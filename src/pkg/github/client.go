@@ -198,6 +198,10 @@ type Client struct {
 	selfAuthorizationHoldEnabled func(repo string) bool
 	selfAuthDisabledLoggedMu     sync.Mutex
 	selfAuthDisabledLogged       map[string]bool
+	// labelApprovalPolicy resolves label-driven approval per repo
+	// (hivecommons/hive#11313, label_approval.go). nil means no repo opted in.
+	labelApprovalMu     sync.RWMutex
+	labelApprovalPolicy func(repo string) (LabelApprovalPolicy, bool)
 	// reporterTrustHoldEnabled and reporterTrusted are the live config seams
 	// for the #9665 reporter-trust hold (pr_reporter_trust.go). Both nil
 	// until the boot wiring installs them; nil means "off" and "nobody",

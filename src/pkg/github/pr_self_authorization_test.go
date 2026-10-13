@@ -28,6 +28,9 @@ type selfAuthIssue struct {
 	Comments  []selfAuthComment
 	Status    int // non-zero to fail the GET
 	FailList  bool
+	// Timeline is the issue's label events for the #11313 label-approval
+	// signal; nil serves an empty timeline.
+	Timeline []unparkWireTimelineEvent
 }
 
 type selfAuthComment struct {
@@ -40,11 +43,16 @@ type selfAuthComment struct {
 type selfAuthServer struct {
 	issues map[int]*selfAuthIssue
 
+	// roles maps login to the role_name the collaborator permission
+	// endpoint reports (#11313); unknown logins report "read"/"none".
+	roles map[string]string
+
 	mu            sync.Mutex
 	labelsApplied []string
 	comments      []string
 	prBodies      []string
 	listCalls     int
+	timelineReads int
 }
 
 // postedPRBodies returns the body of every PR created through the fake.
@@ -62,6 +70,30 @@ func (s *selfAuthServer) start(t *testing.T) *httptest.Server {
 		case r.Method == "GET" && strings.HasSuffix(p, "/repos/o/r"):
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"name":"r","default_branch":"main"}`)
+
+		case r.Method == "GET" && strings.Contains(p, "/issues/") && strings.HasSuffix(p, "/timeline"):
+			num := issueNumFromPath(p, "/timeline")
+			s.mu.Lock()
+			s.timelineReads++
+			s.mu.Unlock()
+			events := []unparkWireTimelineEvent{}
+			if issue := s.issues[num]; issue != nil && issue.Timeline != nil {
+				events = issue.Timeline
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(events)
+
+		case r.Method == "GET" && strings.Contains(p, "/collaborators/") && strings.HasSuffix(p, "/permission"):
+			login := strings.TrimSuffix(p[strings.LastIndex(strings.TrimSuffix(p, "/permission"), "/")+1:], "/permission")
+			out := map[string]any{"permission": "read", "role_name": "read"}
+			if role, ok := s.roles[login]; ok {
+				out["role_name"] = role
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+
+		case r.Method == "GET" && strings.HasPrefix(p, "/orgs/") && strings.Contains(p, "/members/"):
+			w.WriteHeader(http.StatusNotFound)
 
 		case r.Method == "GET" && strings.Contains(p, "/issues/") && strings.HasSuffix(p, "/comments"):
 			num := issueNumFromPath(p, "/comments")

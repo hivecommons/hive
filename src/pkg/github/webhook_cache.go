@@ -30,6 +30,9 @@ type WebhookEventResult struct {
 	Repo        string `json:"repo"`
 	KnownRepo   bool   `json:"known_repo"`
 	Invalidated []int  `json:"invalidated"`
+	// DirtyIssues lists the issues an `issues` labeled/unlabeled event marked
+	// for the next un-park sweep (hivecommons/hive#11313).
+	DirtyIssues []int `json:"dirty_issues,omitempty"`
 }
 
 // webhookTracker records webhook liveness per repository and the set of PRs a
@@ -43,6 +46,7 @@ type webhookTracker struct {
 	lastEvent     map[string]time.Time
 	aliases       map[string][]string
 	dirty         map[string]map[int]time.Time
+	dirtyIssues   map[string]map[int]time.Time
 	events        []time.Time
 	invalidations []time.Time
 	wasHealthy    bool
@@ -50,11 +54,12 @@ type webhookTracker struct {
 
 func newWebhookTracker() *webhookTracker {
 	return &webhookTracker{
-		now:       time.Now,
-		window:    DefaultWebhookHealthWindow,
-		lastEvent: map[string]time.Time{},
-		aliases:   map[string][]string{},
-		dirty:     map[string]map[int]time.Time{},
+		now:         time.Now,
+		window:      DefaultWebhookHealthWindow,
+		lastEvent:   map[string]time.Time{},
+		aliases:     map[string][]string{},
+		dirty:       map[string]map[int]time.Time{},
+		dirtyIssues: map[string]map[int]time.Time{},
 	}
 }
 
@@ -120,6 +125,46 @@ func (t *webhookTracker) markDirty(aliases []string, number int) {
 		}
 		byNumber[number] = now
 	}
+}
+
+// markIssueDirty records that an issue's labels changed, so the un-park
+// sweep can run ahead of its polling interval. Pull requests never land
+// here; they have their own dirty set. The mark is stored under the first
+// alias only (the configured repo name) because it is counted, not looked up
+// by alias.
+func (t *webhookTracker) markIssueDirty(aliases []string, number int) {
+	if len(aliases) == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	byNumber := t.dirtyIssues[aliases[0]]
+	if byNumber == nil {
+		byNumber = map[int]time.Time{}
+		t.dirtyIssues[aliases[0]] = byNumber
+	}
+	byNumber[number] = t.now()
+}
+
+// takeDirtyIssues returns how many issues webhooks marked dirty since the last
+// call and clears them.
+func (t *webhookTracker) takeDirtyIssues() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := 0
+	for _, byNumber := range t.dirtyIssues {
+		n += len(byNumber)
+	}
+	t.dirtyIssues = map[string]map[int]time.Time{}
+	return n
+}
+
+// TakeDirtyIssueCount reports how many issues an `issues` webhook marked dirty
+// since the last call, and clears the mark. The un-park sweep scheduler uses
+// a non-zero answer to run early instead of waiting out its interval; polling
+// stays the fallback when webhooks are not delivered.
+func TakeDirtyIssueCount() int {
+	return sharedWebhookTracker.takeDirtyIssues()
 }
 
 // clearDirtyBefore clears a dirty mark set before since. A mark set after the
@@ -251,7 +296,8 @@ type webhookEventPayload struct {
 	Repository struct {
 		FullName string `json:"full_name"`
 	} `json:"repository"`
-	Number      int `json:"number"`
+	Number      int    `json:"number"`
+	Action      string `json:"action"`
 	PullRequest *struct {
 		Number int `json:"number"`
 	} `json:"pull_request"`
@@ -298,6 +344,10 @@ func (c *Client) HandleWebhookEvent(event string, payload []byte) (WebhookEventR
 	aliases := webhookRepoAliases(configured, p.Repository.FullName)
 	sharedWebhookTracker.recordEvent(aliases)
 
+	if n, ok := webhookIssueLabelTarget(event, p); ok {
+		sharedWebhookTracker.markIssueDirty(aliases, n)
+		res.DirtyIssues = []int{n}
+	}
 	numbers := webhookInvalidationTargets(event, p, aliases)
 	for _, n := range numbers {
 		c.invalidateWebhookPR(aliases, n)
@@ -327,6 +377,20 @@ func webhookRepoAliases(configured, fullName string) []string {
 		return []string{a}
 	}
 	return []string{a, b}
+}
+
+// webhookIssueLabelTarget returns the issue number of an `issues` event whose
+// action changed a label on a non-PR issue. Everything else is not an un-park
+// trigger.
+func webhookIssueLabelTarget(event string, p webhookEventPayload) (int, bool) {
+	if event != "issues" || p.Issue == nil || p.Issue.PullRequest != nil || p.Issue.Number <= 0 {
+		return 0, false
+	}
+	switch p.Action {
+	case "labeled", "unlabeled":
+		return p.Issue.Number, true
+	}
+	return 0, false
 }
 
 func webhookInvalidationTargets(event string, p webhookEventPayload, aliases []string) []int {

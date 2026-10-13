@@ -78,3 +78,38 @@ func TestIssueUnparkSweepGate_ThrottledToOnePassPerInterval(t *testing.T) {
 		t.Fatal("a pass after the interval elapsed should have run")
 	}
 }
+
+// An `issues` label webhook lets the sweep run ahead of its interval
+// (hivecommons/hive#11313), but never more often than the webhook floor.
+func TestIssueUnparkSweepGate_WebhookDirtyIssueRunsEarly(t *testing.T) {
+	srv := newUnparkGateServer(t)
+	client := github.NewClientForTest(srv.URL, "o", []string{"o/r"}, sweepQuietLogger())
+	t.Cleanup(func() { github.TakeDirtyIssueCount() })
+
+	lastRun := time.Now().Add(-2 * issueUnparkSweepWebhookInterval)
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
+	if srv.count() != 0 {
+		t.Fatal("inside the interval with no dirty issue, the sweep must not run")
+	}
+
+	if _, err := client.HandleWebhookEvent("issues", []byte(`{"action":"labeled","issue":{"number":4},"repository":{"full_name":"o/r"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	lastRun = time.Now().Add(-2 * issueUnparkSweepWebhookInterval)
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
+	if srv.count() == 0 {
+		t.Fatal("a dirty issue should have run the sweep early")
+	}
+
+	if _, err := client.HandleWebhookEvent("issues", []byte(`{"action":"labeled","issue":{"number":5},"repository":{"full_name":"o/r"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	before := srv.count()
+	runIssueUnparkSweepIfDue(context.Background(), client, nil, nil, &lastRun, sweepQuietLogger())
+	if srv.count() != before {
+		t.Fatal("the webhook floor must still throttle back-to-back sweeps")
+	}
+	if github.TakeDirtyIssueCount() != 1 {
+		t.Fatal("a throttled dirty mark must survive for the next due pass")
+	}
+}

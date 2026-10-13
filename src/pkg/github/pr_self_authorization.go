@@ -217,6 +217,9 @@ func (c *Client) issueHasHumanAcknowledgement(ctx context.Context, owner, repo s
 	if inherited {
 		return true, nil
 	}
+	if c.issueApprovedByLabel(ctx, owner, repo, issue) {
+		return true, nil
+	}
 	if issue.GetComments() == 0 {
 		// The issue payload already told us there are none; skip the call.
 		// An unreadable parent is the only error left to report.
@@ -234,6 +237,32 @@ func (c *Client) issueHasHumanAcknowledgement(ctx context.Context, owner, repo s
 		}
 	}
 	return false, parentErr
+}
+
+// issueApprovedByLabel is the label-driven approval signal
+// (hivecommons/hive#11313): on a repo that opted in, a configured acceptance
+// label whose newest addition was made by a trusted account counts as human
+// sign-off the way `approved-direction` does, unless a person's own park
+// label withholds it (A29). It is layered on top of the signals above rather
+// than folded into them: a repo without label_driven never reaches the
+// timeline read, and a lookup failure counts as no sign-off.
+func (c *Client) issueApprovedByLabel(ctx context.Context, owner, repo string, issue *gh.Issue) bool {
+	policy, ok := c.labelApprovalPolicyFor(owner + "/" + repo)
+	if !ok {
+		policy, ok = c.labelApprovalPolicyFor(repo)
+	}
+	if !ok {
+		return false
+	}
+	f, err := c.evaluateLabelApproval(ctx, owner, repo, issue, policy)
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Warn("self-authorization gate: label approval could not be read, it counts as no sign-off",
+				"repo", owner+"/"+repo, "issue", issue.GetNumber(), "error", err.Error())
+		}
+		return false
+	}
+	return f.Accepted && !f.Blocked()
 }
 
 // splitRepoRef normalises "owner/repo" or a bare repo name into its two halves,

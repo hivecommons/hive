@@ -9,14 +9,17 @@ import (
 // RepoPolicy records optional per-repository policy overrides. It is separate
 // from project.repos so existing configs keep their string-list repo shape.
 type RepoPolicy struct {
-	Repo                  string               `yaml:"repo" json:"repo"`
-	SelfAuthorizationHold *bool                `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
-	ReporterTrustHold     *bool                `yaml:"reporter_trust_hold,omitempty" json:"reporter_trust_hold,omitempty"`
-	AutoMerge             *bool                `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
-	LabelDriven           bool                 `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
-	ACMMLevel             *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
-	ACMMPinned            bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
-	ACMMLastAutomatic     *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
+	Repo                  string `yaml:"repo" json:"repo"`
+	SelfAuthorizationHold *bool  `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
+	ReporterTrustHold     *bool  `yaml:"reporter_trust_hold,omitempty" json:"reporter_trust_hold,omitempty"`
+	AutoMerge             *bool  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	LabelDriven           bool   `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
+	// LabelDrivenApprovalLabels overrides project.label_driven_approval_labels
+	// for this repo (hivecommons/hive#11313). Only read when LabelDriven is set.
+	LabelDrivenApprovalLabels []string             `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
+	ACMMLevel                 *int                 `yaml:"acmm_level,omitempty" json:"acmm_level,omitempty"`
+	ACMMPinned                bool                 `yaml:"acmm_pinned,omitempty" json:"acmm_pinned,omitempty"`
+	ACMMLastAutomatic         *AutonomyLevelChange `yaml:"acmm_last_automatic,omitempty" json:"acmm_last_automatic,omitempty"`
 }
 
 type AutonomyLevelChange struct {
@@ -70,6 +73,76 @@ func (c *Config) EffectiveACMMLevelForRepo(repo string) int {
 func (c *Config) RepoLabelDriven(repo string) bool {
 	rp, ok := c.RepoPolicyFor(repo)
 	return ok && rp.LabelDriven
+}
+
+// DefaultLabelDrivenApprovalLabel is the acceptance label Prow-style
+// organisations use; it is what label-driven approval maps to "approve" when
+// project.label_driven_approval_labels is unset.
+const DefaultLabelDrivenApprovalLabel = "triage/accepted"
+
+// DefaultLabelDrivenTrustedBots are the command bots whose label additions
+// count as an acceptance on a label-driven repo when
+// project.label_driven_trusted_bots is unset: the Prow GitHub Actions port
+// and the Prow instance hivecommons runs (hivecommons/hive#11313).
+var DefaultLabelDrivenTrustedBots = []string{"github-actions[bot]", "kubestellar-prow[bot]"}
+
+// LabelDrivenApprovalLabels returns the labels whose trusted addition approves
+// an issue on repo (hivecommons/hive#11313), or nil when repo is not
+// label-driven, so the feature is a no-op everywhere it was not opted into.
+// A label-driven repo resolves its own repo_policies override first, then
+// project.label_driven_approval_labels, then DefaultLabelDrivenApprovalLabel.
+// An explicit empty override turns label approval off for that repo while
+// keeping the rest of label-driven behaviour.
+func (c *Config) LabelDrivenApprovalLabels(repo string) []string {
+	rp, ok := c.RepoPolicyFor(repo)
+	if !ok || !rp.LabelDriven {
+		return nil
+	}
+	if rp.LabelDrivenApprovalLabels != nil {
+		return normalizeLabelList(rp.LabelDrivenApprovalLabels)
+	}
+	if c.Project.LabelDrivenApprovalLabels != nil {
+		return normalizeLabelList(c.Project.LabelDrivenApprovalLabels)
+	}
+	return []string{DefaultLabelDrivenApprovalLabel}
+}
+
+// LabelDrivenApprovalLabelsDefault returns the project-wide approval labels
+// that label-driven repos without their own override inherit.
+func (c *Config) LabelDrivenApprovalLabelsDefault() []string {
+	if c != nil && c.Project.LabelDrivenApprovalLabels != nil {
+		return normalizeLabelList(c.Project.LabelDrivenApprovalLabels)
+	}
+	return []string{DefaultLabelDrivenApprovalLabel}
+}
+
+// LabelDrivenTrustOrgMembers reports whether public members of the repo's
+// owning organisation may approve by label (default true: Prow itself lets
+// only org members add `triage/accepted`).
+func (c *Config) LabelDrivenTrustOrgMembers() bool {
+	if c == nil || c.Project.LabelDrivenTrustOrgMembers == nil {
+		return true
+	}
+	return *c.Project.LabelDrivenTrustOrgMembers
+}
+
+// LabelDrivenTrustedBots returns the bot logins whose label additions count
+// as acceptances on label-driven repos.
+func (c *Config) LabelDrivenTrustedBots() []string {
+	if c == nil || c.Project.LabelDrivenTrustedBots == nil {
+		return append([]string(nil), DefaultLabelDrivenTrustedBots...)
+	}
+	return normalizeLabelList(c.Project.LabelDrivenTrustedBots)
+}
+
+func normalizeLabelList(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (c *Config) RepoACMMPinned(repo string) bool {
@@ -251,7 +324,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && len(rp.LabelDrivenApprovalLabels) == 0
 }
 
 // ReporterTrustHoldEnabledForRepo resolves the #9665 reporter-trust hold for
@@ -307,6 +380,65 @@ func (c *Config) SetReporterTrustHoldForRepos(values map[string]*bool) {
 			c.Project.RepoPolicies[idx].ReporterTrustHold = &v
 		} else {
 			c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, ReporterTrustHold: &v})
+		}
+	}
+}
+
+// LabelDrivenRepoSetting is one repo's label-driven policy as edited from the
+// dashboard Repos tab (hivecommons/hive#11313). ApprovalLabels nil or empty
+// keeps the project default.
+type LabelDrivenRepoSetting struct {
+	Enabled        bool
+	ApprovalLabels *[]string
+}
+
+// SetLabelDrivenForRepos records or clears per-repo label-driven policies. A
+// nil entry (or Enabled false) switches the repo back to the default
+// comment-driven flow and drops the approval-label override with it; the
+// policy row is pruned when nothing else is set on it.
+func (c *Config) SetLabelDrivenForRepos(values map[string]*LabelDrivenRepoSetting) {
+	if c == nil || len(values) == 0 {
+		return
+	}
+	repoPauseMu.Lock()
+	defer repoPauseMu.Unlock()
+	for repo, setting := range values {
+		name := strings.TrimSpace(repo)
+		if name == "" {
+			continue
+		}
+		name, _ = NormalizeRepoForOrg(c.Project.Org, name)
+		key := repoPauseKey(c.Project.Org, name)
+		idx := -1
+		for i, rp := range c.Project.RepoPolicies {
+			if repoPauseKey(c.Project.Org, rp.Repo) == key {
+				idx = i
+				break
+			}
+		}
+		if setting == nil || !setting.Enabled {
+			if idx >= 0 {
+				c.Project.RepoPolicies[idx].LabelDriven = false
+				c.Project.RepoPolicies[idx].LabelDrivenApprovalLabels = nil
+				if repoPolicyHasNoOverrides(c.Project.RepoPolicies[idx]) {
+					c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
+				}
+			}
+			continue
+		}
+		// An empty override cannot round-trip through yaml omitempty, so it
+		// means "inherit the project default" here.
+		var labels []string
+		if setting.ApprovalLabels != nil {
+			if labels = normalizeLabelList(*setting.ApprovalLabels); len(labels) == 0 {
+				labels = nil
+			}
+		}
+		if idx >= 0 {
+			c.Project.RepoPolicies[idx].LabelDriven = true
+			c.Project.RepoPolicies[idx].LabelDrivenApprovalLabels = labels
+		} else {
+			c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, LabelDriven: true, LabelDrivenApprovalLabels: labels})
 		}
 	}
 }

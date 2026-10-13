@@ -69,6 +69,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	repos := make([]string, 0, len(cfg.Project.Repos))
 	repoSelfAuthorizationHold := make(map[string]map[string]any, len(cfg.Project.Repos))
 	repoReporterTrustHold := make(map[string]map[string]any, len(cfg.Project.Repos))
+	repoLabelDriven := make(map[string]map[string]any, len(cfg.Project.Repos))
 	for _, repo := range cfg.Project.Repos {
 		full := repo
 		if strings.Contains(repo, "/") {
@@ -87,6 +88,19 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			rtEntry["value"] = *rp.ReporterTrustHold
 		}
 		repoReporterTrustHold[full] = rtEntry
+		repoLabelDriven[full] = labelDrivenRepoPayload(cfg, repo)
+	}
+	// hivecommons/hive#11313 label-driven approval, rendered on the Repos tab
+	// next to the per-repo opt-in. EFFECTIVE values are sent for the defaulted
+	// lists; the *Set flags say whether the operator overrode a default.
+	labelDrivenApproval := map[string]any{
+		"approvalLabels":     cfg.LabelDrivenApprovalLabelsDefault(),
+		"approvalLabelsSet":  cfg.Project.LabelDrivenApprovalLabels != nil,
+		"trustOrgMembers":    cfg.LabelDrivenTrustOrgMembers(),
+		"trustOrgMembersSet": cfg.Project.LabelDrivenTrustOrgMembers != nil,
+		"trustedBots":        cfg.LabelDrivenTrustedBots(),
+		"trustedBotsSet":     cfg.Project.LabelDrivenTrustedBots != nil,
+		"docsAnchor":         "label-driven-repositories",
 	}
 	// #9665 reporter trust, rendered on the Labels tab (who is trusted, what
 	// label everyone else needs) and the Repos tab (the merge hold). EFFECTIVE
@@ -149,6 +163,8 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"reporterTrustHoldSet":           cfg.GitHub.ReporterTrustHold != nil,
 		"repoReporterTrustHold":          repoReporterTrustHold,
 		"reporterTrustHoldEnvLocked":     cfg.GitHub.ReporterTrustHoldEnvOverrideSet(),
+		"repoLabelDriven":                repoLabelDriven,
+		"labelDrivenApproval":            labelDrivenApproval,
 		// Kick-list caps, rendered on the Repos tab. The EFFECTIVE values are
 		// sent (defaults and ceiling already resolved) so the fields always
 		// show the number actually in force rather than an empty box when the
@@ -2447,6 +2463,11 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 		// #9665 reporter-trust merge hold, same shape as the #5117 pair.
 		ReporterTrustHold     *bool            `json:"reporterTrustHold,omitempty"`
 		RepoReporterTrustHold map[string]*bool `json:"repoReporterTrustHold,omitempty"`
+		// hivecommons/hive#11313 label-driven approval: the per-repo opt-in
+		// (with optional approval-label override) and the project-wide trust
+		// knobs. Pointer-typed so absent keys mean "unchanged".
+		RepoLabelDriven     map[string]*labelDrivenRepoBody `json:"repoLabelDriven,omitempty"`
+		LabelDrivenApproval *labelDrivenApprovalBody        `json:"labelDrivenApproval,omitempty"`
 		// Kick-list caps. POINTER-typed so an absent key means "unchanged":
 		// the Repos tab sends only the fields the operator actually touched,
 		// and editing a repo must not reset the caps (or vice versa).
@@ -2462,7 +2483,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	// the "nothing supplied" guard must only fire when the request would change
 	// nothing at all.
 	capsOnly := body.MaxIssuesPerKick != nil || body.MaxPRsPerKick != nil
-	holdOnly := body.ReporterTrustHold != nil || body.RepoReporterTrustHold != nil
+	holdOnly := body.ReporterTrustHold != nil || body.RepoReporterTrustHold != nil || body.RepoLabelDriven != nil || body.LabelDrivenApproval != nil
 	if len(body.Repos) == 0 && body.PrimaryRepo == nil && body.SelfAuthorizationHold == nil && body.RepoSelfAuthorizationHold == nil && !capsOnly && !holdOnly {
 		jsonError(w, "at least one repo is required", http.StatusBadRequest)
 		return
@@ -2651,6 +2672,12 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.RepoReporterTrustHold != nil {
 		s.deps.Config.SetReporterTrustHoldForRepos(body.RepoReporterTrustHold)
+	}
+	if body.RepoLabelDriven != nil {
+		s.deps.Config.SetLabelDrivenForRepos(labelDrivenRepoSettings(body.RepoLabelDriven))
+	}
+	if body.LabelDrivenApproval != nil {
+		body.LabelDrivenApproval.applyTo(s.deps.Config)
 	}
 	s.deps.Config.PruneRepoPoliciesToWatched()
 

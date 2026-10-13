@@ -2844,6 +2844,12 @@
     .rt-assoc { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); white-space: nowrap; }
     .rt-check { display: flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
     .rt-inherit { font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
+    /* #11313 label-driven approval sub-row under a repo row: shown only while
+       the repo's toggle is on; reuses the config-field input recipe. */
+    .ld-sub { flex-wrap: wrap; margin-left: var(--sp-6); }
+    .ld-sub .config-field { flex: 1; min-width: 0; margin-bottom: var(--sp-0); }
+    .ld-sub .config-help, .ld-defaults .config-help { flex-basis: 100%; margin: var(--sp-0); font-size: var(--fs-sm); }
+    .ld-defaults { margin-top: var(--sp-5); }
     .config-toggle-label.danger { color: var(--red); font-weight: 600; }
     .config-section-rule { border: none; border-top: 1px solid var(--border); margin: var(--sp-6) var(--sp-0); }
 
@@ -36252,6 +36258,12 @@ function burnAreaChart() {
       const rtHoldEnvLocked = !!_configState.data.reporterTrustHoldEnvLocked;
       const repoRtHold = _configState.data.repoReporterTrustHold || {};
       const rtGateOn = !!((_configState.data.reporterTrust || {}).enabled);
+      // #11313 label-driven approval: per-repo opt-in plus project-wide trust.
+      const repoLabelDriven = _configState.data.repoLabelDriven || {};
+      const ldApproval = _configState.data.labelDrivenApproval || {};
+      const ldDefaultLabels = Array.isArray(ldApproval.approvalLabels) ? ldApproval.approvalLabels : ['triage/accepted'];
+      const ldLocked = !dashboardRoleAtLeast(window._hiveRole || 'read', 'write');
+      const anyLabelDriven = repos.some(r => !!(repoLabelDriven[r] || {}).enabled);
       // The API sends EFFECTIVE caps (defaults already resolved), so these
       // boxes always show the number actually in force rather than a blank.
       // Dirty edits win so a value the operator just typed survives a re-render
@@ -36316,9 +36328,18 @@ function burnAreaChart() {
           ? '<button class="remove-item" data-action="clearRepoReporterTrustHoldOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the all-repos default">inherit</button>'
           : '<span class="rt-inherit">inherits</span>';
         const rtRow = '<label title="' + rtTitle + '" class="rt-check"><input type="checkbox" ' + (rtEffective ? 'checked' : '') + ' ' + (rtHoldEnvLocked ? 'disabled' : '') + ' data-change-action="toggleRepoReporterTrustHold" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Hold PRs for untrusted reporters (#9665)</label>' + rtInherit;
+        // #11313 label-driven approvals (Prow-style): opt-in per repo, with the
+        // sub-row (approval labels + help) only while the toggle is on.
+        const ld = repoLabelDriven[r] || {};
+        const ldOn = !!ld.enabled;
+        const ldRow = '<label class="rt-check" title="Opt-in: on this repo Hive leaves triage labels alone; a trusted triager applying ' + esc(ldDefaultLabels.join(', ') || 'the approval label') + ' releases parked issues and counts as human sign-off (#11313)"><input type="checkbox" ' + (ldOn ? 'checked' : '') + ' ' + (ldLocked ? 'disabled' : '') + ' data-change-action="toggleRepoLabelDriven" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Label-driven approvals (Prow-style)</label>';
+        const ldSub = `<div class="config-list-item ld-sub" data-ld-repo="${esc(r)}">${ldRow}${ldOn ? `
+            <div class="config-field"><label>Approval labels ${settingHelpMark('maintainer-commands', 'label-driven-repositories', 'Approval labels', 'Comma-separated labels whose trusted addition approves an issue on this repo. Empty inherits the all-repos default (' + esc(ldDefaultLabels.join(', ')) + ').')}</label><input type="text" ${ldLocked ? 'disabled' : ''} value="${esc((ld.approvalLabels || []).join(', '))}" placeholder="${esc(ldDefaultLabels.join(', '))}" data-change-action="setRepoLabelDrivenLabels" data-arg0="${esc(r)}" data-arg-types="s,v"></div>
+            <p class="config-help">Opt-in: <code>${esc((ld.effectiveLabels || ldDefaultLabels).join('</code>, <code>'))}</code> applied by a trusted triager/org member releases parked issues and counts as human sign-off. <a href="${esc(dashboardDocsHref('maintainer-commands', 'label-driven-repositories'))}" target="_blank" rel="noopener noreferrer" data-docs-page="maintainer-commands" data-docs-anchor="label-driven-repositories" data-action="gh3" data-stop="1">How label-driven repositories work</a></p>` : ''}
+          </div>`;
         // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
         const displayName = ghHost + '/' + r;
-        return `<div class="config-list-item" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(displayName)}">${esc(displayName)}</span><label title="${holdTitle}" style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:var(--muted);white-space:nowrap"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>`;
+        return `<div class="config-list-item" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(displayName)}">${esc(displayName)}</span><label title="${holdTitle}" style="display:flex;align-items:center;gap:5px;font-size:0.7rem;color:var(--muted);white-space:nowrap"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub;
       }).join('');
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
@@ -36358,6 +36379,23 @@ function burnAreaChart() {
           <div id="cfg-repo-add-status" style="font-size:0.72rem;margin-top:var(--sp-3)"></div>
           ${defaultWarn}
         </div>
+        ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${ldApproval.trustOrgMembers !== false ? 'on' : ''} ${ldLocked ? 'disabled' : ''}" data-action="${ldLocked ? '' : 'toggleLabelDrivenTrustOrgMembers'}" data-arg-types="t" title="Prow's own rule: public members of the repo's org may apply the approval label. Off: only triage/write/maintain/admin collaborators and trusted bots."></div>
+            <span class="config-toggle-label">Label-driven repos: trust public org members to apply approval labels ${settingHelpMark('operator-reference', 'label-driven-approval', 'Trust org members', 'When on (default), a public member of the repository owner org who applies the approval label is trusted, matching Prow. Collaborators with the triage role or higher are always trusted.')}</span>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Default approval labels ${settingHelpMark('operator-reference', 'label-driven-approval', 'Default approval labels', 'Comma-separated. Applies to every label-driven repo without its own list. Empty restores triage/accepted.')}</label>
+              <input type="text" id="cfg-label-driven-approval-labels" ${ldLocked ? 'disabled' : ''} value="${esc(ldDefaultLabels.join(', '))}" placeholder="triage/accepted" data-change-action="setLabelDrivenApprovalDefault" data-arg-types="v">
+            </div>
+            <div class="config-field">
+              <label>Trusted bots ${settingHelpMark('operator-reference', 'label-driven-approval', 'Trusted bots', 'Comma-separated bot logins (for example github-actions[bot]) whose label additions count as a trusted triager. Empty restores the built-in list.')}</label>
+              <input type="text" id="cfg-label-driven-trusted-bots" ${ldLocked ? 'disabled' : ''} value="${esc((ldApproval.trustedBots || []).join(', '))}" placeholder="github-actions[bot]" data-change-action="setLabelDrivenTrustedBots" data-arg-types="v">
+            </div>
+          </div>
+          <p class="config-help">Only the last <em>labeled</em> event counts; an unreadable timeline fails closed. <code>hold</code> and <code>do-not-merge</code> still park. Nothing changes for repos without the toggle.</p>
+        </div>` : ''}
         <div style="margin-top:22px;padding-top:var(--sp-6);border-top:1px solid var(--border)">
           <div style="font-size:0.8rem;font-weight:600;margin-bottom:var(--sp-2)">Kick prompt list caps</div>
           <p class="fs-sm text-muted mb-5">
@@ -36451,6 +36489,59 @@ function burnAreaChart() {
       payload[repo] = null;
       markDirty('repos', 'repoReporterTrustHold', payload);
       renderConfigTab('Repos');
+    }
+
+    // #11313 label-driven approval controls (Repos tab). Per-repo entries are
+    // sent whole so the server can clear or set the opt-in and its labels in
+    // one PUT; project-wide knobs travel in their own bag.
+    function hiveSplitLabelList(value) {
+      return String(value || '').split(',').map(v => v.trim()).filter(Boolean);
+    }
+    function repoLabelDrivenPayload() {
+      return Object.fromEntries(Object.entries(_configState.data.repoLabelDriven || {}).map(([k, v]) => [k, v && v.enabled ? { enabled: true, approvalLabels: v.approvalLabels || [] } : null]));
+    }
+    function toggleRepoLabelDriven(repo, checked) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'write')) {
+        showToast('Write or owner role is required to change label-driven approvals.', 'error');
+        renderConfigTab('Repos');
+        return;
+      }
+      if (!_configState.data.repoLabelDriven) _configState.data.repoLabelDriven = {};
+      const prev = _configState.data.repoLabelDriven[repo] || {};
+      _configState.data.repoLabelDriven[repo] = checked ? { enabled: true, approvalLabels: prev.approvalLabels || [] } : { enabled: false };
+      markDirty('repos', 'repoLabelDriven', repoLabelDrivenPayload());
+      renderConfigTab('Repos');
+    }
+    function setRepoLabelDrivenLabels(repo, value) {
+      if (!_configState.data.repoLabelDriven) _configState.data.repoLabelDriven = {};
+      const prev = _configState.data.repoLabelDriven[repo] || {};
+      const labels = hiveSplitLabelList(value);
+      _configState.data.repoLabelDriven[repo] = { enabled: true, approvalLabels: labels, effectiveLabels: labels.length ? labels : undefined };
+      markDirty('repos', 'repoLabelDriven', repoLabelDrivenPayload());
+      renderConfigTab('Repos');
+    }
+    function labelDrivenApprovalDirty() {
+      const d = _configState.dirty.repos || {};
+      return Object.assign({}, d.labelDrivenApproval || {});
+    }
+    function toggleLabelDrivenTrustOrgMembers(el) {
+      const isOn = el.classList.toggle('on');
+      if (!_configState.data.labelDrivenApproval) _configState.data.labelDrivenApproval = {};
+      _configState.data.labelDrivenApproval.trustOrgMembers = isOn;
+      markDirty('repos', 'labelDrivenApproval', Object.assign(labelDrivenApprovalDirty(), { trustOrgMembers: isOn }));
+    }
+    function setLabelDrivenApprovalDefault(value) {
+      if (!_configState.data.labelDrivenApproval) _configState.data.labelDrivenApproval = {};
+      const labels = hiveSplitLabelList(value);
+      _configState.data.labelDrivenApproval.approvalLabels = labels.length ? labels : ['triage/accepted'];
+      markDirty('repos', 'labelDrivenApproval', Object.assign(labelDrivenApprovalDirty(), { approvalLabels: labels }));
+      renderConfigTab('Repos');
+    }
+    function setLabelDrivenTrustedBots(value) {
+      if (!_configState.data.labelDrivenApproval) _configState.data.labelDrivenApproval = {};
+      const bots = hiveSplitLabelList(value);
+      _configState.data.labelDrivenApproval.trustedBots = bots;
+      markDirty('repos', 'labelDrivenApproval', Object.assign(labelDrivenApprovalDirty(), { trustedBots: bots }));
     }
 
     function clearRepoSelfAuthHoldOverride(repo) {

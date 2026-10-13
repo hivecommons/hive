@@ -8732,6 +8732,12 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 // backlog a person is waiting on.
 const issueUnparkSweepInterval = 5 * time.Minute
 
+// issueUnparkSweepWebhookInterval is the minimum spacing when an `issues`
+// webhook has marked a label change (hivecommons/hive#11313): a maintainer who
+// just added `triage/accepted` should not wait out the polling interval, but a
+// burst of label events must not turn into a sweep per event.
+const issueUnparkSweepWebhookInterval = 30 * time.Second
+
 // runIssueUnparkSweepIfDue re-queues parked issues a maintainer has answered
 // with a `/hive` command, and keeps the "What to reply" block current on every
 // parked issue (hivecommons/hive#9879). Every gate — human author, live write
@@ -8745,8 +8751,14 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 		return
 	}
 	now := time.Now()
-	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < issueUnparkSweepInterval {
-		return
+	if lastRun != nil && !lastRun.IsZero() {
+		since := now.Sub(*lastRun)
+		if since < issueUnparkSweepWebhookInterval {
+			return
+		}
+		if since < issueUnparkSweepInterval && github.TakeDirtyIssueCount() == 0 {
+			return
+		}
 	}
 	if lastRun != nil {
 		*lastRun = now
@@ -8754,7 +8766,16 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
 		MaxActions: github.DefaultIssueUnparkSweepMaxActions,
 		// cfg is nil only in tests; nil leaves every repo on the default path.
-		LabelDriven: func(repo string) bool { return cfg.RepoLabelDriven(repo) },
+		LabelDriven:   func(repo string) bool { return cfg.RepoLabelDriven(repo) },
+		LabelApproval: labelApprovalPolicyResolver(cfg),
+		LabelApprovalAudit: func(event github.IssueLabelApprovalEvent) {
+			if dashSrv == nil {
+				return
+			}
+			detail := fmt.Sprintf("repo=%s, issue=%d, label=%s, actor=%s, trust=%s, removed=%s, released=%t, pending=%t",
+				event.Repo, event.Number, event.Label, event.Actor, event.TrustReason, strings.Join(event.Removed, ","), event.Released, event.Pending)
+			dashSrv.AuditLogRecord("system", "issue-approved-by-label", detail, "", event.Repo, event.Number)
+		},
 		Audit: func(event github.IssueUnparkEvent) {
 			if dashSrv == nil {
 				return
@@ -8771,9 +8792,30 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 	if result == nil {
 		return
 	}
-	if len(result.Unparked) > 0 || result.Replies > 0 {
+	if len(result.Unparked) > 0 || result.Replies > 0 || len(result.LabelApproved) > 0 {
 		logger.Info("issue un-park sweep complete",
-			"seen", result.Seen, "unparked", len(result.Unparked), "replies", result.Replies, "skipped", result.Skipped)
+			"seen", result.Seen, "unparked", len(result.Unparked), "label_approved", len(result.LabelApproved), "replies", result.Replies, "skipped", result.Skipped)
+	}
+}
+
+// labelApprovalPolicyResolver reads label-driven approval settings
+// (hivecommons/hive#11313) live from cfg. It answers ok=false for every repo
+// without project.repo_policies[].label_driven, which keeps the feature off
+// there; a nil cfg (tests) opts nothing in.
+func labelApprovalPolicyResolver(cfg *config.Config) func(repo string) (github.LabelApprovalPolicy, bool) {
+	return func(repo string) (github.LabelApprovalPolicy, bool) {
+		if cfg == nil {
+			return github.LabelApprovalPolicy{}, false
+		}
+		labels := cfg.LabelDrivenApprovalLabels(repo)
+		if len(labels) == 0 {
+			return github.LabelApprovalPolicy{}, false
+		}
+		return github.LabelApprovalPolicy{
+			Labels:          labels,
+			TrustOrgMembers: cfg.LabelDrivenTrustOrgMembers(),
+			TrustedBots:     cfg.LabelDrivenTrustedBots(),
+		}, true
 	}
 }
 

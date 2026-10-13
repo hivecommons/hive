@@ -46,6 +46,36 @@ type unparkServer struct {
 	removed map[int][]string
 	// permissions maps login to the permission level the API reports.
 	permissions map[string]string
+	// roles maps login to the role_name the permission endpoint reports
+	// (hivecommons/hive#11313); unset logins report none.
+	roles map[string]string
+	// orgMembers lists logins GET /orgs/{org}/members/{user} answers 204 for.
+	orgMembers map[string]bool
+	// timelines maps issue number to its label events; a missing issue
+	// yields an empty timeline. timelineStatus, when non-zero, fails every
+	// timeline read with that status.
+	timelines      map[int][]unparkWireTimelineEvent
+	timelineStatus int
+	// orgLookups counts membership lookups, permLookups permission lookups.
+	orgLookups, permLookups, timelineReads int
+}
+
+type unparkWireTimelineEvent struct {
+	ID        int64     `json:"id"`
+	Event     string    `json:"event"`
+	Actor     wireUser  `json:"actor"`
+	Label     wireLabel `json:"label"`
+	CreatedAt string    `json:"created_at"`
+}
+
+func labeledAt(id int64, actor, label string, at time.Time) unparkWireTimelineEvent {
+	return unparkWireTimelineEvent{ID: id, Event: "labeled", Actor: wireUser{Login: actor}, Label: wireLabel{Name: label}, CreatedAt: at.UTC().Format(time.RFC3339)}
+}
+
+func unlabeledAt(id int64, actor, label string, at time.Time) unparkWireTimelineEvent {
+	ev := labeledAt(id, actor, label, at)
+	ev.Event = "unlabeled"
+	return ev
 }
 
 func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue, permissions map[string]string) (*httptest.Server, *unparkServer) {
@@ -63,6 +93,17 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/orgs/", func(w http.ResponseWriter, r *http.Request) {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		rec.orgLookups++
+		login := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		if rec.orgMembers[login] {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
 	base := fmt.Sprintf("/repos/%s/%s/", owner, repo)
 	mux.HandleFunc(base, func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, base)
@@ -114,13 +155,32 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 			rec.removed[n] = append(rec.removed[n], label)
 			_ = json.NewEncoder(w).Encode([]wireLabel{})
 
+		case strings.HasSuffix(path, "/timeline") && r.Method == http.MethodGet:
+			rec.timelineReads++
+			if rec.timelineStatus != 0 {
+				w.WriteHeader(rec.timelineStatus)
+				return
+			}
+			var n int
+			fmt.Sscanf(path, "issues/%d/timeline", &n)
+			events := rec.timelines[n]
+			if events == nil {
+				events = []unparkWireTimelineEvent{}
+			}
+			_ = json.NewEncoder(w).Encode(events)
+
 		case strings.HasPrefix(path, "collaborators/") && strings.HasSuffix(path, "/permission"):
+			rec.permLookups++
 			login := strings.TrimSuffix(strings.TrimPrefix(path, "collaborators/"), "/permission")
 			level, ok := rec.permissions[login]
 			if !ok {
 				level = "read"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"permission": level})
+			out := map[string]any{"permission": level}
+			if role, ok := rec.roles[login]; ok {
+				out["role_name"] = role
+			}
+			_ = json.NewEncoder(w).Encode(out)
 
 		default:
 			w.WriteHeader(http.StatusNotFound)

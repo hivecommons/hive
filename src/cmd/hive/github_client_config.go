@@ -257,6 +257,10 @@ func (b *boot) applyGitHubClientAgentHooks(client *github.Client) {
 		}
 	})
 	client.SetSelfAuthorizationHoldEnabled(b.selfAuthorizationHoldEnabled)
+	// #11313 label-driven approval: the same live resolver the un-park sweep
+	// uses, so a trusted acceptance label counts as sign-off for #5117 on
+	// exactly the repos where it releases parked issues.
+	client.SetLabelApprovalPolicy(labelApprovalPolicyResolver(b.cfg))
 	// #9665 reporter trust: both seams read live config, so a dashboard edit
 	// takes effect on the next PR request without a client rebuild. The
 	// trust predicate is the SAME one enumeration uses for admission

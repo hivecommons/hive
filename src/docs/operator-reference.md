@@ -145,7 +145,11 @@ Top-level YAML keys accepted by `config.Config`:
 | `github.graphql_pr_batch_page_size` | `50` | Page size for the GraphQL `pullRequests(first:)` batch. Values above GitHub's `100` maximum are rejected. |
 | `governor.labels.automerge` | Defaults to `lgtm`. | Label applied when a merger/owner queues a PR for Hive auto-merge-on-green. Distinct from the [App self-merge sweep](#app-self-merge-sweep-auto_merge), which needs no label and no human queuer. |
 | `project.repo_policies[].auto_merge` | effective `false` below L6; unset = `true` at L6 | Per-repo off switch. Switching to L6 turns this on for every active repo; owners can toggle repos afterward. `false` lets Hive open PRs for that repo but blocks all Hive merge paths (`hive-merge`, App self-authored sweep, and proxy-visible direct REST/GraphQL merge attempts). The dashboard repo-card switch persists this key and takes effect without restart. |
-| `project.repo_policies[].label_driven` | Off (unset) for every repo. | Opt-in for repos whose maintainers accept and park issues with labels and their own bots (for example `needs-triage` → `triage/accepted`). On such a repo the un-park sweep posts no "What to reply" notice and never removes `needs-human`, `needs-decision` or `needs-direction`; `/hive approve`, `/hive decision` and `/hive help` get a one-line reply pointing at the labels. Hive still filters parked issues and may still add `needs-decision` with a question. Config-file key only; see [maintainer-commands.md](maintainer-commands.md#label-driven-repositories). |
+| `project.repo_policies[].label_driven` | Off (unset) for every repo. | Opt-in for repos whose maintainers accept and park issues with labels and their own bots (for example `needs-triage` → `triage/accepted`). On such a repo the un-park sweep posts no "What to reply" notice and never removes `needs-human`, `needs-decision` or `needs-direction` on a `/hive` comment alone; instead a trusted triager applying an approval label releases the issue and counts as human sign-off — see [Label-driven approval](#label-driven-approval). Editable from the dashboard: Settings → Repos → per-repo "Label-driven approvals (Prow-style)" (write or owner role). Details in [maintainer-commands.md](maintainer-commands.md#label-driven-repositories). |
+| `project.repo_policies[].label_driven_approval_labels` | Unset: inherits `project.label_driven_approval_labels`. | Per-repo approval-label list; only read when `label_driven` is set. Editable from the dashboard sub-row of the repo's label-driven toggle. |
+| `project.label_driven_approval_labels` | `["triage/accepted"]` | Labels whose trusted addition approves an issue on every label-driven repo without its own list. Ignored by repos without `label_driven: true`. Dashboard: Settings → Repos → "Default approval labels". |
+| `project.label_driven_trust_org_members` | `true` | Whether a public member of the repo's owning org who applies an approval label is trusted (Prow's own rule). Dashboard: Settings → Repos → "trust public org members". |
+| `project.label_driven_trusted_bots` | `["github-actions[bot]", "kubestellar-prow[bot]"]` | Bot logins whose label additions count as a trusted triager (Prow command bots relaying `/triage accepted`). Dashboard: Settings → Repos → "Trusted bots". |
 | `auto_merge.allow_unprotected_base` | Deprecated no-op. | Accepted so older configs keep loading. `hive-merge` now merges into any protected or unprotected branch the App can write, subject to the CI-evidence gate and GitHub's own merge rules. |
 | `auto_merge.no_ci_ok` | Empty by default. | Explicit repo list whose zero-CI merge-request verdict may pass; failing or pending CI evidence is still enforced. |
 | `auto_merge.human_merge_paths` | Unset (off). | Per-repo map of `owner/repo` to glob patterns (same syntax as `intent.guardrail_path_patterns`) for paths a person must merge. Applies to every merge lane (App self-merge, trusted-author, label-queued, merge-request relay) whatever the intent tier; a matching PR is held with one comment, and an incomplete changed-file list fails closed. Details in the sweep key table below. |
@@ -178,6 +182,38 @@ Top-level YAML keys accepted by `config.Config`:
 | `variables.security.*` | Deny by default. | `allow_exec`, `allow_http`, and GitHub prompt-source allowlists are honored only from the trusted seed, not dashboard overlays. |
 | `data.claude_sessions_dir` | `/data/home/.claude/projects` | Where the dashboard reads Claude Code session JSONL for per-agent token/cost accounting. Point it at the agents' real session directory if you relocate `HOME`. |
 | `data.copilot_sessions_dir` | `/data/home/.copilot/session-state` | Same, for the Copilot CLI backend's session state. |
+
+### Label-driven approval
+
+Opt-in per repository (`project.repo_policies[].label_driven: true`,
+hivecommons/hive#11313). With it unset nothing below applies and the hive
+behaves exactly as before. With it set:
+
+- The un-park sweep treats a trusted addition of an approval label (default
+  `triage/accepted`) like `/hive approve`: it removes the park labels Hive
+  itself added (`needs-human`, `needs-decision`, `needs-direction`) and adds
+  `approved-direction`, without requiring a `/hive` comment. Park labels a
+  person added, and `hold` / `do-not-merge`, are left alone and keep the issue
+  parked; Hive posts one "accepted, but still held by …" note per acceptance.
+- `pr_self_authorization` counts that label as human sign-off, the same way it
+  counts `approved-direction`.
+- `/hive approve` and `/hive decision` on such a repo may also be issued by
+  collaborators with the GitHub **triage** role (read via `role_name`, so
+  custom roles based on triage count too); elsewhere write+ is still required.
+
+**Who is trusted to apply the label.** Only the actor of the *latest*
+`labeled` timeline event for that label is checked, in this order: a bot in
+`label_driven_trusted_bots`; a collaborator whose `role_name` is `triage`,
+`write`, `maintain` or `admin`; a public member of the owning org when
+`label_driven_trust_org_members` is on. Any other actor, a label Hive applied
+itself, or a timeline that cannot be read → not approved (fail closed, logged
+once). Removing and re-adding the label re-evaluates the newest event only.
+
+**Webhook.** An `issues` `labeled`/`unlabeled` webhook marks the issue dirty so
+the next sweep runs within ~30 s instead of the 5-minute poll; polling remains
+the fallback. This dirty-mark, and the check that once-only reply markers were
+authored by the hive's own identity, apply to every repo and are the only
+behaviour changes for repos that did not opt in.
 
 ### GitHub PR-request creation
 

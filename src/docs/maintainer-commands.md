@@ -77,28 +77,74 @@ repeat comments can repeat their documented action.
 Some repositories accept and park issues entirely with labels and their own
 lifecycle bot (for example `needs-triage` → `triage/accepted`, with the bot
 removing `needs-human`). Clearing those labels from Hive would fight that
-workflow, so an operator can opt a repository out per repo:
+workflow, so an operator can opt a repository in per repo — in the config file
+or from the dashboard (Settings → Repos → "Label-driven approvals
+(Prow-style)", write or owner role):
 
 ```yaml
 project:
+  label_driven_approval_labels: [triage/accepted]   # default
+  label_driven_trust_org_members: true              # default (Prow's rule)
+  label_driven_trusted_bots: [github-actions[bot], kubestellar-prow[bot]]
   repo_policies:
     - repo: projectbluefin/common
       label_driven: true
+      # label_driven_approval_labels: [accepted]    # optional per-repo list
 ```
+
+This is strictly opt-in (hivecommons/hive#11313). Repositories without
+`label_driven: true` behave exactly as described in the sections above; the only
+global changes are that an `issues` label webhook lets the un-park sweep run
+early, and once-only reply markers are trusted only when the hive itself wrote
+them.
 
 On an opted-in repository the un-park sweep:
 
-- posts no "What to reply" notice (`<!-- hive:unpark-notice:9879 -->`);
-- never removes `needs-human`, `needs-decision` or `needs-direction` and never
-  adds `approved-direction`, including for `/hive approve` and
-  `/hive decision <text>`;
-- answers `/hive approve`, `/hive decision <text>` and `/hive help` once
-  (same per-comment marker) with one line pointing at the repository's labels;
-- posts no hint for prose assent.
+- posts no "What to reply" notice (`<!-- hive:unpark-notice:9879 -->`) and no
+  hint for prose assent;
+- treats a **trusted** addition of an approval label as approval: it removes
+  the park labels Hive itself added, adds `approved-direction`, and replies once
+  per acceptance (`<!-- hive:label-approval:11313 event=N -->`). No `/hive`
+  comment is needed;
+- answers `/hive approve` and `/hive decision <text>` the same way (Hive-added
+  park labels only), and also accepts them from collaborators with the GitHub
+  **triage** role; `/hive help` gets a one-line reply pointing at the labels;
+- never removes a park label a person added, nor `hold` / `do-not-merge`. When
+  one of those is present the issue stays parked and Hive posts one
+  "accepted, but still held by …" note naming the labels.
 
 Parked issues are still filtered from enumeration, and Hive may still add
-`needs-decision` with a comment asking the question. Repositories without
-`label_driven: true` behave exactly as described above.
+`needs-decision` with a comment asking the question.
+
+### Who may apply the approval label
+
+Only the actor of the most recent `labeled` event for the label is checked
+(removing and re-adding re-evaluates the newest event). Trusted, in order:
+
+1. a bot in `label_driven_trusted_bots` (Prow command bots relaying
+   `/triage accepted`);
+2. a collaborator whose GitHub `role_name` is `triage`, `write`, `maintain` or
+   `admin` (custom roles that build on triage count as triage);
+3. a public member of the repository's owning org, when
+   `label_driven_trust_org_members` is on (default).
+
+Anything else — an untrusted person, an unlisted bot, a label Hive applied
+itself, or a timeline that could not be read — is **not** approval; the sweep
+fails closed and logs once.
+
+### What each label does on a label-driven repository
+
+Label approval layers on top of the existing label paths rather than replacing
+them; the table states every effect in one place.
+
+| Label | Un-park sweep (label-driven repo) | PR self-authorization sign-off | Reporter-trust admission (`issue_filter.reporter_trust`) |
+|---|---|---|---|
+| `triage/accepted` (or configured approval label) applied by a trusted actor | Releases the issue: Hive-added `needs-*` removed, `approved-direction` added, one reply | Counts as human sign-off, like `approved-direction` | Unchanged: still one of the labels that admits an untrusted reporter's issue if listed in `untrusted_require_labels` |
+| same label applied by an untrusted actor / unreadable timeline | No effect (fail closed) | Not sign-off | Unchanged |
+| `approved-direction` | Issue is not parked | Human sign-off (unchanged) | n/a |
+| `needs-human`, `needs-decision`, `needs-direction` added by Hive | Removed on label approval or `/hive approve` | Parked → no sign-off | n/a |
+| `needs-human`, `needs-decision`, `needs-direction` added by a person | Kept; issue stays parked, Hive posts one "still held" note | Parked → no sign-off | n/a |
+| `hold`, `do-not-merge` | Kept; issue stays parked (unchanged) | Hold (unchanged) | n/a |
 
 ## How the hive sees comments
 

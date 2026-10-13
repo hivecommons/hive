@@ -945,6 +945,15 @@ type ProjectConfig struct {
 	// Empty (the default) renders nothing, so a hive that never sets it gets
 	// byte-identical prompts. See WritingGuideSection.
 	WritingGuide string `yaml:"writing_guide,omitempty"`
+
+	// LabelDrivenApprovalLabels, LabelDrivenTrustOrgMembers and
+	// LabelDrivenTrustedBots configure label-driven approval
+	// (hivecommons/hive#11313) on repos that set
+	// project.repo_policies[].label_driven. They have no effect on any other
+	// repo. See LabelDrivenApprovalLabels / LabelDrivenTrust in repo_policy.go.
+	LabelDrivenApprovalLabels  []string `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
+	LabelDrivenTrustOrgMembers *bool    `yaml:"label_driven_trust_org_members,omitempty" json:"label_driven_trust_org_members,omitempty"`
+	LabelDrivenTrustedBots     []string `yaml:"label_driven_trusted_bots,omitempty" json:"label_driven_trusted_bots,omitempty"`
 }
 
 const MaxWritingGuideBytes = 64 * 1024

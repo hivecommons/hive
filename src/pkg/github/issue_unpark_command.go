@@ -88,6 +88,32 @@ type IssueUnparkSweepOptions struct {
 	// removes a parking label; `/hive approve` and `/hive decision` get a
 	// one-line reply pointing at the labels instead. nil means no repo opts in.
 	LabelDriven func(repo string) bool
+	// LabelApproval resolves label-driven approval (hivecommons/hive#11313)
+	// for a repo. It is consulted only for repos LabelDriven reports true,
+	// so a repo that did not opt in never reaches it. nil falls back to the
+	// resolver installed with SetLabelApprovalPolicy; with neither, the
+	// label-driven sweep behaves exactly as before #11313.
+	LabelApproval func(repo string) (LabelApprovalPolicy, bool)
+	// LabelApprovalAudit, when set, is called once per acceptance acted on.
+	LabelApprovalAudit func(IssueLabelApprovalEvent)
+}
+
+// IssueLabelApprovalEvent records one acceptance the sweep acted on, for the
+// audit log (hivecommons/hive#11313).
+type IssueLabelApprovalEvent struct {
+	Repo   string
+	Number int
+	// Label is the acceptance label and Actor who added it.
+	Label string
+	Actor string
+	// TrustReason says why Actor counted (role, org membership, bot allowlist).
+	TrustReason string
+	// Removed lists the hive park labels the acceptance cleared.
+	Removed []string
+	// Released is true when no park label remains.
+	Released bool
+	// Pending is true when a person's park label withheld the approval.
+	Pending bool
 }
 
 // IssueUnparkSweepResult reports what one pass did.
@@ -101,6 +127,13 @@ type IssueUnparkSweepResult struct {
 	// Replies counts answers posted that did not un-park: `/hive help`, and
 	// the hint left when a maintainer approves in prose.
 	Replies int
+	// LabelApproved lists the acceptances acted on via a configured approval
+	// label on label-driven repos (hivecommons/hive#11313).
+	LabelApproved []IssueLabelApprovalEvent
+}
+
+func (r *IssueUnparkSweepResult) actions() int {
+	return len(r.Unparked) + r.Replies + len(r.LabelApproved)
 }
 
 // SweepIssueUnparkCommands lets a maintainer re-queue a parked issue with a
@@ -133,27 +166,34 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 	cutoff := time.Now().Add(-unparkCommandScanWindow)
 
 	for _, repo := range c.getRepos() {
-		if len(result.Unparked)+result.Replies >= maxActions {
+		if result.actions() >= maxActions {
 			break
 		}
 		owner, repoName := c.splitRepo(repo)
 		labelDriven := opts.LabelDriven != nil && opts.LabelDriven(repo)
+		var policy LabelApprovalPolicy
+		labelApproval := false
+		if labelDriven {
+			policy, labelApproval = c.resolveLabelApproval(opts, repo)
+		}
 		issues, err := c.listOpenIssuesForTaskListSweep(ctx, owner, repoName)
 		if err != nil {
 			return result, err
 		}
 		for _, issue := range issues {
-			if len(result.Unparked)+result.Replies >= maxActions {
+			if result.actions() >= maxActions {
 				break
 			}
 			if issue == nil || issue.IsPullRequest() {
 				continue
 			}
-			if !hasIssueParkingLabel(issueLabelNames(issue.Labels)) {
+			labels := issueLabelNames(issue.Labels)
+			parked := hasIssueParkingLabel(labels)
+			if !parked && !(labelApproval && hasLabelApprovalCandidate(labels, policy)) {
 				continue
 			}
 			result.Seen++
-			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, result, opts.Audit)
+			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, unparkLabelApproval{policy: policy, enabled: labelApproval, audit: opts.LabelApprovalAudit}, result, opts.Audit)
 			if err != nil {
 				if c.logger != nil {
 					c.logger.Warn("unpark sweep skipped issue", "repo", repo, "issue", issue.GetNumber(), "error", err)
@@ -169,11 +209,50 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 	return result, nil
 }
 
+// resolveLabelApproval picks the label-approval resolver: the sweep option
+// first, then the client-wide one. Only called for label-driven repos.
+func (c *Client) resolveLabelApproval(opts IssueUnparkSweepOptions, repo string) (LabelApprovalPolicy, bool) {
+	if opts.LabelApproval != nil {
+		p, ok := opts.LabelApproval(repo)
+		if !ok || !p.Enabled() {
+			return LabelApprovalPolicy{}, false
+		}
+		return p, true
+	}
+	return c.labelApprovalPolicyFor(repo)
+}
+
+// hasLabelApprovalCandidate reports whether an unparked issue still has
+// something for the label path to do: an acceptance label without the
+// approval label (R3: approval is given whether or not the issue is parked).
+func hasLabelApprovalCandidate(labels []string, policy LabelApprovalPolicy) bool {
+	if labelPresent(labels, HumanAckLabel) {
+		return false
+	}
+	for _, l := range labels {
+		if policy.hasLabel(l) {
+			return true
+		}
+	}
+	return false
+}
+
+// unparkLabelApproval carries the per-repo label-approval settings into
+// tryUnparkIssue. enabled is false for every repo that did not opt in.
+type unparkLabelApproval struct {
+	policy  LabelApprovalPolicy
+	enabled bool
+	audit   func(IssueLabelApprovalEvent)
+}
+
 // tryUnparkIssue handles one parked issue: keep its "What to reply" comment
 // current, then answer the newest eligible command on it. On a label-driven
-// repo there is no notice and no label change: commands get a pointer to the
-// labels and prose assent gets no hint.
-func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, labelDriven bool, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) (bool, error) {
+// repo there is no notice; without label approval configured there is no
+// label change either: commands get a pointer to the labels and prose assent
+// gets no hint. With label approval (hivecommons/hive#11313) a trusted
+// acceptance label is acted on first, and `/hive approve` / `/hive decision`
+// remove only the park labels the hive added itself.
+func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, labelDriven bool, la unparkLabelApproval, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) (bool, error) {
 	number := issue.GetNumber()
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
@@ -185,8 +264,18 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		}
 	}
 
-	answered := answeredUnparkCommentIDs(comments)
-	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff)
+	if la.enabled {
+		acted, err := c.tryLabelApproval(ctx, displayRepo, owner, repo, issue, comments, la, result)
+		if err != nil || acted {
+			return acted, err
+		}
+	}
+	if !hasIssueParkingLabel(issueLabelNames(issue.Labels)) {
+		return false, nil
+	}
+
+	answered := c.answeredUnparkCommentIDs(comments)
+	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, labelDriven && la.enabled)
 	if err != nil {
 		return false, err
 	}
@@ -202,6 +291,10 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 			return false, nil
 		case unparkCommandHelp:
 			body = unparkLabelDrivenReply + "\n\n" + maintainerCommandReference()
+		case unparkCommandApprove, unparkCommandDecision:
+			if la.enabled {
+				return c.unparkLabelDrivenCommand(ctx, displayRepo, owner, repo, issue, candidate, command, result, audit)
+			}
 		}
 		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), body); err != nil {
 			return false, err
@@ -252,6 +345,166 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 			"repo", displayRepo, "issue", number, "actor", actor, "decision", decision)
 	}
 	return true, nil
+}
+
+// tryLabelApproval acts on a trusted acceptance label (hivecommons/hive#11313):
+// it adds the approval label, removes the park labels the hive itself added
+// before the acceptance, and on a parked issue posts one comment saying what
+// changed and what still blocks. Each acceptance is acted on once: the hive's
+// own `approved-direction` addition after the acceptance, or its own marker
+// comment, is the record. It returns true when it wrote anything.
+func (c *Client) tryLabelApproval(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, comments []*gh.IssueComment, la unparkLabelApproval, result *IssueUnparkSweepResult) (bool, error) {
+	number := issue.GetNumber()
+	labels := issueLabelNames(issue.Labels)
+	f, err := c.evaluateLabelApproval(ctx, owner, repo, issue, la.policy)
+	if err != nil {
+		return false, err
+	}
+	if !f.Accepted {
+		return false, nil
+	}
+	parked := hasIssueParkingLabel(labels)
+	if f.Acted || c.labelApprovalAlreadyCommented(comments, f.AcceptanceID) {
+		return false, nil
+	}
+	event := IssueLabelApprovalEvent{Repo: displayRepo, Number: number, Label: f.Label, Actor: f.Actor, TrustReason: f.TrustReason}
+	if f.Blocked() {
+		// A person's park label keeps the issue out of the queue: no approval,
+		// one comment, and nothing more until that label is gone (R13).
+		if err := c.postLabelApprovalReply(ctx, owner, repo, number, f.AcceptanceID, renderLabelApprovalPendingReply(f)); err != nil {
+			return false, err
+		}
+		event.Pending = true
+		c.recordLabelApproval(event, la, result)
+		return true, nil
+	}
+	if !parked && labelPresent(labels, HumanAckLabel) {
+		return false, nil
+	}
+	for _, label := range f.HiveParkLabels {
+		if err := c.removeIssueLabel(ctx, owner, repo, number, label); err != nil {
+			return false, err
+		}
+		event.Removed = append(event.Removed, label)
+	}
+	if !labelPresent(labels, HumanAckLabel) {
+		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanAckLabel}); err != nil {
+			return false, fmt.Errorf("adding %s to %s/%s#%d: %w", HumanAckLabel, owner, repo, number, err)
+		}
+		c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
+			WriteTarget{Repo: owner + "/" + repo, Number: number}, "label", HumanAckLabel)
+	}
+	event.Released = f.Released()
+	if parked {
+		// R8: approval alone, on an issue that was not parked, gets no comment.
+		if err := c.postLabelApprovalReply(ctx, owner, repo, number, f.AcceptanceID, renderLabelApprovalReply(f, event.Removed)); err != nil {
+			return false, err
+		}
+	}
+	c.recordLabelApproval(event, la, result)
+	if c.logger != nil {
+		c.logger.Info("issue approved by label", "repo", displayRepo, "issue", number, "label", f.Label, "actor", f.Actor, "trust", f.TrustReason, "removed", strings.Join(event.Removed, ","), "released", event.Released)
+	}
+	return true, nil
+}
+
+func (c *Client) recordLabelApproval(event IssueLabelApprovalEvent, la unparkLabelApproval, result *IssueUnparkSweepResult) {
+	result.LabelApproved = append(result.LabelApproved, event)
+	if la.audit != nil {
+		la.audit(event)
+	}
+}
+
+func (c *Client) postLabelApprovalReply(ctx context.Context, owner, repo string, number int, eventID int64, body string) error {
+	marked := labelApprovalMarker(eventID) + "\n" + body
+	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)}); err != nil {
+		return fmt.Errorf("replying to label approval on %s/%s#%d: %w", owner, repo, number, err)
+	}
+	return nil
+}
+
+// unparkLabelDrivenCommand answers `/hive approve` / `/hive decision` on a
+// label-driven repo with label approval configured (R5): it removes only the
+// park labels the hive itself added, adds the approval label, and says which
+// labels it left alone and who added them.
+func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, candidate *gh.IssueComment, command unparkCommand, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) (bool, error) {
+	number := issue.GetNumber()
+	labels := issueLabelNames(issue.Labels)
+	events, err := c.listIssueLabelEvents(ctx, owner, repo, number)
+	if err != nil {
+		return false, err
+	}
+	var removed []string
+	var kept []string
+	for _, label := range labels {
+		if !isIssueParkingLabel(label) {
+			continue
+		}
+		ev, ok := lastLabeledEvent(events, label)
+		if !ok || !c.isHiveAccount(ev.Actor) {
+			kept = append(kept, labelAttribution{Label: label, Actor: safeGetLogin(ev.Actor)}.String())
+			continue
+		}
+		if err := c.removeIssueLabel(ctx, owner, repo, number, label); err != nil {
+			return false, err
+		}
+		removed = append(removed, label)
+	}
+	if !labelPresent(labels, HumanAckLabel) {
+		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanAckLabel}); err != nil {
+			return false, fmt.Errorf("adding %s to %s/%s#%d: %w", HumanAckLabel, owner, repo, number, err)
+		}
+		c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
+			WriteTarget{Repo: owner + "/" + repo, Number: number}, "label", HumanAckLabel)
+	}
+	actor := safeGetLogin(candidate.GetUser())
+	decision := strings.TrimSpace(command.Decision)
+	if decision == "" {
+		decision = "go with the recommendation"
+	}
+	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkLabelDrivenAcceptedReply(actor, decision, removed, kept)); err != nil {
+		return false, err
+	}
+	event := IssueUnparkEvent{Repo: displayRepo, Number: number, Actor: actor, Decision: decision, CommentURL: candidate.GetHTMLURL()}
+	result.Unparked = append(result.Unparked, event)
+	if audit != nil {
+		audit(event)
+	}
+	return true, nil
+}
+
+func renderUnparkLabelDrivenAcceptedReply(actor, decision string, removed, kept []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Approved by @%s. Decision: %s\n\n`%s` is applied", actor, decision, HumanAckLabel)
+	if len(removed) > 0 {
+		fmt.Fprintf(&b, " and Hive's own %s removed", quoteLabels(removed))
+	}
+	b.WriteString(".")
+	if len(kept) > 0 {
+		fmt.Fprintf(&b, " Left in place because Hive did not add them: %s.", strings.Join(kept, ", "))
+	}
+	b.WriteString(" Any `hold` label is left exactly as it was.")
+	return b.String()
+}
+
+// removeIssueLabel removes one label; a label that has already gone is not an
+// error.
+func (c *Client) removeIssueLabel(ctx context.Context, owner, repo string, number int, label string) error {
+	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label)); err != nil {
+		if githubStatusError(err, http.StatusNotFound) {
+			return nil
+		}
+		return fmt.Errorf("removing %s from %s/%s#%d: %w", label, owner, repo, number, err)
+	}
+	return nil
+}
+
+func isIssueParkingLabel(label string) bool {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case issueNeedsHumanLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel:
+		return true
+	}
+	return false
 }
 
 // hasIssueParkingLabel reports whether the issue is parked on a person.
@@ -307,7 +560,14 @@ func labelPresent(labels []string, want string) bool {
 // lookup failure is reported to the caller rather than being read as "allowed":
 // the asymmetry is the same one the self-authorization gate uses — not knowing
 // is never permission.
-func (c *Client) commenterMayUnpark(ctx context.Context, owner, repo, login string) (bool, error) {
+//
+// Both the legacy `permission` field and `role_name` are read: `role_name`
+// is where GitHub reports `maintain` and `triage` (the legacy field collapses
+// them to "write" and "read"), while the legacy field still covers custom
+// org roles. allowTriage additionally admits the triage role; it is true only
+// on label-driven repos with label approval (hivecommons/hive#11313), where
+// the people who accept with labels are the people who answer Hive.
+func (c *Client) commenterMayUnpark(ctx context.Context, owner, repo, login string, allowTriage bool) (bool, error) {
 	if strings.TrimSpace(login) == "" {
 		return false, nil
 	}
@@ -315,15 +575,22 @@ func (c *Client) commenterMayUnpark(ctx context.Context, owner, repo, login stri
 	if err != nil {
 		return false, fmt.Errorf("permission lookup for %s on %s/%s: %w", login, owner, repo, err)
 	}
-	return unparkPermissionLevels[strings.ToLower(strings.TrimSpace(level.GetPermission()))], nil
+	role := strings.ToLower(strings.TrimSpace(level.GetRoleName()))
+	if unparkPermissionLevels[strings.ToLower(strings.TrimSpace(level.GetPermission()))] || unparkPermissionLevels[role] {
+		return true, nil
+	}
+	return allowTriage && role == "triage", nil
 }
 
 // answeredUnparkCommentIDs collects the comment IDs the hive has already
-// answered, read back from its own replies' markers.
-func answeredUnparkCommentIDs(comments []*gh.IssueComment) map[int64]bool {
+// answered, read back from its own replies' markers. Only markers in comments
+// the hive itself wrote count (hivecommons/hive#11313): a pasted marker must
+// not suppress an answer. A hive that cannot name its own accounts keeps the
+// previous any-author rule.
+func (c *Client) answeredUnparkCommentIDs(comments []*gh.IssueComment) map[int64]bool {
 	answered := map[int64]bool{}
 	for _, cm := range comments {
-		if cm == nil {
+		if cm == nil || !c.markerAuthorTrusted(cm.GetUser()) {
 			continue
 		}
 		body := cm.GetBody()
@@ -354,7 +621,7 @@ const unparkCandidateLimit = 5
 // comes from someone allowed to give one. Comments from people without write
 // access do not shadow an older command from someone who has it; they are
 // skipped in silence so the gate cannot be probed.
-func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time) (*gh.IssueComment, unparkCommand, error) {
+func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time, allowTriage bool) (*gh.IssueComment, unparkCommand, error) {
 	checked := 0
 	for i := len(comments) - 1; i >= 0 && checked < unparkCandidateLimit; i-- {
 		cm := comments[i]
@@ -377,7 +644,7 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 			continue
 		}
 		checked++
-		allowed, err := c.commenterMayUnpark(ctx, owner, repo, safeGetLogin(cm.GetUser()))
+		allowed, err := c.commenterMayUnpark(ctx, owner, repo, safeGetLogin(cm.GetUser()), allowTriage)
 		if err != nil {
 			return nil, unparkCommand{}, err
 		}
