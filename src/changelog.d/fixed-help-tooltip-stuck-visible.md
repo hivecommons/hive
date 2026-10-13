@@ -1,0 +1,1 @@
+- Dashboard tooltips (help marks and Overview ⓘ terms) now disappear when the pointer leaves or focus moves away; they previously stayed on screen after the first hover.

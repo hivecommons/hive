@@ -2899,7 +2899,6 @@
     .theme-desc { color:var(--muted); font-size:.72rem; line-height:1.35; margin-top:3px; min-height:2.1em; }
     .theme-actions { display:flex; gap:var(--sp-4); flex-wrap:wrap; align-items:center; margin:10px 0; }
     .theme-byte-count { font-family:var(--font-mono); font-size:.72rem; color:var(--muted); text-align:right; margin-top:var(--sp-2); }
-    .config-tooltip-portal { display: block; position: fixed; }
     .config-info .config-tooltip, .config-tooltip-portal {
       display: none; position: fixed; background: var(--bg); border: 1px solid var(--border);
       border-radius: var(--r); padding: 6px 10px;
@@ -2910,6 +2909,7 @@
       pointer-events: none;
     }
     .config-tooltip-portal { display: block; position: fixed; }
+    .config-tooltip-portal[hidden] { display: none; }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: none; }
     .section-help-mark { text-decoration: none; }
     .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }

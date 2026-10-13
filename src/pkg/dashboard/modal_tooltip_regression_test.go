@@ -103,6 +103,9 @@ func TestHelpTooltipsUseBodyFixedPortal11269(t *testing.T) {
 			t.Fatalf("tooltip portal must be body-level fixed positioning, missing %q in %s", want, portalRule)
 		}
 	}
+	if hiddenRule := cssRule(t, html, ".config-tooltip-portal[hidden]"); !strings.Contains(hiddenRule, "display: none") {
+		t.Fatalf("tooltip portal must honour [hidden] so it disappears after the pointer leaves, got %s", hiddenRule)
+	}
 	if strings.Contains(jsFunc(t, html, "positionConfigTooltip"), "pageX") || strings.Contains(jsFunc(t, html, "positionConfigTooltip"), "offsetParent") {
 		t.Fatal("tooltip positioning must use trigger viewport rects, not page coordinates or offset parents")
 	}
