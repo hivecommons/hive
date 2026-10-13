@@ -440,6 +440,9 @@ type Server struct {
 	npsIssueLimiter npsRateLimiter
 	// npsIssueFiler overrides the forge client for detractor issues (tests).
 	npsIssueFiler npsIssueFiler
+	// nousIssueFiler overrides the forge client for promoted Experiment Lab
+	// verdict issues (tests).
+	nousIssueFiler nousIssueFiler
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.

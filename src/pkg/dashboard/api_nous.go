@@ -10,10 +10,18 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.syncNousKnowledge()
+	s.syncNousVerdict()
 	s.deps.Nous.Mu.Lock()
-	status := make(map[string]interface{}, len(s.deps.Nous.Status))
+	status := make(map[string]interface{}, len(s.deps.Nous.Status)+1)
 	for k, v := range s.deps.Nous.Status {
 		status[k] = v
+	}
+	// The verdict is derived state, merged at serve time so a stale copy
+	// can never linger in Status after the campaign's file changes.
+	if verdict := s.deps.Nous.verdictMap(); verdict != nil {
+		status[nousStatusKeyVerdict] = verdict
+	} else {
+		delete(status, nousStatusKeyVerdict)
 	}
 	s.deps.Nous.Mu.Unlock()
 	jsonResponse(w, status)
@@ -56,23 +64,10 @@ func (s *Server) handleNousApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	approval, err := s.approveNousSpektacularRun()
-	if err != nil {
-		s.auditFromRequest(r, "nous_approve_failed", auditDetail("error", err.Error()), "")
-		jsonError(w, err.Error(), nousRunApprovalStatus(err))
-		return
-	}
+	// Approve only records the owner's answer. It no longer opens issues
+	// or admits runs: those are promotion targets the owner picks on the
+	// verdict card (POST /api/nous/promote, #11699).
 	s.auditFromRequest(r, "nous_approve", "", "")
-	if approval.handled {
-		runLink := approval.link
-		if approval.existing {
-			jsonResponse(w, map[string]interface{}{"ok": true, "status": "already_approved", "run": runLink})
-			return
-		}
-		s.auditFromRequest(r, "nous_run_admitted", auditDetail("run", runLink["key"], "stage", runLink["stage"]), "")
-		jsonResponse(w, map[string]interface{}{"ok": true, "status": "approved", "run": runLink})
-		return
-	}
 	okResponse(w, map[string]string{"status": "approved"})
 }
 

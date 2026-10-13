@@ -3399,6 +3399,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	publishNousDependencyStatus(b.nousState, nousLayout, b.cfg.Nous.ResolvedFetchAllowlist())
 	b.nousState.PersistPanel = nousPanelPersister(nousLayout, time.Now)
 	wireNousGate(b.nousState, nousLayout, b.notifier, b.logger)
+	wireNousVerdict(b.nousState, b.cfg, nousLayout, os.Getenv, b.logger)
 	if deps.startNousGateWatch != nil {
 		deps.startNousGateWatch(b.ctx, b.nousState, b.cfg.Nous.GatePollInterval(), b.logger)
 	}

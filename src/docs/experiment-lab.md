@@ -43,7 +43,7 @@ default, configurable with `data.nous_dir` and overridable at runtime with
 | Learned principles | `governor/principles.json` | the experimentation agent (Nous); read live |
 | Baseline snapshots | `snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` |
 | Pending gate question, owner decision, decision history | `gates/pending.json`, `gates/decision.json`, `gates/history.jsonl` | `bin/nous-hive-gate.py` writes `pending.json`; `PUT /api/nous/gate-decision` writes the other two (see [Gate protocol](#gate-protocol)) |
-| Mode, scope, goals, output mode, fast-fail bounds, schedule, controllable knobs | `panel-config.json` (mirrors `NousState.Mode`/`Scope`/`Config`) | every `PUT /api/nous/mode`, `PUT /api/nous/scope` and `PUT /api/nous/config/*`; re-applied at boot |
+| Mode, scope, goals, output labels, fast-fail bounds, schedule, controllable knobs | `panel-config.json` (mirrors `NousState.Mode`/`Scope`/`Config`) | every `PUT /api/nous/mode`, `PUT /api/nous/scope` and `PUT /api/nous/config/*`; re-applied at boot |
 
 Panel configuration therefore **survives a process restart**: `loadNousState()`
 in `cmd/hive/main.go` seeds the snapshot count from the files above, performs
@@ -146,8 +146,14 @@ The nightly hub DR backup is unchanged and still excludes `nous/` entirely.
 5. **Approve / Reject / Abort** — while in **Suggest** mode, a pending
    proposal (`NousState.Status["pending"]`) shows Apply/Reject buttons in the
    dashboard, backed by `POST /api/nous/approve` and `POST /api/nous/abort`.
-   A running experiment can be stopped early with the same Abort action,
-   which reverts the governor to its pre-experiment configuration.
+   Approve only records the decision (audited `nous_approve`); it never opens
+   an issue or admits a run. A running experiment can be stopped early with
+   the same Abort action, which reverts the governor to its pre-experiment
+   configuration.
+6. **Verdict and Promote** — when the campaign has written its final
+   recommendation, the panel shows a verdict card. Acting on it is a separate,
+   manual, owner-only step: see
+   [Verdict card and manual Promote](#verdict-card-and-manual-promote).
 
 ## Gate protocol
 
@@ -243,7 +249,7 @@ endpoint, all requiring owner role and all triggering `refreshAndPersist()`:
 | Endpoint | Section | Fields (dashboard defaults shown) |
 |---|---|---|
 | `PUT /api/nous/config/goals` | `goals` | Governor and repo research questions — free-text hypotheses (e.g. "Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?"). |
-| `PUT /api/nous/config/output` | `output` | Output mode — `state-only` (files + dashboard only), `issue` (opens a GitHub issue per proposal), `issue+pr` (issue and PR pair), or `spektacular-run` (approving a proposal admits its org-qualified `owner/repo#number` target as a Spektacular run at `spec`; a repeated approve returns the admitted run instead of admitting it again — see [Spektacular](spektacular.md)); plus `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything Nous creates. |
+| `PUT /api/nous/config/output` | `output` | `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything a promotion creates. There is **no output mode**: Nous writes its verdict to files and the dashboard reads it; opening an issue or admitting a Spektacular run is the owner's manual Promote action on the [verdict card](#verdict-card-and-manual-promote). (Before #11699 this section carried a `mode` of `state-only` / `issue` / `issue+pr` / `spektacular-run` that Approve acted on automatically; a stored `mode` is ignored.) |
 | `PUT /api/nous/config/repos` | `repos` | Which repos from `projectRepos` are eligible targets for repo-scope experiments. |
 | `PUT /api/nous/config/fast-fail` | `fast_fail` | `queue_depth_max` (default 30), `mttr_max_minutes` (default 180), `budget_burn_rate_max_pct` (default 110) — see below. |
 | `PUT /api/nous/config/schedule` | `schedule` | `experiment_duration_hours` (default 4), `baseline_hours` (default 4), `cooldown_hours` (default 2). |
@@ -322,6 +328,8 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 4. Once the baseline progress bar reports sufficient coverage, switch mode to
    `suggest` (`PUT /api/nous/mode {"mode": "suggest"}`). Review each proposal
    that appears under "Pending Proposal" and Apply or Reject it.
+   When the campaign reaches a verdict, the verdict card appears; promote it
+   to an issue or a Spektacular run yourself if you agree with it.
 5. Only move to `evolve` once you're comfortable with the proposals Nous has
    made in `suggest` mode — `evolve` runs approved-pattern experiments without
    per-experiment approval.
@@ -389,8 +397,9 @@ resolved by the hive with the same precedence its own readers use, so the
 agent and the dashboard never disagree about where a campaign's files live.
 Every other role launches exactly as before.
 
-**Not in this part.** Promotion of a winning configuration (part 6), dashboard
-campaign cards driven by the contract, and any pack inclusion of the role.
+**Not in this part.** Dashboard campaign cards driven by the contract and any
+pack inclusion of the role. Promotion of a winning configuration is part 6
+([below](#verdict-card-and-manual-promote)).
 
 ## Pinned campaign dependencies
 
@@ -470,3 +479,89 @@ for fetched repos, per-campaign narrowing of the hive-wide allowlist, cache
 size limits and cleanup, hash-pinning the Nous Python packages themselves
 (upstream ships `uv.lock` only; the commit pin stands), and enforcing the
 allowlist at the network layer in Docker mode.
+
+## Verdict card and manual Promote
+
+RFC #11585 part 6 (#11699). When a campaign has produced its `Verdict`
+(Nous: `deployment_recommendation` in `<nous_dir>/<campaign>/meta_findings.json`,
+read through the engine contract above), the Experiment Lab panel shows a
+**verdict card**, and the owner may **promote** it. Nothing is promoted
+automatically — the `/hive decision` on the RFC makes this binding: promotion
+is a manual, owner-only, audited step, and the card is the only place it
+happens.
+
+### What the card shows
+
+- The recommendation as a status chip: `deploy` (ok), `deploy_with_caveats`
+  (warn) or `fall_back_to_baseline` (error), plus the campaign name.
+- **Score vs. baseline** when the campaign measured against one. When it did
+  not (`measured_against_baseline: false` — no objective, or no baseline
+  measurements, RFC §4), the card shows the score alone with a
+  **not measured against baseline** chip, because that score says nothing
+  about whether the change beats what is running today. The same flag and
+  wording are carried into any issue the verdict is promoted to.
+- Summary, evidence (`citations`) and `caveats` from the engine, and the
+  campaign report path when `report.md` exists beside the verdict.
+- Each promotion already recorded (who, when, the issue link or the
+  Spektacular run key), and one **Promote** button per target that has not
+  been promoted yet. Buttons for promoted targets are disabled.
+
+The verdict rides inside `GET /api/nous/status` as `verdict`:
+
+```json
+{
+  "verdict": {
+    "campaign": "governor",
+    "recommendation": "deploy_with_caveats",
+    "score": 0.82, "baseline": 0.75, "measured_against_baseline": true,
+    "citations": ["ledger#12"], "caveats": ["only two rounds"],
+    "summary": "…", "target_repo": "acme/widgets", "report": "/data/nous/governor/report.md",
+    "targets": ["issue", "spektacular-run"],
+    "promotions": { "issue": { "promoted_by": "alice", "promoted_at": "…", "repo": "acme/widgets", "number": 77, "url": "…" } }
+  }
+}
+```
+
+The key is absent while the campaign has no verdict. `NousState` and the
+`/api/nous/*` paths are otherwise unchanged.
+
+### Promote targets
+
+`POST /api/nous/promote {"target": "issue" | "spektacular-run", "repo": "owner/name"}`
+— **owner only**. The dashboard asks for confirmation in its own dialog first
+(no native browser dialogs). `repo` is optional: it defaults to the campaign's
+target repo, then to the hive's single configured repo; a bare name is
+qualified with the project org. If none of those resolve, the request is a
+`400` and the owner must name the repo.
+
+| Target | What happens |
+|---|---|
+| `issue` | Opens one issue in the target repo titled `Experiment Lab verdict: <recommendation> (<campaign>)` carrying the recommendation, score (or the not-measured flag), evidence, caveats, report path and who promoted it. `output.autoHold` adds the `hold` label. Audited as `hive_issue_created` (flow `nous-promote`). |
+| `spektacular-run` | Opens the verdict issue (or reuses the one an earlier `issue` promotion opened) and admits it as a Spektacular run at the `spec` stage — the same path as `POST /api/runs/spec`; the run follows the normal review pipeline and nothing merges on its own. Requires `runs.spektacular.enabled` (`409` otherwise) and the run lease registry (`503` otherwise); both are checked before any issue is opened. |
+
+Responses: `200 {"ok": true, "status": "promoted", "promotion": {…}}`;
+`409 {"status": "already_promoted", "promotion": {…}}` when the current
+verdict was already promoted to that target (idempotent — the second call
+opens nothing); `400` for a bad body, unknown target or unresolvable repo;
+`409` with `no verdict to promote` when the campaign has none; `502` when the
+forge rejects the issue; `500` when the promotion cannot be recorded.
+
+Every call is audited: `nous_promote` with `campaign`, `target`,
+`recommendation`, `repo`, `number` and `run_key` on success;
+`nous_promote_failed` with the reason otherwise. Promotions are appended to
+`<nous_dir>/promotions/history.jsonl` (`pkg/nousstore`) and mirrored in
+`NousState.Promotions`, so they survive restarts and the card stays
+consistent with what actually happened.
+
+### What changed from the earlier output modes
+
+Before this part, `PUT /api/nous/config/output {"mode": …}` chose an
+automatic output (`issue`, `issue+pr`, `spektacular-run`) and
+`POST /api/nous/approve` acted on it. That path is removed: Approve records
+the decision only, the config dialog's Output section keeps just the label
+toggles, and the only way a verdict reaches an issue or a run is the owner
+pressing Promote.
+
+**Not in this part.** An owner notification when a new verdict lands, the
+link to an artifact PR (part 8), and verdicts for campaigns other than the
+hive's own governor campaign.

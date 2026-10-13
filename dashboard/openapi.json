@@ -17981,6 +17981,117 @@
         }
       }
     },
+    "/api/nous/promote": {
+      "post": {
+        "tags": [
+          "Experiment Lab"
+        ],
+        "summary": "Promote the campaign verdict (manual, owner-only)",
+        "description": "Promotes the current Experiment Lab verdict to an issue in the target repo or to a Spektacular spec-stage run against that issue. Never runs automatically: the owner triggers it from the verdict card after an in-app confirmation. Idempotent per target (a repeat returns 409 already_promoted and opens nothing). Audited as nous_promote / nous_promote_failed and recorded under <nous_dir>/promotions/history.jsonl. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "spektacular-run"
+                    ],
+                    "description": "Required. issue opens the verdict issue; spektacular-run opens (or reuses) it and admits a spec-stage run."
+                  },
+                  "repo": {
+                    "type": "string",
+                    "description": "Optional owner/name (or bare name, qualified with the project org). Defaults to the verdict's target repo, then the hive's single configured repo."
+                  }
+                },
+                "required": [
+                  "target"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Promoted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "promoted"
+                    },
+                    "promotion": {
+                      "type": "object",
+                      "properties": {
+                        "campaign": {
+                          "type": "string"
+                        },
+                        "target": {
+                          "type": "string"
+                        },
+                        "recommendation": {
+                          "type": "string"
+                        },
+                        "promoted_by": {
+                          "type": "string"
+                        },
+                        "promoted_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "repo": {
+                          "type": "string"
+                        },
+                        "number": {
+                          "type": "integer"
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "run_key": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, unknown target, or no resolvable repo"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Nous not configured"
+          },
+          "409": {
+            "description": "No verdict to promote, already promoted to this target (status already_promoted), or runs.spektacular.enabled is off"
+          },
+          "500": {
+            "description": "Promotion could not be recorded or the run could not be admitted"
+          },
+          "502": {
+            "description": "The forge rejected the issue"
+          },
+          "503": {
+            "description": "GitHub client or run lease registry unavailable"
+          }
+        }
+      }
+    },
     "/api/nous/scope": {
       "put": {
         "tags": [

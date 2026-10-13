@@ -440,6 +440,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/nous/principles", s.handleNousPrinciples)
 	s.mux.HandleFunc("POST /api/nous/approve", s.handleNousApprove)
 	s.mux.HandleFunc("POST /api/nous/abort", s.handleNousAbort)
+	s.mux.HandleFunc("POST /api/nous/promote", s.handleNousPromote)
 	s.mux.HandleFunc("PUT /api/nous/mode", s.handleNousMode)
 	s.mux.HandleFunc("PUT /api/nous/scope", s.handleNousScope)
 	s.mux.HandleFunc("GET /api/nous/phase", s.handleNousPhase)
