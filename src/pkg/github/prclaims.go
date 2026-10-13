@@ -82,7 +82,11 @@ const (
 	// does not un-merge, so nothing about that evidence decays at 72h; the
 	// only thing that ends it is the issue closing, and the contribute queue
 	// only ever consults claims for OPEN issues. Retention is the bound on
-	// ledger growth for issues that did close, not on the claim's truth.
+	// ledger growth for issues that did close, not on the claim's truth — so
+	// it counts from the LAST time the issue was listed open (IssueClaim.
+	// IssueOpenAt, hivecommons/hive#11580), not from the merge: a settled
+	// claim on a still-open issue is carried indefinitely, and retires only
+	// once the issue has been absent from the open set for this long.
 	settledClaimRetention = 30 * 24 * time.Hour
 
 	// SettledClaimStaleAfter is how long a settled claim may hold an issue
@@ -211,6 +215,15 @@ type IssueClaim struct {
 	// ClaimSourceVerdict claim. Logged on suppression so an operator can see
 	// whose research the hub is trusting.
 	SourceReporter string `json:"source_reporter,omitempty"`
+	// IssueOpenAt is when the enumeration last listed the claimed issue as
+	// still OPEN (hivecommons/hive#11580). It restarts the retention clock of
+	// a settled claim: a merged fix does not un-merge, so the claim must hold
+	// for as long as the issue it covers stays open, and settledClaimRetention
+	// counts only from the last time the issue was seen open — i.e. it bounds
+	// ledger growth after the issue closes, not the claim's truth while it is
+	// open. Zero on pre-#11580 ledgers, which fall back to the merge/verdict
+	// instant exactly as before.
+	IssueOpenAt time.Time `json:"issue_open_at,omitempty"`
 }
 
 // ClaimSourceVerdict is the IssueClaim.Source for claims recovered from a
@@ -258,8 +271,18 @@ func (c IssueClaim) SettledStale(now time.Time) bool {
 
 // settledRetained reports whether a settled claim is still inside
 // settledClaimRetention as of now. Callers must have checked Settled().
+//
+// The retention clock starts at the settling instant and RESTARTS every time
+// the enumeration lists the claimed issue as still open (IssueOpenAt,
+// hivecommons/hive#11580): a settled claim on an open issue never lapses on
+// the calendar, only once the issue has been gone from the open set for the
+// full retention window.
 func settledRetained(c IssueClaim, now time.Time) bool {
-	return now.Before(c.SettledAt().Add(settledClaimRetention))
+	anchor := c.SettledAt()
+	if c.IssueOpenAt.After(anchor) {
+		anchor = c.IssueOpenAt
+	}
+	return now.Before(anchor.Add(settledClaimRetention))
 }
 
 // claimRank orders claims by evidential strength, highest first. It exists so
@@ -1008,7 +1031,17 @@ func NewClaimLedger(path string, logger *slog.Logger) *ClaimLedger {
 // A missing file is not an error — it yields an empty ledger, which is the
 // correct state on a hive's very first boot.
 func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
+	return loadClaimLedgerAt(path, logger, nil)
+}
+
+// loadClaimLedgerAt is LoadClaimLedger with an injectable clock, so the
+// retention decisions made while reading the file are testable without
+// depending on the wall clock. A nil clock means time.Now.
+func loadClaimLedgerAt(path string, logger *slog.Logger, clock func() time.Time) (*ClaimLedger, error) {
 	l := NewClaimLedger(path, logger)
+	if clock != nil {
+		l.now = clock
+	}
 	data, err := os.ReadFile(l.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1022,12 +1055,20 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 		// an empty one; the next successful fetch repopulates it.
 		return l, fmt.Errorf("parsing claim ledger %s: %w", l.path, err)
 	}
-	cutoff := l.now().Add(-l.ttl)
+	now := l.now()
+	cutoff := now.Add(-l.ttl)
 	for _, c := range file.Claims {
 		if c.Issue <= 0 || c.Repo == "" {
 			continue
 		}
-		if c.ObservedAt.Before(cutoff) {
+		// Mirror pruneLocked (#8003, #11580): a settled claim's evidence does
+		// not decay with the TTL, only its retention bound retires it, so a
+		// restart must not drop a claim the running hub would have kept.
+		if c.Settled() {
+			if !settledRetained(c, now) {
+				continue
+			}
+		} else if c.ObservedAt.Before(cutoff) {
 			continue
 		}
 		// Ledgers written before FirstObservedAt existed carry a zero anchor.
@@ -1039,7 +1080,7 @@ func LoadClaimLedger(path string, logger *slog.Logger) (*ClaimLedger, error) {
 		}
 		l.insertLocked(c)
 	}
-	churnCutoff := l.now().Add(-l.churnTTL)
+	churnCutoff := now.Add(-l.churnTTL)
 	for _, r := range file.History {
 		if r.ObservedAt.Before(churnCutoff) {
 			continue
@@ -1219,7 +1260,46 @@ func (l *ClaimLedger) Lookup(repo string, issue int) (IssueClaim, bool) {
 // previous claims are retained and only refreshed with whatever did come back.
 // This is the fail-closed path: suppressing one legitimate kick for a cycle is
 // cheap; nine duplicate PRs are not.
+//
+// Reconcile knows nothing about which issues are open; it is ReconcileOpen
+// with no open set, so settled claims retire settledClaimRetention after
+// whichever is later: the settling instant or the last IssueOpenAt a previous
+// ReconcileOpen recorded.
 func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
+	l.ReconcileOpen(live, authoritative, nil)
+}
+
+// OpenIssueSet is the set of issues the enumeration just listed as open,
+// keyed like the ledger (repo#number). Build one with OpenIssuesOf.
+type OpenIssueSet map[string]struct{}
+
+// OpenIssuesOf collects the open issues in an enumeration result into an
+// OpenIssueSet for ReconcileOpen. A nil result yields an empty set, which
+// ReconcileOpen treats as "no issue was seen open this pass" — it never
+// retires anything early, because retention only ever counts forward from a
+// recorded observation.
+func OpenIssuesOf(result *ActionableResult) OpenIssueSet {
+	open := OpenIssueSet{}
+	if result == nil {
+		return open
+	}
+	for _, issue := range result.Issues.Items {
+		if issue.Number <= 0 || issue.Repo == "" {
+			continue
+		}
+		open[claimKey(issue.Repo, issue.Number)] = struct{}{}
+	}
+	return open
+}
+
+// ReconcileOpen is Reconcile plus the set of issues the same enumeration pass
+// listed as still open (hivecommons/hive#11580). Every settled claim whose
+// issue is in that set has its IssueOpenAt refreshed to now BEFORE the
+// retention check, so a merged fix keeps holding its still-open issue for as
+// long as the issue stays open: the issue closing — dropping out of the open
+// set — is what starts the settledClaimRetention countdown, not the merge.
+// Unsettled claims ignore the set; their lifetime is the scan's and the TTL's.
+func (l *ClaimLedger) ReconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet) {
 	if l == nil {
 		return
 	}
@@ -1247,12 +1327,21 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 		// settledClaimRetention from the merge/verdict, refreshing ObservedAt
 		// so the non-authoritative prune does not retire them either, and let
 		// insertLocked's rank rule decide when the scan DID find something.
+		// An issue the enumeration still lists as open restarts the retention
+		// clock first (#11580), so the carry-forward never lapses while the
+		// issue is open.
 		now := l.now()
 		for key, c := range prev {
 			if c.FirstObservedAt.IsZero() {
 				c.FirstObservedAt = c.ObservedAt
 			}
-			if !c.Settled() || !settledRetained(c, now) {
+			if !c.Settled() {
+				continue
+			}
+			if _, isOpen := open[key]; isOpen {
+				c.IssueOpenAt = now
+			}
+			if !settledRetained(c, now) {
 				continue
 			}
 			c.ObservedAt = now
@@ -1262,6 +1351,7 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 			}
 			l.claims[key] = c
 		}
+		l.markOpenLocked(open, now)
 		return
 	}
 	for _, c := range live {
@@ -1270,7 +1360,28 @@ func (l *ClaimLedger) Reconcile(live []IssueClaim, authoritative bool) {
 		}
 		l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	}
+	l.markOpenLocked(open, l.now())
 	l.pruneLocked()
+}
+
+// markOpenLocked stamps IssueOpenAt on every settled claim whose issue is in
+// open, including settled claims the scan itself just produced (a merged PR
+// still inside mergedClaimScanWindow), so the retention anchor is recorded
+// from the first pass rather than only once the scan stops listing the PR.
+// Callers must hold l.mu.
+func (l *ClaimLedger) markOpenLocked(open OpenIssueSet, now time.Time) {
+	if len(open) == 0 {
+		return
+	}
+	for key, c := range l.claims {
+		if !c.Settled() {
+			continue
+		}
+		if _, isOpen := open[key]; isOpen {
+			c.IssueOpenAt = now
+			l.claims[key] = c
+		}
+	}
 }
 
 // pruneLocked drops entries older than the TTL. It runs on the
@@ -1282,10 +1393,16 @@ func (l *ClaimLedger) pruneLocked() {
 	for k, c := range l.claims {
 		if c.Settled() {
 			// #8003: a settled claim's evidence does not decay with the API's
-			// reachability; only its retention bound retires it here.
+			// reachability; only its retention bound retires it here. A
+			// retained claim takes a fresh ObservedAt, as the authoritative
+			// carry-forward does, so the on-disk TTL field agrees with the
+			// in-memory retention across Save/Load.
 			if !settledRetained(c, now) {
 				delete(l.claims, k)
+				continue
 			}
+			c.ObservedAt = now
+			l.claims[k] = c
 			continue
 		}
 		if c.ObservedAt.Before(cutoff) {
@@ -1625,7 +1742,7 @@ func ApplyDuplicatePRGuard(
 			"cached_claims", ledger.Len(),
 		)
 	}
-	ledger.Reconcile(scan.Claims, authoritative)
+	ledger.ReconcileOpen(scan.Claims, authoritative, OpenIssuesOf(result))
 	// Churn history accumulates from whatever the scan DID return, partial or
 	// not (#7995): a record is an observation that a pull request existed in a
 	// state, which a later failure cannot falsify.

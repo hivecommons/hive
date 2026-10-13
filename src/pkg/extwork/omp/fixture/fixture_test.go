@@ -68,6 +68,18 @@ func waitState(t *testing.T, p *omp.Peer, key extwork.ExecutionKey, want extwork
 	}, "state %s not reached for %s", want, key)
 }
 
+// waitQueued blocks until the workbench's "queued" progress frame, sent after
+// the start ack, has been observed. Start itself already marks the run
+// accepted, so waitState(StateAccepted) cannot stand in for it: a tick issued
+// before the frame lands can have its running frame overwritten by it.
+func waitQueued(t *testing.T, p *omp.Peer, key extwork.ExecutionKey) {
+	t.Helper()
+	testutil.Eventually(t, settle, func() bool {
+		obs, _ := p.Observe(key)
+		return obs.Detail == "queued on the workbench"
+	}, "queued frame not observed for %s", key)
+}
+
 // waitPending blocks until the workbench has parked at least one offer.
 func waitPending(t *testing.T, w *Workbench) []string {
 	t.Helper()
@@ -178,7 +190,7 @@ func TestWorkbenchLifecycle(t *testing.T) {
 	if st := w.Stats(); st.Runs != 1 || st.Starts != 2 {
 		t.Fatalf("stats after starts = %+v", st)
 	}
-	waitState(t, p, key, extwork.StateAccepted)
+	waitQueued(t, p, key)
 	// Bad bundle is refused by the workbench.
 	if d, _, _ := p.Offer(ctx, extwork.Offer{ExecutionKey: "bad", Summary: "ok"}, 1); d != extwork.OfferAccepted {
 		t.Fatal("bad offer not accepted")
@@ -233,6 +245,7 @@ func TestWorkbenchLifecycle(t *testing.T) {
 		if _, err := p.Start(ctx, hkey, 1, "implement", bundle(t, hint, hint)); err != nil {
 			t.Fatal(err)
 		}
+		waitQueued(t, p, hkey)
 		w.Tick()
 		w.Tick()
 		w.Tick()
@@ -293,12 +306,7 @@ func TestCancelStopsAndIgnores(t *testing.T) {
 		if _, err := p.Start(ctx, key, 1, "implement", bundle(t, tc.id, "")); err != nil {
 			t.Fatal(err)
 		}
-		// The workbench sends its "queued" progress frame after the start
-		// ack; wait for it so it cannot land after the tick's running frame.
-		testutil.Eventually(t, settle, func() bool {
-			obs, _ := p.Observe(key)
-			return obs.Detail == "queued on the workbench"
-		}, "queued frame not observed for %s", tc.id)
+		waitQueued(t, p, key)
 		tc.w.Tick()
 		waitState(t, p, key, extwork.StateRunning)
 		facts, err := p.Cancel(ctx, key)
@@ -428,6 +436,7 @@ func TestControlSurface(t *testing.T) {
 	if _, err := p.Start(context.Background(), key, 1, "implement", bundle(t, "ctl", "")); err != nil {
 		t.Fatal(err)
 	}
+	waitQueued(t, p, key)
 	if code, _ := post("/control/tick"); code != http.StatusOK {
 		t.Fatalf("tick = %d", code)
 	}

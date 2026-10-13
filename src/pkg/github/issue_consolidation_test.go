@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // openTwin is one open issue served by consolidationMockServer.
@@ -19,6 +20,15 @@ type openTwin struct {
 	author      string
 }
 
+// closedTwin is one closed issue served by consolidationMockServer, closed
+// closedAgo before now with the given state_reason.
+type closedTwin struct {
+	number              int
+	title, body, author string
+	stateReason         string
+	closedAgo           time.Duration
+}
+
 // consolidationMock records what a create attempt did: issues created, and
 // the issue number + body of every comment posted.
 type consolidationMock struct {
@@ -26,11 +36,14 @@ type consolidationMock struct {
 	commentedOn    []int
 	commentBodies  []string
 	commentsStatus int // non-zero, non-200: every comment POST fails with it
+	closed         []closedTwin
+	closedLists    int // closed-issue list requests served
 }
 
 // consolidationMockServer serves open issues newest-first (the order the
-// GitHub list returns with sort=created&direction=desc), an empty closed list
-// (no rejected twin), label ensures, comments, and creates.
+// GitHub list returns with sort=created&direction=desc), m.closed as the
+// closed list (empty by default: no rejected twin, no closed sibling), label
+// ensures, comments, and creates.
 func consolidationMockServer(t *testing.T, open []openTwin, m *consolidationMock) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +67,19 @@ func consolidationMockServer(t *testing.T, open []openTwin, m *consolidationMock
 			_, _ = io.WriteString(w, `{"id":1}`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
 			if r.URL.Query().Get("state") != "open" {
-				_, _ = io.WriteString(w, `[]`)
+				m.closedLists++
+				out := make([]map[string]any, 0, len(m.closed))
+				for _, c := range m.closed {
+					at := time.Now().Add(-c.closedAgo).UTC().Format(time.RFC3339)
+					out = append(out, map[string]any{
+						"number": c.number, "title": c.title, "body": c.body, "state": "closed",
+						"state_reason": c.stateReason, "closed_at": at, "updated_at": at,
+						"html_url": "https://github.example/o/r/issues/" + strconv.Itoa(c.number),
+						"user":     map[string]any{"login": c.author},
+					})
+				}
+				b, _ := json.Marshal(out)
+				_, _ = w.Write(b)
 				return
 			}
 			out := make([]map[string]any, 0, len(open))
@@ -321,6 +346,97 @@ func TestIssueRequestWatcher_SameComponentBelowThresholdFiles(t *testing.T) {
 				Repo: "o/r", Agent: "scanner", Title: "[scanner] new finding", Body: tc.body,
 			})
 			if m.created != 1 || len(m.commentedOn) != 0 || res.Consolidated {
+				t.Fatalf("created=%d comments=%v result=%+v, want a fresh issue", m.created, m.commentedOn, res)
+			}
+		})
+	}
+}
+
+// The steady-state #11239 cadence: each variant's PR merges and closes its
+// issue before the next variant is filed, so the open count alone never
+// reaches the threshold. A sibling closed as completed within the window
+// counts, and the finding folds into the oldest OPEN sibling.
+func TestIssueRequestWatcher_RecentlyClosedSiblingCountsTowardFold(t *testing.T) {
+	m := &consolidationMock{closed: []closedTwin{
+		{number: 55, author: testBot, title: "[sec-check] entity bypass", body: "scripts/lib/gate.mjs and test/fixtures/entity.svg", stateReason: "completed", closedAgo: 3 * 24 * time.Hour},
+	}}
+	srv := consolidationMockServer(t, []openTwin{
+		{number: 61, author: testBot, title: "[sec-check] CDATA bypass", body: "scripts/lib/gate.mjs and test/fixtures/cdata.svg"},
+		{number: 58, author: testBot, title: "[sec-check] DOCTYPE bypass", body: "scripts/lib/gate.mjs and test/fixtures/doctype.svg"},
+	}, m)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+
+	_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+		Repo: "o/r", Agent: "sec-check",
+		Title: "[sec-check] image-set() bypass",
+		Body:  "scripts/lib/gate.mjs:88 misses image-set(); see test/fixtures/imageset.svg",
+	})
+	if m.created != 0 {
+		t.Fatalf("created %d issues, want the variant folded into #58", m.created)
+	}
+	if len(m.commentedOn) != 1 || m.commentedOn[0] != 58 {
+		t.Fatalf("comments posted on %v, want exactly one on the oldest open sibling #58", m.commentedOn)
+	}
+	for _, want := range []string{"<!-- hive-finding-folded -->", "`scripts/lib/gate.mjs`", "2 open agent-filed issues (plus 1 closed as completed in the last 14 days)"} {
+		if !strings.Contains(m.commentBodies[0], want) {
+			t.Errorf("folded comment lacks %q:\n%s", want, m.commentBodies[0])
+		}
+	}
+	if !res.OK || !res.Consolidated || res.Number != 58 {
+		t.Errorf("result = %+v, want ok/consolidated naming #58", res)
+	}
+}
+
+// Closed siblings that are not completed, or completed outside the window,
+// do not count; with no open sibling at all nothing folds — a finding is
+// never folded into a closed issue.
+func TestIssueRequestWatcher_ClosedSiblingsThatDoNotCountFile(t *testing.T) {
+	twoOpen := []openTwin{
+		{number: 61, author: testBot, title: "[sec-check] a", body: "scripts/lib/gate.mjs and test/a.svg"},
+		{number: 58, author: testBot, title: "[sec-check] b", body: "scripts/lib/gate.mjs and test/b.svg"},
+	}
+	cases := []struct {
+		name   string
+		open   []openTwin
+		closed []closedTwin
+	}{
+		{
+			name: "not_planned sibling belongs to the rejected-twin gate",
+			open: twoOpen,
+			closed: []closedTwin{
+				{number: 55, author: testBot, title: "[sec-check] x", body: "scripts/lib/gate.mjs and test/x.svg", stateReason: "not_planned", closedAgo: 2 * 24 * time.Hour},
+			},
+		},
+		{
+			name: "completed sibling outside the window",
+			open: twoOpen,
+			closed: []closedTwin{
+				{number: 50, author: testBot, title: "[sec-check] y", body: "scripts/lib/gate.mjs and test/y.svg", stateReason: "completed", closedAgo: 20 * 24 * time.Hour},
+			},
+		},
+		{
+			name: "all siblings closed, none open",
+			closed: []closedTwin{
+				{number: 57, author: testBot, title: "[sec-check] p", body: "scripts/lib/gate.mjs and test/p.svg", stateReason: "completed", closedAgo: 1 * 24 * time.Hour},
+				{number: 56, author: testBot, title: "[sec-check] q", body: "scripts/lib/gate.mjs and test/q.svg", stateReason: "completed", closedAgo: 2 * 24 * time.Hour},
+				{number: 55, author: testBot, title: "[sec-check] r", body: "scripts/lib/gate.mjs and test/r.svg", stateReason: "completed", closedAgo: 3 * 24 * time.Hour},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{closed: tc.closed}
+			srv := consolidationMockServer(t, tc.open, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+
+			_, res := fileRequest(t, c, withIssueDir(t), IssueRequest{
+				Repo: "o/r", Agent: "sec-check", Title: "[sec-check] new bypass", Body: "scripts/lib/gate.mjs and test/c.svg",
+			})
+			if m.created != 1 || len(m.commentedOn) != 0 || res.Consolidated || res.RejectedDuplicate {
 				t.Fatalf("created=%d comments=%v result=%+v, want a fresh issue", m.created, m.commentedOn, res)
 			}
 		})

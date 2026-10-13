@@ -102,6 +102,10 @@ type PRResponse struct {
 	// is the one an agent must act on, by commenting on that PR rather than
 	// filing again, so it is reported rather than folded into AlreadyExisted.
 	DuplicateTree bool `json:"duplicate_tree,omitempty"`
+	// DuplicateReason names why the PR-side guard redirected to an existing PR
+	// (closes-issue, overlapping-files, merged-fix); the agent should comment on
+	// or rebase onto that PR instead of filing again.
+	DuplicateReason string `json:"duplicate_reason,omitempty"`
 	// SelfAuthorized reports that the PR was held because its only tracked
 	// rationale is an issue the hive filed and no human has acknowledged
 	// (#5117). The PR was still opened; it just cannot merge until someone
@@ -528,6 +532,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	resp.URL = res.URL
 	resp.AlreadyExisted = res.AlreadyExisted
 	resp.DuplicateTree = res.DuplicateTree
+	resp.DuplicateReason = res.DuplicateReason
 
 	// F6: apply the ACMM "hold" label server-side, from authoritative config, on
 	// the path that actually runs. At hold-gated levels (L3/L4/L5) every
@@ -558,7 +563,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// compute a hold that must not be applied.
 	holdByLevel := c.prHoldLabel != nil && c.prHoldLabel(req.Agent)
 	var selfAuth SelfAuthorization
-	if !res.DuplicateTree && !holdByLevel {
+	if !res.IsDuplicate() && !holdByLevel {
 		if !c.selfAuthorizationHoldActive(req.Repo) {
 			c.logSelfAuthorizationDisabledOnce(req.Repo, res.Number)
 		} else {
@@ -573,11 +578,11 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// to L6 — the whole point is that a stranger's request waits for a human
 	// at every level. Same duplicate-tree precedence as the other two.
 	var reporter ReporterTrust
-	if !res.DuplicateTree && c.reporterTrustHoldActive(req.Repo) {
+	if !res.IsDuplicate() && c.reporterTrustHoldActive(req.Repo) {
 		reporter = c.EvaluateReporterTrust(ctx, req.Repo, title, body, req.IssueN)
 		resp.ReporterTrustHeld = reporter.Held
 	}
-	if !res.DuplicateTree && (holdByLevel || selfAuth.Held || reporter.Held) {
+	if !res.IsDuplicate() && (holdByLevel || selfAuth.Held || reporter.Held) {
 		holdLabels := []string{"hold"}
 		if reporter.Held {
 			// A reporter-trust hold is a human-only decision at every level, so
@@ -618,7 +623,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// Self-authorization notices remain best-effort courtesy: the label is the
 	// enforcement, and a failed courtesy must not fail the request and send it
 	// round the retry loop.
-	if holdByLevel && !res.DuplicateTree {
+	if holdByLevel && !res.IsDuplicate() {
 		if cerr := c.ensureLevelHoldNotice(ctx, req.Repo, res.Number, req.Agent); cerr != nil {
 			c.logger.Warn("pr-request watcher: level-held PR but could not post the release marker",
 				slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("agent", req.Agent), slog.String("error", cerr.Error()))
@@ -637,10 +642,10 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// also carried a reporter-trust reason must not shed the label on
 	// promotion. Best-effort like the #5117 notice — the label is the
 	// enforcement, and the release path re-evaluates and re-posts if needed.
-	if reporter.Held && !res.DuplicateTree {
+	if reporter.Held && !res.IsDuplicate() {
 		c.recordReporterTrustEscalation(req.Repo, res.Number, reporter.escalationReason())
 	}
-	if reporter.Held && !res.DuplicateTree && !res.AlreadyExisted {
+	if reporter.Held && !res.IsDuplicate() && !res.AlreadyExisted {
 		if cerr := c.CreateIssueComment(ctx, req.Repo, res.Number, reporterTrustNotice(reporter)); cerr != nil {
 			c.logger.Warn("pr-request watcher: reporter-trust-held PR but could not post the explanation",
 				slog.String("repo", req.Repo), slog.Int("number", res.Number), slog.String("error", cerr.Error()))
@@ -671,13 +676,14 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		"reporter_login", reporter.Reporter,
 		"reporter_association", reporter.Association,
 		"needs_human_reason", reporter.NeedsHumanReason(),
-		"duplicate_tree", strconv.FormatBool(res.DuplicateTree))
+		"duplicate_tree", strconv.FormatBool(res.DuplicateTree),
+		"duplicate_reason", res.DuplicateReason)
 	c.writePRResult(path, resp)
 	// Success (or reuse of an existing PR) — consume the request so it isn't
 	// reprocessed.
 	_ = os.Remove(path)
 	c.prRetries.clear(path)
-	if res.DuplicateTree {
+	if res.IsDuplicate() {
 		// Logged on its own line, not folded into the line below: this is the
 		// outcome the issue asked to be able to count ("a queue that looks like
 		// five problems when it is one"), and it should be findable without

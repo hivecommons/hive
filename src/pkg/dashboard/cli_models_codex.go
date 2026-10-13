@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"time"
 )
 
@@ -83,15 +84,21 @@ type codexRPCMessage struct {
 
 // runCodexModelProbe executes the app-server probe and returns the served id
 // order. A package-level seam (mirroring runCopilotSDKHelper) so unit tests
-// can substitute canned results without a real codex binary.
-var runCodexModelProbe = execCodexModelProbe
+// can substitute canned results without a real codex binary. Held in an
+// atomic pointer because background refreshes (refreshCLIModelsAsync) from
+// earlier tests may still be reading the seam when a later test swaps it.
+var runCodexModelProbe atomic.Pointer[func() ([]string, error)]
+
+func init() { setCodexModelProbe(execCodexModelProbe) }
+
+func setCodexModelProbe(fn func() ([]string, error)) { runCodexModelProbe.Store(&fn) }
 
 // discoverCodexModels lists the model catalog of the installed Codex CLI via
 // `codex app-server` model/list. Best-effort: any probe failure returns
 // fallback=true with an empty list so the caller substitutes the static list,
 // exactly like the copilot probe's failure semantics.
 func (s *Server) discoverCodexModels() cliModelResult {
-	models, err := runCodexModelProbe()
+	models, err := (*runCodexModelProbe.Load())()
 	if err != nil {
 		// Expected on hosted spokes (main image ships no codex binary); the
 		// static fallback keeps the dropdown populated. Never logs bodies.

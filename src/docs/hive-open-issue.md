@@ -416,6 +416,17 @@ Paths that unrelated findings mention in passing (`README.md`,
 never count as a shared component. Below the threshold, overlapping findings
 file normally; an exact file-set twin still takes precedence.
 
+Open issues alone rarely reach the threshold in steady state: each variant's
+PR merges and closes its issue before the next variant is filed. So when at
+least one open App-bot issue cites the path but the open count falls short,
+App-bot issues on that path closed as **completed** within the last 14 days
+count toward the threshold too (one extra, bounded list call: up to 2 pages
+of 100 closed issues by the App bot, updated since the window start). The
+fold target is still the oldest **open** sibling — a finding is never folded
+into a closed issue — so if every sibling is closed the finding files
+normally. Issues closed as `not_planned` or `duplicate` never count: they are
+the rejected-twin gate's evidence, not a sign of a stream.
+
 ## Where things live
 
 | Path | What |

@@ -90,7 +90,10 @@ jobs:
           # paging a human every time:
           #   - v6 removed discord/ (#9277) while v5 still develops it, so
           #     every v5 discord commit is a modify/delete conflict there.
-          #     Keep v6's deletion.
+          #     Keep v6's deletion. The same removal dropped the discord-only
+          #     workflow .github/workflows/discord-syntax.yml, which v5 still
+          #     edits (dependabot action bumps, #11551), so that one file is
+          #     the same modify/delete conflict and keeps v6's deletion too.
           #   - v6 split src/pkg/config/config.go into topical files (#9386)
           #     and kept a slim config.go, while v5 keeps growing the old
           #     monolith, so every v5 edit to it conflicts here too (#9956).
@@ -98,10 +101,10 @@ jobs:
           #     split files, so keep v6's side.
           # When the ONLY conflicts match one of those two patterns, resolve
           # them and finish the merge. Anything else (other content
-          # conflicts, deletions outside discord/) still fails loudly below.
+          # conflicts, other deletions) still fails loudly below.
           elif unmerged="$(git status --porcelain | grep -E '^(DD|AU|UD|UA|DU|AA|UU) ' || true)" \
                && [ -n "$unmerged" ] \
-               && ! printf '%s\n' "$unmerged" | grep -qvE '^DU discord/|^UU src/pkg/config/config\.go$'; then
+               && ! printf '%s\n' "$unmerged" | grep -qvE '^DU discord/|^DU \.github/workflows/discord-syntax\.yml$|^UU src/pkg/config/config\.go$'; then
             resolved=0
             while IFS= read -r entry; do
               [ -n "$entry" ] || continue
@@ -118,7 +121,7 @@ jobs:
             # --cleanup=strip: --no-edit would otherwise keep the "# Conflicts:"
             # comment lines git leaves in MERGE_MSG.
             git commit --no-edit --signoff --cleanup=strip
-            echo "Auto-resolved: kept v6's side of ${resolved} known-structural conflict(s) (discord/ deletions, src/pkg/config/config.go split)."
+            echo "Auto-resolved: kept v6's side of ${resolved} known-structural conflict(s) (discord/ + discord-syntax.yml deletions, src/pkg/config/config.go split)."
             echo "conflict=false" >> "$GITHUB_OUTPUT"
           else
             # Inventory the conflict BEFORE aborting (#7337): hunk and line

@@ -405,7 +405,7 @@ git checkout -q -b pinbump "$base_sha"
 echo pb > pb.txt
 git add pb.txt
 GIT_AUTHOR_NAME='hive-release[bot]' GIT_AUTHOR_EMAIL='hive-release@hive.kubestellar.io' \
-  git commit -q -m "⬆️ images: bump goose 1.53.0 -> 1.54.0" \
+  git commit -q -m "🌱 images: bump goose 1.53.0 -> 1.54.0" \
   -m "Signed-off-by: hive-release[bot] <hive-release@hive.kubestellar.io>"
 pinbump_sha=$(git rev-parse HEAD)
 
@@ -443,7 +443,7 @@ git checkout -q -b pinbumpfixed "$base_sha"
 echo pf > pf.txt
 git add pf.txt
 GIT_AUTHOR_NAME='hive-release[bot]' GIT_AUTHOR_EMAIL='hive-release@hive.kubestellar.io' \
-  git commit -q -m "⬆️ images: bump claude 2.1.295 -> 2.1.296" \
+  git commit -q -m "🌱 images: bump claude 2.1.295 -> 2.1.296" \
   -m "Signed-off-by: hive-release[bot] <hive-release@hive.kubestellar.io>
 Signed-off-by: clubanderson <407614+clubanderson@users.noreply.github.com>"
 

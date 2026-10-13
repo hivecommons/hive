@@ -12,6 +12,7 @@ import (
 
 func TestAPIBudgetModeHysteresisAndReset(t *testing.T) {
 	now := time.Date(2026, 10, 8, 20, 0, 0, 0, time.UTC)
+	resetRESTAccountingForTest(t, now)
 	var log strings.Builder
 	c := &Client{logger: slog.New(slog.NewTextHandler(&log, nil))}
 	c.rateLimits.now = func() time.Time { return now }
@@ -64,6 +65,7 @@ func TestAPIBudgetSnapshotCarriesSkippedSteps(t *testing.T) {
 }
 
 func TestAPIBudgetNilAndUnknownBucketDefaults(t *testing.T) {
+	resetRESTAccountingForTest(t, time.Date(2026, 10, 8, 20, 30, 0, 0, time.UTC))
 	var c *Client
 	c.SetAPIBudgetThresholds(1, 1)
 	c.RecordAPIBudgetSkippedSteps([]string{"x"})
@@ -79,6 +81,7 @@ func TestAPIBudgetNilAndUnknownBucketDefaults(t *testing.T) {
 
 func TestAPIBudgetCriticalCanRelaxToConserve(t *testing.T) {
 	now := time.Date(2026, 10, 8, 21, 0, 0, 0, time.UTC)
+	resetRESTAccountingForTest(t, now)
 	c := &Client{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	c.rateLimits.now = func() time.Time { return now }
 	c.SetAPIBudgetThresholds(800, 250)

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
   <meta property="og:title" content="Hive Dashboard — AI Agent Orchestration for Open Source">
   <meta property="og:description" content="Real-time dashboard for a Hive AI agent swarm. Monitor agents, governor mode, issues, PRs, and contributor activity across open source projects.">
@@ -41,6 +41,8 @@
       /* Type ramp — section headers / card titles / labels only; body-copy sizes stay. */
       --fs-xs: .68rem; --fs-sm: .75rem; --fs-base: .82rem;
       --fs-md: .92rem; --fs-lg: 1.05rem; --fs-xl: 1.25rem;
+      /* Touch floor: iOS Safari zooms the page when a focused control is under 16px. */
+      --fs-touch: 16px;
       /* Terminal surface — terminals always read as terminals: near-black
          in dark mode, deep neutral (never white) in light mode. The
          fg/muted/cyan companions are mode-independent because the
@@ -112,13 +114,16 @@
          chat FAB (48px + 24px offset + breathing room — #7160); the phone
          media query overrides it with its own FAB-sized clearance. */
       padding: calc(var(--navbar-sticky-height) + var(--sp-5)) var(--sp-7) 84px calc(var(--sidebar-w) + var(--sp-7));
-      margin: var(--sp-0); min-height: 100vh; max-width: 100vw; overflow-x: hidden;
+      margin: var(--sp-0); min-height: 100vh; min-height: 100dvh; max-width: 100vw; overflow-x: hidden;
     }
     [data-dashboard-section], #governor, #token-panel, #cost-panel { scroll-margin-top: calc(var(--navbar-sticky-height) + var(--sp-5)); }
     h1 { font-size: var(--fs-xl); margin-bottom: var(--sp-7); display: flex; align-items: center; }
     h1 span.bee { font-size: var(--fs-2xl); margin-right: var(--sp-4); }
     .timestamp { color: var(--muted); font-size: 0.8rem; margin-left: var(--sp-5); }
-    .status-stale {
+    /* Pill badge. .agent-card.status-stale reuses the class name for its pulse
+       animation only — without the :not() the pill recipe turned a stale agent
+       card into an inline-flex row that overflowed the viewport. */
+    .status-stale:not(.agent-card) {
       display: inline-flex; align-items: center; gap: var(--sp-2);
       margin-left: var(--sp-4); padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--status-warn) 45%, transparent);
       border-radius: var(--r-pill); background: color-mix(in srgb, var(--status-warn) 12%, transparent);
@@ -447,7 +452,7 @@
       .oc-version-hive .oc-version-bee-orbit:first-of-type { display: block; transform: translate3d(-50%, -50%, 0) translate3d(var(--oc-version-bee-orbit-offset-x, 0), var(--oc-version-bee-orbit-offset-y, 0), 0); }
       .oc-version-honey-dot { opacity: 0.75; transform: none; }
     }
-    /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
+    /* Drawer toggle. Hidden on desktop; the ≤1024px block flips it to
        inline-flex. It lives with the project title so the center run-state
        group remains visually anchored. */
     #oc-drawer-toggle {
@@ -826,7 +831,7 @@
        media query — that is why the old rule needed !important. Driving the
        drawer off `transform` leaves `display:flex` untouched, so applyLayout()
        can keep doing its thing without reopening the drawer. */
-    @media (max-width: 768px) {
+    @media (max-width: 1024px) {
       .oc-sidebar {
         width: min(var(--sidebar-w), 84vw);
         transform: translateX(-100%);
@@ -864,7 +869,7 @@
       .oc-topbar { left: var(--sp-0); right: auto; width: 100%; max-width: 100%; margin-left: var(--sp-0); }
       body { padding-left: var(--sp-6); }
     }
-    @media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+    @media (max-width: 1024px) and (prefers-reduced-motion: reduce) {
       .oc-sidebar, .oc-sidebar.open, #oc-drawer-backdrop { transition: none; }
     }
     @media (max-width: 600px) {
@@ -1325,7 +1330,7 @@
 
     /* .btn / .terminal-link / .restart-btn — button system recipes at end of style block */
     /* .backend-select — shared input recipe (end of style block) */
-    .backend-select { appearance: none; -webkit-appearance: none; cursor: pointer; }
+    .backend-select { appearance: none; -webkit-appearance: none; cursor: pointer; max-width: 100%; min-width: 0; }
     .backend-select:hover { color: var(--text); border-color: var(--text); }
     .backend-select option { background: var(--surface); color: var(--text); }
     .backend-select option:disabled { color: var(--muted); }
@@ -1388,9 +1393,44 @@
     .gov-pr-model-legend .open::before { background:var(--blue); }
     .gov-pr-model-legend .closed::before { background:var(--yellow); }
     @media (max-width: 620px) {
-      .gov-pr-model-row { grid-template-columns:1fr; gap:var(--sp-2); }
+      .gov-pr-models-subheader { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+      .gov-pr-models-subheader .gov-pr-models-toggle { grid-column: 1 / -1; }
+      .gov-pr-models-summary { white-space: normal; }
+      .gov-pr-models-head { align-items: flex-start; flex-direction: column; }
+      .gov-pr-models-toggle { flex-wrap: wrap; }
+      .gov-pr-models-toggle button { min-height: 36px; }
+      .governor-subsection .section-body,
+      .gov-pr-models,
+      .gov-pr-models-subheader,
+      .gov-pr-models-head,
+      .gov-pr-model-row,
+      .gov-pr-model-name,
+      .gov-pr-model-sub,
+      .gov-pr-model-bar {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+      }
+      .gov-pr-model-row { grid-template-columns:minmax(0, 1fr) !important; gap:var(--sp-2); }
       .gov-pr-model-metrics { grid-template-columns:repeat(2, minmax(90px, 1fr)); }
+      .gov-pr-model-metric { text-align: left; }
       .gov-pr-model-share { justify-self:start; }
+      .gov-pr-model-table {
+        width: 100% !important;
+        max-width: 100% !important;
+        table-layout: fixed;
+        font-size: var(--fs-xs);
+      }
+      .gov-pr-model-table th,
+      .gov-pr-model-table td {
+        padding: var(--sp-2);
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .gov-pr-model-table th:nth-child(n+4),
+      .gov-pr-model-table td:nth-child(n+4) {
+        display: none;
+      }
     }
 
     /* ── ACMM level-up recommendation (advisory) + lifecycle timeline ── */
@@ -3039,6 +3079,7 @@
       display: flex; gap: var(--sp-3); margin-top: var(--sp-3);
     }
     .config-list-add input { flex: 1; }
+    .config-table-wrap { max-width: 100%; overflow-x: auto; }
     .config-list-add button {
       background: var(--border); color: var(--text); border: none;
       border-radius: var(--r); padding: var(--sp-3) var(--sp-5); cursor: pointer; font-size: var(--fs-sm);
@@ -3414,7 +3455,7 @@
     .public-knowledge-url code { overflow-wrap: anywhere; }
     .public-knowledge-confirm { border: var(--line-width) solid var(--yellow); border-radius: var(--r); padding: var(--sp-3); color: var(--yellow); background: color-mix(in srgb, var(--yellow) 10%, transparent); font-size: var(--fs-sm); }
     .public-knowledge-tags { min-width: min(24em, 100%); }
-    .kb-layout { display: grid; grid-template-columns: 240px 1fr; gap: var(--sp-6); min-height: 320px; }
+    .kb-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: var(--sp-6); min-height: 320px; }
 
     .kb-integrations-modal { height: 100%; min-height:0; overflow: hidden; }
     .kb-integrations-loading { text-align: center; padding: var(--sp-7); color: var(--muted); }
@@ -3431,6 +3472,25 @@
     .kb-integration-scope-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--sp-4); margin-top: var(--sp-4); }
     .kb-integration-enabled { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-4); }
     .kb-integration-form-actions { gap: var(--sp-3); margin-top: var(--sp-4); }
+    @media (max-width: 768px) {
+      .kb-layout,
+      .kb-integrations-shell,
+      .kb-integration-form-grid-3,
+      .kb-integration-form-grid-2,
+      .kb-integration-scope-grid {
+        grid-template-columns: 1fr;
+      }
+      .kb-integrations-shell { gap: var(--sp-4); }
+      .kb-integrations-sidebar {
+        border-right: 0;
+        border-bottom: var(--line-width) solid var(--border);
+        padding-right: var(--sp-0);
+        padding-bottom: var(--sp-4);
+        max-height: 34dvh;
+      }
+      .kb-integrations-main { padding-right: var(--sp-0); }
+      .kb-integration-actions { justify-content: flex-start; }
+    }
     .kb-sidebar { display: flex; flex-direction: column; gap: 10px; }
     .kb-layer-list { display: flex; flex-direction: column; gap: var(--sp-2); }
     /* .kb-layer-btn — ghost button (system recipe); layout + active state here */
@@ -3446,7 +3506,8 @@
     .kb-filter-pill { padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--r-sm); font-size: var(--fs-xs); cursor: pointer; background: var(--bg); color: var(--muted); transition: all 0.15s; }
     .kb-filter-pill:hover { border-color: var(--accent); }
     .kb-filter-pill.active { background: rgba(88,166,255,0.12); border-color: var(--accent); color: var(--accent); }
-    .kb-main { display: flex; flex-direction: column; gap: 10px; }
+    .kb-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+    .kb-actions { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-bottom: 14px; }
     .kb-fact-list { display: flex; flex-direction: column; gap: var(--sp-3); max-height: 500px; overflow-y: auto; }
     .kb-fact-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; transition: all 0.15s; }
     .kb-fact-item:hover { border-color: var(--accent); background: rgba(88,166,255,0.04); }
@@ -3907,6 +3968,295 @@
         border-radius: 0;
       }
     }
+    @media (max-width: 768px) {
+      body {
+        padding-left: max(var(--sp-5), env(safe-area-inset-left));
+        padding-right: max(var(--sp-5), env(safe-area-inset-right));
+        padding-top: calc(var(--navbar-sticky-height) + var(--sp-5) + env(safe-area-inset-top));
+      }
+      .oc-topbar {
+        --topbar-grid-columns: auto minmax(0, 1fr) auto;
+        padding-left: max(var(--sp-5), env(safe-area-inset-left));
+        padding-right: max(var(--sp-5), env(safe-area-inset-right));
+        padding-top: env(safe-area-inset-top);
+        gap: var(--sp-2);
+      }
+      .oc-topbar-center {
+        display: none;
+      }
+      .oc-topbar-left,
+      .oc-topbar-right {
+        justify-content: flex-start;
+        gap: var(--sp-2);
+        overflow: hidden;
+      }
+      .oc-topbar-right {
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+      }
+      .oc-topbar .nav-chip {
+        min-width: 44px !important;
+        min-height: 44px !important;
+        height: 44px !important;
+        padding-left: var(--sp-3) !important;
+        padding-right: var(--sp-3) !important;
+      }
+      #acmm-badge {
+        max-width: 58px;
+        overflow: hidden;
+        text-overflow: clip;
+        white-space: nowrap;
+      }
+      .oc-health-badge .nav-chip__label,
+      #oc-settings-btn .nav-chip__label,
+      #welcome-topbar-btn .nav-chip__label {
+        display: none;
+      }
+      .oc-topbar .layout-toggle.nav-chip {
+        display: none;
+      }
+      .dash-card,
+      .token-panel,
+      .cost-panel,
+      .agent-card,
+      .repo-card,
+      [data-dashboard-section] {
+        min-width: 0;
+        max-width: 100%;
+      }
+      .dash-card-header {
+        flex-wrap: wrap;
+        row-gap: var(--sp-2);
+      }
+      .dash-card-header .dash-card-title {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      /* iOS Safari zooms the page when a focused control is under 16px. */
+      input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+      select,
+      textarea {
+        font-size: var(--fs-touch) !important;
+      }
+      .gh-auth-overlay,
+      .cred-dialog-overlay,
+      .config-overlay,
+      .hive-dialog-overlay,
+      .nous-config-overlay,
+      .acmm-dialog-overlay {
+        align-items: stretch;
+        justify-content: stretch;
+        padding: var(--sp-0);
+      }
+      .config-modal,
+      .feedback-modal,
+      .nous-config-dialog,
+      .hive-dialog,
+      .acmm-dialog {
+        width: 100vw !important;
+        width: 100dvw !important;
+        max-width: 100vw !important;
+        max-width: 100dvw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        max-height: 100vh !important;
+        max-height: 100dvh !important;
+        border-radius: var(--sp-0) !important;
+        border-left: 0;
+        border-right: 0;
+      }
+      .config-header,
+      .feedback-header,
+      .nous-config-dialog > h2 {
+        padding-top: max(var(--sp-6), env(safe-area-inset-top));
+      }
+      .config-tabs {
+        flex-wrap: wrap;
+        overflow-x: hidden;
+        padding: var(--sp-0) var(--sp-4);
+        -webkit-overflow-scrolling: touch;
+      }
+      .config-tab {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+      }
+      .config-body,
+      .feedback-body,
+      .nous-config-body {
+        padding: var(--sp-5);
+      }
+      .config-footer,
+      .feedback-footer {
+        flex-wrap: wrap;
+        align-items: center;
+        padding-bottom: max(var(--sp-5), env(safe-area-inset-bottom));
+      }
+      .feedback-footer > *,
+      .config-footer > * {
+        min-width: 0;
+      }
+      .feedback-footer .feedback-option-extra {
+        flex: 1 1 100%;
+      }
+      .config-field-row,
+      .config-field-row4,
+      .cadence-mode-row {
+        grid-template-columns: 1fr;
+      }
+      .var-row {
+        flex-wrap: wrap;
+      }
+      /* Modal bodies: list rows and inline-styled flex rows wrap instead of
+         pushing their trailing controls past the viewport; data tables scroll
+         inside the modal; long tokens break. */
+      .config-list-item,
+      .config-list-add,
+      .config-body div[style*="display:flex"]:not([style*="flex-direction:column"]),
+      .config-body div[style*="display: flex"]:not([style*="flex-direction: column"]) {
+        flex-wrap: wrap;
+      }
+      .config-body select,
+      .config-body input,
+      .config-body textarea {
+        max-width: 100%;
+      }
+      .cmp-attest-form label,
+      .cmp-attest-form select,
+      .cmp-attest-form input,
+      .cmp-attest-form textarea {
+        width: 100%;
+        min-width: 0;
+      }
+      .config-list-add input,
+      .config-body div[style*="display:flex"] > input,
+      .config-body div[style*="display:flex"] > select {
+        flex: 1 1 100%;
+        min-width: 0;
+      }
+      .config-list-item > *,
+      .config-list-add > * {
+        min-width: 0;
+      }
+      .rt-check,
+      .rt-inherit {
+        white-space: normal;
+      }
+      .config-table-wrap,
+      .cost-table-scroll {
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      .config-body .config-table,
+      .config-body .cmp-table,
+      .cost-sub-body > .cost-table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+      .config-body code,
+      .nous-config-body code,
+      .hive-dialog code,
+      .kb-integrations-modal code {
+        overflow-wrap: anywhere;
+        white-space: normal;
+      }
+      .var-row .var-source {
+        flex: 1 1 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .cadence-mode-inline,
+      .am-bot-add,
+      .cmp-domain-head,
+      .cmp-attest-form {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .config-field input:not([type]),
+      .config-field input[type="text"],
+      .config-field input[type="number"],
+      .config-field input[type="password"],
+      .config-field input[type="url"],
+      .config-field input[type="email"],
+      .config-field select,
+      .config-field textarea,
+      .feedback-field input[type="text"],
+      .feedback-field textarea,
+      .feedback-field select,
+      .nous-config-section textarea,
+      .nous-config-section input[type="text"],
+      .nous-config-section input[type="number"],
+      .field-input,
+      .kb-search-box,
+      .kick-prompt,
+      .backend-select,
+      .oc-chat-input,
+      .hive-chat-input {
+        font-size: var(--fs-touch);
+      }
+      .hv-btn,
+      .dialog-btn,
+      .repo-chip-btn,
+      .config-close,
+      .feedback-segmented label,
+      .kb-layer-btn,
+      .public-knowledge-switch,
+      .release-channel-select,
+      button,
+      [role="button"],
+      a.nav-chip {
+        min-height: 44px;
+      }
+      .btn-sm,
+      .btn-icon,
+      .dash-card-action,
+      .dash-card-actions > button,
+      .dash-card-actions > a,
+      .dash-card-actions > .hv-btn,
+      .dash-card-actions > .config-gear {
+        min-height: 36px !important;
+        height: auto !important;
+      }
+      .dashboard-grip,
+      .config-info,
+      .section-settings-gear {
+        min-width: 44px;
+        min-height: 44px;
+      }
+      .hive-chat-fab {
+        width: 48px;
+        height: 48px;
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(12px, env(safe-area-inset-bottom));
+      }
+    }
+    @media (max-width: 480px) {
+      body {
+        padding-left: max(var(--sp-4), env(safe-area-inset-left));
+        padding-right: max(var(--sp-4), env(safe-area-inset-right));
+      }
+      .config-header,
+      .feedback-header {
+        gap: var(--sp-4);
+        padding-left: var(--sp-5);
+        padding-right: var(--sp-5);
+      }
+      .config-title,
+      .feedback-header h2 {
+        overflow-wrap: anywhere;
+      }
+      .feedback-tabs,
+      .feedback-segmented {
+        width: 100%;
+        overflow-x: auto;
+      }
+      .feedback-tabs .hv-btn,
+      .feedback-segmented label {
+        flex: 1 0 auto;
+        justify-content: center;
+      }
+    }
 
     /* ══ Input system (Phase 2) ══
        One recipe for text inputs/selects/textareas (derived from the old
@@ -4257,9 +4607,9 @@
     .campaign-jam-live { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
     .campaign-jam-live-pill { border: 1px solid var(--border); border-radius: var(--r-full); padding: var(--sp-1) var(--sp-2); background: var(--bg); color: var(--fg); }
     @media (max-width: 1100px) { .campaign-jam-grid { grid-template-columns: 1fr; } }
-    @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: 1fr; } }
+    @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: minmax(0, 1fr); } .campaign-row > div { min-width: 0; } .campaign-row-actions { justify-content: flex-start; } }
     /* Review queue (#9607) */
-    .review-subsection { display: grid; gap: var(--dash-section-header-gap, var(--sp-3)); margin: var(--sp-2) 0 var(--sp-7); }
+    .review-subsection { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--dash-section-header-gap, var(--sp-3)); margin: var(--sp-2) 0 var(--sp-7); }
     .review-subsection + .review-subsection { margin-top: var(--sp-7); }
     .review-subsection-body.dash-card-body { padding: var(--sp-4); }
     .review-subsection-body > .review-queue-panel { padding: 0; }
@@ -4782,7 +5132,7 @@
     </div>
   </nav>
 
-  <!-- Dim layer behind the mobile drawer. display:none on desktop; the ≤768px
+  <!-- Dim layer behind the mobile drawer. display:none on desktop; the ≤1024px
        block turns it on. Its id is registered in OVERLAY_SELECTOR so the
        existing installModalScrollLock() observer body-locks scroll for free. -->
   <div id="oc-drawer-backdrop"></div>
@@ -7691,7 +8041,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         for (var i = 0; i < overlays.length; i++) {
           var el = overlays[i];
           if (el.classList.contains('hidden')) continue;
-          // The mobile drawer backdrop is always display:block under 768px and
+          // The mobile drawer backdrop is always display:block under 1024px and
           // animates on opacity, so display alone would read as permanently
           // open. It is open only while it carries .open.
           if (el.id === 'oc-drawer-backdrop') {
@@ -22285,7 +22635,7 @@ function burnAreaChart() {
       html += '<div class="dash-card-subtitle kb-stats-help">Layers are knowledge-source scopes; facts are the reusable items agents search and inject into prompts.</div>';
 
       // Action buttons
-      html += '<div style="display:flex;gap:var(--sp-4);margin-bottom:14px">';
+      html += '<div class="kb-actions" style="display:flex;flex-wrap:wrap;gap:var(--sp-4);margin-bottom:14px">';
       html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbOpenCreate" title="Create a new knowledge fact manually. Choose a layer (personal, project, org, community), type, and enter the fact content.">+ New Fact</button>';
       html += '<button class="hv-btn btn-secondary nous-btn btn-surface" data-action="kbOpenSubscriptions" title="Manage knowledge sources: git repos, wiki subscriptions, document imports, and fact imports.">🔗 Knowledge Sources</button>';
       html += '<button class="hv-btn btn-secondary nous-btn btn-surface" data-action="kbOpenVaults" title="Manage knowledge vaults — collections of facts organized by topic or project. Vaults can be shared across hive instances.">📂 Vaults</button>';
@@ -43145,11 +43495,11 @@ function burnAreaChart() {
     });
 
     // Sidebar resize handle — drag right edge to resize sidebar width
-    // Mobile drawer. Under 768px the sidebar is translated offscreen; .open
+    // Mobile drawer. Under 1024px (phones and portrait tablets) the sidebar is translated offscreen; .open
     // slides it back in. Nothing is persisted — a drawer left open across
     // reloads would be a bug, not a feature.
     (function initMobileDrawer() {
-      const DRAWER_MAX_W = 768; // must match the @media breakpoint above
+      const DRAWER_MAX_W = 1024; // must match the @media breakpoint above
       const sidebar = document.getElementById('oc-sidebar');
       const toggle = document.getElementById('oc-drawer-toggle');
       const backdrop = document.getElementById('oc-drawer-backdrop');
@@ -43172,7 +43522,7 @@ function burnAreaChart() {
       });
       backdrop.addEventListener('click', closeDrawer);
       // Rotating to landscape (or resizing past the breakpoint) must not strand
-      // the drawer open — above 768px the sidebar is a normal static column and
+      // the drawer open — above 1024px the sidebar is a normal static column and
       // a leftover .open would leave the backdrop covering the page.
       window.addEventListener('resize', () => {
         if (!isMobile()) closeDrawer();

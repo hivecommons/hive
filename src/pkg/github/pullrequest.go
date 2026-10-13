@@ -84,6 +84,17 @@ type CreatePRResult struct {
 	// reads the result — "your retry was absorbed" versus "this change is
 	// already proposed as #N, go comment on it".
 	DuplicateTree bool
+	// DuplicateReason is set (with AlreadyExisted) when the PR-side guard
+	// redirected the request to an existing PR: one of the DuplicateReason*
+	// constants. The returned PR is the one to continue on.
+	DuplicateReason string
+}
+
+// IsDuplicate reports whether the returned PR was reused because it already
+// covers this request's content or issue, rather than because it is this
+// request's own earlier PR.
+func (r CreatePRResult) IsDuplicate() bool {
+	return r.DuplicateTree || r.DuplicateReason != ""
 }
 
 // CreatePR opens a pull request on behalf of THIS hive's GitHub App — so the PR
@@ -186,6 +197,31 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 			Author:         existing.GetUser().GetLogin(),
 			AlreadyExisted: true,
 			DuplicateTree:  true,
+		}, nil
+	}
+
+	// Issue and file-set identity: agents on one issue never collide on head or
+	// tree, so also refuse when an open PR already closes the same issue, an
+	// open App-bot PR edits an overlapping file set, or a merged PR already
+	// fixed the issue. Retryable lookup failures keep the request queued;
+	// terminal ones degrade to opening the PR.
+	if found, err := c.findDuplicatePR(ctx, owner, repo, head, base, body); err != nil {
+		if isRetryableGitHubError(err) {
+			return CreatePRResult{}, fmt.Errorf("CreatePR: duplicate guard lookup failed with retryable error for %s/%s head %s: %w", owner, repo, head, err)
+		}
+		c.logger.Warn("CreatePR: duplicate guard lookup failed with terminal error, creating without it",
+			slog.String("repo", repo), slog.String("head", head), slog.String("error", err.Error()))
+	} else if found != nil {
+		c.logger.Info("CreatePR: an existing PR already covers this request, redirecting to it instead of opening a duplicate",
+			slog.String("repo", repo), slog.String("head", head), slog.String("reason", found.reason),
+			slog.Int("number", found.pr.GetNumber()))
+		c.redirectToExistingPR(ctx, owner, repo, head, found)
+		return CreatePRResult{
+			Number:          found.pr.GetNumber(),
+			URL:             found.pr.GetHTMLURL(),
+			Author:          found.pr.GetUser().GetLogin(),
+			AlreadyExisted:  true,
+			DuplicateReason: found.reason,
 		}, nil
 	}
 
