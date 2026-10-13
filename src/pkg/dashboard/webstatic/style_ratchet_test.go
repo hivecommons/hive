@@ -29,9 +29,9 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 	// fan-out UI); these baselines are v6's own counts, not v5's.
 	"operator static/index.html": {
 		inlineStyles:   1690,
-		rawColors:      149,
-		rawFontSizes:   693,
-		rawPadding:     240,
+		rawColors:      148,
+		rawFontSizes:   692,
+		rawPadding:     239,
 		rawBorderRadii: 185,
 	},
 	"contributor landing": {

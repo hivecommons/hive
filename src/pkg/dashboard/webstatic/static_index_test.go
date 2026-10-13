@@ -715,3 +715,72 @@ func TestStaticTopbarACMMAndSidebarVersionPlacement(t *testing.T) {
 		t.Fatal("topbar still contains the inline version/upgrade strip")
 	}
 }
+
+// TestStaticExperimentLabVerdictCard pins the verdict card and the manual
+// Promote action (RFC #11585 part 6, #11699): the card renders the engine's
+// recommendation as a status-badge chip keyed by the design system's tones,
+// flags verdicts that were not measured against a baseline, shows recorded
+// promotions, and offers two owner-only Promote buttons (Issue, Spektacular
+// run) that go through the in-app confirm dialog and the audited
+// POST /api/nous/promote. The old automatic output-mode strip is gone.
+func TestStaticExperimentLabVerdictCard(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`const NOUS_VERDICT_TONES = { deploy: 'ok', deploy_with_caveats: 'warn', fall_back_to_baseline: 'error' };`,
+		`const NOUS_PROMOTE_TARGETS = {`,
+		`function renderNousVerdictCard(verdict, mode) {`,
+		`html += renderNousVerdictCard(s.verdict, mode);`,
+		`<div class="nous-card nous-verdict-card mt-5" data-nous-verdict="${escapeHtml(v.recommendation)}"`,
+		`<span class="status-badge nous-verdict-chip" data-status="${tone}"`,
+		`<span class="status-badge nous-verdict-unmeasured" data-status="warn"`,
+		`not measured against baseline</span>`,
+		`<ul class="nous-verdict-list ${cls}">`,
+		`<div class="nous-verdict-promotion" data-nous-promoted="${escapeHtml(target)}">`,
+		`data-action="nousPromote" data-arg0="${escapeHtml(target)}" data-nous-target="${escapeHtml(target)}"`,
+		`${done ? ' disabled' : ''}`,
+		`Promotion is manual, owner-only and audited.`,
+		`async function nousPromote(target) {`,
+		`const ok = await hiveConfirm({`,
+		`await fetch('/api/nous/promote', {`,
+		`body: JSON.stringify({ target }),`,
+		`.nous-verdict-card { border-color: var(--purple); }`,
+		`.nous-config-output-modes {`,
+		`<div class="text-muted nous-config-output-note"`,
+		`body: JSON.stringify({ autoHold, autoDoNotMerge: autoDnm }),`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard Experiment Lab verdict card missing %q", want)
+		}
+	}
+	// The pre-#11699 automatic output modes (state-only / issue / issue+pr /
+	// spektacular-run picked in config and acted on by Approve) are gone.
+	for _, gone := range []string{
+		`function selectNousOutputMode(`,
+		`data-action="selectNousOutputMode"`,
+		`{ id: 'state-only', label: 'State Only'`,
+		`body: JSON.stringify({ mode: outputMode, autoHold`,
+		`'Spektacular run already admitted: '`,
+	} {
+		if strings.Contains(html, gone) {
+			t.Fatalf("static dashboard still carries the automatic output mode: %q", gone)
+		}
+	}
+	// The card and the promote flow must not use native dialogs or inline styles.
+	for _, fn := range []string{`function renderNousVerdictCard(verdict, mode) {`, `async function nousPromote(target) {`} {
+		start := strings.Index(html, fn)
+		end := strings.Index(html[start:], "\n    }\n") + start
+		snippet := html[start:end]
+		for _, forbidden := range []string{"style=", "alert(", "confirm(", "prompt("} {
+			if forbidden == "confirm(" && strings.Contains(snippet, "hiveConfirm(") {
+				snippet = strings.ReplaceAll(snippet, "hiveConfirm(", "hiveConfirm[")
+			}
+			if strings.Contains(snippet, forbidden) {
+				t.Fatalf("%s must not use %q", fn, forbidden)
+			}
+		}
+	}
+}

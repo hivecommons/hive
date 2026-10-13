@@ -3427,6 +3427,20 @@
     .nous-btn-reject { margin-left: var(--sp-4); }
     .nous-experiment-live { background: var(--green-bg); border: 1px solid var(--green); border-radius: 8px; padding: var(--sp-5); margin-bottom: 10px; }
     .nous-experiment-live h4 { margin: var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-0); font-size: var(--fs-base); color: var(--text); }
+    /* Verdict card (#11699): the engine's final recommendation plus the
+       owner's manual Promote actions. Nothing here fires on its own. */
+    .nous-verdict-card { border-color: var(--purple); }
+    .nous-verdict-card h3 { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+    .nous-verdict-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-4); }
+    .nous-verdict-score { font-size: var(--fs-sm); color: var(--fg); }
+    .nous-verdict-label, .nous-verdict-note { font-size: var(--fs-sm); }
+    .nous-verdict-label code { font-size: var(--fs-sm); }
+    .nous-verdict-summary { font-size: var(--fs-sm); color: var(--fg); margin-bottom: var(--sp-4); }
+    .nous-verdict-list { margin: var(--sp-2) var(--sp-0) var(--sp-4); padding-left: var(--sp-7); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-verdict-list li { margin-bottom: var(--sp-1); }
+    .nous-verdict-promotions { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-2); }
+    .nous-verdict-actions { display: flex; gap: var(--sp-4); flex-wrap: wrap; align-items: center; }
+    .nous-verdict-actions .nous-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
     /* Nous Config Panel */
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
@@ -3454,10 +3468,6 @@
     .nous-config-pill.active { --pill-c: var(--accent); }
     .nous-config-pill:hover { border-color: var(--accent); }
     .nous-config-output-modes { flex:0 0 auto; display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
-    .nous-config-output-mode { flex: 1; padding: 8px 10px; text-align: center; font-size: 0.76rem; cursor: pointer; border: none; background: var(--bg); color: var(--muted); transition: all 0.2s; }
-    .nous-config-output-mode:not(:last-child) { border-right: 1px solid var(--border); }
-    .nous-config-output-mode.active { background: color-mix(in srgb, var(--purple) 15%, transparent); color: var(--purple); font-weight: 700; }
-    .nous-config-output-mode:hover:not(.active) { background: rgba(124,58,237,0.1); }
     .nous-config-btn-bar { display: flex; justify-content: flex-end; gap: var(--sp-4); margin-top: var(--sp-6); }
     /* .nous-config-btn(-save/-cancel) — primary/ghost buttons (system recipe) */
     .nous-config-principle-row { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-0); border-bottom: 1px solid var(--border); font-size: 0.78rem; }
@@ -21777,6 +21787,8 @@ function burnAreaChart() {
         html += '</div>';
       }
 
+      html += renderNousVerdictCard(s.verdict, mode);
+
       // Principles
       if (principles.length > 0) {
         html += '<div class="nous-card mt-5">';
@@ -21847,6 +21859,106 @@ function burnAreaChart() {
       setIfChanged(panel, html);
     }
 
+    // Verdict recommendations and the tone each takes on the card. Mirrors
+    // nousengine's vocabulary (deploy / deploy_with_caveats / fall_back_to_baseline).
+    const NOUS_VERDICT_TONES = { deploy: 'ok', deploy_with_caveats: 'warn', fall_back_to_baseline: 'error' };
+    const NOUS_PROMOTE_TARGETS = {
+      issue: { label: 'Promote → Issue', confirm: 'Open an issue with this verdict', desc: 'Open an issue in the target repo carrying the verdict, its evidence and caveats. Nothing is applied; the issue is where the change gets discussed.' },
+      'spektacular-run': { label: 'Promote → Spektacular run', confirm: 'Start a Spektacular run for this verdict', desc: 'Open (or reuse) the verdict issue and admit a Spektacular spec-stage run against it. The run follows the normal review path; nothing merges on its own.' },
+    };
+
+    function nousVerdictLabel(recommendation) {
+      return String(recommendation || 'no recommendation').replace(/_/g, ' ');
+    }
+
+    // renderNousVerdictCard shows the engine's final recommendation for the
+    // campaign and the owner's manual Promote buttons (#11699). The server
+    // never promotes on its own: every button goes through a confirm dialog
+    // and an audited, owner-only POST /api/nous/promote.
+    function renderNousVerdictCard(verdict, mode) {
+      if (!verdict || !verdict.recommendation) return '';
+      const v = verdict;
+      const tone = NOUS_VERDICT_TONES[v.recommendation] || 'neutral';
+      const promotions = v.promotions || {};
+      const targets = Array.isArray(v.targets) && v.targets.length ? v.targets : Object.keys(NOUS_PROMOTE_TARGETS);
+      let html = `<div class="nous-card nous-verdict-card mt-5" data-nous-verdict="${escapeHtml(v.recommendation)}" data-nous-campaign="${escapeHtml(v.campaign || '')}">`;
+      html += `<h3>Verdict <span class="status-badge nous-verdict-chip" data-status="${tone}" title="recommendation: ${escapeHtml(v.recommendation)}">${escapeHtml(nousVerdictLabel(v.recommendation))}</span></h3>`;
+      html += '<div class="nous-verdict-head">';
+      if (v.measured_against_baseline) {
+        html += `<span class="nous-verdict-score">Score <strong>${escapeHtml(String(v.score))}</strong> vs. baseline <strong>${escapeHtml(String(v.baseline))}</strong></span>`;
+      } else {
+        html += `<span class="nous-verdict-score">Score <strong>${escapeHtml(String(v.score))}</strong></span>`;
+        html += '<span class="status-badge nous-verdict-unmeasured" data-status="warn" title="The campaign had no objective or no baseline measurements, so this score does not show whether the change beats what is running today.">not measured against baseline</span>';
+      }
+      if (v.campaign) html += `<span class="text-muted nous-verdict-label">campaign: ${escapeHtml(v.campaign)}</span>`;
+      html += '</div>';
+      if (v.summary) html += `<div class="nous-verdict-summary">${escapeHtml(v.summary)}</div>`;
+      const list = (title, items, cls) => {
+        if (!Array.isArray(items) || items.length === 0) return '';
+        return `<div class="text-muted nous-verdict-label">${title}</div><ul class="nous-verdict-list ${cls}">` + items.map(i => `<li>${escapeHtml(String(i))}</li>`).join('') + '</ul>';
+      };
+      html += list('Evidence', v.citations, 'nous-verdict-citations');
+      html += list('Caveats', v.caveats, 'nous-verdict-caveats');
+      if (v.report) html += `<div class="text-muted nous-verdict-label">Report: <code>${escapeHtml(v.report)}</code></div>`;
+
+      const promoted = Object.keys(promotions);
+      if (promoted.length) {
+        html += '<div class="nous-verdict-promotions">';
+        for (const target of promoted) {
+          const p = promotions[target] || {};
+          const who = p.promoted_by ? ` by ${escapeHtml(p.promoted_by)}` : '';
+          let where = '';
+          if (p.run_key) where = `Spektacular run <button class="btn" data-action="openRunDetail" data-arg0="${escapeHtml(p.run_key)}">${escapeHtml(p.run_key)}</button>`;
+          else if (p.url) where = `<a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.repo || '')}#${escapeHtml(String(p.number || ''))}</a>`;
+          else if (p.number) where = `${escapeHtml(p.repo || '')}#${escapeHtml(String(p.number))}`;
+          html += `<div class="nous-verdict-promotion" data-nous-promoted="${escapeHtml(target)}">Promoted to ${escapeHtml(target.replace(/-/g, ' '))}${who}${where ? ': ' + where : ''}</div>`;
+        }
+        html += '</div>';
+      }
+
+      html += '<div class="nous-verdict-actions">';
+      for (const target of targets) {
+        const meta = NOUS_PROMOTE_TARGETS[target];
+        if (!meta) continue;
+        const done = !!promotions[target];
+        html += `<button class="hv-btn btn-primary nous-btn nous-btn-promote" data-action="nousPromote" data-arg0="${escapeHtml(target)}" data-nous-target="${escapeHtml(target)}" title="${escapeHtml(done ? 'Already promoted to ' + target.replace(/-/g, ' ') : meta.desc)}"${done ? ' disabled' : ''}>${escapeHtml(meta.label)}</button>`;
+      }
+      html += '<span class="text-muted nous-verdict-note">Promotion is manual, owner-only and audited.</span>';
+      html += '</div>';
+      html += '</div>';
+      return html;
+    }
+
+    async function nousPromote(target) {
+      if (!experimentLabEnabled()) return;
+      const meta = NOUS_PROMOTE_TARGETS[target];
+      if (!meta) { showToast('Unknown promotion target: ' + target, 'error'); return; }
+      const v = (_nousCache && _nousCache.status && _nousCache.status.verdict) || {};
+      const repo = v.target_repo ? ` in ${v.target_repo}` : '';
+      const ok = await hiveConfirm({
+        title: meta.confirm,
+        message: `${meta.desc} This promotes the "${nousVerdictLabel(v.recommendation)}" verdict${repo} and is recorded in the audit log.`,
+        confirmLabel: 'Promote',
+      });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/nous/promote', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ target }),
+        });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+          const p = j.promotion || {};
+          showToast(p.run_key ? 'Spektacular run admitted: ' + p.run_key : 'Issue opened: ' + (p.repo || '') + '#' + (p.number || ''), 'success');
+        } else if (r.status === 409 && j.status === 'already_promoted') {
+          showToast('Already promoted to ' + target.replace(/-/g, ' '), 'info');
+        } else {
+          showToast(j.error || 'Promote failed', 'error');
+        }
+        fetchNousStatus();
+      } catch (e) { showToast('Promote failed: ' + e.message, 'error'); }
+    }
+
     async function nousSetMode(mode) {
       if (!experimentLabEnabled()) return;
       const current = (_nousCache && _nousCache.status && _nousCache.status.mode) || 'observe';
@@ -21882,7 +21994,7 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/nous/approve', { method: 'POST' });
         const j = await r.json();
-        if (j.ok) { showToast(j.run && j.run.key ? (j.status === 'already_approved' ? 'Spektacular run already admitted: ' : 'Spektacular run admitted: ') + j.run.key : 'Experiment approved and started', 'success'); fetchNousStatus(); }
+        if (j.ok) { showToast('Experiment approved and started', 'success'); fetchNousStatus(); }
         else showToast(j.error || 'Approve failed', 'error');
       } catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
     }
@@ -21996,21 +22108,12 @@ function burnAreaChart() {
       h += `<textarea id="nc-repo-goal" rows="2" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(repoCamp.research_question || '')}</textarea>`;
       h += '</div>';
 
-      // Output Mode
+      // Output: promotion is manual (#11699). Verdicts are written to files
+      // and read here; the owner picks Issue or Spektacular run on the
+      // verdict card. Only the labels applied to promoted items are config.
       h += '<div class="nous-config-section">';
-      h += '<h3>📤 Output Mode</h3>';
-      h += '<div class="nous-config-output-modes">';
-      const outModes = [
-        { id: 'state-only', label: 'State Only', desc: 'Write to files, read in dashboard' },
-        { id: 'issue', label: 'Issue', desc: 'Open issue with proposal' },
-        { id: 'issue+pr', label: 'Issue + PR', desc: 'Open issue and PR pair' },
-        { id: 'spektacular-run', label: 'Spektacular Run', desc: 'Approve a repo campaign by creating the spec stage run lease' },
-      ];
-      for (const om of outModes) {
-        const active = (output.mode || 'state-only') === om.id ? ' active' : '';
-        h += `<button class="nous-config-output-mode${active}" data-output-mode="${om.id}" data-action="selectNousOutputMode" data-arg-types="t" title="${escapeHtml(om.desc)}">${escapeHtml(om.label)}</button>`;
-      }
-      h += '</div>';
+      h += '<h3>📤 Output</h3>';
+      h += '<div class="text-muted nous-config-output-note" title="Nous writes its verdict to meta_findings.json and the dashboard reads it. Promoting a verdict to an issue or a Spektacular run is a manual, owner-only, audited action on the verdict card; there is no automatic output mode.">Verdicts are written to files and shown on the verdict card. Promotion is manual via the card\'s <strong>Promote</strong> buttons (Issue or Spektacular run); nothing is opened or run automatically.</div>';
       h += '<div class="mt-4">';
       h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'hold' label to any issues or PRs it creates. This prevents agents from acting on Nous-generated work items until an operator reviews them."><input type="checkbox" id="nc-auto-hold" ${output.autoHold ? 'checked' : ''}> Auto-apply <code>hold</code> label to Nous issues/PRs</label>`;
       h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'do-not-merge' label to any PRs it creates. This prevents automated merge workflows from merging experiment PRs without operator review."><input type="checkbox" id="nc-auto-dnm" ${output.autoDoNotMerge ? 'checked' : ''}> Auto-apply <code>do-not-merge</code> label to Nous PRs</label>`;
@@ -22100,7 +22203,7 @@ function burnAreaChart() {
       // Save / Cancel
       h += '<div class="nous-config-btn-bar">';
       h += '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig" title="Discard all changes and close this dialog">Cancel</button>';
-      h += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Goals, output mode, repo targets, fast-fail bounds, timing, controllable knobs, and principle settings will be updated.">Save Configuration</button>';
+      h += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Goals, output labels, repo targets, fast-fail bounds, timing, controllable knobs, and principle settings will be updated.">Save Configuration</button>';
       h += '</div>';
 
       h += '</div>';
@@ -22110,12 +22213,6 @@ function burnAreaChart() {
     function configEnvVal(cfg, key, fallback) {
       if (cfg && cfg.campaign && cfg.campaign[key]) return cfg.campaign[key];
       return fallback;
-    }
-
-    function selectNousOutputMode(btn) {
-      const parent = btn.parentElement;
-      parent.querySelectorAll('.nous-config-output-mode').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
     }
 
     function toggleNousRepo(pill) {
@@ -22153,15 +22250,13 @@ function burnAreaChart() {
         if (!r.ok) errors.push('goals: ' + (await r.json()).error);
       } catch (e) { errors.push('goals: ' + e.message); }
 
-      // Output mode
-      const activeOutput = document.querySelector('.nous-config-output-mode.active');
-      const outputMode = activeOutput ? activeOutput.dataset.outputMode : 'state-only';
+      // Output labels (no mode: promotion is manual, #11699)
       const autoHold = document.getElementById('nc-auto-hold')?.checked || false;
       const autoDnm = document.getElementById('nc-auto-dnm')?.checked || false;
       try {
         const r = await fetch('/api/nous/config/output', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ mode: outputMode, autoHold, autoDoNotMerge: autoDnm }),
+          body: JSON.stringify({ autoHold, autoDoNotMerge: autoDnm }),
         });
         if (!r.ok) errors.push('output: ' + (await r.json()).error);
       } catch (e) { errors.push('output: ' + e.message); }

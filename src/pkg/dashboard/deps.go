@@ -297,6 +297,18 @@ type NousState struct {
 	// (#11697): the read handlers refresh Ledger/Principles from it on
 	// every request. Nil keeps the boot-snapshot behaviour.
 	KnowledgeStore NousKnowledgeStore `json:"-"`
+	// Verdict is the campaign's final recommendation, nil until there is
+	// one (#11699). It is served inside /api/nous/status as "verdict" and
+	// is never acted on automatically; see POST /api/nous/promote.
+	Verdict *NousVerdict `json:"verdict,omitempty"`
+	// Promotions are the owner promotions recorded so far (all campaigns).
+	Promotions []NousPromotion `json:"promotions,omitempty"`
+	// VerdictStore, when set, serves Verdict live (cmd/hive wires the
+	// engine's Verdict face). Nil leaves Verdict as set in memory.
+	VerdictStore NousVerdictStore `json:"-"`
+	// PromotionStore, when set, is the durable promotion record (#11699);
+	// Promotions mirrors it. Nil keeps promotions in memory only.
+	PromotionStore NousPromotionStore `json:"-"`
 	// Now is the clock for decision timestamps; nil means time.Now.
 	Now func() time.Time `json:"-"`
 	Mu  sync.Mutex       `json:"-"`
