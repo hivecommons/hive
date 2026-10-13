@@ -502,6 +502,7 @@ type alertHive struct {
 	IsPlaceholder    bool
 	Online           bool
 	LastHeartbeat    string
+	OfflineSince     string
 	StartedAt        string
 	RegisteredAt     string
 	Upgrading        bool
@@ -566,6 +567,7 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 		IsPlaceholder:    isPlaceholderEntry(h),
 		Online:           h.Online,
 		LastHeartbeat:    h.LastHeartbeat,
+		OfflineSince:     h.OfflineSince,
 		StartedAt:        h.StartedAt,
 		RegisteredAt:     h.RegisteredAt,
 		Upgrading:        h.Upgrading,
@@ -881,11 +883,22 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 
 		// --- Rule: offline beyond the threshold. Checked for placeholders too:
 		// a pool slot that has stopped heartbeating is genuinely broken, not
-		// merely idle. ---
+		// merely idle.
+		//
+		// A hive whose registry entry was pruned after staleRemoveAge has no
+		// LastHeartbeat left; for an assigned hive the persisted went-offline
+		// time (OfflineSince) stands in, so the alert outlives the prune
+		// instead of vanishing after 24h (#11644). ---
 		if !h.Online {
 			if age, ok := heartbeatAge(h.LastHeartbeat, now); ok && age > alertOfflineThreshold {
 				add(h.ID, h.Name, AlertTypeOffline, AlertSeverityCritical,
 					"No heartbeat for "+roundedDuration(age))
+			} else if h.LastHeartbeat == "" {
+				if age, ok := heartbeatAge(h.OfflineSince, now); ok && age > alertOfflineThreshold {
+					add(h.ID, h.Name, AlertTypeOffline, AlertSeverityCritical,
+						"Offline since "+strings.TrimSpace(h.OfflineSince)+" ("+roundedDuration(age)+
+							"); registry entry pruned after "+staleRemoveAge.String()+" without a heartbeat")
+				}
 			}
 		}
 

@@ -227,6 +227,13 @@ type MyHiveEntry struct {
 	// version is known.
 	VersionMissingReason string `json:"versionMissingReason,omitempty"`
 
+	// OfflineSince is the RFC3339 time an assigned hive went offline, taken
+	// from its persisted timeline. Set only when the row has no live
+	// heartbeat (the registry entry was pruned after staleRemoveAge), so the
+	// card says "offline since …" instead of looking un-provisioned and the
+	// offline alert keeps firing (#11644).
+	OfflineSince string `json:"offlineSince,omitempty"`
+
 	// InactiveAgents is how many of this hive's agents are RUNNING but not
 	// doing any work — session gone, sitting on a login prompt, or producing
 	// nothing while work is queued. Computed on read by
@@ -882,6 +889,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			result[i].PendingRequests = pending
 		}
 		result[i].Unassigned = isPlaceholderEntry(result[i])
+		result[i].OfflineSince = s.prunedOfflineSince(result[i])
 	}
 
 	// Unassigned placeholder rows: auth-class check failures are the pool's
@@ -1188,6 +1196,25 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	}
 
 	return json.Marshal(resp)
+}
+
+// prunedOfflineSince returns when an assigned hive with no live heartbeat went
+// offline, or "". A row reaches here without a heartbeat when it was built
+// from the SaaS meta record alone — its registry entry having been pruned
+// after staleRemoveAge — so the persisted timeline is the only remaining
+// record of when it stopped reporting. Placeholders and hives still
+// provisioning or errored are excluded: they have their own signals.
+func (s *HubServer) prunedOfflineSince(h MyHiveEntry) string {
+	if s == nil || s.timeline == nil || h.Online || h.LastHeartbeat != "" {
+		return ""
+	}
+	if h.ProvStatus != statusAssigned && h.ProvStatus != "running" {
+		return ""
+	}
+	if isPlaceholderEntry(h) {
+		return ""
+	}
+	return s.timeline.offlineSince(h.ID)
 }
 
 func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {

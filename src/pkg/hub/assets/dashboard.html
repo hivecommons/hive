@@ -6973,6 +6973,7 @@
           var cluster = h.clusterName || h.clusterId || '';
           if (cluster) parts.push('cluster: ' + cluster);
           if (h.lastHeartbeat) parts.push('last seen: ' + fmtUserTS(h.lastHeartbeat));
+          else if (h.offlineSince) parts.push('offline since: ' + fmtUserTS(h.offlineSince));
           return parts.join('\n');
         })();
         var dot = h.upgrading
@@ -7443,6 +7444,13 @@
             ? 'The hub last heard from this hive ' + vmSeen + ' (' + fmtUserTS(h.lastHeartbeat) + ') and the heartbeat carried no build version — the spoke build predates version reporting, or the pod that replaced it has not come up.'
             : 'The hub has never received a heartbeat from this hive, so it knows nothing about the build it runs. ' +
               (vmReason.indexOf('push-only') === 0 ? 'Its cluster is push-only: the hub cannot reach in to look, so the spoke must come up and report in.' : 'Check that the spoke pod is running and can reach the hub.');
+          /* An assigned hive silent past the registry's 24h prune has no
+             heartbeat left, but it is not un-provisioned: the hub sends when it
+             went offline (offlineSince, from the persisted timeline). */
+          if (!h.lastHeartbeat && h.offlineSince) {
+            vmLabel = 'offline since ' + fmtUserTS(h.offlineSince);
+            vmTitle = 'This hive went offline ' + timelineAgo(h.offlineSince) + ' (' + fmtUserTS(h.offlineSince) + ') and has not sent a heartbeat since, so the hub dropped its live registry entry. Check that the spoke pod is running and can reach the hub.';
+          }
           versionCell = '<span class="version-missing" title="' + escAttr(vmTitle) + '">' + esc(vmLabel) + '</span>' + (driftDot ? ' ' + driftDot : '');
         }
         var pendingBadge = (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write')))

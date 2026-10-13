@@ -207,6 +207,25 @@ func (t *timelineStore) recent(hiveID string, n int) []TimelineEvent {
 	return out
 }
 
+// offlineSince returns the timestamp of the hive's newest went_offline event,
+// or "" when it has none or came back online after it. The timeline is
+// persisted to disk, so this outlives the registry entry that staleRemoveAge
+// prunes — it is what keeps a long-dead hive visible as offline (#11644).
+func (t *timelineStore) offlineSince(hiveID string) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	events := t.byID[hiveID]
+	for i := len(events) - 1; i >= 0; i-- {
+		switch events[i].Kind {
+		case TimelineWentOffline:
+			return events[i].TS
+		case TimelineCameOnline:
+			return ""
+		}
+	}
+	return ""
+}
+
 // persist writes a hive's timeline atomically (tmp+rename), matching the
 // other /data/saas state files. Failures are logged by the caller's absence
 // of a return value only — a timeline write must never fail a heartbeat.
