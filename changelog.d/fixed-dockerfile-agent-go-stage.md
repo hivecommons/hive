@@ -1,0 +1,1 @@
+- Fixed the image build broken by the arm64 Go toolchain fix (#11726): the new `agent-go` stage was declared between `builder`'s `FROM` and its build steps, so `/hive`, `/bd` and `/hivectl` were never built and `COPY --from=builder` failed. The stage is now declared before `builder`.
