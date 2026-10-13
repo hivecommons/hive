@@ -186,7 +186,15 @@ type MyHiveEntry struct {
 	// what both the alert evaluator (alertHiveFromEntry) and the JSON payload
 	// read. The spoke owns the consecutive-failure threshold and the self-heal,
 	// so there is nothing to compute on read the way AdvisoryStale is computed.
-	CommitsBehindStableV4 *int `json:"commitsBehindStableV4,omitempty"`
+	//
+	// Measured against the tip of the hive's OWN running branch (GitBranch)
+	// when the hub tracks it, else the stable release line. It used to be the
+	// stable line for every row, and once auto-promotion held stable off any
+	// branch tip the line resolved to the highest tracked branch (v6), so a v5
+	// hive at the stable commit read "796 behind" a branch it never ran.
+	// BranchTipSHA names the tip the count is relative to.
+	CommitsBehindStableV4 *int   `json:"commitsBehindStableV4,omitempty"`
+	BranchTipSHA          string `json:"branchTipSHA,omitempty"`
 
 	// CommitsBehindTarget is how far this hive sits behind what its OWN tag
 	// can deliver (behindTargetFor): branch HEAD for a branch tag, the
@@ -205,6 +213,19 @@ type MyHiveEntry struct {
 	BehindTargetFloatingSHA             string `json:"behindTargetFloatingSHA,omitempty"`
 	BehindTargetPendingImageCommits     int    `json:"behindTargetPendingImageCommits,omitempty"`
 	BehindTargetVerificationUnavailable bool   `json:"behindTargetVerificationUnavailable,omitempty"`
+	// BehindTargetPromotionGated is true when the tracked channel moves only
+	// by promotion (:stable). The branch tip moving past the channel is then
+	// the UPSTREAM channel's progress, not an image this hive is waiting on,
+	// so the dashboard must not render "N behind · building" for a hive that
+	// is current on its channel.
+	BehindTargetPromotionGated bool `json:"behindTargetPromotionGated,omitempty"`
+
+	// VersionMissingReason says WHY Version/GitHash are empty, so the Version
+	// cell never degrades to a bare "—": the hub knows whether it has never
+	// heard from the spoke, heard from it but got no version, or whether the
+	// hive sits on a push-only cluster it cannot inspect. Empty when a
+	// version is known.
+	VersionMissingReason string `json:"versionMissingReason,omitempty"`
 
 	// InactiveAgents is how many of this hive's agents are RUNNING but not
 	// doing any work — session gone, sitting on a login prompt, or producing
@@ -914,8 +935,16 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		stableLine = fallbackReleaseLine
 	}
 	for i := range result {
-		if count, known := commitsBehindStableLine(result[i].GitHash, stableLine, s.logger); known {
+		tipLine := stableLine
+		if result[i].GitBranch != "" && getLatestSHAForBranch(result[i].GitBranch) != "" {
+			tipLine = result[i].GitBranch
+		}
+		result[i].BranchTipSHA = getLatestSHAForBranch(tipLine)
+		if count, known := commitsBehindStableLine(result[i].GitHash, tipLine, s.logger); known {
 			result[i].CommitsBehindStableV4 = &count
+		}
+		if result[i].GitHash == "" && result[i].Version == "" {
+			result[i].VersionMissingReason = versionMissingReason(result[i].LastHeartbeat, s.clusterIsPullOnly(result[i].ClusterID))
 		}
 		// Measure "behind" against the target this spoke can actually reach —
 		// the same resolution the auto-upgrade engine uses — not the branch
@@ -944,6 +973,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			}
 			result[i].BehindTargetPendingImageCommits = bt.PendingImageCommits
 			result[i].BehindTargetVerificationUnavailable = bt.VerificationUnavailable
+			result[i].BehindTargetPromotionGated = bt.PromotionGated
 			if count, known := commitsBehindTarget(result[i].GitHash, bt.SHA, s.logger); known {
 				result[i].CommitsBehindTarget = &count
 			}

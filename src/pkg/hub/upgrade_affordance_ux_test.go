@@ -91,7 +91,7 @@ func TestNonOwnersGetPassiveUpdateAvailableBadge(t *testing.T) {
 func TestChannelCurrentButBranchImagePendingIsExplicit(t *testing.T) {
 	body := funcBody(t, "var buildRow = function(")
 	for _, want := range []string{
-		"var channelImagePending = !!(isCurrent && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':'",
+		"var channelImagePending = !!(isCurrent && !promotionGated && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':'",
 		"' image is published at ' + behindSHA",
 		"'. Upgrade will appear after a newer immutable image is published.'",
 		`channelImagePending ? '<span style="color:var(--yellow);margin-left:3px"`,

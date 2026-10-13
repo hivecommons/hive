@@ -200,7 +200,31 @@ func probeSpokeImageTag(tag string, logger *slog.Logger) (exists bool, verified 
 	}
 }
 
+// channelFollowsBranchTip reports whether a release channel is expected to
+// carry the newest published image of its source branch. candidate and edge
+// do: CI retags them on every green build, so a newer immutable per-SHA image
+// on the branch IS a newer channel build the floating tag has merely not
+// caught up with (#10719). stable does NOT: it is promotion-gated — it moves
+// only when promote-stable retags it after the soak — so a newer v5 image is
+// the CANDIDATE, not a stable build the tag is lagging. Walking stable
+// forward to the newest branch image bypassed the soak gate: the hub
+// instructed :stable spokes to upgrade to 3910932/9c1a585/6eed1b9 while the
+// channel sat at 0d399a6.
+func channelFollowsBranchTip(channel string) bool {
+	return channel != ReleaseChannelStable
+}
+
+// promotionGatedTarget is the target for a channel that does not follow its
+// branch tip: the floating tag itself, fully verified — the digest resolved,
+// so the image exists, and there is nothing newer the spoke may reach.
+func promotionGatedTarget(channel, floatingSHA string) behindTarget {
+	return behindTarget{SHA: shortSHA(floatingSHA), Ref: ":" + channel, Channel: true, FloatingSHA: shortSHA(floatingSHA), PromotionGated: true}
+}
+
 func channelPublishedImageTarget(branch, channel, floatingSHA string, logger *slog.Logger) behindTarget {
+	if !channelFollowsBranchTip(channel) {
+		return promotionGatedTarget(channel, floatingSHA)
+	}
 	target := behindTarget{SHA: shortSHA(floatingSHA), Ref: ":" + channel, Channel: true, FloatingSHA: shortSHA(floatingSHA)}
 	if branch == "" || target.FloatingSHA == "" {
 		return target
@@ -251,6 +275,9 @@ func channelPublishedImageTarget(branch, channel, floatingSHA string, logger *sl
 }
 
 func channelPublishedImageTargetNonBlocking(branch, channel, floatingSHA string, logger *slog.Logger) behindTarget {
+	if !channelFollowsBranchTip(channel) {
+		return promotionGatedTarget(channel, floatingSHA)
+	}
 	target := behindTarget{SHA: shortSHA(floatingSHA), Ref: ":" + channel, Channel: true, FloatingSHA: shortSHA(floatingSHA)}
 	if branch == "" || target.FloatingSHA == "" {
 		return target

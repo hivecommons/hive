@@ -535,6 +535,7 @@
     .nps-admin-response { border-top: 1px solid var(--border); padding: var(--sp-3) 0; }
     .nps-admin-response-meta { font-size: var(--fs-xs); color: var(--muted); }
     .nps-admin-response-text { font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; margin-top: var(--sp-2); }
+      .upgrade-ctl[aria-disabled="true"] { cursor: not-allowed !important; opacity: 0.5; pointer-events: auto; }
   </style>
 </head>
 <body>
@@ -3036,6 +3037,10 @@
        stable_branch on every poll: the line :stable follows moves at each
        rollover (v4 -> v5 at #7721 Phase 1), so it is never hard-coded here. */
     var STABLE_BRANCH_LABEL = '';
+    /* The promotion-gated release channel (hub ReleaseChannelStable). Named
+       once so the version cell's "is this channel tip-tracking?" test and the
+       channel block cannot drift on a string typo. */
+    var RELEASE_CHANNEL_STABLE = 'stable';
     var _latestSHAs = {};
     var _latestSHAMessages = {};
     var _latestImageStatus = {};
@@ -7189,6 +7194,30 @@
             ? ' (image verification unavailable; using the channel tag target)'
             : '';
           var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the newest verified image)' : '';
+          /* The row's TARGET is the commit whose image is still building —
+             there is nothing to pull yet. The control stays visible (the
+             operator must see that an upgrade is coming and to what) but is
+             disabled with the reason, instead of vanishing. Only when the
+             target IS the building tip: a target the hub already verified
+             (fall-forward to an older published image) remains clickable. */
+          var targetBuilding = !!(imageBuilding && branchLatest && branchTipSHA && sameShaJS(branchLatest, branchTipSHA) &&
+            !h.behindTargetVerificationUnavailable);
+          var targetBuildingTitle = 'image for ' + (branchLatest || '') + ' still building';
+          /* upgradeNowAttrs is the ONE source of the clickable upgrade
+             control's attributes, so the auto and manual paths cannot drift on
+             the handler, the keyboard binding or the disabled rendering. */
+          var upgradeNowAttrs = function(title, hover) {
+            if (targetBuilding) {
+              /* aria-disabled drives the dimmed/not-allowed look via the
+                 [aria-disabled="true"] rule on .upgrade-ctl. */
+              return ' class="upgrade-ctl" role="button" aria-disabled="true" tabindex="-1" title="' + escAttr(targetBuildingTitle) + '"';
+            }
+            return ' role="button" tabindex="0"' +
+              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')"' +
+              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')}"' +
+              (hover || '') + ' title="' + escAttr(title) + '"';
+          };
+
           var channelTipBehindCount = pendingImageCommits || ((h.commitsBehindStableV4 !== undefined && h.commitsBehindStableV4 !== null)
             ? h.commitsBehindStableV4
             : null);
@@ -7200,8 +7229,32 @@
              waiting-for-image state explicitly; when behindTargetSHA later
              advances, isCurrent becomes false and the normal Upgrade
              available/Upgrade now affordance appears. */
-          var channelImagePending = !!(isCurrent && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':' &&
+          /* NOT for a promotion-gated channel (:stable). Stable moves only
+             when promote-stable retags it after the soak, so "v5 tip has moved
+             past stable's commit" is the CANDIDATE's progress, not an image
+             this hive is waiting on — reading it as pending painted every
+             stable hive "796 behind · building" with an hourglass while the
+             hub itself said commitsBehindTarget 0 and grouped it Up to date.
+             The hub flags the channel (behindTargetPromotionGated); older
+             hubs are recognised by the :stable ref. */
+          var promotionGated = !!h.behindTargetPromotionGated || h.behindTargetRef === ':' + RELEASE_CHANNEL_STABLE;
+          var channelImagePending = !!(isCurrent && !promotionGated && h.behindTargetRef && h.behindTargetRef.charAt(0) === ':' &&
             behindSHA && branchTipSHA && !sameShaJS(behindSHA, branchTipSHA));
+          /* For a stable hive that IS current, the useful secondary fact is
+             how far the channel itself trails candidate — informational, not
+             an upgrade this hive can take. Read from the channel block so the
+             row and the header quote the same number. */
+          var stableLagNote = '';
+          if (isCurrent && promotionGated) {
+            var stableCT = null;
+            for (var sci = 0; sci < _channelTargets.length; sci++) {
+              if (_channelTargets[sci] && _channelTargets[sci].channel === RELEASE_CHANNEL_STABLE) { stableCT = _channelTargets[sci]; break; }
+            }
+            if (stableCT && stableCT.compare_to && stableCT.behind > 0) {
+              stableLagNote = '; the stable channel itself is ' + stableCT.behind + ' behind ' + stableCT.compare_to +
+                ' and advances only by promotion';
+            }
+          }
           var imagePendingStatus = _latestImageStatus[branchName] || 'pending';
           var imagePendingCount = channelTipBehindCount !== null ? (String(channelTipBehindCount) + ' commits') : 'newer commits';
           var imagePendingTitle = h.behindTargetRef + ' image is published at ' + behindSHA +
@@ -7211,7 +7264,7 @@
           var status = latestUnknown
             ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
             : channelImagePending ? '<span style="color:var(--yellow);margin-left:3px" title="' + escAttr(imagePendingTitle) + '">⏳</span>'
-            : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="' + escAttr('Current: running commit matches ' + behindRef + ' ' + (branchLatest || '')) + '">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="' + escAttr('Behind latest reachable image ' + (branchLatest || '') + ' (' + behindRef + ')') + '">↑</span>';
+            : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="' + escAttr('Current: running commit matches ' + behindRef + ' ' + (branchLatest || '') + stableLagNote) + '">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="' + escAttr('Behind latest reachable image ' + (branchLatest || '') + ' (' + behindRef + ')') + '">↑</span>';
           var upgradeIcon = '';
           if (isUpgrading) {
             var switchStale = isSwitching && _switchStartedAt[h.id] && (Date.now() - _switchStartedAt[h.id] > SWITCH_STALE_MS);
@@ -7265,10 +7318,9 @@
                branch name or commit subject carrying one would break out of the
                attribute. jsArg supplies its own quotes for the handler args. */
             upgradeIcon = '<span title="' + escAttr(queuedTitle) + '" style="' + UPGRADE_STATE_BADGE_STYLE + '">' + esc(queuedLabel) + '</span>' +
-              '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
-              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')"' +
-              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')}"' +
-              ' title="' + escAttr('Upgrade to ' + branchLatest + ' now instead of waiting for auto-upgrade' + buildingHint + pendingImageNote + floatingLagNote + verificationNote) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade now</span>';
+              '<span id="upgrade-' + escAttr(h.id) + '"' +
+              upgradeNowAttrs('Upgrade to ' + branchLatest + ' now instead of waiting for auto-upgrade' + buildingHint + pendingImageNote + floatingLagNote + verificationNote, '') +
+              ' style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade now</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
             /* Manual path (auto-upgrade OFF): a real primary-ish button, not
                text-with-an-underline. The bare word "Upgrade" read as a label,
@@ -7276,11 +7328,10 @@
                plus the box, the ↑ glyph and a hover state make it unmissably
                the thing to click. */
             var latestShort = branchLatest ? String(branchLatest).substring(0, 7) : 'latest';
-            upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
-              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')"' +
-              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ',' + jsArg(branchLatest || '') + ')}"' +
-              ' onmouseover="this.style.background=\'' + UPGRADE_BTN_HOVER_BG + '\'" onmouseout="this.style.background=\'' + UPGRADE_BTN_BG + '\'"' +
-              ' title="' + escAttr('Current: ' + sha + ' → Latest verified image: ' + branchLatest + buildingHint + pendingImageNote + floatingLagNote + verificationNote) + '" style="' + UPGRADE_BTN_STYLE + '">↑ Upgrade available → ' + esc(latestShort) + '</span>';
+            upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '"' +
+              upgradeNowAttrs('Current: ' + sha + ' → Latest verified image: ' + branchLatest + buildingHint + pendingImageNote + floatingLagNote + verificationNote,
+                targetBuilding ? '' : ' onmouseover="this.style.background=\'' + UPGRADE_BTN_HOVER_BG + '\'" onmouseout="this.style.background=\'' + UPGRADE_BTN_BG + '\'"') +
+              ' style="' + UPGRADE_BTN_STYLE + '">↑ Upgrade available → ' + esc(latestShort) + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted) {
             /* Non-owners get the STATE with no action: they cannot trigger the
                upgrade, so a button would be a lie, but saying nothing made a
@@ -7344,10 +7395,13 @@
           /* The drift dot rides on the SHA line, right of the current/behind
              glyph: "what commit is this hive on, and does it match the fleet" is
              one thought. It sets no extra line, so a drifting hive is no taller. */
+          /* commitsBehindStableV4 is measured against the hive's OWN branch
+             tip (branchTipSHA) on current hubs; older hubs sent the stable
+             line's tip, which _stableV4SHA still names. */
           var tipNote = '';
-          if (h.behindTargetRef && h.behindTargetRef !== STABLE_BRANCH_LABEL + ' tip' &&
+          if (h.behindTargetRef && h.behindTargetRef !== branchName + ' tip' &&
               h.commitsBehindStableV4 !== undefined && h.commitsBehindStableV4 !== null && h.commitsBehindStableV4 > 0) {
-            tipNote = '; ' + h.commitsBehindStableV4 + ' behind ' + STABLE_BRANCH_LABEL + ' tip ' + (_stableV4SHA || '') +
+            tipNote = '; ' + h.commitsBehindStableV4 + ' behind ' + branchName + ' tip ' + (h.branchTipSHA || _stableV4SHA || '') +
               ' — reachable only once ' + h.behindTargetRef + ' is promoted';
           }
           var behindBadgeWarnStyle = 'display:inline-block;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(210,153,34,0.14);color:var(--yellow);border:1px solid rgba(210,153,34,0.35);white-space:nowrap';
@@ -7375,7 +7429,22 @@
         /* No version reported, but drift can still exist (e.g. heartbeat-stale on a
            spoke too old to report a SHA) — surface the dot beside the dash so
            folding Drift into Version never hides a signal. */
-        } else { versionCell = '<span class="text-muted">—</span>' + (driftDot ? ' ' + driftDot : ''); }
+        } else { versionCell = '';
+          /* Say WHY the version is unknown, never a bare "—". The hub sends the
+             reason (versionMissingReason: never heard from the spoke / heard
+             from it but no version / push-only cluster the hub cannot inspect);
+             the age of the last heartbeat is appended here so "no data" and
+             "stale data" read differently at a glance. Older hubs send no
+             reason; derive the same two cases from lastHeartbeat. */
+          var vmReason = h.versionMissingReason || (h.lastHeartbeat ? 'heartbeat carries no version' : 'no heartbeat yet');
+          var vmSeen = h.lastHeartbeat ? timelineAgo(h.lastHeartbeat) : '';
+          var vmLabel = vmSeen ? (vmReason + ' · last seen ' + vmSeen) : vmReason;
+          var vmTitle = h.lastHeartbeat
+            ? 'The hub last heard from this hive ' + vmSeen + ' (' + fmtUserTS(h.lastHeartbeat) + ') and the heartbeat carried no build version — the spoke build predates version reporting, or the pod that replaced it has not come up.'
+            : 'The hub has never received a heartbeat from this hive, so it knows nothing about the build it runs. ' +
+              (vmReason.indexOf('push-only') === 0 ? 'Its cluster is push-only: the hub cannot reach in to look, so the spoke must come up and report in.' : 'Check that the spoke pod is running and can reach the hub.');
+          versionCell = '<span class="text-muted" style="font-size:var(--fs-2xs);white-space:nowrap" title="' + escAttr(vmTitle) + '">' + esc(vmLabel) + '</span>' + (driftDot ? ' ' + driftDot : '');
+        }
         var pendingBadge = (h.pendingRequestCount > 0 && (roleAtLeast(h.role, 'read-write')))
           ? '<span title="' + escAttr(h.pendingRequestCount + (h.pendingRequestCount === 1 ? ' pending access request' : ' pending access requests')) + '" style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:var(--fs-2xs);display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'
           : '';
