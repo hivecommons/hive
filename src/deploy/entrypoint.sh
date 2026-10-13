@@ -2186,9 +2186,8 @@ for path in (os.environ.get('HIVE_UID_MAP_PERSISTED', '/data/.hive/uid-map.json'
     # redirect above, instead of hanging through a timeout on every dial.
     #
     # sysctl net.ipv6.conf.all.disable_ipv6=1 was REJECTED as the mechanism:
-    # the image depends on IPv6 loopback internally (the gateway nginx binds
-    # `listen [::]:PORT` for ::1 clients — gateway_nginx_dualstack_test.go —
-    # and the proxy's self-lookup reads /proc/net/tcp6), and /proc/sys is
+    # the image depends on IPv6 loopback internally (the proxy's self-lookup
+    # reads /proc/net/tcp6), and /proc/sys is
     # read-only in most container runtimes anyway.
     #
     # A kernel with no IPv6 stack at all (/proc/sys/net/ipv6 absent) has no
