@@ -1,0 +1,1 @@
+- Hub-managed upgrades now patch a spoke Deployment directly after the heartbeat fallback stays armed too long, so a crash-looping spoke that never reaches its self-upgrade minimum uptime can still receive the target image.

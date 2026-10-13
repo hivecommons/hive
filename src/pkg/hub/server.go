@@ -1120,6 +1120,11 @@ type HubServer struct {
 	// Key: hive ID, value: target SHA.  Cleared when the spoke reports the
 	// target SHA, proving the upgrade completed.
 	heartbeatUpgrade map[string]string
+	// heartbeatFallbackDirectPatch records direct Deployment patches attempted
+	// after a hub-managed heartbeat fallback stayed armed too long. It is
+	// in-memory throttle state only: a hub restart may try once more, which is
+	// acceptable for an idempotent set-image repair.
+	heartbeatFallbackDirectPatch map[string]heartbeatFallbackDirectPatchRecord
 
 	// uncollectibleUpgradeNoted de-duplicates the timeline entry written when
 	// the hub declines to arm an upgrade a hive cannot collect. Key: hive ID,
@@ -1512,26 +1517,27 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// immediately below by loadGenerations, which reads any persisted
 		// rotation off the PVC. It is set here too so the field is never nil
 		// between struct construction and that load.
-		keyGenerations:          legacyGenerationSet(secret),
-		clusters:                loadClusters(logger),
-		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
-		poolReplenishHold:       make(map[string]time.Time),
-		heartbeatUpgrade:        make(map[string]string),
-		heartbeatSwitchTag:      make(map[string]string),
-		heartbeatSwitchSent:     make(map[string]switchSend),
-		clusterUnreachableUntil: make(map[string]time.Time),
-		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
-		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
-		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
-		hubBanners:              make(map[string]*HubBannerEntry),
-		spokeProxyAuthCache:     make(map[string]spokeProxyAuthEntry),
-		topRepoRefreshEnabled:   true,
-		authRolloutSeen:         make(map[string]authRolloutEntry),
-		timeline:                newTimelineStore(),
-		journey:                 newJourneyStore(),
-		alerts:                  newAlertState(),
-		revokedSessions:         newRevokedSessions(),
-		urlHealth:               newURLHealthState(),
+		keyGenerations:               legacyGenerationSet(secret),
+		clusters:                     loadClusters(logger),
+		heartbeatHealth:              make(map[string]*HeartbeatHealthEntry),
+		poolReplenishHold:            make(map[string]time.Time),
+		heartbeatUpgrade:             make(map[string]string),
+		heartbeatFallbackDirectPatch: make(map[string]heartbeatFallbackDirectPatchRecord),
+		heartbeatSwitchTag:           make(map[string]string),
+		heartbeatSwitchSent:          make(map[string]switchSend),
+		clusterUnreachableUntil:      make(map[string]time.Time),
+		pendingWebhooks:              make(map[string]*pendingWebhookEntry),
+		pendingGitHubAppConfigs:      make(map[string]*HeartbeatGitHubAppConfig),
+		pendingGateways:              make(map[string]*HeartbeatGatewayConfig),
+		hubBanners:                   make(map[string]*HubBannerEntry),
+		spokeProxyAuthCache:          make(map[string]spokeProxyAuthEntry),
+		topRepoRefreshEnabled:        true,
+		authRolloutSeen:              make(map[string]authRolloutEntry),
+		timeline:                     newTimelineStore(),
+		journey:                      newJourneyStore(),
+		alerts:                       newAlertState(),
+		revokedSessions:              newRevokedSessions(),
+		urlHealth:                    newURLHealthState(),
 		// /api/reach dependencies (#3994): the stub reporter answers an
 		// empty fleet until phase 2a's store is wired via SetReachReporter;
 		// the ancestry backend defaults to the compare-API adapter over
@@ -3008,6 +3014,55 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				}
 				s.mu.Unlock()
 				hbTarget = reach.SHA
+			}
+		}
+	}
+	if hbTarget != "" {
+		var cluster *ClusterConfig
+		if saasHive != nil {
+			cluster = s.clusterForHive(saasHive)
+		}
+		kubectlReachable := cluster != nil && cluster.KubectlReachable()
+		s.mu.RLock()
+		lastDirectPatch := s.heartbeatFallbackDirectPatch[payload.HiveID]
+		s.mu.RUnlock()
+		shouldPatch, directPatchReason := shouldPatchHeartbeatFallbackDirectly(heartbeatFallbackDirectPatchInput{
+			HubManaged:       saasHive != nil && !spokeManaged,
+			Paused:           spokeUpgradesPausedNow,
+			DigestPinned:     digestPinnedNow,
+			KubectlReachable: kubectlReachable,
+			Target:           hbTarget,
+			Current:          payload.GitHash,
+			UpgradeStarted:   entry.UpgradeStartedAt,
+			Now:              time.Now(),
+			LastPatch:        lastDirectPatch,
+		})
+		if shouldPatch {
+			attempts := lastDirectPatch.Attempts + 1
+			now := time.Now()
+			s.mu.Lock()
+			if s.heartbeatFallbackDirectPatch == nil {
+				s.heartbeatFallbackDirectPatch = make(map[string]heartbeatFallbackDirectPatchRecord)
+			}
+			s.heartbeatFallbackDirectPatch[payload.HiveID] = heartbeatFallbackDirectPatchRecord{
+				Target:   hbTarget,
+				At:       now,
+				Attempts: attempts,
+			}
+			s.mu.Unlock()
+			s.logger.Info("heartbeat fallback exhausted — patching Deployment image directly",
+				"hive_id", payload.HiveID,
+				"from", payload.GitHash,
+				"to", hbTarget,
+				"attempts", attempts)
+			if err := s.patchHeartbeatFallbackDirectly(saasHive, cluster, hbTarget); err != nil {
+				s.logger.Warn("heartbeat fallback direct Deployment patch failed",
+					"hive_id", payload.HiveID,
+					"from", payload.GitHash,
+					"to", hbTarget,
+					"attempts", attempts,
+					"reason", directPatchReason,
+					"error", err)
 			}
 		}
 	}
