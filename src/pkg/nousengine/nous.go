@@ -70,10 +70,11 @@ func init() {
 // Nous is the default engine: the Nous framework run through bin/nous-runner.sh
 // with the inline dispatcher unless the hive resolved sdk.
 type Nous struct {
-	layout      nousstore.Layout
-	dispatcher  string
-	binDir      string
-	campaignDir string
+	layout         nousstore.Layout
+	dispatcher     string
+	binDir         string
+	campaignDir    string
+	fetchAllowlist []string
 }
 
 // NewNous builds the Nous engine. An empty Dispatcher means the default; an
@@ -99,7 +100,7 @@ func NewNous(s Settings) (*Nous, error) {
 	if cd == "" {
 		cd = DefaultCampaignDir
 	}
-	return &Nous{layout: nousstore.New(root), dispatcher: d, binDir: bin, campaignDir: cd}, nil
+	return &Nous{layout: nousstore.New(root), dispatcher: d, binDir: bin, campaignDir: cd, fetchAllowlist: s.FetchAllowlist}, nil
 }
 
 // Name implements Engine.
@@ -127,6 +128,7 @@ func (n *Nous) Invocation(c Campaign) (Invocation, error) {
 		runnerDataDirEnv + "=" + n.layout.Root,
 		nousstore.EnvRoot + "=" + n.layout.Root,
 		runnerCampaignEnv + "=" + def,
+		config.NousFetchAllowlistEnv + "=" + fetchAllowlistEnvValue(n.fetchAllowlist),
 	}
 	if c.ID != "" {
 		env = append(env, runnerRunIDEnv+"="+c.ID)

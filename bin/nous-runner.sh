@@ -162,6 +162,36 @@ if [ "$AUTO_APPROVE" = "true" ]; then
   APPROVE_FLAG="--auto-approve"
 fi
 
+# Pinned dependencies (RFC #11585 part 7, #11700): before the engine starts,
+# `hive nous-setup` fetches the campaign's declared dependencies — repos by
+# commit, files by sha256 — from allowlisted hosts only (HIVE_NOUS_FETCH_ALLOWLIST,
+# exported by the hive from nous.fetch_allowlist), verifies every pin and
+# records the resolved versions in $NOUS_DATA_DIR/<run-id>/dependencies.json.
+# Any refusal or mismatch ends the campaign here, before compute is spent.
+# This is the ONLY place the runner fetches anything; do not add curl/pip/git
+# fetches elsewhere in this script (pkg/nousdeps guard_test.go enforces it).
+RUN_ID="$(basename "$WORK_DIR")"
+HIVE_BIN="${HIVE_BIN:-hive}"
+DEPS_ENV_FILE="$NOUS_DATA_DIR/$RUN_ID/dependencies.env"
+if command -v "$HIVE_BIN" >/dev/null 2>&1; then
+  if ! "$HIVE_BIN" nous-setup --campaign "$CAMPAIGN_CONFIG" --run-id "$RUN_ID" --root "$NOUS_DATA_DIR"; then
+    echo "[nous-runner] ERROR: dependency setup refused or failed — campaign not started"
+    exit 1
+  fi
+  if [ -f "$DEPS_ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$DEPS_ENV_FILE"
+    set +a
+  fi
+else
+  if [ -n "$(read_yaml_field "$CAMPAIGN_CONFIG" "campaign.dependencies")" ]; then
+    echo "[nous-runner] ERROR: campaign declares dependencies but '$HIVE_BIN' is not on PATH to fetch them — refusing to start"
+    exit 1
+  fi
+  echo "[nous-runner] WARN: '$HIVE_BIN' not found; no dependency record will be written for this run"
+fi
+
 echo "[nous-runner] invoking run_campaign.py (agent=$NOUS_AGENT, auto_approve=$AUTO_APPROVE, timeout=${TIMEOUT_SEC}s)"
 NOUS_HIVE_MODE="$EFFECTIVE_MODE" \
 NOUS_HIVE_SCOPE="$EFFECTIVE_SCOPE" \
@@ -169,7 +199,7 @@ NOUS_GATE_SCRIPT="$GATE_SCRIPT" \
 NOUS_DATA_DIR="$NOUS_DATA_DIR" \
 "$NOUS_PYTHON" "$NOUS_DIR/run_campaign.py" \
   "$CAMPAIGN_CONFIG" \
-  --run-id "$(basename "$WORK_DIR")" \
+  --run-id "$RUN_ID" \
   --max-iterations 1 \
   --timeout "$TIMEOUT_SEC" \
   $APPROVE_FLAG \

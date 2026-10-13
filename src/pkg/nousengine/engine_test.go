@@ -63,7 +63,7 @@ func TestNewNousDispatcher(t *testing.T) {
 }
 
 func TestNousInvocation(t *testing.T) {
-	n, err := NewNous(Settings{Root: "/srv/nous", Dispatcher: "sdk", BinDir: "/opt/bin", CampaignDir: "/opt/campaigns"})
+	n, err := NewNous(Settings{Root: "/srv/nous", Dispatcher: "sdk", BinDir: "/opt/bin", CampaignDir: "/opt/campaigns", FetchAllowlist: []string{"github.com", "huggingface.co"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +85,7 @@ func TestNousInvocation(t *testing.T) {
 		"NOUS_RUN_ID=exp-1",
 		"NOUS_HIVE_MODE=suggest",
 		"NOUS_HIVE_SCOPE=repo",
+		config.NousFetchAllowlistEnv + "=github.com,huggingface.co",
 	} {
 		if !contains(inv.Env, want) {
 			t.Errorf("Env missing %q: %v", want, inv.Env)
@@ -282,9 +283,21 @@ func TestFakeRecordsCalls(t *testing.T) {
 
 func TestHiveEnv(t *testing.T) {
 	got := HiveEnv(Settings{})
-	want := map[string]string{config.NousDispatcherEnv: config.DefaultNousDispatcher, nousstore.EnvRoot: nousstore.DefaultRoot}
+	want := map[string]string{
+		config.NousDispatcherEnv:     config.DefaultNousDispatcher,
+		nousstore.EnvRoot:            nousstore.DefaultRoot,
+		config.NousFetchAllowlistEnv: strings.Join(config.DefaultNousFetchAllowlist, config.NousFetchAllowlistSeparator),
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("HiveEnv(empty) = %v, want %v", got, want)
+	}
+	// An explicitly empty allowlist (deny all) must not export a blank value,
+	// which the subcommand would read as "unset → default".
+	if got = HiveEnv(Settings{FetchAllowlist: []string{}}); got[config.NousFetchAllowlistEnv] != config.NousFetchAllowlistSeparator {
+		t.Fatalf("deny-all allowlist exported as %q", got[config.NousFetchAllowlistEnv])
+	}
+	if got = HiveEnv(Settings{FetchAllowlist: []string{"mirror.example"}}); got[config.NousFetchAllowlistEnv] != "mirror.example" {
+		t.Fatalf("allowlist exported as %q", got[config.NousFetchAllowlistEnv])
 	}
 	got = HiveEnv(Settings{Root: " /srv/nous ", Dispatcher: "SDK"})
 	if got[config.NousDispatcherEnv] != config.NousDispatcherSDK || got[nousstore.EnvRoot] != "/srv/nous" {

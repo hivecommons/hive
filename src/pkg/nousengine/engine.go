@@ -150,6 +150,9 @@ type Settings struct {
 	BinDir string
 	// CampaignDir is where the campaign definitions live. Empty → DefaultCampaignDir.
 	CampaignDir string
+	// FetchAllowlist is the resolved dependency fetch allowlist
+	// (config.NousConfig.ResolvedFetchAllowlist). Nil → the default list.
+	FetchAllowlist []string
 }
 
 var (
@@ -202,9 +205,10 @@ func New(name string, s Settings) (Engine, error) {
 
 // HiveEnv is the hive-wide experimentation environment exported to every
 // experimenter agent so its helper scripts (bin/nous-runner.sh) see the same
-// dispatcher and data root the hive resolved: config.NousDispatcherEnv and
-// nousstore.EnvRoot. The per-agent engine name (config.NousEngineEnv) is
-// added by the agent manager from that agent's own config.
+// dispatcher, data root and dependency fetch allowlist the hive resolved:
+// config.NousDispatcherEnv, nousstore.EnvRoot and config.NousFetchAllowlistEnv.
+// The per-agent engine name (config.NousEngineEnv) is added by the agent
+// manager from that agent's own config.
 func HiveEnv(s Settings) map[string]string {
 	d := strings.ToLower(strings.TrimSpace(s.Dispatcher))
 	if !config.ValidNousDispatchers[d] {
@@ -215,7 +219,22 @@ func HiveEnv(s Settings) map[string]string {
 		root = nousstore.DefaultRoot
 	}
 	return map[string]string{
-		config.NousDispatcherEnv: d,
-		nousstore.EnvRoot:        root,
+		config.NousDispatcherEnv:     d,
+		nousstore.EnvRoot:            root,
+		config.NousFetchAllowlistEnv: fetchAllowlistEnvValue(s.FetchAllowlist),
 	}
+}
+
+// fetchAllowlistEnvValue serialises the resolved allowlist for
+// config.NousFetchAllowlistEnv. Nil means "not resolved" and gets the default
+// list; an explicitly empty list — deny everything — is exported as the
+// separator alone, because a blank value would read as unset downstream.
+func fetchAllowlistEnvValue(hosts []string) string {
+	if hosts == nil {
+		hosts = config.DefaultNousFetchAllowlist
+	}
+	if len(hosts) == 0 {
+		return config.NousFetchAllowlistSeparator
+	}
+	return strings.Join(hosts, config.NousFetchAllowlistSeparator)
 }

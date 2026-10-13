@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"sort"
 	"strconv"
@@ -68,6 +69,31 @@ const (
 	NousEngineEnv = "HIVE_NOUS_ENGINE"
 )
 
+// Pinned campaign dependencies (RFC #11585 part 7, #11700).
+//
+// A campaign may declare dependencies — a target repo pinned by commit, data
+// files pinned by sha256 — that `hive nous-setup` (pkg/nousdeps) fetches
+// before the engine starts. Fetches are limited to an exact-hostname
+// allowlist, modelled on runs.spektacular.recheck.egress_allowlist, and to
+// the setup step: once setup finishes the agent needs no new network access.
+const (
+	// NousFetchAllowlistEnv overrides nous.fetch_allowlist at runtime as a
+	// comma-separated list of hostnames (env > yaml > default). It is also
+	// the name the hive exports the RESOLVED list under to experimenter
+	// agents, so `hive nous-setup` inside the agent pane enforces the same
+	// list the operator configured.
+	NousFetchAllowlistEnv = "HIVE_NOUS_FETCH_ALLOWLIST"
+
+	// NousFetchAllowlistSeparator joins hosts in NousFetchAllowlistEnv.
+	NousFetchAllowlistSeparator = ","
+)
+
+// DefaultNousFetchAllowlist is the conservative default: only the host the
+// hive's own repos live on. It applies when nous.fetch_allowlist is absent
+// (nil) and NousFetchAllowlistEnv is unset. An explicitly empty yaml list
+// denies every fetch.
+var DefaultNousFetchAllowlist = []string{"github.com"}
+
 // ValidExperimentEngines is the closed set `agents.<name>.engine` may name.
 var ValidExperimentEngines = map[string]bool{ExperimentEngineNous: true}
 
@@ -82,6 +108,59 @@ type NousConfig struct {
 	// Dispatcher selects how Nous performs its LLM work: inline (default)
 	// or sdk. See NousDispatcherInline / NousDispatcherSDK.
 	Dispatcher string `yaml:"dispatcher,omitempty" json:"dispatcher,omitempty"`
+	// FetchAllowlist is the exact hostnames `hive nous-setup` may fetch
+	// campaign dependencies from. Absent (nil) applies
+	// DefaultNousFetchAllowlist; an explicitly empty list denies all fetches.
+	FetchAllowlist []string `yaml:"fetch_allowlist,omitempty" json:"fetch_allowlist,omitempty"`
+}
+
+// ResolvedFetchAllowlist resolves the dependency fetch allowlist with
+// precedence env > yaml > default. Hosts are lower-cased, trimmed and
+// de-duplicated; order is preserved.
+func (n NousConfig) ResolvedFetchAllowlist() []string {
+	return n.ResolveFetchAllowlist(os.Getenv)
+}
+
+// ResolveFetchAllowlist is ResolvedFetchAllowlist with an injectable
+// environment reader (nil skips the env tier). A set but blank env value is
+// treated as unset so `HIVE_NOUS_FETCH_ALLOWLIST=` cannot silently deny
+// everything; use an empty yaml list for that.
+func (n NousConfig) ResolveFetchAllowlist(getenv func(string) string) []string {
+	if getenv != nil {
+		if raw := strings.TrimSpace(getenv(NousFetchAllowlistEnv)); raw != "" {
+			return normalizeFetchAllowlist(strings.Split(raw, NousFetchAllowlistSeparator))
+		}
+	}
+	if n.FetchAllowlist != nil {
+		return normalizeFetchAllowlist(n.FetchAllowlist)
+	}
+	return normalizeFetchAllowlist(DefaultNousFetchAllowlist)
+}
+
+func normalizeFetchAllowlist(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	seen := map[string]bool{}
+	for _, h := range hosts {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+		out = append(out, h)
+	}
+	return out
+}
+
+// ValidateFetchAllowlistHost rejects anything that is not an exact DNS
+// hostname: wildcards, schemes, paths, ports, IP literals and loopback names.
+// The rule matches runs.spektacular.recheck.egress_allowlist so operators
+// learn one shape.
+func ValidateFetchAllowlistHost(host string) error {
+	h := strings.TrimSpace(host)
+	if h == "" || h != strings.ToLower(h) || strings.ContainsAny(h, "/:*@?# ") || net.ParseIP(h) != nil || h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return fmt.Errorf("fetch_allowlist entry %q must be an exact lowercase DNS hostname", host)
+	}
+	return nil
 }
 
 // GatePollInterval resolves the pending-gate poll cadence with precedence
@@ -128,11 +207,17 @@ func normalizeNousDispatcher(v string) string {
 	return strings.ToLower(strings.TrimSpace(v))
 }
 
-// Validate rejects a yaml dispatcher outside ValidNousDispatchers. Empty is
-// valid and means "default".
+// Validate rejects a yaml dispatcher outside ValidNousDispatchers and a
+// fetch_allowlist entry that is not an exact hostname. Empty is valid and
+// means "default".
 func (n NousConfig) Validate() error {
 	if v := normalizeNousDispatcher(n.Dispatcher); v != "" && !ValidNousDispatchers[v] {
 		return fmt.Errorf("nous: invalid dispatcher %q (must be %s, or empty for %s)", n.Dispatcher, sortedKeys(ValidNousDispatchers), DefaultNousDispatcher)
+	}
+	for _, h := range n.FetchAllowlist {
+		if err := ValidateFetchAllowlistHost(h); err != nil {
+			return fmt.Errorf("nous: %w", err)
+		}
 	}
 	return nil
 }

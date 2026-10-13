@@ -28,3 +28,86 @@ func TestNousGatePollInterval(t *testing.T) {
 		})
 	}
 }
+
+func TestNousResolveFetchAllowlist(t *testing.T) {
+	env := func(v string) func(string) string {
+		return func(k string) string {
+			if k == NousFetchAllowlistEnv {
+				return v
+			}
+			return ""
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		env  string
+		yaml []string
+		want []string
+	}{
+		{"default when nil", "", nil, []string{"github.com"}},
+		{"explicit empty yaml denies all", "", []string{}, []string{}},
+		{"yaml wins over default", "", []string{"github.com", "huggingface.co"}, []string{"github.com", "huggingface.co"}},
+		{"yaml normalised and deduped", "", []string{" GitHub.com ", "github.com", ""}, []string{"github.com"}},
+		{"env wins over yaml", "huggingface.co, Objects.githubusercontent.com", []string{"github.com"}, []string{"huggingface.co", "objects.githubusercontent.com"}},
+		{"blank env falls through", "   ", []string{"example.org"}, []string{"example.org"}},
+		{"env of only separators yields empty", ",,", nil, []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := (NousConfig{FetchAllowlist: tc.yaml}).ResolveFetchAllowlist(env(tc.env))
+			if len(got) != len(tc.want) {
+				t.Fatalf("ResolveFetchAllowlist() = %q, want %q", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("ResolveFetchAllowlist()[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+	t.Run("nil getenv skips env tier", func(t *testing.T) {
+		t.Setenv(NousFetchAllowlistEnv, "evil.example")
+		if got := (NousConfig{}).ResolveFetchAllowlist(nil); len(got) != 1 || got[0] != "github.com" {
+			t.Fatalf("ResolveFetchAllowlist(nil) = %q, want default", got)
+		}
+	})
+	t.Run("ResolvedFetchAllowlist reads the process env", func(t *testing.T) {
+		t.Setenv(NousFetchAllowlistEnv, "mirror.example")
+		if got := (NousConfig{}).ResolvedFetchAllowlist(); len(got) != 1 || got[0] != "mirror.example" {
+			t.Fatalf("ResolvedFetchAllowlist() = %q", got)
+		}
+	})
+}
+
+func TestNousValidateFetchAllowlist(t *testing.T) {
+	for _, tc := range []struct {
+		host string
+		ok   bool
+	}{
+		{"github.com", true},
+		{"objects.githubusercontent.com", true},
+		{"", false},
+		{"GitHub.com", false},
+		{"*.github.com", false},
+		{"https://github.com", false},
+		{"github.com/owner", false},
+		{"github.com:443", false},
+		{"127.0.0.1", false},
+		{"::1", false},
+		{"localhost", false},
+		{"svc.localhost", false},
+		{"user@github.com", false},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			err := (NousConfig{FetchAllowlist: []string{tc.host}}).Validate()
+			if tc.ok && err != nil {
+				t.Fatalf("Validate(%q) = %v, want nil", tc.host, err)
+			}
+			if !tc.ok && err == nil {
+				t.Fatalf("Validate(%q) = nil, want error", tc.host)
+			}
+		})
+	}
+	if err := (NousConfig{}).Validate(); err != nil {
+		t.Fatalf("empty config: %v", err)
+	}
+}

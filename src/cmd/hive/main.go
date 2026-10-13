@@ -61,6 +61,7 @@ import (
 	"github.com/hivecommons/hive/pkg/mint"
 	"github.com/hivecommons/hive/pkg/msteams"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/nousdeps"
 	"github.com/hivecommons/hive/pkg/nousengine"
 	"github.com/hivecommons/hive/pkg/nousstore"
 	"github.com/hivecommons/hive/pkg/persona"
@@ -2112,13 +2113,20 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 // dispatcher (HIVE_NOUS_DISPATCHER > nous.dispatcher > inline) and the
 // durable Nous root (HIVE_NOUS_DATA_DIR > data.nous_dir > /data/nous). Both
 // use the same precedence as the hive's own readers so the agent and the
-// dashboard never disagree about where a campaign's files live.
+// dashboard never disagree about where a campaign's files live. The resolved
+// dependency fetch allowlist (HIVE_NOUS_FETCH_ALLOWLIST > nous.fetch_allowlist
+// > github.com) rides along so `hive nous-setup` in the agent pane enforces
+// the operator's list (RFC #11585 part 7).
 func experimentAgentEnv(cfg *config.Config, getenv func(string) string) map[string]string {
 	if cfg == nil {
 		return nil
 	}
 	layout := nousstore.Resolve(cfg.Data.NousDir, getenv)
-	return nousengine.HiveEnv(nousengine.Settings{Root: layout.Root, Dispatcher: cfg.Nous.ResolveDispatcher(getenv)})
+	return nousengine.HiveEnv(nousengine.Settings{
+		Root:           layout.Root,
+		Dispatcher:     cfg.Nous.ResolveDispatcher(getenv),
+		FetchAllowlist: cfg.Nous.ResolveFetchAllowlist(getenv),
+	})
 }
 
 // taskMCPURLForAgents is the bare task MCP endpoint handed to hub-launched
@@ -3388,6 +3396,7 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	deps.ensureNousDirs(nousLayout, b.logger)
 	b.nousState = deps.loadNousState(nousLayout, b.logger)
 	b.nousState.SnapshotDir = nousLayout.SnapshotDir()
+	publishNousDependencyStatus(b.nousState, nousLayout, b.cfg.Nous.ResolvedFetchAllowlist())
 	b.nousState.PersistPanel = nousPanelPersister(nousLayout, time.Now)
 	wireNousGate(b.nousState, nousLayout, b.notifier, b.logger)
 	if deps.startNousGateWatch != nil {
@@ -10475,6 +10484,11 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Claude Code Stop hook in phase 1; see pkg/advisor/cli.go. Talks
 		// only to the hive's loopback advise endpoint and fails open.
 		return true, advisor.RunHook(args[1:], os.Stdin, stdout, stderr)
+	case nousdeps.Subcommand:
+		// Run from inside an experimenter's pane by bin/nous-runner.sh before
+		// the engine starts; see pkg/nousdeps/cli.go. Fetches the campaign's
+		// pinned dependencies from allowlisted hosts only and records them.
+		return true, nousdeps.Run(args[1:], stdout, stderr)
 	default:
 		return false, 0
 	}
