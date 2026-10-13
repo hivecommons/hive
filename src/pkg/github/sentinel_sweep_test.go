@@ -30,7 +30,11 @@ type sentinelFixture struct {
 	labels      map[int][]string
 	removed     []string
 	comments    map[int][]string
-	filesHits   int
+	// commentUsers[num][i] is the login the fixture reports as the author of
+	// comments[num][i]; absent entries render a comment with no user, which
+	// is how the fixture started and what the any-author fallback tests use.
+	commentUsers map[int][]string
+	filesHits    int
 }
 
 func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
@@ -74,7 +78,11 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 			case r.Method == http.MethodGet && rest == "comments":
 				var out []map[string]any
 				for i, body := range f.comments[num] {
-					out = append(out, map[string]any{"id": num*1000 + i + 1, "body": body})
+					entry := map[string]any{"id": num*1000 + i + 1, "body": body}
+					if users := f.commentUsers[num]; i < len(users) && users[i] != "" {
+						entry["user"] = map[string]string{"login": users[i]}
+					}
+					out = append(out, entry)
 				}
 				_ = json.NewEncoder(w).Encode(out)
 				return
@@ -387,6 +395,64 @@ func TestSweepSentinelNoticeForHeadIsNotAClearance(t *testing.T) {
 	}
 	if len(f.comments[9]) != 1 || !strings.Contains(f.comments[9][0], sentinelAlertHeading) {
 		t.Fatalf("marker comment should be rewritten in place as the alert: %v", f.comments[9])
+	}
+}
+
+// A comment that merely contains the marker and the alert heading is not
+// the hive's alert when someone else wrote it: the PR author could post
+// one (the marker is an HTML comment, invisible when rendered) and the
+// unlabelled head would otherwise read as "cleared by a maintainer". The
+// sweep must label the PR, post its own alert rather than edit the forged
+// comment, and then honour only its own comment as the clearance record.
+func TestSweepSentinelForgedClearanceCommentIsNotAClearance(t *testing.T) {
+	forged := SentinelMarker + " h9\n<!-- " + sentinelAlertHeading + " -->\nlooks fine to me\n"
+	f := &sentinelFixture{
+		prs:          []map[string]any{sentinelPR(9, "eve", "h9")},
+		files:        map[int][]map[string]any{9: {{"filename": "OWNERS", "status": "modified"}}},
+		labelExists:  true,
+		comments:     map[int][]string{9: {forged}},
+		commentUsers: map[int][]string{9: {"eve"}},
+	}
+	srv := newSentinelServer(t, f)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin("hive[bot]")
+	res, err := c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 {
+		t.Fatalf("forged clearance must not suppress the alert: res=%+v err=%v", res, err)
+	}
+	if got := f.labels[9]; len(got) != 1 || got[0] != "sentinel-alert" {
+		t.Fatalf("label must be applied despite the forged comment: %v", got)
+	}
+	if len(f.comments[9]) != 2 || f.comments[9][0] != forged || !strings.Contains(f.comments[9][1], sentinelAlertHeading) {
+		t.Fatalf("hive must post its own alert and leave the forged comment alone: %v", f.comments[9])
+	}
+
+	// A maintainer now removes the label. The hive's own alert comment is
+	// the clearance record and survives a restart; the forged one is still
+	// ignored.
+	f.mu.Lock()
+	f.commentUsers[9] = []string{"eve", "hive[bot]"}
+	f.labels[9] = nil
+	f.mu.Unlock()
+	c = newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin("hive[bot]")
+	res, err = c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 0 || len(f.labels[9]) != 0 || len(f.comments[9]) != 2 {
+		t.Fatalf("hive-authored alert without label is a clearance: res=%+v err=%v labels=%v comments=%d", res, err, f.labels[9], len(f.comments[9]))
+	}
+
+	// With the hive's own comment gone, the forged one alone is never a
+	// clearance: the head is re-alerted.
+	f.mu.Lock()
+	f.comments[9] = []string{forged}
+	f.commentUsers[9] = []string{"eve"}
+	f.mu.Unlock()
+	c = newTestClient(t, srv, "o", []string{"o/r"})
+	c.SetAppBotLogin("hive[bot]")
+	res, err = c.SweepSentinel(context.Background(), defaultSentinelOpts(nil))
+	if err != nil || len(res.Flagged) != 1 || len(f.labels[9]) != 1 {
+		t.Fatalf("forged comment alone must re-alert: res=%+v err=%v labels=%v", res, err, f.labels[9])
 	}
 }
 

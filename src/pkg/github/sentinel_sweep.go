@@ -222,7 +222,7 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	}
 	event := SentinelSweepEvent{Number: number, Author: author, Title: pr.GetTitle(), HeadSHA: head, Findings: findings, Blocked: decision.Block, TrustedReason: decision.TrustedReason}
 	marker := SentinelMarker + " " + head
-	comment, posted, err := findMarkerComment(ctx, c.client, owner, repo, number, marker)
+	comment, posted, err := c.findOwnMarkerComment(ctx, owner, repo, number, marker)
 	if err != nil {
 		return SentinelSweepEvent{}, false, err
 	}
@@ -282,7 +282,9 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 // path, so "alert comment for this head present, label absent" can only mean a
 // human removed it. A trusted-author notice for the same head does not count:
 // if the operator later turns on trusted_authors_block the head still owes a
-// label.
+// label. The caller must have found the comment with findOwnMarkerComment:
+// only a comment the hive itself wrote carries that meaning, since anyone
+// who can comment on the PR can type the marker and the heading.
 func sentinelClearedByMaintainer(comment *gh.IssueComment, posted bool) bool {
 	if !posted || comment == nil {
 		return false
@@ -335,6 +337,23 @@ func listPRFilesWithPatch(ctx context.Context, client *gh.Client, owner, repo st
 }
 
 func findMarkerComment(ctx context.Context, client *gh.Client, owner, repo string, number int, marker string) (*gh.IssueComment, bool, error) {
+	return findMarkerCommentWhere(ctx, client, owner, repo, number, marker, nil)
+}
+
+// findOwnMarkerComment is findMarkerComment restricted to comments one of
+// the hive's own accounts wrote. The sentinel reads state back from its
+// marker comment (which head was alerted on, whether a maintainer cleared
+// it), and any PR author can post a comment containing the marker text, so
+// a comment of unverified authorship must not be read as the hive's. A hive
+// that cannot name its own accounts keeps the legacy any-author rule, the
+// same fallback markerAuthorTrusted applies to the label-approval markers.
+func (c *Client) findOwnMarkerComment(ctx context.Context, owner, repo string, number int, marker string) (*gh.IssueComment, bool, error) {
+	return findMarkerCommentWhere(ctx, c.client, owner, repo, number, marker, func(comment *gh.IssueComment) bool {
+		return c.markerAuthorTrusted(comment.GetUser())
+	})
+}
+
+func findMarkerCommentWhere(ctx context.Context, client *gh.Client, owner, repo string, number int, marker string, accept func(*gh.IssueComment) bool) (*gh.IssueComment, bool, error) {
 	opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for {
 		comments, resp, err := client.Issues.ListComments(ctx, owner, repo, number, opts)
@@ -342,9 +361,13 @@ func findMarkerComment(ctx context.Context, client *gh.Client, owner, repo strin
 			return nil, false, fmt.Errorf("listing comments for sentinel marker: %w", err)
 		}
 		for _, comment := range comments {
-			if strings.Contains(comment.GetBody(), marker) {
-				return comment, true, nil
+			if !strings.Contains(comment.GetBody(), marker) {
+				continue
 			}
+			if accept != nil && !accept(comment) {
+				continue
+			}
+			return comment, true, nil
 		}
 		if resp == nil || resp.NextPage == 0 {
 			return nil, false, nil
