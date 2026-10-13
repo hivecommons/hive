@@ -17,6 +17,20 @@ lets the hourly promotion workflow catch `stable` up to `candidate` after the
 when, and the workflow skips without moving tags until resumed. Non-admins see
 a read-only badge.
 
+## Testing v6 changes
+
+`stable` is promoted from `v5`, so the default `:stable` image in the v6 docs and manifests is a v5 build and does not contain fixes that merged only to `v6`. To test a v6 change, run `edge` instead; the defaults stay on `:stable` ([#11742](https://github.com/hivecommons/hive/issues/11742)).
+
+- **Kubernetes / kind:** from the overlay directory, `kustomize edit set image ghcr.io/hivecommons/hive:edge`, then apply. On kind, `kind load docker-image ghcr.io/hivecommons/hive:edge --name hive` avoids re-pulling into each cluster.
+- **Docker Compose:** set `image: ghcr.io/hivecommons/hive:edge` in `src/docker-compose.yaml`.
+- **Podman Quadlet:** set `Image=ghcr.io/hivecommons/hive:edge` in `hive.container`.
+
+To confirm which commit an image was built from, read its `org.opencontainers.image.revision` label:
+
+```bash
+podman inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' ghcr.io/hivecommons/hive:edge
+```
+
 ## How channels are published
 
 Channels are **retags, not rebuilds**. Each release line's `docker.yml` workflow adds fast-moving channels as extra tags in the same `docker buildx imagetools create` call that publishes the branch's `-latest` and immutable short-SHA tags, so a channel always points at an already-built, multi-arch digest. Builds of branch `v5` publish `candidate`; the separate stable-promotion workflow later retags `stable` to the digest for the newest build that crossed the 24-hour line after the soak gate passes. Builds of branch `v6` publish `edge`. All three images get their line's channels in both published orgs:
