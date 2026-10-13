@@ -71,3 +71,34 @@ func TestFormatIssueList_CarriesNotice(t *testing.T) {
 		t.Errorf("unconfigured empty ${ISSUE_LIST} changed: %q, want %q", legacy, "(none)")
 	}
 }
+
+// An empty label allowlist means "no label filter": a filter that is non-zero
+// only through other parts must not render the deny-all label block.
+func TestIssueFilterNotice_EmptyAllowlistRendersNothing(t *testing.T) {
+	enabled := true
+	tests := []struct {
+		name string
+		f    config.IssueFilterConfig
+	}{
+		{"zero", config.IssueFilterConfig{}},
+		{"empty slice", config.IssueFilterConfig{RequireLabels: []string{}}},
+		{"reporter trust only", config.IssueFilterConfig{
+			ReporterTrust: config.ReporterTrustConfig{
+				Enabled:                &enabled,
+				UntrustedRequireLabels: []string{"triage/accepted"},
+			},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newSchedulerWithFilter(tt.f)
+			if got := s.issueFilterNotice(); got != "" {
+				t.Errorf("issueFilterNotice() = %q, want empty", got)
+			}
+			out, _ := s.formatIssueListWithPolicy(nil)
+			if out != "(none)" {
+				t.Errorf("empty list = %q, want %q", out, "(none)")
+			}
+		})
+	}
+}

@@ -5,15 +5,16 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
 // swapCodexProbe substitutes the codex probe seam for one test and restores it.
 func swapCodexProbe(t *testing.T, fn func() ([]string, error)) {
 	t.Helper()
-	prev := runCodexModelProbe
-	runCodexModelProbe = fn
-	t.Cleanup(func() { runCodexModelProbe = prev })
+	prev := runCodexModelProbe.Load()
+	setCodexModelProbe(fn)
+	t.Cleanup(func() { runCodexModelProbe.Store(prev) })
 }
 
 // codexCannedStdout builds a canned app-server stdout: initialize response,
@@ -146,15 +147,17 @@ func TestQueryCLIModels_CodexTimeoutFallsBack(t *testing.T) {
 // ride the same stabilize/retention machinery as the other backends: a model
 // seen in one live sample survives its absence from the next.
 func TestQueryCLIModels_CodexResultsFeedRetention(t *testing.T) {
-	sample := []string{"gpt-5.6-sol", "gpt-5.4"}
+	var sample atomic.Pointer[[]string]
+	setSample := func(ids ...string) { sample.Store(&ids) }
+	setSample("gpt-5.6-sol", "gpt-5.4")
 	swapCodexProbe(t, func() ([]string, error) {
-		return append([]string(nil), sample...), nil
+		return append([]string(nil), *sample.Load()...), nil
 	})
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 	if r := s.queryCLIModels("codex"); !contains(r.models, "gpt-5.4") {
 		t.Fatalf("first live sample missing id: %v", r.models)
 	}
-	sample = []string{"gpt-5.6-sol"}
+	setSample("gpt-5.6-sol")
 	s.cliModels.entries = map[string]cliModelCacheEntry{}
 	r := s.queryCLIModels("codex")
 	if r.fallback {

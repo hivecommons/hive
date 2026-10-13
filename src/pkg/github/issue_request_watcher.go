@@ -788,7 +788,9 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	}
 	var fileSetTwin, componentTwin *gh.Issue
 	var componentPath string
-	var componentCount int
+	var componentCount, componentClosed int
+	var openComponent map[string]int
+	var openComponentOldest map[string]*gh.Issue
 	if found, err := c.scanOpenIssues(ctx, owner, repoName, title, wantFiles); err != nil {
 		if isRetryableGitHubError(err) {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: dedupe lookup failed with retryable error in %s/%s: %w", owner, repoName, err)
@@ -803,6 +805,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	} else {
 		fileSetTwin = found.fileSet
 		componentTwin, componentPath, componentCount = found.component, found.componentPath, found.componentCount
+		openComponent, openComponentOldest = found.componentCounts, found.componentOldest
 	}
 
 	// Rejected-finding gate (#6463): a maintainer who recently closed an
@@ -846,14 +849,34 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	// its own issue and PR. Once enough open agent-filed issues already cite a
 	// path this finding also cites, the pattern is clear: fold the finding
 	// into the oldest of them, which acts as the component's tracker.
+	//
+	// Open issues alone rarely reach the threshold in steady state: each
+	// variant's PR merges and closes its issue before the next one is filed.
+	// So when some open sibling exists but the open count falls short, App-bot
+	// issues closed as completed within sameComponentClosedSiblingWindow count
+	// too. The fold target is still the oldest OPEN sibling — a finding is
+	// never folded into a closed issue, where nobody would act on it. With no
+	// open sibling the finding files normally (no extra API call is made).
+	// not_planned/duplicate closures never count: they belong to the
+	// rejected-twin gate above.
+	if componentTwin == nil && len(openComponent) > 0 {
+		closed, err := c.recentlyCompletedComponentCounts(ctx, owner, repoName, wantFiles)
+		if err != nil {
+			c.logger.Warn("CreateIssue: recently-closed sibling lookup failed, folding on open issues only",
+				slog.String("repo", repoName), slog.String("error", err.Error()))
+		} else {
+			componentTwin, componentPath, componentCount, componentClosed = pickFoldComponent(openComponent, closed, openComponentOldest)
+		}
+	}
 	if componentTwin != nil {
 		if err := c.CreateIssueComment(ctx, owner+"/"+repoName, componentTwin.GetNumber(),
-			foldedComponentFindingComment(title, body, componentPath, componentCount)); err != nil {
+			foldedComponentFindingComment(title, body, componentPath, componentCount, componentClosed)); err != nil {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: folding into open issue #%d in %s/%s: %w", componentTwin.GetNumber(), owner, repoName, err)
 		}
 		c.logger.Info("CreateIssue: folded finding into the oldest open issue on the same component",
 			slog.String("repo", repoName), slog.Int("number", componentTwin.GetNumber()),
-			slog.String("path", componentPath), slog.Int("open_siblings", componentCount))
+			slog.String("path", componentPath), slog.Int("open_siblings", componentCount),
+			slog.Int("recently_closed_siblings", componentClosed))
 		return CreateIssueResult{Number: componentTwin.GetNumber(), URL: componentTwin.GetHTMLURL(), AlreadyExisted: true, Consolidated: true}, nil
 	}
 
@@ -919,6 +942,12 @@ type openIssueMatches struct {
 	component      *gh.Issue
 	componentPath  string
 	componentCount int
+
+	// componentCounts is, per non-ubiquitous path the request cites, how many
+	// open App-bot-filed issues cite it; componentOldest is the oldest of
+	// them. Kept so recently-closed siblings can top the counts up (#11239).
+	componentCounts map[string]int
+	componentOldest map[string]*gh.Issue
 }
 
 // sameComponentFoldThreshold is how many open App-bot-filed issues must
@@ -927,6 +956,15 @@ type openIssueMatches struct {
 // file normally: two issues touching one file is ordinary, a third is a
 // stream.
 const sameComponentFoldThreshold = 3
+
+// sameComponentClosedSiblingWindow is how far back an App-bot issue closed as
+// completed still counts toward sameComponentFoldThreshold (#11239). Without
+// it the count resets every time a variant's PR merges, and a one-bypass,
+// one-issue, one-PR cadence never reaches the threshold.
+const sameComponentClosedSiblingWindow = 14 * 24 * time.Hour
+
+// sameComponentClosedMaxPages bounds the recently-closed sibling scan.
+const sameComponentClosedMaxPages = 2
 
 // ubiquitousFileRefs are paths so many unrelated findings mention in passing
 // that sharing one says nothing about sharing a root cause.
@@ -999,17 +1037,78 @@ func (c *Client) scanOpenIssues(ctx context.Context, owner, repo, title string, 
 			break
 		}
 	}
-	// Most-cited shared path wins; ties go to the lexically smallest so the
-	// choice is deterministic.
-	for p, n := range componentCounts {
-		if n < sameComponentFoldThreshold {
+	found.component, found.componentPath, found.componentCount, _ = pickFoldComponent(componentCounts, nil, componentOldest)
+	found.componentCounts, found.componentOldest = componentCounts, componentOldest
+	return found, nil
+}
+
+// pickFoldComponent picks the shared path to fold into: among paths cited by
+// at least one open sibling whose open plus recently-closed count reaches
+// sameComponentFoldThreshold, the most-cited wins; ties go to the lexically
+// smallest so the choice is deterministic. The target is always the oldest
+// open sibling on that path.
+func pickFoldComponent(open, closed map[string]int, oldest map[string]*gh.Issue) (target *gh.Issue, path string, openCount, closedCount int) {
+	best := 0
+	for p, n := range open {
+		if n == 0 || oldest[p] == nil {
 			continue
 		}
-		if n > found.componentCount || (n == found.componentCount && p < found.componentPath) {
-			found.component, found.componentPath, found.componentCount = componentOldest[p], p, n
+		total := n + closed[p]
+		if total < sameComponentFoldThreshold {
+			continue
+		}
+		if total > best || (total == best && p < path) {
+			target, path, openCount, closedCount, best = oldest[p], p, n, closed[p], total
 		}
 	}
-	return found, nil
+	return target, path, openCount, closedCount
+}
+
+// recentlyCompletedComponentCounts counts, per non-ubiquitous path in
+// wantFiles, the App-bot-filed issues closed as completed within
+// sameComponentClosedSiblingWindow that cite it (#11239). Bounded to
+// sameComponentClosedMaxPages pages of 100, filtered server-side by creator
+// and since. not_planned/duplicate closures are skipped: a maintainer
+// rejection is the rejected-twin gate's evidence, not a sign of a stream.
+func (c *Client) recentlyCompletedComponentCounts(ctx context.Context, owner, repo string, wantFiles map[string]bool) (map[string]int, error) {
+	botLogin := strings.TrimSpace(c.appBotLogin)
+	counts := make(map[string]int)
+	if botLogin == "" || len(wantFiles) == 0 {
+		return counts, nil
+	}
+	cutoff := time.Now().Add(-sameComponentClosedSiblingWindow)
+	opts := &gh.IssueListByRepoOptions{
+		State:       "closed",
+		Creator:     botLogin,
+		Sort:        "updated",
+		Direction:   "desc",
+		Since:       cutoff,
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+	for page := 1; page <= sameComponentClosedMaxPages; page++ {
+		opts.ListOptions.Page = page
+		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, is := range issues {
+			if is.IsPullRequest() || is.GetUser().GetLogin() != botLogin {
+				continue
+			}
+			if is.GetStateReason() != "completed" || is.GetClosedAt().Time.Before(cutoff) {
+				continue
+			}
+			for p := range issueFileRefSet(is.GetTitle() + "\n" + is.GetBody()) {
+				if wantFiles[p] && !isUbiquitousFileRef(p) {
+					counts[p]++
+				}
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+	}
+	return counts, nil
 }
 
 // consolidatedFindingComment renders a finding folded into an open issue that
@@ -1035,12 +1134,20 @@ func consolidatedFindingComment(title, body string, files map[string]bool) strin
 // issue on a component that already has a stream of open findings (#11239).
 // The marker lets tooling count folded variants; the header tells whoever
 // works the tracker to fix the shared root cause rather than one more variant.
-func foldedComponentFindingComment(title, body, path string, openSiblings int) string {
+func foldedComponentFindingComment(title, body, path string, openSiblings, closedSiblings int) string {
 	var b strings.Builder
 	b.WriteString("<!-- hive-finding-folded -->\n")
 	b.WriteString("**Folded finding.** This was filed as a separate issue, but ")
 	b.WriteString(strconv.Itoa(openSiblings))
-	b.WriteString(" open agent-filed issues already cite `")
+	b.WriteString(" open agent-filed issues")
+	if closedSiblings > 0 {
+		b.WriteString(" (plus ")
+		b.WriteString(strconv.Itoa(closedSiblings))
+		b.WriteString(" closed as completed in the last ")
+		b.WriteString(strconv.Itoa(int(sameComponentClosedSiblingWindow / (24 * time.Hour))))
+		b.WriteString(" days)")
+	}
+	b.WriteString(" already cite `")
 	b.WriteString(path)
 	b.WriteString("`, so it was folded into the oldest of them instead of opening another. Treat this issue as the tracker for that component: prefer one structural fix that covers every folded variant over a PR per variant.\n\n### ")
 	b.WriteString(title)

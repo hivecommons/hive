@@ -95,7 +95,9 @@ func hasAnyIssueLabel(labels []string, want []string) bool {
 // issues.
 func (s *Scheduler) issueFilterNotice() string {
 	f := s.cfg.Project.IssueFilter
-	if f.IsZero() {
+	// An empty allowlist means "no label filter"; other filter parts (reporter
+	// trust, hard suppress) must not render a deny-all label block.
+	if len(f.RequireLabels) == 0 {
 		return ""
 	}
 	var b strings.Builder
@@ -183,6 +185,7 @@ func (s *Scheduler) formatIssueListWithPolicyForAgent(issues []github.Issue, ref
 		}
 	}
 	b.WriteString(formatBlockedIssuesNote(blocked))
+	b.WriteString(s.formatFoldedTrackersNote(issues))
 	return b.String(), failClosed
 }
 

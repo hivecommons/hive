@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -235,11 +236,14 @@ func TestCLIModelCache_TTL(t *testing.T) {
 
 func TestHandleBackendsDoesNotBlockRoleOnCLIProbe(t *testing.T) {
 	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	const reqTimeout = 30 * time.Second
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	var once sync.Once
+	exited := make(chan struct{})
+	var once, exitOnce sync.Once
 	swapSDKHelper(t, func(ctx context.Context, token string) ([]byte, error) {
 		once.Do(func() { close(entered) })
+		defer exitOnce.Do(func() { close(exited) })
 		select {
 		case <-release:
 			return nil, context.Canceled
@@ -247,28 +251,67 @@ func TestHandleBackendsDoesNotBlockRoleOnCLIProbe(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	})
-	defer close(release)
+	// Registered after swapSDKHelper so it runs first (LIFO): the probe
+	// goroutine must be finished before the seam is restored.
+	t.Cleanup(func() {
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+		}
+		close(release)
+		select {
+		case <-entered:
+			select {
+			case <-exited:
+			case <-time.After(10 * time.Second):
+				t.Error("background Copilot probe did not exit after release")
+			}
+		default:
+		}
+	})
 
 	s := NewServer(0, testLogger())
 	s.RegisterAPI(testDeps(t))
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()
 
-	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/config/backends", nil)
-	if err != nil {
-		t.Fatal(err)
+	// get issues a GET bounded by a generous timeout and reports a goroutine
+	// dump on expiry. The probe stays blocked (release is open) throughout,
+	// so a response at all proves the handler did not wait for it.
+	get := func(path string) *http.Response {
+		t.Helper()
+		type result struct {
+			resp *http.Response
+			err  error
+		}
+		done := make(chan result, 1)
+		go func() {
+			resp, err := ts.Client().Get(ts.URL + path)
+			done <- result{resp, err}
+		}()
+		select {
+		case r := <-done:
+			if r.err != nil {
+				t.Fatalf("GET %s: %v", path, r.err)
+			}
+			closeHTTPBody(r.resp.Body)
+			return r.resp
+		case <-time.After(reqTimeout):
+			buf := make([]byte, 1<<20)
+			buf = buf[:runtime.Stack(buf, true)]
+			t.Fatalf("GET %s blocked behind the Copilot probe for %v\n%s", path, reqTimeout, buf)
+			return nil
+		}
 	}
-	start := time.Now()
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatalf("GET /api/config/backends: %v", err)
-	}
-	closeHTTPBody(resp.Body)
+
+	resp := get("/api/config/backends")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/api/config/backends status = %d, want 200", resp.StatusCode)
 	}
-	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
-		t.Fatalf("/api/config/backends waited for the blocked probe: %v", elapsed)
+	select {
+	case <-release:
+		t.Fatal("probe released before the response arrived")
+	default:
 	}
 	if got := resp.Header.Get("Server-Timing"); !strings.Contains(got, "dashboard_lock_wait") {
 		t.Fatalf("Server-Timing = %q, want dashboard_lock_wait metric", got)
@@ -276,21 +319,13 @@ func TestHandleBackendsDoesNotBlockRoleOnCLIProbe(t *testing.T) {
 
 	select {
 	case <-entered:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("background Copilot probe did not start")
 	}
 
-	start = time.Now()
-	resp, err = ts.Client().Get(ts.URL + "/api/role")
-	if err != nil {
-		t.Fatalf("GET /api/role: %v", err)
-	}
-	closeHTTPBody(resp.Body)
+	resp = get("/api/role")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/api/role status = %d, want 200", resp.StatusCode)
-	}
-	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
-		t.Fatalf("/api/role blocked behind the model discovery probe: %v", elapsed)
 	}
 }
 
