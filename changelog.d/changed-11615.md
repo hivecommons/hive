@@ -1,0 +1,1 @@
+- The hub dashboard bulk-action bar now reads "Bulk hive actions, N hive(s) selected:" and lists its buttons in a clearer order with clearer labels: Clear, Restart, Upgrade to latest, Set instant upgrade, Set daily upgrade, Set Tue 1pm ET upgrade, Set auto-upgrade off, Switch branch. Behaviour is unchanged. ([#11615](https://github.com/hivecommons/hive/issues/11615))

@@ -6667,22 +6667,21 @@
         branchOpts += '<option value="' + esc(branches[bi]) + '">' + esc(branches[bi]) + '</option>';
       }
       var branchPicker = branches.length > 0
-        ? '<select id="bulk-branch-select" style="' + btn + ';padding:var(--sp-2) var(--sp-4)"><option value="">Switch branch…</option>' + branchOpts + '</select>'
+        ? '<select id="bulk-branch-select" style="' + btn + ';padding:var(--sp-2) var(--sp-4)"><option value="">Switch branch</option>' + branchOpts + '</select>'
         : '';
       bar.innerHTML =
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;' +
         'background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);border-radius:8px">' +
-        '<strong style="font-size:0.8rem;color:#60a5fa">' + ids.length + (ids.length === 1 ? ' hive' : ' hives') + ' selected</strong>' +
+        '<strong style="font-size:0.8rem;color:#60a5fa">Bulk hive actions, ' + ids.length + (ids.length === 1 ? ' hive' : ' hives') + ' selected:</strong>' +
         (over ? '<span style="font-size:0.72rem;color:var(--red)">Over the ' + BULK_MAX_HIVES + '-hive limit — deselect some.</span>' : '') +
-        '<span style="flex:1"></span>' +
+        '<button class="hv-btn btn-danger" type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
         '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'restart\')" style="' + btn + '">Restart</button>' +
         '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
-        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto: instant</button>' +
-        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, midday — keeps a stable hive from being restarted mid-work, and puts a bad roll in staffed hours">Auto: daily 1pm ET</button>' +
-        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'weekly-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a week, Tuesday midday — the least disruptive cadence that still keeps the hive current">Auto: Tue 1pm ET</button>' +
-        '<button class="hv-btn btn-danger" type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Auto-upgrade off</button>' +
+        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Set instant upgrade</button>' +
+        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, midday — keeps a stable hive from being restarted mid-work, and puts a bad roll in staffed hours">Set daily upgrade</button>' +
+        '<button class="hv-btn btn-primary" type="button" onclick="runBulkAction(\'weekly-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a week, Tuesday midday — the least disruptive cadence that still keeps the hive current">Set Tue 1pm ET upgrade</button>' +
+        '<button class="hv-btn btn-danger" type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Set auto-upgrade off</button>' +
         branchPicker +
-        '<button class="hv-btn btn-danger" type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
         '</div>';
       bar.style.display = '';
       var sel = document.getElementById('bulk-branch-select');
