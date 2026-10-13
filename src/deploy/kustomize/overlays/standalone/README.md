@@ -102,6 +102,8 @@ kubectl -n hive-inference rollout status deploy/vllm
 
 ## Pinning / upgrading the image
 
+To test a `v6` change, track `:edge` instead of `:stable` — see [Testing v6 changes](../../../../docs/release-channels.md#testing-v6-changes).
+
 The base tracks `ghcr.io/hivecommons/hive:stable`. Pin so that upgrades are
 deliberate — there is no hub to auto-upgrade a standalone hive.
 

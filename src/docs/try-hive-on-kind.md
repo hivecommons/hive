@@ -54,6 +54,21 @@ Open <http://localhost:3002> and sign in with the GitHub device flow (the
 kind delete cluster --name hive
 ```
 
+## Testing v6 changes
+
+The overlay defaults to `ghcr.io/hivecommons/hive:stable`, which is a v5 build. To test something that merged to `v6`, switch to `edge` before applying:
+
+```bash
+cd src/deploy/kustomize/overlays/kind
+kustomize edit set image ghcr.io/hivecommons/hive:edge
+docker pull ghcr.io/hivecommons/hive:edge
+kind load docker-image ghcr.io/hivecommons/hive:edge --name hive
+```
+
+Check which commit the image was built from with
+`podman inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' ghcr.io/hivecommons/hive:edge`.
+See [release-channels.md](release-channels.md#testing-v6-changes).
+
 ## kind gotchas
 
 - **StorageClass.** kind's default class is `standard`; the overlay pins it on
