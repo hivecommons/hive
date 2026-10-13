@@ -460,6 +460,9 @@ func repoHoldAdjustBreakdown(repo *FrontendRepo, itemType string, held bool) {
 	if repo == nil || repo.WorkBreakdown == nil {
 		return
 	}
+	// Copy-on-write: lock-free status readers share this struct.
+	wb := *repo.WorkBreakdown
+	repo.WorkBreakdown = &wb
 	deltaHold, deltaActionable := 1, -1
 	if !held {
 		deltaHold, deltaActionable = -1, 1

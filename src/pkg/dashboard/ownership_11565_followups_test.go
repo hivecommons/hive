@@ -327,3 +327,53 @@ func TestApplyRepoHoldNoRaceWithStatusEndpoint11565(t *testing.T) {
 	}
 	<-done
 }
+
+func workBreakdownStatus11675(t *testing.T) (*Server, *github.RepoWorkBreakdown) {
+	t.Helper()
+	s := newTestServer()
+	status := parityStatus9102(t)
+	status.Repos[0].WorkBreakdown = &github.RepoWorkBreakdown{}
+	status.Repos[0].WorkBreakdown.PRs.Actionable = 5
+	status.Repos[0].WorkBreakdown.PRs.Hold = 5
+	status.Repos[0].Ownership = map[string]Ownership{
+		ownershipKey(ownershipKindPR, 11): {YourTurn: true, Verb: OwnershipVerbReview, ReasonCode: OwnershipReasonLevelGateHold},
+		ownershipKey(ownershipKindPR, 12): {YourTurn: true, Verb: OwnershipVerbReview, ReasonCode: OwnershipReasonPersonPRNeedsHuman},
+	}
+	s.UpdateStatus(status)
+	return s, status.Repos[0].WorkBreakdown
+}
+
+// TestApplyRepoHoldLeavesPublishedWorkBreakdownUntouched11675: the hold move
+// must publish an adjusted copy of the work breakdown, not edit the shared one.
+func TestApplyRepoHoldLeavesPublishedWorkBreakdownUntouched11675(t *testing.T) {
+	s, published := workBreakdownStatus11675(t)
+	s.applyRepoHoldToStatus("octo/demo", 11, "pr", true, "hold", nil)
+	if published.PRs.Hold != 5 || published.PRs.Actionable != 5 {
+		t.Fatalf("published work breakdown was mutated in place: %+v", published.PRs)
+	}
+	s.statusMu.RLock()
+	got := s.status.Repos[0].WorkBreakdown
+	s.statusMu.RUnlock()
+	if got == published || got.PRs.Hold != 6 || got.PRs.Actionable != 4 {
+		t.Fatalf("adjusted breakdown = %+v (same pointer: %v), want Hold 6 Actionable 4", got.PRs, got == published)
+	}
+}
+
+// TestApplyRepoHoldNoRaceOnWorkBreakdown11675 overlaps /api/status encoding
+// with hold moves that adjust a non-nil WorkBreakdown; go test -race fails on
+// an in-place write.
+func TestApplyRepoHoldNoRaceOnWorkBreakdown11675(t *testing.T) {
+	s, _ := workBreakdownStatus11675(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 300; i++ {
+			rec := httptest.NewRecorder()
+			s.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+		}
+	}()
+	for i := 0; i < 300; i++ {
+		s.applyRepoHoldToStatus("octo/demo", 11, "pr", i%2 == 0, "hold", nil)
+	}
+	<-done
+}
