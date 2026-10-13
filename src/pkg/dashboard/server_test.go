@@ -311,9 +311,9 @@ func TestHandleSSE_Headers(t *testing.T) {
 	defer resp.Body.Close()
 
 	checks := map[string]string{
-		"Content-Type":  "text/event-stream",
-		"Cache-Control": "no-cache",
-		"Connection":    "keep-alive",
+		"Content-Type":      "text/event-stream",
+		"Cache-Control":     "no-cache",
+		"Connection":        "keep-alive",
 		"X-Accel-Buffering": "no",
 	}
 	for header, want := range checks {
