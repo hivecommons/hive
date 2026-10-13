@@ -53,7 +53,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 	}
 
 	if folded := foldedTrackerRefs(scannerIssues); len(folded) > 0 {
-		b.WriteString(fmt.Sprintf("FOLDED-FINDING TRACKERS (%d, issues carrying a <!-- hive-finding-folded --> comment — one structural fix per tracker, not a PR per variant): %s\n",
+		b.WriteString(fmt.Sprintf("FOLDED-FINDING TRACKERS (%d, issues a finding folded into since this hub started; trackers folded before the last restart are not flagged — one structural fix per tracker, not a PR per variant): %s\n",
 			len(folded), strings.Join(folded, ", ")))
 	}
 
