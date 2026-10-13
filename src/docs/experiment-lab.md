@@ -391,3 +391,82 @@ Every other role launches exactly as before.
 
 **Not in this part.** Promotion of a winning configuration (part 6), dashboard
 campaign cards driven by the contract, and any pack inclusion of the role.
+
+## Pinned campaign dependencies
+
+RFC #11585 part 7 (#11700) gives a campaign a controlled way to get the
+things it needs that are not in the hive's own repo — a simulator such as
+BLIS, workload traces, model configs — so results are reproducible and
+nobody has to trust what the model decides to download.
+
+**Declaring dependencies.** A campaign lists them under
+`campaign.dependencies` (or top-level `dependencies`). Every entry is pinned:
+repos by a full 40-hex commit, files by URL plus sha256. Short SHAs, tags and
+branch names are refused.
+
+```yaml
+campaign:
+  name: blis-routing-v1
+  dependencies:
+    - repo: inference-sim/inference-sim      # owner/name on github.com, or a full https URL
+      commit: 8de28905b87474b870c56e1ecbd3c970532683b8
+      role: target                           # becomes NOUS_TARGET_REPO_PATH / target_system.repo_path
+    - url: https://huggingface.co/datasets/<org>/<name>/resolve/<rev>/trace.jsonl
+      sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+      role: data                             # linked into worktrees via worktree_extras
+```
+
+`role` is `target` (at most one, repos only), `data` or `tool`; it defaults
+to `target` for the first repo, `data` for files and `tool` for further
+repos. `name` defaults to the repo or file name and becomes the
+`NOUS_DEP_<NAME>` variable below.
+
+**The setup step.** `bin/nous-runner.sh` runs `hive nous-setup` before
+`run_campaign.py`. The step (`pkg/nousdeps`):
+
+1. validates every declaration and checks every host against the allowlist
+   **before fetching anything** — one bad entry ends the campaign with no
+   bytes moved;
+2. fetches repos with `git fetch --depth 1 <commit>` and files over https
+   (redirect hops are checked against the allowlist too; downloads are
+   capped at 2 GiB), into a cache under `<nous_dir>/cache/deps/` —
+   `repos/<host>/<owner>/<name>/<commit>` and `files/<sha256>/<basename>` —
+   or under `$HIVE_AGENT_CACHE_DIR/deps` when that is set, so a repeat
+   campaign re-uses verified content instead of re-downloading;
+3. verifies the checked-out commit and the file hash against the pin, and
+   deletes anything that does not match;
+4. records what it resolved, plus toolchain versions (installed Nous commit,
+   Python, Go, git), in `<nous_dir>/<run-id>/dependencies.json`, and writes
+   `dependencies.env` next to it with `NOUS_DEP_<NAME>=<path>` for every
+   dependency and `NOUS_TARGET_REPO_PATH` for the target. The runner sources
+   that file so the campaign can reference the paths.
+
+A refusal or verification failure leaves no record and exits non-zero; the
+runner then refuses to start the campaign. A campaign that declares no
+dependencies still gets a record with the toolchain versions, so every run
+says exactly which Nous it ran. Once setup finishes the agent needs no new
+network access; the runner itself performs no fetch of any kind.
+
+**Allowlist.** `nous.fetch_allowlist` is a list of exact lowercase DNS
+hostnames (no wildcards, schemes, ports or IP literals — the same shape as
+`runs.spektacular.recheck.egress_allowlist`). The default is `github.com`.
+`HIVE_NOUS_FETCH_ALLOWLIST` (comma-separated) overrides it; precedence is
+env > yaml > default. An explicitly empty yaml list denies every fetch. The
+hive resolves the list once and exports it to experimenter agents under the
+same variable, so `hive nous-setup` enforces what the operator configured.
+`GET /api/nous/status` reports it under `dependencies.fetch_allowlist`
+together with the cache directory and record path.
+
+**Guards.** `pkg/nousdeps` guard tests and section 8 of
+`src/deploy/test_supply_chain_pins.sh` fail CI if the Nous image or install
+pin stops being a full commit, if `bin/nous-runner.sh` stops running
+`hive nous-setup` before `run_campaign.py`, or if a bare
+`curl`/`wget`/`pip install`/`git clone` appears in the runner.
+
+**Not in this part.** Rewriting `target_system.repo_path` /
+`worktree_extras` inside the campaign file (campaigns reference the exported
+`NOUS_TARGET_REPO_PATH` / `NOUS_DEP_*` paths instead), a declared build step
+for fetched repos, per-campaign narrowing of the hive-wide allowlist, cache
+size limits and cleanup, hash-pinning the Nous Python packages themselves
+(upstream ships `uv.lock` only; the commit pin stands), and enforcing the
+allowlist at the network layer in Docker mode.
