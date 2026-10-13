@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // stubGitHubWriter records write calls and can inject an error. It implements
@@ -226,5 +227,55 @@ func TestGitHubIssueSeamErrors(t *testing.T) {
 	}
 	if NewGitHubIssueSeam(nil, "acme") != nil {
 		t.Fatal("nil client must yield no seam")
+	}
+}
+
+type stubIssueConsolidator struct {
+	res   github.CreateIssueResult
+	err   error
+	repos []string
+}
+
+func (s *stubIssueConsolidator) CreateIssueConsolidated(_ context.Context, repo, _, _ string, _ []string) (github.CreateIssueResult, error) {
+	s.repos = append(s.repos, repo)
+	return s.res, s.err
+}
+
+// The issue seam files through the consolidating create (#11578): a reused or
+// folded-into open issue comes back as the publisher's ref, and the raw
+// go-github create is never reached.
+func TestGitHubIssueSeamCreatesThroughConsolidation(t *testing.T) {
+	sentinel := errors.New("boom consolidate")
+	for _, tc := range []struct {
+		name    string
+		repo    string
+		res     github.CreateIssueResult
+		err     error
+		want    IssueRef
+		wantErr bool
+	}{
+		{name: "new issue", repo: "widget", res: github.CreateIssueResult{Number: 9, URL: "u9"}, want: IssueRef{Number: 9, URL: "u9"}},
+		{name: "folded into open twin", repo: "acme/widget", res: github.CreateIssueResult{Number: 4, URL: "u4", AlreadyExisted: true, Consolidated: true}, want: IssueRef{Number: 4, URL: "u4"}},
+		{name: "error", repo: "acme/widget", err: sentinel, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &stubGitHubWriter{}
+			c := &stubIssueConsolidator{res: tc.res, err: tc.err}
+			f := &gitHubForge{writer: w, org: "acme", consolidator: c}
+			ref, err := f.CreateIssue(context.Background(), tc.repo, "t", "b", []string{"audit"})
+			if tc.wantErr {
+				if !errors.Is(err, sentinel) {
+					t.Fatalf("error should wrap sentinel: %v", err)
+				}
+			} else if err != nil || ref != tc.want {
+				t.Fatalf("ref = %+v err=%v, want %+v", ref, err, tc.want)
+			}
+			if w.created != 0 {
+				t.Fatalf("raw create called %d times, want 0", w.created)
+			}
+			if len(c.repos) != 1 || c.repos[0] != "acme/widget" {
+				t.Fatalf("consolidating create repos = %v, want [acme/widget]", c.repos)
+			}
+		})
 	}
 }

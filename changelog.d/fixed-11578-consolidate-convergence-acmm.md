@@ -1,0 +1,1 @@
+- Convergence publisher findings and dashboard ACMM gap issues now go through the consolidating issue create, reusing an open issue for the same subject or file set instead of filing a twin ([#11578](https://github.com/hivecommons/hive/issues/11578)).

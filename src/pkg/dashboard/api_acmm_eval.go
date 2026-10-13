@@ -302,15 +302,14 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 	})
 	labelExists := labelErr == nil || strings.Contains(labelErr.Error(), "already_exists")
 
-	issueReq := &gh.IssueRequest{
-		Title: gh.Ptr(title),
-		Body:  gh.Ptr(body),
-	}
+	var labels []string
 	if labelExists {
-		issueReq.Labels = &[]string{acmmIssueLabelName, "ai-fix-requested"}
+		labels = []string{acmmIssueLabelName, "ai-fix-requested"}
 	}
 
-	issue, _, err := ghClient.Issues.Create(ctx, owner, req.Repo, issueReq)
+	// The consolidating create reuses an open issue with the same subject or
+	// file set instead of filing a duplicate gap issue (#11578).
+	issue, err := s.deps.GHClient.CreateIssueConsolidated(ctx, owner+"/"+req.Repo, title, body, labels)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to create issue: %v", err), http.StatusInternalServerError)
 		return
@@ -319,15 +318,15 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, github.AuditActionHiveIssueCreated,
 		meta.AuditDetail(
 			"repo", owner+"/"+req.Repo,
-			"number", strconv.Itoa(issue.GetNumber()),
-			"url", issue.GetHTMLURL(),
+			"number", strconv.Itoa(issue.Number),
+			"url", issue.URL,
 			"tracker", acmmIssueDestinationGitHub,
 			"flow", "acmm-eval"), "")
 
 	jsonResponse(w, map[string]interface{}{
 		"tracker":      acmmIssueDestinationGitHub,
-		"issue_number": issue.GetNumber(),
-		"issue_url":    issue.GetHTMLURL(),
+		"issue_number": issue.Number,
+		"issue_url":    issue.URL,
 	})
 }
 

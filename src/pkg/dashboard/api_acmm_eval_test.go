@@ -842,6 +842,11 @@ func TestHandleACMMCreateIssue_LabelAlreadyExists_LabelsStillAssigned(t *testing
 	mux.HandleFunc("/repos/myorg/repo1/labels", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"already_exists"}`, http.StatusUnprocessableEntity)
 	})
+	// The issue create confirms each label exists before using it.
+	mux.HandleFunc("/repos/myorg/repo1/labels/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"name": strings.TrimPrefix(r.URL.Path, "/repos/myorg/repo1/labels/")})
+	})
 	var captured map[string]interface{}
 	mux.HandleFunc("/repos/myorg/repo1/issues", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&captured)
@@ -866,6 +871,83 @@ func TestHandleACMMCreateIssue_LabelAlreadyExists_LabelsStillAssigned(t *testing
 	}
 	if captured["labels"] == nil {
 		t.Fatal("expected labels to be assigned when label already existed")
+	}
+}
+
+// The GitHub path goes through the consolidating create (#11578): an open
+// issue for the same gap is reused instead of filing a duplicate.
+func TestHandleACMMCreateIssue_ReusesOpenIssue(t *testing.T) {
+	var criterion *ACMMCriterion
+	for i := range universalCriteria {
+		if universalCriteria[i].ID == "acmm:claude-md" {
+			criterion = &universalCriteria[i]
+			break
+		}
+	}
+	if criterion == nil {
+		t.Fatal("fixture criterion acmm:claude-md not found in universalCriteria")
+	}
+	title, _ := acmmIssueContent(criterion)
+
+	for _, tc := range []struct {
+		name       string
+		open       []map[string]interface{}
+		wantNumber float64
+		wantPosts  int
+	}{
+		{name: "no open twin files a new issue", open: []map[string]interface{}{}, wantNumber: 42, wantPosts: 1},
+		{name: "open issue with the same title is reused", open: []map[string]interface{}{
+			{"number": 17, "title": title, "state": "open", "html_url": "https://github.com/myorg/repo1/issues/17"},
+		}, wantNumber: 17, wantPosts: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			mux := http.NewServeMux()
+			mux.HandleFunc("/repos/myorg/repo1/labels", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"name": "acmm"})
+			})
+			mux.HandleFunc("/repos/myorg/repo1/labels/", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"name": strings.TrimPrefix(r.URL.Path, "/repos/myorg/repo1/labels/")})
+			})
+			mux.HandleFunc("/repos/myorg/repo1/issues", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					if r.URL.Query().Get("state") == "open" {
+						_ = json.NewEncoder(w).Encode(tc.open)
+						return
+					}
+					_ = json.NewEncoder(w).Encode([]map[string]interface{}{})
+					return
+				}
+				posts++
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"number": 42, "html_url": "https://github.com/myorg/repo1/issues/42",
+				})
+			})
+			ts := httptest.NewServer(mux)
+			t.Cleanup(ts.Close)
+
+			s := NewServer(0, acmmEvalTestLogger())
+			deps := testDeps(t)
+			deps.GHClient = ghpkg.NewClientForTest(ts.URL, "myorg", []string{"repo1"}, acmmEvalTestLogger())
+			s.RegisterAPI(deps)
+
+			rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
+				"repo": "repo1", "criterion_id": criterion.ID,
+			})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+			}
+			got := decodeJSON(t, rec)
+			if got["issue_number"] != tc.wantNumber {
+				t.Fatalf("issue_number = %v, want %v", got["issue_number"], tc.wantNumber)
+			}
+			if posts != tc.wantPosts {
+				t.Fatalf("issue create POSTs = %d, want %d", posts, tc.wantPosts)
+			}
+		})
 	}
 }
 

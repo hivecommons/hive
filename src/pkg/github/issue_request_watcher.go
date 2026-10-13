@@ -741,11 +741,21 @@ func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labe
 	return c.createIssue(ctx, repo, title, body, labels, false)
 }
 
+// CreateIssueConsolidated is CreateIssue with open-twin consolidation on, for
+// hive lanes outside this package (the convergence publisher and the
+// dashboard's ACMM gap issues) that must fold into an open twin over the same
+// files instead of filing beside it (#11578).
+func (c *Client) CreateIssueConsolidated(ctx context.Context, repo, title, body string, labels []string) (CreateIssueResult, error) {
+	return c.createIssue(ctx, repo, title, body, labels, true)
+}
+
 // createIssue is CreateIssue with the open-twin consolidation switch. The
 // agent issue-request watcher turns it on: agents file findings one at a time
 // and cannot see each other's, so two findings about the same files become
 // two issues, two PRs, and a merge conflict (#9376). Hive-internal callers
-// (fleet report, review backlog) also turn it on; the public CreateIssue wrapper keeps plain semantics.
+// (fleet report, review backlog, and through CreateIssueConsolidated the
+// convergence publisher and ACMM gap issues) also turn it on; the public
+// CreateIssue wrapper keeps plain semantics.
 func (c *Client) createIssue(ctx context.Context, repo, title, body string, labels []string, consolidateOpen bool) (CreateIssueResult, error) {
 	if c == nil || c.client == nil {
 		return CreateIssueResult{}, ErrNoGitHubClient

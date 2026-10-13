@@ -185,9 +185,10 @@ type IssueRef struct {
 // core Forge interface because only the GitHub adapter implements it today;
 // a caller that needs it type-asserts and refuses cleanly when absent.
 type IssueCreator interface {
-	// CreateIssue files a new issue in repo and returns its reference. It
-	// performs no dedupe of its own: the publisher's mutation journal and
-	// marker lookup are the idempotency guards.
+	// CreateIssue files a new issue in repo and returns its reference. The
+	// publisher's mutation journal and marker lookup are its idempotency
+	// guards; the GitHub seam additionally reuses an open issue with the same
+	// subject or file set rather than twinning it (#11578).
 	CreateIssue(ctx context.Context, repo, title, body string, labels []string) (IssueRef, error)
 }
 

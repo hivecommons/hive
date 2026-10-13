@@ -33,6 +33,13 @@ type githubWriter interface {
 	ListByRepo(ctx context.Context, owner, repo string, opts *gh.IssueListByRepoOptions) ([]*gh.Issue, *gh.Response, error)
 }
 
+// githubIssueConsolidator is the consolidating create of *github.Client: it
+// reuses an open issue with the same subject and folds a finding into an open
+// twin over the same files instead of filing a second issue (#11578).
+type githubIssueConsolidator interface {
+	CreateIssueConsolidated(ctx context.Context, repo, title, body string, labels []string) (github.CreateIssueResult, error)
+}
+
 // markerLookupMaxPages bounds FindIssueByMarker to the most recent pages of
 // open issues, matching the bounded dedupe scan pkg/github.CreateIssue uses:
 // publisher-filed issues are recent by construction and an unbounded scan of
@@ -53,6 +60,10 @@ type gitHubForge struct {
 	client githubReader
 	writer githubWriter
 	org    string
+
+	// consolidator, when set, routes CreateIssue through the consolidating
+	// create so publisher filings fold into open twins like the agent lane.
+	consolidator githubIssueConsolidator
 }
 
 // newGitHubForge builds a GitHub adapter backed by a real pkg/github client.
@@ -215,23 +226,33 @@ func (f *gitHubForge) SetHold(ctx context.Context, repo string, number int, hold
 // NewGitHubIssueSeam exposes the issue-create and marker-lookup seam over an
 // already-authenticated pkg/github client (the App-authenticated client a
 // GitHub hive boots with), so the publisher files as the hive's App identity
-// without a second token. Writes go straight to go-github's Issues service:
-// the publisher's own mutation journal is the idempotency guard, and routing
-// through *github.Client.CreateIssue would journal the same effect twice
-// under two different logical IDs.
+// without a second token. Creates go through
+// *github.Client.CreateIssueConsolidated, the same consolidating create the
+// agent lane uses, so a convergence finding folds into an open issue over the
+// same files instead of twinning it under a different marker (#11578); the
+// publisher's mutation journal and marker lookup remain its own idempotency
+// guards.
 func NewGitHubIssueSeam(client *github.Client, org string) IssueSeam {
 	if client == nil || client.GoGitHub() == nil {
 		return nil
 	}
-	return &gitHubForge{client: client, writer: client.GoGitHub().Issues, org: org}
+	return &gitHubForge{client: client, writer: client.GoGitHub().Issues, org: org, consolidator: client}
 }
 
-// CreateIssue files a new issue via go-github Issues.Create.
+// CreateIssue files a new issue: through the consolidating create when the
+// seam was built over a *github.Client, else via go-github Issues.Create.
 func (f *gitHubForge) CreateIssue(ctx context.Context, repo, title, body string, labels []string) (IssueRef, error) {
+	owner, name := splitRepo(repo, f.org)
+	if f.consolidator != nil {
+		res, err := f.consolidator.CreateIssueConsolidated(ctx, owner+"/"+name, title, body, labels)
+		if err != nil {
+			return IssueRef{}, fmt.Errorf("forge: create issue in %s/%s: %w", owner, name, err)
+		}
+		return IssueRef{Number: res.Number, URL: res.URL}, nil
+	}
 	if f.writer == nil {
 		return IssueRef{}, fmt.Errorf("forge: github write path unavailable")
 	}
-	owner, name := splitRepo(repo, f.org)
 	req := &gh.IssueRequest{Title: gh.Ptr(logscrub.ScrubString(title)), Body: gh.Ptr(logscrub.ScrubString(body))}
 	if len(labels) > 0 {
 		req.Labels = &labels
