@@ -77,11 +77,16 @@ fi
 # "raw secret text reaches the agent's own context" exposure without changing
 # who is trusted with what.
 if [[ -z "${HIVE_AGENT_TOKEN_CACHE:-}" && -n "${HIVE_GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
-  if printf '%s' "$HIVE_GITHUB_TOKEN" | gh auth login --with-token >/dev/null 2>&1; then
+  _gh_auth_args=(auth login --with-token)
+  if [[ -n "${GH_HOST:-}" && "${GH_HOST}" != "github.com" ]]; then
+    _gh_auth_args+=(--hostname "$GH_HOST")
+  fi
+  if printf '%s' "$HIVE_GITHUB_TOKEN" | gh "${_gh_auth_args[@]}" >/dev/null 2>&1; then
     echo "[agent-launch] gh CLI pre-authenticated from the shared token cache (native install, no per-agent scope available — N14/#3842)"
   else
     echo "[agent-launch] WARN: gh auth login --with-token failed — gh calls in this session may be unauthenticated" >&2
   fi
+  unset _gh_auth_args
 fi
 
 unset GH_TOKEN

@@ -284,7 +284,7 @@ Set conditionally:
 | `BD_DIR` | When the agent has a configured `beads_dir` | Beads data directory for the `bd` CLI. |
 | `HIVE_CAVEMAN_MODE` | When set in the agent's config | Passed through from `caveman_mode`. |
 | `HIVE_JEV_MODE`, `HIVE_JEV_ENDPOINT` | Only when the agent's `jev_mode` is `assist` | The mode (`assist`) and the hive's loopback Jev decision endpoint (`http://127.0.0.1:18446`) that `hive jev decide` calls. The Jev API key itself is never exported — the hive attaches it server-side. |
-| `HIVE_AGENT_TOKEN_CACHE` | Per-UID agents | Path of the agent's cached scoped GitHub token (see [hive-open-pr.md](hive-open-pr.md) and [troubleshooting.md](troubleshooting.md)). |
+| `HIVE_AGENT_TOKEN_CACHE` | Per-UID agents | Path of the agent's cached scoped GitHub token (see [hive-open-pr.md](hive-open-pr.md) and [troubleshooting.md](troubleshooting.md#hive_agent_token_cache-unset-no-read-credential-available)). |
 | `HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `DISABLE_AUTOUPDATER` | Per-UID agents | Per-agent home (#4596) and XDG data/state roots (#6238); `XDG_CONFIG_HOME` is deliberately **not** set (`~/.config` stays the shared credential/config bridge). The Claude CLI self-updater is disabled - the image pins the CLI version. |
 | `CODEX_HOME` | codex backend only | Per-agent Codex state directory (pre-created by the manager; codex refuses to create it itself). |
 | `HIVE_CONN_<NAME>_URL` and connection auth vars | Per configured `api` connection | See the connection rows in [Inference, CLI backends, and agents](#inference-cli-backends-and-agents). |

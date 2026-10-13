@@ -325,6 +325,49 @@ Read what the PR-request watcher itself concluded. It probes the repository and 
 kubectl -n hive logs deploy/hive | grep 'pr-request watcher'
 ```
 
+## "HIVE_AGENT_TOKEN_CACHE unset, no read credential available"
+
+This advisory means an agent tried to read the primary GitHub repository with
+`gh`/Git and no scoped App token (or native-install `gh` login) was available.
+It is **not** expected on normal per-UID Kubernetes deployments: those agents
+inherit `HIVE_AGENT_TOKEN_CACHE`, the entrypoint pre-creates the cache, and the
+manager mints it before launch. Writes can still work through the hive's App
+write gate while reads fail, because advisory agents do not receive
+`GITHUB_TOKEN` directly.
+
+Common causes:
+
+- The agent is running in a deployment that does not use the per-UID manager
+  path (native/systemd, Compose/Quadlet, or a Kubernetes pod whose UID
+  isolation did not initialize), so `HIVE_AGENT_TOKEN_CACHE` is legitimately
+  absent and the native `gh auth login` fallback must be used instead.
+- The cache file exists but is empty, unreadable, or was not pre-created by the
+  entrypoint as `dev:hive-<agent> 0640`.
+- The GitHub App is not installed on the repo, or token minting failed for the
+  installation/repository.
+- On GitHub Enterprise (for example `github.ibm.com`), the hive is missing the
+  enterprise host setting, so `gh`/Git are looking at the wrong host credential.
+
+Check from inside the hive container:
+
+```sh
+su -s /bin/sh hive-<agent> -c 'printf "%s\n" "${HIVE_AGENT_TOKEN_CACHE:-unset}"; test -r "$HIVE_AGENT_TOKEN_CACHE" && echo readable || echo MISSING'
+```
+
+Never print the file contents. If this says `unset` on a native/shared-UID
+deployment, check that the launch environment has the shared App token available
+to the launcher (`HIVE_GITHUB_TOKEN`) and that `gh auth status --hostname
+github.ibm.com` succeeds after launch. For GitHub Enterprise, set the primary
+GitHub host/base URL so agents inherit `GH_HOST=github.ibm.com`, and
+install/authorize the GitHub App on the target repo (`Jaedon-Paget/kie` in the
+reported case). On per-UID Kubernetes, `unset` or `MISSING` points to a broken
+entrypoint/UID-isolation setup; restart the pod and inspect the boot log for the
+agent token-cache creation lines.
+
+The wrapper intentionally does **not** fall back to the shared full-privilege
+App token: doing so would let an advisory agent read/write with fleet-wide
+installation permissions instead of its tier-scoped credential.
+
 ## An agent says "Please run /login" but logging in changes nothing
 
 Check whether the same line carries **`API Error: 403`**. If it does, the agent is

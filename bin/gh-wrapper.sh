@@ -147,7 +147,7 @@ if ! _contributor_mode; then
     # network failure. Fail loud and instant instead.
     export GH_PROMPT_DISABLED=1
   else
-    echo "⛔ BLOCKED: per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
+    echo "⛔ BLOCKED: per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset}); on per-UID deployments restart/repair token delivery, and on native/shared-UID GitHub Enterprise deployments set GH_HOST to your host such as github.ibm.com before launch. See src/docs/troubleshooting.md#hive_agent_token_cache-unset-no-read-credential-available." >&2
     echo "   Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3)." >&2
     echo "   The hive delivers a scoped token per agent; report this to the operator so token delivery is repaired." >&2
     exit 1

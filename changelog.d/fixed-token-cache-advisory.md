@@ -1,0 +1,1 @@
+- Make native/shared-UID guide auth diagnostics actionable and honor `GH_HOST` when the native `gh auth login` fallback authenticates GitHub Enterprise hosts.

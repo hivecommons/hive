@@ -130,6 +130,30 @@ run_wrapper() {
   return 0
 }
 
+run_wrapper_without_token_cache() {
+  : >"$STUB_LOG"
+  local out rc
+  out="$(
+    HIVE_GH_WRAPPER_REAL_GH="$STUB" \
+    STUB_LOG="$STUB_LOG" \
+    HIVE_AGENT="testagent" \
+    HIVE_AGENT_ID="testagent" \
+    HIVE_AGENT_MODE="ADVISORY" \
+    HIVE_ACMM_LEVEL="2" \
+    HIVE_CONTRIBUTOR_MODE="false" \
+    bash "$WRAPPER" version 2>&1
+  )"
+  rc=$?
+  local reached=no
+  [ -s "$STUB_LOG" ] && reached=yes
+  if [[ "$rc" = 1 && "$reached" = no && "$out" == *"HIVE_AGENT_TOKEN_CACHE unset"* && "$out" == *"GH_HOST"* && "$out" == *"troubleshooting.md#hive_agent_token_cache-unset-no-read-credential-available"* ]]; then
+    echo "exit=1 stub=no gate=token-cache-remedy"
+  else
+    echo "exit=${rc} stub=${reached} gate=other"
+    [ -n "${GH_WRAPPER_TEST_VERBOSE:-}" ] && printf '    wrapper said: %s\n' "$out" >&2
+  fi
+}
+
 # assert_blocked <label> <result> [expected-gate]
 # Passing the gate name pins WHICH check did the blocking.
 assert_blocked() {
@@ -184,6 +208,8 @@ else
 fi
 
 echo "=== gh-wrapper gate tests ==="
+
+assert_blocked "missing token cache reports operator remedy" "$(run_wrapper_without_token_cache)" "token-cache-remedy"
 
 # ── N15 chain A: unknown mode must fail CLOSED ────────────────────────────────
 # Before the fix an unrecognized mode matched no case arm and fell through with
