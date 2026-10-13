@@ -85,8 +85,8 @@ func TestRepoCardNameStaysLeftAlignedBesideOrderHandle(t *testing.T) {
 		// hivecommons/hive#10968: the header wraps instead of letting the
 		// auto-merge toggle and swarm chip overlap a long repo name.
 		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
-		".repo-name a { flex: 1 1 auto; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
-		".repo-name .repo-automerge-toggle { margin-left: auto; }",
+		".repo-name a { flex: 1 1 6rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+		".repo-name .repo-automerge-toggle { margin: 0 0 0 auto; }",
 		`<div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}"`,
 	} {
 		if !strings.Contains(html, snippet) {
@@ -109,7 +109,7 @@ func TestRepoCardNameThemeCSSDoesNotRecenterHeader(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
 		".repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }",
-		".repo-name a { flex: 1 1 auto; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+		".repo-name a { flex: 1 1 6rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("index.html base repo-name rule is missing %q", snippet)

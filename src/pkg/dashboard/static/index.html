@@ -1652,7 +1652,11 @@
     }
     .repo-provider-label { font-size:var(--fs-2xs); font-weight:700; letter-spacing:0.08em; color:var(--muted); text-transform:uppercase; margin-bottom:var(--sp-2); }
     .repo-name { font-size: 0.85rem; font-weight: 600; margin-bottom: var(--sp-3); display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; min-height: 1.75rem; min-width: 0; max-width: 100%; text-align: left; }
-    .repo-name a { flex: 1 1 auto; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The name's flex-basis is a short floor, not its content width, so the
+       header keeps the badges, auto-merge toggle and swarm/pause chips on the
+       name's line and truncates a long repo name with an ellipsis; the row
+       only wraps once even the floor plus the controls do not fit. */
+    .repo-name a { flex: 1 1 6rem; min-width: 0; max-width: 100%; text-align: left; justify-self: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .repo-header-badges, .repo-header-actions { display: inline-flex; align-items: center; flex: 0 0 auto; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; max-width: 100%; }
     .repo-header-actions { justify-content: flex-end; }
     .repo-header-spacer { min-width: var(--sp-2); }
@@ -1670,7 +1674,10 @@
     .repo-paused-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; text-transform: uppercase; border: 1px solid color-mix(in srgb, var(--yellow) 45%, transparent); background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); cursor: help; }
     .repo-pause-btn { flex: 0 0 auto; margin-left: 0; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-automerge-toggle { flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
-    .repo-name .repo-automerge-toggle { margin-left: auto; }
+    /* margin: 0 beats .config-toggle's margin-bottom (that rule is declared
+       later with equal specificity), which was floating the toggle and its
+       label 5px above the name's centre line. */
+    .repo-name .repo-automerge-toggle { margin: 0 0 0 auto; }
     .repo-automerge-toggle .config-toggle-label { font-size: var(--fs-2xs); }
     .repo-automerge-switch { flex: 0 0 auto; }
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
@@ -1719,6 +1726,10 @@
     .repo-pill-run-title { color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: var(--sp-1); }
     .repo-pill-col .repo-issue-pill-wrap, .repo-pill-col .repo-pr-pill-wrap { flex: 0 1 auto; max-width: 100%; width: 100%; }
     .repo-issue-pill-wrap, .repo-pr-pill-wrap { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(6rem, 1fr) max-content; align-items: center; gap: var(--sp-2); min-width: 0; max-width: 100%; }
+    /* The Overview-filter bucket row ("ISSUES | N outside Overview bands")
+       shares the pill rows' grid so its two chips centre on one line instead
+       of sitting inline on a text baseline at different heights. */
+    .repo-overview-filter-bucket { display: grid; grid-template-columns: minmax(4.5rem, max-content) minmax(0, 1fr); align-items: center; justify-items: start; gap: var(--sp-2); min-width: 0; max-width: 100%; }
     .repo-pill-main { display: flex; align-items: center; gap: var(--sp-1); min-width: 0; overflow: hidden; }
     .repo-pill-status { display: inline-block; text-align: center; min-width: 4.5rem; max-width: 5.25rem; padding: 3px 6px; border: 1px solid color-mix(in srgb, var(--pill-c, var(--border)) 45%, transparent); border-radius: var(--r-pill); color: var(--pill-c, var(--muted)); background: color-mix(in srgb, var(--pill-c, var(--muted)) 10%, transparent); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.02em; line-height: 1; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .repo-pill-status.held { --pill-c: var(--muted); border-style: dashed; }

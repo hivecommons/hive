@@ -206,8 +206,8 @@ func TestThemeCSSAppendsStructuralLayoutGuardAfterCustomCSS(t *testing.T) {
 		`body #oc-topbar.oc-topbar #oc-project-name.oc-project-title{text-align:left!important;`,
 		`body #repos.repo-grid .repo-card .repo-name{display:flex!important;`,
 		`justify-content:flex-start!important;`,
-		`body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 auto!important;`,
-		`body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin-left:auto!important;`,
+		`body #repos.repo-grid .repo-card .repo-name>a{flex:1 1 6rem!important;`,
+		`body #repos.repo-grid .repo-card .repo-name .repo-automerge-toggle{margin:0 0 0 auto!important;`,
 	} {
 		if !strings.Contains(css, want) {
 			t.Fatalf("layout guard missing %q:\n%s", want, css)
