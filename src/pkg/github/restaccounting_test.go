@@ -8,10 +8,9 @@ import (
 
 func resetRESTAccountingForTest(t *testing.T, now time.Time) func(time.Time) {
 	t.Helper()
-	old := sharedRESTAccounting
 	store := &restAccountingStore{now: func() time.Time { return now }, coreRemaining: -1}
-	sharedRESTAccounting = store
-	t.Cleanup(func() { sharedRESTAccounting = old })
+	old := sharedRESTAccountingPtr.Swap(store)
+	t.Cleanup(func() { sharedRESTAccountingPtr.Store(old) })
 	return func(next time.Time) { store.now = func() time.Time { return next } }
 }
 
