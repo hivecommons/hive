@@ -1,0 +1,1 @@
+- Entrypoint UID-isolation no longer aborts on an empty or truncated persisted `/data/.hive/uid-map.json`; it rebuilds from directory ownership and fsyncs the map before the atomic rename, so a node crash can no longer leave every later boot on the shared dev UID with no per-agent GitHub token.

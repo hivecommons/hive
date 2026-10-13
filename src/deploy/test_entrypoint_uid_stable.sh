@@ -101,6 +101,28 @@ else
   bad "adoption from existing directory owners failed"
 fi
 
+# A 0-byte persisted map (left behind by an unsynced rename across a node
+# crash) must be treated as absent, not abort the build and leave every
+# later boot on the shared dev UID.
+: > "$HIVE_UID_MAP_PERSISTED"
+rm -f "$HIVE_UID_MAP_RUNTIME"
+if PATH="$WORK/bin:$PATH" hive_build_uid_map >/dev/null 2>"$WORK/empty.err" \
+   && json_assert architect=2001 scanner=2009 adjudicator=2010 \
+   && grep -q 'persisted UID map .* unreadable' "$WORK/empty.err"; then
+  ok "empty persisted map is rebuilt from directory owners with a warning"
+else
+  bad "empty persisted map aborted the UID map build" "$(cat "$WORK/empty.err" 2>/dev/null | tail -3)"
+fi
+
+printf '{"agents":{"architect":' > "$HIVE_UID_MAP_PERSISTED"
+rm -f "$HIVE_UID_MAP_RUNTIME"
+if PATH="$WORK/bin:$PATH" hive_build_uid_map >/dev/null 2>&1 \
+   && json_assert architect=2001 scanner=2009 adjudicator=2010; then
+  ok "truncated persisted map is rebuilt from directory owners"
+else
+  bad "truncated persisted map aborted the UID map build"
+fi
+
 mkdir -p "$WORK/data/home/agents/scanner" "$WORK/data/beads/scanner" "$WORK/data/agents/scanner"
 printf 'token' > "$WORK/tokens/gh-token-scanner.cache"
 cat > "$WORK/owners.tsv" <<EOFOWNERS

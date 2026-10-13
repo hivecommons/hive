@@ -185,6 +185,15 @@ def load_map(path):
             raw = json.load(f) or {}
     except FileNotFoundError:
         return None
+    except (ValueError, OSError) as e:
+        # A 0-byte or truncated map (seen fleet-wide after node crashes on
+        # cephfs-backed /data) must not abort UID isolation for every later
+        # boot; treat it as absent so UIDs are recovered from dir ownership.
+        print('[entrypoint] WARN: persisted UID map %s unreadable (%s); rebuilding' % (path, e), file=os.sys.stderr)
+        return None
+    if not isinstance(raw, dict):
+        print('[entrypoint] WARN: persisted UID map %s is not an object; rebuilding' % path, file=os.sys.stderr)
+        return None
     agents = {}
     for name, uid in (raw.get('agents') or {}).items():
         try:
@@ -252,6 +261,8 @@ for path in (persisted_path, runtime_path):
     with open(tmp, 'w') as f:
         json.dump(uid_map, f, indent=2)
         f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)
 
 print('[entrypoint] UID map written to %s and %s' % (persisted_path, runtime_path), file=os.sys.stderr)

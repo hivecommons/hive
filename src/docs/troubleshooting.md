@@ -337,6 +337,20 @@ write gate while reads fail, because advisory agents do not receive
 
 Common causes:
 
+- **The persisted UID map is empty or truncated.** The boot log shows
+  `[entrypoint] WARN: Failed to build UID map` (older images) or
+  `WARN: persisted UID map /data/.hive/uid-map.json unreadable … rebuilding`,
+  followed by `no UID map found, agents will share dev UID`. A 0-byte
+  `/data/.hive/uid-map.json` is what an unsynced rename leaves behind when the
+  node crashes mid-boot (seen on CephFS-backed `/data`). Current images recover
+  automatically from directory ownership; on older images delete the empty
+  file and restart the pod:
+
+  ```sh
+  kubectl -n <ns> exec deploy/hive -c hive -- sh -c 'test -s /data/.hive/uid-map.json || rm -f /data/.hive/uid-map.json'
+  kubectl -n <ns> rollout restart deploy/hive
+  ```
+
 - The agent is running in a deployment that does not use the per-UID manager
   path (native/systemd, Compose/Quadlet, or a Kubernetes pod whose UID
   isolation did not initialize), so `HIVE_AGENT_TOKEN_CACHE` is legitimately
@@ -344,7 +358,10 @@ Common causes:
 - The cache file exists but is empty, unreadable, or was not pre-created by the
   entrypoint as `dev:hive-<agent> 0640`.
 - The GitHub App is not installed on the repo, or token minting failed for the
-  installation/repository.
+  installation/repository. A hosted hive whose `project.org` is still the slot
+  placeholder (`available-…`) logs `app <id> has no installation for
+  "available-…"` every poll and runs with no GitHub credentials at all; set the
+  real org in the dashboard so installation auto-discovery can succeed.
 - On GitHub Enterprise (for example `github.ibm.com`), the hive is missing the
   enterprise host setting, so `gh`/Git are looking at the wrong host credential.
 
