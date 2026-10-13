@@ -31,12 +31,20 @@ var issueTitleColonRE = regexp.MustCompile(`:\s+.*$`)
 
 var issueTitleWhitespaceRE = regexp.MustCompile(`\s+`)
 
+// A path ("web/src/store/cache.ts") or bare filename ("kagent.go") token.
+// Such a token pins the subject to one concrete file, so a short stem like
+// "split x.ts" is still a safe dedupe key even though it fails the generic
+// length/word floors below.
+var issueTitlePathTokenRE = regexp.MustCompile(`(?:^|\s)(?:[\w.-]*/[\w./-]+|[\w-]+\.[a-z][\w]*)(?:\s|$)`)
+
 const (
 	// A canonical subject is only trusted as a dedupe key when enough of the
 	// title survives stripping. Without this, short/generic stems (e.g.
 	// "[operations] CI failure") would collapse unrelated findings into one.
 	minCanonicalSubjectLen   = 20
 	minCanonicalSubjectWords = 3
+	// A stem that names a concrete file only needs an action word beside it.
+	minCanonicalSubjectPathWords = 2
 )
 
 // canonicalIssueSubject reduces an issue title to the stable subject used for
@@ -51,8 +59,19 @@ func canonicalIssueSubject(title string) string {
 	t = issueTitleCountRE.ReplaceAllString(t, "")
 	t = issueTitleWhitespaceRE.ReplaceAllString(strings.ToLower(t), " ")
 	t = strings.TrimSpace(t)
-	if len(t) < minCanonicalSubjectLen || len(strings.Fields(t)) < minCanonicalSubjectWords {
+	if !canonicalSubjectSpecific(t) {
 		return ""
 	}
 	return t
+}
+
+// canonicalSubjectSpecific reports whether a stripped, lowercased stem is
+// specific enough to key duplicates on: either it names a file/path and has
+// an action word alongside it, or it clears the generic length/word floors.
+func canonicalSubjectSpecific(t string) bool {
+	words := len(strings.Fields(t))
+	if words >= minCanonicalSubjectPathWords && issueTitlePathTokenRE.MatchString(t) {
+		return true
+	}
+	return len(t) >= minCanonicalSubjectLen && words >= minCanonicalSubjectWords
 }
