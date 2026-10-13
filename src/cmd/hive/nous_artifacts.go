@@ -16,10 +16,6 @@ import (
 // optional GitHub artifact mirror reports itself (RFC #11585 part 8, #11701).
 const nousStatusArtifactRepoKey = "artifact_repo"
 
-// errNousArtifactRepoDisabled is returned by the owner "Sync now" seam when
-// no artifact repository is configured.
-var errNousArtifactRepoDisabled = errors.New("nous artifact repository not configured")
-
 // artifactForge adapts *github.Client to nousartifacts.Forge. Every call
 // goes through the hive's App-identity client (ETag cache, accounting,
 // effects boundary) — never a raw http.Client and never the owner's token.
