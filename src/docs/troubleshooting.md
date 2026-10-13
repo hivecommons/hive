@@ -351,6 +351,11 @@ Common causes:
   kubectl -n <ns> rollout restart deploy/hive
   ```
 
+  A Kubernetes or Podman hive in this state also reports a failing
+  `uid_isolation` health check (dashboard health summary and
+  `/api/health/deep`), which the hub surfaces as a `health-check-failing`
+  fleet alert ([#11713](https://github.com/hivecommons/hive/issues/11713)).
+
 - The agent is running in a deployment that does not use the per-UID manager
   path (native/systemd, Compose/Quadlet, or a Kubernetes pod whose UID
   isolation did not initialize), so `HIVE_AGENT_TOKEN_CACHE` is legitimately

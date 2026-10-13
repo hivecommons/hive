@@ -120,3 +120,26 @@ func (m *Manager) awaitUIDIsolation(ctx context.Context, agent *AgentProcess) er
 		}
 	}
 }
+
+// SharedDevUID reports whether this manager is running every agent on the
+// shared dev UID: no UID map was loaded at boot (the "no UID map found, agents
+// will share dev UID" path), or the map exists but no agent was allocated a
+// per-agent UID. Either way no agent gets its own scoped GitHub token cache.
+// The dashboard turns this into an operator-visible health check (#11713)
+// when the deployment was expected to isolate agents.
+func (m *Manager) SharedDevUID() bool {
+	if m.uidMap == nil {
+		return true
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.agents) == 0 {
+		return false
+	}
+	for _, a := range m.agents {
+		if a.UID > 0 {
+			return false
+		}
+	}
+	return true
+}

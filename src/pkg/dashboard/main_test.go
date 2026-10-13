@@ -92,6 +92,9 @@ func TestMain(m *testing.M) {
 	dataDiskUsageFn = func() (dataDiskUsage, bool) {
 		return dataDiskUsage{Path: dataVolumePath, TotalBytes: 100 << 30, UsedBytes: 10 << 30}, true
 	}
+	// Likewise the uid_isolation check (#11713) reads ambient HIVE_* env and
+	// the serviceaccount mount; a CI runner inside a hive pod has both.
+	uidIsolationExpectedFn = func() bool { return false }
 
 	code := m.Run()
 	os.RemoveAll(testDataDir)

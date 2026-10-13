@@ -3205,6 +3205,18 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		checks[healthCheckDataDisk] = diskCheck
 	}
 
+	// Per-agent UID isolation (#11713). Omitted unless the deployment was
+	// expected to isolate agents (see uidIsolationExpected).
+	if st, detail, ok := s.uidIsolationCheck(); ok {
+		checks[healthCheckUIDIsolation] = map[string]any{"status": st, "detail": detail}
+		if st == "fail" {
+			failCount++
+			if overall == "ok" {
+				overall = "degraded"
+			}
+		}
+	}
+
 	// 12. Queue trend (is work being processed?)
 	s.statusMu.RLock()
 	if s.status != nil {
@@ -4422,6 +4434,16 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 			fails++
 		case "warn":
 			warns++
+		}
+	}
+
+	// Per-agent UID isolation (#11713): a hive that should isolate agents but
+	// booted on the shared dev UID fails here so the hub raises its
+	// health-check-failing alert with the remedy in the detail.
+	if st, detail, ok := s.uidIsolationCheck(); ok {
+		checks = append(checks, check{Name: healthCheckUIDIsolation, Status: st, Detail: detail})
+		if st == "fail" {
+			fails++
 		}
 	}
 
