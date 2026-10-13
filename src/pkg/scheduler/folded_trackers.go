@@ -14,9 +14,16 @@ const foldedFindingMarker = "<!-- hive-finding-folded -->"
 // maxFoldedTrackersNamed caps the section so it cannot crowd out ready work.
 const maxFoldedTrackersNamed = 10
 
+// isFoldedTracker reports whether an open issue is a folded-finding tracker:
+// either the client saw a finding fold into it this process lifetime
+// (Issue.FoldedTracker, #11587 — the watcher posts the marker as a comment,
+// which the enumerated body never carries) or its body opens with the marker.
 func isFoldedTracker(issue github.Issue) bool {
 	if issue.State != "" && !strings.EqualFold(issue.State, "open") {
 		return false
+	}
+	if issue.FoldedTracker {
+		return true
 	}
 	return strings.HasPrefix(strings.TrimSpace(issue.Body), foldedFindingMarker)
 }

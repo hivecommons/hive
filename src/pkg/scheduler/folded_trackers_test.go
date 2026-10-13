@@ -19,6 +19,8 @@ func TestIsFoldedTracker(t *testing.T) {
 		{"no marker", github.Issue{Body: "plain"}, false},
 		{"closed", github.Issue{State: "closed", Body: foldedFindingMarker}, false},
 		{"open state", github.Issue{State: "OPEN", Body: foldedFindingMarker}, true},
+		{"client flag, plain body", github.Issue{FoldedTracker: true, Body: "original finding"}, true},
+		{"client flag, closed", github.Issue{State: "closed", FoldedTracker: true, Body: "original finding"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -43,5 +45,28 @@ func TestFormatFoldedTrackersNote(t *testing.T) {
 	}
 	if strings.Contains(got, "ordinary") {
 		t.Errorf("non-tracker leaked:\n%s", got)
+	}
+}
+
+// The scanner lane: a tracker the client flagged at fold time is tagged in
+// its work-list line and named in the summary line; unflagged issues are not.
+func TestScannerMessageNamesFoldedTrackers(t *testing.T) {
+	s := newScheduler()
+	issues := []github.Issue{
+		{Repo: "acme/widget", Number: 7, Title: "svg gate bypasses", Body: "original finding", FoldedTracker: true},
+		{Repo: "acme/widget", Number: 8, Title: "ordinary", Body: "x"},
+	}
+	msg := s.buildScannerMessage(issues, emptyActionable())
+	if !strings.Contains(msg, "svg gate bypasses [FOLDED-TRACKER]") {
+		t.Errorf("tracker line not tagged:\n%s", msg)
+	}
+	if !strings.Contains(msg, "FOLDED-FINDING TRACKERS (1") || !strings.Contains(msg, "acme/widget#7") {
+		t.Errorf("summary line missing tracker:\n%s", msg)
+	}
+	if strings.Contains(msg, "ordinary [FOLDED-TRACKER]") {
+		t.Errorf("non-tracker tagged:\n%s", msg)
+	}
+	if got := s.buildScannerMessage(issues[1:], emptyActionable()); strings.Contains(got, "FOLDED-FINDING TRACKERS") {
+		t.Errorf("summary line present with no trackers:\n%s", got)
 	}
 }

@@ -36,7 +36,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 		if issue.IsTracker {
 			tracker = " [TRACKER]"
 		}
-		if issue.FoldedTracker {
+		if isFoldedTracker(issue) {
 			tracker += " [FOLDED-TRACKER]"
 		}
 		title := issue.Title
@@ -630,7 +630,7 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 func foldedTrackerRefs(issues []github.Issue) []string {
 	var refs []string
 	for _, issue := range issues {
-		if issue.FoldedTracker {
+		if isFoldedTracker(issue) {
 			refs = append(refs, issueDisplayRef(issue))
 		}
 	}
