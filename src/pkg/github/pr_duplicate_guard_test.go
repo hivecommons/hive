@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 type guardPR struct {
@@ -31,8 +33,11 @@ type guardServer struct {
 	// existingComments is returned for every GET .../comments.
 	existingComments []string
 	// failStatus, when non-zero, is returned for any path containing failPath.
+	// failMethod, when set, narrows the injected failure to that HTTP method so
+	// a GET and a POST on the same path can fail independently.
 	failPath   string
 	failStatus int
+	failMethod string
 
 	mu       sync.Mutex
 	created  int
@@ -61,7 +66,8 @@ func (g *guardServer) start(t *testing.T) *httptest.Server {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
-		if g.failStatus != 0 && g.failPath != "" && strings.Contains(path+"?"+r.URL.RawQuery, g.failPath) {
+		if g.failStatus != 0 && g.failPath != "" && strings.Contains(path+"?"+r.URL.RawQuery, g.failPath) &&
+			(g.failMethod == "" || g.failMethod == r.Method) {
 			w.WriteHeader(g.failStatus)
 			_, _ = io.WriteString(w, `{"message":"injected"}`)
 			return
@@ -298,6 +304,160 @@ func TestCreatePR_DuplicateGuardRetryableFailuresFailClosed(t *testing.T) {
 				t.Errorf("created %d PRs, want 0 (request must stay queued)", g.created)
 			}
 		})
+	}
+}
+
+// A candidate whose file set cannot be read definitively (files endpoint
+// failing, or an empty list GitHub may return for a capped diff) is skipped
+// rather than blocking the PR, and the failure is not escalated to a retryable
+// lookup error: the request must not stay queued on one unreadable sibling.
+// PR numbers are unique to this test because prChangedFiles caches fingerprints
+// process-wide by repo/number/head SHA.
+func TestCreatePR_DuplicateGuardSkipsUnreadableCandidate(t *testing.T) {
+	const bot = "hive[bot]"
+	for _, tc := range []struct {
+		name string
+		g    *guardServer
+	}{
+		{
+			name: "files endpoint fails for the candidate",
+			g: &guardServer{
+				open:       []guardPR{{Number: 801, Ref: "b", User: bot, Files: []string{"a.go"}}},
+				headFiles:  []string{"a.go"},
+				failPath:   "/pulls/801/files",
+				failStatus: http.StatusBadGateway,
+			},
+		},
+		{
+			name: "candidate reports no files",
+			g: &guardServer{
+				open:      []guardPR{{Number: 802, Ref: "b", User: bot}},
+				headFiles: []string{"a.go"},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := tc.g.start(t)
+			c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+			res, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", "no keyword")
+			if err != nil {
+				t.Fatalf("CreatePR: %v", err)
+			}
+			if res.Number != 99 || res.IsDuplicate() {
+				t.Errorf("got #%d reason %q, want a freshly opened #99", res.Number, res.DuplicateReason)
+			}
+			if tc.g.created != 1 {
+				t.Errorf("created %d PRs, want 1", tc.g.created)
+			}
+		})
+	}
+}
+
+// The file-set walk reads at most maxDuplicateTreeCandidates bot PRs: a
+// duplicate sitting past the cap is not detected, so the PR opens. Pins the
+// bound so a change to it is a deliberate one.
+func TestCreatePR_DuplicateGuardStopsAtCandidateCap(t *testing.T) {
+	const bot = "hive[bot]"
+	g := &guardServer{headFiles: []string{"dup.go"}}
+	for i := 0; i < maxDuplicateTreeCandidates; i++ {
+		n := 1000 + i
+		g.open = append(g.open, guardPR{Number: n, Ref: fmt.Sprintf("b%d", n), User: bot, Files: []string{fmt.Sprintf("f%d.go", n)}})
+	}
+	// Identical file set, but only reachable as candidate index == cap.
+	g.open = append(g.open, guardPR{Number: 1999, Ref: "b1999", User: bot, Files: []string{"dup.go"}})
+	srv := g.start(t)
+	c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+	res, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", "no keyword")
+	if err != nil {
+		t.Fatalf("CreatePR: %v", err)
+	}
+	if res.Number != 99 || res.IsDuplicate() {
+		t.Errorf("got #%d reason %q, want a freshly opened #99 (candidate past the cap must not be inspected)", res.Number, res.DuplicateReason)
+	}
+	// Move the duplicate inside the cap and the same guard refuses the PR.
+	g.open = append([]guardPR{g.open[len(g.open)-1]}, g.open[:len(g.open)-1]...)
+	g.created = 0
+	res, err = c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", "no keyword")
+	if err != nil {
+		t.Fatalf("CreatePR (dup inside cap): %v", err)
+	}
+	if res.Number != 1999 || res.DuplicateReason != DuplicateReasonOverlappingFiles {
+		t.Errorf("got #%d reason %q, want #1999 %q", res.Number, res.DuplicateReason, DuplicateReasonOverlappingFiles)
+	}
+	if g.created != 0 {
+		t.Errorf("created %d PRs, want 0", g.created)
+	}
+}
+
+// The redirect comment is courtesy; the refusal is the enforcement. A failure
+// reading or posting the comment must not surface as a CreatePR error, and
+// must not turn the refusal into a freshly opened PR.
+func TestCreatePR_DuplicateGuardRedirectCommentFailureIsNotFatal(t *testing.T) {
+	for _, tc := range []struct {
+		name, method string
+	}{
+		{"listing existing comments fails", http.MethodGet},
+		{"posting the comment fails", http.MethodPost},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := &guardServer{
+				open:       []guardPR{{Number: 7, Ref: "a", Body: "Fixes #42", User: "human"}},
+				failPath:   "/issues/7/comments",
+				failMethod: tc.method,
+				failStatus: http.StatusInternalServerError,
+			}
+			srv := g.start(t)
+			c := NewClientForTest(srv.URL, "o", nil, prTestLogger())
+			res, err := c.CreatePR(context.Background(), "o/r", "new-branch", "main", "title", "Closes #42")
+			if err != nil {
+				t.Fatalf("CreatePR: %v", err)
+			}
+			if res.Number != 7 || res.DuplicateReason != DuplicateReasonClosesIssue {
+				t.Errorf("got #%d reason %q, want #7 %q", res.Number, res.DuplicateReason, DuplicateReasonClosesIssue)
+			}
+			if g.created != 0 {
+				t.Errorf("created %d PRs, want 0", g.created)
+			}
+			if g.comments != 0 {
+				t.Errorf("recorded %d posted comments, want 0", g.comments)
+			}
+		})
+	}
+}
+
+func TestFileSetContained(t *testing.T) {
+	head := map[string]bool{"a.go": true, "b.go": true}
+	for _, tc := range []struct {
+		name  string
+		other []string
+		want  bool
+	}{
+		{"empty other is never contained", nil, false},
+		{"other inside head", []string{"a.go"}, true},
+		{"identical sets", []string{"a.go", "b.go"}, true},
+		{"head inside other", []string{"a.go", "b.go", "c.go"}, true},
+		{"partial overlap", []string{"a.go", "c.go"}, false},
+		{"disjoint", []string{"c.go"}, false},
+	} {
+		if got := fileSetContained(head, tc.other); got != tc.want {
+			t.Errorf("%s: fileSetContained(head, %v) = %v, want %v", tc.name, tc.other, got, tc.want)
+		}
+	}
+}
+
+func TestDuplicateGuardComment(t *testing.T) {
+	pr := &gh.PullRequest{Number: gh.Ptr(7)}
+	for _, tc := range []struct {
+		reason, want string
+	}{
+		{DuplicateReasonClosesIssue, "this PR already closes #42"},
+		{DuplicateReasonMergedFix, "this merged PR already closed #42"},
+		{DuplicateReasonOverlappingFiles, "overlapping set of files"},
+	} {
+		got := duplicateGuardComment(&duplicateFinding{pr: pr, reason: tc.reason, issue: 42}, "new-branch")
+		if !strings.Contains(got, duplicateGuardMarker) || !strings.Contains(got, "`new-branch`") || !strings.Contains(got, tc.want) {
+			t.Errorf("%s: comment %q lacks marker, head or %q", tc.reason, got, tc.want)
+		}
 	}
 }
 
