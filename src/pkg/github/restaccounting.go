@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -49,7 +50,15 @@ type restAccountingStore struct {
 	coreObserved  time.Time
 }
 
-var sharedRESTAccounting = &restAccountingStore{now: time.Now, coreRemaining: -1}
+var sharedRESTAccountingPtr atomic.Pointer[restAccountingStore]
+
+func init() {
+	sharedRESTAccountingPtr.Store(&restAccountingStore{now: time.Now, coreRemaining: -1})
+}
+
+// sharedRESTAccounting returns the process-wide store. The pointer is atomic so
+// tests can swap it while transports in other goroutines are still recording.
+func sharedRESTAccounting() *restAccountingStore { return sharedRESTAccountingPtr.Load() }
 
 type restAccountingTransport struct{ inner http.RoundTripper }
 
@@ -77,8 +86,9 @@ func RecordRESTRequest(caller, method, path string, status int, h http.Header) {
 	notModified := status == http.StatusNotModified || h.Get(etagCacheHeader) == "revalidated"
 	rateLimited := status == http.StatusTooManyRequests || (status == http.StatusForbidden && h.Get("X-RateLimit-Remaining") == "0")
 	charged := !notModified && endpoint != "/rate_limit"
-	sharedRESTAccounting.record(restAccountingEvent{
-		at:          sharedRESTAccounting.now(),
+	store := sharedRESTAccounting()
+	store.record(restAccountingEvent{
+		at:          store.now(),
 		caller:      caller,
 		method:      method,
 		endpoint:    endpoint,
@@ -90,16 +100,16 @@ func RecordRESTRequest(caller, method, path string, status int, h http.Header) {
 }
 
 func RESTTopConsumers(limit int) []RESTConsumer {
-	return sharedRESTAccounting.top(limit)
+	return sharedRESTAccounting().top(limit)
 }
 
 func LowValueRESTWorkAllowed() bool {
-	remaining, _, ok := sharedRESTAccounting.coreSnapshot()
+	remaining, _, ok := sharedRESTAccounting().coreSnapshot()
 	return !ok || remaining > lowValueRESTBudgetFloor
 }
 
 func CoreRateLimitSnapshot() (remaining int, reset time.Time, ok bool) {
-	return sharedRESTAccounting.coreSnapshot()
+	return sharedRESTAccounting().coreSnapshot()
 }
 
 func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header) {
