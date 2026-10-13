@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -45,6 +46,29 @@ func TestFormatFoldedTrackersNote(t *testing.T) {
 	}
 	if strings.Contains(got, "ordinary") {
 		t.Errorf("non-tracker leaked:\n%s", got)
+	}
+}
+
+// The section names at most maxFoldedTrackersNamed trackers and counts the
+// rest, so a long tracker backlog cannot crowd out the ready work list.
+func TestFormatFoldedTrackersNoteCapsNamedTrackers(t *testing.T) {
+	s := &Scheduler{}
+	var issues []github.Issue
+	for i := 1; i <= maxFoldedTrackersNamed+2; i++ {
+		issues = append(issues, github.Issue{Repo: "acme/widget", Number: i, Title: fmt.Sprintf("tracker %d", i), Body: foldedFindingMarker + "\nx"})
+	}
+	got := s.formatFoldedTrackersNote(issues)
+	if want := fmt.Sprintf("Folded trackers (%d)", maxFoldedTrackersNamed+2); !strings.Contains(got, want) {
+		t.Errorf("header should count every tracker, lacks %q:\n%s", want, got)
+	}
+	if !strings.Contains(got, fmt.Sprintf("acme/widget#%d — tracker %d", maxFoldedTrackersNamed, maxFoldedTrackersNamed)) {
+		t.Errorf("tracker at the cap should be named:\n%s", got)
+	}
+	if strings.Contains(got, fmt.Sprintf("acme/widget#%d", maxFoldedTrackersNamed+1)) {
+		t.Errorf("tracker past the cap must not be named:\n%s", got)
+	}
+	if !strings.Contains(got, "… and 2 more") {
+		t.Errorf("overflow count missing:\n%s", got)
 	}
 }
 
