@@ -822,9 +822,9 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		// A human-filed twin was not created by this hive, so the finding's
 		// detail would otherwise vanish: leave it as a comment (#11576).
 		if consolidateOpen && len(c.hiveBotLogins()) > 0 && !isHiveBotLogin(c.hiveBotLogins(), existing.GetUser().GetLogin()) {
-			if err := c.CreateIssueComment(ctx, owner+"/"+repoName, existing.GetNumber(),
-				consolidatedFindingComment(title, body, wantFiles)); err != nil {
-				return CreateIssueResult{}, fmt.Errorf("CreateIssue: commenting on human-filed issue #%d in %s/%s: %w", existing.GetNumber(), owner, repoName, err)
+			if err := c.commentOnHumanFiledTwin(ctx, owner, repoName, existing,
+				subjectMatchFindingComment(title, body)); err != nil {
+				return CreateIssueResult{}, err
 			}
 			return CreateIssueResult{Number: existing.GetNumber(), URL: existing.GetHTMLURL(), ID: existing.GetID(), AlreadyExisted: true, Consolidated: true}, nil
 		}
@@ -863,8 +863,12 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	// whichever merges first forces the other to rebase. Fold the finding into
 	// the existing issue so one PR handles both.
 	if fileSetTwin != nil {
-		if err := c.CreateIssueComment(ctx, owner+"/"+repoName, fileSetTwin.GetNumber(),
-			consolidatedFindingComment(title, body, wantFiles)); err != nil {
+		comment := consolidatedFindingComment(title, body, wantFiles)
+		if !isHiveBotLogin(c.hiveBotLogins(), fileSetTwin.GetUser().GetLogin()) {
+			if err := c.commentOnHumanFiledTwin(ctx, owner, repoName, fileSetTwin, comment); err != nil {
+				return CreateIssueResult{}, err
+			}
+		} else if err := c.CreateIssueComment(ctx, owner+"/"+repoName, fileSetTwin.GetNumber(), comment); err != nil {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: consolidating into open issue #%d in %s/%s: %w", fileSetTwin.GetNumber(), owner, repoName, err)
 		}
 		c.logger.Info("CreateIssue: consolidated finding into open issue over the same file set",
@@ -1182,6 +1186,44 @@ func (c *Client) countClosedSiblingsBy(ctx context.Context, owner, repo, botLogi
 	return nil
 }
 
+// hiveFindingFoldedMarker tags every comment that folds a finding into an
+// existing issue, so a human-filed twin is commented on at most once.
+const hiveFindingFoldedMarker = "<!-- hive-finding-folded -->"
+
+// commentOnHumanFiledTwin folds a finding into a human-filed issue at most
+// once. Scanner re-files are reworded across sweeps, so the body-digest claim
+// cannot dedupe them; a marker already on the issue means the finding was
+// recorded and this re-file reuses the issue silently. A failed lookup
+// comments anyway — suppression only on positive evidence.
+func (c *Client) commentOnHumanFiledTwin(ctx context.Context, owner, repo string, twin *gh.Issue, comment string) error {
+	found, err := c.IssueCommentsContain(ctx, owner+"/"+repo, twin.GetNumber(), hiveFindingFoldedMarker)
+	if err != nil {
+		c.logger.Warn("CreateIssue: folded-comment lookup on human-filed issue failed, commenting anyway",
+			slog.String("repo", repo), slog.Int("number", twin.GetNumber()), slog.String("error", err.Error()))
+	} else if found {
+		c.logger.Info("CreateIssue: human-filed issue already carries a folded finding, reusing without another comment",
+			slog.String("repo", repo), slog.Int("number", twin.GetNumber()))
+		return nil
+	}
+	if err := c.CreateIssueComment(ctx, owner+"/"+repo, twin.GetNumber(), comment); err != nil {
+		return fmt.Errorf("CreateIssue: commenting on human-filed issue #%d in %s/%s: %w", twin.GetNumber(), owner, repo, err)
+	}
+	return nil
+}
+
+// subjectMatchFindingComment renders a finding folded into a human-filed issue
+// with the same canonical subject (#11576). File sets were never compared on
+// this path, so the header claims only a subject match.
+func subjectMatchFindingComment(title, body string) string {
+	var b strings.Builder
+	b.WriteString(hiveFindingFoldedMarker + "\n")
+	b.WriteString("**Consolidated finding.** This was filed as a separate issue; it has the same subject as this one, so it was folded in here instead. Address it together with this issue.\n\n### ")
+	b.WriteString(title)
+	b.WriteString("\n\n")
+	b.WriteString(body)
+	return b.String()
+}
+
 // consolidatedFindingComment renders a finding folded into an open issue that
 // covers the same files (#9376). The header says why it is a comment rather
 // than its own issue, so whoever picks the issue up handles both in one PR.
@@ -1192,6 +1234,7 @@ func consolidatedFindingComment(title, body string, files map[string]bool) strin
 	}
 	sort.Strings(paths)
 	var b strings.Builder
+	b.WriteString(hiveFindingFoldedMarker + "\n")
 	b.WriteString("**Consolidated finding.** This was filed as a separate issue; it references exactly the same files as this one (")
 	b.WriteString(strings.Join(paths, ", "))
 	b.WriteString("), so it was folded in here instead. Address it in the same PR as this issue — two PRs editing the same files would conflict.\n\n### ")
@@ -1207,7 +1250,7 @@ func consolidatedFindingComment(title, body string, files map[string]bool) strin
 // works the tracker to fix the shared root cause rather than one more variant.
 func foldedComponentFindingComment(title, body, path string, openSiblings, closedSiblings int) string {
 	var b strings.Builder
-	b.WriteString("<!-- hive-finding-folded -->\n")
+	b.WriteString(hiveFindingFoldedMarker + "\n")
 	b.WriteString("**Folded finding.** This was filed as a separate issue, but ")
 	b.WriteString(strconv.Itoa(openSiblings))
 	b.WriteString(" open agent-filed issue")

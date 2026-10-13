@@ -46,6 +46,9 @@ type consolidationMock struct {
 	// list (the only closed list filtered by creator) with that status while
 	// the rejected-twin closed list keeps working.
 	closedSiblingStatus int
+	// listCommentsStatus, when non-zero, fails every comment list GET with
+	// that status; otherwise the list serves the comments posted so far.
+	listCommentsStatus int
 }
 
 // consolidationMockServer serves open issues newest-first (the order the
@@ -73,6 +76,21 @@ func consolidationMockServer(t *testing.T, open []openTwin, m *consolidationMock
 			m.commentedOn = append(m.commentedOn, n)
 			m.commentBodies = append(m.commentBodies, in.Body)
 			_, _ = io.WriteString(w, `{"id":1}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			if m.listCommentsStatus != 0 {
+				w.WriteHeader(m.listCommentsStatus)
+				return
+			}
+			parts := strings.Split(r.URL.Path, "/")
+			n, _ := strconv.Atoi(parts[len(parts)-2])
+			out := make([]map[string]any, 0, len(m.commentedOn))
+			for i, on := range m.commentedOn {
+				if on == n {
+					out = append(out, map[string]any{"id": i + 1, "body": m.commentBodies[i]})
+				}
+			}
+			b, _ := json.Marshal(out)
+			_, _ = w.Write(b)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
 			if r.URL.Query().Get("state") != "open" {
 				m.closedLists++
@@ -250,16 +268,21 @@ func TestIssueRequestWatcher_FoldsIntoHumanFiledIssue(t *testing.T) {
 		name        string
 		open        openTwin
 		title, body string
+		want        []string
+		notWant     []string
 	}{
 		{
 			name:  "file set",
 			open:  openTwin{number: 415, author: "human", title: "HP ZBook black screen", body: "see build/esp.sh:12"},
 			title: "[scanner] ESP path length too long", body: "build/esp.sh:40 overflows",
+			want: []string{hiveFindingFoldedMarker, "exactly the same files", "`build/esp.sh`"},
 		},
 		{
 			name:  "canonical subject",
 			open:  openTwin{number: 415, author: "human", title: "HP ZBook black screen on boot", body: "no files"},
 			title: "[scanner] HP ZBook black screen on boot", body: "no files either",
+			want:    []string{hiveFindingFoldedMarker, "same subject as this one"},
+			notWant: []string{"exactly the same files", "()"},
 		},
 	}
 	for _, tc := range cases {
@@ -279,7 +302,122 @@ func TestIssueRequestWatcher_FoldsIntoHumanFiledIssue(t *testing.T) {
 			if !res.OK || !res.Consolidated || res.Number != 415 {
 				t.Errorf("result = %+v, want consolidated into #415", res)
 			}
+			for _, want := range tc.want {
+				if !strings.Contains(m.commentBodies[0], want) {
+					t.Errorf("comment lacks %q:\n%s", want, m.commentBodies[0])
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(m.commentBodies[0], notWant) {
+					t.Errorf("comment must not contain %q:\n%s", notWant, m.commentBodies[0])
+				}
+			}
 		})
+	}
+}
+
+// humanTwinRefiles are two reworded re-files of one finding against human
+// issue #415, by file set and by canonical subject. Scanner sweeps reword a
+// finding each time, so byte-identical dedupe never catches them.
+var humanTwinRefiles = []struct {
+	name     string
+	open     openTwin
+	requests [2]IssueRequest
+}{
+	{
+		name: "file set",
+		open: openTwin{number: 415, author: "human", title: "HP ZBook black screen", body: "see build/esp.sh:12"},
+		requests: [2]IssueRequest{
+			{Repo: "o/r", Agent: "scanner", Title: "[scanner] ESP path length too long", Body: "build/esp.sh:40 overflows"},
+			{Repo: "o/r", Agent: "scanner", Title: "[scanner] ESP path exceeds firmware limit", Body: "build/esp.sh:41 writes past the limit"},
+		},
+	},
+	{
+		name: "canonical subject",
+		open: openTwin{number: 415, author: "human", title: "HP ZBook black screen on boot", body: "no files"},
+		requests: [2]IssueRequest{
+			{Repo: "o/r", Agent: "scanner", Title: "[scanner] HP ZBook black screen on boot", Body: "no files either"},
+			{Repo: "o/r", Agent: "scanner", Title: "[scanner] HP ZBook black screen on boot", Body: "reworded: still no files"},
+		},
+	},
+}
+
+// #11681: a human's issue must not collect one comment per scanner sweep.
+// The second reworded re-file sees the folded marker and reuses #415 silently.
+func TestIssueRequestWatcher_HumanFiledIssueCommentedAtMostOnce(t *testing.T) {
+	for _, tc := range humanTwinRefiles {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{}
+			srv := consolidationMockServer(t, []openTwin{tc.open}, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+			dir := withIssueDir(t)
+
+			for i, req := range tc.requests {
+				reqPath, res := fileRequest(t, c, dir, req)
+				if !res.OK || !res.Consolidated || !res.AlreadyExisted || res.Number != 415 {
+					t.Errorf("request %d: result = %+v, want consolidated into #415", i+1, res)
+				}
+				if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+					t.Errorf("request %d must be consumed", i+1)
+				}
+			}
+			if m.created != 0 || len(m.commentedOn) != 1 || m.commentedOn[0] != 415 {
+				t.Fatalf("created=%d comments=%v, want exactly one comment on human issue #415", m.created, m.commentedOn)
+			}
+		})
+	}
+}
+
+// A failed comment lookup is not evidence the finding was recorded: comment
+// anyway rather than drop it.
+func TestIssueRequestWatcher_HumanFiledCommentLookupFailureStillComments(t *testing.T) {
+	for _, tc := range humanTwinRefiles {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &consolidationMock{listCommentsStatus: http.StatusForbidden}
+			srv := consolidationMockServer(t, []openTwin{tc.open}, m)
+			defer srv.Close()
+			c := issueTestClient(t, srv.URL)
+			c.appBotLogin = testBot
+
+			_, res := fileRequest(t, c, withIssueDir(t), tc.requests[0])
+			if m.created != 0 || len(m.commentedOn) != 1 || m.commentedOn[0] != 415 {
+				t.Fatalf("created=%d comments=%v, want one comment on #415 despite the failed lookup", m.created, m.commentedOn)
+			}
+			if !res.OK || !res.Consolidated || res.Number != 415 {
+				t.Errorf("result = %+v, want consolidated into #415", res)
+			}
+		})
+	}
+}
+
+// #9376 regression guard: a bot-filed file-set twin still records every
+// reworded re-file as its own comment, marker or not.
+func TestIssueRequestWatcher_BotFiledFileSetTwinCommentedPerRefile(t *testing.T) {
+	m := &consolidationMock{}
+	srv := consolidationMockServer(t, []openTwin{
+		{number: 41, author: testBot, title: "[scanner] a in x.go", body: "pkg/x.go:3"},
+	}, m)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+	dir := withIssueDir(t)
+
+	for i, req := range []IssueRequest{
+		{Repo: "o/r", Agent: "scanner", Title: "[scanner] b in x.go", Body: "pkg/x.go:9"},
+		{Repo: "o/r", Agent: "scanner", Title: "[scanner] c in x.go", Body: "pkg/x.go:20"},
+	} {
+		_, res := fileRequest(t, c, dir, req)
+		if !res.OK || !res.Consolidated || res.Number != 41 {
+			t.Errorf("request %d: result = %+v, want consolidated into #41", i+1, res)
+		}
+	}
+	if m.created != 0 || len(m.commentedOn) != 2 || m.commentedOn[0] != 41 || m.commentedOn[1] != 41 {
+		t.Fatalf("created=%d comments=%v, want two comments on bot issue #41", m.created, m.commentedOn)
+	}
+	if !strings.Contains(m.commentBodies[0], hiveFindingFoldedMarker) {
+		t.Errorf("consolidated comment lacks the folded marker:\n%s", m.commentBodies[0])
 	}
 }
 
