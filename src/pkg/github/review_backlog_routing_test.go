@@ -460,9 +460,15 @@ func TestReviewBacklogGitHubIssueDestinationOverHTTP(t *testing.T) {
 type stateBacklogSink struct {
 	fakeBacklogSink
 	closed map[string]bool
+	err    error // returned by every ItemOpen probe while non-nil
+	probes int
 }
 
 func (s *stateBacklogSink) ItemOpen(_ context.Context, _ string, ref ReviewBacklogRef) (bool, error) {
+	s.probes++
+	if s.err != nil {
+		return false, s.err
+	}
 	return !s.closed[ref.ID], nil
 }
 
@@ -504,5 +510,166 @@ func TestReviewBacklogRefilesWhenLedgerItemClosed(t *testing.T) {
 	rec, ok := ledger.fingerprint("o/r", ReviewFindingFingerprint(outputschema.Finding{Title: "ChairLift pin stale", File: "pkg/pin.go", Summary: "ChairLift pin is out of date"}))
 	if !ok || rec.ItemID != "id-2" {
 		t.Fatalf("ledger record = %+v ok=%v, want id-2", rec, ok)
+	}
+}
+
+// The state probe is fail-safe and narrow: a lookup error keeps the old
+// append path, and a re-raise from the PR that already filed the finding
+// never probes (nothing to append, nothing to re-file).
+func TestReviewBacklogStateProbeErrorAppendsAndSamePRSkipsProbe(t *testing.T) {
+	withReviewBacklogState(t)
+	srv := prCommentServer(t, map[int][]string{})
+	c := reviewTestClient(t, srv.URL)
+	c.SetReviewBacklog(func() (bool, int) { return true, 3 })
+	sink := &stateBacklogSink{fakeBacklogSink: fakeBacklogSink{dest: config.ReviewBacklogLinear}, closed: map[string]bool{}}
+	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
+		return ReviewBacklogRouting{
+			Severity: config.ReviewSeverityConfig{BlockAt: "P1"},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogLinear, MaxPerPRPerDay: 5},
+			Sink:     sink,
+		}
+	})
+	ctx := context.Background()
+	day := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+	finding := nit("ChairLift pin stale", "medium", "pkg/pin.go", 7, "ChairLift pin is out of date")
+	req5 := ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: routingReport(t, 5, "abc", finding)}
+	req6 := ReviewRequest{Repo: "o/r", Number: 6, Agent: "reviewer", Report: routingReport(t, 6, "def", finding)}
+
+	if err := c.fileOutOfScopeReviewBacklog(ctx, req5, day); err != nil {
+		t.Fatal(err)
+	}
+	if sink.probes != 0 {
+		t.Fatalf("first filing probed %d times, want 0 (fingerprint unknown)", sink.probes)
+	}
+
+	sink.err = errors.New("tracker unavailable")
+	if err := c.fileOutOfScopeReviewBacklog(ctx, req6, day); err != nil {
+		t.Fatal(err)
+	}
+	if sink.probes != 1 || len(sink.created) != 1 || len(sink.appends) != 1 {
+		t.Fatalf("probe error: probes=%d created=%d appends=%d, want 1/1/1 (append path kept)", sink.probes, len(sink.created), len(sink.appends))
+	}
+
+	sink.err = nil
+	sink.closed["id-1"] = true
+	if err := c.fileOutOfScopeReviewBacklog(ctx, req5, day.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if sink.probes != 1 || len(sink.created) != 1 || len(sink.appends) != 1 {
+		t.Fatalf("same-PR re-raise: probes=%d created=%d appends=%d, want no probe, no create, no append", sink.probes, len(sink.created), len(sink.appends))
+	}
+}
+
+// githubIssueBacklogSink.ItemOpen: no number is an error (a non-GitHub ID
+// landed in a GitHub ledger record), the issue state decides, and an API
+// failure is returned rather than guessed.
+func TestGitHubIssueBacklogSinkItemOpen(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/7":
+			_, _ = io.WriteString(w, `{"number":7,"state":"closed"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/8":
+			_, _ = io.WriteString(w, `{"number":8,"state":"open"}`)
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"message":"boom"}`)
+		}
+	}))
+	defer srv.Close()
+	sink := githubIssueBacklogSink{c: reviewTestClient(t, srv.URL)}
+	ctx := context.Background()
+
+	if _, err := sink.ItemOpen(ctx, "o/r", ReviewBacklogRef{ID: "ENG-1"}); err == nil || !strings.Contains(err.Error(), "no issue number") {
+		t.Fatalf("ref without number: err = %v, want no-issue-number error", err)
+	}
+	if open, err := sink.ItemOpen(ctx, "o/r", ReviewBacklogRef{ID: "7", Number: 7}); err != nil || open {
+		t.Fatalf("closed issue: open=%v err=%v, want false/nil", open, err)
+	}
+	if open, err := sink.ItemOpen(ctx, "o/r", ReviewBacklogRef{ID: "8", Number: 8}); err != nil || !open {
+		t.Fatalf("open issue: open=%v err=%v, want true/nil", open, err)
+	}
+	if _, err := sink.ItemOpen(ctx, "o/r", ReviewBacklogRef{ID: "9", Number: 9}); err == nil {
+		t.Fatal("API failure must be returned, not treated as a state")
+	}
+	if _, err := (githubIssueBacklogSink{c: &Client{}}).ItemOpen(ctx, "o/r", ReviewBacklogRef{ID: "8", Number: 8}); !errors.Is(err, ErrNoGitHubClient) {
+		t.Fatalf("nil client: err = %v, want ErrNoGitHubClient", err)
+	}
+}
+
+// The #11578 shape: a review finding that cites the same file as an open
+// App-bot (agent-filed) issue folds into that issue instead of becoming a
+// second issue over the same file. The ledger records the twin's number so
+// later re-raises append there.
+func TestReviewBacklogGitHubSinkFoldsIntoOpenAgentTwin(t *testing.T) {
+	withReviewBacklogState(t)
+	var created, labelled int
+	var commentedOn []int
+	var twinComments []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues":
+			if r.URL.Query().Get("state") != "open" {
+				_, _ = io.WriteString(w, `[]`)
+				return
+			}
+			_, _ = io.WriteString(w, `[{"number":41,"title":"[scanner] unchecked error in pkg/a.go","body":"pkg/a.go:3 drops the Close error","state":"open","html_url":"https://github.example/o/r/issues/41","user":{"login":"`+testBot+`"}}]`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+			_, _ = io.WriteString(w, `{"name":"x"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues/41/labels":
+			labelled++
+			_, _ = io.WriteString(w, `[{"name":"nit"}]`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			var n int
+			_, _ = fmt.Sscanf(r.URL.Path, "/repos/o/r/issues/%d/comments", &n)
+			commentedOn = append(commentedOn, n)
+			if n == 41 {
+				var payload struct {
+					Body string `json:"body"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&payload)
+				twinComments = append(twinComments, payload.Body)
+			}
+			_, _ = io.WriteString(w, `{"id":1}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/o/r/issues":
+			created++
+			_, _ = io.WriteString(w, `{"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = fmt.Fprintf(w, `{"path":%q}`, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	c.appBotLogin = testBot
+	c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
+		return ReviewBacklogRouting{
+			Severity: config.ReviewSeverityConfig{BlockAt: "P2"},
+			Backlog:  config.ReviewBacklogConfig{Destination: config.ReviewBacklogGitHubIssue, Labels: []string{"nit"}},
+		}
+	})
+	finding := nit("nit", "low", "pkg/a.go", 3, "minor")
+	if err := c.fileOutOfScopeReviewBacklog(context.Background(), ReviewRequest{Repo: "o/r", Number: 5, Agent: "reviewer", Report: routingReport(t, 5, "abc", finding)}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if created != 0 {
+		t.Fatalf("created %d issues, want 0 (folded into the open agent twin)", created)
+	}
+	// The twin gets the consolidation comment carrying the finding, then the
+	// usual reused-item link comment; the PR gets its summary comment.
+	if len(twinComments) != 2 || !strings.Contains(twinComments[0], "**Consolidated finding.**") || !strings.Contains(twinComments[0], "`pkg/a.go`") || !strings.HasPrefix(twinComments[1], reviewBacklogLinkMarker) {
+		t.Fatalf("comments on #41 = %q (all comments %v), want consolidation then link", twinComments, commentedOn)
+	}
+	if labelled != 1 {
+		t.Fatalf("labelled = %d, want the backlog labels ensured on #41", labelled)
+	}
+	ledger, err := loadReviewBacklog("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := ledger.fingerprint("o/r", ReviewFindingFingerprint(outputschema.Finding{Title: "nit", File: "pkg/a.go", Summary: "minor"}))
+	if !ok || rec.ItemNumber != 41 {
+		t.Fatalf("ledger record = %+v ok=%v, want the twin #41", rec, ok)
 	}
 }

@@ -44,6 +44,9 @@ func TestEnsureFleetReportCreatesWhenNoFingerprintMatch(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+	// The create runs with open-twin consolidation on; a report body cites
+	// no files, so there is nothing to fold into and it stays a plain create.
+	c.appBotLogin = "hive-app[bot]"
 	res, err := c.EnsureFleetReport(context.Background(), fleetreport.Report{Fingerprint: "fp", Title: "Fleet report", Body: "<!-- hive-fleet-fingerprint:fp -->\nbody", Labels: []string{"fleet-report"}})
 	if err != nil {
 		t.Fatal(err)

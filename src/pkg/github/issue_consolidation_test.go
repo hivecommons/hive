@@ -251,8 +251,9 @@ func TestIssueRequestWatcher_ConsolidationCommentFailureRetries(t *testing.T) {
 	}
 }
 
-// Hive-internal CreateIssue callers (fleet report, review backlog) keep plain
-// create semantics: consolidation is scoped to agent requests.
+// The public CreateIssue wrapper keeps plain create semantics: consolidation
+// is opted into by the agent watcher, the review-backlog sink and the fleet
+// report through createIssue.
 func TestCreateIssue_DirectCallDoesNotConsolidate(t *testing.T) {
 	m := &consolidationMock{}
 	srv := consolidationMockServer(t, []openTwin{
