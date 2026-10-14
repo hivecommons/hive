@@ -112,7 +112,7 @@ func TestKnowledgeIntegrationsModalUsesVendorIcons(t *testing.T) {
 		`function kbIntegrationIcon(type)`,
 		`'<span class="kb-layer-label">' + kbIntegrationIcon(t) + escapeHtml(kbIntegrationLabel(t)) + '</span>'`,
 		`class="kb-integration-icon" viewBox="0 0 24 24" aria-hidden="true"`,
-		`.kb-integration-icon { width: var(--kb-integration-icon); height: var(--kb-integration-icon);`,
+		`.kb-integration-icon { width: 16px; height: 16px;`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing vendor icon snippet %q", want)
