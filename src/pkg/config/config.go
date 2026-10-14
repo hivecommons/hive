@@ -679,6 +679,28 @@ type AutonomyConfig struct {
 	CooldownDays int    `yaml:"cooldown_days,omitempty" json:"cooldown_days,omitempty"`
 }
 
+// AutonomyDemoteOnValues lists the canonical (lower-case) values accepted for
+// autonomy.demote_on, in the order the Settings dialog presents them.
+func AutonomyDemoteOnValues() []string {
+	return []string{"rollback", "rework", "either"}
+}
+
+// CanonicalAutonomyDemoteOn trims and lower-cases v and reports whether the
+// result is a recognised autonomy.demote_on value. The empty string is
+// accepted and means "use the default".
+func CanonicalAutonomyDemoteOn(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		return "", true
+	}
+	for _, known := range AutonomyDemoteOnValues() {
+		if v == known {
+			return v, true
+		}
+	}
+	return v, false
+}
+
 func (a AutonomyConfig) EffectivePromoteAfter() int {
 	if a.PromoteAfter > 0 {
 		return a.PromoteAfter

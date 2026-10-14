@@ -39594,6 +39594,39 @@ function burnAreaChart() {
           ${renderClaimsTTLFields(f)}
         </div>
 
+        <div class="qa-section">
+          <div class="qa-section-title">Autonomy policy ${settingHelpMark('settings', 'features', 'Autonomy policy', `Opt-in automatic ACMM level changes driven by retro evidence (<code>autonomy.*</code> in hive.yaml). Both toggles default off; the advisor otherwise only recommends and a human applies the change.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.autonomyAutoPromote ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="autonomyAutoPromote"></div>
+            <span class="config-toggle-label">Auto-promote <code>autonomy.auto_promote</code> ${settingHelpMark('settings', 'features', 'Auto-promote', `When on, the hive raises its own ACMM level once the retro evidence clears the thresholds below. Off by default.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.autonomyAutoDemote ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="autonomyAutoDemote"></div>
+            <span class="config-toggle-label">Auto-demote <code>autonomy.auto_demote</code> ${settingHelpMark('settings', 'features', 'Auto-demote', `When on, the hive lowers its own ACMM level after the retro pattern selected in "Demote on". Off by default.`)}</span>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Promote after (clean signals) ${settingHelpMark('settings', 'features', 'Promote after', `Consecutive qualifying retro signals required before an automatic promotion (default 3). <code>autonomy.promote_after</code>`)}</label>
+              <input type="number" min="1" step="1" value="${esc(String(f.autonomyPromoteAfter || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyPromoteAfter" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Cooldown (days) ${settingHelpMark('settings', 'features', 'Autonomy cooldown', `Minimum days between automatic level changes (default 7). <code>autonomy.cooldown_days</code>`)}</label>
+              <input type="number" min="1" step="1" value="${esc(String(f.autonomyCooldownDays || 7))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyCooldownDays" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Max level ${settingHelpMark('settings', 'features', 'Autonomy max level', `Highest ACMM level automatic promotion may reach (1-6, default 6; capped by the hive ceiling). <code>autonomy.max_level</code>`)}</label>
+              <input type="number" min="1" max="6" step="1" value="${esc(String(f.autonomyMaxLevel || 6))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyMaxLevel" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Demote on ${settingHelpMark('settings', 'features', 'Autonomy demote on', `Which retro pattern triggers an automatic demotion: a rolled-back run, a PR reworked after review, or either (default rollback). <code>autonomy.demote_on</code>`)}</label>
+              <select data-change-action="markDirty" data-arg0="features" data-arg1="autonomyDemoteOn" data-arg-types="s,s,v">
+                ${['rollback', 'rework', 'either'].map(v => `<option value="${v}"${(f.autonomyDemoteOn || 'rollback') === v ? ' selected' : ''}>${v}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="qa-note">Both toggles are opt-in; the ACMM advisor keeps recommending changes for a human to apply while they are off.</div>
+        </div>
+
         <div style="margin-top:18px;padding-top:var(--sp-6);border-top:1px solid var(--border)">
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.prFollowUpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="prFollowUpEnabled"></div>

@@ -155,10 +155,6 @@ auto_merge.trusted_authors.exclude_labels[] # TODO #11854
 auto_merge.trusted_authors.repos[] # TODO #11854
 auto_merge.trusted_authors.require_role # TODO #11854
 auto_merge.trusted_bot_authors[] # TODO #11854
-autonomy.cooldown_days # TODO #11854
-autonomy.demote_on # TODO #11854
-autonomy.max_level # TODO #11854
-autonomy.promote_after # TODO #11854
 classification.review_bots.logins[] # TODO #11854
 classification.review_bots.max_attempts_per_thread # TODO #11854
 classification.review_bots.resolve_after_fix # TODO #11854
