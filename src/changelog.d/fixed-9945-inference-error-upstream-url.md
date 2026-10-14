@@ -1,1 +1,0 @@
-- Name the upstream URL and responding `Server` header in agent-facing "inference backend returned <status>" and "unreachable" errors from the spoke proxy, so a 401 from an unexpected gateway can be diagnosed (#9945).
