@@ -119,9 +119,9 @@ func (w *SLAWindow) set(span SLASpan, st SLAStat) {
 // say how many issues reached each stage that day.
 type SLADay struct {
 	Day            string  `json:"day"`
-	StartToPRP50   float64 `json:"start_to_pr_p50,omitempty"`
-	PRToMergeP50   float64 `json:"pr_to_merge_p50,omitempty"`
-	OpenToMergeP50 float64 `json:"open_to_merge_p50,omitempty"`
+	StartToPRP50   float64 `json:"start_to_pr_p50"`
+	PRToMergeP50   float64 `json:"pr_to_merge_p50"`
+	OpenToMergeP50 float64 `json:"open_to_merge_p50"`
 	NStarted       int     `json:"n_started"`
 	NPR            int     `json:"n_pr"`
 	NMerged        int     `json:"n_merged"`

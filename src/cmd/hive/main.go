@@ -2690,6 +2690,13 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// not zero the fleet counters. Enabled before any producer records.
 	deps.enableLifecyclePersistence(b.dashSrv, lifecycleTimelinePath)
 	deps.enableSLAHistoryPersistence(b.dashSrv, slaHistoryPath)
+	// Writes are throttled to one a minute; flush the last dirty buckets on
+	// shutdown so a pod roll never drops the current day's SLA samples.
+	b.preShutdownHooks.add("flush-sla-history", func() {
+		if err := b.dashSrv.SLATracker().History.Flush(); err != nil {
+			b.logger.Warn("sla history flush on shutdown failed", "error", err)
+		}
+	})
 
 	// The scheduler's classifier pass records KindClassified journeys the
 	// moment lane routing decides an issue's lane — same store, no extra work.
