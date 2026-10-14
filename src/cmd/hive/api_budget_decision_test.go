@@ -59,6 +59,7 @@ func TestWebhookAwareEvalIntervalComposesWithBudgetStretch(t *testing.T) {
 }
 
 func TestEvalIntervalForConfigWithoutWebhooksMatchesBudget(t *testing.T) {
+	t.Cleanup(github.ResetWebhookTrackerForTest())
 	cfg := &config.Config{}
 	cfg.Governor.EvalIntervalS = 300
 	cfg.Governor.EvalIntervalMaxS = 1800

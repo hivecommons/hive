@@ -288,6 +288,14 @@ func resetWebhookTrackerForTest(now func() time.Time) func() {
 	return func() { sharedWebhookTracker = old }
 }
 
+// ResetWebhookTrackerForTest swaps in a fresh process-wide webhook tracker and
+// returns a restore func. Tests outside this package that read webhook health
+// (e.g. via the governor eval interval) call it so webhook events recorded by
+// earlier tests in the binary cannot make webhooks look healthy.
+func ResetWebhookTrackerForTest() func() {
+	return resetWebhookTrackerForTest(nil)
+}
+
 type webhookPRRef struct {
 	Number int `json:"number"`
 }
