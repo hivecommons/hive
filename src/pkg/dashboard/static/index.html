@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
   <meta property="og:title" content="Hive Dashboard — AI Agent Orchestration for Open Source">
   <meta property="og:description" content="Real-time dashboard for a Hive AI agent swarm. Monitor agents, governor mode, issues, PRs, and contributor activity across open source projects.">
@@ -3397,6 +3397,25 @@
       /* Audit search controls: keep the Save/clear buttons out of the FAB
          column entirely. Clearance = FAB size (40) + FAB offset (12). */
       .audit-controls-row { padding-right: 52px; }
+    }
+    /* Phone: the floating card left ~40% of the screen for the conversation
+       (#11836). Open it as a full-height sheet instead. interactive-widget
+       in the viewport meta makes 100dvh shrink with the keyboard, so the
+       input row stays above it. */
+    @media (max-width: 600px) {
+      .hive-chat-panel, .hive-chat-panel.maximized, .hive-chat-panel.docked {
+        inset: 0; width: 100vw !important; height: 100vh !important; max-width: none; max-height: none;
+        min-width: 0; min-height: 0; border: 0; border-radius: 0; box-shadow: none;
+      }
+      @supports (height: 100dvh) {
+        .hive-chat-panel, .hive-chat-panel.maximized, .hive-chat-panel.docked { height: 100dvh !important; }
+      }
+      .hive-chat-panel .hive-chat-header { padding-top: max(var(--sp-3), env(safe-area-inset-top)); }
+      .hive-chat-panel .hive-chat-input-row { padding-bottom: max(var(--sp-3), env(safe-area-inset-bottom)); }
+      .hive-chat-resize, .hive-chat-resize-width, #hiveChatDock, #hiveChatMax { display: none; }
+      .hive-chat-fab.open { display: none; }
+      body:has(.hive-chat-panel.open) { overflow: hidden; }
+      .hive-chat-main:has(.hive-chat-messages .chat-msg) .hive-chat-suggestions { display: none; }
     }
 
     /* Experiment Lab (Nous) */

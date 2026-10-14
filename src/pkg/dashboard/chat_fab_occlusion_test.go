@@ -133,3 +133,23 @@ chatFab.onclick();
 assert(!chatPanel.classList.contains('open') && !chatFab.classList.contains('open'), 'FAB click must toggle closed symmetrically (#7160)');
 `)
 }
+
+func TestChatOpensAsFullHeightSheetOnPhones(t *testing.T) {
+	html := indexHTML(t)
+	block := indexSliceBetween(t, html, "/* Phone: the floating card left", "\n    /* Experiment Lab (Nous) */")
+	for _, want := range []string{
+		"@media (max-width: 600px)",
+		"inset: 0",
+		"100dvh",
+		".hive-chat-fab.open { display: none; }",
+		"body:has(.hive-chat-panel.open) { overflow: hidden; }",
+		".hive-chat-main:has(.hive-chat-messages .chat-msg) .hive-chat-suggestions { display: none; }",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("phone chat sheet CSS missing %q (#11836)", want)
+		}
+	}
+	if !strings.Contains(html, "interactive-widget=resizes-content") {
+		t.Errorf("viewport meta must set interactive-widget=resizes-content so the input row stays above the keyboard (#11836)")
+	}
+}
