@@ -6,8 +6,9 @@ kind: Kustomization
 # This is for an operator running their OWN Hive against their OWN repos, with
 # NO connection to the kubestellar hub. It layers on TWO bases:
 #
-#   ../../../k8s        the core Hive workload (namespace/configmap/secret/pvc/
-#                       rbac/deployment/service)
+#   ../../../k8s        the core Hive workload (namespace/configmap/pvc/rbac/
+#                       deployment/service). The `hive-secrets` Secret is
+#                       NOT included; create it yourself (see README.md).
 #   ../../../inference  an in-cluster OpenAI-compatible inference backend
 #                       (llama.cpp serving Qwen2.5-0.5B) + EPP RBAC, so a
 #                       self-hosted user gets a working model endpoint without

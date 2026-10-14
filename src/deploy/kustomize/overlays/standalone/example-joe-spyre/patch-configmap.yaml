@@ -53,6 +53,7 @@ data:
         - joe:owner
 
     github:
+      token: ${HIVE_GITHUB_TOKEN}
       # EXAMPLE OAuth App client id — replace with your own.
       oauth_client_id: Ov23liEXAMPLEjoe
 

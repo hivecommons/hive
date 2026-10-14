@@ -6,7 +6,7 @@ the kubestellar hub**. It layers on the two in-repo bases:
 
 | Base | What it provides |
 |------|------------------|
-| `../../../k8s` | Core Hive workload: namespace, ConfigMap, Secret, PVC, RBAC, Deployment, Service. |
+| `../../../k8s` | Core Hive workload: namespace, ConfigMap, PVC, RBAC, Deployment, Service. The `hive-secrets` Secret is not included; create it yourself (below). |
 | `../../../inference` | An in-cluster OpenAI-compatible inference backend (llama.cpp serving Qwen2.5-0.5B) plus EPP RBAC — so you get a working model endpoint without an external provider. |
 
 The overlay only adds **deltas**; it never edits the bases. A concrete,
@@ -38,8 +38,12 @@ callback leg can derive different `redirect_uri`s and the provider rejects the
 code exchange. Do not use `hub.dashboard_url` for this on a standalone hive;
 see [docs/linear-agent.md](../../../../docs/linear-agent.md#setup).
 
-Also populate `hive-secrets` (from the base) with a GitHub App PEM **or**
-`HIVE_GITHUB_TOKEN`, and — if your litellm/inference endpoint needs auth —
+Also create the `hive-secrets` Secret yourself (keys documented in the
+`src/deploy/k8s/secret.yaml` template; `kubectl apply -k` does not manage it, so
+re-applying the overlay leaves your keys alone) with a GitHub App PEM **or**
+`HIVE_GITHUB_TOKEN` (wired into `hive.yaml` as `github.token:
+${HIVE_GITHUB_TOKEN}`; swap it for `app_id`/`installation_id`/`key_file` when
+using an App), and — if your litellm/inference endpoint needs auth —
 the key named by `governor.litellm.api_key_env` (default `HIVE_LITELLM_API_KEY`)
 or mounted at `api_key_file` (default `/secrets/litellm_api_key`).
 

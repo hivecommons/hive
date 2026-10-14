@@ -38,6 +38,12 @@ kubectl -n hive rollout restart deploy/hive
 kubectl -n hive rollout status deploy/hive --timeout=600s
 ```
 
+The overlay's `hive.yaml` reads the PAT through `github.token:
+${HIVE_GITHUB_TOKEN}`, so the Secret must carry that key. `kubectl apply -k` does
+not manage `hive-secrets` (the base ships
+[`secret.yaml`](../deploy/k8s/secret.yaml) only as a template), so you can
+re-apply the overlay after config changes without losing these keys.
+
 ## 4. Port-forward and sign in
 
 ```bash
@@ -112,6 +118,13 @@ See [release-channels.md](release-channels.md#testing-v6-changes).
           path: /spec/template/spec/containers/0/imagePullPolicy
           value: IfNotPresent
   ```
+- **Config fix after a failed first boot.** The first boot writes
+  `/data/hive.yaml.runtime` from the ConfigMap, and later boots read that file
+  instead of the ConfigMap. If the pod crash-looped on a bad config, fixing
+  `patch-configmap.yaml` and re-applying is not enough: also run
+  `kubectl -n hive delete pvc hive-data` (this deletes all Hive state; then
+  re-apply the overlay) or remove `/data/hive.yaml.runtime`, then restart the
+  pod.
 - **No inference component.** The overlay omits
   [`src/deploy/inference`](../deploy/inference/): it needs Gateway API Inference
   Extension CRDs and downloads a model. The base's `HIVE_LLMD_ENDPOINT` is

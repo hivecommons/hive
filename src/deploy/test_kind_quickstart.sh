@@ -41,6 +41,16 @@ hive_test_pass "kind cluster $CLUSTER created"
 kubectl --context "kind-${CLUSTER}" apply -k "$OVERLAY"
 hive_test_pass "overlay applied"
 
+# The base does not ship hive-secrets (#11776), and the pod refuses to start
+# without a GitHub token and a dashboard token (#11775). Placeholders are enough
+# to pass config validation and reach /api/health.
+kubectl --context "kind-${CLUSTER}" -n hive create secret generic hive-secrets \
+  --from-literal=HIVE_GITHUB_TOKEN=ghp_kind_smoke_placeholder \
+  --from-literal=HIVE_DASHBOARD_TOKEN="kind-smoke-$$-$RANDOM" \
+  --dry-run=client -o yaml | kubectl --context "kind-${CLUSTER}" apply -f -
+kubectl --context "kind-${CLUSTER}" -n hive rollout restart deploy/hive
+hive_test_pass "hive-secrets created"
+
 if kubectl --context "kind-${CLUSTER}" -n hive rollout status deploy/hive --timeout="$TIMEOUT"; then
   hive_test_pass "deploy/hive rolled out"
 else
