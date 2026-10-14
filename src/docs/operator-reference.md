@@ -281,6 +281,9 @@ workflow runs when a required check is missing:
   reported as `required-check-never-started:<ctx>`: GitHub never scheduled the
   workflows (seen on hivecommons/hive#11553), and only a new push, a
   close/reopen, or `@dependabot rebase` will create them.
+- `required-check-held:<ctx>` and `required-check-never-started:<ctx>` are
+  logged once per PR head as `automerge hold`; later ticks only count the PR in
+  the skip stats instead of emitting `automerge skip` every tick.
 - fork heads and human-authored lanes are never touched; a first-time
   contributor's held run is still a person's decision.
 

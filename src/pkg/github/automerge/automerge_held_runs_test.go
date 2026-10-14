@@ -169,3 +169,45 @@ func TestTrySweepSelfAuthoredPRNamesNeverStartedRequiredCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestTerminalRequiredCheckHoldLoggedOncePerHeadAndReason(t *testing.T) {
+	tests := []struct {
+		name   string
+		reason string
+		want   bool
+	}{
+		{"held", "required-check-held:ci/build", true},
+		{"never started", "required-check-never-started:ci/build", true},
+		{"missing", "required-check-missing:ci/build", false},
+		{"approved", approvedHeldWorkflowRunsReason, false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTerminalRequiredCheckHold(tt.reason); got != tt.want {
+				t.Fatalf("isTerminalRequiredCheckHold(%q) = %v, want %v", tt.reason, got, tt.want)
+			}
+		})
+	}
+
+	c := &Engine{}
+	steps := []struct {
+		name    string
+		number  int
+		sha     string
+		reason  string
+		wantNew bool
+	}{
+		{"first", 7, "abc", "required-check-held:ci/build", true},
+		{"repeat tick", 7, "abc", "required-check-held:ci/build", false},
+		{"sha case", 7, "ABC", "required-check-held:ci/build", false},
+		{"new head", 7, "def", "required-check-held:ci/build", true},
+		{"other pr", 8, "abc", "required-check-held:ci/build", true},
+		{"reason changed", 7, "def", "required-check-never-started:ci/build", true},
+	}
+	for _, st := range steps {
+		if got := c.markTerminalHoldLogged("acme", "widget", st.number, st.sha, st.reason); got != st.wantNew {
+			t.Fatalf("%s: markTerminalHoldLogged = %v, want %v", st.name, got, st.wantNew)
+		}
+	}
+}

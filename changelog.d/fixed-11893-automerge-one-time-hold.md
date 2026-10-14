@@ -1,0 +1,1 @@
+- The automerge sweep now logs a single `automerge hold` line per PR head for `required-check-held:<ctx>` and `required-check-never-started:<ctx>` instead of an `automerge skip` line on every tick; the PR is still counted as skipped in tick stats ([#11893](https://github.com/hivecommons/hive/issues/11893), [#11877](https://github.com/hivecommons/hive/issues/11877)).
