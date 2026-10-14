@@ -139,7 +139,9 @@ func (m *Manager) agentKickLogDir(name string) string {
 // captureScrollbackForAgent pulls the agent's full retained scrollback, via
 // the test seam when one is wired. It is the single capture path shared by
 // CaptureFullLog (live "full log") and archiveKickLogLocked (durable
-// snapshot), so both always see the same bytes.
+// snapshot), so both always see the same bytes. Both go through
+// kickLogContent, which prefers the CLI transcript when HIVE_KICK_LOG_SOURCE
+// asks for it (kick_transcript.go).
 func (m *Manager) captureScrollbackForAgent(agent *AgentProcess) (string, error) {
 	return m.terminalSession().CaptureFullLog(agent)
 }
@@ -174,7 +176,9 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 	if agent.tmuxSession == "" {
 		return 0
 	}
-	content, err := m.captureScrollbackForAgent(agent)
+	content, source, err := m.kickLogContent(m.kickTranscriptTargetLocked(agent), func() (string, error) {
+		return m.captureScrollbackForAgent(agent)
+	})
 	if err != nil {
 		m.logger.Warn("kick log archive: capture failed", "name", agent.Name, "reason", reason, "error", err)
 		return 0
@@ -196,7 +200,7 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 	if agent.LastKick != nil {
 		filenameTime = *agent.LastKick
 	}
-	header := m.kickLogHeaderLocked(agent, "archived", now, reason)
+	header := m.kickLogHeaderLocked(agent, "archived", now, reason, source)
 
 	dir := m.agentKickLogDir(agent.Name)
 	if err := os.MkdirAll(dir, kickLogDirMode); err != nil {
@@ -209,7 +213,7 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 		m.logger.Warn("kick log archive: write failed", "name", agent.Name, "path", path, "error", err)
 		return 0
 	}
-	m.logger.Info("archived kick log", "name", agent.Name, "reason", reason, "file", fname, "bytes", len(header)+len(content))
+	m.logger.Info("archived kick log", "name", agent.Name, "reason", reason, "source", source, "file", fname, "bytes", len(header)+len(content))
 
 	m.pruneKickLogs(dir)
 	m.notifyKickObserver(agent.Name, KickObserverEventArchived, reason)
@@ -221,9 +225,10 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 
 // kickLogHeaderLocked builds the framing prepended to a kick log. The archive
 // (stampKey "archived") and the live full log (stampKey "captured", reason
-// "live") share it so the two differ only in those two fields. Callers must
-// hold m.mu (read or write).
-func (m *Manager) kickLogHeaderLocked(agent *AgentProcess, stampKey string, now time.Time, reason string) string {
+// "live") share it so the two differ only in those two fields. source names
+// what the body was built from (kickLogSourceScrollback or
+// kickLogSourceTranscript). Callers must hold m.mu (read or write).
+func (m *Manager) kickLogHeaderLocked(agent *AgentProcess, stampKey string, now time.Time, reason, source string) string {
 	kickStarted := "unknown"
 	if agent.LastKick != nil {
 		kickStarted = agent.LastKick.UTC().Format(time.RFC3339)
@@ -237,7 +242,7 @@ func (m *Manager) kickLogHeaderLocked(agent *AgentProcess, stampKey string, now 
 		model = "default"
 	}
 	return fmt.Sprintf(
-		"==== hive kick log ====\nagent: %s\n%s: %s\nreason: %s\nkick_started: %s\nkick_prompt: %s\nhive_version: %s\nhive_commit: %s\nbackend: %s\nmodel: %s\ntmux_session: %s\n=======================\n",
+		"==== hive kick log ====\nagent: %s\n%s: %s\nreason: %s\nkick_started: %s\nkick_prompt: %s\nhive_version: %s\nhive_commit: %s\nbackend: %s\nmodel: %s\nsource: %s\ntmux_session: %s\n=======================\n",
 		agent.Name,
 		stampKey,
 		now.UTC().Format(time.RFC3339),
@@ -248,6 +253,7 @@ func (m *Manager) kickLogHeaderLocked(agent *AgentProcess, stampKey string, now 
 		commit,
 		agent.effectiveBackend(),
 		model,
+		source,
 		agent.tmuxSession,
 	)
 }
@@ -273,7 +279,7 @@ func (m *Manager) FullLogHeader(name string) string {
 	if !ok || agent.tmuxSession == "" || !m.tmuxSessionExistsForAgent(agent) {
 		return ""
 	}
-	return m.kickLogHeaderLocked(agent, "captured", time.Now(), "live")
+	return m.kickLogHeaderLocked(agent, "captured", time.Now(), "live", m.kickLogSourceLocked(agent))
 }
 
 // rotateKickLogOnKickLocked runs at the top of deliverKickLocked, before any

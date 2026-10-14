@@ -504,9 +504,16 @@ func (m *Manager) captureTmuxPaneForAgent(agent *AgentProcess) string {
 // restart, the buffer holds multiple kicks' output back to the tmux
 // history-limit. That is an accepted v1 limitation — the whole retained
 // session is returned.
+//
+// With HIVE_KICK_LOG_SOURCE=transcript|auto the CLI's own transcript of the
+// current kick is rendered instead when one is usable (kick_transcript.go).
 func (m *Manager) CaptureFullLog(name string) (string, error) {
 	m.mu.RLock()
 	agent, ok := m.agents[name]
+	var target kickTranscriptTarget
+	if ok {
+		target = m.kickTranscriptTargetLocked(agent)
+	}
 	m.mu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("agent %s not found", name)
@@ -514,7 +521,10 @@ func (m *Manager) CaptureFullLog(name string) (string, error) {
 	if agent.tmuxSession == "" {
 		return "", fmt.Errorf("agent %s has no active session", name)
 	}
-	return m.captureScrollbackForAgent(agent)
+	content, _, err := m.kickLogContent(target, func() (string, error) {
+		return m.captureScrollbackForAgent(agent)
+	})
+	return content, err
 }
 
 // captureVisiblePaneForAgent captures only the visible pane (no scrollback).

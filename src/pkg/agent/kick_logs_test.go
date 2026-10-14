@@ -123,6 +123,7 @@ func TestArchiveKickLogLocked_WritesHeaderAndContent(t *testing.T) {
 		"hive_commit: abc1234",
 		"backend: claude",
 		"model: opus",
+		"source: scrollback",
 		"tmux_session: hive-scanner-kicklog-test",
 		"run output line 2",
 	} {

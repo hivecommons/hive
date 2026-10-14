@@ -244,8 +244,21 @@ read the logs of the last several runs — not just the latest —
   (override the root with `HIVE_KICK_LOG_DIR`). `/data` is the persistent
   volume on hosted hives, so archives survive agent restarts, pod rolls, and
   hive image upgrades. Each file starts with a small header (agent, archive
-  time, snapshot reason, kick start time, prompt snippet) followed by the raw
-  scrollback. `<reason>` is `kick`, `restart`, or `shutdown`.
+  time, snapshot reason, kick start time, prompt snippet, build/backend/model,
+  `source`) followed by the raw scrollback. `<reason>` is `kick`, `restart`,
+  or `shutdown`.
+- **Transcript source.** The scrollback is what the CLI painted, so tool
+  output the CLI collapsed (`(N lines hidden)`) is not in it.
+  `HIVE_KICK_LOG_SOURCE=transcript` (or `auto`) builds the archive and the
+  live full log from the CLI's own transcript instead — Copilot CLI
+  `events.jsonl` and Claude Code session JSONL — rendered as plain text:
+  timestamped turns, every tool call with its full arguments (the shell
+  command on a `$ ` line) and its full output. Only entries since the kick
+  started are included. A missing, stale or unparseable transcript falls back
+  to the scrollback with one warning in the hive log, and the header's
+  `source:` line says which was used. A transcript over
+  `HIVE_KICK_LOG_MAX_BYTES` keeps its head and tail around a
+  `[… N bytes omitted …]` marker. The default, `scrollback`, is unchanged.
 - **Retention.** Per agent, the newest **10** archives are kept
   (`HIVE_KICK_LOG_RETENTION`; `0` disables archiving) within a **64 MiB**
   per-agent size cap (`HIVE_KICK_LOG_MAX_BYTES`); the oldest files are pruned

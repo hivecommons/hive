@@ -732,6 +732,9 @@ type Manager struct {
 	kickLogDir       string
 	kickLogRetention int
 	kickLogMaxBytes  int64
+	// kickLogSource is HIVE_KICK_LOG_SOURCE (kick_transcript.go); "" behaves
+	// as kickLogSourceScrollback.
+	kickLogSource string
 	// buildInfo supplies hive_version/hive_commit for kick log headers.
 	buildInfo func() (version, commit string)
 }
@@ -861,6 +864,7 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 		kickLogDir:                    kickLogDir,
 		kickLogRetention:              kickLogRetention,
 		kickLogMaxBytes:               kickLogMaxBytes,
+		kickLogSource:                 kickLogSourceFromEnv(),
 	}
 
 	for name, cfg := range agents {
