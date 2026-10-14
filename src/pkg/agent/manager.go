@@ -318,6 +318,11 @@ type AgentProcess struct {
 	// tokenRestartGaveUp latches once the cap is hit so the diagnosis is logged
 	// a single time rather than every poll (~3s). Cleared alongside the counter.
 	tokenRestartGaveUp bool
+	// restartStormBackoffUntil is the shared circuit breaker for automatic
+	// relaunch paths (crashed-session recovery, token-refresh recovery and
+	// Copilot hang diagnostics). Operator restarts bypass it; automatic loops
+	// must not relaunch forever with no backoff.
+	restartStormBackoffUntil time.Time
 	// lastRateLimitRestart paces the relaunch of an agent whose CLI start-up
 	// banner reports GitHub rate-limited the credential validation. Distinct
 	// from lastTokenRestart on purpose: this lane has no attempt cap because

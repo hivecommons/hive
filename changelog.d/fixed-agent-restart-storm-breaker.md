@@ -1,0 +1,1 @@
+- Added a shared automatic-agent-restart circuit breaker so repeated relaunch loops back off, pause with a restart-storm reason, and reset cleanly instead of flooding the hub dashboard.

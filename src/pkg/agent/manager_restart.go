@@ -177,7 +177,7 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		if h.message != "" {
 			err = m.RestartThenSendKick(ctx, h.name, h.message)
 		} else {
-			err = m.Restart(ctx, h.name)
+			_, err = m.restartWithStormBreaker(ctx, h.name, "stalled session recovery", "stalled: "+h.reason)
 		}
 		if err != nil {
 			m.logger.Error("failed to restart stalled session", "name", h.name, "error", err)
@@ -187,12 +187,18 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	var restarted []string
 	for _, name := range crashed {
 		m.logger.Info("restarting crashed agent", "name", name)
-		if err := m.Restart(ctx, name); err != nil {
+		didRestart, err := m.restartWithStormBreaker(ctx, name, "crashed agent recovery", "agent CLI crashed or tmux session disappeared")
+		if err != nil {
 			m.logger.Error("failed to restart crashed agent", "name", name, "error", err)
+		} else if !didRestart {
+			continue
 		} else {
 			m.mu.RLock()
 			agent := m.agents[name]
 			m.mu.RUnlock()
+			if agent == nil || agent.Paused {
+				continue
+			}
 			m.logger.Info("agent recovered from crash",
 				"name", name,
 				"restart_count", agent.RestartCount,
@@ -838,6 +844,9 @@ func (m *Manager) ResetRestartCount(name string) error {
 	agent.RestartCount = 0
 	agent.RestartEvents = nil
 	agent.LastRestartReason = "operator"
+	agent.restartStormBackoffUntil = time.Time{}
+	agent.tokenRestartAttempts = 0
+	agent.tokenRestartGaveUp = false
 	// Resetting the counter is the operator saying "I have looked at this";
 	// lift the restart/kick breaker with it (#7363) so a deliberate kick
 	// need not wait out the hold.

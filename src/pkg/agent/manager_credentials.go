@@ -180,7 +180,7 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 			}
 			_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 			agent.forceRelaunch = true
-			if err := m.RestartWithReason(ctx, agent.Name, "copilot hang diagnostic timed out"); err != nil {
+			if _, err := m.restartWithStormBreaker(ctx, agent.Name, "copilot hang diagnostic timed out", agent.LastError); err != nil {
 				m.logger.Warn("diagnostic: restart after timeout failed", "agent", agent.Name, "error", err)
 				agent.State = StateFailed
 				m.audit(AuditAgentStartFailed, agent.Name, auditFields(
@@ -234,7 +234,7 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 			}
 			_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
 			agent.forceRelaunch = true
-			if err := m.Restart(ctx, agent.Name); err != nil {
+			if _, err := m.restartWithStormBreaker(ctx, agent.Name, "copilot diagnostic recovered", agent.LastError); err != nil {
 				m.logger.Warn("diagnostic: restart failed", "agent", agent.Name, "error", err)
 			}
 			return

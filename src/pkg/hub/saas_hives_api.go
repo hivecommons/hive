@@ -1047,6 +1047,9 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		// count. (isPlaceholderEntry is the same authoritative test computeFleet‐
 		// Stats and the alert layer use.)
 		if len(result[i].Agents) > 0 && !isPlaceholderEntry(result[i]) {
+			if sh := loadSaaSHive(result[i].ID); sh != nil {
+				applyAgentRestartResetBaselines(result[i].Agents, sh.AgentRestartResets, journeyNow)
+			}
 			blockers := hiveBlockers{
 				GitHubAppRequired:       result[i].GitHubAppRequired,
 				GitHubAppPermIssue:      result[i].GitHubAppPermIssue,

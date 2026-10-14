@@ -161,6 +161,9 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	resumeModel := agent.effectiveModel()
 	agent.Paused = false
 	agent.Config.Paused = false
+	agent.restartStormBackoffUntil = time.Time{}
+	agent.tokenRestartAttempts = 0
+	agent.tokenRestartGaveUp = false
 	if persistPause := m.persistPauseCallback; persistPause != nil {
 		// Deferred so it runs after this function's explicit m.mu.Unlock on
 		// every return path: the callback does config disk I/O and may

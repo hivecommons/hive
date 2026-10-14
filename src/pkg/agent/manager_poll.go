@@ -207,7 +207,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 							"max_attempts", tokenRestartMaxAttempts,
 						)
 						go func() {
-							if err := m.RestartWithReason(ctx, agent.Name, "login token refreshed"); err != nil {
+							if _, err := m.restartWithStormBreaker(ctx, agent.Name, "login token refreshed", "agent stayed at login prompt after shared token refresh"); err != nil {
 								m.logger.Warn("token-triggered restart failed",
 									"agent", agent.Name,
 									"error", err,
