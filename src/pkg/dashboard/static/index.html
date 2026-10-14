@@ -32687,6 +32687,12 @@ function burnAreaChart() {
       markDirty('dashboard', 'issue_bands', bands);
     }
 
+    function markBackendsPolicy(key, value) {
+      _configState.data.backends = _configState.data.backends || {};
+      _configState.data.backends[key] = splitConfigLines(value);
+      markDirty('backends', key, _configState.data.backends[key]);
+    }
+
     function renderGovDashboard(dash) {
       const bands = dash.issue_bands || {};
       const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
@@ -36694,6 +36700,7 @@ function burnAreaChart() {
 
     function renderGovAgents(agents) {
       const sec = (_configState.data || {}).security || {};
+      const backendPolicy = (_configState.data || {}).backends || {};
       const live = window._lastAgents || [];
       const liveMap = {};
       live.forEach(a => { liveMap[a.name] = a; });
@@ -36717,6 +36724,15 @@ function burnAreaChart() {
             ${agents.map(a => { const name = typeof a === 'string' ? a : (a && a.name) || ''; return '<option value="' + esc(name) + '">copy ' + esc(name) + '</option>'; }).join('')}
           </select>
           <button class="hv-btn btn-primary" data-action="addAgent" title="Create the new agent with the specified name and optional copied config">+ Add Agent</button>
+        </div>
+        <div class="config-section mt-6">
+          <h3>Backend placement policy</h3>
+          <p class="text-muted fs-base">Restrict which CLI or inference backends agents may use. Deny wins over allow; an empty allow list permits every supported backend.</p>
+          <div class="config-field-row">
+            <div class="config-field"><label>Allowed backends ${yamlHint('backends.allow[]')}</label><textarea rows="4" placeholder="copilot&#10;claude" data-change-action="markBackendsPolicy" data-arg0="allow" data-arg-types="s,v">${esc((backendPolicy.allow || []).join('\n'))}</textarea></div>
+            <div class="config-field"><label>Denied backends ${yamlHint('backends.deny[]')}</label><textarea rows="4" placeholder="codex" data-change-action="markBackendsPolicy" data-arg0="deny" data-arg-types="s,v">${esc((backendPolicy.deny || []).join('\n'))}</textarea></div>
+          </div>
+          <div class="config-help">Use backend IDs such as <code>copilot</code>, <code>claude</code>, <code>gemini</code>, <code>goose</code>, <code>codex</code>, <code>bob</code>, <code>vllm</code>, <code>llm-d</code>, or a configured gateway name.</div>
         </div>`;
     }
 
@@ -42093,6 +42109,14 @@ function burnAreaChart() {
             });
             if (!dashRes.ok) throw new Error(await saveErrorMessage(dashRes));
             _configState.data.dashboard = await dashRes.json().catch(() => _configState.data.dashboard);
+          } else if (_configState.type === 'governor' && section === 'backends') {
+            const backendsRes = await fetch('/api/config/backends', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!backendsRes.ok) throw new Error(await saveErrorMessage(backendsRes));
+            _configState.data.backends = await backendsRes.json().catch(() => _configState.data.backends);
           } else {
             const res = await fetch(`${base}/${section}`, {
               method: 'PUT',

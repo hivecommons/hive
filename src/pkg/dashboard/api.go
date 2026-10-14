@@ -330,6 +330,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/sidebar", s.handleSidebarGet)
 	s.mux.HandleFunc("PUT /api/config/sidebar", s.handleSidebarSet)
 	s.mux.HandleFunc("GET /api/config/backends", s.handleBackends)
+	s.mux.HandleFunc("PUT /api/config/backends", s.handleBackendsPolicyPut)
 	s.mux.HandleFunc("GET /api/inference/models/{backend}", s.handleInferenceModels)
 
 	s.mux.HandleFunc("GET /api/knowledge", s.handleKnowledgeList)

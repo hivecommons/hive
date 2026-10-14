@@ -3347,6 +3347,49 @@
             }
           }
         }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update backend placement allow/deny policy",
+        "description": "Owner-only Settings write for the top-level `backends` policy in hive.yaml. `allow` is the optional allow-list for agent backend placement; `deny` is the deny-list and takes precedence.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "allow": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "deny": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated backend placement policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/nous/status": {
