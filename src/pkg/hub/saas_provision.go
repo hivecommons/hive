@@ -819,6 +819,11 @@ type SaaSHive struct {
 	// an upgrade that already went out at 17:01. Empty for instant-mode hives,
 	// which are never gated and never record a date.
 	AutoUpgradeLastFired string `json:"auto_upgrade_last_fired,omitempty"`
+	// AutoUpgradeLastAt is when an automatic upgrade last went out for this
+	// hive (any mode). Instant-mode hives are held until it is older than
+	// autoUpgradeCooldown() (#11825); persisted so a hub restart cannot reset
+	// the cooldown.
+	AutoUpgradeLastAt time.Time `json:"auto_upgrade_last_at,omitempty"`
 
 	// AutoUpgradePendingTarget / AutoUpgradePendingSince / AutoUpgradeCollapsed
 	// are the merge-driven upgrade DEBOUNCE state (#5391): the newest SHA seen

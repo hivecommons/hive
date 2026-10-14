@@ -474,6 +474,13 @@ type HeartbeatUpgradePolicy struct {
 	// none, paused, or unknown when the hub can say why there is no timestamp.
 	NextUpdateAt     string `json:"next_update_at,omitempty"`
 	NextUpdateStatus string `json:"next_update_status,omitempty"`
+	// CooldownSeconds is the per-hive minimum interval between automatic
+	// upgrades for a hub-managed instant hive (#11825); omitted when the
+	// cooldown does not apply or is disabled. NextEligibleAt (RFC3339 UTC) is
+	// when the hive may next auto-upgrade, present only while it is inside
+	// that cooldown.
+	CooldownSeconds int    `json:"cooldown_seconds,omitempty"`
+	NextEligibleAt  string `json:"next_eligible_at,omitempty"`
 }
 
 type TaskStatusPayload struct {

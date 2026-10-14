@@ -340,6 +340,7 @@ section requires for lookups.
 | `HIVE_UPGRADE_WAVE_SIZE` | No | saved scale setting, else built-in default | Number of spokes upgraded per wave. |
 | `HIVE_UPGRADE_DEBOUNCE_SECONDS` | No | built-in default | Debounce window before an upgrade wave starts. |
 | `HIVE_UPGRADE_MAX_HOLD_SECONDS` | No | built-in default | Maximum time an upgrade may be held before proceeding. |
+| `HIVE_UPGRADE_COOLDOWN_SECONDS` | No | `21600` (6h) | Minimum interval between automatic upgrades of the same instant-mode hive; a newer target inside the cooldown is deferred and the newest one is applied once it expires. Negative disables. |
 | `HIVE_VANITY_REPAIR_SUCCESS_COOLDOWN` | No | `24h` | Go duration a hive is skipped by the heartbeat-kick vanity-URL repair after a **successful** repair (mint or drift-adopt). One of the [#5923](https://github.com/hivecommons/hive/issues/5923) guardrails (`pkg/hub/saas_provision.go`); the env overrides exist for emergency production tuning without a rebuild. Invalid or non-positive values fall back to the default. |
 | `HIVE_VANITY_REPAIR_FAILURE_BACKOFF` | No | `1h` | Go duration the same repair path waits after a **failed** attempt before retrying a hive, preventing tight loops against unreachable clusters or an exhausted mint budget. |
 | `HIVE_VANITY_MINT_BUDGET` | No | `20` | Fleet-wide cap (positive integer) on vanity-host certificate **mints** from the repair path per window — sized well under Let's Encrypt's 50 certificates / registered domain / 168h limit so the remainder stays reserved for claim-time provisioning. |

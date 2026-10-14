@@ -1322,6 +1322,19 @@ func (s *HubServer) triggerAutoUpgrades() {
 		if commitAtOrAheadOfTarget(currentSHA, latestSHA, s.logger) {
 			continue
 		}
+		// Per-hive cooldown (#11825): an instant hive that auto-upgraded less
+		// than autoUpgradeCooldown() ago is DEFERRED, not dropped. Nothing is
+		// recorded against the target, so once the cooldown expires the hive
+		// chases whatever latestSHA is THEN — intermediate targets are skipped.
+		if autoUpgradeCooldownApplies(h.AutoUpgradeMode, reach.Channel) {
+			cooldown := autoUpgradeCooldown()
+			if remaining := autoUpgradeCooldownRemaining(h.AutoUpgradeLastAt, cooldown, time.Now()); remaining > 0 {
+				s.logger.Debug("auto-upgrade deferred — hive is inside its upgrade cooldown",
+					"hive_id", h.ID, "target", latestSHA, "current", currentSHA,
+					"remaining", remaining.Round(time.Second), "cooldown", cooldown)
+				continue
+			}
+		}
 		// Merge-driven debounce (#5391). Reached ONLY on the automatic
 		// chase-latest path: everything that starts an upgrade for an operator
 		// — a manual "Upgrade now" (upgradeHiveHandler), a bulk upgrade
@@ -1438,6 +1451,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// The hive is deliverable again — drop any suppressed-refusal memory so a
 		// future undeliverable episode is reported afresh rather than swallowed.
 		s.forgetUncollectibleUpgrade(h.ID)
+		s.recordAutoUpgradeFired(&h, time.Now())
 		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID, "mode", normalizeAutoUpgradeMode(h.AutoUpgradeMode))
 		s.recordTimeline(h.ID, TimelineUpgradeStarted,
 			fmt.Sprintf("auto-upgrade triggered on %s: %s → %s", branch, orDash(currentSHA), latestSHA), "auto-upgrade")
