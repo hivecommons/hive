@@ -50,6 +50,24 @@ func TestPruneCopilotCacheOnlyRemovesStaleScratchDirs(t *testing.T) {
 	}
 }
 
+func TestRunCopilotCacheJanitorUsesSharedHome(t *testing.T) {
+	oldHome := sharedAgentHome
+	sharedAgentHome = filepath.Join(t.TempDir(), "home")
+	t.Cleanup(func() { sharedAgentHome = oldHome })
+	oldScratch := filepath.Join(copilotCacheRoot(), "linux-x64", ".extracting-1.0.88-old")
+	if err := os.MkdirAll(oldScratch, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-2 * copilotCachePruneAge)
+	if err := os.Chtimes(oldScratch, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	NewManager(nil, discardLogger(), ProjectContext{}).runCopilotCacheJanitor()
+	if _, err := os.Stat(oldScratch); !os.IsNotExist(err) {
+		t.Fatalf("janitor left stale scratch dir: %v", err)
+	}
+}
+
 func TestCopilotDiskFullConditionAndErrors(t *testing.T) {
 	old := statfsForPath
 	statfsForPath = func(_ string, st *syscall.Statfs_t) error {

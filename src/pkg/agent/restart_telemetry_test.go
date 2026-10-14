@@ -88,6 +88,17 @@ func TestRestartStormBreakerPausesCopilotWhenDataFull(t *testing.T) {
 	}
 }
 
+func TestRestartStormDiskFullReasonAndPaneTail(t *testing.T) {
+	reason := diskFullPauseReason("copilot hang diagnostic timed out", "TAR_ENTRY_ERROR(Unknown system error -122)")
+	if reason != "disk-full: TAR_ENTRY_ERROR(Unknown system error -122)" {
+		t.Fatalf("diskFullPauseReason = %q", reason)
+	}
+	tail := compactPaneTail("\nfirst\n\nsecond\nthird\n", 2)
+	if tail != "second | third" {
+		t.Fatalf("compactPaneTail = %q", tail)
+	}
+}
+
 func TestResetAndResumeClearRestartStormBreaker(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{"scanner": {Backend: "claude"}}, slog.Default(), ProjectContext{})
 	m.mu.Lock()
