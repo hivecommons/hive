@@ -3223,6 +3223,15 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Slot-placeholder project.org with a bare repo (#11846).
+	if st, detail, ok := s.projectOrgCheck(); ok {
+		checks[healthCheckProjectOrg] = map[string]any{"status": st, "detail": detail}
+		failCount++
+		if overall == "ok" {
+			overall = "degraded"
+		}
+	}
+
 	// 12. Queue trend (is work being processed?)
 	s.statusMu.RLock()
 	if s.status != nil {
@@ -4451,6 +4460,12 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		if st == "fail" {
 			fails++
 		}
+	}
+
+	// Slot-placeholder project.org with a bare repo (#11846).
+	if st, detail, ok := s.projectOrgCheck(); ok {
+		checks = append(checks, check{Name: healthCheckProjectOrg, Status: st, Detail: detail})
+		fails++
 	}
 
 	// 8. Queue
