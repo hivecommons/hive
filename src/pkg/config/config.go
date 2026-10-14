@@ -165,6 +165,9 @@ type Config struct {
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
+	// SLA holds the Delivery SLA span targets the dashboard Overview colours
+	// against (see sla.go). Unset fields use the defaults.
+	SLA SLAConfig `yaml:"sla,omitempty" json:"sla,omitempty"`
 	// WriteSurface configures the audited GitHub write surface
 	// (hivecommons/hive#9587): per-lane allowlists of the relay operations an
 	// agent may ask the hive to perform, and the lanes whose direct GitHub

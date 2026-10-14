@@ -24,6 +24,8 @@ type bootDashboardFake struct {
 	lifecyclePath string
 	sessionsSrv   *dashboard.Server
 	lifecycleSrv  *dashboard.Server
+	slaPath       string
+	slaSrv        *dashboard.Server
 }
 
 func newBootDashboardFake() *bootDashboardFake {
@@ -34,8 +36,9 @@ func newBootDashboardFake() *bootDashboardFake {
 			f.srv = dashboard.NewServer(0, logger)
 			return f.srv
 		},
-		enableSessionPersistence:   func(s *dashboard.Server, p string) { f.sessionsSrv, f.sessionsPath = s, p },
-		enableLifecyclePersistence: func(s *dashboard.Server, p string) { f.lifecycleSrv, f.lifecyclePath = s, p },
+		enableSessionPersistence:    func(s *dashboard.Server, p string) { f.sessionsSrv, f.sessionsPath = s, p },
+		enableLifecyclePersistence:  func(s *dashboard.Server, p string) { f.lifecycleSrv, f.lifecyclePath = s, p },
+		enableSLAHistoryPersistence: func(s *dashboard.Server, p string) { f.slaSrv, f.slaPath = s, p },
 	}
 	return f
 }
@@ -101,6 +104,9 @@ func TestBootDashboardWithConstructsAndPersistsOnPVC(t *testing.T) {
 	}
 	if f.lifecycleSrv != f.srv || f.lifecyclePath != lifecycleTimelinePath || !strings.HasPrefix(f.lifecyclePath, "/data/") {
 		t.Fatalf("lifecycle persistence = %q on %p", f.lifecyclePath, f.lifecycleSrv)
+	}
+	if f.slaSrv != f.srv || f.slaPath != slaHistoryPath || !strings.HasPrefix(f.slaPath, "/data/") {
+		t.Fatalf("sla history persistence = %q on %p", f.slaPath, f.slaSrv)
 	}
 	if got := f.srv.TokenSparklineHistory(); len(got) != 1 || got[0].Input != 10 {
 		t.Fatalf("token seed not applied: %+v", got)

@@ -234,6 +234,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// fixed-commit telemetry read path (convergence_soak.go).
 	s.mux.HandleFunc("GET /api/config/convergence", s.handleConvergenceConfigGet)
 	s.mux.HandleFunc("PUT /api/config/convergence", s.handleConvergenceConfigPut)
+	s.mux.HandleFunc("GET /api/config/sla", s.handleSLAConfigGet)
+	s.mux.HandleFunc("PUT /api/config/sla", s.handleSLAConfigPut)
 	s.mux.HandleFunc("GET /api/convergence/soak", s.handleConvergenceSoak)
 	s.mux.HandleFunc("GET /api/config/governor/advisory", s.handleGovernorAdvisoryGet)
 	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)

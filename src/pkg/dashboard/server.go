@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/watchdog"
 )
@@ -403,6 +404,9 @@ type StatusPayload struct {
 	OverviewTotals   FrontendOverviewTotals    `json:"overviewTotals"`
 	ActionableNow    FrontendActionableNow     `json:"actionableNow"`
 	OverviewCoverage *FrontendOverviewCoverage `json:"overviewCoverage,omitempty"`
+	// SLA is the fleet-wide Delivery SLA roll-up (spans, 30-day history,
+	// stale in-progress issues, targets); per-repo blocks sit on each repo.
+	SLA *FrontendSLA `json:"sla,omitempty"`
 	// OverviewKPIIncomplete means at least one configured repo did not produce
 	// forge totals for this status snapshot, so Overview KPI history must not
 	// record it as a real point.
@@ -913,6 +917,7 @@ type FrontendRepo struct {
 	Mode             string                    `json:"mode,omitempty"`
 	CountsIncomplete bool                      `json:"countsIncomplete,omitempty"`
 	WorkBreakdown    *github.RepoWorkBreakdown `json:"workBreakdown,omitempty"`
+	SLA              *timeline.SLARepoReport   `json:"sla,omitempty"`
 	// ActionableIssues and OpenPrs are the items the agents may act on: the
 	// enumeration's actionable sets, minus anything held or exempt. Every
 	// automated consumer — the contribute queue, the mergeable counter, the

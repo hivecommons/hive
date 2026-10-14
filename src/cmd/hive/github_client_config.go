@@ -315,6 +315,7 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRMerged,
 				fmt.Sprintf("repo=%s, number=%d, path=%s, actor=%s", obs.Repo, obs.Number, path, obs.Actor),
 				github.AttributionAgentGovernor, obs.Repo, obs.Number)
+			recordObservedMerge(b.dashSrv, b.cfg.Project.Org, obs.Repo, obs.Number, obs.ObservedAt, obs.Actor, path)
 		case github.PRStateClosed:
 			path := obs.Attribution
 			if path == "" {
@@ -355,6 +356,9 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 			sessions = b.agentMgr
 		}
 		recordPRFollowUpPointer(b.cfg, sessions, d, time.Now(), b.logger)
+		// The issues the PR fixes get their own pr_opened stage: the
+		// start→PR SLA boundary, and the link a later merge folds back on.
+		recordPROpenedForIssues(b.dashSrv, b.cfg.Project.Org, d.Agent, d.Repo, d.Number, d.URL, d.Issues)
 	})
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
 }

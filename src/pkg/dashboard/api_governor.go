@@ -200,6 +200,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"review_bots":           reviewBotsSectionResponse(cfg),
 		"auto_merge":            s.autoMergeSectionResponseWithBots(cfg),
 		"convergence":           s.convergenceSectionResponse(cfg),
+		"sla":                   slaSectionResponse(cfg),
 		"advisory":              advisorySectionResponse(cfg),
 		"project_observability": s.projectObservabilityResponse(cfg),
 		"replan":                replanSectionResponse(cfg),

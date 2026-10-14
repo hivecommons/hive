@@ -2689,6 +2689,7 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// the panel's only memory of merged/blocked outcomes, so a pod roll must
 	// not zero the fleet counters. Enabled before any producer records.
 	deps.enableLifecyclePersistence(b.dashSrv, lifecycleTimelinePath)
+	deps.enableSLAHistoryPersistence(b.dashSrv, slaHistoryPath)
 
 	// The scheduler's classifier pass records KindClassified journeys the
 	// moment lane routing decides an issue's lane — same store, no extra work.
@@ -6227,6 +6228,11 @@ func recordEnumeratedIssues(ctx context.Context, rec lifecycleRecorder, actionab
 		event := timeline.Event{
 			IssueRef: issueRef(issue.Repo, issue.Number),
 			Kind:     timeline.KindEnumerated,
+		}
+		// The GitHub created_at is the open→triage / open→merge SLA origin;
+		// retained here so the SLA never re-fetches the issue.
+		if !issue.CreatedAt.IsZero() {
+			event.Attrs = map[string]string{timeline.AttrIssueCreatedAt: issue.CreatedAt.UTC().Format(time.RFC3339)}
 		}
 		_, span := tracing.StartTimelineSpan(ctx, event)
 		store.Record(event)
