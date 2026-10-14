@@ -17,8 +17,9 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 		return fmt.Errorf("translate request: %w", err)
 	}
 
+	upstreamURL := openAIChatCompletionsURL(route.Endpoint)
 	upstreamReq, err := http.NewRequestWithContext(
-		clientReq.Context(), http.MethodPost, openAIChatCompletionsURL(route.Endpoint), bytes.NewReader(openaiBody))
+		clientReq.Context(), http.MethodPost, upstreamURL, bytes.NewReader(openaiBody))
 	if err != nil {
 		return fmt.Errorf("create upstream request: %w", err)
 	}
@@ -41,7 +42,7 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 			"type": "error",
 			"error": map[string]any{
 				"type":    "api_error",
-				"message": fmt.Sprintf("inference backend returned %d: %s", resp.StatusCode, string(errBody)),
+				"message": inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server")),
 			},
 		}
 		errJSON, _ := json.Marshal(anthropicErr)

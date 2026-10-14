@@ -2771,11 +2771,11 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		}
 		resp, err := client.Do(upstreamReq)
 		if err != nil {
-			p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
+			p.logger.Error("inference upstream failed", "agent", agentName, "url", upstreamURL, "error", err)
 			if p.gatewayHealth != nil {
 				p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
 			}
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend unreachable: %s"}}`, err.Error()), http.StatusBadGateway)
+			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, jsonEscape(inferenceBackendUnreachableMessage(err, upstreamURL))), http.StatusBadGateway)
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
@@ -2791,14 +2791,16 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			p.logger.Error("inference upstream error",
 				"agent", agentName,
 				"status", resp.StatusCode,
+				"url", upstreamURL,
+				"server", resp.Header.Get("Server"),
 				"body", truncateBytes(errBody, 500),
 			)
 			// A LiteLLM "team not allowed to access model" 403 carries the
 			// entitled set — cache it so the dashboard's model list narrows
 			// and its reconcile policy (#1848) can heal the agent.
 			p.recordInferenceError(route, agentName, resp.StatusCode, errBody)
-			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend returned %d: %s"}}`,
-				resp.StatusCode, truncateBytes(errBody, 200))
+			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
+				jsonEscape(inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
 			_, _ = w.Write([]byte(anthropicErr))
@@ -2970,18 +2972,18 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	}
 	resp, err := client.Do(upstreamReq)
 	if err != nil {
-		p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
+		p.logger.Error("inference upstream failed", "agent", agentName, "url", upstreamURL, "error", err)
 		if p.gatewayHealth != nil {
 			p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
 		}
-		p.writeHTTPError(conn, http.StatusBadGateway, "inference backend unreachable: "+err.Error())
+		p.writeHTTPError(conn, http.StatusBadGateway, inferenceBackendUnreachableMessage(err, upstreamURL))
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(resp.Body)
-		p.logger.Error("inference upstream error", "agent", agentName, "status", resp.StatusCode, "body", truncateBytes(errBody, 500))
+		p.logger.Error("inference upstream error", "agent", agentName, "status", resp.StatusCode, "url", upstreamURL, "server", resp.Header.Get("Server"), "body", truncateBytes(errBody, 500))
 		// Same entitlement capture as the HTTP translator path.
 		p.recordInferenceError(route, agentName, resp.StatusCode, errBody)
 		anthropicErr := &http.Response{
@@ -2990,8 +2992,8 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 			ProtoMinor: 1,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(strings.NewReader(fmt.Sprintf(
-				`{"type":"error","error":{"type":"api_error","message":"inference backend returned %d: %s"}}`,
-				resp.StatusCode, jsonEscape(truncateBytes(errBody, 200))))),
+				`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
+				jsonEscape(inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server")))))),
 		}
 		_ = anthropicErr.Write(conn)
 		return
