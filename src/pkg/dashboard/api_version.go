@@ -210,9 +210,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		releaseStatus.Channel.Branch = versionBranch
 	}
 	if marker == nil {
-		if manualAttempt := upgradeAttemptFromDashboardState(manualUpgrade); manualAttempt != nil {
-			releaseStatus.Attempt = *manualAttempt
-		}
+		releaseStatus.Attempt = selectUpgradeAttempt(releaseStatus.Attempt, manualUpgrade, upgradeOutcomeRec, versionHash)
 	}
 	if imageSource != spoke.SelfImageSourcePodmanEnv && s.releaseChannelSelectorAvailable(releaseStatus.Channel) {
 		releaseStatus.Channel.SelectorEnabled = true

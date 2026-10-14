@@ -124,3 +124,52 @@ func formatUpgradeTime(t time.Time) string {
 	}
 	return t.UTC().Format(time.RFC3339)
 }
+
+// selectUpgradeAttempt decides whether the dashboard-button record (manual)
+// or the landed-outcome classification (base, from buildUpgradeAttemptStatus)
+// is the "last upgrade" the Channel card shows. Newest evidence wins.
+//
+// The dashboard record is written by the dashboard's own upgrade button and
+// then settled once by reconcileDashboardUpgradeState; no other rollout path
+// (a hub-driven channel pull, a floating-tag retag, kubectl set image, a
+// redeploy) ever touches it again. Letting a terminal record outrank the
+// outcome unconditionally made the card report "Last upgrade 0978b9c · 4d
+// ago" on a hive that had been rolled daily since, while the upgrade-notice
+// banner beside it correctly announced the newer commit.
+func selectUpgradeAttempt(base UpgradeAttemptStatus, manual *dashboardUpgradeState, outcome *upgradeOutcome, runningSHA string) UpgradeAttemptStatus {
+	at := upgradeAttemptFromDashboardState(manual)
+	if at == nil {
+		return base
+	}
+	switch manual.State {
+	case dashboardUpgradeStateStarted, dashboardUpgradeStateQueued:
+		// An unresolved request is live state and outranks any past landing.
+		return *at
+	}
+	manualAt := manual.UpdatedAt
+	if manualAt.IsZero() {
+		manualAt = manual.StartedAt
+	}
+	if outcome != nil {
+		outcomeAt := outcome.CompletedAt
+		if outcomeAt.IsZero() {
+			outcomeAt = outcome.RequestedAt
+		}
+		if !outcomeAt.IsZero() && (manualAt.IsZero() || outcomeAt.After(manualAt)) {
+			return base
+		}
+	}
+	runningSHA = strings.TrimSpace(runningSHA)
+	if manual.State == dashboardUpgradeStateDone && runningSHA != "" && manual.Target != "" && !sameCommitDashboard(runningSHA, manual.Target) {
+		if outcome != nil {
+			// The outcome path already reports the superseded landing with the
+			// running commit leading; prefer its wording over a second copy.
+			return base
+		}
+		at.Superseded = true
+		at.RunningCommit = shortSHADashboard(runningSHA)
+		at.Detail = "The hive is running " + at.RunningCommit + ". The last dashboard-requested upgrade (to " +
+			shortSHADashboard(manual.Target) + ") has since been superseded — the hive was rolled by the hub or a floating image tag, not by this dashboard."
+	}
+	return *at
+}

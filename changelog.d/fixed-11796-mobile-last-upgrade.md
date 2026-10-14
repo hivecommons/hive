@@ -1,0 +1,1 @@
+- Dashboard Channel card no longer shows a days-old "Last upgrade <sha> · Nd ago" from a settled dashboard-button upgrade record after the hub has rolled the hive again; the newest landed upgrade (or the running commit, marked superseded) wins, on mobile and desktop alike (#11796).
