@@ -1,0 +1,1 @@
+- dashboard settings: expose every `notifications.*` key — Discord bot token (write-only), channel id, allowed users, factory and hosted-request webhooks (write-only), and the hub GitHub activity feed (`notifications.github_activity.*`), with YAML-key hints and restart notes (#11854)

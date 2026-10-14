@@ -37837,25 +37837,125 @@ function burnAreaChart() {
         </label>`).join('');
       return `
         <div class="config-field">
-          <label>Ntfy Server ${ntfyHint} ${settingHelpMark('notifications', 'configuration', 'Ntfy Server', `URL of the ntfy.sh server for push notifications. The governor sends alerts for mode changes, budget warnings, agent crashes, and rate limits. Leave empty to disable ntfy notifications. Default: https://ntfy.sh`)}</label>
+          <label>Ntfy Server ${ntfyHint} ${yamlHint('notifications.ntfy.server')} ${settingHelpMark('notifications', 'configuration', 'Ntfy Server', `URL of the ntfy.sh server for push notifications. The governor sends alerts for mode changes, budget warnings, agent crashes, and rate limits. Leave empty to disable ntfy notifications. Default: https://ntfy.sh`)}</label>
           <input type="text" value="${esc(n.ntfyServer || '')}" data-change-action="markDirty" data-arg0="notifications" data-arg1="ntfyServer" data-arg-types="s,s,v" placeholder="https://ntfy.sh">
         </div>
         <div class="config-field">
-          <label>Ntfy Topic ${settingHelpMark('notifications', 'configuration', 'Ntfy Topic', `Topic name on the ntfy server. Subscribe to this topic in the ntfy app or web UI to receive governor notifications on your phone or desktop.`)}</label>
+          <label>Ntfy Topic ${yamlHint('notifications.ntfy.topic')} ${settingHelpMark('notifications', 'configuration', 'Ntfy Topic', `Topic name on the ntfy server. Subscribe to this topic in the ntfy app or web UI to receive governor notifications on your phone or desktop.`)}</label>
           <input type="text" value="${esc(n.ntfyTopic || '')}" data-change-action="markDirty" data-arg0="notifications" data-arg1="ntfyTopic" data-arg-types="s,s,v" placeholder="my-topic">
         </div>
         <div class="config-field">
-          <label>Discord Webhook ${discordHint} ${settingHelpMark('notifications', 'configuration', 'Discord Webhook', `Discord webhook URL for posting selected hive notifications to a channel. Create a webhook in your Discord server settings under Integrations.`)}</label>
+          <label>Discord Webhook ${discordHint} ${yamlHint('notifications.discord.webhook')} ${settingHelpMark('notifications', 'configuration', 'Discord Webhook', `Discord webhook URL for posting selected hive notifications to a channel. Create a webhook in your Discord server settings under Integrations.`)}</label>
           <input type="text" value="${n.hasDiscord ? '••••••••' : ''}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordWebhook" data-arg-types="s,s,v" placeholder="https://discord.com/api/webhooks/...">
         </div>
         <div class="config-field">
-          <label>Slack Webhook ${slackHint} ${settingHelpMark('notifications', 'configuration', 'Slack Webhook', `Slack incoming webhook URL. It uses the same notify hook fanout as Discord and ntfy.`)}</label>
+          <label>Slack Webhook ${slackHint} ${yamlHint('notifications.slack.webhook')} ${settingHelpMark('notifications', 'configuration', 'Slack Webhook', `Slack incoming webhook URL. It uses the same notify hook fanout as Discord and ntfy.`)}</label>
           <input type="text" value="${n.hasSlack ? '••••••••' : ''}" data-change-action="markDirty" data-arg0="notifications" data-arg1="slackWebhook" data-arg-types="s,s,v" placeholder="https://hooks.slack.com/services/...">
         </div>
         <div class="config-field">
-          <label>Hive notification events ${settingHelpMark('notifications', 'configuration', 'Hive notification events', `Select which hive transitions are fanned out through the notify hooks to Discord, Slack, and ntfy.`)}</label>
+          <label>Hive notification events ${yamlHint('notifications.events[]')} ${settingHelpMark('notifications', 'configuration', 'Hive notification events', `Select which hive transitions are fanned out through the notify hooks to Discord, Slack, and ntfy.`)}</label>
           <div class="config-grid notification-event-checkboxes">${eventBoxes}</div>
+        </div>
+        ${renderGovNotificationsDiscordBot(n)}
+        ${renderGovNotificationsGithubActivity(n)}`;
+    }
+
+    function markNotificationsList(key, value) {
+      markDirty('notifications', key, splitConfigLines(value));
+    }
+
+    function githubActivityState() {
+      const n = ((_configState.data || {}).notifications) || {};
+      n.githubActivity = n.githubActivity || {};
+      return n.githubActivity;
+    }
+
+    function markGithubActivity(key, value) {
+      githubActivityState()[key] = value;
+      const prev = (_configState.dirty.notifications || {}).githubActivity || {};
+      markDirty('notifications', 'githubActivity', Object.assign({}, prev, { [key]: value }));
+    }
+
+    function markGithubActivityList(key, value) {
+      markGithubActivity(key, splitConfigLines(value));
+    }
+
+    function toggleGithubActivityFlag(el, key) {
+      if (!el || el.classList.contains('disabled')) return;
+      const isOn = el.classList.toggle('on');
+      el.setAttribute('aria-checked', isOn ? 'true' : 'false');
+      markGithubActivity(key, isOn);
+    }
+
+    function renderGovNotificationsDiscordBot(n) {
+      const tokenText = n.hasDiscordBotToken ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
+      const factoryText = n.hasDiscordFactoryWebhook ? 'Configured — enter a new URL to change, or save an empty value to clear.' : 'https://discord.com/api/webhooks/...';
+      const requestsText = n.hasDiscordRequestsWebhook ? 'Configured — enter a new URL to change, or save an empty value to clear.' : 'https://discord.com/api/webhooks/...';
+      return `
+        <div class="config-subgroup">Discord bot ${settingHelpMark('notifications', 'configuration', 'Discord bot', `Optional Discord bot integration; separate from webhook notifications. The bot posts status to one channel and accepts commands only from allowed users.`)}</div>
+        <div class="config-field">
+          <label>Bot token ${yamlHint('notifications.discord.bot_token')} ${settingHelpMark('notifications', 'configuration', 'Discord bot token', `Discord bot token. The bot starts only when both the token and the channel id are set.`)}</label>
+          <input type="password" autocomplete="new-password" placeholder="${esc(tokenText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordBotToken" data-arg-types="s,s,v">
+          <div class="config-help">Write-only; the current token is never echoed. Requires restart.</div>
+        </div>
+        <div class="config-field">
+          <label>Channel id ${yamlHint('notifications.discord.channel_id')} ${settingHelpMark('notifications', 'configuration', 'Discord channel id', `Discord channel the bot posts to and listens on, for example 1234567890.`)}</label>
+          <input type="text" value="${esc(n.discordChannelId || '')}" placeholder="1234567890" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordChannelId" data-arg-types="s,s,w">
+          <div class="config-help">Requires restart.</div>
+        </div>
+        <div class="config-field">
+          <label>Allowed users ${yamlHint('notifications.discord.allowed_users[]')} ${settingHelpMark('notifications', 'configuration', 'Discord allowed users', `Discord user IDs permitted to issue bot commands (!kick, !pause, agent actions). When empty, command handling is disabled (fail closed): the bot still posts status but accepts no commands.`)}</label>
+          <textarea rows="3" placeholder="One Discord user id per line" data-change-action="markNotificationsList" data-arg0="discordAllowedUsers" data-arg-types="s,v">${esc((n.discordAllowedUsers || []).join('\n'))}</textarea>
+          <div class="config-help">Empty disables bot commands. Requires restart.</div>
+        </div>
+        <div class="config-field">
+          <label>Factory webhook ${yamlHint('notifications.discord.factory_webhook')} ${settingHelpMark('notifications', 'configuration', 'Discord factory webhook', `Discord webhook the hub posts the org-wide GitHub activity feed to. Required when the GitHub activity feed is enabled.`)}</label>
+          <input type="password" autocomplete="new-password" placeholder="${esc(factoryText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordFactoryWebhook" data-arg-types="s,s,v">
+          <div class="config-help">Write-only; the current URL is never echoed. Used by the hub process.</div>
+        </div>
+        <div class="config-field">
+          <label>Hosted-hive requests webhook ${yamlHint('notifications.discord.requests_webhook_url')} ${settingHelpMark('notifications', 'configuration', 'Discord requests webhook', `Discord webhook the hub posts new hosted-hive provision requests to (the community request channel). A hub-level requests webhook takes precedence when set.`)}</label>
+          <input type="password" autocomplete="new-password" placeholder="${esc(requestsText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordRequestsWebhookUrl" data-arg-types="s,s,v">
+          <div class="config-help">Write-only; the current URL is never echoed. Used by the hub process; may require restart.</div>
         </div>`;
+    }
+
+    function renderGovNotificationsGithubActivity(n) {
+      const ga = n.githubActivity || {};
+      const toggle = (key, on, label, yamlKey, tip) => `<div class="config-toggle mt-3">
+          <div class="config-toggle-switch ${on ? 'on' : ''}" data-action="toggleGithubActivityFlag" data-arg0="${key}" data-arg-types="t,s" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
+          <span class="config-toggle-label">${label} ${yamlHint(yamlKey)} ${settingHelpMark('notifications', 'configuration', label, tip)}</span>
+        </div>`;
+      const list = (key, label, yamlKey, placeholder, tip) => `<div class="config-field">
+          <label>${label} ${yamlHint(yamlKey)} ${settingHelpMark('notifications', 'configuration', label, tip)}</label>
+          <textarea rows="3" placeholder="${esc(placeholder)}" data-change-action="markGithubActivityList" data-arg0="${key}" data-arg-types="s,v">${esc((ga[key] || []).join('\n'))}</textarea>
+        </div>`;
+      return `
+        <div class="config-subgroup">GitHub activity feed ${settingHelpMark('notifications', 'configuration', 'GitHub activity feed', `Default off. When enabled, the hub polls org repos, diffs issue and PR state, and posts concise lines to the Discord factory webhook. Runs in the hub process; changes apply after a hub restart.`)}</div>
+        ${toggle('enabled', !!ga.enabled, 'Enable GitHub activity feed', 'notifications.github_activity.enabled', 'Requires a Discord factory webhook and an org (or project.org). Requires restart.')}
+        <div class="config-field-row">
+          <div class="config-field">
+            <label>Org ${yamlHint('notifications.github_activity.org')} ${settingHelpMark('notifications', 'configuration', 'GitHub activity org', `GitHub org to watch. Empty falls back to project.org.`)}</label>
+            <input type="text" value="${esc(ga.org || '')}" placeholder="${esc(ga.effectiveOrg || 'project.org')}" data-change-action="markGithubActivity" data-arg0="org" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Poll interval (seconds) ${yamlHint('notifications.github_activity.poll_interval_s')} ${settingHelpMark('notifications', 'configuration', 'GitHub activity poll interval', `Seconds between polls. 0 uses the built-in default.`)}</label>
+            <input type="number" min="0" value="${esc(String(ga.pollIntervalS || 0))}" data-change-action="markGithubActivity" data-arg0="pollIntervalS" data-arg-types="s,N">
+          </div>
+        </div>
+        <div class="config-field">
+          <label>API URL ${yamlHint('notifications.github_activity.api_url')} ${settingHelpMark('notifications', 'configuration', 'GitHub activity API URL', `GitHub API base URL for GitHub Enterprise. Empty uses https://api.github.com.`)}</label>
+          <input type="text" value="${esc(ga.apiUrl || '')}" placeholder="https://api.github.com" data-change-action="markGithubActivity" data-arg0="apiUrl" data-arg-types="s,w">
+          <div class="config-help">Requires restart.</div>
+        </div>
+        ${list('repos', 'Repos', 'notifications.github_activity.repos[]', 'One repo per line; empty watches every org repo', 'Limit the feed to these repos. Empty watches every repo in the org.')}
+        ${list('events', 'Events', 'notifications.github_activity.events[]', 'issue_opened', 'Activity events to post, for example issue_opened, issue_closed, issue_reopened. Empty posts every event.')}
+        <div class="config-field-row">
+          ${list('allowAuthors', 'Allow authors', 'notifications.github_activity.allow_authors[]', 'One login per line', 'When set, only activity by these authors is posted.')}
+          ${list('denyAuthors', 'Deny authors', 'notifications.github_activity.deny_authors[]', 'One login per line', 'Activity by these authors is never posted.')}
+        </div>
+        ${toggle('filterBots', ga.filterBots !== false, 'Filter bot authors', 'notifications.github_activity.filter_bots', 'Default on: skip activity authored by bot accounts.')}
+        ${toggle('filterDependabot', ga.filterDependabot !== false, 'Filter Dependabot', 'notifications.github_activity.filter_dependabot', 'Default on: skip Dependabot activity.')}`;
     }
 
     // ── Stats tab for per-agent stat config ──

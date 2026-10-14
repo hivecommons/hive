@@ -957,6 +957,7 @@ func (s *Server) governorNotificationsPayload() map[string]any {
 		out["slackWebhook"] = maskSecret(cfg.Notifications.Slack.Webhook)
 		out["hasSlack"] = cfg.Notifications.Slack.Webhook != ""
 	}
+	notificationsExtraPayload(cfg, out)
 	return out
 }
 
@@ -971,6 +972,7 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		DiscordWebhook string   `json:"discordWebhook"`
 		SlackWebhook   string   `json:"slackWebhook"`
 		Events         []string `json:"events"`
+		notificationsExtraBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -985,6 +987,10 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := validateNotificationURL(body.SlackWebhook, "slackWebhook"); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := applyNotificationsExtra(s.deps.Config, body.notificationsExtraBody); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
