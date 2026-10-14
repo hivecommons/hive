@@ -159,7 +159,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			//   5. A quiet-output window: a genuinely stuck login prompt sits
 			//      silent, while an agent still rendering output may simply be
 			//      discussing login/auth work in its answer.
-			if showsLogin && loginStreak >= loginStreakRestartMin && configHasTokens() {
+			if showsLogin && loginStreak >= loginStreakRestartMin && m.agentOwnBackendHasCredential(agent) {
 				now := time.Now()
 				m.mu.RLock()
 				lastKick := agent.LastKick

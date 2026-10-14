@@ -404,3 +404,14 @@ func (m *Manager) AgentHasValidCredential(agentName string) bool {
 	}
 	return m.credentialFileProves(agentName, proc.UID, backend)
 }
+
+// agentOwnBackendHasCredential gates the token-triggered restart heal on a
+// credential a fresh process of THIS agent's backend can use. The backend-blind
+// configHasTokens() let a valid credential for another backend restart a
+// Copilot agent with no Copilot login before the auth-required hold engaged.
+func (m *Manager) agentOwnBackendHasCredential(agent *AgentProcess) bool {
+	if agent == nil {
+		return false
+	}
+	return m.credentialFileProves(agent.Name, agent.UID, effectiveBackend(agent))
+}

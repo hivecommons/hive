@@ -1,0 +1,1 @@
+- Token-triggered login restarts now require a usable credential for the stuck agent's own backend ([#11897](https://github.com/hivecommons/hive/issues/11897)): a valid credential for another backend no longer restarts a Copilot agent with no Copilot login up to three times before the `auth-required` hold engages.
