@@ -26,7 +26,7 @@ type styleRatchetCounts struct {
 // removes raw styling — but they must not go UP.
 var styleRatchetBaselines = map[string]styleRatchetCounts{
 	"operator static/index.html": {
-		inlineStyles:   1561,
+		inlineStyles:   1559,
 		rawColors:      141,
 		rawFontSizes:   650,
 		rawPadding:     223,
@@ -39,7 +39,7 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 		rawBorderRadii: 53,
 	},
 	"hub static pages": {
-		inlineStyles:   947,
+		inlineStyles:   946,
 		rawColors:      450,
 		rawFontSizes:   427,
 		rawPadding:     165,

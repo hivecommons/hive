@@ -1,0 +1,1 @@
+- Add a global Settings search box that filters settings by labels, help text, YAML keys, and known option text.
