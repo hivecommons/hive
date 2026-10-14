@@ -191,9 +191,15 @@ func (s *Service) dashboardKick(ctx context.Context, agent, prompt string) (stri
 			return fmt.Sprintf("❌ Failed to marshal kick payload: %s", err), nil
 		}
 	}
-	err := s.dashboardPost(ctx, fmt.Sprintf("/api/kick/%s", agent), body)
+	resp, err := s.dashboardPostBody(ctx, fmt.Sprintf("/api/kick/%s", agent), body)
 	if err != nil {
 		return fmt.Sprintf("❌ Failed to kick %s: %s", agent, err), nil
+	}
+	var result struct {
+		Status string `json:"status"`
+	}
+	if json.Unmarshal(resp, &result) == nil && result.Status == "deferred" {
+		return fmt.Sprintf("⏳ Kick for %s queued until the first governor scan", agent), nil
 	}
 	if prompt != "" {
 		return fmt.Sprintf("✅ Sent to %s: \"%s\"", agent, prompt), nil
@@ -265,31 +271,37 @@ func (s *Service) dashboardGet(ctx context.Context, path string) ([]byte, error)
 }
 
 func (s *Service) dashboardPost(ctx context.Context, path string, body []byte) error {
+	_, err := s.dashboardPostBody(ctx, path, body)
+	return err
+}
+
+func (s *Service) dashboardPostBody(ctx context.Context, path string, body []byte) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.dashboardURL+path, reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	s.authorizeDashboardRequest(ctx, req)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyReadBytes))
 		if summary := summarizeErrorBody(respBody); summary != "" {
-			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, summary)
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, summary)
 		}
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return nil
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyReadBytes))
+	return data, nil
 }
 
 const (

@@ -1,0 +1,1 @@
+- Dashboard chat `!kick` now replies that the kick is queued until the first governor scan when the dashboard defers it, instead of claiming it was kicked (#11829).

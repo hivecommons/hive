@@ -1414,3 +1414,19 @@ func TestDrainLoop_StopsOnCancel(t *testing.T) {
 		t.Fatal("drainLoop did not stop after context cancellation")
 	}
 }
+
+func TestDashboardKick_Deferred(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"ok":true,"status":"deferred","agent":"scanner"}`))
+	}))
+	defer ts.Close()
+
+	b := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
+	b.client = ts.Client()
+
+	result, _ := b.dashboardKick(ownerCommandContext(), "scanner", "")
+	if !strings.Contains(result, "queued until the first governor scan") || strings.Contains(result, "✅") {
+		t.Errorf("deferred kick must not report success, got %q", result)
+	}
+}
