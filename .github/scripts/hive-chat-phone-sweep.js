@@ -4,7 +4,9 @@
 // command through #hiveChatInput/#hiveChatSend and fails when one gets no
 // reply or an error-shaped reply. Env: HIVE_URL (required), HIVE_TOKEN
 // (owner dashboard token) or HIVE_SESSION (seeded hive_session cookie),
-// SWEEP_OUT (screenshot dir), SWEEP_REPLY_TIMEOUT_MS.
+// SWEEP_OUT (screenshot dir), SWEEP_REPLY_TIMEOUT_MS,
+// MIN_MESSAGES_HEIGHT_412x839 / MIN_MESSAGES_HEIGHT_412x480_KEYBOARD (px;
+// #hiveChatMessages height minimums, #11870), GITHUB_STEP_SUMMARY.
 const fs = require('fs');
 const path = require('path');
 const { chromium, devices } = require('playwright');
@@ -60,14 +62,23 @@ const BAD = [
   if (!commands.length) failures.push('!help: listed no commands');
   for (let i = 0; i < queue.length; i++) await send(queue[i], i + 1);
 
-  // Layout numbers are recorded only; enforcing minimums waits on #11836.
-  for (const [w, h] of [[412, 839], [412, 480]]) {
+  const layouts = [
+    [412, 839, 'MIN_MESSAGES_HEIGHT_412x839', ''],
+    [412, 480, 'MIN_MESSAGES_HEIGHT_412x480_KEYBOARD', ' (keyboard up)'],
+  ];
+  const summary = ['### Hive Chat message-list height', '', '| Viewport | Measured | Minimum | Result |', '|---|---|---|---|'];
+  for (const [w, h, key, note] of layouts) {
     await page.setViewportSize({ width: w, height: h });
     await page.waitForTimeout(300);
-    const listH = await page.$eval('#hiveChatMessages', el => el.getBoundingClientRect().height);
-    console.log(`layout: #hiveChatMessages height at ${w}x${h} = ${Math.round(listH)}px`);
+    const listH = Math.round(await page.$eval('#hiveChatMessages', el => el.getBoundingClientRect().height));
+    const min = Number(process.env[key] || 0);
+    const ok = listH >= min;
+    console.log(`layout: #hiveChatMessages height at ${w}x${h} = ${listH}px (minimum ${min}px)`);
+    summary.push(`| ${w}x${h}${note} | ${listH}px | ${min}px | ${ok ? '✅' : '❌'} |`);
+    if (!ok) failures.push(`layout: #hiveChatMessages height at ${w}x${h}${note} is ${listH}px, below ${key}=${min}px`);
     await page.screenshot({ path: path.join(out, `layout-${w}x${h}.png`) });
   }
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary.join('\n') + '\n');
   await browser.close();
   console.log(`swept ${queue.length + 1} prompts (${chips.length} chips, ${commands.length} commands)`);
   if (failures.length) {
