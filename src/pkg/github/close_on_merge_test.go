@@ -341,7 +341,10 @@ func TestCloseOnMergeReopenedAfterMergeLedgerSkipsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := newTestClient(t, srv, "o", []string{"r"})
-	opts := CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}}
+	// RecheckAfter 0 would mean the default; a one-nanosecond window makes
+	// every sweep re-verify so this test exercises the per-PR comment marker
+	// rather than the ledger's settled marker.
+	opts := CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}, RecheckAfter: time.Nanosecond}
 	for sweep := 1; sweep <= 2; sweep++ {
 		results := c.CloseOnMergeForLedger(context.Background(), ledger, opts)
 		if len(results) != 1 || results[0].Action != CloseOnMergeSkipped || results[0].Reason != "reopened_after_merge" {

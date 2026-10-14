@@ -224,6 +224,18 @@ type IssueClaim struct {
 	// open. Zero on pre-#11580 ledgers, which fall back to the merge/verdict
 	// instant exactly as before.
 	IssueOpenAt time.Time `json:"issue_open_at,omitempty"`
+	// CloseOnMergeSettledAt is when the close-on-merge ledger sweep last
+	// reached a final verdict for this claim: the issue closed, was already
+	// closed, carries Hive's marker, awaits confirmation, or can never be
+	// closed for this PR (untrusted author, reopened by a person). While it
+	// is within CloseOnMergeOptions.RecheckAfter of now the sweep skips the
+	// claim without any API call; before this field existed every merged
+	// claim cost a PR read and an issue read on every pass, which starved
+	// the core quota on hives with large merge histories. Carried forward by
+	// Reconcile with the claim's other anchors while the SAME PR keeps
+	// claiming the issue; a different PR starts unsettled. Zero on older
+	// ledgers, which the sweep treats as never checked.
+	CloseOnMergeSettledAt time.Time `json:"close_on_merge_settled_at,omitempty"`
 }
 
 // ClaimSourceVerdict is the IssueClaim.Source for claims recovered from a
@@ -1101,10 +1113,16 @@ func loadClaimLedgerAt(path string, logger *slog.Logger, clock func() time.Time)
 // observation. Callers must hold l.mu.
 func (l *ClaimLedger) anchorFirstObservedLocked(prev map[string]IssueClaim, c IssueClaim) IssueClaim {
 	if existing, ok := prev[c.Key()]; ok &&
-		existing.PRNumber == c.PRNumber && existing.PRRepo == c.PRRepo &&
-		!existing.FirstObservedAt.IsZero() {
-		c.FirstObservedAt = existing.FirstObservedAt
-		return c
+		existing.PRNumber == c.PRNumber && existing.PRRepo == c.PRRepo {
+		// The close-on-merge verdict belongs to this PR/issue pair, so it
+		// survives the scan re-listing the same merged PR.
+		if c.CloseOnMergeSettledAt.IsZero() {
+			c.CloseOnMergeSettledAt = existing.CloseOnMergeSettledAt
+		}
+		if !existing.FirstObservedAt.IsZero() {
+			c.FirstObservedAt = existing.FirstObservedAt
+			return c
+		}
 	}
 	if c.FirstObservedAt.IsZero() {
 		c.FirstObservedAt = c.ObservedAt
@@ -1174,6 +1192,27 @@ func (l *ClaimLedger) Record(c IssueClaim) error {
 	l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	l.mu.Unlock()
 	return l.Save()
+}
+
+// MarkCloseOnMergeSettled stamps CloseOnMergeSettledAt = at on the claim for
+// (repo, issue) if it is still the one made by PR pr. It reports whether the
+// ledger changed; callers batch a Save after a sweep rather than per claim.
+// A claim that a different PR has since taken over is left alone: the new
+// PR's verdict has not been reached yet.
+func (l *ClaimLedger) MarkCloseOnMergeSettled(repo string, issue, pr int, at time.Time) bool {
+	if l == nil || issue <= 0 || repo == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	key := claimKey(repo, issue)
+	c, ok := l.claims[key]
+	if !ok || c.PRNumber != pr {
+		return false
+	}
+	c.CloseOnMergeSettledAt = at
+	l.claims[key] = c
+	return true
 }
 
 // SetTTL overrides the entry lifetime. Intended for tests.

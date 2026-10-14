@@ -6082,6 +6082,7 @@ func (c *Config) applyBootstrapEnv() {
 	if v := strings.TrimSpace(os.Getenv(ContributeSkipLabelsEnvVar)); v != "" {
 		c.Hub.ContributeSkipLabels = parseContributeSkipLabels(v)
 	}
+	c.Issues.applyEnv(os.Getenv)
 }
 
 func readDashboardAuthTokenFile() string {

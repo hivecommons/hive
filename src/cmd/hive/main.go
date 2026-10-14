@@ -8837,8 +8837,6 @@ var (
 	claimLedger       *github.ClaimLedger
 	claimLedgerPath   = github.ClaimLedgerPath
 	claimLedgerLoader = github.LoadClaimLedger
-	closeOnMergeMu    sync.Mutex
-	closeOnMergeLast  time.Time
 )
 
 // hiveIdentity determines which PR authors count as "this hive", so only our
@@ -8879,35 +8877,6 @@ func applyDuplicatePRGuard(
 	}
 	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
-}
-
-func runCloseOnMergeSweep(ctx context.Context, cfg *config.Config, ghClient *github.Client, ledger *github.ClaimLedger, logger *slog.Logger) {
-	if cfg == nil || ghClient == nil || ledger == nil || !cfg.Issues.CloseOnMergeEnabled() {
-		return
-	}
-	opts := github.CloseOnMergeOptions{
-		Identity: hiveIdentity(cfg),
-		Logger:   logger,
-		TrustedAuthor: func(repo, login string) bool {
-			decision := trustedAuthorFunc(cfg)(login, cfg.AutoMerge.TrustedAuthors.EffectiveRequireRole())
-			return decision.Allowed
-		},
-	}
-	results := ghClient.CloseOnMergeForLedger(ctx, ledger, opts)
-	logCloseOnMergeResults(logger, "close-on-merge ledger sweep", results)
-
-	interval := cfg.Issues.EffectiveCloseOnMergeBackfillInterval()
-	closeOnMergeMu.Lock()
-	due := closeOnMergeLast.IsZero() || time.Since(closeOnMergeLast) >= interval
-	if due {
-		closeOnMergeLast = time.Now()
-	}
-	closeOnMergeMu.Unlock()
-	if !due {
-		return
-	}
-	backfill := ghClient.CloseOnMergeBackfill(ctx, opts)
-	logCloseOnMergeResults(logger, "close-on-merge backfill sweep", backfill)
 }
 
 func logCloseOnMergeResults(logger *slog.Logger, msg string, results []github.CloseOnMergeResult) {
