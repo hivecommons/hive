@@ -1,0 +1,1 @@
+- Hub landing: the "Agent CLIs by support tier" paragraph in the integrations band is now centered in its column like the sibling headings and chip rows, instead of being pinned to the left edge at wide viewports (#11884).

@@ -700,6 +700,12 @@ a.nav-chip:active,
   gap: var(--sp-4);
 }
 
+/* Nested group copy inherits the band's max-inline-size but not its
+   justify-items, so it would otherwise sit at the start edge of the group. */
+.hv-integration-group > p {
+  justify-self: center;
+}
+
 .hv-integration-group h3 {
   color: var(--text);
   font-size: var(--fs-md);
