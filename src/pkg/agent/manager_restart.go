@@ -865,12 +865,12 @@ func (m *Manager) restartWithReason(ctx context.Context, name, reason string, ki
 			"stderr", strings.TrimSpace(string(output)))
 	}
 
+	m.recordRestartLocked(agent, reason)
+	m.logger.Info("audit: agent restarting", "name", name, "reason", sanitizeRestartReason(reason), "restart_count", agent.RestartCount)
+
 	if err := m.ensureTmuxSession(agent); err != nil {
 		return err
 	}
-
-	m.recordRestartLocked(agent, reason)
-	m.logger.Info("audit: agent restarting", "name", name, "reason", sanitizeRestartReason(reason), "restart_count", agent.RestartCount)
 
 	if agent.Paused {
 		agent.State = StatePaused
