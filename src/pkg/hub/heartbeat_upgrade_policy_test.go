@@ -34,8 +34,8 @@ func TestHeartbeatUpgradePolicyHubManagedChannelSpoke(t *testing.T) {
 	if !got.HubManaged || got.SpokeManaged {
 		t.Errorf("HubManaged=%v SpokeManaged=%v, want hub-managed only", got.HubManaged, got.SpokeManaged)
 	}
-	if got.Schedule != AutoUpgradeModeInstant {
-		t.Errorf("Schedule = %q, want %q — an empty stored mode is instant, not unknown", got.Schedule, AutoUpgradeModeInstant)
+	if got.Schedule != AutoUpgradeModeDaily {
+		t.Errorf("Schedule = %q, want %q — an empty stored mode is daily (#11822), not unknown", got.Schedule, AutoUpgradeModeDaily)
 	}
 	if got.Branch != "v5" {
 		t.Errorf("Branch = %q, want the spoke's own line v5 (never a hard-wired v4)", got.Branch)

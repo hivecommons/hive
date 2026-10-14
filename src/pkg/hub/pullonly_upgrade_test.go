@@ -522,6 +522,7 @@ func TestAutoUpgradeToggleWorksUnderPull(t *testing.T) {
 	saveSaaSHive(&SaaSHive{
 		ID: "toggle-1", Owner: "alice", Status: "running",
 		ClusterID: "vllm-d", AutoUpgrade: false,
+		AutoUpgradeMode: AutoUpgradeModeInstant,
 	})
 	s.registry.Hives = []RegistryEntry{{
 		ID: "toggle-1", GitBranch: "v4", GitHash: "old1234",
