@@ -425,7 +425,7 @@ func TestReporterTrustWebBase(t *testing.T) {
 	if got := c.reporterTrustWebBase(); got != "https://ghe.example.com" {
 		t.Fatalf("GHE web base = %q", got)
 	}
-	body := reporterTrustWaitCommentAt(c.reporterTrustWebBase(), "o/r", "needs-triage", plainWaitAdmitter{})
+	body := reporterTrustWaitCommentAt(c.reporterTrustWebBase(), "o/r", "o/r", "needs-triage", plainWaitAdmitter{})
 	if !strings.Contains(body, "See https://ghe.example.com/o/r/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation") {
 		t.Fatalf("GHE notice does not link the GHE governance page:\n%s", body)
 	}
