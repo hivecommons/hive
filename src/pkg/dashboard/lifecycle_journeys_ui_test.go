@@ -35,7 +35,7 @@ func TestLifecycleJourneysPanelPinned(t *testing.T) {
 		`target="_blank" rel="noopener"`,
 		// Fixed stage axis + chips through the shared kind→color mapping.
 		"LC_STAGE_AXIS",
-		"['enumerated', 'classified', 'kicked', 'pr_opened', 'merged', 'blocked']",
+		"['enumerated', 'classified', 'kicked', 'started', 'pr_opened', 'merged', 'blocked']",
 		"lcBarHtml",
 		"lcAxisHtml",
 		"lcParseTime",
