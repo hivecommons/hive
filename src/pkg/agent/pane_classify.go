@@ -35,6 +35,7 @@ var loginPromptPatterns = []string{
 	// GitHub device-flow screen (Copilot CLI)
 	"Enter one-time code",
 	"github.com/login/device",
+	"github.com/settings/copilot",
 	// Codex browser sign-in / device-code hand-off
 	"Finish signing in via your browser",
 	"auth.openai.com/oauth/authorize",

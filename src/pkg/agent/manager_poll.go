@@ -138,10 +138,10 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				return
 			}
 
-			// Auto-restart agents stuck on the login prompt when a valid
-			// token exists in the shared config.json. This handles the case
-			// where a user authenticates via one agent's terminal and other
-			// agents don't pick up the new token automatically.
+			// Auto-restart agents stuck on the login prompt when that agent's
+			// backend has a credential a fresh process can actually use. This
+			// handles the case where a user authenticates via one agent's
+			// terminal and other agents don't pick up the new token automatically.
 			//
 			// FIVE guards, each traced to a live failure (hivecommons/hive,
 			// 2026-08-22, scanner restart_count=28 with every kick destroyed):
@@ -159,7 +159,7 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			//   5. A quiet-output window: a genuinely stuck login prompt sits
 			//      silent, while an agent still rendering output may simply be
 			//      discussing login/auth work in its answer.
-			if showsLogin && loginStreak >= loginStreakRestartMin && configHasTokens() {
+			if showsLogin && loginStreak >= loginStreakRestartMin && m.AgentHasValidCredential(agent.Name) {
 				now := time.Now()
 				m.mu.RLock()
 				lastKick := agent.LastKick

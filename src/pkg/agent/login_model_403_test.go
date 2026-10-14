@@ -77,6 +77,7 @@ func TestOtherLoginPatternsUnaffected(t *testing.T) {
 		"Select login method",
 		"github.com/login/device",
 		"Enter one-time code",
+		"github.com/settings/copilot",
 	} {
 		if !paneShowsLoginPrompt([]string{line}) {
 			t.Errorf("login pattern no longer detected: %q", line)

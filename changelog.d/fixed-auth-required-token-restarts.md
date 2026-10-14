@@ -1,0 +1,1 @@
+- Stop login-prompt recovery from restarting agents unless that agent’s own backend has a usable credential.
