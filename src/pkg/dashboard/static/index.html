@@ -32335,7 +32335,7 @@ function burnAreaChart() {
         case 'Appearance': return renderGovAppearance();
         case 'Dashboard': return renderGovDashboard(d.dashboard || {});
         case 'Agents': return renderGovAgents(d.agents || []);
-        case 'Thresholds': return renderGovThresholds(d);
+        case 'Thresholds': return renderGovThresholds(d) + renderGovSLATargets(d);
         case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
         case 'Repos': return renderGovRepos(d.repos || []);
         case 'Budget': return renderGovBudget(d.budget || {}, d.health || {});
@@ -36948,7 +36948,6 @@ function burnAreaChart() {
           <label>Coverage goal (%) ${settingHelpMark('governor-thresholds', '', 'Coverage goal', `Test-coverage percentage the quality card, ci-maintainer bar, agent coverage preamble, and ACMM full-autonomy gate measure against (1-100, default 91).`)}</label>
           <input type="number" min="1" max="100" id="cfg-coverage-target" value="${activeCoverageTarget}" data-input-action="markDirty" data-arg0="coverage-target" data-arg1="coverageTarget" data-arg-types="s,s,N">
         </div>
-        ${renderGovSLATargets(d)}
         <p class="fs-sm text-muted mb-7">Drag the handles to set issue-count thresholds for governor mode transitions.</p>
         ${effNote}
         ${scalingSummary ? `<p class="fs-sm text-muted mb-4" id="thresh-scaling-summary"><strong>${scalingSummary}</strong></p>` : ''}

@@ -7143,6 +7143,30 @@
         }
       }
     },
+    "/api/config/sla": {
+      "get": {
+        "tags": ["Governor"],
+        "summary": "Get Delivery SLA targets",
+        "description": "Returns the configured `sla.targets` (0 = default), the effective targets with defaults filled in, and the defaults. Hours per span; the Overview Delivery SLA panel colours its p50s and sparklines against these. Requires owner role.",
+        "responses": {
+          "200": { "description": "SLA targets", "content": { "application/json": { "schema": { "type": "object", "properties": { "targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } }, "effective_targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } }, "defaults": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } } } } } } },
+          "403": { "description": "Requires owner role" },
+          "503": { "description": "Config unavailable" }
+        }
+      },
+      "put": {
+        "tags": ["Governor"],
+        "summary": "Update Delivery SLA targets",
+        "description": "Replaces `sla.targets` with the given per-span hour budgets and persists hive.yaml. Each value must be between 0 (default) and 8760; invalid budgets are rejected before anything is mutated. Requires owner role.",
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } } } } } } },
+        "responses": {
+          "200": { "description": "Updated SLA targets", "content": { "application/json": { "schema": { "type": "object", "properties": { "targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } }, "effective_targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } }, "defaults": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } } } } } } },
+          "400": { "description": "Invalid body or budget" },
+          "403": { "description": "Requires owner role" },
+          "503": { "description": "Config unavailable" }
+        }
+      }
+    },
     "/api/config/governor/coverage-target": {
       "put": {
         "tags": [
