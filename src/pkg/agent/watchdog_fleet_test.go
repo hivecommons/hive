@@ -234,6 +234,12 @@ func TestWatchdogAgentNamesExcludesQuietByDesign(t *testing.T) {
 func TestDeadSessionRecoveryOwnershipTransfer(t *testing.T) {
 	newCrashedManager := func(t *testing.T) *Manager {
 		t.Helper()
+		// Recovery runs `tmux new-session`. Against a real tmux server the
+		// session one subtest creates survives into the next, where
+		// missing-session recovery (#11832) sees "duplicate session", adopts
+		// it as alive and restarts nothing — so the subtests must not share
+		// a server. A fake tmux that accepts every command keeps them hermetic.
+		writeFakeTmux(t, "#!/bin/sh\nexit 0\n")
 		m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
 		// The session is gone: the crash loop's missing-session branch.
 		orig := tmuxSessionExists
