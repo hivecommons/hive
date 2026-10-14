@@ -35,10 +35,8 @@ var apiKeyRedactor = regexp.MustCompile(`(^|[^A-Za-z0-9._-])(sk-[A-Za-z0-9._\-]{
 // codes/lines in text derived from an agent pane.
 func RedactPaneTokens(s string) string {
 	s = statusTokenRedactor.ReplaceAllStringFunc(s, func(m string) string {
-		if len(m) > 7 {
-			return m[:7] + "***"
-		}
-		return "***"
+		// The pattern guarantees at least 14 characters, so m[:7] is always valid.
+		return m[:7] + "***"
 	})
 	// ${1} preserves the boundary character the pattern had to consume.
 	s = apiKeyRedactor.ReplaceAllString(s, "${1}sk-***REDACTED***")
