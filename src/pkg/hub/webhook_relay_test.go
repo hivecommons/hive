@@ -89,6 +89,12 @@ func TestRelayWebhookToSpokeIgnoresUnmanagedRepos(t *testing.T) {
 // self-reported by the spoke, so a private/internal target must never be
 // relayed to. The production guard (isPrivateURL) rejects loopback, so the
 // httptest spoke here must receive nothing.
+//
+// The relay evaluates the guard on its own goroutine, so this test wraps the
+// production guard (still isPrivateURL underneath) to observe each verdict and
+// waits for every relay to finish evaluating before returning. Without that
+// wait the goroutines outlived the test and raced the next test's
+// allowLoopbackRelay swap of spokeWebhookRelayGuard under -race.
 func TestRelayWebhookToSpokeRefusesPrivateDashboardURL(t *testing.T) {
 	hit := make(chan struct{}, 1)
 	spoke := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -97,16 +103,39 @@ func TestRelayWebhookToSpokeRefusesPrivateDashboardURL(t *testing.T) {
 	}))
 	defer spoke.Close()
 
+	targets := []string{spoke.URL, "http://169.254.169.254", "http://10.0.0.5:8080", "http://localhost:8080"}
+	verdicts := make(chan bool, len(targets))
+	orig := spokeWebhookRelayGuard
+	spokeWebhookRelayGuard = func(ctx context.Context, u string) bool {
+		refused := orig(ctx, u)
+		verdicts <- refused
+		return refused
+	}
+	t.Cleanup(func() { spokeWebhookRelayGuard = orig })
+
 	s := newWebhookHub()
 	s.registry.Hives = []RegistryEntry{{ID: "h1", Org: "acme", Repos: []string{"widgets"}, DashboardURL: spoke.URL}}
-	for _, u := range []string{spoke.URL, "http://169.254.169.254", "http://10.0.0.5:8080", "http://localhost:8080"} {
+	for _, u := range targets {
 		s.registry.Hives[0].DashboardURL = u
 		s.relayWebhookToSpoke("pull_request", http.Header{}, []byte(`{"repository":{"name":"widgets","full_name":"acme/widgets","owner":{"login":"acme"}}}`))
+	}
+	deadline := time.After(5 * time.Second)
+	for i := range targets {
+		select {
+		case refused := <-verdicts:
+			if !refused {
+				t.Errorf("guard allowed a private dashboard URL (verdict %d of %d)", i+1, len(targets))
+			}
+		case <-hit:
+			t.Fatal("relay reached a private dashboard URL; the SSRF guard must refuse it")
+		case <-deadline:
+			t.Fatalf("only %d of %d relays evaluated the guard before the deadline", i, len(targets))
+		}
 	}
 	select {
 	case <-hit:
 		t.Fatal("relay reached a private dashboard URL; the SSRF guard must refuse it")
-	case <-time.After(500 * time.Millisecond):
+	default:
 	}
 }
 
