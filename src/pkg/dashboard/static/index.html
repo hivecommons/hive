@@ -2757,12 +2757,16 @@
     /* Scrollable surfaces inside the OTHER modals (#4805) — the #2766 rules
        above only covered the config modal family. These are the remaining
        overlay scrollers; without containment their boundary hands the wheel
-       to the dashboard whenever the body lock is absent or stuck. */
+       to the dashboard whenever the body lock is absent or stuck.
+       Form textareas and <pre> blocks are deliberately NOT in this list:
+       Chrome honours overscroll-behavior:contain on a scroll container even
+       when it has nothing to scroll, so a contained (empty) textarea under
+       the pointer swallowed the wheel and the modal body behind it could
+       never be scrolled to its bottom. Their chain lands on .nous-config-body
+       or the overlay, both contained, so the dashboard still never moves. */
     .gh-setup-modal,
     .acmm-dialog,
     .nous-config-dialog > .nous-config-body,
-    .nous-config-overlay textarea,
-    .nous-config-overlay pre,
     .nous-config-body [style*="overflow-y:auto"],
     .nous-config-body [style*="overflow-y: auto"],
     .welcome-body,
@@ -22096,7 +22100,6 @@ function burnAreaChart() {
 
     function kbShowModal(title, bodyHtml, opts) {
       const dialogWidth = (opts && opts.width) || '600px';
-      const dialogMaxHeight = (opts && opts.maxHeight) || '';
       let overlay = document.getElementById('kb-modal-overlay');
       if (!overlay) {
         overlay = document.createElement('div');
@@ -22443,7 +22446,10 @@ function burnAreaChart() {
     }
 
     function kbOpenSubscriptions() {
-      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content" style="height:70vh;overflow-y:auto"><div style="text-align:center;padding:var(--sp-7);color:var(--muted)">Loading...</div></div>', { width: 'min(960px, 92vw)', maxHeight: '85vh' });
+      // The dialog body (.nous-config-body) is the one scroll container —
+      // a nested fixed-height scroller here left two competing scrollers and
+      // the bottom of the form unreachable (#11786).
+      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content"><div class="kb-integrations-loading">Loading...</div></div>', { width: 'min(960px, 92vw)', maxHeight: '85vh' });
       kbLoadSubscriptions();
     }
 
@@ -22851,7 +22857,7 @@ function burnAreaChart() {
 
     function kbOpenHowItWorks() {
       const body = `
-        <div style="max-height:70vh;overflow-y:auto;font-size:var(--fs-base);line-height:1.6;color:var(--fg);padding-right:var(--sp-6)">
+        <div style="font-size:var(--fs-base);line-height:1.6;color:var(--fg)">
           <div style="margin-bottom:18px">
             <h3 class="modal-h">How Knowledge Works</h3>
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-0)">Hive organizes knowledge into <strong>4 layers</strong>, listed from highest to lowest priority:</p>
