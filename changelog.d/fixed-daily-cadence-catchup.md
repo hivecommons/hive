@@ -1,0 +1,1 @@
+- Give daily time-of-day cadences enough catch-up window to survive stretched governor eval intervals instead of skipping the slot.

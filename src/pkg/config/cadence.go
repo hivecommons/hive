@@ -17,7 +17,9 @@ const (
 	CadenceModeTimes      = "times"
 	CadenceModeCron       = "cron"
 	CadenceModeContinuous = "continuous"
-	CadenceCatchUpWindow  = 10 * time.Minute
+	// CadenceCatchUpWindow must cover the stretched governor eval cadence
+	// (15–30m) plus jitter so a daily HH:MM slot is not skipped silently.
+	CadenceCatchUpWindow = 45 * time.Minute
 )
 
 const cadenceObjectPrefix = "tod:"
