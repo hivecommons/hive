@@ -295,6 +295,10 @@ type Client struct {
 	// the life of the process.
 	defaultBranchMu sync.RWMutex
 	defaultBranches map[string]string
+	// closingLinks memoises issue↔PR pairs already pushed to GitHub's
+	// Development sidebar for non-default-branch PRs (hivecommons/hive#11888).
+	// Zero value is ready to use.
+	closingLinks closingLinkCache
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning
