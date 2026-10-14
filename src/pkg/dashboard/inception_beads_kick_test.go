@@ -28,6 +28,7 @@ func covFInceptionServerWithBeads(t *testing.T) (*Server, *knowledge.InceptionEn
 
 	s := NewServer(0, logger)
 	deps := testDeps(t)
+	enableBrainstormAgent(deps)
 	deps.Inception = eng
 	deps.Knowledge = kapi
 	deps.BeadStores = map[string]*beads.Store{"brainstorm": store}

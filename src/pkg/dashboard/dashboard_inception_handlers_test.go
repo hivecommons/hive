@@ -29,6 +29,13 @@ func newMinimalServer(t *testing.T) *Server {
 	return srv
 }
 
+// enableBrainstormAgent adds an enabled brainstorm agent to a testDeps config
+// so the inception start/scan handlers admit the request. testDeps itself
+// stays at exactly one agent ("scanner"); several tests assert on that.
+func enableBrainstormAgent(deps *Dependencies) {
+	deps.Config.Agents["brainstorm"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true}
+}
+
 func TestHandleInceptionStartNilEngine(t *testing.T) {
 	srv := newMinimalServer(t)
 	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader(`{"idea":"test"}`))
