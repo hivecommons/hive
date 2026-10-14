@@ -1635,11 +1635,59 @@ func litellmModelsHTTPError(req *http.Request, resp *http.Response, apiKey strin
 			return fmt.Errorf("gateway requires an API key and none is configured (HTTP %d for GET %s; final URL %s): %s",
 				resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
 		}
-		return fmt.Errorf("gateway rejected the configured key (HTTP %d for GET %s; final URL %s): %s",
-			resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
+		// A JSON body means the gateway API ITSELF evaluated the key and said
+		// no — the opposite classification from the proxy/WAF branch above.
+		// Spell out exactly what was sent (method, path, which header carried
+		// the key, its fingerprint, the User-Agent) and what answered (Server,
+		// content-type) so the operator can line it up against a curl that
+		// works from their laptop without guessing which part differs.
+		return fmt.Errorf("gateway rejected the configured key (HTTP %d for GET %s; final URL %s) — this is the gateway API's own JSON auth error (server %q, content-type %q), not a proxy/WAF refusal, so the key below is what it evaluated; request sent: %s: %s",
+			resp.StatusCode, req.URL.String(), finalURL, resp.Header.Get("Server"), contentType, probeRequestShape(req, apiKey), gatewayMsg)
 	default:
-		return fmt.Errorf("gateway returned HTTP %d for GET %s (final URL %s): %s", resp.StatusCode, req.URL.String(), finalURL, gatewayMsg)
+		return fmt.Errorf("gateway returned HTTP %d for GET %s (final URL %s; server %q, content-type %q; request sent: %s): %s",
+			resp.StatusCode, req.URL.String(), finalURL, resp.Header.Get("Server"), contentType, probeRequestShape(req, apiKey), gatewayMsg)
 	}
+}
+
+// probeUserAgent is what the probe (and the inference translator, which also
+// uses Go's default client) presents as User-Agent. Go only stamps the header
+// at transport time, so req.UserAgent() is empty while the diagnostic is being
+// built; naming the default here keeps the report truthful.
+const probeUserAgent = "Go-http-client/1.1 (Go default; identical to the hive's inference translator)"
+
+// probeRequestShape describes the outbound probe request in the terms an
+// operator compares against their own curl: method and path, which header
+// carried the key (always Authorization: Bearer — never x-api-key), the key's
+// SHA-256 prefix (a fingerprint, never the value), the User-Agent, and the
+// egress proxy that applied. One sentence fragment, safe to log.
+func probeRequestShape(req *http.Request, apiKey string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s", req.Method, req.URL.String())
+	if apiKey == "" {
+		b.WriteString(" with no Authorization header")
+	} else {
+		b.WriteString(" with Authorization: Bearer <key>")
+		if hash := config.APIKeySHA256(apiKey); hash != "" {
+			fmt.Fprintf(&b, " (SHA256 %s)", shortKeyHash(hash))
+		}
+	}
+	if req.Header.Get("Content-Type") != "" {
+		fmt.Fprintf(&b, ", Content-Type %s", req.Header.Get("Content-Type"))
+	}
+	fmt.Fprintf(&b, ", User-Agent %s%s", probeUserAgent, describeEgressProxy(req))
+	return b.String()
+}
+
+// shortKeyHashLen is how many leading hex characters of a key's SHA-256 the
+// dashboard shows: enough to match against `shasum -a 256` output by eye,
+// far too few to be a usable fingerprint of the secret.
+const shortKeyHashLen = 12
+
+func shortKeyHash(hash string) string {
+	if len(hash) > shortKeyHashLen {
+		return hash[:shortKeyHashLen]
+	}
+	return hash
 }
 
 // probeEdgeRejectedError marks a /v1/models probe failure that an ingress,
@@ -1693,7 +1741,12 @@ func probeLiteLLMInference(endpoint, apiKey, model string) error {
 			" (server %q), so inference from the hive is blocked too, not just model listing%s: %s",
 			chatURL, model, resp.StatusCode, resp.Header.Get("Server"), describeEgressProxy(req), gatewayMsg)
 	}
-	return fmt.Errorf("POST %s (model %q) returned HTTP %d: %s", chatURL, model, resp.StatusCode, gatewayMsg)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("POST %s (model %q) was rejected by the gateway API itself with HTTP %d (JSON auth error; server %q, content-type %q) — request sent: %s: %s",
+			chatURL, model, resp.StatusCode, resp.Header.Get("Server"), contentType, probeRequestShape(req, apiKey), gatewayMsg)
+	}
+	return fmt.Errorf("POST %s (model %q) returned HTTP %d (server %q, content-type %q): %s",
+		chatURL, model, resp.StatusCode, resp.Header.Get("Server"), contentType, gatewayMsg)
 }
 
 // redactSecret removes any occurrence of a secret value from a message so
@@ -1810,20 +1863,20 @@ func (s *Server) liteLLMProbeResult(lc *config.LiteLLMConfig, overrideKey string
 			} else {
 				infErr := probeLiteLLMInference(ep, probeKey, lc.DefaultModel)
 				if infErr == nil {
-					return map[string]interface{}{
+					return s.withLiteLLMRouteDiagnostic(map[string]interface{}{
 						"ok":                true,
 						"models":            0,
 						"modelsListBlocked": true,
 						"inferenceModel":    lc.DefaultModel,
 						"warning":           redactSecret(err.Error(), probeKey),
-					}
+					}, ep, probeKey)
 				}
 				err = fmt.Errorf("%w; fallback inference check with default model also failed: %v", err, infErr)
 			}
 		}
-		return map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}
+		return s.withLiteLLMRouteDiagnostic(map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}, ep, probeKey)
 	}
-	result := map[string]interface{}{"ok": true, "models": n}
+	result := s.withLiteLLMRouteDiagnostic(map[string]interface{}{"ok": true, "models": n}, ep, probeKey)
 	// If the proxy has learned this key's entitled subset (some gateways
 	// advertise the full catalog on /v1/models but scope the key to fewer),
 	// surface how many of the ADVERTISED models are actually usable so Test
@@ -1840,6 +1893,23 @@ func (s *Server) liteLLMProbeResult(lc *config.LiteLLMConfig, overrideKey string
 		}
 	}
 	return result
+}
+
+// withLiteLLMRouteDiagnostic attaches the "route" line (where agents on the
+// litellm backend will really POST, with which key) to a LiteLLM tab probe
+// result. The tab probes the LEGACY block's endpoint; when an explicit gateway
+// named "litellm" exists the route resolver prefers that gateway instead, and
+// the line says so, so the operator is never told "OK" about an endpoint no
+// agent will use (hivecommons/hive#9945). Nil-safe for the test seams that
+// build a Server without deps.
+func (s *Server) withLiteLLMRouteDiagnostic(probe map[string]interface{}, testedEndpoint, testedKey string) map[string]interface{} {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return probe
+	}
+	if line := inferenceRouteDiagnostic(s.deps.Config, config.GatewayKindLiteLLM, testedEndpoint, testedKey); line != "" {
+		probe["route"] = line
+	}
+	return probe
 }
 
 // handleGovernorLiteLLMTest is the Test Connection endpoint: a live

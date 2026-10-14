@@ -104,6 +104,10 @@ Endpoint environment overrides used by v2 include:
 
 Never put the key value itself in YAML.
 
+### Which endpoint and key agents on the `litellm` backend actually use
+
+When a `gateways:` entry named `litellm` exists (the Model Gateways tab creates one), agents on the built-in `litellm` backend take **endpoint, default model, key and CA bundle from that gateway**, and the legacy `governor.litellm` block / `HIVE_LITELLM_ENDPOINT` are ignored for routing. Only when no such gateway has an endpoint does the legacy block (env var first, then YAML) route traffic. `local_proxy: true` wins over both. Every Test button prints the resulting route — `Agents on backend "litellm" send inference to POST <url> … — route source: …` — and warns when that is not the endpoint or key the test just exercised, so "Connection OK" is never shown for an endpoint no agent will use.
+
 
 ## OpenRouter scan-to-fund gateway
 
@@ -164,6 +168,7 @@ The watsonx path uses the same gateway machinery: configure the gateway endpoint
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | `401` or repeated gateway auth errors | Missing/stale API key or wrong LiteLLM virtual key | Rotate the key, update the env/file reference, restart or reload the hive. |
+| Test says `Connection OK` but agents fail with `401 Invalid proxy server token` naming the correct key hash | The route the agents use and the endpoint the test probed were not the same: a stale `governor.litellm.endpoint` / `HIVE_LITELLM_ENDPOINT` still pointed at a previous gateway while the Model Gateways tab's `litellm` gateway (and its key) pointed at the new one, so the new key was sent to the old gateway. | Fixed: the explicit `litellm` gateway now wins for the endpoint as it already did for the key. Read the `Agents on backend "litellm" send inference to POST …` line under the Test result; if it carries a ⚠, reconcile the two sources it names. |
 | Model dropdown empty or unverified | `/v1/models` unreachable or blocked | Check endpoint URL, network policy, TLS CA bundle, and gateway logs. |
 | Test connection says a proxy refused the request | The Hive pod reached an HTTP proxy, ingress, WAF, VPN boundary, or load balancer in front of the gateway before LiteLLM evaluated the key. The diagnostic quotes the observed `Server` header (for example `awselb/2.0`) and content type; that identifies the fronting proxy class, not its owner or rules. | Allow the Hive cluster's egress IPs/network path through the gateway's ELB/WAF/VPN/allow-list, or configure an endpoint reachable from the cluster. This is outside Hive's control; compare the dashboard's HTTPS_PROXY/NO_PROXY egress note with the path your laptop uses. |
 | Agent starts but every prompt fails | Endpoint does not implement OpenAI chat completions for the selected model | Select a chat-capable model or fix gateway routing. |

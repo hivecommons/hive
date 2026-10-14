@@ -31963,10 +31963,15 @@ function burnAreaChart() {
     // {ok:false, error}) from the save/test endpoints. Live results only —
     // the server never counts static fallback aliases here.
     function litellmProbeMessage(probe) {
+      // probe.route (#9945): the request agents on the litellm backend will
+      // really make (POST URL, key fingerprint, config source) and a warning
+      // when it is not what this Test just exercised. Appended to every
+      // outcome so "OK" is never shown without saying what it proves.
+      const route = probe.route ? '\n' + probe.route : '';
       if (probe.ok && probe.modelsListBlocked) {
         // /v1/models was refused by a proxy in front of the gateway, but a
         // 1-token inference call with the default model succeeded (#9945).
-        return { ok: true, msg: `LiteLLM OK — inference with ${probe.inferenceModel} works, but model listing is blocked: ${probe.warning}` };
+        return { ok: true, msg: `LiteLLM OK — inference with ${probe.inferenceModel} works, but model listing is blocked: ${probe.warning}` + route };
       }
       if (probe.ok) {
         const base = `LiteLLM OK — ${probe.models} model${probe.models === 1 ? '' : 's'} available`;
@@ -31975,9 +31980,9 @@ function burnAreaChart() {
         // so the smaller usable number is not a surprise later.
         const usable = (typeof probe.usable === 'number' && probe.usable < probe.models)
           ? ` (${probe.usable} usable with your key)` : '';
-        return { ok: true, msg: base + usable };
+        return { ok: true, msg: base + usable + route };
       }
-      return { ok: false, msg: `LiteLLM connection failed: ${probe.error}` };
+      return { ok: false, msg: `LiteLLM connection failed: ${probe.error}` + route };
     }
 
     // showLiteLLMTestResult writes a probe result to the tab's inline
