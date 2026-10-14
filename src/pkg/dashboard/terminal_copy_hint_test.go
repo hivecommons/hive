@@ -84,6 +84,7 @@ func TestTerminalCopyHintBannerRendering(t *testing.T) {
 	script := `
 function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function terminalCopyHintDismissed(){ return false; }
+const TERMINAL_KEYBOARD_COPY_HINT = 'keyboard copy hint';
 function terminalCopyUrlButtonHtml(agentName, hasLoginURL){ if (!agentName || !hasLoginURL) return ''; return '<button data-action="copyTerminalUrl">Copy login URL</button>'; }
 ` + jsFunc(t, html, "terminalCopyHintHtml") + `
 const withURL = terminalCopyHintHtml(true, false, 'scanner', 'https://github.com/login/device', '', '', '');
