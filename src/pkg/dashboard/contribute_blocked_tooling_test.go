@@ -69,7 +69,7 @@ func TestBlockedVerdictToolingFailure_Classifier(t *testing.T) {
 }
 
 func TestBlockedVerdictToolingFailure_ReleaseCommentIsMarkedAndBounded(t *testing.T) {
-	long := strings.Repeat("x", noWorkReasonMaxLen*2)
+	long := strings.Repeat("§", noWorkReasonMaxLen*2)
 	body := toolingBlockedReleaseComment("mrbobbytables", long)
 	if !strings.HasPrefix(body, toolingBlockedReleaseMarker) {
 		t.Fatalf("release comment must start with the marker, got %q", body[:80])
@@ -77,8 +77,8 @@ func TestBlockedVerdictToolingFailure_ReleaseCommentIsMarkedAndBounded(t *testin
 	if !strings.Contains(body, "@mrbobbytables") || !strings.Contains(body, "`"+blockedWorkflowLabel+"`") {
 		t.Fatalf("release comment must name the reporter and the label: %q", body)
 	}
-	if strings.Count(body, "x") > noWorkReasonMaxLen {
-		t.Fatalf("release comment must cap the reason at %d runes", noWorkReasonMaxLen)
+	if n := strings.Count(body, "§"); n == 0 || n > noWorkReasonMaxLen {
+		t.Fatalf("release comment must carry the reason capped at %d bytes, got %d marks", noWorkReasonMaxLen, n)
 	}
 	anon := toolingBlockedReleaseComment("", "")
 	if strings.Contains(anon, "@") || strings.Contains(anon, "Reported reason") {
