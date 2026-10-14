@@ -162,8 +162,6 @@ autonomy.promote_after # TODO #11855
 classification.review_bots.logins[] # TODO #11855
 classification.review_bots.max_attempts_per_thread # TODO #11855
 classification.review_bots.resolve_after_fix # TODO #11855
-classifier.complex_signals[] # TODO #11855
-classifier.simple_keywords[] # TODO #11855
 compliance.frameworks[] # TODO #11855
 compliance.posture_checks.history_days # TODO #11855
 compliance.posture_checks.window_days # TODO #11855

@@ -24708,6 +24708,51 @@
         }
       }
     },
+    "/api/config/classifier": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update tier classifier keyword overrides",
+        "description": "Owner-only Settings write for the top-level `classifier` keyword lists in hive.yaml. Empty lists keep the built-in defaults.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "simple_keywords": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "complex_signals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated tier classifier keyword overrides",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/inference/models/{backend}": {
       "get": {
         "tags": [
