@@ -18,7 +18,8 @@ import (
 // global swap must drain first.
 func waitForCommitBehindResolvers(t *testing.T) {
 	t.Helper()
-	testutil.Eventually(t, 2*time.Second, func() bool {
+	// An in-flight resolver can legitimately run for its full compare timeout.
+	testutil.Eventually(t, commitBehindCompareTimeout+2*time.Second, func() bool {
 		commitBehindMu.Lock()
 		defer commitBehindMu.Unlock()
 		return len(commitBehindInFlight) == 0
