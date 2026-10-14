@@ -511,3 +511,14 @@ func TestMarkReporterTrustAwaiting_ClankerOnPostsOnce(t *testing.T) {
 		t.Errorf("posted comment missing relay link, addendum or marker:\n%s", posted[0])
 	}
 }
+
+func TestReporterTrustWaitCommentLinksOwnerRepo(t *testing.T) {
+	c := &Client{org: "hivecommons"}
+	for _, repo := range []string{"hive", "hivecommons/hive"} {
+		body := reporterTrustWaitCommentAt("https://github.com", repo, c.qualifiedRepo(repo), "", enabledReporterTrust())
+		want := "https://github.com/hivecommons/hive/blob/HEAD/GOVERNANCE.md#reporter-trust-and-escalation"
+		if !strings.Contains(body, want) {
+			t.Fatalf("repo %q: comment missing %q:\n%s", repo, want, body)
+		}
+	}
+}
