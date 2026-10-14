@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -349,5 +350,91 @@ func TestRecordStarted(t *testing.T) {
 	recordStarted(rec, "acme", "scanner", "", 3, "claim")
 	if got := len(rec.store.Journeys(0)); got != 1 {
 		t.Fatalf("empty repo recorded; journeys = %d", got)
+	}
+}
+
+// Delivery SLA wiring: the issue journeys a PR fixes get pr_opened (with the
+// PR's ref) and later merged, so start→PR and PR→merge spans close per issue.
+func TestRecordPROpenedForIssues_ThenMergeFoldsOntoIssues(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordStarted(rec, "acme", "bee", "acme/widgets", 7, "claim")
+	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 41, "https://x/41", []int{7, 8, 0, 41})
+
+	for _, ref := range []string{"widgets#7", "widgets#8"} {
+		j, ok := rec.store.Journey(ref)
+		if !ok {
+			t.Fatalf("%s missing", ref)
+		}
+		st := j.Stages[timeline.KindPROpened]
+		if st == nil || st.Attrs[timeline.AttrPRRef] != "widgets#41" || st.Agent != "bee" {
+			t.Fatalf("%s pr_opened = %+v", ref, st)
+		}
+	}
+	if _, ok := rec.store.Journey("widgets#41"); ok {
+		t.Fatal("the PR's own number must be skipped (recordPROpened owns it)")
+	}
+	if _, ok := rec.store.Journey("widgets#0"); ok {
+		t.Fatal("zero issue numbers must be skipped")
+	}
+
+	recordLifecycleFromAudit(rec, "acme", github.AuditRecord{
+		Action: github.AuditActionPRMerged, Repo: "acme/widgets", Target: 41, Agent: "governor",
+		Detail: "repo=acme/widgets, number=41, method=squash, sha=abc123",
+	})
+	for _, ref := range []string{"widgets#41", "widgets#7", "widgets#8"} {
+		j, _ := rec.store.Journey(ref)
+		st := j.Stages[timeline.KindMerged]
+		if st == nil || st.Attrs["sha"] != "abc123" {
+			t.Fatalf("%s merged = %+v", ref, st)
+		}
+	}
+	samples := timeline.DeriveSLASamples(rec.store.Journeys(0))
+	spans := map[string]int{}
+	for _, s := range samples {
+		spans[s.Ref+":"+string(s.Span)]++
+	}
+	for _, want := range []string{"widgets#7:start_to_pr", "widgets#7:pr_to_merge", "widgets#8:pr_to_merge"} {
+		if spans[want] != 1 {
+			t.Errorf("missing sample %s in %v", want, spans)
+		}
+	}
+	if spans["widgets#41:pr_to_merge"] != 0 {
+		t.Error("PR-keyed journey must not produce issue SLA samples")
+	}
+}
+
+func TestRecordObservedMerge_UsesObservedInstant(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 41, "", []int{7})
+	at := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	recordObservedMerge(rec, "acme", "acme/widgets", 41, at, "alice", "human")
+
+	for _, ref := range []string{"widgets#41", "widgets#7"} {
+		j, ok := rec.store.Journey(ref)
+		if !ok {
+			t.Fatalf("%s missing", ref)
+		}
+		st := j.Stages[timeline.KindMerged]
+		if st == nil || st.FirstAt != at.UnixMilli() || st.Attrs["actor"] != "alice" || st.Attrs["source"] != "observed" {
+			t.Fatalf("%s merged = %+v", ref, st)
+		}
+	}
+	recordObservedMerge(nil, "acme", "acme/widgets", 41, at, "", "")
+	recordPROpenedForIssues(&fakeLifecycleRecorder{}, "acme", "bee", "acme/widgets", 41, "", []int{7})
+}
+
+func TestRecordEnumeratedIssues_RetainsCreatedAt(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	created := time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)
+	recordEnumeratedIssues(context.Background(), rec, &github.ActionableResult{
+		Issues: github.IssueResult{Items: []github.Issue{{Repo: "widgets", Number: 1, CreatedAt: created}, {Repo: "widgets", Number: 2}}},
+	})
+	j, _ := rec.store.Journey("widgets#1")
+	if got := j.Stages[timeline.KindEnumerated].Attrs[timeline.AttrIssueCreatedAt]; got != "2026-10-01T09:30:00Z" {
+		t.Fatalf("created_at = %q", got)
+	}
+	j2, _ := rec.store.Journey("widgets#2")
+	if j2.Stages[timeline.KindEnumerated].Attrs[timeline.AttrIssueCreatedAt] != "" {
+		t.Fatal("zero CreatedAt must not be recorded")
 	}
 }

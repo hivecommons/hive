@@ -483,6 +483,29 @@ func (s *Store) Journey(ref string) (Journey, bool) {
 	return j.clone(), true
 }
 
+// LinkedIssueRefs returns the refs of the ISSUE journeys whose pr_opened
+// stage names prRef (the "repo#N" of a pull request), so a merge observed
+// for that PR can be folded onto the issues it fixes. The PR's own journey
+// (ref == prRef) is excluded. Sorted for determinism.
+func (s *Store) LinkedIssueRefs(prRef string) []string {
+	if s == nil || prRef == "" {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []string
+	for ref, j := range s.journeys {
+		if ref == prRef {
+			continue
+		}
+		if st := j.Stages[KindPROpened]; st != nil && st.Attrs[AttrPRRef] == prRef {
+			out = append(out, ref)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // synthesizeEvents renders a journey's stages back into per-stage Events
 // (newest first is the caller's job). Count is carried in attrs so consumers
 // of the event view can see collapse cardinality.
@@ -943,10 +966,16 @@ func (s *Store) persistLocked() error {
 	if err != nil {
 		return fmt.Errorf("marshaling lifecycle timeline: %w", err)
 	}
-	dir := filepath.Dir(s.path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(s.path)+".*.tmp")
+	return writeFileAtomic(s.path, data, "lifecycle timeline")
+}
+
+// writeFileAtomic commits data to path with the repo's atomic-persist idiom
+// (unique temp file + fsync + rename). label names the file in errors.
+func writeFileAtomic(path string, data []byte, label string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("creating tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("creating tmp %s: %w", label, err)
 	}
 	tmpPath := tmp.Name()
 	keep := false
@@ -957,19 +986,19 @@ func (s *Store) persistLocked() error {
 		}
 	}()
 	if err := tmp.Chmod(timelineFileMode); err != nil {
-		return fmt.Errorf("protecting tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("protecting tmp %s: %w", label, err)
 	}
 	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("writing tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("writing tmp %s: %w", label, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("syncing tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("syncing tmp %s: %w", label, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing tmp lifecycle timeline: %w", err)
+		return fmt.Errorf("closing tmp %s: %w", label, err)
 	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
-		return fmt.Errorf("committing lifecycle timeline: %w", err)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("committing %s: %w", label, err)
 	}
 	keep = true
 	return nil

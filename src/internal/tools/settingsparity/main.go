@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,11 +23,20 @@ type row struct {
 }
 
 func main() {
-	format := flag.String("format", "markdown", "markdown or json")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// run renders the settings-parity table and returns the process exit code.
+func run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("settingsparity", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	format := fs.String("format", "markdown", "markdown or json")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	repoRoot, err := filepath.Abs("..")
 	if err != nil {
-		fatal(err)
+		return fail(stderr, err)
 	}
 	if _, err := os.Stat(filepath.Join(repoRoot, "src", "pkg", "config", "config.go")); err != nil {
 		cwd, _ := os.Getwd()
@@ -34,7 +44,7 @@ func main() {
 	}
 	leaves, err := settingsparity.ConfigLeaves(repoRoot)
 	if err != nil {
-		fatal(err)
+		return fail(stderr, err)
 	}
 	defaults := exampleDefaults(filepath.Join(repoRoot, "src", "hive.yaml.example"))
 	refs := referenceCorpus(repoRoot)
@@ -49,23 +59,24 @@ func main() {
 		rows = append(rows, row{Key: leaf.Path, Type: leaf.Type, Default: defaults[leaf.Path], UI: ui, Where: where, Notes: notesFor(leaf.Path)})
 	}
 	if *format == "json" {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(rows); err != nil {
-			fatal(err)
+			return fail(stderr, err)
 		}
-		return
+		return 0
 	}
-	fmt.Println("| key | type | default | exposed-in-UI | where | notes |")
-	fmt.Println("| --- | --- | --- | --- | --- | --- |")
+	fmt.Fprintln(stdout, "| key | type | default | exposed-in-UI | where | notes |")
+	fmt.Fprintln(stdout, "| --- | --- | --- | --- | --- | --- |")
 	for _, r := range rows {
-		fmt.Printf("| `%s` | `%s` | %s | %s | %s | %s |\n", esc(r.Key), esc(r.Type), cell(r.Default), cell(r.UI), cell(r.Where), cell(r.Notes))
+		fmt.Fprintf(stdout, "| `%s` | `%s` | %s | %s | %s | %s |\n", esc(r.Key), esc(r.Type), cell(r.Default), cell(r.UI), cell(r.Where), cell(r.Notes))
 	}
+	return 0
 }
 
-func fatal(err error) {
-	fmt.Fprintln(os.Stderr, err)
-	os.Exit(1)
+func fail(stderr io.Writer, err error) int {
+	fmt.Fprintln(stderr, err)
+	return 1
 }
 
 func referenceCorpus(repoRoot string) string {

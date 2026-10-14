@@ -136,6 +136,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `classification` | Go-consumed subset of `hive-project.yaml`'s `classification:` block — today only `review_bots`, the external review-bot logins whose inline threads on hive-authored PRs the hive addresses and resolves itself. | Off unless `review_bots.logins` names a bot. The same key in `hive-project.yaml` is read when `hive.yaml` has none. See [review-bot-threads.md](review-bot-threads.md). |
 | `claims` | The worker-claim ledger ([#8380](https://github.com/hivecommons/hive/issues/8380)): who is on an issue right now, ranked human > agent > contributor > external, so a person can take an issue over from a hive agent or a relay contributor and the displaced holder is told to stop. | Default ON. `enabled: false` turns recording, enforcement and `/api/claims` off. `human_ttl_s` 4h, `agent_ttl_s` 2h, `contributor_ttl_s` 30m, `max_ttl_s` 24h; the owner can also set these four from **Governor Config → Features → Issue claims** (a value of 0 or *Reset to default* uses the default; human, agent and contributor may not exceed the max), and a saved change applies without a restart to claims made or renewed afterwards while existing claims keep their expiry ([#10981](https://github.com/hivecommons/hive/issues/10981)); `comment: false` / `label: false` suppress the GitHub issue comment / `claimed` label mirror (`label: false` also suppresses the `hive/in-progress` start label an agent claim mirrors, [#11841](https://github.com/hivecommons/hive/issues/11841)). A governor kick only *lists* the issues it names (30-minute hold, no comment, not a claim); the agent claim, with its comment, is recorded on the agent's first start signal on an issue — its own comment, label or claim request through `hive-open-issue`, or a `hive-open-pr` request naming it. `escalate_after_claims` (default `2`, negative turns it off) counts those claims only: once one agent's last that-many claims on a free issue were followed by no linked PR, referencing commit, label or assignee change and no close/reopen, the issue is withheld from every kick, labelled `needs-human` and given one comment listing the claims, instead of being claimed again. A `hive/likely-done` issue an agent already started on after the merged PR (its verification) is withheld from kicks until a person comments, labels, assigns, closes or reopens it, so it is verified once rather than every cycle ([#10527](https://github.com/hivecommons/hive/issues/10527)). Driven from `hivectl claim` — see [hivectl.md](hivectl.md#claim--unclaim--claims--issue-claims). |
 | `removed_agents` | Persistent tombstones for deleted agents. | Dashboard/overlay-owned; do not seed casually. |
+| `sla` | Delivery SLA targets (`sla.targets.start_to_pr_h`, `pr_to_merge_h`, `open_to_merge_h`, hours; defaults 4 / 24 / 72) the dashboard's Throughput section colours its Delivery SLA spans against. | Metrics are derived from the lifecycle timeline; no extra GitHub calls. Also editable from **Settings → Thresholds**. See [Delivery SLA](#delivery-sla). |
 | `sentinel` | Suspicious-activity alerts: flags open PRs (any author) that touch sensitive files or look like security overrides, privilege escalation, or codebase damage. | Default ON; observe-and-alert only. See [Suspicious-activity alerts](#suspicious-activity-alerts-sentinel). |
 
 ## Notable fields
@@ -280,6 +281,9 @@ workflow runs when a required check is missing:
   reported as `required-check-never-started:<ctx>`: GitHub never scheduled the
   workflows (seen on hivecommons/hive#11553), and only a new push, a
   close/reopen, or `@dependabot rebase` will create them.
+- `required-check-held:<ctx>` and `required-check-never-started:<ctx>` are
+  logged once per PR head as `automerge hold`; later ticks only count the PR in
+  the skip stats instead of emitting `automerge skip` every tick.
 - fork heads and human-authored lanes are never touched; a first-time
   contributor's held run is still a person's decision.
 
@@ -603,6 +607,78 @@ governor:
 ```
 
   Lower it to resume sooner after a reset at the cost of a rebuffed run per probe; raise it to waste less while noticing later.
+
+## Delivery SLA
+
+The **Throughput** section of the dashboard carries a **Delivery SLA** block
+(below the merged/opened metric tiles; moved there from the Overview) that
+answers "how long does it take this hive to turn an issue into a merged PR?"
+without spending any GitHub API quota. Everything is derived from the
+lifecycle timeline the hive already keeps ([#11841](https://github.com/hivecommons/hive/issues/11841)
+follow-on): the issue's `created_at` retained when it is enumerated, the
+`classified` stage, the `started` entry written with the `hive/in-progress`
+label, the `pr_opened` entry recorded when a hive PR that `Fixes`/`Closes` the
+issue is opened, and the merge observed by the PR watcher, the close-on-merge
+ledger or the audit stream, fanned out to every issue the PR linked.
+
+Per repo and fleet-wide, five spans are aggregated over rolling 7-day and
+30-day windows as `{p50_h, p95_h, n}` (nearest-rank percentiles, hours):
+
+| Span | From → to |
+|---|---|
+| `open_to_triage` | issue created → classified |
+| `triage_to_start` | classified → `hive/in-progress` (`started`) |
+| `start_to_pr` | `started` → linked PR opened |
+| `pr_to_merge` | linked PR opened → merged |
+| `open_to_merge` | issue created → merged |
+
+A journey enters a window by the timestamp of the span's *end* event, so a
+PR merged today counts in today's `pr_to_merge` even if it was opened last
+month.
+
+In the dashboard the three headline tiles (start → PR, PR → merge,
+open → merge) sit under the Throughput merged/opened metrics and follow its
+repository filter; they show the 7-day percentiles for every period pill
+except `all`, which switches to the 30-day window. **Repos ▾** expands a
+per-repo table and the stale list, and the collapsed Throughput summary line
+appends the open → merge p50 and the stale in-progress count.
+
+**History.** Daily buckets (`day`, p50 of `start_to_pr`, `pr_to_merge` and
+`open_to_merge`, plus `n_started`, `n_pr`, `n_merged`) for the last 30 days
+are persisted to `/data/sla-history.json` (written atomically, pruned to
+30 days, throttled to one write a minute and flushed on shutdown). Restarting the hive or evicting old
+journeys from the timeline never shrinks a stored day, so the Throughput
+sparklines always have 30 days behind them. A corrupt file is moved aside
+as `sla-history.json.corrupt` and history restarts from the live timeline.
+
+**Stale in-progress.** Issues that have carried `hive/in-progress` for longer
+than the agent claim TTL (`claims.agent_ttl_s`, default 2h) with no linked
+PR are listed as `stale_in_progress` with their start time, age and agent.
+The badge in the Delivery SLA header counts them and links to each issue; it is the first
+place to look when an agent claimed work and went quiet.
+
+**Targets.** Each span's p50 is coloured green at or under its target,
+yellow up to 1.5× the target and red beyond. Targets are hours in
+`hive.yaml` and can also be set from **Settings → Thresholds → Delivery SLA
+targets** (`PUT /api/config/sla`), applying on the next status poll:
+
+```yaml
+sla:
+  targets:
+    start_to_pr_h: 4      # started → linked PR opened
+    pr_to_merge_h: 24     # PR opened → merged
+    open_to_merge_h: 72   # issue created → merged
+```
+
+`0` or an omitted key means the default. Values above one year are
+rejected.
+
+**Reading the panel.** The three tiles show the current-window p50, `n`,
+p95 and target with a 30-day sparkline of daily p50s; `7d`/`30d` toggles
+the window. **Repos ▾** expands a per-repo table (start→PR p50/p95,
+PR→merge p50/p95, merged in 7d, 30-day open→merge sparkline) and the
+stale-issue list. The same numbers are in `GET /api/status` under `sla`
+(fleet) and `repos[].sla`; see [api-reference.md](api-reference.md).
 
 ## Fleet breaker
 

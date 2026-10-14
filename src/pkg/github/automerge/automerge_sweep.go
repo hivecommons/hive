@@ -127,6 +127,9 @@ type Engine struct {
 	// already tried to approve, so each head costs one approve pass.
 	heldRunApprovalsMu sync.Mutex
 	heldRunApprovals   map[string]bool
+	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
+	// terminal held/never-started hold so later ticks only count them.
+	terminalHoldsLogged map[string]bool
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -841,7 +844,13 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				result.UpdatedBranches++
 			}
 			if reason != "" {
-				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				if isTerminalRequiredCheckHold(reason) {
+					if c.markTerminalHoldLogged(owner, repoName, number, pr.GetHead().GetSHA(), reason) {
+						c.info("automerge hold", "repo", repo, "pr", number, "sha", pr.GetHead().GetSHA(), "reason", reason)
+					}
+				} else {
+					c.info("automerge skip", "repo", repo, "pr", number, "reason", reason)
+				}
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++

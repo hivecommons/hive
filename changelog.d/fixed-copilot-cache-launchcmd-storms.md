@@ -1,1 +1,0 @@
-- Prune stale Copilot extraction cache directories, pause disk-full Copilot relaunch loops, and prevent inference backend launch command defaults from starting gateway binaries as agents.

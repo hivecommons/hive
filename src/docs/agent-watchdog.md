@@ -245,7 +245,12 @@ the activity signal the hub reports.
   queue producing nothing is behaving correctly, and reporting it would light
   the condition on every healthy quiet hive — the same rule the hub applies to
   agent inactivity. Advisory-tier agents, which cannot drain a queue by design,
-  are never marked down for a backlog they may not touch.
+  are never marked down for a backlog they may not touch. Nor are agents the
+  governor is deliberately not kicking — cadence paused in the current mode
+  (the same predicate as the dashboard card's "off by cadence"), or a reviewer
+  lane with nothing to adjudicate: they are reported
+  `Producing=True / IdleNotScheduled` with the reason, and a not-producing
+  alert raised before the suppression began is cleared on the next reconcile.
 - The shared-`$HOME` 0600 permission clobber (RFC failure mode 3) was fixed
   at the source by the `umask 007` launch change (#4668) and is not
   re-implemented here.

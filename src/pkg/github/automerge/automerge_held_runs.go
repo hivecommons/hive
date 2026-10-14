@@ -151,6 +151,28 @@ func (c *Engine) markHeldRunApprovalAttempted(owner, repo string, number int, he
 	return true
 }
 
+// isTerminalRequiredCheckHold reports whether reason is a hold polling cannot
+// cure (held for approval, or runs never created).
+func isTerminalRequiredCheckHold(reason string) bool {
+	return strings.HasPrefix(reason, requiredCheckHeldPrefix) || strings.HasPrefix(reason, requiredCheckNeverStartedPrefix)
+}
+
+// markTerminalHoldLogged records that the hold was reported for this PR head
+// and reports whether this is the first report.
+func (c *Engine) markTerminalHoldLogged(owner, repo string, number int, headSHA, reason string) bool {
+	key := c.evaluatedHeadKey(owner, repo, number) + "@" + strings.ToLower(headSHA) + "@" + reason
+	c.heldRunApprovalsMu.Lock()
+	defer c.heldRunApprovalsMu.Unlock()
+	if c.terminalHoldsLogged == nil {
+		c.terminalHoldsLogged = make(map[string]bool)
+	}
+	if c.terminalHoldsLogged[key] {
+		return false
+	}
+	c.terminalHoldsLogged[key] = true
+	return true
+}
+
 // approveWorkflowRunEffect routes POST /actions/runs/{id}/approve through the
 // mutation boundary. go-github v72 has no binding for this endpoint.
 func (c *Engine) approveWorkflowRunEffect(ctx context.Context, owner, repo string, number int, headSHA string, run *gh.WorkflowRun) error {

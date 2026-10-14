@@ -234,6 +234,12 @@ func TestWatchdogAgentNamesExcludesQuietByDesign(t *testing.T) {
 func TestDeadSessionRecoveryOwnershipTransfer(t *testing.T) {
 	newCrashedManager := func(t *testing.T) *Manager {
 		t.Helper()
+		// Recovery runs `tmux new-session`. Against a real tmux server the
+		// session one subtest creates survives into the next, where
+		// missing-session recovery (#11832) sees "duplicate session", adopts
+		// it as alive and restarts nothing — so the subtests must not share
+		// a server. A fake tmux that accepts every command keeps them hermetic.
+		writeFakeTmux(t, "#!/bin/sh\nexit 0\n")
 		m, _ := newWatchdogTestManager(t, map[string]string{"a1": "claude"})
 		// The session is gone: the crash loop's missing-session branch.
 		orig := tmuxSessionExists
@@ -656,5 +662,27 @@ func TestWatchdogObserveCredentialProvenIsClaudeOnly(t *testing.T) {
 	}
 	if obs.CredentialProven {
 		t.Fatal("copilot evidence is presence-only and must never read as proof — doing so suppresses the operator's re-authentication alert")
+	}
+}
+
+// #11910: WatchdogFleet reports the governor's deliberate kick suppression to
+// the reconciler; a nil func means no suppression (the pre-#11910 behaviour).
+func TestWatchdogKickSuppressedReason(t *testing.T) {
+	var _ watchdog.KickSuppressionReporter = WatchdogFleet{}
+
+	if got := (WatchdogFleet{}).KickSuppressedReason("strategist"); got != "" {
+		t.Errorf("nil KickSuppressed must report no suppression, got %q", got)
+	}
+	f := WatchdogFleet{KickSuppressed: func(name string) string {
+		if name == "strategist" {
+			return "cadence paused in idle mode"
+		}
+		return ""
+	}}
+	if got := f.KickSuppressedReason("strategist"); got != "cadence paused in idle mode" {
+		t.Errorf("KickSuppressedReason(strategist) = %q, want the injected reason", got)
+	}
+	if got := f.KickSuppressedReason("scanner"); got != "" {
+		t.Errorf("KickSuppressedReason(scanner) = %q, want \"\"", got)
 	}
 }

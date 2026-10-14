@@ -1,1 +1,0 @@
-- Respect daily/weekly auto-upgrade windows for candidate-channel hives unless explicitly configured for continuous candidate tracking.

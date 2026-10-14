@@ -212,6 +212,11 @@ func classifyMergeFailureForOperator(repo, errMsg string) (mergeFailureAlert, bo
 			key:     "review-required",
 			message: fmt.Sprintf("Merge blocked for %s: branch protection or a ruleset requires reviews/approvals the App cannot provide. Add the App to the bypass list or require-review exemption, or approve the PR.", repo),
 		}, true
+	case strings.Contains(lower, "was never created"):
+		return mergeFailureAlert{
+			key:     "never-created-checks",
+			message: fmt.Sprintf("Merge blocked for %s: a required check was never created on the PR head and nothing is running, so the hive will not keep polling it. The PR author's token likely cannot trigger workflows; re-trigger CI or merge it manually.", repo),
+		}, true
 	case len(missing) > 0:
 		return mergeFailureAlert{
 			key:     "missing-checks:" + strings.Join(missing, ","),

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -120,6 +121,51 @@ func (s *Scheduler) reviewerLaneGate() (level int, workList, idleReason string) 
 		return level, "", reviewerLaneIdleNothingToAdjudicate
 	}
 	return level, workList, ""
+}
+
+// ReviewerLaneIdleReason reports why the governor will not kick agentName
+// right now because its reviewer lane has nothing to do: reviewerLaneGate's
+// idle reason ("nothing to adjudicate", or the dormant-below-ACMM notice).
+// It is "" unless agentName's kick would actually route to the reviewer lane,
+// so the watchdog's not-producing gate (#11910) asks exactly the question the
+// scheduled-kick skip answers (#11046) and no other agent is excused.
+func (s *Scheduler) ReviewerLaneIdleReason(agentName string) string {
+	if !s.routesToReviewerLane(agentName) {
+		return ""
+	}
+	_, _, idleReason := s.reviewerLaneGate()
+	return idleReason
+}
+
+// routesToReviewerLane mirrors buildAgentMessage's resolution chain without
+// its logging: a reviewer-role agent reaches the lane only when no prompt
+// source, config kick_template, ACMM pack template, or convention template
+// resolves first. A configured prompt_source is treated as resolving — it
+// cannot be checked without a network fetch, and the conservative answer
+// keeps the watchdog's alert rather than excusing the agent.
+func (s *Scheduler) routesToReviewerLane(agentName string) bool {
+	if s.agentRole(agentName) != RoleReviewer {
+		return false
+	}
+	baseName := s.cfg.BaseAgentName(agentName)
+	if agentCfg, ok := s.cfg.Agents[baseName]; ok {
+		if agentCfg.PromptSource.IsSet() && s.gitHubPromptResolver() != nil {
+			return false
+		}
+		if agentCfg.KickTemplate != "" && s.loadNamedTemplate(agentCfg.KickTemplate) != "" {
+			return false
+		}
+	}
+	if s.cfg.ACMMLevel != nil && *s.cfg.ACMMLevel > 0 {
+		if pack, err := config.ACMMPackByLevel(*s.cfg.ACMMLevel); err == nil {
+			for _, pa := range pack.Agents {
+				if pa.Name == baseName && pa.KickTemplate != "" && s.loadNamedTemplate(pa.KickTemplate) != "" {
+					return false
+				}
+			}
+		}
+	}
+	return s.loadPromptTemplate(baseName) == ""
 }
 
 // buildReviewerMessage is the hardcoded-fallback kick for reviewer-role

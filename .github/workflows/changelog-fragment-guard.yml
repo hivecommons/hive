@@ -131,6 +131,28 @@ jobs:
           src/scripts/check-changelog-fragment.sh "$BASE_REF"
 
 
+      # api-reference.md `pkg/<file>:<line>` citations go stale when a PR edits
+      # a route-registering server.go. The `relative links and anchors resolve`
+      # job reports that too, but it is not a required check, so the causing PR
+      # merged red and every later PR inherited the failure (#11866). This
+      # context is required, so the drift fails the PR that caused it. Pure
+      # grep/sed, no toolchain.
+      - name: Route-registering or static page files changed — api-reference citations must be resynced
+        if: ${{ steps.sync_branch.outputs.skip != 'true' }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if ! git diff --name-only "origin/${BASE_REF}...HEAD" | grep -Eq '^src/pkg/(hub|dashboard)/server\.go$|^src/pkg/(hub|dashboard)/static/'; then
+            echo "No server.go or hub/dashboard static page change in this PR — nothing to check."
+            exit 0
+          fi
+          if ! bash src/scripts/check-api-reference-citations.sh; then
+            echo "::error::This PR edited a server.go or static pages and src/docs/api-reference.md citations drifted. Run 'bash src/scripts/check-api-reference-citations.sh --fix' and commit the result. If static pages under src/pkg/dashboard/ also changed, lower the matching baseline in src/pkg/dashboard/webstatic/style_ratchet_test.go (styleRatchetBaselines) in the same PR."
+            exit 1
+          fi
+
+
       # Most guard failures are humans who never heard of changelog.d. For
       # same-repo PRs (the author already has push rights to the branch, so
       # this adds no privilege), generate a fragment from the PR title and push

@@ -71,7 +71,7 @@ type MergeResponse struct {
 	Number   int    `json:"number,omitempty"`
 	SHA      string `json:"sha,omitempty"`
 	Attempts int    `json:"attempts,omitempty"`
-	// CIWaits counts consecutive ticks the request has been parked on a
+	// CIWaits counts consecutive polls the request has been parked on a
 	// pending CI verdict (#6173). Unlike Attempts it is not a failure count:
 	// it resets to zero once CI reports, and only mergeRequestMaxCIWaits
 	// consecutive waits turn into a failed attempt.
@@ -300,8 +300,26 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
-	// Track attempts across ticks by reading the prior result (if any).
-	attempts := priorMergeAttempts(path) + 1
+	// Durable per-PR+SHA state (/data, survives restarts and re-requests).
+	// A request for a head that already exhausted its budget is refused with
+	// the recorded reason instead of starting another poll cycle, and a head
+	// parked on pending CI is not re-evaluated before its backoff elapses.
+	now := nowFn()
+	prState, tracked := c.mergeRequestState(req.Repo, req.Number, req.ExpectSHA)
+	if tracked && prState.Exhausted && now.Sub(prState.At) < mergeRequestExhaustedRefusal {
+		c.refuseExhaustedMergeRequest(path, req, prState, nowFn)
+		return
+	}
+	if tracked && !prState.Exhausted && now.Before(prState.NextPollAt) {
+		return
+	}
+	if tracked && prState.Exhausted {
+		prState = mergeRequestPRState{}
+	}
+
+	// Track attempts across ticks by reading the prior result (if any) and
+	// the durable PR+SHA state, whichever has seen more.
+	attempts := max(priorMergeAttempts(path), prState.Attempts) + 1
 
 	// Human-merge paths (#11039): a PR touching a path listed in
 	// auto_merge.human_merge_paths for its repo is never merged by the App,
@@ -334,7 +352,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	// the request without consuming an attempt; red and unverified verdicts
 	// are failed attempts that go through the same retry / exhaust /
 	// re-engage path a GitHub-side refusal does.
-	verdict, why, err := c.verifyMergeRequestCI(ctx, req.Repo, req.Number, req.ExpectSHA)
+	verdict, why, err := c.verifyMergeRequestCI(ctx, req.Repo, req.Number, req.ExpectSHA, now)
 	if err != nil {
 		c.logCIVerdict(req, verdict, err.Error())
 		c.recordMergeFailure(path, req, attempts, err.Error(), nowFn)
@@ -345,12 +363,27 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	switch verdict {
 	case mergeCIGreen:
 	case mergeCIPending:
-		waits := priorMergeCIWaits(path) + 1
-		if waits < mergeRequestMaxCIWaits {
-			c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts - 1, CIWaits: waits, Error: why, At: nowFn().UTC().Format(time.RFC3339)})
+		waits := max(priorMergeCIWaits(path), prState.CIWaits) + 1
+		since := prState.PendingSince
+		if since.IsZero() {
+			since = now
+		}
+		if waits < mergeRequestMaxCIWaits && now.Sub(since) < mergeRequestMaxCIWait {
+			c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts - 1, CIWaits: waits, Error: why, At: now.UTC().Format(time.RFC3339)})
+			c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{
+				SHA: req.ExpectSHA, Attempts: attempts - 1, CIWaits: waits,
+				PendingSince: since, NextPollAt: now.Add(mergeCIPendingDelay(now.Sub(since))),
+				Reason: why, At: now,
+			})
 			return
 		}
-		c.recordMergeFailure(path, req, attempts, fmt.Sprintf("%s (still pending after %d ticks)", why, waits), nowFn)
+		c.recordMergeFailure(path, req, attempts, fmt.Sprintf("%s (still pending after %d polls over %s)", why, waits, now.Sub(since).Round(time.Second)), nowFn)
+		return
+	case mergeCINeverCreated:
+		// Terminal on the first verdict: no retry or wait can create the
+		// check, and no code push from the fix loop can either, so the
+		// request is quarantined now without the re-engage hook.
+		c.quarantineMergeRequest(path, req, attempts, why, nowFn)
 		return
 	default:
 		c.recordMergeFailure(path, req, attempts, why, nowFn)
@@ -365,6 +398,7 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 	resp := MergeResponse{Number: req.Number, Attempts: attempts, At: nowFn().UTC().Format(time.RFC3339), OK: true, SHA: res.SHA}
 	c.writeMergeResult(path, resp)
 	_ = os.Remove(path)
+	c.clearMergeRequestState(req.Repo, req.Number)
 	c.logger.Info("merge-request watcher: PR merged by App bot",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", res.SHA), slog.String("agent", req.Agent))
@@ -376,7 +410,9 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 // watcher's own pre-merge CI gate (#6173), so a red-CI refusal is classified
 // and re-engaged exactly like a branch-protection refusal would be.
 func (c *Client) recordMergeFailure(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
-	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: errMsg, At: nowFn().UTC().Format(time.RFC3339)})
+	now := nowFn()
+	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: errMsg, At: now.UTC().Format(time.RFC3339)})
+	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: attempts >= mergeRequestMaxAttempts, Reason: errMsg, At: now})
 	c.raiseMergeFailureAlert(req.Repo, req.Number, errMsg)
 	if attempts >= mergeRequestMaxAttempts {
 		// Terminal: a PR that still won't merge after N tries is blocked by
@@ -420,6 +456,34 @@ func (c *Client) recordMergeFailure(path string, req MergeRequest, attempts int,
 	c.logger.Info("merge-request watcher: merge failed, will retry",
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.Int("attempts", attempts), slog.String("error", errMsg))
+}
+
+// quarantineMergeRequest sets a request aside on its first terminal verdict
+// (mergeCINeverCreated): nothing a retry, a wait or a pushed fix can change.
+// It records the exhaustion against the PR+SHA so re-requests for the same
+// head are refused, and deliberately does NOT call the re-engage hook.
+func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts int, reason string, nowFn func() time.Time) {
+	now := nowFn()
+	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: reason, At: now.UTC().Format(time.RFC3339)})
+	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: true, Reason: reason, At: now})
+	c.raiseMergeFailureAlert(req.Repo, req.Number, reason)
+	_ = os.Rename(path, path+".exhausted")
+	c.logger.Warn("merge-request watcher: merge cannot proceed on this head, quarantined without retry",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.String("sha", req.ExpectSHA), slog.String("reason", reason))
+}
+
+// refuseExhaustedMergeRequest answers a new request for a PR+SHA whose earlier
+// request was already exhausted with the recorded reason, instead of starting
+// another wait/retry cycle on a head that has not changed.
+func (c *Client) refuseExhaustedMergeRequest(path string, req MergeRequest, prev mergeRequestPRState, nowFn func() time.Time) {
+	reason := fmt.Sprintf("refused: an earlier merge request for this PR was exhausted on the same head %s at %s (%s); push a new commit or merge it manually",
+		shortSHA(prev.SHA), prev.At.UTC().Format(time.RFC3339), prev.Reason)
+	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: prev.Attempts, OK: false, Error: reason, At: nowFn().UTC().Format(time.RFC3339)})
+	_ = os.Rename(path, path+".exhausted")
+	c.logger.Info("merge-request watcher: refused re-request for a head already exhausted",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.String("sha", prev.SHA), slog.String("agent", req.Agent))
 }
 
 func (c *Client) denyMergeRequest(path string, req MergeRequest, reason string, nowFn func() time.Time) {

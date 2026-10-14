@@ -74,7 +74,18 @@ verdict:
 - **pending** - a gating check is still queued/in progress, a required check
   has not been created yet, or a workflow run is in flight without a job. The
   request is parked (`ci_waits` in the result file, no attempt consumed) and
-  re-evaluated next tick, for up to `mergeRequestMaxCIWaits` ticks.
+  re-evaluated with a per-PR+SHA backoff: every tick (10 s) for the first
+  minute, then once a minute, then every five minutes. After
+  `mergeRequestMaxCIWaits` polls or one hour pending, whichever comes first,
+  the wait becomes a failed attempt.
+- **never-created** - a required check has no status or check run on the
+  head, nothing else on the head (statuses, check runs of any kind, workflow
+  runs) is queued or in progress, and the head is older than 30 minutes
+  (`mergeCIMissingRequiredGrace`). The check will never appear, typically
+  because the PR was opened with a token that cannot trigger workflows. The
+  request is quarantined (`.exhausted`) on the first such verdict, an operator
+  alert is raised, and the fix loop is **not** re-engaged: no code push can
+  create the check.
 - **red** - a gating check failed, or a workflow run concluded failure with
   zero jobs. Refused; counts as a failed attempt and, at the retry limit, is
   classified and re-engaged into the fix loop like a branch-protection
@@ -88,6 +99,14 @@ verdict:
   default stays refuse.
 
 An API error while gathering that evidence is a failed attempt, never a pass.
+
+**Wait state survives restarts and re-requests.** The attempt count, `ci_waits`,
+the pending-poll backoff and an "exhausted" record are kept per PR and head SHA
+in `/data/merge-request-state.json` (the PVC), not only in the tmpfs result
+files. A new `hive-merge` request for a PR whose previous request was exhausted
+on the same head SHA is refused within 24 hours: the request is moved to
+`.exhausted` and its result file repeats the recorded reason instead of starting
+another poll cycle. Pushing a new commit (a new head SHA) starts fresh.
 
 **Fork PR workflow approval remains manual.** When a cross-repo pull request's
 workflow runs conclude `action_required`, the watcher refuses the merge with a

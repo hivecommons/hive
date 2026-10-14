@@ -1794,3 +1794,38 @@ func TestSnapshot_IncludesAllFields(t *testing.T) {
 		t.Error("LastKickMessage not copied")
 	}
 }
+
+func TestDiffNewLines_InPlaceChange(t *testing.T) {
+	prev := []string{"header", "✻ working for 17m 46s", "footer", "prompt"}
+	curr := []string{"header", "✻ working for 17m 49s", "footer", "prompt"}
+	diff := diffNewLines(prev, curr)
+	if len(diff) != 1 || diff[0] != "✻ working for 17m 49s" {
+		t.Errorf("expected only the changed line, got %v", diff)
+	}
+}
+
+func TestDiffNewLines_IdenticalFrames(t *testing.T) {
+	frame := []string{"header", "body", "footer"}
+	if diff := diffNewLines(frame, frame); len(diff) != 0 {
+		t.Errorf("identical frames should return nothing, got %v", diff)
+	}
+}
+
+func TestDiffNewLines_ScrollingAppend(t *testing.T) {
+	prev := []string{"a", "b", "c"}
+	curr := []string{"b", "c", "d", "e"}
+	diff := diffNewLines(prev, curr)
+	if len(diff) != 2 || diff[0] != "d" || diff[1] != "e" {
+		t.Errorf("expected [d e], got %v", diff)
+	}
+}
+
+func TestDiffNewLines_RedrawDuplicateLineIsNew(t *testing.T) {
+	prev := []string{"header", "  git push blocked: no token", "timer 1s", "prompt"}
+	curr := []string{"header", "  git push blocked: no token", "  git push blocked: no token", "timer 4s", "prompt"}
+	diff := diffNewLines(prev, curr)
+	want := []string{"  git push blocked: no token", "timer 4s"}
+	if len(diff) != len(want) || diff[0] != want[0] || diff[1] != want[1] {
+		t.Errorf("expected %v, got %v", want, diff)
+	}
+}

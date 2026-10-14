@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +37,19 @@ const (
 	// on the head SHA. GitHub has no verdict at all, so neither does the
 	// hive. Refuse (unless the repo is opted in via auto_merge.no_ci_ok).
 	mergeCIUnverified
+	// mergeCINeverCreated: a required check has no status or check run on
+	// the head, nothing else on the head is queued or in progress, and the
+	// head is older than mergeCIMissingRequiredGrace. The check will never
+	// appear (typically the PR was opened with a token that cannot trigger
+	// workflows), so waiting or retrying cannot help, and neither can a code
+	// push from the fix loop. Refuse terminally.
+	mergeCINeverCreated
 )
+
+// mergeCIMissingRequiredGrace is how old a head must be before a required
+// check that was never created, with nothing else in flight, is judged
+// terminal rather than pending. A var so tests can shorten it.
+var mergeCIMissingRequiredGrace = 30 * time.Minute
 
 func (v mergeCIVerdict) String() string {
 	switch v {
@@ -48,16 +61,19 @@ func (v mergeCIVerdict) String() string {
 		return "red"
 	case mergeCIUnverified:
 		return "unverified"
+	case mergeCINeverCreated:
+		return "never-created"
 	}
 	return fmt.Sprintf("mergeCIVerdict(%d)", int(v))
 }
 
-// mergeRequestMaxCIWaits bounds how many consecutive watcher ticks a request
-// may sit in mergeCIPending before it is treated as a failed attempt. A
+// mergeRequestMaxCIWaits bounds how many pending-CI polls a request may sit
+// through in mergeCIPending before it is treated as a failed attempt. A
 // pending verdict deliberately does NOT consume one of the
 // mergeRequestMaxAttempts retries (CI that is merely slow is not a merge
 // failure), but "required check never got created" must not park a request
-// forever either. At the default 10s poll interval this is one hour.
+// forever either. Polls back off per PR+SHA (mergeCIPendingBackoff), so
+// mergeRequestMaxCIWait bounds the same wait in wall-clock time.
 const mergeRequestMaxCIWaits = 360
 
 // workflowRunsPerPage is the page size for the head-SHA workflow-run listing.
@@ -114,11 +130,12 @@ func (c *Client) repoNoCIOK(owner, name string) bool {
 // verifyMergeRequestCI computes the pre-merge CI verdict for a merge request.
 // repo may be "owner/repo" or a bare name (resolved against c.org, like
 // MergePR). expectSHA, when set, is the SHA whose CI is judged; when empty the
-// PR's current head is used. The returned reason is a human-readable
+// PR's current head is used. now is the watcher's clock, used to age the head
+// for the never-created required-check verdict. The returned reason is a human-readable
 // explanation suitable for the result file and the log. A non-nil error means
 // the verdict could not be computed (API failure) and the caller must treat
 // that as a failed attempt, never as a pass.
-func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number int, expectSHA string) (mergeCIVerdict, string, error) {
+func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number int, expectSHA string, now time.Time) (mergeCIVerdict, string, error) {
 	if c == nil || c.client == nil {
 		return mergeCIUnverified, "no GitHub client", ErrNoGitHubClient
 	}
@@ -199,6 +216,11 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded: workflow run(s) %s concluded failure without producing a job (zero check runs)", strings.Join(opaque.failed, ", ")), nil
 	case !st.Green && !commitCIReasonIsPending(st.Reason):
 		return mergeCIRed, fmt.Sprintf("ci gate: required status check has not succeeded (%s)", st.Reason), nil
+	case requiredCheckNeverCreated(st, opaque, headPushedAt, now):
+		// The reason deliberately avoids GitHub's protection vocabulary so
+		// isRequiredCheckMergeBlocker never routes it to the fix loop: no
+		// code push can create a check whose workflow cannot be triggered.
+		return mergeCINeverCreated, fmt.Sprintf("ci gate: required check %s was never created on %s and nothing on the head is queued or in progress after %s (the PR author's token likely cannot trigger workflows); a human must re-trigger CI or merge it", quotedNames(st.MissingRequired), shortSHA(sha), mergeCIMissingRequiredGrace), nil
 	case !st.Green:
 		return mergeCIPending, fmt.Sprintf("ci gate: CI still running (%s)", st.Reason), nil
 	case len(st.MissingRequired) > 0:
@@ -267,6 +289,42 @@ type opaqueWorkflowRunResult struct {
 	failed         []string
 	actionRequired []string
 	pending        []string
+	// inFlight counts every latest workflow run on the SHA whose status is
+	// not completed, with or without jobs.
+	inFlight int
+	// earliest is the earliest run_started_at/created_at among the listed
+	// runs (zero when none).
+	earliest time.Time
+}
+
+// requiredCheckNeverCreated reports whether a missing required check can be
+// judged terminal: nothing on the head (status, check run of any kind, or
+// workflow run) is still running, and the head has existed for longer than
+// mergeCIMissingRequiredGrace. The head's age is measured from the earliest
+// evidence that postdates the push (CI activity or the PR's updated_at), so
+// it can only be underestimated; with no timestamp at all it is not judged.
+func requiredCheckNeverCreated(st CommitCIState, opaque opaqueWorkflowRunResult, headPushedAt, now time.Time) bool {
+	if len(st.MissingRequired) == 0 || st.InFlight > 0 || opaque.inFlight > 0 || len(opaque.pending) > 0 {
+		return false
+	}
+	var oldest time.Time
+	for _, at := range []time.Time{st.EarliestActivity, opaque.earliest, headPushedAt} {
+		if !at.IsZero() && (oldest.IsZero() || at.Before(oldest)) {
+			oldest = at
+		}
+	}
+	if oldest.IsZero() || now.IsZero() {
+		return false
+	}
+	return now.Sub(oldest) >= mergeCIMissingRequiredGrace
+}
+
+func quotedNames(names []string) string {
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, strconv.Quote(name))
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // opaqueWorkflowRuns lists the workflow runs for sha and returns those that
@@ -289,6 +347,16 @@ func (c *Client) opaqueWorkflowRuns(ctx context.Context, owner, repo, sha string
 			continue
 		}
 		status, conclusion := run.GetStatus(), run.GetConclusion()
+		started := run.GetRunStartedAt().Time
+		if started.IsZero() {
+			started = run.GetCreatedAt().Time
+		}
+		if !started.IsZero() && (out.earliest.IsZero() || started.Before(out.earliest)) {
+			out.earliest = started
+		}
+		if status != "completed" {
+			out.inFlight++
+		}
 		isActionRequired := status == "completed" && conclusion == "action_required"
 		isFailure := status == "completed" && workflowRunFailureConclusions[conclusion] && !isActionRequired
 		isPending := status != "completed"

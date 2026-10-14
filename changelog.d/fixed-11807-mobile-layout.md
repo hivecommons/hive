@@ -1,1 +1,0 @@
-- Mobile dashboard: collapsed-section summaries, quota meters, tile rows and topbar pills now reflow on phones instead of overflowing or clipping (#11807).

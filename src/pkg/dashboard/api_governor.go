@@ -192,14 +192,16 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		},
 		"logging":               loggingSectionResponse(cfg),
 		"dashboard":             dashboardSettingsResponse(cfg),
+		"backends":              backendsPolicyResponse(cfg),
 		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
-		"classifier":            classifierSectionResponse(),
+		"classifier":            classifierSectionResponse(cfg),
 		"features":              s.featuresSectionWithLinked(cfg),
 		"review":                reviewSectionResponse(cfg),
 		"review_bots":           reviewBotsSectionResponse(cfg),
 		"auto_merge":            s.autoMergeSectionResponseWithBots(cfg),
 		"convergence":           s.convergenceSectionResponse(cfg),
+		"sla":                   slaSectionResponse(cfg),
 		"advisory":              advisorySectionResponse(cfg),
 		"project_observability": s.projectObservabilityResponse(cfg),
 		"replan":                replanSectionResponse(cfg),
@@ -955,6 +957,7 @@ func (s *Server) governorNotificationsPayload() map[string]any {
 		out["slackWebhook"] = maskSecret(cfg.Notifications.Slack.Webhook)
 		out["hasSlack"] = cfg.Notifications.Slack.Webhook != ""
 	}
+	notificationsExtraPayload(cfg, out)
 	return out
 }
 
@@ -969,6 +972,7 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		DiscordWebhook string   `json:"discordWebhook"`
 		SlackWebhook   string   `json:"slackWebhook"`
 		Events         []string `json:"events"`
+		notificationsExtraBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -983,6 +987,10 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := validateNotificationURL(body.SlackWebhook, "slackWebhook"); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := applyNotificationsExtra(s.deps.Config, body.notificationsExtraBody); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1853,12 +1861,17 @@ func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
 // which title keywords map issues to the Simple/Complex tiers. classify.SetLanes
 // already surfaces per-agent lane_keywords per-agent; these are the analogous
 // global tier lists.
-func classifierSectionResponse() map[string]interface{} {
+func classifierSectionResponse(cfgs ...*config.Config) map[string]interface{} {
 	simple, complex := classify.TierKeywords()
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"simpleKeywords": simple,
 		"complexSignals": complex,
 	}
+	if len(cfgs) > 0 && cfgs[0] != nil {
+		out["simple_keywords"] = append([]string{}, cfgs[0].Classifier.SimpleKeywords...)
+		out["complex_signals"] = append([]string{}, cfgs[0].Classifier.ComplexSignals...)
+	}
+	return out
 }
 
 // liteLLMProbeResult runs the live probe against the effective endpoint

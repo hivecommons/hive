@@ -313,6 +313,13 @@ type Client struct {
 	// falls back to the original quarantine behavior. Set by
 	// SetMergeReEngageHook.
 	mergeReEngage MergeReEngageFunc
+	// mergeStateMu guards the merge-request watcher's per-PR+SHA wait state
+	// (merge_request_state.go). mergeStatePath is where it is persisted;
+	// empty keeps it in memory only (tests). Set by SetMergeRequestStatePath.
+	mergeStateMu     sync.Mutex
+	mergeStatePath   string
+	mergeState       map[string]mergeRequestPRState
+	mergeStateLoaded bool
 	// attribution holds the invocation-attribution hooks (trailer gate,
 	// per-agent metadata resolver, audit sink) — see attribution.go. Guarded by
 	// attribMu because the hooks are installed in stages during startup while

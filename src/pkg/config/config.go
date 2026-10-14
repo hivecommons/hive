@@ -165,6 +165,9 @@ type Config struct {
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence ConvergenceConfig `yaml:"convergence,omitempty" json:"convergence,omitempty"`
+	// SLA holds the Delivery SLA span targets the dashboard Overview colours
+	// against (see sla.go). Unset fields use the defaults.
+	SLA SLAConfig `yaml:"sla,omitempty" json:"sla,omitempty"`
 	// WriteSurface configures the audited GitHub write surface
 	// (hivecommons/hive#9587): per-lane allowlists of the relay operations an
 	// agent may ask the hive to perform, and the lanes whose direct GitHub
@@ -4991,6 +4994,11 @@ type HubConfig struct {
 	AutoUpgrade         bool   `yaml:"auto_upgrade"`
 	AutoUpgradeMode     string `yaml:"auto_upgrade_mode,omitempty"`
 	ContributeSuspended bool   `yaml:"contribute_suspended"`
+	// UpgradeDrainTimeoutS bounds how long a hub-instructed self-upgrade waits
+	// for in-flight agent kicks to finish (new kicks are withheld meanwhile)
+	// before exiting anyway. 0/unset uses the default (45 min); a negative
+	// value disables draining. Resolve with EffectiveUpgradeDrainTimeout.
+	UpgradeDrainTimeoutS int `yaml:"upgrade_drain_timeout_s,omitempty" json:"upgrade_drain_timeout_s,omitempty"`
 	// TaskStatusPush controls the separate task-status push loop, not the core
 	// heartbeat or hub-managed upgrade/config delivery. Nil defaults to true.
 	// HIVE_HUB_TASK_STATUS_PUSH overrides it; resolve with TaskStatusPushEnabled.

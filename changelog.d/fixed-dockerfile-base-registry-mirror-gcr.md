@@ -1,1 +1,0 @@
-- `src/Dockerfile` and `src/Dockerfile.hub` base images are now pulled from `mirror.gcr.io` (Google's quota-free Docker Hub cache) instead of ECR Public, which returned 429 `Data limit exceeded` on shared CI runners; tags and digests are unchanged ([#11757](https://github.com/hivecommons/hive/issues/11757)).

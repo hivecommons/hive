@@ -1,1 +1,0 @@
-- Mobile dashboard: section `?` help marks, ⚙ settings gears, drag grips and topbar icon chips are now a fixed 40px square tap target with a 16px glyph instead of 44px circles around a 9.6px glyph, and the Overview 24h/7d range pills are padded so they read as pills rather than circles; desktop sizing is unchanged (#11801).

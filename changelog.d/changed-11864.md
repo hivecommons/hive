@@ -1,1 +1,0 @@
-- dedupe: advisory-only checklists (no proposed closes/relabels) now carry `Decision required: no` and the `triage/advisory` label instead of being parked as `needs-decision` (#11864)

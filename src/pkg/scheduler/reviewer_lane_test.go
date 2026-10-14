@@ -511,3 +511,36 @@ func TestBuildAgentMessage_ClosingInstructionKeptWhenNotStandingDown(t *testing.
 		}
 	}
 }
+
+// #11910: the watchdog asks the scheduler whether the reviewer lane would
+// skip this agent's kick, so a lane with nothing to adjudicate is not reported
+// as alive but not producing. Only an agent whose kick routes to the lane is
+// excused.
+func TestReviewerLaneIdleReason(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		level        int
+		fixture      string
+		agent        string
+		kickTemplate string
+		want         string
+	}{
+		{name: "empty escalated queue", level: 5, fixture: reviewerNoneEscalatedFixture, agent: "adjudicator", want: reviewerLaneIdleNothingToAdjudicate},
+		{name: "below ACMM gate", level: reviewerLaneMinACMMLevel - 1, fixture: reviewerFixture, agent: "adjudicator", want: reviewerLaneIdleDormant()},
+		{name: "lane has work", level: 5, fixture: reviewerOneEscalatedFixture, agent: "adjudicator", want: ""},
+		{name: "kick_template shadows the lane", level: 5, fixture: reviewerNoneEscalatedFixture, agent: "adjudicator", kickTemplate: "reviewer-queue.md", want: ""},
+		{name: "non-reviewer agent", level: 5, fixture: reviewerNoneEscalatedFixture, agent: "scanner", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := reviewerTestScheduler(t, tc.level, tc.fixture)
+			if tc.kickTemplate != "" {
+				ac := s.cfg.Agents[tc.agent]
+				ac.KickTemplate = tc.kickTemplate
+				s.cfg.Agents[tc.agent] = ac
+			}
+			if got := s.ReviewerLaneIdleReason(tc.agent); got != tc.want {
+				t.Errorf("ReviewerLaneIdleReason(%q) = %q, want %q", tc.agent, got, tc.want)
+			}
+		})
+	}
+}

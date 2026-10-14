@@ -1560,6 +1560,38 @@
     @media (max-width: 800px) { .prt-attribution { grid-template-columns:1fr; } }
     @media (max-width: 900px) { .lc-fleet.prt-headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 640px) { .lc-fleet.prt-headline { grid-template-columns: 1fr; } .window-pills-toolbar { justify-self: start; justify-content: flex-start; } }
+    /* Delivery SLA (#11879; moved here from the Overview in #11899): three
+       span tiles in the Throughput metric rhythm with 30-day sparklines
+       coloured against sla.targets, a stale in-progress badge and a per-repo
+       table. Colour is a scoped custom property; no new :root tokens. */
+    .prt-sla { margin: var(--sp-3) 0; min-width: 0; }
+    .prt-sla-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); font-size: var(--fs-xs); }
+    .prt-sla-head strong { display: inline-flex; align-items: center; gap: var(--sp-1); }
+    .prt-sla-head-spacer { flex: 1 1 auto; }
+    .prt-sla-window { color: var(--muted); font-size: var(--fs-2xs); }
+    .prt-sla-stale { display: inline-flex; align-items: center; gap: var(--sp-1); padding: var(--sp-0) var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-pill); color: var(--muted); text-decoration: none; white-space: nowrap; cursor: pointer; background: var(--bg); font: inherit; font-size: var(--fs-2xs); font-weight: 700; line-height: 1.4; }
+    .prt-sla-stale[data-sla-state="breach"] { border-color: var(--red); color: var(--red); }
+    .prt-sla-stale:hover { border-color: var(--accent); }
+    .prt-sla-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-2); }
+    .prt-sla .prt-metric { --prt-sla-color: var(--text); min-width: 0; }
+    .prt-sla .prt-metric[data-sla-state="ok"] { --prt-sla-color: var(--green); }
+    .prt-sla .prt-metric[data-sla-state="warn"] { --prt-sla-color: var(--yellow); }
+    .prt-sla .prt-metric[data-sla-state="breach"] { --prt-sla-color: var(--red); }
+    .prt-sla .prt-metric .mval { color: var(--prt-sla-color); }
+    .prt-sla .prt-metric .mlbl { display: flex; align-items: center; gap: var(--sp-1); text-transform: none; letter-spacing: 0; }
+    .prt-sla .prt-metric-spark { margin-top: var(--sp-1); }
+    .prt-sla .prt-metric-spark .sparkline { display: block; margin: 0; max-width: 100%; }
+    .prt-sla .prt-metric-spark svg { max-width: 100%; height: auto; }
+    .prt-sla-detail { overflow: auto; min-width: 0; margin-top: var(--sp-2); -webkit-overflow-scrolling: touch; }
+    .prt-sla-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+    .prt-sla-table th, .prt-sla-table td { padding: var(--sp-1) var(--sp-2); text-align: right; border-top: 1px solid var(--border); white-space: nowrap; }
+    .prt-sla-table th { color: var(--muted); font-size: var(--fs-2xs); font-weight: 600; border-top: none; }
+    .prt-sla-table th:first-child, .prt-sla-table td:first-child { text-align: left; }
+    .prt-sla-table td[data-sla-state="ok"] { color: var(--green); }
+    .prt-sla-table td[data-sla-state="warn"] { color: var(--yellow); }
+    .prt-sla-table td[data-sla-state="breach"] { color: var(--red); }
+    .prt-sla-stale-list { display: flex; flex-wrap: wrap; gap: var(--sp-2); font-size: var(--fs-xs); margin-bottom: var(--sp-2); }
+    .prt-sla-stale-list a { color: var(--red); font-weight: 600; }
     .lc-journeys { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: flex; flex-direction: column; gap: var(--sp-2);
       max-height: 420px; overflow-y: auto; }
     .lc-journey { font-size: 0.78rem; border-radius: var(--r); background: var(--bg); border: 1px solid var(--border); overflow: hidden; flex-shrink: 0; }
@@ -20146,7 +20178,8 @@ function burnAreaChart() {
       const mergedActorTotal = mergedActors.hive + mergedActors.human + mergedActors.other;
       const hiveMergedPct = mergedActorTotal ? Math.round((mergedActors.hive / mergedActorTotal) * 100) : 0;
       const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
-      const summary = `${merged} merged · ${opened} opened (${windowName ? windowName[1] : 'window'})`;
+      const slaReport = prtSLAReport();
+      const summary = `${merged} merged · ${opened} opened (${windowName ? windowName[1] : 'window'})${prtSLASummary(slaReport)}`;
       setSectionSummary('pr-throughput-section', summary, `Merged and opened PRs in the selected window; ${hiveMergedPct}% hive-attributed merged share`);
       const pathLabels = { sweep: 'auto-merge sweep', queue: 'auto-merge sweep', relay: 'merge relay', hive: 'hive identity', human: 'human', other_automation: 'other automation', unknown: 'unrecorded path' };
       const pathParts = Object.keys(byPath).filter((k) => Number(byPath[k]) > 0).sort()
@@ -20173,8 +20206,178 @@ function burnAreaChart() {
           <div class="lc-fleet-stat" title="Pull/merge requests observed merged in the selected range"><div class="val merged">${merged}</div><div class="lbl">Merged</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'merged', 'var(--green)')}</span></div>
           <div class="lc-fleet-stat" title="Pull/merge requests observed closed without merging in the selected range"><div class="val closed">${closed}</div><div class="lbl">Closed without merging</div><span class="prt-tile-spark">${prtSeriesSpark(dto, 'closed', 'var(--red)')}</span></div>
           ${prtHiveHumanTile(dto)}
-        </div>${metricsHtml}<div class="prt-attribution">${prtActorMatrix(dto)}${prtActorTrend(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
+        </div>${metricsHtml}${renderThroughputSLA()}<div class="prt-attribution">${prtActorMatrix(dto)}${prtActorTrend(dto)}</div>${pathsHtml}${breakdowns ? `<div class="prt-breakdowns">${breakdowns}</div>` : ''}`;
       applySectionCollapse('pr-throughput-section');
+    }
+
+    // ── Delivery SLA (Throughput) ─────────────────────────────────────────────
+    // Reads /api/status .sla (fleet) and repos[].sla, derived server-side from
+    // the lifecycle timeline — no extra fetch. Spans are hours; p50 is coloured
+    // against the sla.targets budgets (Settings → Thresholds).
+    const PRT_SLA_SPANS = [
+      { key: 'start_to_pr', hist: 'start_to_pr_p50', target: 'start_to_pr_h', label: 'Start → PR', color: 'var(--accent)', tip: 'Hours from the hive/in-progress start mark (an agent claimed, commented or opened a PR on the issue) to the PR that fixes it being opened.' },
+      { key: 'pr_to_merge', hist: 'pr_to_merge_p50', target: 'pr_to_merge_h', label: 'PR → merge', color: 'var(--green)', tip: 'Hours from the fixing PR opening to its merge (hive-driven or observed).' },
+      { key: 'open_to_merge', hist: 'open_to_merge_p50', target: 'open_to_merge_h', label: 'Open → merge', color: 'var(--orange)', tip: 'Hours from the issue being opened on GitHub to the fixing PR merging — the end-to-end delivery time.' },
+    ];
+    const PRT_SLA_WARN_RATIO = 1.5;
+    let _prtSLAExpanded = false;
+    // The SLA window follows the Throughput period pills: 7d percentiles for
+    // every pill except `all`, which switches to the 30d window.
+    function prtSLAWindow() { return prtHours > 0 && prtHours <= 168 ? '7d' : '30d'; }
+
+    function prtSLAState(p50, n, target) {
+      if (!Number.isFinite(n) || n <= 0 || !Number.isFinite(p50)) return 'none';
+      if (!Number.isFinite(target) || target <= 0) return 'none';
+      if (p50 <= target) return 'ok';
+      if (p50 <= target * PRT_SLA_WARN_RATIO) return 'warn';
+      return 'breach';
+    }
+
+    function fmtSLAHours(h) {
+      if (!Number.isFinite(h)) return '—';
+      if (h < 1) return `${Math.round(h * 60)}m`;
+      if (h < 48) return `${h >= 10 ? Math.round(h) : h.toFixed(1)}h`;
+      return `${(h / 24).toFixed(1)}d`;
+    }
+
+    // prtSLASeries turns the 30 daily buckets into a dense sparkline
+    // series: days with no closed span carry the previous day's p50 forward so
+    // a quiet weekend does not read as "zero hours".
+    function prtSLASeries(history, field) {
+      const out = [];
+      let last = 0;
+      (history || []).forEach(d => {
+        const v = Number(d && d[field]);
+        if (Number.isFinite(v) && v > 0) last = v;
+        out.push(last);
+      });
+      return out;
+    }
+
+    function prtSLASpark(span, report, state, width) {
+      const series = prtSLASeries(report && report.history, span.hist);
+      if (!series.some(v => v > 0)) return '';
+      const title = `30-day daily p50 · ${overviewKPISparkTitle(series.filter(v => v > 0), fmtSLAHours)}`;
+      return `<span class="prt-metric-spark">${renderSparkline(null, series, {
+        width: width || 240, height: 28, min: 0, color: state === 'none' ? span.color : 'var(--prt-sla-color)', title,
+        ariaLabel: `${span.label}: ${title}`, label: `sla ${span.label}`, id: `prt-sla:${span.key}`,
+        wrapperClass: 'sparkline--flush', wrapperTitle: title, strokeWidth: 1.5,
+      })}</span>`;
+    }
+
+    function prtSLAInfoHTML(id, label, tip) {
+      return `<span class="config-info overview-term-info" tabindex="0" data-action="gh3" data-stop="1" aria-describedby="${esc(id)}" aria-label="${esc(label)} details">ⓘ<span id="${esc(id)}" class="config-tooltip" role="tooltip">${esc(tip)}</span></span>`;
+    }
+
+    // prtSLAReport follows the Throughput repo filter: the fleet block for
+    // "All repos", otherwise that repo's own windows/history/stale list.
+    function prtSLAReport() {
+      const status = window._lastStatus || {};
+      const fleet = status.sla || null;
+      if (!fleet) return null;
+      if (!prtRepo) return Object.assign({}, fleet, { stale_count: (fleet.stale_in_progress || []).length });
+      const match = (status.repos || []).find(r => r && overviewRepoName(r).toLowerCase() === String(prtRepo).toLowerCase());
+      if (!match || !match.sla) return Object.assign({}, fleet, { windows: {}, history: [], stale_in_progress: [], stale_count: 0, merged_7d: 0, missing: true });
+      return Object.assign({}, match.sla, { targets: fleet.targets, claim_ttl_s: fleet.claim_ttl_s, stale_count: (match.sla.stale_in_progress || []).length });
+    }
+
+    function prtSLAIssueURL(repoShort, number) {
+      const repos = (window._lastStatus || {}).repos || [];
+      const match = repos.find(r => r && (r.name === repoShort || (r.full || '').split('/').pop() === repoShort));
+      const full = (match && (match.full || match.name)) || repoShort;
+      return `https://github.com/${full.split('/').map(encodeURIComponent).join('/')}/issues/${encodeURIComponent(String(number))}`;
+    }
+
+    function prtSLAStaleBadge(report) {
+      const stale = (report && report.stale_in_progress) || [];
+      const n = stale.length;
+      const ttl = Number(report && report.claim_ttl_s);
+      const ttlText = Number.isFinite(ttl) && ttl > 0 ? fmtSLAHours(ttl / 3600) : 'the claim TTL';
+      const tip = n
+        ? `${n} issue${n === 1 ? '' : 's'} marked hive/in-progress for longer than ${ttlText} with no PR yet. Click to list them.`
+        : `No issue has carried hive/in-progress past ${ttlText} without a PR.`;
+      if (n === 1) {
+        const s0 = stale[0];
+        return `<a class="prt-sla-stale" data-sla-state="breach" href="${esc(prtSLAIssueURL(s0.repo, s0.number))}" target="_blank" rel="noopener" title="${esc(tip)}" aria-label="${esc(tip)}">⚠ 1 stale in-progress · ${esc(s0.repo)}#${esc(String(s0.number))}</a>`;
+      }
+      return `<button type="button" class="prt-sla-stale" data-sla-state="${n ? 'breach' : 'none'}" data-action="togglePRThroughputSLADetail" data-stop="1" title="${esc(tip)}" aria-label="${esc(tip)}" aria-expanded="${_prtSLAExpanded ? 'true' : 'false'}">${n ? '⚠ ' : '✓ '}${n} stale in-progress</button>`;
+    }
+
+    function prtSLATile(span, report, targets) {
+      const winKey = prtSLAWindow();
+      const win = ((report && report.windows) || {})[winKey] || {};
+      const stat = win[span.key] || {};
+      const p50 = Number(stat.p50_h), p95 = Number(stat.p95_h), n = Number(stat.n) || 0;
+      const target = Number(targets && targets[span.target]);
+      const state = prtSLAState(p50, n, target);
+      const tip = `${span.tip} Target ${fmtSLAHours(target)}; green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. p50 ${fmtSLAHours(n ? p50 : NaN)} · p95 ${fmtSLAHours(n ? p95 : NaN)} · n=${n} over ${winKey}.`;
+      const value = n ? fmtSLAHours(p50) : '—';
+      return `<div class="prt-metric" data-sla-state="${state}" data-sla-span="${esc(span.key)}" title="${esc(tip)}"><div class="mval" data-prt-sla-p50="${Number.isFinite(p50) ? p50 : ''}">${esc(value)}</div><div class="mlbl">${esc(span.label)} p50${prtSLAInfoHTML(`prt-sla-tip-${span.key}`, span.label, tip)}</div><div class="prt-caption">n=${n} · p95 ${esc(n ? fmtSLAHours(p95) : '—')} · <span class="prt-sla-target">target ${esc(fmtSLAHours(target))}</span></div>${prtSLASpark(span, report, state)}</div>`;
+    }
+
+    function prtSLARepoRows(repos, targets) {
+      const rows = (repos || []).filter(r => r && r.sla).map(r => {
+        const rep = r.sla;
+        const win = (rep.windows || {})[prtSLAWindow()] || {};
+        const cell = span => {
+          const st = win[span.key] || {};
+          const n = Number(st.n) || 0;
+          const state = prtSLAState(Number(st.p50_h), n, Number(targets && targets[span.target]));
+          return `<td data-sla-state="${state}" title="n=${n}">${n ? `${esc(fmtSLAHours(Number(st.p50_h)))} / ${esc(fmtSLAHours(Number(st.p95_h)))}` : '—'}</td>`;
+        };
+        const stale = (rep.stale_in_progress || []).length;
+        const spark = prtSLASpark(PRT_SLA_SPANS[2], rep, 'none', 72) || '<span class="overview-kpi-subline">—</span>';
+        return `<tr><td>${esc(overviewRepoName(r))}${stale ? ` <span class="prt-sla-stale" data-sla-state="breach" title="${stale} stale in-progress">⚠ ${stale}</span>` : ''}</td>${cell(PRT_SLA_SPANS[0])}${cell(PRT_SLA_SPANS[1])}<td>${Number(rep.merged_7d) || 0}</td><td>${spark}</td></tr>`;
+      });
+      if (!rows.length) return '<div class="overview-empty">No per-repo SLA data yet — spans appear as issues move start → PR → merge.</div>';
+      return `<table class="prt-sla-table" aria-label="Delivery SLA per repo"><thead><tr><th>Repo</th><th title="p50 / p95 over ${esc(prtSLAWindow())}">Start → PR</th><th title="p50 / p95 over ${esc(prtSLAWindow())}">PR → merge</th><th>Merged 7d</th><th>Open → merge 30d</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+    }
+
+    function prtSLAStaleList(report) {
+      const stale = (report && report.stale_in_progress) || [];
+      if (!stale.length) return '';
+      return `<div class="prt-sla-stale-list" aria-label="Stale in-progress issues"><span class="overview-kpi-subline">Stale in-progress:</span>${stale.map(s => `<a href="${esc(prtSLAIssueURL(s.repo, s.number))}" target="_blank" rel="noopener" title="started ${esc(s.started_at || '')}${s.agent ? ` by ${esc(s.agent)}` : ''}">${esc(s.repo)}#${esc(String(s.number))}</a>`).join('')}</div>`;
+    }
+
+    function renderThroughputSLA() {
+      const report = prtSLAReport();
+      if (!report) return '';
+      const targets = report.targets || {};
+      const winKey = prtSLAWindow();
+      const tiles = PRT_SLA_SPANS.map(span => prtSLATile(span, report, targets)).join('');
+      const repos = prtRepo ? ((window._lastStatus || {}).repos || []).filter(r => r && overviewRepoName(r).toLowerCase() === String(prtRepo).toLowerCase()) : ((window._lastStatus || {}).repos || []);
+      const detail = _prtSLAExpanded
+        ? `<div class="prt-sla-detail" id="prt-sla-detail">${prtSLAStaleList(report)}${prtSLARepoRows(repos, targets)}</div>`
+        : '';
+      const headTip = 'Delivery SLA: how long issues take to move from start to PR, PR to merge, and open to merge. Derived from the lifecycle timeline the hive already records — no extra GitHub calls. Percentiles use the 7d window, or 30d when the Throughput period is set to all; targets live in Settings → Governor → Thresholds.';
+      return `<div class="prt-sla" data-prt-sla data-sla-window="${esc(winKey)}"><div class="prt-sla-head"><strong>Delivery SLA${prtSLAInfoHTML('prt-sla-tip-head', 'Delivery SLA', headTip)}</strong><span class="prt-sla-window">${esc(winKey)} percentiles · 30-day sparklines</span><span class="prt-sla-head-spacer"></span>${prtSLAStaleBadge(report)}<button type="button" class="hv-btn btn-secondary btn-sm" data-action="togglePRThroughputSLADetail" data-stop="1" aria-expanded="${_prtSLAExpanded ? 'true' : 'false'}" aria-controls="prt-sla-detail" title="${_prtSLAExpanded ? 'Hide' : 'Show'} the per-repo breakdown">${_prtSLAExpanded ? 'Repos ▴' : 'Repos ▾'}</button></div><div class="prt-sla-tiles">${tiles}</div>${detail}</div>`;
+    }
+
+    // prtSLASummary is the fragment appended to the collapsed Throughput line.
+    function prtSLASummary(report) {
+      const stat = (((report || {}).windows || {})[prtSLAWindow()] || {}).open_to_merge || {};
+      const n = Number(stat.n) || 0;
+      const stale = Number((report || {}).stale_count) || 0;
+      const parts = [];
+      if (n) parts.push(`open→merge p50 ${fmtSLAHours(Number(stat.p50_h))}`);
+      if (stale) parts.push(`${stale} stale in-progress`);
+      return parts.length ? ' · ' + parts.join(' · ') : '';
+    }
+
+    // refreshThroughputSLA re-renders only the SLA block when a status poll
+    // lands between Throughput fetches, so the tiles track /api/status.
+    function refreshThroughputSLA() {
+      if (!prtLast) return;
+      const card = document.getElementById('pr-throughput-card');
+      const el = card && card.querySelector('[data-prt-sla]');
+      const html = renderThroughputSLA();
+      if (!el) { if (html) renderPRThroughput(prtLast); return; }
+      if (html) el.outerHTML = html; else el.remove();
+    }
+
+    function togglePRThroughputSLADetail() {
+      _prtSLAExpanded = !_prtSLAExpanded;
+      if (prtLast) renderPRThroughput(prtLast);
     }
 
     async function fetchPRThroughput() {
@@ -25234,6 +25437,7 @@ function burnAreaChart() {
       window._configuredAgents = data.configuredAgents || [];
       window._lastStatus = data;
       applyDashboardFeatureVisibility();
+      if (typeof refreshThroughputSLA === 'function') refreshThroughputSLA();
       if (window._acmmOverride) {
         if (data.acmmLevel === window._acmmOverride.level) {
           window._acmmOverride = null;
@@ -31124,6 +31328,7 @@ function burnAreaChart() {
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
+      { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Hub', section: 'Release', label: 'Release channel', key: '', text: 'channel stable candidate edge release update stream' },
       { tab: 'Knowledge', section: 'Knowledge channels', label: 'Knowledge channel', key: '', text: 'channel channels import knowledge vault project org community personal' },
     ];
@@ -32144,7 +32349,7 @@ function burnAreaChart() {
         case 'Appearance': return renderGovAppearance();
         case 'Dashboard': return renderGovDashboard(d.dashboard || {});
         case 'Agents': return renderGovAgents(d.agents || []);
-        case 'Thresholds': return renderGovThresholds(d);
+        case 'Thresholds': return renderGovThresholds(d) + renderGovSLATargets(d);
         case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
         case 'Repos': return renderGovRepos(d.repos || []);
         case 'Budget': return renderGovBudget(d.budget || {}, d.health || {});
@@ -32494,6 +32699,18 @@ function burnAreaChart() {
       const bands = d.issue_bands = Object.assign({}, d.issue_bands || {});
       bands[key] = key === 'stale_days' ? Math.max(0, parseInt(value || '0', 10) || 0) : splitConfigLines(value);
       markDirty('dashboard', 'issue_bands', bands);
+    }
+
+    function markBackendsPolicy(key, value) {
+      _configState.data.backends = _configState.data.backends || {};
+      _configState.data.backends[key] = splitConfigLines(value);
+      markDirty('backends', key, _configState.data.backends[key]);
+    }
+
+    function markClassifierList(key, value) {
+      _configState.data.classifier = _configState.data.classifier || {};
+      _configState.data.classifier[key] = splitConfigLines(value);
+      markDirty('classifier', key, _configState.data.classifier[key]);
     }
 
     function renderGovDashboard(dash) {
@@ -34518,7 +34735,7 @@ function burnAreaChart() {
         <div class="config-field">
           <label>Help &amp; community links ${settingHelpMark('contributor-relay', '', 'Help & community links', `Shown on /contribute Onboarding, Operations, and in relay terminals at connect. One "Label | URL" per line, max 5. Discord channel URLs only work for existing server members; prefer https://hivecommons.dev/discord for new contributors.`)}</label>
           <textarea rows="4" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;resize:vertical" placeholder="Chat with other contributors | https://hivecommons.dev/discord" data-change-action="setContributeHelpLinksFromText" data-arg-types="v">${esc(helpLinksText)}</textarea>
-          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Stored as <code>contribute.help_links</code>. Empty restores Hive's default contributor docs and issue links.</span>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Stored as <code>contribute.help_links[].label</code> and <code>contribute.help_links[].url</code>. Empty restores Hive's default contributor docs and issue links.</span>
         </div>
 
         ${renderFilterWithMode({
@@ -36503,6 +36720,7 @@ function burnAreaChart() {
 
     function renderGovAgents(agents) {
       const sec = (_configState.data || {}).security || {};
+      const backendPolicy = (_configState.data || {}).backends || {};
       const live = window._lastAgents || [];
       const liveMap = {};
       live.forEach(a => { liveMap[a.name] = a; });
@@ -36526,6 +36744,15 @@ function burnAreaChart() {
             ${agents.map(a => { const name = typeof a === 'string' ? a : (a && a.name) || ''; return '<option value="' + esc(name) + '">copy ' + esc(name) + '</option>'; }).join('')}
           </select>
           <button class="hv-btn btn-primary" data-action="addAgent" title="Create the new agent with the specified name and optional copied config">+ Add Agent</button>
+        </div>
+        <div class="config-section mt-6">
+          <h3>Backend placement policy</h3>
+          <p class="text-muted fs-base">Restrict which CLI or inference backends agents may use. Deny wins over allow; an empty allow list permits every supported backend.</p>
+          <div class="config-field-row">
+            <div class="config-field"><label>Allowed backends ${yamlHint('backends.allow[]')}</label><textarea rows="4" placeholder="copilot&#10;claude" data-change-action="markBackendsPolicy" data-arg0="allow" data-arg-types="s,v">${esc((backendPolicy.allow || []).join('\n'))}</textarea></div>
+            <div class="config-field"><label>Denied backends ${yamlHint('backends.deny[]')}</label><textarea rows="4" placeholder="codex" data-change-action="markBackendsPolicy" data-arg0="deny" data-arg-types="s,v">${esc((backendPolicy.deny || []).join('\n'))}</textarea></div>
+          </div>
+          <div class="config-help">Use backend IDs such as <code>copilot</code>, <code>claude</code>, <code>gemini</code>, <code>goose</code>, <code>codex</code>, <code>bob</code>, <code>vllm</code>, <code>llm-d</code>, or a configured gateway name.</div>
         </div>`;
     }
 
@@ -36656,6 +36883,27 @@ function burnAreaChart() {
       if (pinned) return `${effectiveValue} (pinned, scaling off)`;
       if (scaling === 'sqrt') return `${baseValue} × ceil(sqrt(${repos} repos)) = ${effectiveValue} in force`;
       return `${baseValue} × ${repos} repos = ${effectiveValue} in force`;
+    }
+
+    // renderGovSLATargets: the Delivery SLA budgets (hours) the Throughput panel
+    // colours against. Saved through PUT /api/config/sla (top-level block).
+    function renderGovSLATargets(d) {
+      const sla = (d && d.sla) || {};
+      const eff = sla.effective_targets || {};
+      const defaults = sla.defaults || { start_to_pr_h: 4, pr_to_merge_h: 24, open_to_merge_h: 72 };
+      const dirty = _configState.dirty.sla || {};
+      const fields = [
+        ['start_to_pr_h', 'Start → PR', 'Hours from the hive/in-progress start mark to the fixing PR opening.'],
+        ['pr_to_merge_h', 'PR → merge', 'Hours from the fixing PR opening to its merge.'],
+        ['open_to_merge_h', 'Open → merge', 'Hours from the issue opening on GitHub to the fixing PR merging.'],
+      ];
+      return `<div class="config-field mb-7">
+          <label>Delivery SLA targets (hours) ${settingHelpMark('operator-reference', 'delivery-sla', 'Delivery SLA targets', `Per-span budgets the Throughput section's Delivery SLA tiles and sparklines are coloured against: green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. 0 restores the default (${defaults.start_to_pr_h} / ${defaults.pr_to_merge_h} / ${defaults.open_to_merge_h} h).`)}</label>
+          <div class="config-field-row">${fields.map(([key, label, tip]) => {
+            const v = dirty[key] !== undefined ? dirty[key] : (eff[key] !== undefined ? eff[key] : defaults[key]);
+            return `<div class="config-field"><label for="cfg-sla-${esc(key)}" title="${esc(tip)}">${esc(label)}</label><input type="number" min="0" max="8760" step="0.5" id="cfg-sla-${esc(key)}" value="${esc(String(v))}" data-input-action="markDirty" data-arg0="sla" data-arg1="${esc(key)}" data-arg-types="s,s,N" data-setting-path="sla.targets.${esc(key)}" aria-label="${esc(label)} target in hours"></div>`;
+          }).join('')}</div>
+        </div>`;
     }
 
     function renderGovThresholds(d) {
@@ -37589,25 +37837,125 @@ function burnAreaChart() {
         </label>`).join('');
       return `
         <div class="config-field">
-          <label>Ntfy Server ${ntfyHint} ${settingHelpMark('notifications', 'configuration', 'Ntfy Server', `URL of the ntfy.sh server for push notifications. The governor sends alerts for mode changes, budget warnings, agent crashes, and rate limits. Leave empty to disable ntfy notifications. Default: https://ntfy.sh`)}</label>
+          <label>Ntfy Server ${ntfyHint} ${yamlHint('notifications.ntfy.server')} ${settingHelpMark('notifications', 'configuration', 'Ntfy Server', `URL of the ntfy.sh server for push notifications. The governor sends alerts for mode changes, budget warnings, agent crashes, and rate limits. Leave empty to disable ntfy notifications. Default: https://ntfy.sh`)}</label>
           <input type="text" value="${esc(n.ntfyServer || '')}" data-change-action="markDirty" data-arg0="notifications" data-arg1="ntfyServer" data-arg-types="s,s,v" placeholder="https://ntfy.sh">
         </div>
         <div class="config-field">
-          <label>Ntfy Topic ${settingHelpMark('notifications', 'configuration', 'Ntfy Topic', `Topic name on the ntfy server. Subscribe to this topic in the ntfy app or web UI to receive governor notifications on your phone or desktop.`)}</label>
+          <label>Ntfy Topic ${yamlHint('notifications.ntfy.topic')} ${settingHelpMark('notifications', 'configuration', 'Ntfy Topic', `Topic name on the ntfy server. Subscribe to this topic in the ntfy app or web UI to receive governor notifications on your phone or desktop.`)}</label>
           <input type="text" value="${esc(n.ntfyTopic || '')}" data-change-action="markDirty" data-arg0="notifications" data-arg1="ntfyTopic" data-arg-types="s,s,v" placeholder="my-topic">
         </div>
         <div class="config-field">
-          <label>Discord Webhook ${discordHint} ${settingHelpMark('notifications', 'configuration', 'Discord Webhook', `Discord webhook URL for posting selected hive notifications to a channel. Create a webhook in your Discord server settings under Integrations.`)}</label>
+          <label>Discord Webhook ${discordHint} ${yamlHint('notifications.discord.webhook')} ${settingHelpMark('notifications', 'configuration', 'Discord Webhook', `Discord webhook URL for posting selected hive notifications to a channel. Create a webhook in your Discord server settings under Integrations.`)}</label>
           <input type="text" value="${n.hasDiscord ? '••••••••' : ''}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordWebhook" data-arg-types="s,s,v" placeholder="https://discord.com/api/webhooks/...">
         </div>
         <div class="config-field">
-          <label>Slack Webhook ${slackHint} ${settingHelpMark('notifications', 'configuration', 'Slack Webhook', `Slack incoming webhook URL. It uses the same notify hook fanout as Discord and ntfy.`)}</label>
+          <label>Slack Webhook ${slackHint} ${yamlHint('notifications.slack.webhook')} ${settingHelpMark('notifications', 'configuration', 'Slack Webhook', `Slack incoming webhook URL. It uses the same notify hook fanout as Discord and ntfy.`)}</label>
           <input type="text" value="${n.hasSlack ? '••••••••' : ''}" data-change-action="markDirty" data-arg0="notifications" data-arg1="slackWebhook" data-arg-types="s,s,v" placeholder="https://hooks.slack.com/services/...">
         </div>
         <div class="config-field">
-          <label>Hive notification events ${settingHelpMark('notifications', 'configuration', 'Hive notification events', `Select which hive transitions are fanned out through the notify hooks to Discord, Slack, and ntfy.`)}</label>
+          <label>Hive notification events ${yamlHint('notifications.events[]')} ${settingHelpMark('notifications', 'configuration', 'Hive notification events', `Select which hive transitions are fanned out through the notify hooks to Discord, Slack, and ntfy.`)}</label>
           <div class="config-grid notification-event-checkboxes">${eventBoxes}</div>
+        </div>
+        ${renderGovNotificationsDiscordBot(n)}
+        ${renderGovNotificationsGithubActivity(n)}`;
+    }
+
+    function markNotificationsList(key, value) {
+      markDirty('notifications', key, splitConfigLines(value));
+    }
+
+    function githubActivityState() {
+      const n = ((_configState.data || {}).notifications) || {};
+      n.githubActivity = n.githubActivity || {};
+      return n.githubActivity;
+    }
+
+    function markGithubActivity(key, value) {
+      githubActivityState()[key] = value;
+      const prev = (_configState.dirty.notifications || {}).githubActivity || {};
+      markDirty('notifications', 'githubActivity', Object.assign({}, prev, { [key]: value }));
+    }
+
+    function markGithubActivityList(key, value) {
+      markGithubActivity(key, splitConfigLines(value));
+    }
+
+    function toggleGithubActivityFlag(el, key) {
+      if (!el || el.classList.contains('disabled')) return;
+      const isOn = el.classList.toggle('on');
+      el.setAttribute('aria-checked', isOn ? 'true' : 'false');
+      markGithubActivity(key, isOn);
+    }
+
+    function renderGovNotificationsDiscordBot(n) {
+      const tokenText = n.hasDiscordBotToken ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
+      const factoryText = n.hasDiscordFactoryWebhook ? 'Configured — enter a new URL to change, or save an empty value to clear.' : 'https://discord.com/api/webhooks/...';
+      const requestsText = n.hasDiscordRequestsWebhook ? 'Configured — enter a new URL to change, or save an empty value to clear.' : 'https://discord.com/api/webhooks/...';
+      return `
+        <div class="config-subgroup">Discord bot ${settingHelpMark('notifications', 'configuration', 'Discord bot', `Optional Discord bot integration; separate from webhook notifications. The bot posts status to one channel and accepts commands only from allowed users.`)}</div>
+        <div class="config-field">
+          <label>Bot token ${yamlHint('notifications.discord.bot_token')} ${settingHelpMark('notifications', 'configuration', 'Discord bot token', `Discord bot token. The bot starts only when both the token and the channel id are set.`)}</label>
+          <input type="password" autocomplete="new-password" placeholder="${esc(tokenText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordBotToken" data-arg-types="s,s,v">
+          <div class="config-help">Write-only; the current token is never echoed. Requires restart.</div>
+        </div>
+        <div class="config-field">
+          <label>Channel id ${yamlHint('notifications.discord.channel_id')} ${settingHelpMark('notifications', 'configuration', 'Discord channel id', `Discord channel the bot posts to and listens on, for example 1234567890.`)}</label>
+          <input type="text" value="${esc(n.discordChannelId || '')}" placeholder="1234567890" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordChannelId" data-arg-types="s,s,w">
+          <div class="config-help">Requires restart.</div>
+        </div>
+        <div class="config-field">
+          <label>Allowed users ${yamlHint('notifications.discord.allowed_users[]')} ${settingHelpMark('notifications', 'configuration', 'Discord allowed users', `Discord user IDs permitted to issue bot commands (!kick, !pause, agent actions). When empty, command handling is disabled (fail closed): the bot still posts status but accepts no commands.`)}</label>
+          <textarea rows="3" placeholder="One Discord user id per line" data-change-action="markNotificationsList" data-arg0="discordAllowedUsers" data-arg-types="s,v">${esc((n.discordAllowedUsers || []).join('\n'))}</textarea>
+          <div class="config-help">Empty disables bot commands. Requires restart.</div>
+        </div>
+        <div class="config-field">
+          <label>Factory webhook ${yamlHint('notifications.discord.factory_webhook')} ${settingHelpMark('notifications', 'configuration', 'Discord factory webhook', `Discord webhook the hub posts the org-wide GitHub activity feed to. Required when the GitHub activity feed is enabled.`)}</label>
+          <input type="password" autocomplete="new-password" placeholder="${esc(factoryText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordFactoryWebhook" data-arg-types="s,s,v">
+          <div class="config-help">Write-only; the current URL is never echoed. Used by the hub process.</div>
+        </div>
+        <div class="config-field">
+          <label>Hosted-hive requests webhook ${yamlHint('notifications.discord.requests_webhook_url')} ${settingHelpMark('notifications', 'configuration', 'Discord requests webhook', `Discord webhook the hub posts new hosted-hive provision requests to (the community request channel). A hub-level requests webhook takes precedence when set.`)}</label>
+          <input type="password" autocomplete="new-password" placeholder="${esc(requestsText)}" data-change-action="markDirty" data-arg0="notifications" data-arg1="discordRequestsWebhookUrl" data-arg-types="s,s,v">
+          <div class="config-help">Write-only; the current URL is never echoed. Used by the hub process; may require restart.</div>
         </div>`;
+    }
+
+    function renderGovNotificationsGithubActivity(n) {
+      const ga = n.githubActivity || {};
+      const toggle = (key, on, label, yamlKey, tip) => `<div class="config-toggle mt-3">
+          <div class="config-toggle-switch ${on ? 'on' : ''}" data-action="toggleGithubActivityFlag" data-arg0="${key}" data-arg-types="t,s" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
+          <span class="config-toggle-label">${label} ${yamlHint(yamlKey)} ${settingHelpMark('notifications', 'configuration', label, tip)}</span>
+        </div>`;
+      const list = (key, label, yamlKey, placeholder, tip) => `<div class="config-field">
+          <label>${label} ${yamlHint(yamlKey)} ${settingHelpMark('notifications', 'configuration', label, tip)}</label>
+          <textarea rows="3" placeholder="${esc(placeholder)}" data-change-action="markGithubActivityList" data-arg0="${key}" data-arg-types="s,v">${esc((ga[key] || []).join('\n'))}</textarea>
+        </div>`;
+      return `
+        <div class="config-subgroup">GitHub activity feed ${settingHelpMark('notifications', 'configuration', 'GitHub activity feed', `Default off. When enabled, the hub polls org repos, diffs issue and PR state, and posts concise lines to the Discord factory webhook. Runs in the hub process; changes apply after a hub restart.`)}</div>
+        ${toggle('enabled', !!ga.enabled, 'Enable GitHub activity feed', 'notifications.github_activity.enabled', 'Requires a Discord factory webhook and an org (or project.org). Requires restart.')}
+        <div class="config-field-row">
+          <div class="config-field">
+            <label>Org ${yamlHint('notifications.github_activity.org')} ${settingHelpMark('notifications', 'configuration', 'GitHub activity org', `GitHub org to watch. Empty falls back to project.org.`)}</label>
+            <input type="text" value="${esc(ga.org || '')}" placeholder="${esc(ga.effectiveOrg || 'project.org')}" data-change-action="markGithubActivity" data-arg0="org" data-arg-types="s,w">
+          </div>
+          <div class="config-field">
+            <label>Poll interval (seconds) ${yamlHint('notifications.github_activity.poll_interval_s')} ${settingHelpMark('notifications', 'configuration', 'GitHub activity poll interval', `Seconds between polls. 0 uses the built-in default.`)}</label>
+            <input type="number" min="0" value="${esc(String(ga.pollIntervalS || 0))}" data-change-action="markGithubActivity" data-arg0="pollIntervalS" data-arg-types="s,N">
+          </div>
+        </div>
+        <div class="config-field">
+          <label>API URL ${yamlHint('notifications.github_activity.api_url')} ${settingHelpMark('notifications', 'configuration', 'GitHub activity API URL', `GitHub API base URL for GitHub Enterprise. Empty uses https://api.github.com.`)}</label>
+          <input type="text" value="${esc(ga.apiUrl || '')}" placeholder="https://api.github.com" data-change-action="markGithubActivity" data-arg0="apiUrl" data-arg-types="s,w">
+          <div class="config-help">Requires restart.</div>
+        </div>
+        ${list('repos', 'Repos', 'notifications.github_activity.repos[]', 'One repo per line; empty watches every org repo', 'Limit the feed to these repos. Empty watches every repo in the org.')}
+        ${list('events', 'Events', 'notifications.github_activity.events[]', 'issue_opened', 'Activity events to post, for example issue_opened, issue_closed, issue_reopened. Empty posts every event.')}
+        <div class="config-field-row">
+          ${list('allowAuthors', 'Allow authors', 'notifications.github_activity.allow_authors[]', 'One login per line', 'When set, only activity by these authors is posted.')}
+          ${list('denyAuthors', 'Deny authors', 'notifications.github_activity.deny_authors[]', 'One login per line', 'Activity by these authors is never posted.')}
+        </div>
+        ${toggle('filterBots', ga.filterBots !== false, 'Filter bot authors', 'notifications.github_activity.filter_bots', 'Default on: skip activity authored by bot accounts.')}
+        ${toggle('filterDependabot', ga.filterDependabot !== false, 'Filter Dependabot', 'notifications.github_activity.filter_dependabot', 'Default on: skip Dependabot activity.')}`;
     }
 
     // ── Stats tab for per-agent stat config ──
@@ -39047,6 +39395,7 @@ function burnAreaChart() {
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
       const publicationAvailable = f.publicationAvailable === true;
       const publicationMinACMMLevel = f.publicationMinACMMLevel || 3;
+      const cls = (_configState.data || {}).classifier || {};
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const amBots = Array.isArray(am.bot_authors) ? am.bot_authors : [];
@@ -39172,6 +39521,15 @@ function burnAreaChart() {
           <div class="config-field" style="margin-top:10px">
             <label>Private disclosure channel ${settingHelpMark('audit-campaign', 'publication', 'Private disclosure channel', `Where security-sensitive findings go instead of a public issue: repo:owner/name files them in that private repository, notify sends only the title and finding hash to the operator notifier. A sensitive finding with no channel is refused and audited, never filed publicly.`)}</label>
             <input type="text" value="${esc(f.publicationPrivateChannel || '')}" placeholder="repo:owner/security-intake or notify" data-change-action="markDirty" data-arg0="features" data-arg1="publicationPrivateChannel" data-arg-types="s,s,w">
+          </div>
+        </div>
+
+        <div class="overview-settings-section">
+          <h3>Tier classifier</h3>
+          <p class="text-muted fs-base">Override the issue-title keywords that map work to Simple or Complex tiers. Empty lists keep the built-in defaults.</p>
+          <div class="config-field-row">
+            <div class="config-field"><label>Simple keywords ${yamlHint('classifier.simple_keywords[]')} ${settingHelpMark('settings', 'features', 'Simple keywords', `Title substrings that classify an issue as Tier Simple. Leave empty to keep the built-in default set.`)}</label><textarea rows="4" data-change-action="markClassifierList" data-arg0="simple_keywords" data-arg-types="s,v">${esc((cls.simple_keywords || []).join('\n'))}</textarea><div class="config-help">Effective defaults: ${esc((cls.simpleKeywords || []).join(', ') || 'none')}</div></div>
+            <div class="config-field"><label>Complex signals ${yamlHint('classifier.complex_signals[]')} ${settingHelpMark('settings', 'features', 'Complex signals', `Title substrings that classify an issue as Tier Complex. Leave empty to keep the built-in default set.`)}</label><textarea rows="4" data-change-action="markClassifierList" data-arg0="complex_signals" data-arg-types="s,v">${esc((cls.complex_signals || []).join('\n'))}</textarea><div class="config-help">Effective defaults: ${esc((cls.complexSignals || []).join(', ') || 'none')}</div></div>
           </div>
         </div>
 
@@ -41842,6 +42200,17 @@ function burnAreaChart() {
               body: JSON.stringify(values)
             });
             if (!amRes.ok) throw new Error(await saveErrorMessage(amRes));
+          } else if (_configState.type === 'governor' && section === 'sla') {
+            // sla is a TOP-LEVEL config block (Delivery SLA targets); it
+            // saves through its own owner-only /api/config/sla endpoint.
+            const current = ((_configState.data || {}).sla || {}).targets || {};
+            const slaRes = await fetch('/api/config/sla', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify({ targets: Object.assign({}, current, values) })
+            });
+            if (!slaRes.ok) throw new Error(await saveErrorMessage(slaRes));
+            _configState.data.sla = await slaRes.json().catch(() => _configState.data.sla);
           } else if (_configState.type === 'governor' && section === 'convergence') {
             // convergence is a TOP-LEVEL config block, not under governor —
             // it saves through its own owner-only /api/config/convergence
@@ -41870,6 +42239,22 @@ function burnAreaChart() {
             });
             if (!dashRes.ok) throw new Error(await saveErrorMessage(dashRes));
             _configState.data.dashboard = await dashRes.json().catch(() => _configState.data.dashboard);
+          } else if (_configState.type === 'governor' && section === 'backends') {
+            const backendsRes = await fetch('/api/config/backends', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!backendsRes.ok) throw new Error(await saveErrorMessage(backendsRes));
+            _configState.data.backends = await backendsRes.json().catch(() => _configState.data.backends);
+          } else if (_configState.type === 'governor' && section === 'classifier') {
+            const clsRes = await fetch('/api/config/classifier', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!clsRes.ok) throw new Error(await saveErrorMessage(clsRes));
+            _configState.data.classifier = await clsRes.json().catch(() => _configState.data.classifier);
           } else {
             const res = await fetch(`${base}/${section}`, {
               method: 'PUT',

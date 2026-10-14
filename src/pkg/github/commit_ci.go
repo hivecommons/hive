@@ -98,6 +98,17 @@ type CommitCIState struct {
 	MissingRequired []string
 	// Observed names every status context/check-run name seen on the SHA.
 	Observed map[string]bool
+	// InFlight counts every pending commit status and every not-yet-completed
+	// check run on the SHA, gating or not. Unlike Reason it includes the
+	// non-required checks skipped when RequiredKnown, so a caller can tell
+	// "a required check is missing while CI is still running" from "a
+	// required check is missing and nothing on the head will ever report".
+	InFlight int
+	// EarliestActivity is the earliest status created_at / check-run
+	// started_at observed on the SHA (zero when none carries a timestamp).
+	// Every one of them postdates the push, so it is a safe lower bound on
+	// how long the head has existed.
+	EarliestActivity time.Time
 }
 
 // CommitCIOptions carries policy facts that are known to callers before the
@@ -423,10 +434,20 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 
 	dcoSatisfied := dcoContextSucceeded(allStatuses, allCheckRuns)
 
+	noteActivity := func(at time.Time) {
+		if !at.IsZero() && (st.EarliestActivity.IsZero() || at.Before(st.EarliestActivity)) {
+			st.EarliestActivity = at
+		}
+	}
+
 	for _, s := range allStatuses {
 		ctxName := s.GetContext()
 		st.Evidence++
 		seen[ctxName] = true
+		noteActivity(s.GetCreatedAt().Time)
+		if s.GetState() == "pending" {
+			st.InFlight++
+		}
 		if requiredKnown {
 			// Required-checks-only gating: skip anything not on the
 			// branch's actual required list, no matter its state.
@@ -465,6 +486,10 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		name := cr.GetName()
 		st.Evidence++
 		seen[name] = true
+		noteActivity(cr.GetStartedAt().Time)
+		if cr.GetStatus() != "completed" {
+			st.InFlight++
+		}
 		if requiredKnown {
 			if !required[name] {
 				continue

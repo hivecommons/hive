@@ -3,8 +3,11 @@ package github
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // protectionCollector gathers, once per enrichment pass, the per-repository
@@ -110,8 +113,24 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 				}
 			}
 			f.FailingRequiredChecks = red
-			if observedRequired > 0 {
+			switch {
+			case observedRequired > 0:
 				f.MissingRequiredChecks = missing
+			case len(missing) > 0 && strings.EqualFold(pr.MergeableState, "blocked"):
+				// Nothing proves check-run reporting, but GitHub says the head is
+				// blocked: look at commit statuses before deciding. A context
+				// absent from both listings was never created, and must not be
+				// reported as merge-eligible (#11892).
+				if statuses, ok := pc.c.commitStatusContexts(ctx, pr.Repo, pr.HeadSHA); ok {
+					var never []string
+					for _, name := range missing {
+						if !statuses[name] {
+							never = append(never, name)
+						}
+					}
+					sort.Strings(never)
+					f.MissingRequiredChecks = never
+				}
 			}
 		}
 	}
@@ -125,6 +144,30 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		return
 	}
 	pr.Protection = &f
+}
+
+// commitStatusContexts returns the contexts of every commit status on sha, or
+// ok=false when the listing could not be obtained.
+func (c *Client) commitStatusContexts(ctx context.Context, repo, sha string) (map[string]bool, bool) {
+	if sha == "" {
+		return nil, false
+	}
+	owner, name := c.splitRepo(repo)
+	contexts := map[string]bool{}
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		status, resp, err := c.client.Repositories.GetCombinedStatus(ctx, owner, name, sha, opts)
+		if err != nil {
+			return nil, false
+		}
+		for _, st := range status.Statuses {
+			contexts[st.GetContext()] = true
+		}
+		if resp == nil || resp.NextPage == 0 {
+			return contexts, true
+		}
+		opts.Page = resp.NextPage
+	}
 }
 
 func (pc *protectionCollector) requiredChecks(ctx context.Context, repo, branch string) requiredSet {

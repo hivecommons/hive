@@ -234,6 +234,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// fixed-commit telemetry read path (convergence_soak.go).
 	s.mux.HandleFunc("GET /api/config/convergence", s.handleConvergenceConfigGet)
 	s.mux.HandleFunc("PUT /api/config/convergence", s.handleConvergenceConfigPut)
+	s.mux.HandleFunc("GET /api/config/sla", s.handleSLAConfigGet)
+	s.mux.HandleFunc("PUT /api/config/sla", s.handleSLAConfigPut)
 	s.mux.HandleFunc("GET /api/convergence/soak", s.handleConvergenceSoak)
 	s.mux.HandleFunc("GET /api/config/governor/advisory", s.handleGovernorAdvisoryGet)
 	s.mux.HandleFunc("PUT /api/config/governor/advisory", s.handleGovernorAdvisoryPut)
@@ -328,6 +330,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/sidebar", s.handleSidebarGet)
 	s.mux.HandleFunc("PUT /api/config/sidebar", s.handleSidebarSet)
 	s.mux.HandleFunc("GET /api/config/backends", s.handleBackends)
+	s.mux.HandleFunc("PUT /api/config/backends", s.handleBackendsPolicyPut)
+	s.mux.HandleFunc("PUT /api/config/classifier", s.handleClassifierSettingsPut)
 	s.mux.HandleFunc("GET /api/inference/models/{backend}", s.handleInferenceModels)
 
 	s.mux.HandleFunc("GET /api/knowledge", s.handleKnowledgeList)

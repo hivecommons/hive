@@ -1,1 +1,0 @@
-- The Knowledge Sources modal (and the How Knowledge Works / Import Facts modals that share its recipe) can be scrolled all the way to the bottom again ([#11786](https://github.com/hivecommons/hive/issues/11786)): the dialog body is the single internal scroller instead of a nested fixed-height one, and an empty textarea under the pointer no longer swallows wheel events.

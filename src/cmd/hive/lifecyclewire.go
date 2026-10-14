@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -87,6 +88,81 @@ func recordLifecycleFromAudit(rec lifecycleRecorder, org string, audit github.Au
 	_, span := tracing.StartTimelineSpan(context.Background(), event)
 	store.Record(event)
 	span.End()
+	if kind == timeline.KindMerged {
+		recordMergedOnLinkedIssues(store, ref, audit.Agent, 0, attrs)
+	}
+}
+
+// recordMergedOnLinkedIssues folds a PR's merge onto the ISSUE journeys whose
+// pr_opened stage names that PR (recordPROpenedForIssues), closing their
+// pr→merge and open→merge SLA spans. The PR's own journey already has the
+// stage; linked issues get a copy with the same instant. No I/O.
+func recordMergedOnLinkedIssues(store *timeline.Store, prRef, agent string, at int64, attrs map[string]string) {
+	if store == nil {
+		return
+	}
+	for _, issue := range store.LinkedIssueRefs(prRef) {
+		copyAttrs := make(map[string]string, len(attrs))
+		for k, v := range attrs {
+			copyAttrs[k] = v
+		}
+		store.Record(timeline.Event{IssueRef: issue, Kind: timeline.KindMerged, Agent: agent, At: at, Attrs: copyAttrs})
+	}
+}
+
+// recordObservedMerge records a merge the PR-claim ledger OBSERVED (a human
+// merged outside the hive, or the governor's merge arrived via the sync) at
+// the instant it was seen, on the PR's journey and the issues it fixes. The
+// audit bridge covers hive-driven merges; this covers the rest, so pr→merge
+// has a sample whoever pressed the button. Dedupe makes overlap a refresh.
+func recordObservedMerge(rec lifecycleRecorder, org, repo string, number int, observedAt time.Time, actor, attribution string) {
+	if rec == nil {
+		return
+	}
+	store := rec.LifecycleTimeline()
+	if store == nil {
+		return
+	}
+	ref := timelineRef(org, repo, number)
+	if ref == "" {
+		return
+	}
+	attrs := map[string]string{"pr_ref": ref, "source": "observed", "actor": actor, "path": attribution}
+	event := timeline.Event{IssueRef: ref, Kind: timeline.KindMerged, Attrs: attrs}
+	if !observedAt.IsZero() {
+		event.At = observedAt.UnixMilli()
+	}
+	store.Record(event)
+	recordMergedOnLinkedIssues(store, ref, "", event.At, attrs)
+}
+
+// recordPROpenedForIssues records pr_opened on each ISSUE journey a new PR
+// names (Fixes/Closes), with pr_ref pointing at the PR's own "repo#N" so the
+// SLA derivation can tell an issue's journey from the PR's and later merges
+// can be folded back (LinkedIssueRefs). Guarded and nil-safe; no I/O.
+func recordPROpenedForIssues(rec lifecycleRecorder, org, agent, repo string, number int, url string, issues []int) {
+	if rec == nil || len(issues) == 0 {
+		return
+	}
+	store := rec.LifecycleTimeline()
+	if store == nil {
+		return
+	}
+	prRef := timelineRef(org, repo, number)
+	if prRef == "" {
+		return
+	}
+	for _, n := range issues {
+		if n <= 0 || n == number {
+			continue
+		}
+		store.Record(timeline.Event{
+			IssueRef: timelineRef(org, repo, n),
+			Kind:     timeline.KindPROpened,
+			Agent:    agent,
+			Attrs:    map[string]string{timeline.AttrPRRef: prRef, "url": url},
+		})
+	}
 }
 
 // recordPROpened records a pr_opened stage from the typed PR-opened hook (the

@@ -3347,6 +3347,49 @@
             }
           }
         }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update backend placement allow/deny policy",
+        "description": "Owner-only Settings write for the top-level `backends` policy in hive.yaml. `allow` is the optional allow-list for agent backend placement; `deny` is the deny-list and takes precedence.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "allow": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "deny": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated backend placement policy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/nous/status": {
@@ -7140,6 +7183,30 @@
           "403": {
             "description": "Requires owner role"
           }
+        }
+      }
+    },
+    "/api/config/sla": {
+      "get": {
+        "tags": ["Governor"],
+        "summary": "Get Delivery SLA targets",
+        "description": "Returns the configured `sla.targets` (0 = default), the effective targets with defaults filled in, and the defaults. Hours per span; the Throughput Delivery SLA panel colours its p50s and sparklines against these. Requires owner role.",
+        "responses": {
+          "200": { "description": "SLA targets", "content": { "application/json": { "schema": { "type": "object", "properties": { "targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } }, "effective_targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } }, "defaults": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } } } } } } },
+          "403": { "description": "Requires owner role" },
+          "503": { "description": "Config unavailable" }
+        }
+      },
+      "put": {
+        "tags": ["Governor"],
+        "summary": "Update Delivery SLA targets",
+        "description": "Replaces `sla.targets` with the given per-span hour budgets and persists hive.yaml. Each value must be between 0 (default) and 8760; invalid budgets are rejected before anything is mutated. Requires owner role.",
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } } } } } } },
+        "responses": {
+          "200": { "description": "Updated SLA targets", "content": { "application/json": { "schema": { "type": "object", "properties": { "targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } }, "effective_targets": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } }, "defaults": { "type": "object", "properties": { "start_to_pr_h": { "type": "number", "description": "Hours from the hive/in-progress start mark to the fixing PR opening (default 4)" }, "pr_to_merge_h": { "type": "number", "description": "Hours from the fixing PR opening to its merge (default 24)" }, "open_to_merge_h": { "type": "number", "description": "Hours from the issue opening to the fixing PR merging (default 72)" } } } } } } } },
+          "400": { "description": "Invalid body or budget" },
+          "403": { "description": "Requires owner role" },
+          "503": { "description": "Config unavailable" }
         }
       }
     },
@@ -24637,6 +24704,51 @@
           },
           "400": {
             "description": "Missing id, too long, or invalid characters"
+          }
+        }
+      }
+    },
+    "/api/config/classifier": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update tier classifier keyword overrides",
+        "description": "Owner-only Settings write for the top-level `classifier` keyword lists in hive.yaml. Empty lists keep the built-in defaults.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "simple_keywords": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "complex_signals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated tier classifier keyword overrides",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           }
         }
       }

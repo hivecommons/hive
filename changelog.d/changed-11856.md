@@ -1,1 +1,0 @@
-- dashboard: settings-parity ratchet (every hive.yaml key must have a Settings control) (#11856)

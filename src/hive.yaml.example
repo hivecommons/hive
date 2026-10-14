@@ -821,6 +821,7 @@ dashboard:
 #   is_public: false
 #   auto_snapshot: true
 #   auto_upgrade: true
+#   upgrade_drain_timeout_s: 2700  # self-upgrade waits up to this long for in-flight agent kicks (new kicks withheld); 0/unset = 45 min, negative disables
 #   task_status_push: true  # HIVE_HUB_TASK_STATUS_PUSH overrides; false stops only the separate task-status loop (restart required)
 #   contribute_labels_mode: deny
 #   contribute_deny_labels: [hold, wontfix]

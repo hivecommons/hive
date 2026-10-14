@@ -861,7 +861,7 @@ func TestMergeCIGate_NoCIOKDoesNotOverrideFailingCheck(t *testing.T) {
 }
 
 func TestMergeCIVerdictString(t *testing.T) {
-	for v, want := range map[mergeCIVerdict]string{mergeCIGreen: "green", mergeCIPending: "pending", mergeCIRed: "red", mergeCIUnverified: "unverified", mergeCIVerdict(9): "mergeCIVerdict(9)"} {
+	for v, want := range map[mergeCIVerdict]string{mergeCIGreen: "green", mergeCIPending: "pending", mergeCIRed: "red", mergeCIUnverified: "unverified", mergeCINeverCreated: "never-created", mergeCIVerdict(9): "mergeCIVerdict(9)"} {
 		if got := v.String(); got != want {
 			t.Errorf("%d.String() = %q, want %q", int(v), got, want)
 		}
@@ -970,5 +970,103 @@ func TestMergeCIGate_PolicyFailsClosed(t *testing.T) {
 	nilClient.SetMergeRequestPolicy(map[string]bool{"o/r": true}, nil) // must not panic
 	if nilClient.repoAllowsUnprotectedBase("o", "r") || nilClient.repoNoCIOK("o", "r") {
 		t.Fatalf("nil client must deny everything")
+	}
+}
+
+// A required check that was never created on a head where nothing else is
+// running is terminal once the head is older than the grace period (#11891):
+// the request is quarantined on the first verdict, never merged, and never
+// routed to the fix loop. Anything still in flight, or a head too young (or
+// of unknown age), keeps the ordinary pending wait.
+func TestMergeCIGate_RequiredCheckNeverCreated(t *testing.T) {
+	ts := func(d time.Duration) string { return fixedNow().Add(-d).UTC().Format(time.RFC3339) }
+	old, young := ts(2*time.Hour), ts(5*time.Minute)
+	cases := []struct {
+		name     string
+		checks   []ciCheck
+		runs     []ciRun
+		statuses []ciStatus
+		terminal bool
+	}{
+		{
+			name:     "all other checks complete on an old head",
+			checks:   []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success", startedAt: old}, {name: "check-hold-issues", status: "completed", conclusion: "success", startedAt: old}},
+			runs:     []ciRun{{id: 1, name: "CodeQL", status: "completed", conc: "success", jobs: 1, startedAt: old}},
+			terminal: true,
+		},
+		{
+			name:   "non-required check still in progress",
+			checks: []ciCheck{{name: "CodeQL", status: "in_progress", startedAt: old}},
+		},
+		{
+			name:     "non-required status still pending",
+			checks:   []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success", startedAt: old}},
+			statuses: []ciStatus{{context: "external", state: "pending"}},
+		},
+		{
+			name:   "workflow run with jobs still in flight",
+			checks: []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success", startedAt: old}},
+			runs:   []ciRun{{id: 2, name: "build", status: "in_progress", jobs: 1, startedAt: old}},
+		},
+		{
+			name:   "head younger than the grace period",
+			checks: []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success", startedAt: young}},
+		},
+		{
+			name:   "head age unknown",
+			checks: []ciCheck{{name: "CodeQL", status: "completed", conclusion: "success"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &ciFixture{defaultHead: "abc", checks: tc.checks, runs: tc.runs, statuses: tc.statuses}
+			var merges atomic.Int32
+			srv := ciGateServer(t, f, &merges)
+			defer srv.Close()
+			c := testMergeClient(t, srv.URL)
+			c.SetRequiredChecks(map[string]bool{"build-gate": true})
+			var hook atomic.Int32
+			c.SetMergeReEngageHook(func(string, int) bool { hook.Add(1); return true })
+
+			reqPath, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+			c.handleOneMergeRequest(context.Background(), reqPath, fixedNow)
+
+			if merges.Load() != 0 {
+				t.Fatalf("INVARIANT VIOLATED: merged with the required check never reported")
+			}
+			if hook.Load() != 0 {
+				t.Fatalf("a missing required check must never re-engage the fix loop, got %d calls", hook.Load())
+			}
+			resp := readMergeResult(t, reqPath)
+			if !tc.terminal {
+				if resp.Attempts != 0 || resp.CIWaits != 1 || strings.Contains(resp.Error, "never created") {
+					t.Fatalf("expected an ordinary pending wait, got %+v", resp)
+				}
+				mustExist(t, reqPath, "request parked on pending CI")
+				return
+			}
+			if resp.OK || resp.Attempts != 1 || !strings.Contains(resp.Error, `required check "build-gate" was never created`) {
+				t.Fatalf("expected a terminal never-created refusal, got %+v", resp)
+			}
+			for _, banned := range []string{"expected", "required status check", "has not succeeded"} {
+				if strings.Contains(resp.Error, banned) {
+					t.Fatalf("terminal reason must not contain %q (fix-loop vocabulary): %q", banned, resp.Error)
+				}
+			}
+			if isRequiredCheckMergeBlocker(resp.Error) || isConflictMergeBlocker(resp.Error) {
+				t.Fatalf("terminal reason must not classify as re-engageable: %q", resp.Error)
+			}
+			mustExist(t, reqPath+".exhausted", "never-created request quarantined on the first verdict")
+			mustNotExist(t, reqPath, "live request after quarantine")
+
+			// A re-request for the same head is refused with the recorded
+			// reason instead of being evaluated again.
+			again, _ := WriteMergeRequest(t.TempDir(), MergeRequest{Repo: "o/r", Number: 42, ExpectSHA: "abc", Agent: "scanner"})
+			c.handleOneMergeRequest(context.Background(), again, fixedNow)
+			if resp := readMergeResult(t, again); !strings.Contains(resp.Error, "exhausted on the same head") || !strings.Contains(resp.Error, "was never created") {
+				t.Fatalf("re-request on the same head must be refused with the recorded reason, got %+v", resp)
+			}
+			mustExist(t, again+".exhausted", "refused re-request")
+		})
 	}
 }

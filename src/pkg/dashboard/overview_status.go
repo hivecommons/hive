@@ -112,6 +112,7 @@ func (s *Server) statusWithOverviewBands(status *StatusPayload, now time.Time) *
 		}
 	}
 	out.ActionableNow = overviewActionableNow(&out, meta)
+	s.attachSLA(&out, now)
 	return &out
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // sharedCopilotConfigPath and sharedClaudeCredentialPath are vars (not consts)
@@ -248,13 +249,23 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 	}
 }
 
+// RedactPaneTokens masks GitHub tokens, sk- API keys and device-login lines in
+// text derived from an agent pane. It is the seam pkg/dashboard uses so both
+// packages apply the identical pane redaction without dashboard importing
+// pkg/logscrub directly (see internal/testutil/dashboard_import_allowlist.txt).
+func RedactPaneTokens(s string) string {
+	return logscrub.RedactPaneTokens(s)
+}
+
 func compactPaneTail(output string, maxLines int) string {
 	if maxLines <= 0 {
 		return ""
 	}
 	var lines []string
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
+		// Redact per line: the device-code line redactor is line-anchored and
+		// would swallow the whole tail once the lines are joined.
+		line = strings.TrimSpace(logscrub.RedactPaneTokens(logscrub.ScrubString(line)))
 		if line == "" {
 			continue
 		}
