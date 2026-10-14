@@ -246,6 +246,10 @@ type GitHubProxy struct {
 	// quiet. It latches only after inferenceAuthFailureThreshold failures and
 	// clears on the next success (self-heal). Never nil after NewGitHubProxy.
 	inferenceAuth *inferenceAuthState
+	// inferenceLastErrors holds the most recent inference error text returned
+	// to each agent so the dashboard can show it in full while Claude Code is
+	// still retrying (#11761). Never nil after NewGitHubProxy.
+	inferenceLastErrors *inferenceLastErrorState
 	// inferenceBudget tracks PROVIDER spending-limit refusals (a LiteLLM key
 	// past its daily dollar cap, a project out of quota). Distinct from
 	// inferenceAuth (a rejected key) and from the hive's own token budget in
@@ -493,6 +497,7 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 		inference:             newInferenceRouter(),
 		entitlements:          newEntitlementStore(),
 		inferenceAuth:         &inferenceAuthState{},
+		inferenceLastErrors:   newInferenceLastErrorState(),
 		inferenceBudget:       &inferenceBudgetState{},
 		gatewayHealth:         inferencehealth.NewStore(),
 		githubBudget:          newAgentGitHubBudget(time.Now),
@@ -2775,7 +2780,9 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			if p.gatewayHealth != nil {
 				p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
 			}
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, jsonEscape(inferenceBackendUnreachableMessage(err, upstreamURL))), http.StatusBadGateway)
+			unreachableMsg := inferenceBackendUnreachableMessage(err, upstreamURL)
+			p.recordAgentInferenceError(agentName, unreachableMsg, 0)
+			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, jsonEscape(unreachableMsg)), http.StatusBadGateway)
 			return
 		}
 		defer func() { _ = resp.Body.Close() }()
@@ -2799,8 +2806,10 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			// entitled set — cache it so the dashboard's model list narrows
 			// and its reconcile policy (#1848) can heal the agent.
 			p.recordInferenceError(route, agentName, resp.StatusCode, errBody)
+			backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
+			p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
 			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
-				jsonEscape(inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))))
+				jsonEscape(backendMsg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.StatusCode)
 			_, _ = w.Write([]byte(anthropicErr))
@@ -2810,6 +2819,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		// A 2xx means the gateway accepted the key — clear any latched
 		// inference-auth failure so a hive whose key was fixed self-heals.
 		p.recordInferenceSuccessFor(route)
+		p.clearAgentInferenceError(agentName)
 
 		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
@@ -2976,7 +2986,9 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		if p.gatewayHealth != nil {
 			p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
 		}
-		p.writeHTTPError(conn, http.StatusBadGateway, inferenceBackendUnreachableMessage(err, upstreamURL))
+		unreachableMsg := inferenceBackendUnreachableMessage(err, upstreamURL)
+		p.recordAgentInferenceError(agentName, unreachableMsg, 0)
+		p.writeHTTPError(conn, http.StatusBadGateway, unreachableMsg)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -2986,6 +2998,8 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		p.logger.Error("inference upstream error", "agent", agentName, "status", resp.StatusCode, "url", upstreamURL, "server", resp.Header.Get("Server"), "body", truncateBytes(errBody, 500))
 		// Same entitlement capture as the HTTP translator path.
 		p.recordInferenceError(route, agentName, resp.StatusCode, errBody)
+		backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
+		p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
 		anthropicErr := &http.Response{
 			StatusCode: resp.StatusCode,
 			ProtoMajor: 1,
@@ -2993,7 +3007,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(strings.NewReader(fmt.Sprintf(
 				`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
-				jsonEscape(inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server")))))),
+				jsonEscape(backendMsg)))),
 		}
 		_ = anthropicErr.Write(conn)
 		return
@@ -3002,6 +3016,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	// A 2xx means the gateway accepted the key — clear any latched
 	// inference-auth failure so a hive whose key was fixed self-heals.
 	p.recordInferenceSuccessFor(route)
+	p.clearAgentInferenceError(agentName)
 
 	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 

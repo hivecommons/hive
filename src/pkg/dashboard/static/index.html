@@ -950,7 +950,13 @@
     .terminal-copy-hint.backend-auth-error {
       border-color: color-mix(in srgb, var(--red) 55%, transparent);
       background: color-mix(in srgb, var(--red) 10%, var(--panel));
-      color: var(--text); font-weight: 600;
+      color: var(--text); font-weight: 600; flex-wrap: wrap;
+    }
+    /* #11761: the full proxy-side inference error must wrap, never clip —
+       clipping is exactly what Claude Code's own retry line does. */
+    .terminal-copy-hint-detail {
+      min-width: 0; flex: 1 1 100%; white-space: pre-wrap; overflow-wrap: anywhere;
+      font-family: var(--font-mono); font-weight: 400;
     }
     .terminal-copy-hint-dismiss {
       margin-left: auto; padding: var(--sp-0) var(--sp-1); border: 0; background: transparent;
@@ -8735,7 +8741,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </div>
         ${agentNowHtml(a)}
         <div class="oc-detail-blockers">${agentBlockerLineHtml(a)}${neverScheduledChipHtml(a, a.name)}</div>
-        ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
+        ${terminalCopyHintHtml(needsLoginDown, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
         ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
         ${subAgentModelsHtml(a)}
         <div class="oc-detail-indicators">${agentIndicators(a.name)}</div>
@@ -11197,12 +11203,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        sentence — that one reports whether a login URL was actually seen, so it
        earns the space and always wins over the persisted dismissal. */
     const TERMINAL_KEYBOARD_COPY_HINT = 'Selecting text in the terminal: hold ⇧ (Shift) while dragging — tmux mouse mode owns an ordinary drag. Then ⌘C (macOS) or Ctrl+Shift+C copies, and ⌘V or Ctrl+Shift+V pastes.';
-    function terminalCopyHintHtml(needsLogin, sessionUnavailable, agentName, loginURL, backendAuthStatus, backendAuthLastError, statusEvidence) {
+    function terminalCopyHintHtml(needsLogin, sessionUnavailable, agentName, loginURL, backendAuthStatus, backendAuthLastError, statusEvidence, inferenceLastError) {
       if (sessionUnavailable) return '';
+      /* #11761: inferenceLastError is the FULL error hive's inference proxy
+         returned to this agent. Claude Code clips the same text to one pane
+         row beside its "Retrying in Ns" countdown, and the pane-derived
+         backendAuthLastError/statusEvidence inherit that clipping — so the
+         proxy's copy wins whenever the server supplies it. */
+      const fullError = (inferenceLastError || '').trim();
       const backendDetail = backendAuthLastError || ((statusEvidence || '').includes('backend_auth_error') ? statusEvidence : '');
       if (backendDetail && /Inference backend (?:outage|rejected credentials) \(401\)/.test(backendDetail)) {
         const backendTitle = backendDetail.includes('Inference backend outage (401)') ? 'Inference backend outage (401).' : 'Inference backend rejected credentials (401).';
-        return `<div class="terminal-copy-hint backend-auth-error" role="note"><strong>${backendTitle}</strong> ${esc(backendDetail)} <span class="terminal-copy-hint-help">Check the inference proxy / API key; this is not an interactive login.</span></div>`;
+        const shown = fullError ? `<span class="terminal-copy-hint-detail">${esc(fullError)}</span>` : esc(backendDetail);
+        return `<div class="terminal-copy-hint backend-auth-error" role="note"><strong>${backendTitle}</strong> ${shown} <span class="terminal-copy-hint-help">Check the inference proxy / API key; this is not an interactive login.</span></div>`;
+      }
+      if (fullError && !needsLogin) {
+        return `<div class="terminal-copy-hint backend-auth-error" role="note"><strong>Inference backend error.</strong> <span class="terminal-copy-hint-detail">${esc(fullError)}</span> <span class="terminal-copy-hint-help">Full message from hive's inference proxy; the CLI may still be retrying.</span></div>`;
       }
       /* #5327: the copy control is for a LOGIN link. It is rendered only
          where one is expected — see terminalCopyUrlButtonHtml — rather than
@@ -11789,7 +11805,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${agentSpanHandle}
           <span class="working-indicator"></span>
           <div class="agent-name">${agentOrderHandle}<span class="dot ${dotState}" data-status="${statusAttr(dotState)}"${isOff ? ` title="${esc(agentOffTitle(a))}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''}${a.sandboxed ? ' ' + statusBadgeHTML('ready', 'sandboxed', 'Sandboxed runner active', 'done') : ''}${disabledBadge}${continuousBadge}${replicaBadge} ${agentPowerSwitchHtml(a)} ${isDisabled ? disabledEnableBtn : ''}${toggleBtn}${neverScheduledChipHtml(a, configTarget)} <button class="compact-toggle" data-action="toggleAgentCompact" data-arg0="${esc(a.name)}" data-stop="1" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> ${sessionActions} <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(configTarget)}" title="Configure ${esc(a.replicaBase ? (a.replicaBase + ' (base for ' + a.name + ')') : (a.displayName || a.name))}">⚙️</button></div>
-          ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence)}
+          ${terminalCopyHintHtml(needsLogin, agentSessionUnavailable(a), a.name, a.loginURL, a.backendAuthStatus, a.backendAuthLastError, a.statusEvidence, a.inferenceLastError)}
           <div class="agent-state ${isPoweredOff ? 'disabled' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${agentStateText(a)}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return statusBadgeHTML('blocked', 'blocked', a.statusEvidence, 'blocked');
             if (a.structuredStatus === 'NEEDS_CONTEXT') return statusBadgeHTML('needs_context', 'needs context', a.statusEvidence, 'needs-context');

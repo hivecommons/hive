@@ -405,6 +405,12 @@ renders like this:
   'gcp/gemini-3.1-pro-preview', 'aws/claude-sonnet-4-6', ...]"}}
 ```
 
+While Claude Code is still retrying, its TUI clips this line to one pane row and
+shares it with a right-aligned `Retrying in Ns · attempt N/M` countdown, so the
+message is cut off until every retry is exhausted. Hive's inference proxy built
+that message, so the agent's dashboard card shows the **full** text it returned
+(the red inference-backend banner) as soon as the failure happens (#11761).
+
 The status is the tell:
 
 | status | meaning | fix |

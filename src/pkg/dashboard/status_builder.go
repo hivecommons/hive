@@ -134,6 +134,10 @@ var (
 
 	inferenceAuthMu sync.RWMutex
 	inferenceAuthFn func() (errMsg string, since time.Time)
+	// inferenceLastError* carry the proxy's per-agent most recent inference
+	// error text (#11761) — the full message, not the clipped pane line.
+	inferenceLastErrorMu sync.RWMutex
+	inferenceLastErrorFn func(agent string) (msg string, status int, at time.Time, ok bool)
 	// inferenceBudget* carry the PROVIDER spending-limit signal (#4294) —
 	// distinct from the auth signal above and from the hive's own token budget.
 	inferenceBudgetMu sync.RWMutex
@@ -182,6 +186,76 @@ func getInferenceAuthFn() func() (errMsg string, since time.Time) {
 	inferenceAuthMu.RLock()
 	defer inferenceAuthMu.RUnlock()
 	return inferenceAuthFn
+}
+
+// SetInferenceLastErrorProvider registers a function reporting the most recent
+// inference error the proxy returned to one agent (#11761). Claude Code clips
+// its retry status line to one pane row beside the "Retrying in Ns" countdown,
+// so the pane-derived ProviderErrorLine is truncated until every retry is
+// exhausted; the proxy generated that message and holds it in full. Wired to
+// the proxy's LastInferenceError; nil in tests and on spokes with no proxy,
+// which agentInferenceLastError tolerates (the card then keeps the pane line).
+func SetInferenceLastErrorProvider(fn func(agent string) (msg string, status int, at time.Time, ok bool)) {
+	inferenceLastErrorMu.Lock()
+	defer inferenceLastErrorMu.Unlock()
+	inferenceLastErrorFn = fn
+}
+
+func getInferenceLastErrorFn() func(agent string) (msg string, status int, at time.Time, ok bool) {
+	inferenceLastErrorMu.RLock()
+	defer inferenceLastErrorMu.RUnlock()
+	return inferenceLastErrorFn
+}
+
+// inferenceLastErrorMaxAge bounds how old a proxy-recorded inference error may
+// be and still be shown on an agent card. Claude Code's whole retry ladder
+// (10 attempts, backoff capped near 40s) finishes well inside it, so a live
+// outage stays visible, while an error from an agent that has since gone quiet
+// without a successful call (which would clear it) ages out.
+const inferenceLastErrorMaxAge = 15 * time.Minute
+
+// agentInferenceLastError returns the proxy's full last-inference-error text
+// for proc, or ok=false when it should not be shown. Conservative gating: the
+// entry must be recent (inferenceLastErrorMaxAge) AND relevant to the agent's
+// current state — either hive already classified a provider/backend-auth
+// error from the pane, or the error happened during the current turn (newer
+// than the last kick), which is exactly the mid-retry window #11761 is about.
+// A successful inference call clears the proxy entry, so a recovered agent
+// never shows it.
+func agentInferenceLastError(proc *agent.AgentProcess, now time.Time) (msg string, at time.Time, ok bool) {
+	fn := getInferenceLastErrorFn()
+	if fn == nil || proc == nil {
+		return "", time.Time{}, false
+	}
+	m, _, when, found := fn(proc.Name)
+	m = strings.TrimSpace(m)
+	if !found || m == "" || when.IsZero() || now.Sub(when) > inferenceLastErrorMaxAge {
+		return "", time.Time{}, false
+	}
+	providerErr := proc.ProviderErrorClass != "" && now.Before(proc.ProviderErrorBackoffUntil)
+	backendAuthErr := proc.BackendAuth.Status != "" && proc.BackendAuth.Status != agent.BackendAuthOK
+	duringTurn := proc.LastKick != nil && when.After(*proc.LastKick)
+	if !providerErr && !backendAuthErr && !duringTurn {
+		return "", time.Time{}, false
+	}
+	return m, when, true
+}
+
+// preferFullInferenceError returns the proxy's full message in place of a
+// clipped pane-derived line. A pane summary such as "Inference backend
+// rejected credentials (401): <clipped>" keeps its classification prefix —
+// the dashboard keys its backend-auth banner title on it — and only the
+// clipped detail after it is replaced.
+func preferFullInferenceError(paneLine, full string) string {
+	if full == "" {
+		return paneLine
+	}
+	if strings.HasPrefix(paneLine, "Inference backend ") {
+		if i := strings.Index(paneLine, "): "); i >= 0 {
+			return paneLine[:i+len("): ")] + full
+		}
+	}
+	return full
 }
 
 // SetInferenceBudgetProvider registers a function reporting the proxy's current
@@ -1039,15 +1113,29 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 				}
 			}
 		}
+		// #11761: the proxy's full inference error beats the pane line Claude
+		// Code clips beside its retry countdown.
+		inferenceLastErr, inferenceLastErrAt, hasInferenceLastErr := agentInferenceLastError(proc, time.Now())
+		if hasInferenceLastErr {
+			a.InferenceLastError = inferenceLastErr
+			a.InferenceLastErrorAt = formatOptionalTime(inferenceLastErrAt)
+		}
 		if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
 			a.BackendAuthStatus = status
 			a.BackendAuthSince = formatOptionalTime(proc.BackendAuth.Since)
 			a.BackendAuthLastError = proc.BackendAuth.LastError
+			if hasInferenceLastErr {
+				a.BackendAuthLastError = preferFullInferenceError(a.BackendAuthLastError, inferenceLastErr)
+			}
 		}
 		if proc.ProviderErrorClass != "" && time.Now().Before(proc.ProviderErrorBackoffUntil) {
 			a.StructuredStatus = "BLOCKED"
 			a.StatusEvidence = "blocked: inference (" + proc.ProviderErrorClass + ")"
-			if line := strings.TrimSpace(proc.ProviderErrorLine); line != "" {
+			line := strings.TrimSpace(proc.ProviderErrorLine)
+			if hasInferenceLastErr {
+				line = preferFullInferenceError(line, inferenceLastErr)
+			}
+			if line != "" {
 				a.StatusEvidence += ": " + line
 			}
 			if continuousNow && !continuousState.BackoffUntil.IsZero() && time.Now().Before(continuousState.BackoffUntil) {

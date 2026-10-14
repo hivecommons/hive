@@ -4066,6 +4066,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// and the heartbeat builder reports it to the hub (both as an immediate
 		// advisory-staleness cause and as a dedicated inference-auth alert).
 		dashboard.SetInferenceAuthProvider(b.githubProxy.InferenceAuthError)
+		// #11761: the full per-agent inference error the proxy returned, so the
+		// agent card is not limited to Claude Code's clipped retry line.
+		dashboard.SetInferenceLastErrorProvider(b.githubProxy.LastInferenceError)
 		// #4294: the provider spending-limit signal, read by the eval cycle to
 		// raise an advisory and stop kicking agents at a gateway that is
 		// refusing on a money limit.

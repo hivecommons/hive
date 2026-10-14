@@ -729,6 +729,12 @@ type FrontendAgent struct {
 	BackendAuthStatus    string `json:"backendAuthStatus,omitempty"`
 	BackendAuthSince     string `json:"backendAuthSince,omitempty"`
 	BackendAuthLastError string `json:"backendAuthLastError,omitempty"`
+	// InferenceLastError is the full text of the most recent inference error
+	// hive's proxy returned to this agent (#11761), shown while Claude Code's
+	// own retry line is still clipped to one pane row. Empty when unknown,
+	// stale, or cleared by a later successful call.
+	InferenceLastError   string `json:"inferenceLastError,omitempty"`
+	InferenceLastErrorAt string `json:"inferenceLastErrorAt,omitempty"`
 	// Conditions is the watchdog reconciler's observed-truth condition set
 	// (Ready/Authenticated/Producing — RFC #4665), replacing trust in the
 	// State config echo. Empty until the watchdog's first sweep.
