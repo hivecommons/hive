@@ -1,0 +1,1 @@
+- Dashboard: the Delivery SLA tiles, sparklines, stale in-progress badge and per-repo table moved from the Overview to the Throughput section, following its repository filter and period pills; the Overview KPI strip is back to its pre-SLA layout. API, persistence and Settings → Thresholds targets are unchanged ([#11899](https://github.com/hivecommons/hive/issues/11899)).

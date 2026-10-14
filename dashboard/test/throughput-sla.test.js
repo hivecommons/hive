@@ -1,6 +1,7 @@
 'use strict';
 
-// Delivery SLA panel helpers in src/pkg/dashboard/static/index.html: the
+// Delivery SLA block (Throughput section) helpers in
+// src/pkg/dashboard/static/index.html: the
 // sparkline series builder (carry-forward over quiet days), the target
 // colour state, hour formatting and the tile markup. Pure functions run in a
 // vm context; no browser.
@@ -40,35 +41,37 @@ function load() {
     esc: s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     renderSparkline: (el, series, opts) => `<svg data-series="${series.join(',')}" data-color="${opts.color}"></svg>`,
     overviewKPISparkTitle: () => 'summary',
-    _overviewSLAWindow: '7d',
-    _overviewSLAExpanded: false,
+    prtHours: 24,
+    prtRepo: '',
+    _prtSLAExpanded: false,
   };
   vm.createContext(ctx);
   const src = [
-    extractConst('OVERVIEW_SLA_SPANS'),
-    extractConst('OVERVIEW_SLA_WARN_RATIO'),
-    extractFunction('overviewSLAState'),
+    extractConst('PRT_SLA_SPANS'),
+    extractConst('PRT_SLA_WARN_RATIO'),
+    extractFunction('prtSLAWindow'),
+    extractFunction('prtSLAState'),
     extractFunction('fmtSLAHours'),
-    extractFunction('overviewSLASeries'),
-    extractFunction('overviewSLASpark'),
-    extractFunction('overviewSLAInfoHTML'),
-    extractFunction('overviewSLATile'),
+    extractFunction('prtSLASeries'),
+    extractFunction('prtSLASpark'),
+    extractFunction('prtSLAInfoHTML'),
+    extractFunction('prtSLATile'),
   ].join('\n');
   vm.runInContext(src, ctx);
   return ctx;
 }
 
-test('overviewSLASeries carries the last p50 forward over empty days and never dips to zero', () => {
+test('prtSLASeries carries the last p50 forward over empty days and never dips to zero', () => {
   const ctx = load();
   const series = vm.runInContext(
-    'overviewSLASeries([{start_to_pr_p50: 2}, {start_to_pr_p50: 0}, {}, {start_to_pr_p50: 5}, {start_to_pr_p50: 0}], "start_to_pr_p50")', ctx);
+    'prtSLASeries([{start_to_pr_p50: 2}, {start_to_pr_p50: 0}, {}, {start_to_pr_p50: 5}, {start_to_pr_p50: 0}], "start_to_pr_p50")', ctx);
   assert.equal(JSON.stringify(series), '[2,2,2,5,5]');
-  assert.equal(JSON.stringify(vm.runInContext('overviewSLASeries(null, "x")', ctx)), '[]');
+  assert.equal(JSON.stringify(vm.runInContext('prtSLASeries(null, "x")', ctx)), '[]');
 });
 
-test('overviewSLAState colours against the target with a 1.5x amber band', () => {
+test('prtSLAState colours against the target with a 1.5x amber band', () => {
   const ctx = load();
-  const state = (p50, n, target) => vm.runInContext(`overviewSLAState(${p50}, ${n}, ${target})`, ctx);
+  const state = (p50, n, target) => vm.runInContext(`prtSLAState(${p50}, ${n}, ${target})`, ctx);
   assert.equal(state(3, 4, 4), 'ok');
   assert.equal(state(4, 1, 4), 'ok');
   assert.equal(state(5, 1, 4), 'warn');
@@ -88,24 +91,24 @@ test('fmtSLAHours picks minutes, hours or days', () => {
   assert.equal(fmt('NaN'), '—');
 });
 
-test('overviewSLATile renders the p50, n, target and a coloured sparkline', () => {
+test('prtSLATile renders the p50, n, target and a coloured sparkline', () => {
   const ctx = load();
   ctx.report = {
     windows: { '7d': { start_to_pr: { p50_h: 6.5, p95_h: 12, n: 3 } } },
     history: [{ start_to_pr_p50: 2 }, { start_to_pr_p50: 6.5 }],
   };
-  const html = vm.runInContext('overviewSLATile(OVERVIEW_SLA_SPANS[0], report, { start_to_pr_h: 4 })', ctx);
+  const html = vm.runInContext('prtSLATile(PRT_SLA_SPANS[0], report, { start_to_pr_h: 4 })', ctx);
   assert.match(html, /data-sla-state="breach"/);
   assert.match(html, /data-sla-span="start_to_pr"/);
-  assert.match(html, /overview-kpi-value[^>]*>6\.5h</);
+  assert.match(html, /class="mval"[^>]*>6\.5h</);
   assert.match(html, /n=3/);
   assert.match(html, /target 4\.0h/);
   assert.match(html, /data-series="2,6\.5"/);
-  assert.match(html, /data-color="var\(--overview-sla-color\)"/, 'sparkline inherits the tile state colour');
+  assert.match(html, /data-color="var\(--prt-sla-color\)"/, 'sparkline inherits the tile state colour');
   assert.match(html, /class="config-tooltip" role="tooltip"/, 'uses the shared tooltip helper markup');
 
-  const empty = vm.runInContext('overviewSLATile(OVERVIEW_SLA_SPANS[1], { windows: {}, history: [] }, { pr_to_merge_h: 24 })', ctx);
+  const empty = vm.runInContext('prtSLATile(PRT_SLA_SPANS[1], { windows: {}, history: [] }, { pr_to_merge_h: 24 })', ctx);
   assert.match(empty, /data-sla-state="none"/);
-  assert.match(empty, /overview-kpi-value[^>]*>—</);
+  assert.match(empty, /class="mval"[^>]*>—</);
   assert.doesNotMatch(empty, /<svg/, 'no sparkline without history');
 });
