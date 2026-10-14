@@ -254,6 +254,35 @@ tide requires, since nobody but the App authored it and the App cannot review
 its own work. The sweep merges such PRs directly over the GitHub REST API
 (squash), bypassing tide entirely.
 
+Neither the self-merge sweep nor the trusted-bot lane needs Prow's `lgtm` /
+`approved` labels: `tide` is a status GitHub reports but branch protection does
+not require, so the sweep merges once the **required** contexts are green.
+
+**Held and never-started required checks.** A required context can be missing
+from a PR head for reasons polling cannot cure. When the head was pushed by
+`github-actions[bot]` (for example a GITHUB_TOKEN autofix commit onto a
+Dependabot branch), GitHub creates the `pull_request` runs and holds every one
+for approval (`action_required`) under the repository's first-time-contributor
+policy; the required contexts never appear and the PR sits at
+`required-check-missing:<ctx>` indefinitely (hivecommons/hive#11552). For the
+App self-merge and trusted-bot lanes only, the sweep now inspects the head's
+workflow runs when a required check is missing:
+
+- held runs whose head repository is the base repository are approved once per
+  head (`POST /repos/{o}/{r}/actions/runs/{id}/approve`, routed through the
+  mutation boundary as `workflow_run_approve`); the tick logs
+  `automerge skip reason=approved-held-workflow-runs` and the next tick
+  evaluates the running checks. This needs the App's **Actions: Read and write**
+  permission; with read-only Actions the call fails, the sweep logs a one-line
+  warning naming the manual fix ("Approve and run" / `gh run approve`), and the
+  PR is reported as `required-check-held:<ctx>` instead of polled as pending.
+- a head with **no** `pull_request` runs at all that is older than 30 minutes is
+  reported as `required-check-never-started:<ctx>`: GitHub never scheduled the
+  workflows (seen on hivecommons/hive#11553), and only a new push, a
+  close/reopen, or `@dependabot rebase` will create them.
+- fork heads and human-authored lanes are never touched; a first-time
+  contributor's held run is still a person's decision.
+
 Per-repo `project.repo_policies[].auto_merge: false` is stronger than the
 hive-wide L6 setting: the merge relay refuses the repo, the self-authored sweep
 skips it before listing/merging, and the proxy returns 403 for direct

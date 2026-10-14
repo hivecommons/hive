@@ -1744,6 +1744,14 @@ type selfAuthoredPR struct {
 	// merge-time re-check) instead of the first-fetch head SHA — simulates a
 	// push landing between evaluation and merge.
 	headSHAOverride string
+	// updatedAt, when set, is the PR's updated_at (the sweep's head-age clock).
+	updatedAt string
+	// workflowRuns are returned by GET /actions/runs?head_sha=<head>.
+	workflowRuns []map[string]any
+	// approveStatus, when non-zero, is the status POST /actions/runs/{id}/approve
+	// answers with; approveCount counts those POSTs.
+	approveStatus int
+	approveCount  *int
 }
 
 func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]int, getCounts ...*map[int]int) *httptest.Server {
@@ -1779,7 +1787,7 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			if fetchCount[number] > 1 && pr.headSHAOverride != "" {
 				headSHA = pr.headSHAOverride
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			body := map[string]any{
 				"number":          pr.number,
 				"state":           "open",
 				"draft":           pr.draft,
@@ -1789,7 +1797,31 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 				"head":            map[string]string{"sha": headSHA},
 				"base":            map[string]string{"ref": "main"},
 				"labels":          issueLabels("", pr.extraLabels),
-			})
+			}
+			if pr.updatedAt != "" {
+				body["updated_at"] = pr.updatedAt
+			}
+			json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/actions/runs":
+			number := shaNumber(t, "/repos/acme/widget/commits/"+r.URL.Query().Get("head_sha")+"/status")
+			pr := byNumber[number]
+			runs := pr.workflowRuns
+			if runs == nil {
+				runs = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"total_count": len(runs), "workflow_runs": runs})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/actions/runs/") && strings.HasSuffix(r.URL.Path, "/approve"):
+			for _, pr := range byNumber {
+				if pr.approveCount != nil {
+					(*pr.approveCount)++
+				}
+				if pr.approveStatus != 0 {
+					w.WriteHeader(pr.approveStatus)
+					json.NewEncoder(w).Encode(map[string]string{"message": "Resource not accessible by integration"})
+					return
+				}
+			}
+			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main":
 			json.NewEncoder(w).Encode(map[string]any{"commit": map[string]string{"sha": "basesha"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
