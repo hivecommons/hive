@@ -82,3 +82,43 @@ func parseJSStringArray(t *testing.T, html, name string) []string {
 	}
 	return out
 }
+
+// TestKnowledgeIntegrationsModalUsesVendorIcons guards the vendor/project
+// glyph mapping: every registry connector type (plus Obsidian) must have an
+// inline SVG path in KC_TYPE_ICONS so the sidebar never falls back to the
+// generic plug for a known connector.
+func TestKnowledgeIntegrationsModalUsesVendorIcons(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+
+	start := strings.Index(html, "const KC_TYPE_ICONS = {")
+	if start < 0 {
+		t.Fatal("KC_TYPE_ICONS declaration not found")
+	}
+	end := strings.Index(html[start:], "};")
+	if end < 0 {
+		t.Fatal("KC_TYPE_ICONS declaration not terminated")
+	}
+	icons := html[start : start+end]
+	for _, typ := range append([]string{"obsidian"}, connector.DefaultRegistry().Types()...) {
+		if !strings.Contains(icons, `'`+typ+`': 'M`) {
+			t.Errorf("KC_TYPE_ICONS missing an SVG path for connector type %q", typ)
+		}
+	}
+	for _, want := range []string{
+		`function kbIntegrationIcon(type)`,
+		`'<span class="kb-layer-label">' + kbIntegrationIcon(t) + escapeHtml(kbIntegrationLabel(t)) + '</span>'`,
+		`class="kb-integration-icon" viewBox="0 0 24 24" aria-hidden="true"`,
+		`.kb-integration-icon { width: var(--kb-integration-icon); height: var(--kb-integration-icon);`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing vendor icon snippet %q", want)
+		}
+	}
+	if strings.Contains(html, `(t === 'obsidian' ? '🔮 ' : '🔌 ')`) {
+		t.Error("integrations sidebar still renders the generic plug emoji per connector")
+	}
+}
