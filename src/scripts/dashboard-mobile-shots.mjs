@@ -70,10 +70,31 @@ function selectViewports(filter) {
   return picked;
 }
 
+function onPath(name) {
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', ''] : [''];
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const full = path.join(dir, name + ext);
+      try {
+        fs.accessSync(full, fs.constants.X_OK);
+        return full;
+      } catch (_) {}
+    }
+  }
+  return '';
+}
+
+// Resolves bare names against PATH so a missing browser is a clean SKIP, not an
+// unhandled spawn ENOENT (the self-hosted runners ship no Chrome, #11810).
 function chromePath() {
   for (const candidate of CHROME_CANDIDATES) {
-    if (candidate.includes(path.sep) && fs.existsSync(candidate)) return candidate;
-    if (!candidate.includes(path.sep)) return candidate;
+    if (candidate.includes(path.sep)) {
+      if (fs.existsSync(candidate)) return candidate;
+      continue;
+    }
+    const found = onPath(candidate);
+    if (found) return found;
   }
   return '';
 }
@@ -176,7 +197,7 @@ async function main() {
   const themes = opts.theme ? [opts.theme] : THEMES;
   const bin = chromePath();
   if (!bin) {
-    console.log('SKIP: Chrome/Chromium not found');
+    console.log('SKIP: Chrome/Chromium not found (set CHROME_BIN or install google-chrome/chromium)');
     return;
   }
   fs.mkdirSync(opts.out, { recursive: true });
@@ -190,6 +211,10 @@ async function main() {
     '--window-size=1440,1000',
     'about:blank',
   ], { stdio: 'ignore' });
+  chrome.on('error', (err) => {
+    console.error(`ERROR: failed to launch ${bin}: ${err.message}`);
+    process.exit(1);
+  });
 
   async function cleanup() {
     chrome.kill('SIGTERM');

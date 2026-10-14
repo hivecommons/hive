@@ -29,6 +29,20 @@ jobs:
         with:
           node-version: '22'
 
+      # The self-hosted fleet ships no browser (#11810): fetch Chrome for Testing
+      # into RUNNER_TEMP and hand it to the harness via CHROME_BIN. Best-effort —
+      # if the download fails the harness prints SKIP instead of crashing.
+      - name: Install Chrome for Testing
+        id: chrome
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          out="$(npx --yes @puppeteer/browsers@2 install chrome@stable --path "$RUNNER_TEMP/chrome-for-testing" | tail -n 1)"
+          bin="${out#* }"
+          test -x "$bin"
+          echo "CHROME_BIN=$bin" >> "$GITHUB_ENV"
+          "$bin" --version
+
       - name: Capture mobile screenshots and overflow report
         run: node src/scripts/dashboard-mobile-shots.mjs --out dashboard-mobile-shots-out
 
