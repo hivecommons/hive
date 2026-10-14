@@ -1,0 +1,1 @@
+- the pane poller no longer re-emits an entire terminal frame as new output when one line changes in place (e.g. a turn timer); this stops repeated `agent output signal` log spam and prevents the blocked-action thrash breaker from over-counting a single on-screen line (#11911).
