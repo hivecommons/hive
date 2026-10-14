@@ -424,6 +424,34 @@ func TestCmdAgentAction_UnknownAgent(t *testing.T) {
 	}
 }
 
+func TestCmdAgentAction_EmptyAgentShowsUsage(t *testing.T) {
+	tests := []struct {
+		action string
+		args   string
+		want   string
+	}{
+		{"kick", "", "❌ Usage: `!kick <agent> [prompt]`"},
+		{"pause", "  ", "❌ Usage: `!pause <agent>`"},
+		{"resume", "", "❌ Usage: `!resume <agent>`"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.action, func(t *testing.T) {
+			b := NewService(&recordingBackend{}, Config{}, discardLogger())
+			b.SetAgentNames([]string{"scanner", "reviewer"})
+			result, _ := b.cmdAgentAction(ownerCommandContext(), tc.action, tc.args)
+			if !strings.HasPrefix(result, tc.want) {
+				t.Errorf("expected usage %q, got: %q", tc.want, result)
+			}
+			if strings.Contains(result, "Unknown agent") {
+				t.Errorf("unexpected unknown agent error: %q", result)
+			}
+			if !strings.Contains(result, "scanner, reviewer") {
+				t.Errorf("expected agent names listed, got: %q", result)
+			}
+		})
+	}
+}
+
 func TestCmdAgentAction_UnknownAction(t *testing.T) {
 	b := NewService(&recordingBackend{}, Config{}, discardLogger())
 	b.SetAgentNames([]string{"scanner"})

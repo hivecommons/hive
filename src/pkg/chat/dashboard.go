@@ -162,6 +162,10 @@ func (s *Service) cmdAgentAction(ctx context.Context, action, args string) (stri
 		prompt = parts[1]
 	}
 
+	if agentName == "" {
+		return s.agentActionUsage(action), nil
+	}
+
 	agentName = resolveAlias(agentName)
 
 	if !s.isValidAgent(agentName) {
@@ -177,6 +181,27 @@ func (s *Service) cmdAgentAction(ctx context.Context, action, args string) (stri
 		return s.dashboardResume(ctx, agentName)
 	}
 	return "❌ Unknown action", nil
+}
+
+func (s *Service) agentActionUsage(action string) string {
+	var usage string
+	switch action {
+	case "kick":
+		usage = "❌ Usage: `!kick <agent> [prompt]`"
+	case "pause":
+		usage = "❌ Usage: `!pause <agent>`"
+	case "resume":
+		usage = "❌ Usage: `!resume <agent>`"
+	default:
+		return "❌ Unknown action"
+	}
+	s.mu.RLock()
+	agents := s.agentNames
+	s.mu.RUnlock()
+	if len(agents) > 0 {
+		usage += fmt.Sprintf(" — agents: %s", strings.Join(agents, ", "))
+	}
+	return usage
 }
 
 func (s *Service) dashboardKick(ctx context.Context, agent, prompt string) (string, error) {
