@@ -6,9 +6,12 @@
 //
 // Loads src/pkg/dashboard/static/index.html in headless Chrome (CHROME_BIN or a
 // system chrome/chromium, same launch as dashboard-tooltip-smoke.mjs) at
-// 390x844@3, 375x667@2, 430x932@3 and 768x1024@2, in light and dark themes, and
-// screenshots: all sections collapsed, each section expanded alone, Settings,
-// Knowledge Sources and the terminal dialog. Phone viewports send an iOS user agent.
+// 390x844@3, 375x667@2, 430x932@3 and 768x1024@2 plus the landscape phone
+// viewports 844x390@3, 932x430@3, 667x375@2 and 740x360@3 (#11860), in light and
+// dark themes, and screenshots: all sections collapsed, each section expanded
+// alone, Settings, Knowledge Sources and the terminal dialog. Phone viewports send
+// an iOS user agent (Android for 740x360) and touch emulation, so the
+// pointer:coarse landscape tier in index.html applies.
 //
 // Output (default dir: dashboard-mobile-shots-out/):
 //   <viewport>-<theme>-<state>.png   one screenshot per shot
@@ -38,12 +41,18 @@ const STATE_SETTLE_MS = 250;
 const PROFILE_DIR = path.join(process.cwd(), '.chrome-dashboard-mobile-shots');
 const IOS_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
 const IPAD_UA = 'Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
 const VIEWPORTS = [
   { name: '390x844@3', width: 390, height: 844, dpr: 3, mobile: true, ua: IOS_UA },
   { name: '375x667@2', width: 375, height: 667, dpr: 2, mobile: true, ua: IOS_UA },
   { name: '430x932@3', width: 430, height: 932, dpr: 3, mobile: true, ua: IOS_UA },
   { name: '768x1024@2', width: 768, height: 1024, dpr: 2, mobile: true, ua: IPAD_UA },
+  // Landscape phones: wider than the 768px phone breakpoint, under 500px tall.
+  { name: '844x390@3', width: 844, height: 390, dpr: 3, mobile: true, ua: IOS_UA },
+  { name: '932x430@3', width: 932, height: 430, dpr: 3, mobile: true, ua: IOS_UA },
+  { name: '667x375@2', width: 667, height: 375, dpr: 2, mobile: true, ua: IOS_UA },
+  { name: '740x360@3', width: 740, height: 360, dpr: 3, mobile: true, ua: ANDROID_UA },
 ];
 const THEMES = ['light', 'dark'];
 
@@ -281,8 +290,10 @@ async function main() {
     })()`;
 
     for (const vp of viewports) {
+      const landscape = vp.width > vp.height;
       await send('Emulation.setDeviceMetricsOverride', {
         width: vp.width, height: vp.height, deviceScaleFactor: vp.dpr, mobile: vp.mobile,
+        screenOrientation: { type: landscape ? 'landscapePrimary' : 'portraitPrimary', angle: landscape ? 90 : 0 },
       });
       await send('Emulation.setUserAgentOverride', { userAgent: vp.ua });
       await send('Emulation.setTouchEmulationEnabled', { enabled: true });

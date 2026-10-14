@@ -409,8 +409,15 @@ not paste secrets or cluster-specific hostnames into docs, logs, or screenshots.
 and tablets. It loads `src/pkg/dashboard/static/index.html` in headless Chrome
 (`CHROME_BIN` or a system `google-chrome`/`chromium`, like
 `src/scripts/dashboard-tooltip-smoke.mjs`) at 390×844@3, 375×667@2, 430×932@3
-and 768×1024@2 in light and dark themes, and screenshots the collapsed page,
-each section expanded, Settings, Knowledge Sources and the terminal dialog.
+and 768×1024@2, plus the landscape phone viewports 844×390@3, 932×430@3,
+667×375@2 and 740×360@3, in light and dark themes, and screenshots the
+collapsed page, each section expanded, Settings, Knowledge Sources and the
+terminal dialog. Landscape phones are wider than the 768px phone breakpoint, so
+`index.html` carries a separate
+`(max-width: 1024px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse)`
+tier for them (full-width topbar with notch insets, one-row topbar, full-screen
+modals and chat with internal scroll); the harness enables touch emulation so
+that tier is exercised.
 
 ```sh
 node src/scripts/dashboard-mobile-shots.mjs --out dashboard-mobile-shots-out

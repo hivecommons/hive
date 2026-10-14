@@ -55,7 +55,9 @@ body .oc-version-hive{--oc-version-hive-size:28px!important;--oc-version-bee-siz
 body .oc-version-hive>svg{width:var(--oc-version-hive-size)!important;height:var(--oc-version-hive-size)!important;}
 body .oc-version-hive .oc-version-bee-orbit{width:var(--oc-version-hive-size)!important;height:var(--oc-version-hive-size)!important;overflow:visible!important;}
 body .oc-version-hive .oc-version-bee{width:var(--oc-version-bee-size)!important;height:calc(var(--oc-version-bee-size) * 0.667)!important;transform:translate3d(-50%,-50%,0) translate3d(var(--oc-version-bee-radius),0,0) rotate(90deg)!important;}
-@media (max-width:768px){body #oc-topbar.oc-topbar{left:var(--sp-0)!important;right:auto!important;width:100%!important;max-width:100%!important;}body #oc-topbar.oc-topbar>.oc-topbar-center{display:none!important;}}
+/* below 1025px the sidebar is an off-canvas drawer (index.html), so the topbar must not reserve --sidebar-w */
+@media (max-width:1024px){body #oc-topbar.oc-topbar{left:var(--sp-0)!important;right:auto!important;width:100%!important;max-width:100%!important;}}
+@media (max-width:768px){body #oc-topbar.oc-topbar>.oc-topbar-center{display:none!important;}}
 `
 
 const (
