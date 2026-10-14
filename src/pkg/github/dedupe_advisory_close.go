@@ -127,6 +127,7 @@ func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, 
 	}
 	ctx = WithRESTCaller(ctx, "hive:close_on_merge")
 	owner, repoName := c.splitRepo(repo)
+	fullRepo := owner + "/" + repoName
 	number := issue.GetNumber()
 
 	if verdict == dedupeVerdictYes {
@@ -141,7 +142,7 @@ func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, 
 	expired := !issue.GetCreatedAt().Time.IsZero() && now.Sub(issue.GetCreatedAt().Time) >= DedupeAdvisoryMaxAge
 	comment, reason := dedupeAdvisoryExpiredComment, "dedupe_advisory_expired"
 	if !expired {
-		refs := dedupeChecklistRefs(issue.GetBody(), refRepo, repo, number)
+		refs := dedupeChecklistRefs(issue.GetBody(), refRepo, fullRepo, number)
 		if len(refs) == 0 || len(refs) > dedupeAdvisoryMaxRefs {
 			res.Action, res.Reason = CloseOnMergeNoop, "dedupe_advisory_no_refs_to_track"
 			return res, true
@@ -222,7 +223,7 @@ func (c *Client) reclassifyDedupeChecklist(ctx context.Context, repo, owner, rep
 			return res
 		}
 	}
-	if opts.LabelDriven == nil || !opts.LabelDriven(repo) {
+	if opts.LabelDriven == nil || !(opts.LabelDriven(repo) || opts.LabelDriven(owner+"/"+repoName)) {
 		comments, err := c.listIssueComments(ctx, owner, repoName, number)
 		if err != nil {
 			res.Action, res.Reason = CloseOnMergeNoop, "issue_read_failed"
