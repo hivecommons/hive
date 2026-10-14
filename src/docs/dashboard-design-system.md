@@ -403,6 +403,26 @@ headers, visit the same route/viewport/theme, and pixel-diff the resulting PNGs.
 Record the viewport, theme, route, and intentional differences in the PR. Do
 not paste secrets or cluster-specific hostnames into docs, logs, or screenshots.
 
+### Mobile screenshots and overflow report
+
+`src/scripts/dashboard-mobile-shots.mjs` automates the recipe above for phones
+and tablets. It loads `src/pkg/dashboard/static/index.html` in headless Chrome
+(`CHROME_BIN` or a system `google-chrome`/`chromium`, like
+`src/scripts/dashboard-tooltip-smoke.mjs`) at 390×844@3, 375×667@2, 430×932@3
+and 768×1024@2 in light and dark themes, and screenshots the collapsed page,
+each section expanded, Settings, Knowledge Sources and the terminal dialog.
+
+```sh
+node src/scripts/dashboard-mobile-shots.mjs --out dashboard-mobile-shots-out
+node src/scripts/dashboard-mobile-shots.mjs --viewport 390x844 --theme dark   # quick local run
+```
+
+`overflow-report.json` lists findings (`viewport`, `theme`, `state`, `selector`,
+`bbox`, `kind`): `scroll-overflow`, `past-viewport`, `clipped-text` and
+`ellipsis-free-space`. The tool always exits 0 unless the harness itself fails.
+The non-blocking `Dashboard Mobile Shots` workflow runs it on dashboard PRs and
+uploads the screenshots and report as the `dashboard-mobile-shots` artifact.
+
 ## IA and naming glossary — implemented
 
 Implemented in [PR #8602](https://github.com/hivecommons/hive/pull/8602) for A10 `ui-ia-naming`. The source-of-truth details live in [dashboard glossary and sidebar IA](dashboard-glossary.md).
