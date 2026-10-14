@@ -1752,6 +1752,10 @@ type selfAuthoredPR struct {
 	// answers with; approveCount counts those POSTs.
 	approveStatus int
 	approveCount  *int
+	// headCommitAuthor is the login GET /commits/{head} reports as author;
+	// commentBodies collects POST /issues/{n}/comments bodies.
+	headCommitAuthor string
+	commentBodies    *[]string
 }
 
 func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]int, getCounts ...*map[int]int) *httptest.Server {
@@ -1871,6 +1875,24 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 			}
 			*merged = append(*merged, number)
 			json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "merge" + strconv.Itoa(number)})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/sha") && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/commits/"), "/"):
+			pr := byNumber[shaNumber(t, r.URL.Path)]
+			json.NewEncoder(w).Encode(map[string]any{
+				"sha":    "sha" + strconv.Itoa(pr.number),
+				"author": map[string]string{"login": pr.headCommitAuthor},
+				"commit": map[string]any{"author": map[string]string{"name": pr.headCommitAuthor}},
+			})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
+			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/issues/", "/comments")
+			var in struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if pr := byNumber[number]; pr != nil && pr.commentBodies != nil {
+				*pr.commentBodies = append(*pr.commentBodies, in.Body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"id": 1, "body": in.Body})
 		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/pulls/") && strings.HasSuffix(r.URL.Path, "/update-branch"):
 			number := pathNumber(t, r.URL.Path, "/repos/acme/widget/pulls/", "/update-branch")
 			if pr := byNumber[number]; pr != nil && pr.updateCount != nil {
