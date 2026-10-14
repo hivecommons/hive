@@ -14,6 +14,12 @@ var botControlPanelAuthors = []string{"renovate[bot]", "dependabot[bot]", "merge
 // `*renovate dashboard*`).
 var botControlPanelTitleFragments = []string{"dependency dashboard", "renovate dashboard"}
 
+// dedupeAdvisoryLabelName marks a dedupe-agent checklist that recommends no
+// close, relabel, or PR edit (hivecommons/hive#11864). It is filed without
+// needs-decision, so this label is what keeps it out of the work queue and
+// out of the held bucket; it is counted as a hive advisory report.
+const dedupeAdvisoryLabelName = "triage/advisory"
+
 // standingMetaIssueReason preserves the diagnostic predicate introduced by
 // #6158 while the typed classifier lets the repository breakdown distinguish
 // advisory reports from dependency dashboards without reimplementing policy.
@@ -41,7 +47,7 @@ func standingMetaIssueKindFor(title, author string, labels []string) standingMet
 		return standingMetaHiveAdvisory
 	}
 	for _, label := range labels {
-		if strings.EqualFold(label, advisoryLabelName) {
+		if strings.EqualFold(label, advisoryLabelName) || strings.EqualFold(label, dedupeAdvisoryLabelName) {
 			return standingMetaHiveAdvisory
 		}
 	}

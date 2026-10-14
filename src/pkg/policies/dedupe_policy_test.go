@@ -53,6 +53,21 @@ func TestDedupePolicyShips(t *testing.T) {
 		}
 	}
 
+	// Only an action-required checklist is parked as needs-decision; an
+	// advisory-only one carries a top-of-body verdict and the triage/advisory
+	// label instead (hivecommons/hive#11864).
+	for _, want := range []string{
+		"Decision required: <yes|no>",
+		"--label triage/advisory",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dedupe-issues.md is missing %q", want)
+		}
+	}
+	if !strings.Contains(body, "<!-- hive:dedupe-checklist repo=<owner/repo> -->\nDecision required: <yes|no>\n") {
+		t.Error("dedupe-issues.md template must put the Decision required verdict directly under the marker line")
+	}
+
 	// Recommendations only: the lane must forbid itself the actions whose
 	// absence makes the two reference checklists (cncf/endusers#1283,
 	// projectbluefin/dakota#1764) safe to post unattended.

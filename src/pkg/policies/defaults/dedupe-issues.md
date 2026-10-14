@@ -116,6 +116,8 @@ issues marks this issue as a tracker: the hive will never close it on a PR's
 
 ```markdown
 <!-- hive:dedupe-checklist repo=<owner/repo> -->
+Decision required: <yes|no>
+
 ## Summary
 
 Triage pass over the <N> open issues and <M> open PRs in <owner/repo> as of
@@ -170,6 +172,23 @@ for maintainers.
 Every row must carry the evidence you verified, in one clause: the shared path,
 the quoted error, the comment you are citing. "Looks similar" is not a reason.
 
+## Classifying the checklist: decision required or advisory only
+
+Line two of every body is the verdict, `Decision required: yes` or
+`Decision required: no`, so a maintainer learns from the top of the body whether
+there is anything to decide.
+
+- **Action-required** — `Decision required: yes`. The checklist recommends
+  closing an issue or PR, relabelling one, or editing a PR body: any row under
+  "Near-duplicates: close one", "Candidates to close as resolved", or "PR ↔
+  issue links to add", or a consolidation row that asks for an issue to be
+  closed into its tracker.
+- **Advisory only** — `Decision required: no`. Every row is a cross-link,
+  a merge-order note, a "related but distinct" pair, or a "checked and not
+  duplicates" entry; nothing asks anyone to close, relabel, or edit an item.
+
+If you are unsure which a row is, it is action-required.
+
 ## Posting — one checklist per repository, updated in place
 
 The marker line `<!-- hive:dedupe-checklist repo=<owner/repo> -->` is how you
@@ -191,10 +210,9 @@ gh search issues --repo <owner/repo> --state open --match body "hive:dedupe-chec
 - **No checklist exists and you found nothing** → file nothing. A checklist that
   says "no duplicates" is noise.
 
-The checklist asks the maintainer to decide what to close and what to merge, so
-it is a decision issue by construction, and it must stay out of the hive's work
-queue — an agent handed "close #1210 as superseded" as a task would do exactly the
-thing this lane is forbidden to do.
+Every checklist must stay out of the hive's work queue — an agent handed "close
+#1210 as superseded" as a task would do exactly the thing this lane is forbidden
+to do. How it stays out depends on the verdict on line two.
 
 **Park an issue that needs the maintainer's call.** If the issue body asks the
 maintainer to choose between options, or to approve before work can start, add
@@ -206,11 +224,30 @@ maintainer answers. Use the flag; do not name the label yourself.
 
 ${WRITING_GUIDE}
 
+An **action-required** checklist (`Decision required: yes`) asks the maintainer
+to decide what to close and what to merge, so it is parked:
+
 ```bash
 gh issue create --repo <owner/repo> --needs-decision \
   --title "triage: duplicate and overlapping open issues/PRs to consolidate" \
   --body-file /tmp/<unique>.md
 ```
+
+An **advisory-only** checklist (`Decision required: no`) has nothing to decide,
+so it is **not** parked: no `--needs-decision`, no "What to reply" notice, no
+`needs-decision` entry in the dashboard's held bucket. File it with the
+`triage/advisory` label instead, which keeps it out of the work queue:
+
+```bash
+gh issue create --repo <owner/repo> --label triage/advisory \
+  --title "triage: duplicate and overlapping open issues/PRs to consolidate" \
+  --body-file /tmp/<unique>.md
+```
+
+When you edit an existing checklist in place, recompute the verdict and rewrite
+line two. If an advisory checklist gains an action-required row, say so on the
+first line of the delta comment ("Decision required: yes — <row>") so watchers
+see it needs a call.
 
 Use `--body-file`, not `--body`: the checklist contains tables, backticks and
 quotes that shell quoting will mangle. Pick a filename unlikely to collide —
