@@ -3387,6 +3387,17 @@ func (b *boot) bootSupervision() {
 				st := b.gov.GetState()
 				return st.QueueIssues + st.QueuePRs, true
 			},
+			// Agents the governor deliberately does not kick are idle by
+			// design, not "alive but not producing" (#11910).
+			KickSuppressed: func(name string) string {
+				mode := strings.ToLower(string(b.gov.GetState().Mode))
+				ac, ok := b.cfg.Agents[name]
+				onDemand := (ok && ac.OnDemand) || b.onDemandFromPack[name]
+				if b.cfg.OffByCadence(name, mode, onDemand) {
+					return fmt.Sprintf("cadence paused in %s mode", mode)
+				}
+				return b.sched.ReviewerLaneIdleReason(name)
+			},
 		}
 		b.wd = watchdog.New(wdSettings, wdFleet, b.dashSrv, b.logger,
 			watchdog.WithAuthProbes(watchdogAuthProbes(b.cfg)))

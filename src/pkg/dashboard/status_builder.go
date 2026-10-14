@@ -960,10 +960,10 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 		// per-mode cadence and the same IsPaused semantics. offByCadence is the
 		// stricter "has a pause/off ENTRY" form (an ABSENT cadence is not off),
 		// which is why it checks the resolved cadence directly rather than
-		// negating ExpectedActive.
+		// negating ExpectedActive. config.OffByCadence is also the watchdog's
+		// not-producing gate (#11910), so the card and the banner agree.
 		modeCadence := cfg.CadenceValueForMode(name, currentMode)
-		offByCadence := modeCadence != "" && modeCadence.IsPaused() &&
-			!proc.Config.OnDemand && !onDemandSet[name]
+		offByCadence := cfg.OffByCadence(name, currentMode, proc.Config.OnDemand || onDemandSet[name])
 
 		// noCadence: NO governor mode names this agent in its cadence map and it
 		// has never been kicked, so nothing will ever schedule it — the silent
