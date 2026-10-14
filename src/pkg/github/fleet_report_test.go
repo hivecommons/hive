@@ -139,7 +139,6 @@ type selfReportFakeGitHub struct {
 	bodyPatches      []string
 	creates          atomic.Int64
 	reactions        atomic.Int64
-	existingBody     string
 	existingLabels   []string
 	refuseWithStatus int
 }
