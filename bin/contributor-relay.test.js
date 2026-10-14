@@ -14258,6 +14258,95 @@ test('#7924 without issues:write the relay leaves the label alone and the verdic
   }
 });
 
+// ── hivecommons/hive#11775 / #11776: a blocked verdict about the contributor's
+// OWN tooling is not blocked ──────────────────────────────────────────────────
+//
+// Bob's agent could not push to its fork (task token without the `workflow`
+// scope), printed `HIVE_VERDICT: blocked — the push to my fork is rejected…`
+// for two issues, and the relay labelled both `blocked`. Nothing outside the
+// repository was in the way, yet every hive's workflow gate parked the issues
+// with no PR and nothing coming to lift the label. Such a verdict is demoted
+// here: no label, no blocked marker on the wire, so the hub books an idle
+// completion and re-offers the issue to a contributor whose tooling works.
+
+const TOOLING_BLOCKED_REASON = "the push to my fork is rejected because the token lacks workflow scope, and syncing the fork's v5 is blocked by the gh wrapper; the commit is ready in";
+
+test('#11775 isToolingFailureBlockedReason separates push/token/credential failures from external dependencies', () => {
+  const relay = loadRelay({});
+  try {
+    for (const r of [
+      TOOLING_BLOCKED_REASON,
+      'push to my fork was rejected: refusing to allow a GitHub App to create or update workflow',
+      'Fix is ready locally but the push to my fork is rejected: the token lacks the `workflow` scope',
+      'git push failed with HTTP 403',
+      'permission denied when pushing the branch',
+      "the fork's v6 is behind upstream and the gh wrapper refuses to sync it",
+      'GH_TOKEN does not have the repo scope needed to open the PR',
+    ]) assert.ok(relay.isToolingFailureBlockedReason(r), `tooling: ${r}`);
+    for (const r of [
+      BLOCKED_REASON,
+      'waiting on projectbluefin/utah-packages to publish a factory image with the recipes',
+      'the upstream library has not released the API this needs',
+      'depends on hivecommons/hub#42 landing first',
+      '', null, undefined,
+    ]) assert.ok(!relay.isToolingFailureBlockedReason(r), `external: ${r}`);
+  } finally { teardown(relay); }
+});
+
+test('#11775 a tooling-failure blocked verdict is detected as blocked but flagged, and verdictWireFields drops the verdict', () => {
+  const relay = loadRelay({});
+  try {
+    const v = relay.detectNoWorkVerdict([`HIVE_VERDICT: blocked — ${TOOLING_BLOCKED_REASON}`]);
+    assert.strictEqual(v.verdict, 'blocked');
+    assert.strictEqual(v.toolingFailure, true);
+    assert.strictEqual(v.reason, TOOLING_BLOCKED_REASON);
+    // It is still a completion: the agent said it is done.
+    assert.strictEqual(relay.detectCompletionVerdict([`HIVE_VERDICT: blocked — ${TOOLING_BLOCKED_REASON}`], null).verdict, 'blocked');
+    // The older spelling is flagged the same way.
+    assert.strictEqual(relay.detectNoWorkVerdict([`HIVE_VERDICT: no_work_needed — blocked: ${TOOLING_BLOCKED_REASON}`]).toolingFailure, true);
+    // On the wire: the reason for the hub's log, but NO verdict — an old or
+    // new hub both book idle (short cooldown, re-offered).
+    assert.deepStrictEqual(relay.verdictWireFields(v), { verdict_reason: TOOLING_BLOCKED_REASON });
+    // A genuine blocked verdict is untouched.
+    const g = relay.detectNoWorkVerdict([`HIVE_VERDICT: blocked — ${BLOCKED_REASON}`]);
+    assert.strictEqual(g.toolingFailure, undefined);
+    assert.strictEqual(relay.verdictWireFields(g).verdict_blocked, true);
+  } finally { teardown(relay); }
+});
+
+test('#11775 end to end: a tooling-failure blocked verdict applies no label and reaches the hub without the blocked marker', () => {
+  const PANE = `HIVE_VERDICT: blocked — ${TOOLING_BLOCKED_REASON}\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE });
+  const log = console.log; const logged = []; console.log = (...a) => logged.push(a.join(' '));
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'newcomer', permissions: ['issues:write'] }));
+    dispatchTask(relay, 'ct-11775-tooling', 100);
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the verdict still completes the task');
+    assert.strictEqual(completed[0].verdict, undefined, 'no verdict on the wire: the hub books idle');
+    assert.strictEqual(completed[0].verdict_blocked, undefined);
+    assert.strictEqual(completed[0].verdict_reason, TOOLING_BLOCKED_REASON, 'the reason still reaches the hub log');
+    assert.strictEqual(completed[0].completion_signal, 'verdict');
+    assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0,
+      `no blocked label for a tooling failure: ${JSON.stringify(relay.__commands.filter(c => /gh /.test(c)))}`);
+    assert.ok(logged.some(l => /own tooling/.test(l) && /not applying the 'blocked' label/.test(l)), `expected the demotion to be logged, got ${JSON.stringify(logged)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#11775 markIssueBlocked refuses a tooling-failure reason even when called directly with issues:write', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    const before = relay.__commands.length;
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, TOOLING_BLOCKED_REASON);
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh /.test(c)).length, 0);
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, BLOCKED_REASON);
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh issue edit/.test(c)).length, 1, 'the genuine reason still labels');
+  } finally { console.log = log; teardown(relay); }
+});
+
 test('#7924 a label the repository does not define is created once and the add retried once; a second failure costs only a log line', () => {
   const PANE = `HIVE_VERDICT: blocked — ${BLOCKED_REASON}\n${IDLE_PANE}`;
   // First add fails (label missing) → create → retry lands.

@@ -5075,6 +5075,38 @@ const HIVE_VERDICT_TOKENS = [HIVE_VERDICT_COMPLETE, HIVE_VERDICT_NO_WORK, HIVE_V
 // sentinel with the blocked marker as the reason's first word. Read as the
 // blocked verdict, with the marker stripped from the reason.
 const NO_WORK_BLOCKED_REASON_RE = /^blocked\s*(?:(?:[:—–-])|(?:(?:on|by)\b))\s*/i;
+// BLOCKED_TOOLING_FAILURE_RE (hivecommons/hive#11775, #11776): a blocked
+// verdict whose reason describes the CONTRIBUTOR'S OWN tooling failing — the
+// push to the fork rejected, a token without the `workflow` scope, permission
+// denied, the gh/git wrappers, a stale fork — is not blocked on anything
+// outside the repository. Bob's agent printed exactly that for two issues it
+// could not push, the relay labelled both `blocked`, and the fleet-wide
+// workflow gate parked them with no PR and nothing coming to release them.
+// Such a verdict is demoted on the relay: no label, no blocked marker on the
+// wire, so the hub books an ordinary idle completion and re-offers the issue
+// to a contributor whose tooling works. Keep in sync with
+// blockedVerdictToolingFailurePattern in
+// src/pkg/dashboard/contribute_blocked_tooling.go, which is the hub's own
+// defence for relays older than this one.
+const BLOCKED_TOOLING_FAILURE_RE = new RegExp([
+  String.raw`\bpush(?:ed|ing)?\b.{0,80}\b(?:rejected|denied|refused|failed|forbidden|not permitted)\b`,
+  String.raw`\b(?:rejected|denied|refused|failed|cannot|can't|could not|unable to)\b.{0,40}\bpush\b`,
+  String.raw`\b(?:token|credential|PAT)s?\b.{0,60}\b(?:lacks?|lacking|missing|without|does not (?:have|carry|include|grant)|doesn't (?:have|carry|include|grant)|no|insufficient)\b.{0,40}\b(?:scope|permission)s?\b`,
+  String.raw`\b(?:workflow|repo|write)\s+scope\b`,
+  String.raw`\bHTTP\s*40[13]\b`, String.raw`\b40[13]\s+forbidden\b`, String.raw`\b401\s+unauthorized\b`,
+  String.raw`\bpermission denied\b`,
+  String.raw`\bauthentication failed\b`,
+  String.raw`\b(?:gh|go|git)[\s-]wrapper\b`,
+  String.raw`\bfork(?:'s)?\b.{0,80}\b(?:behind|out[\s-]of[\s-]date|stale|sync(?:ed|ing)?|diverged)\b`,
+  String.raw`\bsync(?:ing)?\b.{0,40}\bfork\b`,
+].join('|'), 'i');
+
+// isToolingFailureBlockedReason says whether a blocked verdict's reason is the
+// contributor's own environment failing rather than an external dependency.
+function isToolingFailureBlockedReason(reason) {
+  reason = String(reason || '').trim();
+  return !!reason && BLOCKED_TOOLING_FAILURE_RE.test(reason);
+}
 const NO_WORK_NEEDS_DECISION_REASON_RE = /^(?:decision|needs[_ -]?decision|maintainer[_ -]?decision)\s*[:—–-]\s*/i;
 const NATURAL_NEEDS_DECISION_REASON_RE = /(?:maintainer|design|policy|approval|\/approve).{0,80}(?:decision|approval|\/approve)|(?:decision|approval).{0,80}maintainer/i;
 const ALREADY_DONE_REASON_KIND = 'already_done';
@@ -5101,6 +5133,10 @@ function isNoWorkVerdict(v) {
 // src/pkg/dashboard/contribute_ledgers.go).
 function verdictWireFields(noWork) {
   if (!isNoWorkVerdict(noWork)) return {};
+  // A tooling-failure blocked verdict goes out with its reason but NO verdict
+  // (hivecommons/hive#11775): the hub books it idle on the short cooldown, and
+  // the reason still reaches its log and run record.
+  if (noWork.toolingFailure) return { verdict_reason: noWork.reason };
   const alreadyDone = alreadyDoneVerdictFields(noWork.reason);
   return {
     verdict: HIVE_VERDICT_NO_WORK,
@@ -5185,6 +5221,7 @@ function detectHiveVerdict(lines, wanted) {
 function withoutPaneIndex(v) {
   const out = { verdict: v.verdict, reason: v.reason, line: v.line };
   if (v.needsDecision) out.needsDecision = true;
+  if (v.toolingFailure) out.toolingFailure = true;
   return out;
 }
 
@@ -5234,7 +5271,11 @@ function detectHiveVerdicts(lines, wanted) {
     // compares it against the line that was already on the pane when the task's
     // prompt was delivered, which is how a verdict gets attributed to a task at
     // all (#5650).
-    found.push({ verdict, reason, line: lines[i], index: i, needsDecision });
+    // hivecommons/hive#11775: a blocked verdict about the contributor's own
+    // push/token/credential failure is demoted — the issue is not blocked on
+    // anything outside the repo and must not be labelled as such.
+    const toolingFailure = verdict === HIVE_VERDICT_BLOCKED && isToolingFailureBlockedReason(reason);
+    found.push({ verdict, reason, line: lines[i], index: i, needsDecision, toolingFailure });
   }
   return found;
 }
@@ -6705,6 +6746,10 @@ function markIssueLabel(task, reason, label, description, issueTag) {
 }
 
 function markIssueBlocked(task, reason) {
+  if (isToolingFailureBlockedReason(reason)) {
+    console.log(`Task ${task && task.task_id ? task.task_id : '(unknown)'}: blocked verdict describes this contributor's own tooling (${String(reason).trim().slice(0, 160)}) — not applying the '${BLOCKED_WORKFLOW_LABEL}' label; the hub re-offers the issue on the short cooldown (hivecommons/hive#11775)`);
+    return;
+  }
   markIssueLabel(task, reason, BLOCKED_WORKFLOW_LABEL, 'Waiting on something outside this repository; not contributor work until a human clears the label', 'blocked');
 }
 
@@ -8728,6 +8773,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     ALREADY_DONE_WORKFLOW_LABEL,
     isNoWorkVerdict,
     isAlreadyDoneNoWork,
+    isToolingFailureBlockedReason,
     verdictWireFields,
     alreadyDoneVerdictFields,
     markIssueBlocked,

@@ -1000,6 +1000,11 @@ type ContributeWSHub struct {
 	alreadyDoneMarker func(context.Context, string, int, ghpkg.IssueClaim, string, bool) error
 	// issuePRClaimMarker is the #8876 pending-label seam for verified PR claims.
 	issuePRClaimMarker func(context.Context, string, int, ghpkg.IssueClaim) error
+	// toolingBlockedReleaser is the seam for lifting a `blocked` label a relay
+	// applied on a contributor-tooling-failure verdict (see
+	// contribute_blocked_tooling.go); nil means use GHClient. Tests substitute
+	// a fake.
+	toolingBlockedReleaser func(ctx context.Context, repo string, number int, reporter, reason string) error
 
 	// recentlyFinished records, by task id, when a completed/failed run row was
 	// written (#7838). Consulted by the deferred disconnect booking so a task
@@ -3590,6 +3595,22 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// including the absent field every pre-#3987 relay sends — is
 			// idle, i.e. today's exact semantics.
 			verdict := normalizeCompletionVerdict(msg.Verdict, msg.VerdictBlocked, msg.VerdictNeedsDecision, verifiedPR)
+			// A blocked verdict whose reason is the contributor's OWN tooling
+			// failing (push rejected, token scope, credentials) is not
+			// blocked on anything outside the repo: book it idle so the
+			// issue is re-offered, and lift the `blocked` label the relay
+			// applied so the fleet's workflow gate does not park it until a
+			// human notices (hivecommons/hive#11775, #11776).
+			if downgraded, ok := reclassifyToolingBlockedVerdict(verdict, msg.VerdictReason); ok {
+				h.logger.Warn("[contribute-ws] blocked verdict reclassified: reason describes contributor tooling, not an external dependency",
+					"username", s.contributor.profile.GitHubUsername,
+					"task", msg.TaskID,
+					"verdict_reason", strings.TrimSpace(msg.VerdictReason))
+				verdict = downgraded
+				if completedTask != nil {
+					go h.releaseToolingBlockedIssue(completedTask, s.contributor.profile.GitHubUsername, strings.TrimSpace(msg.VerdictReason))
+				}
+			}
 			if completedTask != nil {
 				// #2393 item 7 + #2565: the full week-long cooldown is applied
 				// only for a VERIFIED PR; an unverified or no-PR completion gets

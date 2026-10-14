@@ -555,6 +555,18 @@ func buildTaskPromptBodyForAccess(repoFull, issueRef, title, sourceHint, baseBra
 			"instead of no_work_needed and stop: hive then holds the issue for the "+
 			"full cooldown and applies the repository's 'blocked' label, which a human "+
 			"lifts when the dependency clears. "+
+			// hivecommons/hive#11775: an agent whose push to its fork was
+			// rejected (token without the workflow scope) printed blocked
+			// for it, and two issues were parked fleet-wide behind a label
+			// nothing would lift. Spell out that a failure of the agent's
+			// own environment is never a blocked issue. The hub and relay
+			// also demote such a verdict defensively
+			// (contribute_blocked_tooling.go).
+			"A failure of YOUR OWN environment — the push to your fork rejected, a "+
+			"token missing a scope, a credential or permission error — is NOT a "+
+			"blocked issue: never print blocked for it; say what failed and print "+
+			"the complete line described below so the issue is offered to another "+
+			"contributor. "+
 			// #7924 (second half): leave the finding on GitHub, not just in this
 			// hub's ledger. fsdk-containers#299 was correctly no_work_needed
 			// (fix in open PR #289) with nothing linking the two on GitHub —
