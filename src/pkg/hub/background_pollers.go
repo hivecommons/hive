@@ -46,6 +46,8 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	start(s.StartNPSRelayPull)
 	// Fleet-alert bookkeeping persistence + hub-restart grace window (#11826).
 	start(s.startAlertStatePersistence)
+	// Live-vs-approved org reconciliation for assigned hives (#11847).
+	start(s.startPlaceholderOrgSweep)
 	s.githubActivityMu.Lock()
 	s.githubActivityCtx = ctx
 	feed := s.githubActivityFeed

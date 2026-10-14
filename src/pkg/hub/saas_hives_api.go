@@ -69,6 +69,11 @@ type MyHiveEntry struct {
 	Assigning   bool   `json:"assigning,omitempty"`
 	AssigningTo string `json:"assigningTo,omitempty"`
 
+	// PlaceholderOrg flags a hive whose claim was delivered with a real org but
+	// whose spoke still reports a slot-placeholder org while a primary repo is
+	// set (#11800): it runs without GitHub credentials, so surface it in Fleet.
+	PlaceholderOrg bool `json:"placeholderOrg,omitempty"`
+
 	// AssignedUnclaimed marks a placeholder wedged at Status=statusAssigned &&
 	// !ClaimDelivered: a claim was stamped but the spoke never reported the
 	// project back. Unlike Assigning — which is true only while a REACHABLE spoke
@@ -673,6 +678,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		//   - only show it when the spoke is genuinely reporting a DIFFERENT,
 		//     non-empty project (an empty reported org means the spoke just
 		//     restarted / hasn't beaten yet — not a fresh assignment).
+		entry.PlaceholderOrg = assignedPlaceholderOrgStuck(sh, entry.Org, entry.PrimaryRepo)
 		spokeReportsDifferentProject := entry.Org != "" && !strings.EqualFold(entry.Org, sh.Org)
 		if !entry.Upgrading && spokeReportsDifferentProject &&
 			// Empty curAPIURL deliberately: a GHE API-URL-only push is a config
