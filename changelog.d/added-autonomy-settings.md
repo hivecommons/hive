@@ -1,0 +1,1 @@
+- Settings → Features gains an "Autonomy policy" section exposing autonomy.auto_promote/auto_demote/promote_after/demote_on/max_level/cooldown_days (#11855).

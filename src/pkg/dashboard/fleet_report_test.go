@@ -3,12 +3,17 @@ package dashboard
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 )
 
 func TestFleetReportEvidenceIncludesRuntimeGatewayFaults(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
 	SetGatewayHealthProvider(func() []inferencehealth.GatewayStatus {
-		return []inferencehealth.GatewayStatus{{Name: "litellm", ErrorClass: inferencehealth.ClassAuth, HTTPStatus: 403}}
+		return []inferencehealth.GatewayStatus{
+			{Name: "litellm", ErrorClass: inferencehealth.ClassAuth, HTTPStatus: 403},
+			{Name: "copilot", ErrorClass: inferencehealth.ClassOther, HTTPStatus: 502},
+		}
 	})
 	t.Cleanup(func() { SetGatewayHealthProvider(nil) })
 	s := &Server{}
@@ -16,8 +21,21 @@ func TestFleetReportEvidenceIncludesRuntimeGatewayFaults(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("evidence len=%d, want 1: %#v", len(got), got)
 	}
-	if got[0].Component != "backend-auth" || got[0].ErrorClass != "auth http 403" || !got[0].Attributable {
+	// Auth faults are no longer a hive-code-defect symptom here: the
+	// inferencehealth store reports them as the inference_auth_failed
+	// runtime class (#11868), so only the upstream fault remains.
+	if got[0].Component != "inference-gateway" || got[0].ErrorClass != "other http 502" || !got[0].Attributable {
 		t.Fatalf("unexpected evidence: %#v", got[0])
+	}
+}
+
+func TestFleetReportEvidenceIncludesRuntimeErrorClasses(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
+	fleetreport.Observe(fleetreport.ClassRestartStorm, "quality", "restart storm: quality restarted 5 times in 10m", "")
+	s := &Server{}
+	got := s.buildFleetReportEvidence(&StatusPayload{})
+	if len(got) != 1 || got[0].Class != fleetreport.ClassRestartStorm || !got[0].Attributable {
+		t.Fatalf("evidence = %#v", got)
 	}
 }
 

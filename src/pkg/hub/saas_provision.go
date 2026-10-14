@@ -3204,6 +3204,11 @@ data:
           threshold: 10
           guide: 2h
           scanner: 2h
+      # Hosted spokes run under the shared App, which is installed on
+      # hivecommons/hive, so they file self-reports there by default
+      # (#11868, #11878). Operators flip this off in Settings.
+      fleet_report:
+        enabled: true
     github:
 {{- if .UseApp}}
       app_id: {{.AppID}}

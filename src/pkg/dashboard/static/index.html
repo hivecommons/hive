@@ -19313,8 +19313,9 @@ function burnAreaChart() {
       dto = dto || {};
       const reports = Array.isArray(dto.reports) ? dto.reports : [];
       const recoveries = Array.isArray(dto.recoveries) ? dto.recoveries : [];
-      setSectionSummary('fleet-report-section', `${reports.length} reports · ${recoveries.length} recovered`);
-      if (reports.length === 0 && recoveries.length === 0) { section.style.display = 'none'; return; }
+      const selfReports = fleetReportSelfReportRow(dto);
+      setSectionSummary('fleet-report-section', `${reports.length} reports · ${recoveries.length} recovered${selfReports.count ? ` · ${selfReports.count} filed` : ''}`);
+      if (reports.length === 0 && recoveries.length === 0 && selfReports.count === 0) { section.style.display = 'none'; return; }
       const dryRun = dto.dry_run !== false;
       const mk = (r, i, recovered) => {
         r = r || {};
@@ -19353,8 +19354,26 @@ function burnAreaChart() {
       const reportHtml = reports.map((r, i) => mk(r, i, false)).join('');
       const recoveryHtml = recoveries.map((r, i) => mk(r, i, true)).join('');
       section.style.display = '';
-      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale" style="margin-top:var(--sp-0)">Persistent ACMM shortfalls and hive-code defect symptoms. Reports contain shape-only scrubbed evidence.</span></div><ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
+      card.innerHTML = `<div class="reco-level-flow"><span class="reco-badge ${dryRun ? 'stay' : 'raise'}">${dryRun ? 'dry-run preview' : 'filing enabled'}</span><span class="reco-rationale">Persistent ACMM shortfalls, hive-code defect symptoms and unusual runtime errors. Reports contain shape-only scrubbed evidence.</span></div>${selfReports.html}<ul class="reco-checklist">${reportHtml}${recoveryHtml}</ul>`;
       applySectionCollapse('fleet-report-section');
+    }
+
+    // fleetReportSelfReportRow summarises the hivecommons/hive issues this
+    // hive has filed or joined (hivecommons/hive#11868): "Self-reports: N
+    // open (last: <class> → #NNN)". Every value comes from GitHub or the
+    // local state file and is escaped; links open the issue in a new tab.
+    function fleetReportSelfReportRow(dto) {
+      const open = (dto && dto.state && dto.state.open) || {};
+      const entries = Object.keys(open).map(fp => Object.assign({ fingerprint: fp }, open[fp] || {}))
+        .filter(e => Number(e.number) > 0 && !e.recovered && !e.closed_at);
+      if (entries.length === 0) return { count: 0, html: '' };
+      entries.sort((x, y) => String(y.posted_at || '').localeCompare(String(x.posted_at || '')));
+      const last = entries[0];
+      const lastLabel = `${escapeHtml(last.class || last.criterion || last.trigger || 'report')} → ${last.url ? `<a href="${escapeHtml(last.url)}" target="_blank" rel="noopener">#${escapeHtml(String(last.number))}</a>` : `#${escapeHtml(String(last.number))}`}${last.joined ? ' (joined)' : ''}`;
+      const links = entries.slice(0, 8).map(e => e.url
+        ? `<a href="${escapeHtml(e.url)}" target="_blank" rel="noopener" title="${escapeHtml(e.class || e.trigger || '')}">#${escapeHtml(String(e.number))}</a>`
+        : `#${escapeHtml(String(e.number))}`).join(', ');
+      return { count: entries.length, html: `<div class="crit-detail" data-fleet-selfreports>Self-reports: <strong>${entries.length} open</strong> (last: ${lastLabel})${entries.length > 1 ? ` · ${links}` : ''}</div>` };
     }
 
     async function fetchHiveAdvice() {
@@ -39575,6 +39594,39 @@ function burnAreaChart() {
           ${renderClaimsTTLFields(f)}
         </div>
 
+        <div class="qa-section">
+          <div class="qa-section-title">Autonomy policy ${settingHelpMark('settings', 'features', 'Autonomy policy', `Opt-in automatic ACMM level changes driven by retro evidence (<code>autonomy.*</code> in hive.yaml). Both toggles default off; the advisor otherwise only recommends and a human applies the change.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.autonomyAutoPromote ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="autonomyAutoPromote"></div>
+            <span class="config-toggle-label">Auto-promote <code>autonomy.auto_promote</code> ${settingHelpMark('settings', 'features', 'Auto-promote', `When on, the hive raises its own ACMM level once the retro evidence clears the thresholds below. Off by default.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.autonomyAutoDemote ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="autonomyAutoDemote"></div>
+            <span class="config-toggle-label">Auto-demote <code>autonomy.auto_demote</code> ${settingHelpMark('settings', 'features', 'Auto-demote', `When on, the hive lowers its own ACMM level after the retro pattern selected in "Demote on". Off by default.`)}</span>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Promote after (clean signals) ${settingHelpMark('settings', 'features', 'Promote after', `Consecutive qualifying retro signals required before an automatic promotion (default 3). <code>autonomy.promote_after</code>`)}</label>
+              <input type="number" min="1" step="1" value="${esc(String(f.autonomyPromoteAfter || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyPromoteAfter" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Cooldown (days) ${settingHelpMark('settings', 'features', 'Autonomy cooldown', `Minimum days between automatic level changes (default 7). <code>autonomy.cooldown_days</code>`)}</label>
+              <input type="number" min="1" step="1" value="${esc(String(f.autonomyCooldownDays || 7))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyCooldownDays" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Max level ${settingHelpMark('settings', 'features', 'Autonomy max level', `Highest ACMM level automatic promotion may reach (1-6, default 6; capped by the hive ceiling). <code>autonomy.max_level</code>`)}</label>
+              <input type="number" min="1" max="6" step="1" value="${esc(String(f.autonomyMaxLevel || 6))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyMaxLevel" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Demote on ${settingHelpMark('settings', 'features', 'Autonomy demote on', `Which retro pattern triggers an automatic demotion: a rolled-back run, a PR reworked after review, or either (default rollback). <code>autonomy.demote_on</code>`)}</label>
+              <select data-change-action="markDirty" data-arg0="features" data-arg1="autonomyDemoteOn" data-arg-types="s,s,v">
+                ${['rollback', 'rework', 'either'].map(v => `<option value="${v}"${(f.autonomyDemoteOn || 'rollback') === v ? ' selected' : ''}>${v}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="qa-note">Both toggles are opt-in; the ACMM advisor keeps recommending changes for a human to apply while they are off.</div>
+        </div>
+
         <div style="margin-top:18px;padding-top:var(--sp-6);border-top:1px solid var(--border)">
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.prFollowUpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="prFollowUpEnabled"></div>
@@ -39863,7 +39915,38 @@ function burnAreaChart() {
           </div>
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
-        ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}`;
+        ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
+        ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}`;
+    }
+
+    // renderGovFleetReportSection renders the self-report settings
+    // (hivecommons/hive#11868): whether this hive files or joins issues on
+    // the report repo when it notices unusual errors in itself. Values are
+    // marked dirty under the 'fleet-report' section, which the generic Save
+    // dispatcher PUTs to /api/config/governor/fleet-report. Keys:
+    // governor.fleet_report.enabled, governor.fleet_report.repo,
+    // governor.fleet_report.max_per_day.
+    function renderGovFleetReportSection(fr) {
+      fr = fr || {};
+      const on = fr.enabled === true;
+      const sourceNote = fr.explicit ? 'set in hive.yaml' : (fr.hub_managed ? 'default for hub-managed hives: on' : 'default for self-hosted hives: off (dry-run preview only)');
+      const openReports = Array.isArray(fr.open_reports) ? fr.open_reports : [];
+      const openHtml = openReports.length === 0
+        ? '<span class="qa-note">No self-reports filed or joined yet.</span>'
+        : `<span class="qa-note">Self-reports: ${openReports.length} open — ${openReports.slice(0, 6).map(e => e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">#${esc(String(e.number))}</a> ${esc(e.class || e.trigger || '')}${e.joined ? ' (joined)' : ''}` : `#${esc(String(e.number))}`).join(', ')}</span>`;
+      return `
+        <div class="qa-section">
+          <div class="qa-section-title">Self-Reported Issues</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${on ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="fleet-report" data-key="enabled"></div>
+            <span class="config-toggle-label">File issues upstream when this hive hits unusual errors ${settingHelpMark('settings', 'features', 'File issues upstream when this hive hits unusual errors', `When on, persistent problems Hive notices in itself (restart storms, repeated kick failures, recovered panics, degraded model discovery, inference auth failures, advisory post failures, ACMM shortfalls) are filed as issues on the report repo — or, when a matching issue is already open, this hive adds itself to it instead. Evidence is shape-only and scrubbed; never tokens or prompts. Rate-limited to the per-day cap below, one new filing per hour, and never re-filed within 7 days of being closed. ${esc(sourceNote)}.`)}</span>
+          </div>
+          <div class="config-field-row qa-hours">
+            <div class="config-field"><label>Report repo ${settingHelpMark('settings', 'features', 'Report repo', `owner/repo that receives self-reports. Default hivecommons/hive. Hub-managed hives without write access relay through the hub, which files under the App identity.`)}</label><input type="text" value="${esc(fr.repo || '')}" placeholder="hivecommons/hive" data-change-action="markDirty" data-arg0="fleet-report" data-arg1="repo" data-arg-types="s,s,v"></div>
+            <div class="config-field"><label>Max new issues per day ${settingHelpMark('settings', 'features', 'Max new issues per day', `Cap on NEW issues this hive may open per 24h. Joining an existing issue never counts. 0 means the default (5).`)}</label><input type="number" min="0" step="1" value="${fr.max_per_day || 0}" placeholder="5" data-change-action="markDirty" data-arg0="fleet-report" data-arg1="max_per_day" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="qa-schedule">${fr.hive_slug ? `<span class="qa-note">Identified upstream as <code>hive/${esc(fr.hive_slug)}</code>. </span>` : ''}${openHtml}</div>
+        </div>`;
     }
 
     // renderGovReplanSection renders the stall-replan lane settings: the

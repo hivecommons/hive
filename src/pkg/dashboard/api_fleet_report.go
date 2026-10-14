@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 // fleetReportStatePath is where the issue-lifecycle state (posted /
@@ -73,11 +74,39 @@ func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string
 		ACMMLevel:  status.ACMMLevel,
 		Unmet:      unmet,
 		Evidence:   s.buildFleetReportEvidence(status),
+		HiveSlug:   s.FleetReportHiveSlug(),
+		Cluster:    os.Getenv("HIVE_CLUSTER_ID"),
+		Now:        time.Now(),
 	}
 	res := fleetreport.Evaluate(obs, state, dryRun)
 	s.persistFleetReportState(res.State)
 	status.FleetReport = &res
 	return &res
+}
+
+// FleetReportHubManaged reports whether this spoke is hub-managed (a
+// heartbeat key was injected), which is the hosted default signal for
+// governor.fleet_report.enabled (#11868).
+func (s *Server) FleetReportHubManaged() bool {
+	return spoke.SpokeHeartbeatKey() != ""
+}
+
+// FleetReportHiveSlug is the identity a self-report names: the hub-assigned
+// hive ID for a hub-managed spoke, "" (anonymous digest) otherwise.
+func (s *Server) FleetReportHiveSlug() string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || !s.FleetReportHubManaged() {
+		return ""
+	}
+	return strings.TrimSpace(s.deps.Config.HiveID)
+}
+
+// FleetReportFilesUpstream resolves governor.fleet_report against the
+// hub-managed signal.
+func (s *Server) FleetReportFilesUpstream() bool {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return false
+	}
+	return s.deps.Config.Governor.FleetReport.FilesUpstream(s.FleetReportHubManaged())
 }
 
 func (s *Server) loadFleetReportState() fleetreport.State {
@@ -112,12 +141,14 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		return nil
 	}
 	var out []fleetreport.Evidence
+	// Runtime error classes (#11868) observed by the hook sites since boot.
+	out = append(out, fleetreport.DefaultTracker().Evidence()...)
 	for _, fault := range s.GatewayHealthState() {
 		class := strings.ToLower(strings.TrimSpace(fault.ErrorClass))
 		component := "inference-gateway"
-		if class == "auth" {
-			component = "backend-auth"
-		} else if class == "budget" {
+		if class == "auth" || class == "budget" {
+			// auth is reported as the inference_auth_failed runtime class by
+			// the inferencehealth store itself; budget is the operator's.
 			continue
 		}
 		errClass := class
@@ -160,18 +191,35 @@ func maxInt(a, b int) int {
 }
 
 func (s *Server) MarkFleetReportPosted(fp string, number int, url string, openedByHive bool, body string) {
+	s.UpdateFleetReportState(func(st *fleetreport.State) {
+		open := st.Open[fp]
+		open.Number = number
+		open.URL = url
+		open.OpenedByHive = open.OpenedByHive || openedByHive
+		open.BodyHash = fleetreport.StableBodyHash(body)
+		open.PostedAt = time.Now().UTC()
+		open.Deferred = ""
+		st.Open[fp] = open
+	})
+}
+
+// UpdateFleetReportState applies fn to the persisted state under the
+// load/persist pair. The publisher uses it for the join/rate-limit bookkeeping
+// (#11868) so pkg/dashboard owns the file and cmd/hive owns the policy.
+func (s *Server) UpdateFleetReportState(fn func(st *fleetreport.State)) {
 	st := s.loadFleetReportState()
 	if st.Open == nil {
 		st.Open = map[string]fleetreport.OpenIssue{}
 	}
-	open := st.Open[fp]
-	open.Number = number
-	open.URL = url
-	open.OpenedByHive = open.OpenedByHive || openedByHive
-	open.BodyHash = fleetreport.StableBodyHash(body)
-	st.Open[fp] = open
+	if st.Criteria == nil {
+		st.Criteria = map[string]fleetreport.CriterionState{}
+	}
+	fn(&st)
 	s.persistFleetReportState(st)
 }
+
+// FleetReportState returns a copy of the persisted state.
+func (s *Server) FleetReportState() fleetreport.State { return s.loadFleetReportState() }
 
 func (s *Server) FleetReportOpenIssue(fp string) (fleetreport.OpenIssue, bool) {
 	st := s.loadFleetReportState()

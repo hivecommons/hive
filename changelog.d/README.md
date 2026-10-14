@@ -10,6 +10,10 @@ deleting the fragments in the same release commit.
 
 ## Format
 
+- **Location:** this directory, at the repository root. Never `src/changelog.d/`:
+  the compiler does not read it, and the guard rejects fragments there with
+  the `git mv` that fixes it (#11919).
+
 - **Filename:** `<category>-<pr-or-slug>.md`, where `<category>` is one of
   `added`, `changed`, `deprecated`, `fixed`, `security` — it picks the `###`
   subsection your entry lands under, which in turn drives the semver bump

@@ -1,5 +1,5 @@
 // Package fleetreport decides when a spoke should report hive-attributable
-// ACMM shortfalls upstream to hivecommons/hive.
+// ACMM shortfalls and unusual runtime errors upstream to hivecommons/hive.
 //
 // The package is deterministic and side-effect free. Callers provide weekly
 // observations, persisted state, and any runtime-error evidence; this package
@@ -46,6 +46,12 @@ type Evidence struct {
 	Periodicity  string        `json:"periodicity,omitempty"`
 	Severity     string        `json:"severity"`
 	Attributable bool          `json:"attributable"`
+	// Runtime-error fields (TriggerRuntimeError). Class is empty for the two
+	// older triggers.
+	Class       string    `json:"class,omitempty"`
+	Message     string    `json:"message,omitempty"`
+	Diagnostics string    `json:"diagnostics,omitempty"`
+	FirstSeen   time.Time `json:"first_seen,omitempty"`
 }
 
 type Observation struct {
@@ -57,11 +63,19 @@ type Observation struct {
 	ACMMLevel  int
 	Unmet      []acmmadvisor.Criterion
 	Evidence   []Evidence
+	// HiveSlug is the hub-assigned slug for a hub-managed spoke. Empty keeps
+	// the hive anonymous (instance digest only) in runtime-error reports.
+	HiveSlug string
+	Cluster  string
+	// Now is the evaluation clock; zero means time.Now().
+	Now time.Time
 }
 
 type State struct {
 	Criteria map[string]CriterionState `json:"criteria,omitempty"`
 	Open     map[string]OpenIssue      `json:"open,omitempty"`
+	// Filings records NEW issue creations (for the daily cap / min gap).
+	Filings []time.Time `json:"filings,omitempty"`
 }
 
 type CriterionState struct {
@@ -76,6 +90,18 @@ type OpenIssue struct {
 	Criterion    string `json:"criterion,omitempty"`
 	Trigger      string `json:"trigger,omitempty"`
 	BodyHash     string `json:"body_hash,omitempty"`
+	Class        string `json:"class,omitempty"`
+	// Joined is true when this hive added itself to an issue it did not open.
+	Joined bool `json:"joined,omitempty"`
+	// PostedAt is when this hive last wrote (create/comment) to the issue.
+	PostedAt time.Time `json:"posted_at,omitempty"`
+	// LastSeenCommentAt is when this hive last posted an "also seen" comment.
+	LastSeenCommentAt time.Time `json:"last_seen_comment_at,omitempty"`
+	// ClosedAt is set when the upstream issue was found closed; such a
+	// fingerprint is not re-filed inside the closed cooldown.
+	ClosedAt time.Time `json:"closed_at,omitempty"`
+	// Deferred is the last reason a filing was held back (rate limit etc).
+	Deferred string `json:"deferred,omitempty"`
 }
 
 type Report struct {
@@ -88,6 +114,9 @@ type Report struct {
 	Trigger     string     `json:"trigger"`
 	Evidence    []Evidence `json:"evidence"`
 	Recovered   bool       `json:"recovered,omitempty"`
+	// Class and Hive are set for TriggerRuntimeError reports.
+	Class string `json:"class,omitempty"`
+	Hive  string `json:"hive,omitempty"`
 }
 
 type Result struct {
@@ -190,7 +219,7 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 			continue
 		}
 		for _, ev := range obs.Evidence {
-			if !ev.Attributable {
+			if !ev.Attributable || ev.Class != "" {
 				continue
 			}
 			fp := Fingerprint(ev.ErrorClass, ev.Component, version, key)
@@ -217,7 +246,7 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 	}
 
 	for _, ev := range obs.Evidence {
-		if !ev.Attributable || !isHiveCodeEvidence(ev) || coveredByACMM[evidenceKey(ev)] {
+		if ev.Class != "" || !ev.Attributable || !isHiveCodeEvidence(ev) || coveredByACMM[evidenceKey(ev)] {
 			continue
 		}
 		fp := DefectFingerprint(ev.ErrorClass, ev.Component, ev.Agent, version)
@@ -238,6 +267,34 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 		}
 	}
 
+	now := obs.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for _, ev := range obs.Evidence {
+		if ev.Class == "" || !IsKnownClass(ev.Class) {
+			continue
+		}
+		fp := RuntimeFingerprint(ev.Class, ev.Message, version)
+		report := BuildRuntimeReport(obs, ev, fp, instance, obs.HiveSlug, version, commit, now)
+		active[fp] = true
+		open := state.Open[fp]
+		wasRecovered := open.Recovered
+		if wasRecovered {
+			open.Recovered = false
+			open.BodyHash = ""
+		}
+		open.Trigger = TriggerRuntimeError
+		open.Class = ev.Class
+		state.Open[fp] = open
+		// A runtime report is re-emitted while the hive has not yet written
+		// to an issue for it; once posted, the publisher owns the once-per-24h
+		// "also seen" cadence, so the body hash is not compared here.
+		if dryRun || wasRecovered || open.Number == 0 || open.PostedAt.IsZero() {
+			res.Reports = append(res.Reports, report)
+		}
+	}
+
 	for fp, open := range state.Open {
 		if open.Recovered || active[fp] {
 			continue
@@ -250,6 +307,8 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 			}
 		case TriggerHiveDefect:
 			res.Recoveries = append(res.Recoveries, RecoveryReport(open, Report{Fingerprint: fp, InstanceID: instance, Trigger: trigger}))
+		case TriggerRuntimeError:
+			res.Recoveries = append(res.Recoveries, RecoveryReport(open, Report{Fingerprint: fp, InstanceID: instance, Trigger: trigger, Class: open.Class, Hive: obs.HiveSlug}))
 		}
 	}
 
@@ -340,6 +399,9 @@ func recoverySubject(report Report) string {
 	if criterion := strings.TrimSpace(report.Criterion); criterion != "" {
 		return fmt.Sprintf("this spoke no longer observes the ACMM shortfall for `%s`.", criterion)
 	}
+	if report.Trigger == TriggerRuntimeError {
+		return fmt.Sprintf("this hive no longer observes runtime error class `%s`.", report.Class)
+	}
 	return "this spoke no longer observes the reported hive-code defect."
 }
 
@@ -424,6 +486,7 @@ func cloneState(in State) State {
 	for k, v := range in.Open {
 		out.Open[k] = v
 	}
+	out.Filings = append([]time.Time(nil), in.Filings...)
 	return out
 }
 

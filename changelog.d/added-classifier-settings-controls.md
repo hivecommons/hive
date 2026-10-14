@@ -1,0 +1,1 @@
+- Expose the top-level `classifier.simple_keywords` and `classifier.complex_signals` keyword lists in dashboard Settings.

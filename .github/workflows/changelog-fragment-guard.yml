@@ -126,6 +126,9 @@ jobs:
           # Read from the event payload, not the API: needs no token scope and
           # therefore behaves identically on fork PRs (#4440's lesson).
           HAS_NO_CHANGELOG_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
+          # The guard copies any src/changelog.d/ fragments it rejected here so
+          # the autofix and comment steps below can act on them (#11919).
+          MISPLACED_OUT: ${{ runner.temp }}/changelog-misplaced.txt
         run: |
           set -euo pipefail
           src/scripts/check-changelog-fragment.sh "$BASE_REF"
@@ -168,9 +171,20 @@ jobs:
           PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MISPLACED_FILE: ${{ runner.temp }}/changelog-misplaced.txt
         run: |
           set -euo pipefail
           echo "pushed=false" >> "$GITHUB_OUTPUT"
+          # A fragment under src/changelog.d/ is never compiled. Generating a
+          # title-only twin at the root would bury the hand-written entry
+          # (#11919) — fail with the move instruction instead.
+          if [ -s "$MISPLACED_FILE" ]; then
+            while IFS= read -r m; do
+              [ -z "$m" ] && continue
+              echo "::error file=$m::misplaced fragment — not autofixing. Run: git mv $m changelog.d/$(basename "$m")"
+            done < "$MISPLACED_FILE"
+            exit 1
+          fi
           # Only the "no fragment" failure is auto-fixable; a malformed
           # fragment (wrong name / no bullet) is the author's to correct.
           if [ -s fragments.txt ]; then
@@ -237,6 +251,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AUTOFIX_PUSHED: ${{ steps.autofix.outputs.pushed }}
           AUTOFIX_FILE: ${{ steps.autofix.outputs.fragment }}
+          MISPLACED_FILE: ${{ runner.temp }}/changelog-misplaced.txt
         with:
           script: |
             const marker = '<!-- changelog-fragment-guard -->';
@@ -245,7 +260,12 @@ jobs:
             const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: number, per_page: 100 });
             const existing = comments.find(c => c.user?.type === 'Bot' && (c.body || '').includes(marker));
             const failed = process.env.GUARD_OUTCOME === 'failure';
-            if (!failed) {
+            // Misplaced src/changelog.d/ fragments get their own comment with
+            // the exact git mv commands (next step); the generic "fragment
+            // needed" text would be wrong there (#11919).
+            const fs = require('fs');
+            const misplaced = fs.existsSync(process.env.MISPLACED_FILE) && fs.readFileSync(process.env.MISPLACED_FILE, 'utf8').trim() !== '';
+            if (!failed || misplaced) {
               if (existing) {
                 await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
               }
@@ -295,4 +315,65 @@ jobs:
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+            }
+
+      # Fragments under src/changelog.d/ are never compiled (#11919). Fork PRs
+      # cannot be pushed to and are skipped by the steps above, so every PR —
+      # fork or not — gets ONE sticky comment with the exact git mv commands,
+      # removed again once nothing is misplaced. Best-effort: if the token is
+      # read-only (some fork configurations) the commands are still in the job
+      # summary and the guard's ::error annotations.
+      - name: Post or update misplaced-fragment comment
+        if: ${{ always() && steps.sync_branch.outputs.skip != 'true' }}
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MISPLACED_FILE: ${{ runner.temp }}/changelog-misplaced.txt
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- hive-changelog-misplaced -->';
+            const number = Number(process.env.PR_NUMBER);
+            const { owner, repo } = context.repo;
+            const files = fs.existsSync(process.env.MISPLACED_FILE)
+              ? fs.readFileSync(process.env.MISPLACED_FILE, 'utf8').split('\n').map(s => s.trim()).filter(Boolean)
+              : [];
+            const cmds = files.map(f => 'git mv ' + f + ' changelog.d/' + f.split('/').pop());
+            if (cmds.length) {
+              await core.summary
+                .addHeading('Misplaced changelog fragments', 3)
+                .addRaw('Fragments live in `changelog.d/` at the repository root, not under `src/`. Run:\n\n')
+                .addCodeBlock(cmds.join('\n'), 'sh')
+                .write();
+            }
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: number, per_page: 100 });
+              const existing = comments.find(c => c.user?.type === 'Bot' && (c.body || '').includes(marker));
+              if (!cmds.length) {
+                if (existing) {
+                  await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
+                }
+                return;
+              }
+              const body = [
+                marker,
+                '### Changelog fragment in the wrong directory',
+                '',
+                'Fragments live in `changelog.d/` at the **repository root**, not under `src/`. Files under `src/changelog.d/` are never compiled into `CHANGELOG.md`, so the **changelog-fragment-guard** check fails. Move them and push:',
+                '',
+                '```sh',
+                ...cmds,
+                'git commit -s -m "changelog: move fragment to repo-root changelog.d/"',
+                '```',
+                '',
+                'See `changelog.d/README.md` (#5675, #11919). This comment is removed automatically once nothing is misplaced.',
+              ].join('\n');
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+              }
+            } catch (e) {
+              core.warning('could not post the misplaced-fragment comment (' + e.message + '); the git mv commands are in the job summary');
             }

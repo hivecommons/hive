@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -236,6 +237,7 @@ func publishAdvisoryDigest(
 	if err == nil {
 		logger.Info("posted advisory digest", "repo", route.primaryRepo, "issue", route.issueNum, "findings", digest.TotalCount, "via", "app")
 		recordPosted(digest.TotalCount, digest.OverflowCount)
+		fleetreport.Clear(fleetreport.ClassAdvisoryPostFailed, route.primaryRepo)
 		if deps.onWriteProven != nil {
 			deps.onWriteProven(ctx)
 		}
@@ -245,6 +247,15 @@ func publishAdvisoryDigest(
 	// err.Error() is the same string logged below — log-safe, never key material.
 	recordError(err.Error())
 	logger.Warn("failed to post advisory digest via app", "repo", route.primaryRepo, "issue", route.issueNum, "error", err)
+	switch classifyAdvisoryPostError(err) {
+	case advisoryPostRateLimited:
+		logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", route.primaryRepo)
+		return advisoryPublishFailed
+	default:
+	}
+	// Self-report (#11868): a refused advisory write (403, repo moved, auth)
+	// is hive-side plumbing; a rate limit is not (handled above).
+	fleetreport.Observe(fleetreport.ClassAdvisoryPostFailed, route.primaryRepo, "advisory digest post failed: "+err.Error(), "")
 	switch classifyAdvisoryPostError(err) {
 	case advisoryPostWriteForbidden:
 		if deps.recordWriteForbidden != nil {
@@ -256,8 +267,6 @@ func publishAdvisoryDigest(
 		} else if deps.onWriteForbidden != nil {
 			deps.onWriteForbidden(ctx)
 		}
-	case advisoryPostRateLimited:
-		logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", route.primaryRepo)
 	default:
 		if deps.onAuthFailure != nil {
 			deps.onAuthFailure(ctx)

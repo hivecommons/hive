@@ -82,6 +82,7 @@ var auditSensitiveActions = map[string]bool{
 	"config_governor_gateway_upsert":        true,
 	"config_governor_general_advanced":      true,
 	"config_governor_health":                true,
+	"config_governor_fleet_report":          true,
 	"config_governor_hub":                   true,
 	"config_governor_inference_auth":        true,
 	"config_governor_labels":                true,

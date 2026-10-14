@@ -14,18 +14,31 @@ never sends.
 ```yaml
 governor:
   fleet_report:
-    file_upstream: false   # default
+    enabled: true              # tri-state; unset = hosted on, self-hosted off
+    repo: hivecommons/hive     # default
+    max_per_day: 5             # cap on NEW issues per 24h (joins never count)
+    file_upstream: false       # legacy alias for enabled: true
 ```
 
-`file_upstream: false` (the default, and the zero value) is **dry-run**: the
-hive evaluates everything, shows you the reports it *would* file on the
-dashboard, and writes nothing upstream. The publish path returns immediately
-when dry-run is set, before any GitHub client is touched.
+`enabled` is a tri-state ([#11868](https://github.com/hivecommons/hive/issues/11868)):
 
-Set `file_upstream: true` to allow filing. There is one knob, and it is
-all-or-nothing: there is no per-trigger opt-in.
+- **unset** (the default) resolves to **on** for hub-managed hives — those
+  booted with `HIVE_HEARTBEAT_KEY` by the hub, which run under the
+  hivecommons-hive GitHub App and so can write to `hivecommons/hive` — and
+  to **off** (dry-run) for self-hosted hives whose PAT is scoped to their
+  own repos;
+- `enabled: false` forces dry-run everywhere;
+- `enabled: true` (or the legacy `file_upstream: true`) forces filing.
 
-## The two triggers
+Dry-run means the hive evaluates everything, shows you the reports it
+*would* file on the dashboard, and writes nothing upstream. The publish path
+returns immediately when dry-run is set, before any GitHub client is touched.
+There is one knob, and it is all-or-nothing: there is no per-trigger opt-in.
+The same settings are exposed in the dashboard under Settings → Governor →
+"Self-Reported Issues" (owner role) and over
+`GET`/`PUT /api/config/governor/fleet-report`.
+
+## The three triggers
 
 A report is only ever built from evidence marked **attributable** — evidence
 the hive believes points at hive's own behaviour rather than at your repos,
@@ -59,6 +72,32 @@ reporter cannot report on itself.
 
 Evidence already covered by an `acmm-shortfall` report in the same pass is
 skipped, so one underlying fault does not file two issues.
+
+### `runtime-error`
+
+Unusual runtime errors the hive notices in itself. "Unusual" is an explicit
+allow-list of classes defined in `pkg/fleetreport/runtime.go`; a condition
+only becomes a report once it crosses that class's threshold, and the report
+title is `[selfreport] <class>: <short message>`.
+
+| Class | Fires when | Severity |
+|---|---|---|
+| `restart_storm` | the restart-storm breaker pauses an agent | high |
+| `kick_failed_repeatedly` | ≥3 consecutive undeliverable kicks for one agent | medium |
+| `panic_recovered` | a dashboard handler recovered from a panic | high |
+| `model_discovery_degraded` | model discovery has been failing for >1h | medium |
+| `inference_auth_failed` | 401/403 from an inference backend (LiteLLM, Copilot) | high |
+| `advisory_post_failed` | the advisory digest could not be posted (rate-limit skips excluded) | medium |
+
+Deferred to follow-ups (defined, not yet wired): `upgrade_stalled`,
+`data_disk_pressure`, `github_app_token_mint_failed`,
+`unexpected_http_5xx_from_hub`, `unclassified_error_repeated`.
+
+Each report attaches the class, severity, count and window, the normalised
+message (numbers, hashes, paths and quoted strings replaced by placeholders)
+and a redacted diagnostics excerpt inside `<details>`. Secrets are never
+collected; the diagnostics go through the same scrubber as the other
+triggers.
 
 ## Exactly what leaves the hive
 
@@ -106,6 +145,29 @@ fingerprint:
   duplicate. The reaction is how "N hives see this" gets counted.
 - **Not found** → it opens one issue.
 
+For `runtime-error` reports the hive goes further and **joins first**. If no
+fingerprint match exists it looks for an open issue labelled
+`hive/selfreport` for the same class, then for a human-filed issue whose
+title or body mentions the class keywords (for example "restart storm",
+"model discovery degraded", "LiteLLM 401"). When any of those matches, the
+hive adds itself to that issue instead of opening a new one:
+
+- one comment `Also seen on **<hive>** (v<version>, <cluster>) at <time>`
+  carrying a `<!-- hive:selfreport-seen hive=<slug> fp=… -->` marker and its
+  diagnostics excerpt — at most once per hive per 24h;
+- its `hive/<slug>` label (created if missing) and `hive/selfreport`;
+- a bump to the `Affected hives (N): …` block in the issue body, edited
+  idempotently between `<!-- hive:selfreport-affected -->` markers.
+
+A new issue is opened only when nothing matches. Rate limits apply to **new**
+filings only: at most `max_per_day` per hive per 24h, at least 1h between
+new filings of different classes, and a fingerprint that was closed upstream
+within the last 7 days is never re-filed (treated as known / fixed pending
+rollout). Filing is also deferred while the GitHub API budget is not
+`normal`. Hub-managed hives whose credential is refused by the report repo
+(403/404) relay the report to the hub's `POST /api/selfreport/ingest` with
+their heartbeat bearer, and the hub files or joins under the App identity.
+
 The hive also remembers the body hash of what it last posted, so a condition
 that persists unchanged does not re-comment every cycle. It re-reports only
 when the body actually changes, when the issue is gone, or when a previously
@@ -115,6 +177,11 @@ When the condition clears, the hive posts a **recovery** comment
 (`self-recovered: yes`). If the hive opened that issue itself, it also closes
 it; if a human opened the issue, the hive comments but **leaves it open** —
 it will not close someone else's issue.
+
+`runtime-error` issues are never auto-closed, even by the hive that opened
+them: when the condition clears for that hive it posts a single
+`cleared on <hive> at <time>` comment and leaves the issue for a human to
+confirm the fix.
 
 ## State
 
@@ -128,7 +195,7 @@ are already open, so a persisting condition can file again.
 
 The evaluation runs on every dashboard status refresh **regardless of the
 knob** — dry-run changes only whether anything is written upstream. So you can
-leave `file_upstream: false`, run normally, and read the reports the hive would
+leave `enabled` unset (self-hosted) or `enabled: false`, run normally, and read the reports the hive would
 have filed on the dashboard's fleet-report panel.
 
 That is the intended way to adopt this: watch the dry-run output until you are

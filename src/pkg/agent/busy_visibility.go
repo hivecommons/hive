@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 const (
@@ -65,6 +67,9 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 	}
 	agent.KicksUndeliverable++
 	m.refreshBusyVisibilityLocked(agent, now)
+	// Self-report (#11868): the tracker applies the ≥3-consecutive threshold.
+	fleetreport.Observe(fleetreport.ClassKickFailedRepeatedly, agent.Name,
+		fmt.Sprintf("kick undeliverable %d times in a row (%s)", agent.KicksUndeliverable, agent.BusyCondition), "")
 }
 
 // markCopilotQuestionFormLocked surfaces a question-form dismissal through the
@@ -83,6 +88,9 @@ func (m *Manager) markCopilotQuestionFormLocked(agent *AgentProcess, now time.Ti
 // resetBusyVisibilityLocked clears the busy-delivery episode. Caller holds
 // m.mu.
 func (m *Manager) resetBusyVisibilityLocked(agent *AgentProcess) {
+	if agent.KicksUndeliverable > 0 {
+		fleetreport.Clear(fleetreport.ClassKickFailedRepeatedly, agent.Name)
+	}
 	agent.KicksUndeliverable = 0
 	agent.BusySince = time.Time{}
 	agent.BusyCondition = ""

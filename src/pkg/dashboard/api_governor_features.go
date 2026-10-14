@@ -203,25 +203,30 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	if body.AutonomyPromoteAfter != nil && *body.AutonomyPromoteAfter < 1 {
-		jsonError(w, "autonomy promote_after must be at least 1", http.StatusBadRequest)
+	// Autonomy policy (autonomy.* in hive.yaml): one canonicalising validator
+	// so every path agrees on bounds and case handling. Zero means "use the
+	// default" for the numeric keys, matching AutonomyConfig.Effective*.
+	if body.AutonomyPromoteAfter != nil && *body.AutonomyPromoteAfter < 0 {
+		jsonError(w, "autonomy promote_after must be 0 (default) or greater", http.StatusBadRequest)
 		return
 	}
+	if body.AutonomyCooldownDays != nil && *body.AutonomyCooldownDays < 0 {
+		jsonError(w, "autonomy cooldown_days must be 0 (default) or greater", http.StatusBadRequest)
+		return
+	}
+	if body.AutonomyMaxLevel != nil && *body.AutonomyMaxLevel != 0 &&
+		(*body.AutonomyMaxLevel < config.MinACMMLevel || *body.AutonomyMaxLevel > config.MaxACMMLevel) {
+		jsonError(w, fmt.Sprintf("autonomy max_level must be %d-%d", config.MinACMMLevel, config.MaxACMMLevel), http.StatusBadRequest)
+		return
+	}
+	var autonomyDemoteOn string
 	if body.AutonomyDemoteOn != nil {
-		switch strings.TrimSpace(*body.AutonomyDemoteOn) {
-		case "", "rollback", "rework", "either":
-		default:
-			jsonError(w, "autonomy demote_on must be rollback, rework, or either", http.StatusBadRequest)
+		canonical, ok := config.CanonicalAutonomyDemoteOn(*body.AutonomyDemoteOn)
+		if !ok {
+			jsonError(w, fmt.Sprintf("autonomy demote_on must be one of %s", strings.Join(config.AutonomyDemoteOnValues(), ", ")), http.StatusBadRequest)
 			return
 		}
-	}
-	if body.AutonomyMaxLevel != nil && (*body.AutonomyMaxLevel < config.MinACMMLevel || *body.AutonomyMaxLevel > config.MaxACMMLevel) {
-		jsonError(w, "autonomy max_level must be 1-6", http.StatusBadRequest)
-		return
-	}
-	if body.AutonomyCooldownDays != nil && *body.AutonomyCooldownDays < 1 {
-		jsonError(w, "autonomy cooldown_days must be at least 1", http.StatusBadRequest)
-		return
+		autonomyDemoteOn = canonical
 	}
 
 	// --- apply ---
@@ -313,7 +318,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		cfg.Autonomy.PromoteAfter = *body.AutonomyPromoteAfter
 	}
 	if body.AutonomyDemoteOn != nil {
-		cfg.Autonomy.DemoteOn = strings.TrimSpace(*body.AutonomyDemoteOn)
+		cfg.Autonomy.DemoteOn = autonomyDemoteOn
 	}
 	if body.AutonomyMaxLevel != nil {
 		cfg.Autonomy.MaxLevel = *body.AutonomyMaxLevel

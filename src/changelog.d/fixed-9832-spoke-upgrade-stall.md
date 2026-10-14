@@ -1,1 +1,0 @@
-- Align spoke dashboard upgrade offers with the hub-resolved release-channel target and keep heartbeat upgrade delivery latched until the target is actually satisfied.
