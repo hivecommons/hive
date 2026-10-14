@@ -98,9 +98,9 @@ func (c *Client) clearMergeFailureAlertsForRepo(repo string) {
 
 // revalidateMergeFailureAlerts retires "merge blocked" alerts whose cause has
 // gone away without an App merge in that repo: the blocked PR is no longer
-// open, or (fork-run-approval) its head no longer has workflow runs awaiting
+// open, (fork-run-approval) its head no longer has workflow runs awaiting
 // maintainer approval — the operator approved them or relaxed the repo/org
-// setting. Errors leave the alert in place; only positive evidence clears it.
+// setting — or (app-permission) a check-runs read on its head succeeds again. Errors leave the alert in place; only positive evidence clears it.
 func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() time.Time) {
 	if c == nil || c.client == nil {
 		return
@@ -141,6 +141,15 @@ func (c *Client) revalidateMergeFailureAlerts(ctx context.Context, nowFn func() 
 			continue
 		}
 		resolved := pr.GetState() != "open"
+		if !resolved && w.entry.key == "app-permission" {
+			// Positive evidence the App can act on the repo again: its
+			// check-runs read on the blocked head succeeds. A real merge
+			// refusal re-raises the alert on the next attempt.
+			_, _, rerr := c.client.Checks.ListCheckRunsForRef(ctx, owner, name, pr.GetHead().GetSHA(), &gh.ListCheckRunsOptions{
+				ListOptions: gh.ListOptions{PerPage: 1},
+			})
+			resolved = rerr == nil && pr.GetHead().GetSHA() != ""
+		}
 		if !resolved && w.entry.key == "fork-run-approval" {
 			runs, _, rerr := c.client.Actions.ListRepositoryWorkflowRuns(ctx, owner, name, &gh.ListWorkflowRunsOptions{
 				HeadSHA:     pr.GetHead().GetSHA(),
@@ -188,7 +197,7 @@ func classifyMergeFailureForOperator(repo, errMsg string) (mergeFailureAlert, bo
 	missing := missingRequiredChecks(msg)
 
 	switch {
-	case isMergeFailureRateLimited(lower), isConflictMergeBlocker(msg):
+	case isMergeFailureRateLimited(lower), isConflictMergeBlocker(msg), isCIGateReadFailure(lower):
 		return mergeFailureAlert{}, false
 	case strings.Contains(lower, "fork pr workflow runs are awaiting maintainer approval"):
 		return mergeFailureAlert{
@@ -201,7 +210,7 @@ func classifyMergeFailureForOperator(repo, errMsg string) (mergeFailureAlert, bo
 		strings.Contains(lower, "pull_requests:write") || strings.Contains(lower, "pull requests write"):
 		return mergeFailureAlert{
 			key:     "app-permission",
-			message: fmt.Sprintf("Merge blocked for %s: the GitHub App lacks repository write permission. Grant the hivecommons App Contents & Pull requests write on %s, or install the App on the repo.", repo, repo),
+			message: fmt.Sprintf("Merge blocked for %s: the GitHub App lacks repository write permission. Grant the hivecommons App Contents & Pull requests write on %s, or install the App on the repo. Trigger: %s", repo, repo, mergeFailureTrigger(msg)),
 		}, true
 	case strings.Contains(lower, "approving review") ||
 		strings.Contains(lower, "required review") ||
@@ -234,7 +243,7 @@ func classifyMergeFailureForOperator(repo, errMsg string) (mergeFailureAlert, bo
 	case strings.Contains(lower, "403") || strings.Contains(lower, "permission") || strings.Contains(lower, "must have admin rights"):
 		return mergeFailureAlert{
 			key:     "app-permission",
-			message: fmt.Sprintf("Merge blocked for %s: the GitHub App appears to lack permission to merge. Grant the hivecommons App Contents & Pull requests write on %s, or install the App on the repo.", repo, repo),
+			message: fmt.Sprintf("Merge blocked for %s: the GitHub App appears to lack permission to merge. Grant the hivecommons App Contents & Pull requests write on %s, or install the App on the repo. Trigger: %s", repo, repo, mergeFailureTrigger(msg)),
 		}, true
 	}
 	return mergeFailureAlert{}, false
@@ -247,7 +256,31 @@ func isMergeFailureRateLimited(lower string) bool {
 		strings.Contains(lower, "http 429")
 }
 
+// isCIGateReadFailure reports a merge-request CI-gate error caused by a failed
+// GitHub read (check-runs, statuses, workflow runs, the PR itself): an HTTP
+// 5xx, or a 403 / "Resource not accessible by integration". The gate never
+// writes, so such a failure says nothing about the App's merge permission; it
+// is a transient, unverified verdict the retry path handles (#11924).
+func isCIGateReadFailure(lower string) bool {
+	if !strings.HasPrefix(lower, "ci gate:") {
+		return false
+	}
+	return strings.Contains(lower, "resource not accessible by integration") ||
+		ciGateReadHTTPErrRE.MatchString(lower)
+}
+
+// mergeFailureTrigger bounds the raw error quoted in an operator alert so a
+// false positive stays diagnosable from the dashboard.
+func mergeFailureTrigger(msg string) string {
+	const maxTriggerLen = 300
+	if len(msg) > maxTriggerLen {
+		return msg[:maxTriggerLen] + "…"
+	}
+	return msg
+}
+
 var (
+	ciGateReadHTTPErrRE   = regexp.MustCompile(`\bget https?://\S+: (?:403|5\d\d)\b`)
 	missingChecksColonRE  = regexp.MustCompile(`(?i)required check\(s\) not yet reported[^:]*:\s*([^()]+)`)
 	missingChecksQuotedRE = regexp.MustCompile(`(?i)required status checks? ["']([^"']+)["'] (?:is|are) expected`)
 )

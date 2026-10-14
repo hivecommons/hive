@@ -30956,7 +30956,13 @@ function burnAreaChart() {
       releaseNotesFetch(from, to).then(function(data) {
         if (data && data.source !== 'unavailable' && Array.isArray(data.sections)) {
           var n = data.sections.length;
-          text.textContent = 'Upgraded ' + fromShort + ' → ' + toShort + ': ' + n + (n === 1 ? ' release.' : ' releases.');
+          var summary = n + (n === 1 ? ' release.' : ' releases.');
+          if (n === 0) {
+            var cats = (data.unreleased && data.unreleased.categories) || {};
+            var u = Object.keys(cats).reduce(function(sum, k) { return sum + (Array.isArray(cats[k]) ? cats[k].length : 0); }, 0);
+            if (u > 0) summary = u + (u === 1 ? ' unreleased change.' : ' unreleased changes.');
+          }
+          text.textContent = 'Upgraded ' + fromShort + ' → ' + toShort + ': ' + summary;
         }
       });
     }
