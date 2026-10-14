@@ -43,6 +43,13 @@
       --fs-md: .92rem; --fs-lg: 1.05rem; --fs-xl: 1.25rem;
       /* Touch floor: iOS Safari zooms the page when a focused control is under 16px. */
       --fs-touch: 16px;
+      /* Mobile icon-only buttons (section ?/⚙/grip, topbar chips): a fixed
+         square tap target with a glyph sized to fill it. Width AND height are
+         pinned so a touch-target min-size can never inflate a round button
+         into a circle several times its glyph. */
+      --tap-target: 40px;
+      --tap-glyph: 16px;
+      --tap-ring: 28px;
       /* Terminal surface — terminals always read as terminals: near-black
          in dark mode, deep neutral (never white) in light mode. The
          fg/muted/cyan companions are mode-independent because the
@@ -1404,7 +1411,9 @@
       .gov-pr-models-summary { white-space: normal; }
       .gov-pr-models-head { align-items: flex-start; flex-direction: column; }
       .gov-pr-models-toggle { flex-wrap: wrap; }
-      .gov-pr-models-toggle button { min-height: 36px; }
+      /* Range pills (24h / 7d …): keep the touch height but widen the padding
+         so a two-character pill reads as a pill, not a circle. */
+      .gov-pr-models-toggle button { min-height: 36px; padding: var(--sp-2) var(--sp-5); font-size: var(--fs-sm); }
       .governor-subsection .section-body,
       .gov-pr-models,
       .gov-pr-models-subheader,
@@ -3932,10 +3941,20 @@
         justify-content: flex-end;
         flex-wrap: nowrap;
       }
+      /* Topbar chips: resize through the nav-chip tokens so icon chips stay a
+         square --tap-target and text chips keep their natural width. */
+      .oc-topbar {
+        --nav-chip-h: var(--tap-target);
+        --nav-chip-icon: var(--tap-glyph);
+      }
       .oc-topbar .nav-chip {
-        min-width: 44px !important;
-        min-height: 44px !important;
-        height: 44px !important;
+        flex: 0 0 auto;
+        min-width: var(--tap-target);
+      }
+      .oc-topbar .nav-chip--icon {
+        font-size: var(--tap-glyph);
+      }
+      .oc-topbar .nav-chip:not(.nav-chip--icon) {
         padding-left: var(--sp-3) !important;
         padding-right: var(--sp-3) !important;
       }
@@ -4156,11 +4175,49 @@
         min-height: 36px !important;
         height: auto !important;
       }
+      /* Icon-only controls: a fixed --tap-target square, never stretched by a
+         flex row or a min-size rule, with the glyph scaled up to match. */
       .dashboard-grip,
+      .dash-card-header .dashboard-grip,
       .config-info,
       .section-settings-gear {
-        min-width: 44px;
-        min-height: 44px;
+        width: var(--tap-target);
+        height: var(--tap-target);
+        min-width: var(--tap-target);
+        min-height: var(--tap-target);
+        flex: 0 0 auto;
+        font-size: var(--tap-glyph);
+      }
+      .section-settings-gear-icon {
+        width: var(--tap-glyph);
+        height: var(--tap-glyph);
+      }
+      /* The round ?/⚙ marks keep the whole 40px box as the hit area but draw
+         their ring on a ::before sized to --tap-ring, so the visible circle
+         stays proportional to the header text. isolation + z-index:-1 keeps
+         the ring under the glyph without touching sibling stacking. */
+      .config-info,
+      .section-settings-gear,
+      .config-info:hover,
+      .section-settings-gear:hover,
+      .section-settings-gear:focus-visible {
+        background: transparent;
+        border-color: transparent;
+        isolation: isolate;
+      }
+      .config-info::before {
+        content: "";
+        position: absolute;
+        inset: calc((var(--tap-target) - var(--tap-ring)) / 2);
+        border-radius: var(--r-pill);
+        background: color-mix(in srgb, var(--blue) 18%, var(--panel));
+        border: 1px solid color-mix(in srgb, var(--blue) 60%, transparent);
+        z-index: -1;
+      }
+      .config-info:hover::before,
+      .section-settings-gear:focus-visible::before {
+        background: var(--blue);
+        border-color: var(--blue);
       }
       .hive-chat-fab {
         width: 48px;
