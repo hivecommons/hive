@@ -247,6 +247,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor/question-autoclose", s.handleGovernorQuestionAutocloseGet)
 	s.mux.HandleFunc("PUT /api/config/governor/question-autoclose", s.handleGovernorQuestionAutocloseSet)
 	s.mux.HandleFunc("GET /api/config/governor/question-autoclose/schedule", s.handleGovernorQuestionAutocloseSchedule)
+	s.mux.HandleFunc("GET /api/config/governor/fleet-report", s.handleGovernorFleetReportGet)
+	s.mux.HandleFunc("PUT /api/config/governor/fleet-report", s.handleGovernorFleetReportSet)
 	s.mux.HandleFunc("GET /api/config/governor/work-source", s.handleGovernorWorkSourceGet)
 	s.mux.HandleFunc("PUT /api/config/governor/work-source", s.handleGovernorWorkSourcePut)
 	s.mux.HandleFunc("PUT /api/config/governor/security", s.handleGovernorSecurity)

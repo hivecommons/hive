@@ -2416,11 +2416,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 		s.AttachHiveAdvice(status, time.Now().UTC())
 	}
 	version, commit := fleetReportBuildInfo()
-	dryRun := true
-	if s.deps != nil && s.deps.Config != nil {
-		dryRun = s.deps.Config.Governor.FleetReport.DryRun()
-	}
-	s.AttachFleetReport(status, version, commit, dryRun)
+	s.AttachFleetReport(status, version, commit, !s.FleetReportFilesUpstream())
 	s.statusSeq++
 	status.StatusSeq = s.statusSeq
 	status.StatusInstance = strconv.FormatInt(s.startedAt.UnixNano(), 10)

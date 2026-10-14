@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 const (
@@ -68,7 +70,11 @@ func (s *Store) Clear(name string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.faults, strings.ToLower(strings.TrimSpace(name)))
+	key := strings.ToLower(strings.TrimSpace(name))
+	if prev, ok := s.faults[key]; ok && prev.ErrorClass == ClassAuth {
+		fleetreport.Clear(fleetreport.ClassInferenceAuthFailed, prev.Name)
+	}
+	delete(s.faults, key)
 }
 
 func (s *Store) Snapshot() []GatewayStatus {
@@ -95,6 +101,13 @@ func (s *Store) record(st GatewayStatus) {
 		s.faults = map[string]GatewayStatus{}
 	}
 	s.faults[strings.ToLower(st.Name)] = st
+	// Self-report (#11868): a 401/403 from the inference gateway is hive's
+	// credential plumbing, not the operator's prompt. Detail is already
+	// bounded and scrubbed by safeDetail.
+	if st.ErrorClass == ClassAuth {
+		fleetreport.Observe(fleetreport.ClassInferenceAuthFailed, st.Name,
+			"inference auth failed for "+st.Name+" (http "+strconv.Itoa(st.HTTPStatus)+")", st.Detail)
+	}
 }
 
 func ClassifyHTTPStatus(status int) string {

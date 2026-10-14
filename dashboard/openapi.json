@@ -9311,6 +9311,192 @@
         }
       }
     },
+    "/api/config/governor/fleet-report": {
+      "get": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Self-report (fleet report) settings",
+        "description": "Returns governor.fleet_report resolved for this hive plus the hivecommons/hive issues it has filed or joined (hivecommons/hive#11868). Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Self-report config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Resolved: explicit governor.fleet_report.enabled, else file_upstream, else on for hub-managed hives and off for self-hosted"
+                    },
+                    "explicit": {
+                      "type": "boolean",
+                      "description": "True when hive.yaml sets enabled or file_upstream"
+                    },
+                    "hub_managed": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string",
+                      "description": "owner/repo receiving self-reports (default hivecommons/hive)"
+                    },
+                    "max_per_day": {
+                      "type": "integer",
+                      "description": "Cap on NEW issues per 24h (default 5)"
+                    },
+                    "hive_slug": {
+                      "type": "string",
+                      "description": "hive/<slug> label this hive uses upstream; empty for anonymous self-hosted hives"
+                    },
+                    "open_reports": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fingerprint": {
+                            "type": "string"
+                          },
+                          "class": {
+                            "type": "string"
+                          },
+                          "trigger": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "joined": {
+                            "type": "boolean"
+                          },
+                          "posted_at": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires owner role"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Update self-report settings",
+        "description": "Updates governor.fleet_report. Fields are pointer-typed; absent fields are unchanged. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "repo": {
+                    "type": "string",
+                    "description": "owner/repo; empty resets to the default"
+                  },
+                  "max_per_day": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "0 resets to the default (5)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated (same shape as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Resolved: explicit governor.fleet_report.enabled, else file_upstream, else on for hub-managed hives and off for self-hosted"
+                    },
+                    "explicit": {
+                      "type": "boolean",
+                      "description": "True when hive.yaml sets enabled or file_upstream"
+                    },
+                    "hub_managed": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string",
+                      "description": "owner/repo receiving self-reports (default hivecommons/hive)"
+                    },
+                    "max_per_day": {
+                      "type": "integer",
+                      "description": "Cap on NEW issues per 24h (default 5)"
+                    },
+                    "hive_slug": {
+                      "type": "string",
+                      "description": "hive/<slug> label this hive uses upstream; empty for anonymous self-hosted hives"
+                    },
+                    "open_reports": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "fingerprint": {
+                            "type": "string"
+                          },
+                          "class": {
+                            "type": "string"
+                          },
+                          "trigger": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "joined": {
+                            "type": "boolean"
+                          },
+                          "posted_at": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, repo not owner/repo, or negative max_per_day"
+          },
+          "403": {
+            "description": "Requires owner role"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/config/governor/question-autoclose": {
       "get": {
         "tags": [

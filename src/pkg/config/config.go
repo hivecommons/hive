@@ -2265,15 +2265,61 @@ type GovernorConfig struct {
 	QuestionAutoclose QuestionAutocloseConfig `yaml:"question_autoclose,omitempty" json:"question_autoclose,omitempty"`
 }
 
-// FleetReportConfig controls upstream fleet self-reporting.
+// FleetReportConfig controls upstream fleet self-reporting
+// (hivecommons/hive#11868).
 type FleetReportConfig struct {
-	// FileUpstream is the explicit opt-in to create/comment on hivecommons/hive.
-	// The zero value is dry-run, which still surfaces the would-file reports on
-	// the dashboard for operator review.
+	// FileUpstream is the legacy explicit opt-in to create/comment on the
+	// report repo. Kept for existing hive.yaml files; Enabled supersedes it.
 	FileUpstream bool `yaml:"file_upstream,omitempty" json:"file_upstream,omitempty"`
+	// Enabled is the tri-state switch. nil = default: ON for hub-managed
+	// (hosted) spokes, which run under the shared GitHub App that is
+	// installed on the report repo, and OFF (dry-run preview) for
+	// self-hosted hives, whose operators must opt in because filing leaves
+	// the hive. An explicit false wins over file_upstream.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Repo is the owner/name the reports are filed on. Empty =
+	// hivecommons/hive.
+	Repo string `yaml:"repo,omitempty" json:"repo,omitempty"`
+	// MaxPerDay caps NEW issues this hive may open per 24h. 0 = default 5.
+	// Joining an existing issue does not count against it.
+	MaxPerDay int `yaml:"max_per_day,omitempty" json:"max_per_day,omitempty"`
 }
 
-func (f FleetReportConfig) DryRun() bool { return !f.FileUpstream }
+// DefaultFleetReportRepo is where self-reports land unless overridden.
+const DefaultFleetReportRepo = "hivecommons/hive"
+
+// defaultFleetReportMaxPerDay is the new-issue cap when max_per_day is unset.
+const defaultFleetReportMaxPerDay = 5
+
+// DryRun is the legacy accessor: dry-run unless file_upstream is set. It
+// ignores the hosted default; callers that know whether the hive is
+// hub-managed should use FilesUpstream.
+func (f FleetReportConfig) DryRun() bool { return !f.FilesUpstream(false) }
+
+// FilesUpstream resolves the tri-state: explicit enabled wins, then the legacy
+// file_upstream opt-in, then the hosted default.
+func (f FleetReportConfig) FilesUpstream(hubManaged bool) bool {
+	if f.Enabled != nil {
+		return *f.Enabled
+	}
+	return f.FileUpstream || hubManaged
+}
+
+// EffectiveRepo returns the report repo, applying the default.
+func (f FleetReportConfig) EffectiveRepo() string {
+	if r := strings.TrimSpace(f.Repo); r != "" {
+		return r
+	}
+	return DefaultFleetReportRepo
+}
+
+// EffectiveMaxPerDay returns the new-issue daily cap, applying the default.
+func (f FleetReportConfig) EffectiveMaxPerDay() int {
+	if f.MaxPerDay > 0 {
+		return f.MaxPerDay
+	}
+	return defaultFleetReportMaxPerDay
+}
 
 // ProviderBudgetConfig tunes how long the hive keeps agent kicks suspended
 // after the inference provider refuses on a spending limit (#4294).

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 const (
@@ -61,6 +63,7 @@ func (m *Manager) applyRestartStormPlan(name, reason string, plan restartStormPl
 			m.logger.Warn("automatic restart suppressed by restart-storm breaker",
 				"agent", name, "reason", reason, "trigger", plan.pauseTrigger, "pause_reason", plan.pauseReason)
 		}
+		fleetreport.Observe(fleetreport.ClassRestartStorm, name, "restart storm: "+reason, plan.pauseReason)
 		return true, false, m.Pause(name, plan.pauseTrigger, plan.pauseReason)
 	case plan.backoff > 0:
 		if m.logger != nil {

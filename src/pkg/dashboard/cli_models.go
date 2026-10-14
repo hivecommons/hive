@@ -20,6 +20,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 const (
@@ -1086,6 +1087,7 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 			s.audit.Log("system", auditActionModelDiscoveryRecovered,
 				auditDetail("backend", backend, "platform", platform, "previous", prev), "")
 		}
+		fleetreport.Clear(fleetreport.ClassModelDiscoveryDegraded, backend)
 		return
 	}
 	served := "live-but-not-the-cli-catalog"
@@ -1097,6 +1099,10 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 			"backend", backend, "platform", platform, "served", served,
 			"fallback", r.fallback, "degraded", r.degraded, "err", r.discoveryErr)
 	}
+	// Self-report (#11868): the tracker only surfaces this once it has
+	// persisted for an hour, so a transient discovery blip never files.
+	fleetreport.Observe(fleetreport.ClassModelDiscoveryDegraded, backend,
+		fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served), r.discoveryErr)
 	if s.audit != nil {
 		s.audit.Log("system", auditActionModelDiscoveryFailed, auditDetail(
 			"backend", backend,

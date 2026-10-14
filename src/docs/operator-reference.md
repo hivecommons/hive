@@ -688,6 +688,35 @@ Engage pauses every agent that is currently running and is not `on_demand`. Agen
 
 Fixes #2953.
 
+## Self-reported issues
+
+When a hive notices an unusual error in itself — a restart storm, repeated
+kick failures, a recovered panic, degraded model discovery, inference
+auth failures or advisory post failures — it files an issue on
+`hivecommons/hive` titled `[selfreport] <class>: <short message>`, or adds
+itself to an open issue that already describes the problem (fingerprint
+match, `hive/selfreport` + class match, or keyword match on a human-filed
+issue). Joining posts one "Also seen on **<hive>**" comment per 24h, adds
+the `hive/<slug>` label and bumps the `Affected hives (N)` block in the body.
+
+```yaml
+governor:
+  fleet_report:
+    enabled: true            # unset = on for hub-managed hives, off (dry-run) for self-hosted
+    repo: hivecommons/hive
+    max_per_day: 5
+```
+
+Rate limits: `max_per_day` new issues per hive per 24h, at least 1h between
+new filings of different classes, no re-filing of a fingerprint closed
+within 7 days, deferred while the GitHub API budget is not normal. Issues
+are never auto-closed; the hive posts one "cleared" comment when the
+condition stops. Hub-managed hives that cannot write to the report repo relay
+through the hub (`POST /api/selfreport/ingest`, heartbeat bearer). The
+dashboard shows "Self-reports: N open (last: <class> → #NNN)" in the Fleet
+Report panel and the toggle/repo/cap under Settings → Governor →
+"Self-Reported Issues". Full details: [fleet-report.md](fleet-report.md).
+
 ## GitHub API quota
 
 Agents reach `api.github.com` through the Hive GitHub proxy, which injects the
