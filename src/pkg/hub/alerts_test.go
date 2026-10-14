@@ -221,6 +221,114 @@ func TestEvaluateAlerts_CrashLoopIgnoresUnparseableStart(t *testing.T) {
 	}
 }
 
+// evalStart runs one evaluation pass for h1 reporting the given StartedAt.
+func evalStart(state *alertState, startedAt, now time.Time) AlertSummary {
+	h := baseHive("h1")
+	h.StartedAt = rfc3339(startedAt)
+	return evaluateAlerts(state, []alertHive{h}, nil, now)
+}
+
+// TestEvaluateAlerts_CrashLoopIgnoresUpgradeRollouts pins #11824: two
+// hub-triggered upgrade waves, each rolling the pod twice (versioned tag, then
+// the mutable tag), produce four new StartedAt values in the window. They are
+// rollouts, not crashes, and must not raise a Critical crash-loop alert — while
+// the same starts with no upgrade on record still do.
+func TestEvaluateAlerts_CrashLoopIgnoresUpgradeRollouts(t *testing.T) {
+	tests := []struct {
+		name string
+		// mode is how the upgrade reaches the alert state: "none" (no
+		// upgrade on record), "noted" (beginUpgrade's noteUpgrade) or
+		// "snapshot" (an evaluation saw the hive Upgrading before it rolled).
+		mode string
+		want bool
+	}{
+		{name: "unattributed starts still alert", mode: "none", want: true},
+		{name: "hub-triggered rollouts do not alert", mode: "noted", want: false},
+		{name: "rollouts seen as Upgrading in a snapshot do not alert", mode: "snapshot", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			state := newAlertState()
+			prevStart := fixedNow.Add(-48 * time.Hour)
+			evalStart(state, prevStart, fixedNow.Add(-60*time.Minute))
+
+			var got AlertSummary
+			for _, wave := range []time.Time{fixedNow.Add(-40 * time.Minute), fixedNow.Add(-5 * time.Minute)} {
+				switch tc.mode {
+				case "noted":
+					state.noteUpgrade("h1", wave)
+				case "snapshot":
+					h := baseHive("h1")
+					h.StartedAt = rfc3339(prevStart)
+					h.Upgrading = true
+					h.UpgradeStartedAt = wave
+					evaluateAlerts(state, []alertHive{h}, nil, wave)
+				}
+				evalStart(state, wave.Add(30*time.Second), wave.Add(time.Minute))
+				prevStart = wave.Add(55 * time.Second)
+				now := wave.Add(2 * time.Minute)
+				if now.After(fixedNow) {
+					now = fixedNow
+				}
+				got = evalStart(state, prevStart, now)
+			}
+			if hasAlert(got.Alerts, "h1", AlertTypeCrashLoop) != tc.want {
+				t.Fatalf("crash-loop alert = %v, want %v (alerts: %+v)",
+					!tc.want, tc.want, got.Alerts)
+			}
+		})
+	}
+}
+
+// TestEvaluateAlerts_CrashLoopAfterUpgradeStillAlerts pins that an upgrade
+// earlier in the window only excuses ITS rollout start: a pod that then keeps
+// crashing well after the grace period is still a Critical crash loop.
+func TestEvaluateAlerts_CrashLoopAfterUpgradeStillAlerts(t *testing.T) {
+	state := newAlertState()
+	evalStart(state, fixedNow.Add(-48*time.Hour), fixedNow.Add(-60*time.Minute))
+
+	upgrade := fixedNow.Add(-50 * time.Minute)
+	state.noteUpgrade("h1", upgrade)
+	evalStart(state, upgrade.Add(30*time.Second), upgrade.Add(time.Minute))
+
+	crashes := []time.Time{
+		fixedNow.Add(-25 * time.Minute),
+		fixedNow.Add(-12 * time.Minute),
+		fixedNow.Add(-2 * time.Minute),
+	}
+	var got AlertSummary
+	for i, st := range crashes {
+		now := st.Add(time.Minute)
+		if i == len(crashes)-1 {
+			now = fixedNow
+		}
+		got = evalStart(state, st, now)
+	}
+	if !hasAlert(got.Alerts, "h1", AlertTypeCrashLoop) {
+		t.Fatalf("crashes after an earlier upgrade must still alert (alerts: %+v)", got.Alerts)
+	}
+}
+
+// TestBeginUpgradeExcusesRolloutStarts drives the real arm path: beginUpgrade
+// must record the rollout so the new pod's start is not counted as a crash
+// even after the latch has cleared (the usual state by the first new beat).
+func TestBeginUpgradeExcusesRolloutStarts(t *testing.T) {
+	s := newBeginUpgradeServer(RegistryEntry{ID: "h1"})
+	s.alerts = newAlertState()
+	s.mu.Lock()
+	s.beginUpgrade(0, "target-a")
+	s.mu.Unlock()
+	u := s.registry.Hives[0].UpgradeStartedAt
+
+	evalStart(s.alerts, u.Add(-48*time.Hour), u.Add(-time.Minute))
+	evalStart(s.alerts, u.Add(20*time.Second), u.Add(time.Minute))
+	evalStart(s.alerts, u.Add(50*time.Second), u.Add(2*time.Minute))
+	got := evalStart(s.alerts, u.Add(80*time.Second), u.Add(3*time.Minute))
+	if hasAlert(got.Alerts, "h1", AlertTypeCrashLoop) {
+		t.Fatalf("rollout starts after beginUpgrade must not alert (alerts: %+v)", got.Alerts)
+	}
+}
+
 func TestEvaluateAlerts_StuckUpgradeRule(t *testing.T) {
 	tests := []struct {
 		name       string

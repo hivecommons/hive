@@ -156,6 +156,16 @@ const (
 	// minutes), short enough that yesterday's incident does not still fire.
 	alertCrashLoopWindow = 2 * time.Hour
 
+	// alertUpgradeStartGrace is how long after the hub triggers an upgrade a
+	// new spoke start is still attributed to that rollout rather than to a
+	// crash. It covers the image pull, the ReplicaSet roll and the follow-up
+	// roll a mutable tag can cause a few seconds later (#11824).
+	alertUpgradeStartGrace = 10 * time.Minute
+
+	// alertUpgradeClockSkew tolerates a spoke-reported StartedAt (spoke clock)
+	// that lands slightly BEFORE the hub-recorded upgrade trigger (hub clock).
+	alertUpgradeClockSkew = 2 * time.Minute
+
 	// alertTokenBurnMedianMultiple is how many times the fleet median 24h token
 	// spend a hive must exceed before its burn is called anomalous. A runaway
 	// agent typically lands an order of magnitude out; 5x is well clear of the
@@ -282,6 +292,10 @@ type alertState struct {
 	// startTimes records the distinct StartedAt values observed per hive, with
 	// the observation time. Key: hive ID.
 	startTimes map[string][]alertStartObservation
+	// upgradeStarts records when the hub triggered (or observed) an upgrade
+	// rollout per hive, so the crash-loop rule can tell a rollout's new
+	// StartedAt from a crash's (#11824). Key: hive ID.
+	upgradeStarts map[string][]time.Time
 	// firstSeen records when each (hive, type) condition was first observed
 	// continuously. Key: alertAckKey(hiveID, type).
 	firstSeen map[string]time.Time
@@ -301,14 +315,65 @@ type alertStartObservation struct {
 
 func newAlertState() *alertState {
 	return &alertState{
-		startTimes: make(map[string][]alertStartObservation),
-		firstSeen:  make(map[string]time.Time),
-		acks:       make(map[string]alertAck),
+		startTimes:    make(map[string][]alertStartObservation),
+		upgradeStarts: make(map[string][]time.Time),
+		firstSeen:     make(map[string]time.Time),
+		acks:          make(map[string]alertAck),
 	}
 }
 
+// noteUpgrade records that an upgrade rollout for hiveID began at `at`. A
+// spoke start that lands within alertUpgradeStartGrace after it is not
+// counted as a crash restart. Safe on a nil receiver (test servers built
+// without alert state).
+func (a *alertState) noteUpgrade(hiveID string, at time.Time) {
+	if a == nil || hiveID == "" || at.IsZero() {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	marks := pruneUpgradeStarts(a.upgradeStarts[hiveID], at)
+	for _, u := range marks {
+		if u.Equal(at) {
+			a.upgradeStarts[hiveID] = marks
+			return
+		}
+	}
+	marks = append(marks, at)
+	if len(marks) > alertStartTimesRetained {
+		marks = marks[len(marks)-alertStartTimesRetained:]
+	}
+	a.upgradeStarts[hiveID] = marks
+}
+
+// pruneUpgradeStarts returns a fresh slice holding only the upgrade marks that
+// can still explain a start observed inside the crash-loop window.
+func pruneUpgradeStarts(marks []time.Time, now time.Time) []time.Time {
+	kept := make([]time.Time, 0, len(marks))
+	for _, u := range marks {
+		if now.Sub(u) > alertCrashLoopWindow+alertUpgradeStartGrace {
+			continue
+		}
+		kept = append(kept, u)
+	}
+	return kept
+}
+
+// upgradeAttributable reports whether a spoke start time is explained by one
+// of the hive's recorded upgrade rollouts.
+func upgradeAttributable(startedAt time.Time, marks []time.Time) bool {
+	for _, u := range marks {
+		if !startedAt.Before(u.Add(-alertUpgradeClockSkew)) && !startedAt.After(u.Add(alertUpgradeStartGrace)) {
+			return true
+		}
+	}
+	return false
+}
+
 // observeStart records a spoke-reported start time and returns how many
-// distinct restarts have been observed inside alertCrashLoopWindow.
+// distinct restarts have been observed inside alertCrashLoopWindow. Starts
+// attributable to an upgrade rollout (see noteUpgrade) are remembered but not
+// counted: a hub-triggered rollout is not a crash (#11824).
 //
 // Returns 0 for an unparseable or zero start time — an unknown uptime is not
 // evidence of a crash loop.
@@ -348,7 +413,20 @@ func (a *alertState) observeStart(hiveID, startedAt string, now time.Time) int {
 	final := make([]alertStartObservation, len(kept))
 	copy(final, kept)
 	a.startTimes[hiveID] = final
-	return len(final)
+
+	marks := pruneUpgradeStarts(a.upgradeStarts[hiveID], now)
+	if len(marks) == 0 {
+		delete(a.upgradeStarts, hiveID)
+	} else {
+		a.upgradeStarts[hiveID] = marks
+	}
+	restarts := 0
+	for _, o := range final {
+		if !upgradeAttributable(o.StartedAt, marks) {
+			restarts++
+		}
+	}
+	return restarts
 }
 
 // markCondition records that a condition is currently true and returns when it
@@ -872,7 +950,13 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		// --- Rule: crash-looping. Distinct start times observed inside the
 		// window, with the current uptime still below the ceiling (a hive that
 		// restarted a few times and has now been up for hours has recovered
-		// and should not keep alerting). ---
+		// and should not keep alerting). An upgrade visible in this snapshot
+		// is recorded first so its rollout start is not counted as a crash;
+		// beginUpgrade records hub-triggered ones too, because the latch is
+		// usually cleared by the time the new pod's first beat is evaluated. ---
+		if h.Upgrading && !h.UpgradeStartedAt.IsZero() {
+			state.noteUpgrade(h.ID, h.UpgradeStartedAt)
+		}
 		restarts := state.observeStart(h.ID, h.StartedAt, now)
 		if restarts >= alertCrashLoopMinRestarts && recentlyStarted(h.StartedAt, now) {
 			add(h.ID, h.Name, AlertTypeCrashLoop, AlertSeverityCritical,

@@ -62,6 +62,12 @@ func (s *HubServer) beginUpgrade(i int, target string) {
 	// toward the same target keeps the original start so the timer is honest.
 	if !h.Upgrading || h.UpgradeTarget != target || h.UpgradeStartedAt.IsZero() {
 		h.UpgradeStartedAt = time.Now()
+		// Remember the rollout for the crash-loop rule: the new StartedAt it
+		// produces is an upgrade, not a crash (#11824). Only a genuinely new
+		// upgrade is noted — a same-target retry must not keep excusing the
+		// starts of a pod that is really crash-looping. alertState's lock is
+		// a leaf, safe to take under s.mu.
+		s.alerts.noteUpgrade(h.ID, h.UpgradeStartedAt)
 	}
 	h.Upgrading = true
 	h.UpgradeTarget = target
