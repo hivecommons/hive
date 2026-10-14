@@ -215,10 +215,13 @@ func shouldAutoUpgradeNowForChannel(mode, lastFiredDate, channel string, now tim
 
 func candidateAutoUpgradeScheduleOverride() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(candidateRespectAutoUpgradeScheduleEnv))) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
+	case "0", "false", "no", "off":
 		return false
+	default:
+		// The dashboard renders a candidate hive's stored daily/weekly mode as
+		// the operator-visible cadence. Respect that cadence unless a deployment
+		// explicitly opts back into candidate-continuous tracking.
+		return true
 	}
 }
 

@@ -195,8 +195,13 @@ func TestHeartbeatUpgradePolicyNextUpdateAtForStableChannel(t *testing.T) {
 		t.Errorf("NextUpdateAt %q is not RFC3339: %v", got.NextUpdateAt, err)
 	}
 
+	candidate := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:candidate", ReleaseChannelCandidate)
+	if candidate.NextUpdateStatus == "candidate-continuous" {
+		t.Errorf("candidate hive NextUpdateStatus = %q, want stored cadence respected by default", candidate.NextUpdateStatus)
+	}
+	t.Setenv(candidateRespectAutoUpgradeScheduleEnv, "false")
 	if got := stablePolicyFor(t, s, "ghcr.io/hivecommons/hive:candidate", ReleaseChannelCandidate); got.NextUpdateAt != "" || got.NextUpdateStatus != "candidate-continuous" {
-		t.Errorf("candidate hive NextUpdate = %q/%q, want empty/candidate-continuous — candidate moves on every green build", got.NextUpdateAt, got.NextUpdateStatus)
+		t.Errorf("candidate opt-out NextUpdate = %q/%q, want empty/candidate-continuous", got.NextUpdateAt, got.NextUpdateStatus)
 	}
 
 	if err := saveStablePromotionState(StablePromotionState{AutoPromote: false, UpdatedBy: hubAdminUsername}); err != nil {
