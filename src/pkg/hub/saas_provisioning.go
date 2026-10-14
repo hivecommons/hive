@@ -957,6 +957,14 @@ func (s *HubServer) handleAvailablePlaceholders(w http.ResponseWriter, r *http.R
 // record, is still an unclaimed placeholder (statusAvailable), or the spoke
 // already reports the recorded project. The spoke's currently-reported values
 // (curOrg/curRepos/curPrimary/curACMM) let the hub stop sending once matched.
+// isSlotPlaceholderOrg reports whether org is a pool slot's synthetic
+// placeholder org ("available-<id>" / "placeholder…") rather than a real
+// GitHub owner.
+func isSlotPlaceholderOrg(org string) bool {
+	o := strings.ToLower(strings.TrimSpace(org))
+	return strings.HasPrefix(o, placeholderOrgPrefix) || strings.HasPrefix(o, "placeholder")
+}
+
 // adoptSpokeProjectConfig makes the hub's meta.json track what a CLAIMED hive's
 // spoke reports for its OPERATOR-CONTROLLED runtime settings: org, repos,
 // primary_repo, and ACMM level. Once a placeholder is claimed, the spoke
@@ -1058,8 +1066,47 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 	// re-arm on a hive whose ClaimDelivered was already true. ACMMDelivered
 	// above now tracks the level on its own, so this returns to being purely
 	// about the project payload.
+	//
+	// A slot-placeholder org is NEVER a valid delivered claim for a hive that
+	// carries a primary repo (#11800). Ten vllm-d hives settled on
+	// org=available-… with ClaimDelivered=true: once the claim was latched, the
+	// post-delivery branch below adopted whatever org the spoke reported —
+	// including the slot's old placeholder org (a spoke restarted onto its
+	// minted hive.yaml, or a record recycled with a stale latch) — overwriting
+	// the approved request org and leaving the hive with no GitHub credentials.
+	if h.PrimaryRepo != "" && isSlotPlaceholderOrg(h.Org) {
+		// Already corrupted: restore the approved request's org for this slot
+		// and re-arm the push so the hub delivers it again.
+		if pr := loadProvisionRequest(h.Owner); pr != nil && pr.Status == provisionStatusApproved &&
+			pr.AssignedHive == hiveID && pr.Org != "" && !isSlotPlaceholderOrg(pr.Org) {
+			s.logger.Warn("hive meta carries slot placeholder org; restoring approved request org",
+				"hive_id", hiveID, "placeholder_org", h.Org, "request_org", pr.Org)
+			h.Org = pr.Org
+			orgMatches = org != "" && strings.EqualFold(org, h.Org)
+			if h.ClaimDelivered {
+				h.ClaimDelivered = false
+				// Fresh clock so the stuck-assignment sweep does not reclaim a
+				// long-assigned live hive the moment its push re-arms.
+				h.AssignedAt = time.Now().UTC().Format(time.RFC3339)
+			}
+			changed = true
+		}
+	}
+	if h.PrimaryRepo != "" && org != "" && isSlotPlaceholderOrg(org) && !isSlotPlaceholderOrg(h.Org) {
+		// Refuse to adopt the spoke's placeholder self-report and re-arm the
+		// claim so projectConfigForHiveID keeps pushing the request org.
+		if h.ClaimDelivered {
+			s.logger.Warn("spoke reports slot placeholder org on a delivered claim; re-arming push",
+				"hive_id", hiveID, "spoke_org", org, "hub_org", h.Org)
+			h.ClaimDelivered = false
+			h.AssignedAt = time.Now().UTC().Format(time.RFC3339)
+			changed = true
+		}
+		org = ""
+		orgMatches = false
+	}
 	if !h.ClaimDelivered {
-		if orgMatches && reposMatch && primaryMatches {
+		if orgMatches && reposMatch && primaryMatches && !(h.PrimaryRepo != "" && isSlotPlaceholderOrg(h.Org)) {
 			h.ClaimDelivered = true
 			changed = true
 		}
