@@ -20,7 +20,6 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
-	"github.com/hivecommons/hive/pkg/logscrub"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"github.com/hivecommons/hive/pkg/skillreg"
@@ -3095,10 +3094,11 @@ func roundTo(f float64, decimals int) float64 {
 	return math.Round(f*shift) / shift
 }
 
-// redactTokens delegates to logscrub.RedactPaneTokens so the agent package,
-// which dashboard imports, applies the identical pane redaction.
+// redactTokens delegates to agent.RedactPaneTokens (itself a thin seam over
+// pkg/logscrub) so the agent package, which dashboard already imports, applies
+// the identical pane redaction.
 func redactTokens(s string) string {
-	return logscrub.RedactPaneTokens(s)
+	return agent.RedactPaneTokens(s)
 }
 
 // SetReleaseLineLagProvider registers a function reporting how far the edge
