@@ -95,6 +95,11 @@ pinned:
   # push filter watches v6 alone; v4 is feature-frozen and v5 never carried
   # the action, hence the explicit exclusions.
   hive-action-tests.yml: [v6, -v4, -v5]
+  # Headless phone-viewport sweep of the Hive Chat panel (#11852). The chat
+  # panel, its chip lists and the sweep script live only on the v6 development
+  # line, so its pull_request filter watches v6 alone; v4 is feature-frozen and
+  # v5 never carried the panel, hence the explicit exclusions.
+  hive-chat-phone-sweep.yml: [v6, -v4, -v5]
   podman-arm64-lane.yml: []
   podman-contract.yml: []
   podman-rootful-lane.yml: []
