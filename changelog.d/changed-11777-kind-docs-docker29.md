@@ -1,0 +1,1 @@
+- Documented Docker 29 containerd store workaround for `kind load docker-image` and `imagePullPolicy: IfNotPresent` requirement in try-hive-on-kind.md ([#11777](https://github.com/hivecommons/hive/issues/11777)).

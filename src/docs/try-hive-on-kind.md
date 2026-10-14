@@ -85,6 +85,33 @@ See [release-channels.md](release-channels.md#testing-v6-changes).
   take minutes, so use the long rollout timeout above. To avoid re-pulling into
   each new cluster: `docker pull` it once, then
   `kind load docker-image ghcr.io/hivecommons/hive:stable --name hive`.
+
+  **Docker 29 and later** (with containerd image store): `kind load docker-image`
+  fails on the multi-arch image with `ctr: content digest ... not found` because
+  `docker save` exports the index without un-pulled platform layers. Use this
+  instead:
+
+  ```bash
+  docker save --platform linux/amd64 ghcr.io/hivecommons/hive:stable \
+    | docker exec -i hive-control-plane ctr -n k8s.io images import --all-platforms -
+  ```
+
+  (Alternatively, save to an archive with `--platform` and use `kind load image-archive`.)
+
+  **Important:** The base Deployment uses `imagePullPolicy: Always`, so the loaded
+  image won't be used offline without an overlay patch. Set `imagePullPolicy: IfNotPresent`:
+
+  ```yaml
+  # kustomization.yaml or an overlay
+  patches:
+    - target:
+        kind: Deployment
+        name: hive
+      patch: |-
+        - op: replace
+          path: /spec/template/spec/containers/0/imagePullPolicy
+          value: IfNotPresent
+  ```
 - **No inference component.** The overlay omits
   [`src/deploy/inference`](../deploy/inference/): it needs Gateway API Inference
   Extension CRDs and downloads a model. The base's `HIVE_LLMD_ENDPOINT` is
