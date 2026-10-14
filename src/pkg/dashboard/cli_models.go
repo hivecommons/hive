@@ -29,6 +29,20 @@ const (
 	// server- and client-side caches age at the same rate.
 	cliModelCacheTTL = 30 * time.Second
 
+	// cliModelFailureBackoffMax caps how long a FAILED discovery result is
+	// reused before re-probing. After a failure the cache TTL doubles per
+	// consecutive failure (30 s, 1 m, 2 m, …) up to this cap, so a backend
+	// whose probe keeps dying is re-spawned at most once an hour instead of
+	// burning a 2–3 s node+CLI spawn every 30 s for nothing (#11865). A
+	// success resets the backoff to cliModelCacheTTL.
+	cliModelFailureBackoffMax = time.Hour
+
+	// cliModelLastGoodTTL bounds how old a retained last-good authoritative
+	// catalog may be and still be served through a transient probe failure.
+	// Older than this it is dropped and discovery falls through to its
+	// ordinary degraded/fallback paths (#11865).
+	cliModelLastGoodTTL = 24 * time.Hour
+
 	// cliModelQueryTimeout limits each outbound discovery HTTP call so a slow
 	// or hanging upstream cannot stall the /api/config/backends response.
 	cliModelQueryTimeout = 3 * time.Second
@@ -71,11 +85,18 @@ const (
 	// is invoked explicitly (not via shebang) so no exec bit is needed.
 	copilotSDKNodeBinary = "node"
 
-	// copilotSDKProbeTimeout bounds the helper exec on dashboard request paths.
-	// The helper has its own longer internal deadline, but the dashboard must
-	// not park a boot-time model-list request behind it; a stale/static list is
-	// safer than a frozen page.
-	copilotSDKProbeTimeout = 3 * time.Second
+	// copilotSDKProbeTimeout bounds the helper exec. The helper spawns the
+	// pinned Copilot CLI through the SDK and needs 2.4–3.2 s wall time on the
+	// fleet's linux/arm64 spokes even when idle (measured on three hive-oke
+	// spokes, CLI 1.0.88); the previous 3 s budget had no headroom and a
+	// loaded node SIGKILLed the probe every few minutes, flipping the copilot
+	// dropdown to "degraded" (#11865). The helper's own watchdog
+	// (INTERNAL_TIMEOUT_MS in bin/copilot-models.mjs) is 15 s and this budget
+	// sits ABOVE it, as the helper's header documents, so the helper gets to
+	// report its own error instead of being killed mid-flight. The request
+	// path never waits on this (queryCLIModelsForBoot serves the stale entry
+	// and refreshes in the background), so a longer budget parks no page.
+	copilotSDKProbeTimeout = 20 * time.Second
 
 	// copilotSDKAgentHome is the shared agent HOME the copilot CLI's stored
 	// device-flow auth lives under ($HOME/.copilot). Agents launch with
@@ -484,6 +505,15 @@ type cliModelResult struct {
 	// projectbluefin spoke this list was served as live for two days and the
 	// browser-side auto-heal moved every agent onto gpt-4o-mini off it.
 	degraded bool
+	// stale is true when the list is the last AUTHORITATIVE catalog this
+	// process (or, via the on-disk copy, a previous one) discovered, served
+	// because the current probe failed transiently (#11865). It IS the
+	// CLI's catalog — just not freshly confirmed — so it stays out of the
+	// degraded/fallback treatment; discoveryErr names the refresh failure so
+	// the dropdown says why the list is cached rather than live.
+	stale bool
+	// staleAt is when the stale catalog was discovered (zero unless stale).
+	staleAt time.Time
 	// discoveryErr is the token-free reason discovery failed or degraded —
 	// the underlying error text, capped — for the audit log and the model
 	// dropdown. Empty on a clean live result AND on the ordinary
@@ -499,7 +529,8 @@ type cliModelResult struct {
 }
 
 // authoritative reports whether the list may be treated as the backend's
-// real inventory: a clean live probe. Fallback and degraded lists are not.
+// real inventory: a clean live probe, or the retained last-good catalog of
+// one (stale). Fallback and degraded lists are not.
 func (r cliModelResult) authoritative() bool {
 	return !r.fallback && !r.degraded
 }
@@ -508,6 +539,13 @@ func (r cliModelResult) authoritative() bool {
 // simply not configured): an error is recorded.
 func (r cliModelResult) failed() bool {
 	return r.discoveryErr != ""
+}
+
+// freshAuthoritative reports whether the list is a clean live probe result
+// worth retaining as the backend's last-good catalog: authoritative and not
+// itself a replay of an earlier one.
+func (r cliModelResult) freshAuthoritative() bool {
+	return r.authoritative() && !r.stale && len(r.models) > 0
 }
 
 // cliModelErrLimit caps the error text carried into the audit log and the
@@ -593,16 +631,145 @@ type cliModelCache struct {
 	// failed/degraded state, a change of error text, and recovery — not one
 	// entry per probe (#7384).
 	audited map[string]string
+	// lastGood is, per backend, the most recent FRESH authoritative result
+	// and when it was discovered. Served through transient probe failures
+	// (see lastGoodFor) so one slow helper run cannot swap the CLI's catalog
+	// for the HTTP inventory and flip the dropdown to "degraded" (#11865).
+	// Persisted under lastGoodDir so a restarted spoke boots with the real
+	// catalog instead of the static list while the first probe runs.
+	lastGood map[string]cliModelCacheEntry
+	// failures counts consecutive failed results per backend; it drives the
+	// re-probe backoff in get (see cliModelFailureBackoffMax).
+	failures map[string]int
+	// lastGoodDir is where last-good catalogs are persisted ("" = memory
+	// only). Set from cliModelLastGoodDir; tests point it at a temp dir.
+	lastGoodDir string
+	// now is the clock seam for TTL/backoff decisions (tests pin it).
+	now func() time.Time
+}
+
+// cliModelLastGoodDir is where last-good CLI catalogs are persisted on a
+// spoke. /data is the hive's persistent volume; .hive already holds other
+// dashboard state. A variable so tests can redirect it.
+var cliModelLastGoodDir = "/data/.hive"
+
+// cliModelLastGoodFile is the per-backend persisted last-good catalog.
+type cliModelLastGoodFile struct {
+	Backend string    `json:"backend"`
+	Models  []string  `json:"models"`
+	At      time.Time `json:"at"`
 }
 
 func newCLIModelCache() *cliModelCache {
-	return &cliModelCache{
+	c := &cliModelCache{
 		entries:       make(map[string]cliModelCacheEntry),
 		refreshing:    make(map[string]bool),
 		retained:      make(map[string]map[string]int),
 		retainedOrder: make(map[string][]string),
 		audited:       make(map[string]string),
+		lastGood:      make(map[string]cliModelCacheEntry),
+		failures:      make(map[string]int),
+		lastGoodDir:   cliModelLastGoodDir,
+		now:           time.Now,
 	}
+	c.loadLastGood()
+	return c
+}
+
+func (c *cliModelCache) clock() time.Time {
+	if c.now == nil {
+		return time.Now()
+	}
+	return c.now()
+}
+
+// lastGoodPath is the persisted last-good catalog file for a backend.
+func (c *cliModelCache) lastGoodPath(backend string) string {
+	return filepath.Join(c.lastGoodDir, "cli-models-last-good-"+backend+".json")
+}
+
+// loadLastGood reads every persisted last-good catalog under lastGoodDir.
+// A missing or unreadable directory (dev machines, unit tests) is simply no
+// catalogs; a malformed or expired file is ignored.
+func (c *cliModelCache) loadLastGood() {
+	if c.lastGoodDir == "" {
+		return
+	}
+	matches, err := filepath.Glob(filepath.Join(c.lastGoodDir, "cli-models-last-good-*.json"))
+	if err != nil {
+		return
+	}
+	now := c.clock()
+	for _, p := range matches {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var f cliModelLastGoodFile
+		if json.Unmarshal(raw, &f) != nil || f.Backend == "" || len(f.Models) == 0 || f.At.IsZero() {
+			continue
+		}
+		if now.Sub(f.At) > cliModelLastGoodTTL {
+			continue
+		}
+		c.lastGood[f.Backend] = cliModelCacheEntry{
+			result: cliModelResult{models: append([]string(nil), f.Models...)},
+			at:     f.At,
+		}
+	}
+}
+
+// persistLastGood writes a backend's last-good catalog to disk. Best effort:
+// a spoke without the data volume (dev, tests) just keeps the memory copy.
+func (c *cliModelCache) persistLastGood(backend string, e cliModelCacheEntry) {
+	if c.lastGoodDir == "" {
+		return
+	}
+	if st, err := os.Stat(c.lastGoodDir); err != nil || !st.IsDir() {
+		return
+	}
+	raw, err := json.Marshal(cliModelLastGoodFile{Backend: backend, Models: e.result.models, At: e.at})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(c.lastGoodPath(backend), raw, 0o600)
+}
+
+// lastGoodFor returns the retained last-good authoritative catalog for a
+// backend, if one exists and is younger than cliModelLastGoodTTL, as a stale
+// result carrying reason as its discoveryErr.
+func (c *cliModelCache) lastGoodFor(backend, reason string) (cliModelResult, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.lastGood[backend]
+	if !ok || len(e.result.models) == 0 || c.clock().Sub(e.at) > cliModelLastGoodTTL {
+		return cliModelResult{}, false
+	}
+	return cliModelResult{
+		models:           append([]string(nil), e.result.models...),
+		reasoningEfforts: e.result.reasoningEfforts,
+		stale:            true,
+		staleAt:          e.at,
+		discoveryErr:     reason,
+	}, true
+}
+
+// ttlFor is the reuse window for a backend's cached result: cliModelCacheTTL
+// after a success, doubling per consecutive failure up to
+// cliModelFailureBackoffMax. Callers hold c.mu.
+func (c *cliModelCache) ttlFor(backend string) time.Duration {
+	n := c.failures[backend]
+	if n <= 0 {
+		return cliModelCacheTTL
+	}
+	ttl := cliModelCacheTTL
+	for i := 1; i < n; i++ {
+		ttl *= 2
+		if ttl >= cliModelFailureBackoffMax {
+			return cliModelFailureBackoffMax
+		}
+	}
+	return ttl
 }
 
 // noteDiscoveryState records the discovery outcome for a backend and reports
@@ -671,12 +838,13 @@ func (c *cliModelCache) stabilize(backend string, fresh []string) []string {
 	return out
 }
 
-// get returns a cached result if it is still within the TTL.
+// get returns a cached result if it is still within the TTL (which is
+// lengthened by the failure backoff, see ttlFor).
 func (c *cliModelCache) get(backend string) (cliModelResult, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.entries[backend]
-	if !ok || time.Since(e.at) > cliModelCacheTTL {
+	if !ok || c.clock().Sub(e.at) > c.ttlFor(backend) {
 		return cliModelResult{}, false
 	}
 	return e.result, true
@@ -714,7 +882,27 @@ func (c *cliModelCache) finishRefresh(backend string) {
 func (c *cliModelCache) set(backend string, r cliModelResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[backend] = cliModelCacheEntry{result: r, at: time.Now()}
+	now := c.clock()
+	c.entries[backend] = cliModelCacheEntry{result: r, at: now}
+	if c.failures == nil {
+		c.failures = make(map[string]int)
+	}
+	if r.failed() {
+		c.failures[backend]++
+	} else {
+		delete(c.failures, backend)
+	}
+	if r.freshAuthoritative() {
+		if c.lastGood == nil {
+			c.lastGood = make(map[string]cliModelCacheEntry)
+		}
+		e := cliModelCacheEntry{
+			result: cliModelResult{models: append([]string(nil), r.models...), reasoningEfforts: r.reasoningEfforts},
+			at:     now,
+		}
+		c.lastGood[backend] = e
+		c.persistLastGood(backend, e)
+	}
 }
 
 // queryCLIModels returns the model list for a CLI backend (copilot, claude,
@@ -818,6 +1006,15 @@ func (s *Server) queryCLIModelsForBoot(backend string) cliModelResult {
 			return r
 		}
 		s.refreshCLIModelsAsync(backend)
+		// A spoke that has discovered this backend before boots with that
+		// catalog (persisted under /data) rather than the static list, so
+		// the dropdown never regresses to "fallback" across a restart
+		// (#11865). The first probe replaces it within one cache window.
+		if r, ok := s.cliModels.lastGoodFor(backend, "discovery refresh running in background"); ok {
+			r.discoveryErr = fmt.Sprintf("serving the CLI catalog discovered at %s; discovery refresh running in background",
+				r.staleAt.UTC().Format(cliModelStaleTimeLayout))
+			return r
+		}
 	}
 	return s.staticCLIModelResult(backend)
 }
@@ -1043,6 +1240,24 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 		return cliModelResult{models: dedupeModels(canonicalizeCopilotModelIDs(models)), fallback: false}
 	}
 
+	if sdkErr != "" && notice == nil && s.cliModels != nil {
+		// The installed helper failed for a reason that is NOT an entitlement
+		// verdict — on the fleet overwhelmingly a timeout on a loaded node.
+		// The catalog it reported a probe or two ago is still the CLI's
+		// catalog; keep serving it, labelled stale with the failure as the
+		// reason, instead of swapping in the HTTP chat-completions inventory
+		// and flipping the dropdown to "degraded" for one cache window
+		// (#11865). An entitlement rejection (notice != nil) is different:
+		// the CLI's list is genuinely gone, so it falls through as before.
+		if last, ok := s.cliModels.lastGoodFor("copilot", "copilot SDK helper failed: "+sdkErr); ok {
+			// Stable text (no relative age) so the audit transition key does
+			// not churn on every probe while the condition persists.
+			last.discoveryErr = fmt.Sprintf("serving the CLI catalog discovered at %s; the refresh failed: %s",
+				last.staleAt.UTC().Format(cliModelStaleTimeLayout), sdkErr)
+			return last
+		}
+	}
+
 	if token == "" {
 		// No credential at all is "not configured", NOT "not licensed" —
 		// carrying a licence notice here would tell an owner who simply has
@@ -1093,6 +1308,10 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	}
 	return out
 }
+
+// cliModelStaleTimeLayout renders when a stale catalog was discovered, in
+// UTC, for the dropdown reason and the audit log.
+const cliModelStaleTimeLayout = "2006-01-02 15:04Z"
 
 // joinDiscoveryErrs concatenates the non-empty parts of a multi-stage
 // discovery failure ("sdk helper: … | http probe: …").
@@ -1310,13 +1529,33 @@ func execCopilotSDKHelper(ctx context.Context, token string) ([]byte, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if len(msg) > copilotSDKStderrLogLimit {
-			msg = msg[:copilotSDKStderrLogLimit]
-		}
-		return nil, fmt.Errorf("sdk helper: %w (stderr: %s)", err, msg)
+		return nil, copilotSDKHelperExecErr(ctx, err, stderr.String())
 	}
 	return stdout.Bytes(), nil
+}
+
+// errCopilotSDKHelperTimeout marks a helper run that hit copilotSDKProbeTimeout
+// and was SIGKILLed by exec.CommandContext. Go reports that kill as the bare
+// "signal: killed" with no stderr, which is indistinguishable from a crash in
+// the dropdown tooltip and the audit log — on the oke-11 spoke an operator
+// read "signal: killed (stderr: )" for hours without learning the probe had
+// merely run 0.2 s over budget (#11865).
+var errCopilotSDKHelperTimeout = errors.New("sdk helper timed out")
+
+// copilotSDKHelperExecErr turns a helper exec failure into the token-free
+// error the dropdown carries. A deadline kill is named as a timeout with the
+// budget it exceeded; anything else keeps the exit status and a capped slice
+// of stderr.
+func copilotSDKHelperExecErr(ctx context.Context, err error, stderr string) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w after %s and was killed (node %s normally needs 2–3 s on an arm64 spoke; the node is probably CPU-starved)",
+			errCopilotSDKHelperTimeout, copilotSDKProbeTimeout, filepath.Base(copilotSDKHelperPath))
+	}
+	msg := strings.TrimSpace(stderr)
+	if len(msg) > copilotSDKStderrLogLimit {
+		msg = msg[:copilotSDKStderrLogLimit]
+	}
+	return fmt.Errorf("sdk helper: %w (stderr: %s)", err, msg)
 }
 
 // copilotSDKModel mirrors one entry of the helper's stdout JSON. The helper

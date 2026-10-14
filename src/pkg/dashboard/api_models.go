@@ -47,6 +47,14 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 			// wrong inventory — the client labels it and auto-heal must sit
 			// it out exactly as it sits out a fallback.
 			"degraded": r.degraded,
+			// stale: the last-good CLI catalog, replayed because the current
+			// probe failed transiently (#11865). Still the CLI's inventory,
+			// so authoritative for validation — but the client labels it and
+			// auto-heal sits it out until a fresh probe confirms it.
+			"stale": r.stale,
+		}
+		if r.stale && !r.staleAt.IsZero() {
+			entry["stale_at"] = r.staleAt.UTC().Format(time.RFC3339)
 		}
 		if len(r.reasoningEfforts) > 0 {
 			entry["reasoning_efforts"] = r.reasoningEfforts
@@ -65,6 +73,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 				"error":    r.discoveryErr,
 				"fallback": r.fallback,
 				"degraded": r.degraded,
+				"stale":    r.stale,
 			}
 		}
 		return entry

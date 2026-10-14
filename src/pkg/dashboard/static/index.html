@@ -17466,6 +17466,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // tooltip on every model dropdown already on screen for that backend —
     // the agent cards are rendered independently of this fetch, so a notice
     // that arrives after they paint still has to reach them.
+    // formatStaleCatalogAge renders how long ago a replayed CLI catalog was
+    // discovered ("40s ago", "12m ago", "3h ago") from the server's RFC3339
+    // stale_at; '' when unparsable.
+    function formatStaleCatalogAge(iso) {
+      const t = Date.parse(iso);
+      if (!Number.isFinite(t)) return '';
+      const sec = Math.max(0, Math.floor((Date.now() - t) / 1000));
+      if (sec < 60) return `${sec}s ago`;
+      if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+      return `${Math.floor(sec / 3600)}h ago`;
+    }
     function setBackendModelNotice(backend, notice) {
       if (notice) BACKEND_MODEL_NOTICES[backend] = notice;
       else delete BACKEND_MODEL_NOTICES[backend];
@@ -17509,8 +17520,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // from a real one for two days while auto-heal downgraded every
           // agent off it (#7384). An entitlement notice (#6500) still wins
           // the label — it is the more specific diagnosis.
+          // b.stale: the server is replaying the last CLI catalog it
+          // discovered because the current probe failed transiently (#11865).
+          // That IS the CLI's list, so it is not "degraded"; the label says
+          // it is cached and the tooltip says why the refresh failed.
           const discoveryFailed = !!(b.discovery && b.discovery.ok === false);
+          const staleAge = b.stale && b.stale_at ? formatStaleCatalogAge(b.stale_at) : '';
           const labelSuffix = (b.notice && b.notice.label) ? ` (${b.notice.label})`
+            : (discoveryFailed && b.stale) ? ` (cached CLI catalog${staleAge ? ', ' + staleAge : ''} — refresh failing)`
             : discoveryFailed ? (b.degraded
                 ? ' (⚠ model discovery degraded — not the CLI catalog)'
                 : ' (⚠ model discovery failed — showing fallback list)')
@@ -17518,17 +17535,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (b.notice && b.notice.detail) {
             console.warn(`[models] ${b.id}: ${b.notice.detail}`);
           } else if (discoveryFailed) {
-            console.warn(`[models] ${b.id}: model discovery failed — ${b.discovery.error}`);
+            console.warn(`[models] ${b.id}: model discovery ${b.stale ? 'serving cached catalog' : 'failed'} — ${b.discovery.error}`);
           }
           // The tooltip carries the diagnostic text itself — the exact
           // string ("Could not find a @github/copilot platform package…" vs
-          // "Not authenticated") an operator previously had to read off a
-          // server log to tell the failures apart.
-          setBackendModelNotice(b.id, b.notice || (discoveryFailed ? {
+          // "Not authenticated" vs "sdk helper timed out after 20s") an
+          // operator previously had to read off a server log to tell the
+          // failures apart.
+          setBackendModelNotice(b.id, b.notice || (discoveryFailed ? (b.stale ? {
+            class: 'discovery',
+            label: 'cached CLI catalog — refresh failing',
+            detail: `ℹ this is the CLI catalog discovered ${staleAge || 'earlier'}; the latest refresh failed and the server is holding the last good list. ${b.discovery.error}`,
+          } : {
             class: 'discovery',
             label: b.degraded ? 'model discovery degraded' : 'model discovery failed',
             detail: `⚠ model discovery ${b.degraded ? 'degraded' : 'failed'} — ${b.degraded ? 'this list is live but is not the catalog the CLI uses' : 'showing the static fallback list'}. ${b.discovery.error}`,
-          } : null));
+          }) : null));
           if (b.reasoning_efforts) MODEL_REASONING_EFFORTS[b.id] = b.reasoning_efforts;
           const models = (b.models || []).map(m => ({ value: m, label: (b.id === 'omp' ? m : m.split('/').pop()) + labelSuffix }));
           if (!models.length) return; // keep prior (possibly fallback) list rather than blanking the dropdown
@@ -17536,7 +17558,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // A degraded list is not authority either: absence from it proves
           // nothing about what the CLI can run, so auto-heal sits it out
           // exactly as it sits out a static fallback (#7384).
-          reconcileModelsAfterDiscovery(b.id, models, !!b.fallback || !!b.degraded);
+          // A stale replay is the CLI's catalog but not freshly confirmed;
+          // auto-heal waits for a live probe too (#11865).
+          reconcileModelsAfterDiscovery(b.id, models, !!b.fallback || !!b.degraded || !!b.stale);
         });
       } catch (e) {
         // Leave BACKEND_MODELS / fallbacks untouched — retried on next refresh hook.

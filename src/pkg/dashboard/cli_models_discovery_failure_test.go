@@ -272,7 +272,7 @@ func TestDiscoveryFailureWiredInDashboard(t *testing.T) {
 	for _, want := range []string{
 		"⚠ model discovery failed — showing fallback list",
 		"⚠ model discovery degraded — not the CLI catalog",
-		"reconcileModelsAfterDiscovery(b.id, models, !!b.fallback || !!b.degraded)",
+		"reconcileModelsAfterDiscovery(b.id, models, !!b.fallback || !!b.degraded || !!b.stale)",
 		"b.discovery.error",
 	} {
 		if !strings.Contains(html, want) {
