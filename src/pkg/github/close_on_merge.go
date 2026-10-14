@@ -48,6 +48,10 @@ type CloseOnMergeOptions struct {
 	MergedAfter time.Time
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// LabelDriven reports a repo that opted in to label-driven triage; the
+	// backfill posts no "What to reply" notice there when it reclassifies a
+	// dedupe checklist as needs-decision. nil means no repo opts in.
+	LabelDriven func(repo string) bool
 }
 
 func (o CloseOnMergeOptions) now() time.Time {
@@ -231,6 +235,10 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 			}
 			for _, issue := range issues {
 				if issue == nil || issue.IsPullRequest() || !strings.EqualFold(issue.GetState(), "open") {
+					continue
+				}
+				if res, ok := c.sweepDedupeAdvisoryChecklist(ctx, repo, issue, opts); ok {
+					out = append(out, res)
 					continue
 				}
 				if !closeOnMergeBackfillCandidate(issue) {

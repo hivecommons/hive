@@ -247,7 +247,14 @@ gh issue create --repo <owner/repo> --label triage/advisory \
 When you edit an existing checklist in place, recompute the verdict and rewrite
 line two. If an advisory checklist gains an action-required row, say so on the
 first line of the delta comment ("Decision required: yes — <row>") so watchers
-see it needs a call.
+see it needs a call. The hive reads line two and parks the issue itself: it
+swaps `triage/advisory` for the decision label and posts the "What to reply"
+notice. Do not add or remove either label yourself.
+
+The hive also closes an advisory-only checklist on its own, with a one-line
+comment, once every `#N` it references is closed or merged, or 7 days after it
+was filed. You still never close it. If a checklist you were going to update is
+closed, it is finished: file a new one if you have new findings.
 
 Use `--body-file`, not `--body`: the checklist contains tables, backticks and
 quotes that shell quoting will mangle. Pick a filename unlikely to collide —

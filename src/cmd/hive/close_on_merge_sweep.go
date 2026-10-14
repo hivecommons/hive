@@ -124,6 +124,7 @@ func runCloseOnMergeSweepWith(ctx context.Context, cfg *config.Config, ghClient 
 		RecheckAfter: cfg.Issues.EffectiveCloseOnMergeRecheck(),
 		MergedAfter:  plan.MergedAfter,
 		Now:          sched.clock(),
+		LabelDriven:  cfg.RepoLabelDriven,
 	}
 	sweep := ghClient.CloseOnMergeLedgerSweep(ctx, ledger, opts)
 	msg := "close-on-merge ledger sweep"
