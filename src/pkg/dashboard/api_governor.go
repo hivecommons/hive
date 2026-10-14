@@ -192,6 +192,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		},
 		"logging":               loggingSectionResponse(cfg),
 		"dashboard":             dashboardSettingsResponse(cfg),
+		"backends":              backendsPolicyResponse(cfg),
 		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
 		"classifier":            classifierSectionResponse(),

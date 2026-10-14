@@ -159,8 +159,6 @@ autonomy.cooldown_days # TODO #11855
 autonomy.demote_on # TODO #11855
 autonomy.max_level # TODO #11855
 autonomy.promote_after # TODO #11855
-backends.allow[] # TODO #11855
-backends.deny[] # TODO #11855
 classification.review_bots.logins[] # TODO #11855
 classification.review_bots.max_attempts_per_thread # TODO #11855
 classification.review_bots.resolve_after_fix # TODO #11855
