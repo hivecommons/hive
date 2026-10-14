@@ -12,6 +12,6 @@ These rules apply to every AI agent (hive agents, Copilot CLI, Claude Code, Code
 ## Working style
 
 - Keep changes surgical and PR-sized; one concern per PR.
-- Every PR needs a `changelog.d/<category>-<slug>.md` fragment (`added|changed|deprecated|fixed|security`) whose body is a single `- ` bullet.
+- Every PR needs a `changelog.d/<category>-<slug>.md` fragment (`added|changed|deprecated|fixed|security`) whose body is a single `- ` bullet. `changelog.d/` is at the repository root, not under `src/` — `src/changelog.d/` is never compiled and the guard rejects it.
 - Sign commits (`git commit -s`); PR titles start with an emoji (`✨` feature, `🐛` fix, `📖` docs, `🌱` chore, `⚠️` breaking).
 - Do not edit `src/docs/api-reference.md` line citations by hand; CI's citation guard reports drift and the fix is `bash src/scripts/check-api-reference-citations.sh --fix` — run it only when CI tells you it drifted. The required `changelog-fragment-guard` check runs it (non-fix) when a PR edits a hub or dashboard `server.go` or their `static/` pages, so the PR that causes drift goes red.
