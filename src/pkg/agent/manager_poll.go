@@ -587,7 +587,22 @@ func diffNewLines(prev, curr []string) []string {
 	if overlap >= 0 {
 		return curr[overlap:]
 	}
-	return curr
+	// Full-screen CLIs redraw in place without scrolling; emit only lines
+	// not already on screen (multiset match, so repeated lines still count).
+	seen := make(map[string]int, len(prev))
+	for _, l := range prev {
+		seen[normalizeLine(l)]++
+	}
+	var out []string
+	for _, l := range curr {
+		n := normalizeLine(l)
+		if seen[n] > 0 {
+			seen[n]--
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 var spinnerReplacer = strings.NewReplacer(
