@@ -27,10 +27,24 @@ const BAD = [
   const ctx = await browser.newContext({ ...devices['Pixel 7'] });
   if (process.env.HIVE_TOKEN) await ctx.addInitScript(t => localStorage.setItem('hive-token', t), process.env.HIVE_TOKEN);
   if (process.env.HIVE_SESSION) await ctx.addCookies([{ name: 'hive_session', value: process.env.HIVE_SESSION, url: base }]);
+  // Suppress the first-run welcome checklist (hive-welcome-state-v1.dismissed).
+  await ctx.addInitScript(() => {
+    try { localStorage.setItem('hive-welcome-state-v1', JSON.stringify({ dismissed: true, checks: {} })); } catch (_) {}
+  });
   const page = await ctx.newPage();
   const httpErrors = [];
   page.on('response', r => { if (new URL(r.url()).pathname.startsWith('/api/chat') && r.status() >= 400) httpErrors.push(r.status() + ' ' + r.url()); });
   await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
+  // Best-effort: dismiss any modal overlay (welcome, then later
+  // data-hive-modal-sequence ones) that still opens and would block the FAB.
+  const overlay = '.config-overlay[data-hive-modal-sequence]:not(.hidden)';
+  await page.waitForSelector(overlay, { state: 'visible', timeout: 3000 }).catch(() => {});
+  for (let i = 0; i < 5 && await page.$(overlay); i++) {
+    const btn = await page.$(`${overlay} [data-action="dismissWelcomeDialog"]`);
+    if (btn) await btn.click({ timeout: 5000 }).catch(() => {});
+    else await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+  }
   await page.click('#hiveChatFab');
   await page.waitForSelector('#hiveChatInput', { state: 'visible' });
 
