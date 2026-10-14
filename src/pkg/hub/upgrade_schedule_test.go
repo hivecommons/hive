@@ -46,10 +46,17 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 		wantFire    string
 	}{
 		{
-			name:        "legacy record with empty mode behaves as instant",
+			name:        "legacy record with empty mode is gated like daily outside the window",
 			mode:        "",
 			now:         mustET(t, 2026, time.July, 15, 3, 0),
+			wantAllowed: false,
+		},
+		{
+			name:        "legacy record with empty mode fires inside the daily window",
+			mode:        "",
+			now:         mustET(t, 2026, time.July, 15, autoUpgradeDailyHour, 0),
 			wantAllowed: true,
+			wantFire:    "2026-07-15",
 		},
 		{
 			name:        "explicit instant is never gated, even at 3am",
