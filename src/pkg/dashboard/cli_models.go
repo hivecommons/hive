@@ -1252,13 +1252,20 @@ func canonicalizeCopilotModelIDs(in []string) []string {
 // substitute helper output without running node or the real CLI.
 var runCopilotSDKHelper = execCopilotSDKHelper
 
+// runCopilotSDKHelperMu guards the seam: a boot-time refresh goroutine can
+// still be probing when a test swaps the runner (#11834).
+var runCopilotSDKHelperMu sync.RWMutex
+
 // probeCopilotModelsSDK runs the SDK helper under its own timeout and parses
 // the resulting model ids. token may be empty — the CLI then resolves stored
 // device-flow auth on its own, which is exactly the hardening this path adds.
 func (s *Server) probeCopilotModelsSDK(token string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), copilotSDKProbeTimeout)
 	defer cancel()
-	out, err := runCopilotSDKHelper(ctx, token)
+	runCopilotSDKHelperMu.RLock()
+	run := runCopilotSDKHelper
+	runCopilotSDKHelperMu.RUnlock()
+	out, err := run(ctx, token)
 	if err != nil {
 		return nil, err
 	}

@@ -10,9 +10,15 @@ import (
 // swapSDKHelper substitutes the SDK-helper seam for one test and restores it.
 func swapSDKHelper(t *testing.T, fn func(ctx context.Context, token string) ([]byte, error)) {
 	t.Helper()
+	runCopilotSDKHelperMu.Lock()
 	prev := runCopilotSDKHelper
 	runCopilotSDKHelper = fn
-	t.Cleanup(func() { runCopilotSDKHelper = prev })
+	runCopilotSDKHelperMu.Unlock()
+	t.Cleanup(func() {
+		runCopilotSDKHelperMu.Lock()
+		runCopilotSDKHelper = prev
+		runCopilotSDKHelperMu.Unlock()
+	})
 }
 
 func TestParseCopilotSDKModels_FiltersPolicyAndAuto(t *testing.T) {
