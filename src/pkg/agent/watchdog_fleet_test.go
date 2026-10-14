@@ -664,3 +664,25 @@ func TestWatchdogObserveCredentialProvenIsClaudeOnly(t *testing.T) {
 		t.Fatal("copilot evidence is presence-only and must never read as proof — doing so suppresses the operator's re-authentication alert")
 	}
 }
+
+// #11910: WatchdogFleet reports the governor's deliberate kick suppression to
+// the reconciler; a nil func means no suppression (the pre-#11910 behaviour).
+func TestWatchdogKickSuppressedReason(t *testing.T) {
+	var _ watchdog.KickSuppressionReporter = WatchdogFleet{}
+
+	if got := (WatchdogFleet{}).KickSuppressedReason("strategist"); got != "" {
+		t.Errorf("nil KickSuppressed must report no suppression, got %q", got)
+	}
+	f := WatchdogFleet{KickSuppressed: func(name string) string {
+		if name == "strategist" {
+			return "cadence paused in idle mode"
+		}
+		return ""
+	}}
+	if got := f.KickSuppressedReason("strategist"); got != "cadence paused in idle mode" {
+		t.Errorf("KickSuppressedReason(strategist) = %q, want the injected reason", got)
+	}
+	if got := f.KickSuppressedReason("scanner"); got != "" {
+		t.Errorf("KickSuppressedReason(scanner) = %q, want \"\"", got)
+	}
+}

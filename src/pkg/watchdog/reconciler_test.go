@@ -797,6 +797,98 @@ func TestProducingRequiresQueuedWork(t *testing.T) {
 	})
 }
 
+// suppressingFleet is a fakeFleet that also implements
+// KickSuppressionReporter, reporting reason for every agent.
+type suppressingFleet struct {
+	*fakeFleet
+	reasonMu sync.Mutex
+	reason   string
+}
+
+func (f *suppressingFleet) KickSuppressedReason(string) string {
+	f.reasonMu.Lock()
+	defer f.reasonMu.Unlock()
+	return f.reason
+}
+
+func (f *suppressingFleet) setReason(reason string) {
+	f.reasonMu.Lock()
+	f.reason = reason
+	f.reasonMu.Unlock()
+}
+
+// #11910: an agent the governor is deliberately not kicking (cadence paused
+// in the current mode, reviewer lane with nothing to adjudicate) is idle by
+// design. The hive-wide backlog is not its work, so silence is not a fault.
+func TestProducingIdleWhenGovernorNotKicking(t *testing.T) {
+	clock := newFakeClock()
+	stale := clock.Now().Add(-7 * time.Hour)
+
+	newFleet := func(reason string) *suppressingFleet {
+		f := newFakeFleet("a1")
+		f.setObs("a1", readyObs())
+		f.setQueued(3)
+		f.mu.Lock()
+		f.production["a1"] = stale
+		f.mu.Unlock()
+		return &suppressingFleet{fakeFleet: f, reason: reason}
+	}
+
+	t.Run("suppressed agent with queued work is IdleNotScheduled", func(t *testing.T) {
+		fleet := newFleet("cadence paused in idle mode")
+		alerter := newFakeAlerter()
+		r := New(fastSettings(), fleet, alerter, testLogger(), WithClock(clock.Now))
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionTrue || p.Reason != "IdleNotScheduled" {
+			t.Fatalf("Producing = %+v, want True/IdleNotScheduled", p)
+		}
+		if !strings.Contains(p.Message, "the governor is not kicking this agent: cadence paused in idle mode") {
+			t.Errorf("Producing message must name the suppression reason, got %q", p.Message)
+		}
+		if alerter.has(producingAlertID("a1")) {
+			t.Fatal("an agent the governor is not kicking must not raise a not-producing alert")
+		}
+	})
+
+	t.Run("empty reason keeps the queued-work fault", func(t *testing.T) {
+		fleet := newFleet("")
+		alerter := newFakeAlerter()
+		r := New(fastSettings(), fleet, alerter, testLogger(), WithClock(clock.Now))
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionFalse || p.Reason != "NoRecentProduction" {
+			t.Fatalf("Producing = %+v, want False/NoRecentProduction", p)
+		}
+		if !alerter.has(producingAlertID("a1")) {
+			t.Fatal("an agent the governor would kick must still alert")
+		}
+	})
+
+	t.Run("alert raised before suppression is cleared", func(t *testing.T) {
+		fleet := newFleet("")
+		alerter := newFakeAlerter()
+		r := New(fastSettings(), fleet, alerter, testLogger(), WithClock(clock.Now))
+		r.Tick(context.Background())
+		if !alerter.has(producingAlertID("a1")) {
+			t.Fatal("precondition: the unsuppressed agent must alert")
+		}
+
+		fleet.setReason("nothing to adjudicate")
+		r.Tick(context.Background())
+
+		p, _ := FindCondition(r.Conditions("a1"), ConditionProducing)
+		if p.Status != ConditionTrue || p.Reason != "IdleNotScheduled" {
+			t.Fatalf("Producing = %+v, want True/IdleNotScheduled once suppressed", p)
+		}
+		if alerter.has(producingAlertID("a1")) {
+			t.Fatal("the not-producing alert must clear once the governor stops kicking the agent")
+		}
+	})
+}
+
 func TestReadinessProviderErrorSurfacesBlockedInferenceLine(t *testing.T) {
 	clock := newFakeClock()
 	fleet := newFakeFleet("a1")

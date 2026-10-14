@@ -62,3 +62,34 @@ func TestExpectedActive_ModeCaseInsensitive(t *testing.T) {
 		t.Error("mode lookup must be case-insensitive")
 	}
 }
+
+// OffByCadence is the shared predicate behind the dashboard's offByCadence
+// card signal and the watchdog's not-producing gate (#11910).
+func TestOffByCadence(t *testing.T) {
+	c := cfgWithModes()
+	for _, tc := range []struct {
+		name     string
+		agent    string
+		mode     string
+		onDemand bool
+		want     bool
+	}{
+		{name: "paused entry", agent: "brainstorm", mode: "surge", want: true},
+		{name: "off entry", agent: "scanner", mode: "idle", want: true},
+		{name: "kicking entry", agent: "scanner", mode: "surge", want: false},
+		{name: "absent entry is not off", agent: "brainstorm", mode: "idle", want: false},
+		{name: "unknown mode", agent: "brainstorm", mode: "busy", want: false},
+		{name: "on-demand is never off by cadence", agent: "brainstorm", mode: "surge", onDemand: true, want: false},
+		{name: "upper-case mode", agent: "brainstorm", mode: "SURGE", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := c.OffByCadence(tc.agent, tc.mode, tc.onDemand); got != tc.want {
+				t.Errorf("OffByCadence(%q, %q, %v) = %v, want %v", tc.agent, tc.mode, tc.onDemand, got, tc.want)
+			}
+		})
+	}
+	var nilCfg *Config
+	if nilCfg.OffByCadence("brainstorm", "surge", false) {
+		t.Error("a nil config cannot tell, so it must not report off by cadence")
+	}
+}

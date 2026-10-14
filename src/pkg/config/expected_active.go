@@ -186,6 +186,25 @@ func (c *Config) ContinuousModes(agentName string) []string {
 	return ContinuousModesIn(c.Governor.Modes, agentName, c.BaseAgentName(agentName), agentConfig)
 }
 
+// OffByCadence reports whether the agent's cadence entry for the CURRENT
+// governor mode is a non-kicking value (pause/off), so the governor will never
+// kick it however healthy the process is. It is the stricter "has a pause/off
+// ENTRY" form of !ExpectedActive: an ABSENT cadence is not off, and an
+// on-demand agent (onDemand: its own flag or the pack's on-demand set) is
+// never off by cadence.
+//
+// Shared by the dashboard's offByCadence card signal and the watchdog's
+// not-producing gate (#11910), so an agent the card calls off by cadence is
+// never also reported as alive but not producing. modeName is matched
+// case-insensitively, as in ExpectedActive.
+func (c *Config) OffByCadence(agentName, modeName string, onDemand bool) bool {
+	if c == nil || onDemand {
+		return false
+	}
+	cad := c.CadenceValueForMode(agentName, strings.ToLower(strings.TrimSpace(modeName)))
+	return cad != "" && cad.IsPaused()
+}
+
 // ExpectedActive reports whether the governor's CURRENT mode schedules this
 // agent on a kicking cadence right now — i.e. the governor is expected to be
 // driving it. It is the inverse of the dashboard's offByCadence: false when the

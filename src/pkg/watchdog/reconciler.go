@@ -47,6 +47,17 @@ type Fleet interface {
 	SetConditions(name string, conds []Condition)
 }
 
+// KickSuppressionReporter is an optional Fleet extension. A fleet that
+// implements it lets the readiness gate ask the question the governor
+// answers — would it kick this agent right now? — before calling silence a
+// fault (#11910).
+type KickSuppressionReporter interface {
+	// KickSuppressedReason is non-empty when the governor deliberately
+	// will not kick this agent right now (cadence paused in the current
+	// mode, reviewer lane with nothing to adjudicate).
+	KickSuppressedReason(name string) string
+}
+
 // AuthStatus is the tri-state outcome of one provider credential probe.
 type AuthStatus string
 
@@ -812,8 +823,23 @@ func (r *Reconciler) reconcileReadiness(name string, obs Observation, now time.T
 			// constantly gets ignored). Same threshold as the hub's
 			// inactiveAgentMinQueued: one waiting item is enough to make "and
 			// nothing is happening" wrong.
-			queued, queueKnown := r.fleet.QueuedWork(name)
+			//
+			// Nor is silence a fault when the governor is deliberately not
+			// kicking the agent: the hive-wide backlog is not this agent's
+			// work while its cadence is paused or its lane is idle (#11910).
+			suppressed := ""
+			if ks, ok := r.fleet.(KickSuppressionReporter); ok {
+				suppressed = ks.KickSuppressedReason(name)
+			}
+			queued, queueKnown := 0, false
+			if suppressed == "" {
+				queued, queueKnown = r.fleet.QueuedWork(name)
+			}
 			switch {
+			case suppressed != "":
+				status = ConditionTrue
+				reason = "IdleNotScheduled"
+				message = fmt.Sprintf("no production for %v, but the governor is not kicking this agent: %s", age.Round(time.Minute), suppressed)
 			case !queueKnown:
 				status = ConditionUnknown
 				reason = "QueueUnknown"
