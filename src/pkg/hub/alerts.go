@@ -895,6 +895,18 @@ func fleetMedianTokens(hives []alertHive) (int64, int) {
 //
 // now is injected so the rules are testable at boundary conditions.
 func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, now time.Time) AlertSummary {
+	return evaluateAlertsInFleet(state, hives, hives, driftAlerts, now)
+}
+
+// evaluateAlertsInFleet is evaluateAlerts for a caller whose view (hives) may
+// be a SCOPED subset of the whole hub fleet. Fleet-relative facts — the
+// token-burn median here, and the repo overlaps fleetAlerts stamps from the
+// same fleet — are taken over the full fleet, so every caller reaches the same
+// firing verdict for the same hive (#11819). alertState is shared hub-wide:
+// when a scoped poll computed the median over only its own few hives, a hive
+// the admin saw firing was evaluated as NOT firing there, retention evicted its
+// FirstSeen and ack, and the admin's next Acknowledge click answered 409.
+func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAlerts []Alert, now time.Time) AlertSummary {
 	summary := AlertSummary{
 		CountsBySeverity: map[string]int{},
 		CountsByType:     map[string]int{},
@@ -903,7 +915,14 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		return summary
 	}
 
-	medianTokens, fleetSize := fleetMedianTokens(hives)
+	medianTokens, fleetSize := fleetMedianTokens(fleet)
+	// visible is the caller's view. An overlap claim by a hive outside it is
+	// kept out of the rendered reason so a scoped caller never learns which
+	// hive it cannot see manages the same repo.
+	visible := make(map[string]bool, len(hives))
+	for _, h := range hives {
+		visible[h.ID] = true
+	}
 
 	var alerts []Alert
 	// active tracks every condition firing this pass, so retainConditions can
@@ -1116,9 +1135,34 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		// hives in the pair deliberately: either operator can act, and an alert
 		// on only one of them reads as that hive being at fault rather than the
 		// pair being ambiguous.
-		if len(h.RepoOverlaps) > 0 {
-			add(h.ID, h.Name, AlertTypeRepoOverlap, AlertSeverityWarning,
-				repoOverlapAlertReason(h.ID, h.RepoOverlaps))
+		//
+		// Unclaimed pool slots are skipped: every slot is seeded with the same
+		// "placeholder" project, so they would otherwise all "overlap" each
+		// other (#11818).
+		if !h.IsPlaceholder && len(h.RepoOverlaps) > 0 {
+			var shown []RepoOverlap
+			for _, o := range h.RepoOverlaps {
+				claims := make([]OverlapClaim, 0, len(o.Hives))
+				for _, c := range o.Hives {
+					if visible[c.ID] {
+						claims = append(claims, c)
+					}
+				}
+				if len(claims) > 1 {
+					o.Hives = claims
+					shown = append(shown, o)
+				}
+			}
+			if len(shown) > 0 {
+				add(h.ID, h.Name, AlertTypeRepoOverlap, AlertSeverityWarning,
+					repoOverlapAlertReason(h.ID, shown))
+			} else {
+				// The overlap is only with hives this caller cannot see: keep
+				// the shared condition alive (so this poll does not evict the
+				// FirstSeen/ack an admin's view relies on) without rendering it.
+				state.markCondition(h.ID, AlertTypeRepoOverlap, now)
+				active[alertAckKey(h.ID, AlertTypeRepoOverlap)] = true
+			}
 		}
 
 		// --- Rule: agents are running but not working. ---
@@ -1278,18 +1322,29 @@ func itoa64(n int64) string {
 	return string(buf[i:])
 }
 
-// fleetAlerts evaluates alerts for the hives the caller can see.
+// fleetAlerts evaluates alerts for the hives the caller can see (entries).
+// fleet is the WHOLE hub fleet, which fleet-relative facts (token-burn median,
+// repo overlaps) are computed over so a scoped caller's poll reaches the same
+// verdict as the admin's and cannot evict shared alert state (#11819). A nil
+// fleet means entries already is the whole fleet.
 //
 // It takes NO HubServer lock: the caller passes an already-copied snapshot, and
 // alertState has its own leaf mutex. This keeps the evaluator off the s.mu
 // critical path entirely.
-func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
+func (s *HubServer) fleetAlerts(entries, fleet []MyHiveEntry) AlertSummary {
 	if s == nil || s.alerts == nil {
 		return AlertSummary{CountsBySeverity: map[string]int{}, CountsByType: map[string]int{}}
+	}
+	if fleet == nil {
+		fleet = entries
 	}
 	hives := make([]alertHive, 0, len(entries))
 	for _, e := range entries {
 		hives = append(hives, alertHiveFromEntry(e))
+	}
+	fleetHives := make([]alertHive, 0, len(fleet))
+	for _, e := range fleet {
+		fleetHives = append(fleetHives, alertHiveFromEntry(e))
 	}
 	// ClusterHasKey is hub-observed fact (the per-cluster PEM store on disk),
 	// so it is stamped here rather than in alertHiveFromEntry, which must stay
@@ -1311,10 +1366,15 @@ func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
 	}
 	// #5691: repo-ownership overlap is a relationship BETWEEN hives, so like
 	// ClusterHasKey above it is computed once over the whole snapshot and
-	// stamped, never derived per hive. Placeholders fall out for free: an
-	// unassigned pool slot has no repos to claim.
-	regsForOverlap := make([]RegistryEntry, 0, len(entries))
-	for _, e := range entries {
+	// stamped, never derived per hive. Computed over the whole fleet (see
+	// above); evaluateAlertsInFleet keeps hidden hives out of the reason.
+	// Unclaimed pool slots are excluded: they are all seeded with the same
+	// "placeholder" project and would otherwise overlap each other (#11818).
+	regsForOverlap := make([]RegistryEntry, 0, len(fleet))
+	for _, e := range fleet {
+		if isPlaceholderEntry(e) {
+			continue
+		}
 		regsForOverlap = append(regsForOverlap, e.RegistryEntry)
 	}
 	if overlaps := computeRepoOverlaps(regsForOverlap); len(overlaps) > 0 {
@@ -1334,7 +1394,7 @@ func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
 	for _, e := range entries {
 		regs = append(regs, e.RegistryEntry)
 	}
-	summary := evaluateAlerts(s.alerts, hives, s.urlUnreachableAlerts(regs, now), now)
+	summary := evaluateAlertsInFleet(s.alerts, hives, fleetHives, s.urlUnreachableAlerts(regs, now), now)
 	// Cosmetic: resolve opaque OIDC ack identities to display names for the
 	// "— ack by …" note. The stored ack keeps the raw identity.
 	label := s.identityLabeler()

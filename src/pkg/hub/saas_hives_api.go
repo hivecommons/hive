@@ -1123,6 +1123,41 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	// quadrant percentiles) has run over the caller's full visible set — the
 	// page is a wire-level view, not a different fleet. No query params →
 	// full set, exactly as before.
+	// Alert state is shared hub-wide, so fleet-relative alert facts (token-burn
+	// median, repo overlaps) must be computed over the same WHOLE fleet for
+	// every caller — otherwise a scoped poll evaluates a hive the admin sees
+	// firing as clear and evicts its FirstSeen/ack (#11819). An admin's result
+	// already is that fleet (registry hives plus meta-only hives); for anyone
+	// else it is rebuilt the same way, used only inside fleetAlerts.
+	var alertFleet []MyHiveEntry
+	if !isAdmin {
+		alertFleet = make([]MyHiveEntry, 0, len(allHives)+len(saasByID))
+		inRegistry := make(map[string]bool, len(allHives))
+		for _, h := range allHives {
+			inRegistry[h.ID] = true
+			entry := MyHiveEntry{RegistryEntry: h}
+			enrichFromSaaSMeta(&entry)
+			resolveGitHubHost(&entry)
+			alertFleet = append(alertFleet, entry)
+		}
+		for id, sh := range saasByID {
+			if inRegistry[id] {
+				continue
+			}
+			entry := MyHiveEntry{RegistryEntry: RegistryEntry{
+				ID:          sh.ID,
+				Name:        sh.Org + "/" + sh.PrimaryRepo,
+				Org:         sh.Org,
+				Repos:       sh.Repos,
+				PrimaryRepo: sh.PrimaryRepo,
+				HiveType:    "hosted",
+			}}
+			enrichFromSaaSMeta(&entry)
+			resolveGitHubHost(&entry)
+			alertFleet = append(alertFleet, entry)
+		}
+	}
+
 	hivesView := result
 	query := parseMyHivesQuery(queryValues)
 	matched := len(result)
@@ -1176,7 +1211,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		// round-trip would make the panel pop in after the list and shift it.
 		// Scoped to the hives this caller can already see, so it never leaks
 		// the existence of a hive they have no access to.
-		"alerts": s.fleetAlerts(result),
+		"alerts": s.fleetAlerts(result, alertFleet),
 	}
 
 	myReq := loadProvisionRequest(username)

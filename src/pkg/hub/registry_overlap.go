@@ -31,6 +31,10 @@ type OverlapClaim struct {
 	Name string `json:"name"`
 }
 
+// placeholderRepoSentinel is the org/repo value an unclaimed pool slot's seed
+// hive.yaml carries (project.org, repos[] and primary_repo all "placeholder").
+const placeholderRepoSentinel = "placeholder"
+
 // repoClaimKey is the identity overlaps are computed on. Host and path are both
 // lower-cased: GitHub owner/repo names are case-insensitive, and two spokes
 // configured separately are exactly the pair most likely to disagree on casing.
@@ -100,6 +104,14 @@ func canonicalRepoClaim(h RegistryEntry, raw string) (host, repo string, ok bool
 	if path == "" {
 		return "", "", false
 	}
+	// An unclaimed pool slot is seeded with the literal "placeholder" as its
+	// org and repos (#11818). That names no real repo, and every slot shares
+	// it, so comparing it would report each slot as overlapping all the others.
+	for _, seg := range strings.Split(path, "/") {
+		if strings.EqualFold(seg, placeholderRepoSentinel) {
+			return "", "", false
+		}
+	}
 	repo = repoDisplayLine(strings.TrimSpace(h.Org), path)
 	if repo == "" || !strings.Contains(repo, "/") {
 		return "", "", false
@@ -154,6 +166,13 @@ func computeRepoOverlaps(hives []RegistryEntry) []RepoOverlap {
 	for _, h := range hives {
 		id := strings.TrimSpace(h.ID)
 		if id == "" {
+			continue
+		}
+		// Unclaimed pool slots claim no work, whatever their seed config says
+		// (#11818). Only the registry-level signals are available here; the
+		// ProvStatus-aware isPlaceholderEntry is applied by fleetAlerts.
+		if org := strings.TrimSpace(h.Org); strings.EqualFold(org, placeholderRepoSentinel) ||
+			strings.HasPrefix(org, placeholderOrgPrefix) {
 			continue
 		}
 		for key, claim := range repoClaimsOf(h) {

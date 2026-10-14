@@ -1356,7 +1356,7 @@ func TestHandleAlertAck(t *testing.T) {
 	// Establish a live condition to acknowledge.
 	e := MyHiveEntry{ProvStatus: alertProvStatusError}
 	e.ID = "h1"
-	s.fleetAlerts([]MyHiveEntry{e})
+	s.fleetAlerts([]MyHiveEntry{e}, nil)
 
 	post := func(body string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -1397,7 +1397,7 @@ func TestHandleAlertAckPersists(t *testing.T) {
 	s := newTestAlertServer()
 	e := MyHiveEntry{ProvStatus: alertProvStatusError}
 	e.ID = "h1"
-	s.fleetAlerts([]MyHiveEntry{e})
+	s.fleetAlerts([]MyHiveEntry{e}, nil)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/saas/admin/alert-ack",
@@ -1418,7 +1418,7 @@ func TestAlertJSONOmitsAckFieldsWhenUnacknowledged(t *testing.T) {
 	s := newTestAlertServer()
 	e := MyHiveEntry{ProvStatus: alertProvStatusError}
 	e.ID = "h1"
-	summary := s.fleetAlerts([]MyHiveEntry{e})
+	summary := s.fleetAlerts([]MyHiveEntry{e}, nil)
 	b, err := json.Marshal(summary)
 	if err != nil {
 		t.Fatal(err)
@@ -1586,7 +1586,7 @@ func TestFleetAlertsOnServer(t *testing.T) {
 	e.ID = "h1"
 	e.Name = "org/h1"
 
-	got := s.fleetAlerts([]MyHiveEntry{e})
+	got := s.fleetAlerts([]MyHiveEntry{e}, nil)
 	if got.Total != 1 {
 		t.Fatalf("Total = %d, want 1 (alerts: %+v)", got.Total, got.Alerts)
 	}
@@ -1596,7 +1596,7 @@ func TestFleetAlertsOnServer(t *testing.T) {
 
 	// A server with no alert state must degrade gracefully rather than panic.
 	var nilState HubServer
-	empty := nilState.fleetAlerts([]MyHiveEntry{e})
+	empty := nilState.fleetAlerts([]MyHiveEntry{e}, nil)
 	if empty.Total != 0 || empty.CountsByType == nil {
 		t.Fatalf("a server without alert state must return an empty usable summary, got %+v", empty)
 	}
@@ -2022,5 +2022,132 @@ func TestCorruptAcksFileIsQuarantinedAndAckingContinues(t *testing.T) {
 	}
 	if !a.Acknowledged {
 		t.Fatal("the post-recovery ack must survive a restart")
+	}
+}
+
+// --- #11818: unclaimed pool slots never raise repo-overlap ---
+
+func TestRepoOverlapAlert_SkipsPlaceholderSlots(t *testing.T) {
+	s := newTestAlertServer()
+	// ProvStatus "available" is the authoritative placeholder signal even when
+	// the slot's seed config looks like a real project.
+	slot := func(id string) MyHiveEntry {
+		e := MyHiveEntry{ProvStatus: statusAvailable}
+		e.ID = id
+		e.Name = id
+		e.Org = "acme"
+		e.PrimaryRepo = "shared"
+		e.Repos = []string{"shared"}
+		return e
+	}
+	got := s.fleetAlerts([]MyHiveEntry{slot("hosted-available-a"), slot("hosted-available-b")}, nil)
+	for _, a := range got.Alerts {
+		if a.Type == AlertTypeRepoOverlap {
+			t.Fatalf("placeholder slots must not raise repo-overlap, got %+v", got.Alerts)
+		}
+	}
+
+	// The rule itself is guarded too, whatever overlaps get stamped.
+	h := baseHive("h1")
+	h.IsPlaceholder = true
+	h.RepoOverlaps = []RepoOverlap{{Repo: "acme/shared", Hives: []OverlapClaim{{ID: "h1"}, {ID: "h2"}}}}
+	other := baseHive("h2")
+	sum := evaluateAlerts(newAlertState(), []alertHive{h, other}, nil, fixedNow)
+	if hasAlert(sum.Alerts, "h1", AlertTypeRepoOverlap) {
+		t.Fatalf("a placeholder must not raise repo-overlap: %+v", sum.Alerts)
+	}
+}
+
+// --- #11819: scoped polls must reach the same verdict as the admin's ---
+
+func scopedTestEntry(id string, tokens int64) MyHiveEntry {
+	e := MyHiveEntry{}
+	e.ID = id
+	e.Name = "org/" + id
+	e.Online = true
+	e.TotalTokens24h = tokens
+	return e
+}
+
+func TestTokenBurnAckSurvivesScopedPollWithSmallerFleet(t *testing.T) {
+	dir := t.TempDir()
+	orig := alertAcksPath
+	alertAcksPath = filepath.Join(dir, "acks.json")
+	defer func() { alertAcksPath = orig }()
+
+	s := newTestAlertServer()
+	fleet := []MyHiveEntry{scopedTestEntry("h1", 100000)}
+	for _, id := range []string{"h2", "h3", "h4", "h5", "h6"} {
+		fleet = append(fleet, scopedTestEntry(id, 5000))
+	}
+
+	adminView := s.fleetAlerts(fleet, nil)
+	before, ok := findAlert(adminView.Alerts, "h1", AlertTypeTokenBurn)
+	if !ok {
+		t.Fatalf("expected a token-burn alert on h1, got %+v", adminView.Alerts)
+	}
+
+	// h1's owner sees only h1. Its median must still be the fleet's, so the
+	// poll agrees h1 is firing instead of evicting the shared condition.
+	ownerView := s.fleetAlerts(fleet[:1], fleet)
+	if !hasAlert(ownerView.Alerts, "h1", AlertTypeTokenBurn) {
+		t.Fatalf("scoped poll must use the fleet median, got %+v", ownerView.Alerts)
+	}
+
+	if rec := ackViaHandler(t, s, adminView, AlertTypeTokenBurn); rec.Code != http.StatusOK {
+		t.Fatalf("ack status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	s.fleetAlerts(fleet[:1], fleet)
+
+	after := s.fleetAlerts(fleet, nil)
+	a, ok := findAlert(after.Alerts, "h1", AlertTypeTokenBurn)
+	if !ok || !a.Acknowledged {
+		t.Fatalf("ack must survive the owner's scoped poll, got %+v", after.Alerts)
+	}
+	if !a.FirstSeen.Equal(before.FirstSeen) {
+		t.Fatalf("FirstSeen churned across a scoped poll: %v -> %v", before.FirstSeen, a.FirstSeen)
+	}
+}
+
+func TestRepoOverlapAckSurvivesScopedPollWithoutLeakingHiddenHive(t *testing.T) {
+	dir := t.TempDir()
+	orig := alertAcksPath
+	alertAcksPath = filepath.Join(dir, "acks.json")
+	defer func() { alertAcksPath = orig }()
+
+	s := newTestAlertServer()
+	mk := func(id, name string) MyHiveEntry {
+		e := scopedTestEntry(id, 5000)
+		e.Name = name
+		e.Org = "acme"
+		e.PrimaryRepo = "shared"
+		e.Repos = []string{"shared"}
+		return e
+	}
+	fleet := []MyHiveEntry{mk("h1", "mine"), mk("h2", "secret-neighbour")}
+
+	adminView := s.fleetAlerts(fleet, nil)
+	if !hasAlert(adminView.Alerts, "h1", AlertTypeRepoOverlap) {
+		t.Fatalf("expected a repo-overlap alert on h1, got %+v", adminView.Alerts)
+	}
+
+	// The owner of h1 cannot see h2: nothing about h2 may be rendered, but the
+	// shared condition must stay alive.
+	ownerView := s.fleetAlerts(fleet[:1], fleet)
+	for _, a := range ownerView.Alerts {
+		if a.Type == AlertTypeRepoOverlap || strings.Contains(a.Reason, "secret-neighbour") {
+			t.Fatalf("scoped poll must not reveal a hidden hive's overlap: %+v", ownerView.Alerts)
+		}
+	}
+
+	if rec := ackViaHandler(t, s, adminView, AlertTypeRepoOverlap); rec.Code != http.StatusOK {
+		t.Fatalf("ack status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	s.fleetAlerts(fleet[:1], fleet)
+
+	after := s.fleetAlerts(fleet, nil)
+	a, ok := findAlert(after.Alerts, "h1", AlertTypeRepoOverlap)
+	if !ok || !a.Acknowledged {
+		t.Fatalf("ack must survive the owner's scoped poll, got %+v", after.Alerts)
 	}
 }

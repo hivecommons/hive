@@ -320,3 +320,29 @@ func TestRegistryResponse_ShapeIsAdditive(t *testing.T) {
 		}
 	}
 }
+
+// #11818: every unclaimed pool slot is seeded with the same placeholder project
+// (org, repos and primary_repo all "placeholder"), so comparing those claims
+// reported each slot as overlapping all the others.
+func TestRepoOverlap_PlaceholderSlotsDoNotOverlap(t *testing.T) {
+	got := computeRepoOverlaps([]RegistryEntry{
+		overlapHive("hosted-available-a", "a", "placeholder", "placeholder", "placeholder"),
+		overlapHive("hosted-available-b", "b", "placeholder", "placeholder", "placeholder"),
+		overlapHive("hosted-available-c", "c", "available-c", "shared", "shared"),
+		overlapHive("hosted-available-d", "d", "available-d", "shared", "shared"),
+		overlapHive("h-e", "e", "acme", "placeholder", "placeholder"),
+		overlapHive("h-f", "f", "acme", "acme/placeholder", "placeholder"),
+	})
+	if got != nil {
+		t.Fatalf("placeholder slots must not overlap each other, got %+v", got)
+	}
+
+	// A real claim next to a placeholder seed still counts.
+	mixed := computeRepoOverlaps([]RegistryEntry{
+		overlapHive("h-a", "a", "acme", "placeholder", "placeholder", "shared"),
+		overlapHive("h-b", "b", "acme", "shared"),
+	})
+	if len(mixed) != 1 || mixed[0].Repo != "acme/shared" {
+		t.Fatalf("want only the real acme/shared overlap, got %+v", mixed)
+	}
+}
