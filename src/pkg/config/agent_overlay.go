@@ -67,6 +67,12 @@ func (c *Config) RejectInvalidAgentOverlays(overlays map[string]AgentConfig) map
 	if len(overlays) == 0 {
 		return overlays
 	}
+	for _, name := range c.Governor.ClearInvalidInferenceLaunchCmds(overlays) {
+		slog.Default().Warn("config: cleared invalid inference launch_cmd from per-agent overlay; inference and gateway backends launch through claude",
+			"hive_id", c.HiveID,
+			"agent", name,
+			"file", overlays[name].sourceFile)
+	}
 	kept := make(map[string]AgentConfig, len(overlays))
 	for name, agent := range overlays {
 		if err := c.validateAgentOverlay(name, agent); err != nil {

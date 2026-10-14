@@ -60,6 +60,8 @@ func (m *Manager) SetDeadSessionRecoveryOwner(ownedElsewhere bool) {
 // the watchdog's; this loop still observes and logs, and still performs the
 // consent/stall work that is nobody else's.
 func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
+	m.runCopilotCacheJanitor()
+
 	m.mu.RLock()
 	var crashed []string
 	var consentStuck, consentCleared []string

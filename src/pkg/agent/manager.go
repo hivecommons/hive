@@ -1089,6 +1089,15 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 			return nil
 		}
 	}
+	if backend == "copilot" {
+		m.runCopilotCacheJanitor()
+		if reason, full := copilotDiskFullCondition(); full {
+			if err := m.Pause(name, DiskFullTrigger, reason); err != nil {
+				return err
+			}
+			return fmt.Errorf("%s", reason)
+		}
+	}
 
 	// Runs with m.mu RELEASED — see mintAgentTokenUnlocked for why holding
 	// m.mu across the outbound mint calls caused a fleet-wide liveness flap.

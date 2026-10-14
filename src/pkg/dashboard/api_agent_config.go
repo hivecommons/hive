@@ -15,6 +15,17 @@ import (
 	"github.com/hivecommons/hive/pkg/resolve"
 )
 
+func (s *Server) defaultLaunchCmdForBackend(backend, model string) string {
+	switch {
+	case backend == "copilot":
+		return fmt.Sprintf("/usr/bin/copilot --allow-all --model %s", model)
+	case backend == "claude" || config.IsInferenceBackend(backend) || s.deps.Config.Governor.ResolveGateway(backend) != nil:
+		return fmt.Sprintf("claude --model %s --dangerously-skip-permissions", model)
+	default:
+		return fmt.Sprintf("%s --model %s", backend, model)
+	}
+}
+
 func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
@@ -37,13 +48,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 	// Use configured launch command if available; otherwise construct one
 	launchCmd := agentCfg.LaunchCmd
 	if launchCmd == "" {
-		launchCmd = fmt.Sprintf("%s --model %s", cli, model)
-		switch cli {
-		case "claude":
-			launchCmd = fmt.Sprintf("claude --model %s --dangerously-skip-permissions", model)
-		case "copilot":
-			launchCmd = fmt.Sprintf("/usr/bin/copilot --allow-all --model %s", model)
-		}
+		launchCmd = s.defaultLaunchCmdForBackend(cli, model)
 	}
 
 	// Use configured display name if available
@@ -733,6 +738,9 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	// and diagnosed as another, relaunched as "hung" forever. Checked here —
 	// after every field edit above — so a save changing either half (or both)
 	// is judged on the final combination.
+	if strings.TrimSpace(agentCfg.LaunchCmd) == s.defaultLaunchCmdForBackend(agentCfg.Backend, agentCfg.Model) {
+		agentCfg.LaunchCmd = ""
+	}
 	if err := s.deps.Config.Governor.ValidateLaunchCmdBackend(agentCfg.Backend, agentCfg.LaunchCmd); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return

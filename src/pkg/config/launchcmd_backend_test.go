@@ -21,6 +21,7 @@ func TestLaunchCmdDeclaredBackend(t *testing.T) {
 		{"bob --model auto", "bob"},
 		{"copilot --allow-all --model claude-sonnet-4-6", "copilot"},
 		{"claude --dangerously-skip-permissions", "claude"},
+		{"litellm --model aws/claude-sonnet-5", "litellm"},
 		// Absolute path and leading env assignments.
 		{"/usr/bin/copilot --allow-all", "copilot"},
 		{"FOO=bar BAZ=qux gemini --model pro", "gemini"},
@@ -89,6 +90,30 @@ func TestValidateLaunchCmdBackend_InferenceAndGateways(t *testing.T) {
 		if err := g.ValidateLaunchCmdBackend(backend, "bob --model auto"); err == nil {
 			t.Errorf("ValidateLaunchCmdBackend(%q, bob ...) = nil, want an error", backend)
 		}
+		if err := g.ValidateLaunchCmdBackend(backend, backend+" --model aws/claude-sonnet-5"); err == nil {
+			t.Errorf("ValidateLaunchCmdBackend(%q, %q --model ...) = nil, want an error", backend, backend)
+		}
+	}
+}
+
+func TestClearInvalidInferenceLaunchCmds(t *testing.T) {
+	g := GovernorConfig{
+		Gateways: []GatewayConfig{{Name: "corp-gw", Kind: GatewayKindCustom, Endpoint: "https://gw.example"}},
+	}
+	agents := map[string]AgentConfig{
+		"litellm": {Backend: "litellm", LaunchCmd: "litellm --model aws/claude-sonnet-5"},
+		"gateway": {Backend: "corp-gw", LaunchCmd: "/usr/local/bin/corp-gw --model x"},
+		"claude":  {Backend: "claude", LaunchCmd: "claude --dangerously-skip-permissions"},
+	}
+	cleared := g.ClearInvalidInferenceLaunchCmds(agents)
+	if strings.Join(cleared, ",") != "gateway,litellm" {
+		t.Fatalf("cleared = %v, want gateway and litellm", cleared)
+	}
+	if agents["litellm"].LaunchCmd != "" || agents["gateway"].LaunchCmd != "" {
+		t.Fatalf("invalid inference launch_cmds were not cleared: %#v", agents)
+	}
+	if agents["claude"].LaunchCmd == "" {
+		t.Fatal("claude launch_cmd was cleared unexpectedly")
 	}
 }
 
@@ -119,5 +144,23 @@ func TestConfigValidateRejectsBackendLaunchCmdMismatch(t *testing.T) {
 	}
 	if err := c.validate(); err != nil {
 		t.Errorf("validate() = %v, want nil for an agreeing backend/launch_cmd", err)
+	}
+}
+
+func TestConfigValidateClearsLegacyInferenceLaunchCmd(t *testing.T) {
+	c := &Config{}
+	c.Project.Org = "example"
+	c.GitHub.Token = "x"
+	c.Agents = map[string]AgentConfig{
+		"ci-maintainer": {
+			Backend:   "litellm",
+			LaunchCmd: "litellm --model aws/claude-sonnet-5",
+		},
+	}
+	if err := c.validate(); err != nil {
+		t.Fatalf("validate() = %v, want nil migration for legacy inference launch_cmd", err)
+	}
+	if got := c.Agents["ci-maintainer"].LaunchCmd; got != "" {
+		t.Fatalf("LaunchCmd after validate = %q, want cleared", got)
 	}
 }

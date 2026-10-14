@@ -2111,6 +2111,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	if b.cfg.GitHub.IsGHE() {
 		b.projectCtx.GHHost = b.cfg.GitHub.HostLabel()
 	}
+	for _, name := range b.cfg.Governor.ClearInvalidInferenceLaunchCmds(b.cfg.Agents) {
+		b.logger.Warn("cleared invalid inference launch_cmd; inference and gateway backends launch through claude", "agent", name)
+	}
 	b.agentMgr = agent.NewManager(b.cfg.EnabledAgents(), b.logger, b.projectCtx)
 	// SIGTERM (pod roll, hive upgrade) destroys every tmux server and with it
 	// the in-flight kick's scrollback; archive it to /data first (#4296).

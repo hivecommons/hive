@@ -173,8 +173,14 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 			// diagnostic is not a start failure — relaunch, like the other two
 			// branches do, and only fall back to StateFailed if the relaunch
 			// itself fails.
-			m.logger.Warn("diagnostic: timed out waiting for copilot error output, relaunching agent", "agent", agent.Name)
+			output := m.captureTmuxPaneForAgent(agent)
+			diagnosticTail := compactPaneTail(output, 8)
 			agent.LastError = "copilot hung with no output (diagnostic timed out)"
+			if diagnosticTail != "" {
+				agent.LastError += ": " + diagnosticTail
+			}
+			m.logger.Warn("diagnostic: timed out waiting for copilot error output, relaunching agent",
+				"agent", agent.Name, "output_tail", truncateStr(diagnosticTail, 500))
 			if agent.UID > 0 {
 				killAgentProcesses(agent.UID, m.logger)
 			}
@@ -240,6 +246,27 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 			return
 		}
 	}
+}
+
+func compactPaneTail(output string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	return strings.Join(lines, " | ")
 }
 
 // fixSharedConfigPerms ensures /data/home/.copilot/config.json is group-readable

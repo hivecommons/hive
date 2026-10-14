@@ -18,9 +18,10 @@ const (
 )
 
 type restartStormPlan struct {
-	allowed     bool
-	backoff     time.Duration
-	pauseReason string
+	allowed      bool
+	backoff      time.Duration
+	pauseTrigger string
+	pauseReason  string
 }
 
 func (m *Manager) restartWithStormBreaker(ctx context.Context, name, reason, detail string) (bool, error) {
@@ -29,9 +30,9 @@ func (m *Manager) restartWithStormBreaker(ctx context.Context, name, reason, det
 	case plan.pauseReason != "":
 		if m.logger != nil {
 			m.logger.Warn("automatic restart suppressed by restart-storm breaker",
-				"agent", name, "reason", reason, "pause_reason", plan.pauseReason)
+				"agent", name, "reason", reason, "trigger", plan.pauseTrigger, "pause_reason", plan.pauseReason)
 		}
-		return false, m.Pause(name, RestartStormTrigger, plan.pauseReason)
+		return false, m.Pause(name, plan.pauseTrigger, plan.pauseReason)
 	case plan.backoff > 0:
 		if m.logger != nil {
 			m.logger.Warn("automatic restart backed off by restart-storm breaker",
@@ -53,12 +54,25 @@ func (m *Manager) planAutomaticRestart(name, reason, detail string, now time.Tim
 	if !ok || agent == nil || agent.Paused {
 		return restartStormPlan{}
 	}
+	if agent.effectiveBackend() == "copilot" {
+		if msg, full := copilotDiskFullCondition(); full {
+			agent.LastError = msg
+			agent.restartStormBackoffUntil = time.Time{}
+			return restartStormPlan{pauseTrigger: DiskFullTrigger, pauseReason: msg}
+		}
+	}
+	if isCopilotDiskFullError(detail) || isCopilotDiskFullError(reason) {
+		msg := diskFullPauseReason(reason, detail)
+		agent.LastError = msg
+		agent.restartStormBackoffUntil = time.Time{}
+		return restartStormPlan{pauseTrigger: DiskFullTrigger, pauseReason: msg}
+	}
 	recent := restartEventsSince(agent.RestartEvents, now.Add(-restartStormWindow))
 	if recent >= restartStormPauseAfter {
 		msg := restartStormPauseReason(reason, detail, agent)
 		agent.LastError = msg
 		agent.restartStormBackoffUntil = time.Time{}
-		return restartStormPlan{pauseReason: msg}
+		return restartStormPlan{pauseTrigger: RestartStormTrigger, pauseReason: msg}
 	}
 	if now.Before(agent.restartStormBackoffUntil) {
 		return restartStormPlan{backoff: agent.restartStormBackoffUntil.Sub(now)}
@@ -111,4 +125,15 @@ func restartStormPauseReason(reason, detail string, agent *AgentProcess) string 
 		cause = "automatic restart loop"
 	}
 	return fmt.Sprintf("restart-storm: %s", sanitizeRestartReason(cause))
+}
+
+func diskFullPauseReason(reason, detail string) string {
+	cause := strings.TrimSpace(detail)
+	if cause == "" {
+		cause = strings.TrimSpace(reason)
+	}
+	if cause == "" {
+		cause = "Copilot launch failed because /data is full or out of quota"
+	}
+	return fmt.Sprintf("%s: %s", copilotDiskFullReasonHead, sanitizeRestartReason(cause))
 }
