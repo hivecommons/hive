@@ -1,0 +1,1 @@
+- Add a Settings parity audit tool and CI ratchet so new hive.yaml settings must be surfaced in the Settings dialog or explicitly allowlisted.
