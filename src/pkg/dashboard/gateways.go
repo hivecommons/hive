@@ -533,6 +533,7 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 		msg := redactSecret(err.Error(), key)
 		probe := map[string]interface{}{"ok": false, "error": msg}
 		probe["diagnostic"] = gatewayProbeDiagnosticText(probeGW, probe, key)
+		s.appendInferenceRouteForForm(probeGW, probe)
 		jsonResponse(w, map[string]interface{}{"ok": false, "error": msg, "diagnostic": probe["diagnostic"], "probe": probe})
 		return
 	}
@@ -549,6 +550,7 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 		msg := redactSecret(redactSecret(err.Error(), key), bearer)
 		probe := map[string]interface{}{"ok": false, "error": msg}
 		probe["diagnostic"] = gatewayProbeDiagnosticText(probeGW, probe, key)
+		s.appendInferenceRouteForForm(probeGW, probe)
 		jsonResponse(w, map[string]interface{}{"ok": false, "error": msg, "diagnostic": probe["diagnostic"], "probe": probe})
 		return
 	}

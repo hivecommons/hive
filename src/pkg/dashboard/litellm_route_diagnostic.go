@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/inference"
 )
 
 // Test Connection probes an endpoint + key the operator points it at. Agents,
@@ -15,7 +14,7 @@ import (
 // while backend "litellm" routed to the stale legacy governor.litellm.endpoint
 // with the new key and every agent call died with LiteLLM's 401 "Invalid proxy
 // server token" (hivecommons/hive#9945). The resolver bug is fixed in
-// pkg/inference; this file makes the route VISIBLE in the Test output so any
+// config.GovernorConfig.ResolveLiteLLMRemoteRoute; this file makes the route VISIBLE in the Test output so any
 // future divergence between "what Test checked" and "what agents will do" is
 // stated in the result rather than discovered from a kicked agent's terminal.
 
@@ -37,14 +36,13 @@ func inferenceRouteDiagnostic(cfg *config.Config, backend, testedEndpoint, teste
 	switch {
 	case backend == "" || strings.EqualFold(backend, config.GatewayKindLiteLLM):
 		backend = config.GatewayKindLiteLLM
-		ep, m, ok := inference.ResolveLiteLLMRoute(cfg, backend, "")
-		if !ok {
+		ep, m, src := resolveLiteLLMRouteForDiagnostic(cfg, backend)
+		if ep == "" {
 			return fmt.Sprintf("Inference route for backend %q: NONE — no endpoint resolves from a gateway named %q, governor.litellm.endpoint or %s; agents on this backend fail with \"502 no inference route\".",
 				backend, backend, config.LiteLLMEndpointEnv)
 		}
-		endpoint, model = ep, m
+		endpoint, model, source = ep, m, src
 		key = cfg.Governor.ResolveLiteLLMInferenceKey(backend)
-		source = liteLLMRouteSource(cfg, backend)
 	default:
 		gw := cfg.Governor.ResolveGateway(backend)
 		if gw == nil || strings.TrimSpace(gw.Endpoint) == "" {
@@ -55,7 +53,7 @@ func inferenceRouteDiagnostic(cfg *config.Config, backend, testedEndpoint, teste
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Agents on backend %q send inference to POST %s", backend, inference.ChatCompletionsURL(endpoint))
+	fmt.Fprintf(&b, "Agents on backend %q send inference to POST %s", backend, config.LiteLLMChatCompletionsURL(endpoint))
 	if model != "" {
 		fmt.Fprintf(&b, " (model %s)", model)
 	}
@@ -78,20 +76,27 @@ func inferenceRouteDiagnostic(cfg *config.Config, backend, testedEndpoint, teste
 	return b.String()
 }
 
-// liteLLMRouteSource names the configuration source ResolveLiteLLMRoute chose
-// for the built-in litellm backend, mirroring its precedence exactly.
-func liteLLMRouteSource(cfg *config.Config, backend string) string {
+// resolveLiteLLMRouteForDiagnostic mirrors inference.ResolveLiteLLMRoute's
+// precedence exactly — local_proxy, then config.ResolveLiteLLMRemoteRoute —
+// and names the source it chose. pkg/dashboard deliberately does not import
+// pkg/inference (import ratchet), so the local-proxy step is restated here;
+// the remote decision is the shared config method, not a copy.
+func resolveLiteLLMRouteForDiagnostic(cfg *config.Config, backend string) (endpoint, model, source string) {
 	lc := cfg.Governor.LiteLLM
 	if lc.LocalProxy {
-		return "governor.litellm.local_proxy (bundled local LiteLLM)"
+		return config.LocalLiteLLMProxyURL(), lc.DefaultModel, "governor.litellm.local_proxy (bundled local LiteLLM)"
 	}
-	if gw := inference.ExplicitLiteLLMGateway(cfg, backend); gw != nil {
-		return fmt.Sprintf("gateway %q (Model Gateways tab)", gw.Name)
+	ep, m, src := cfg.Governor.ResolveLiteLLMRemoteRoute(backend, "")
+	switch src {
+	case config.LiteLLMRouteGateway:
+		gw := cfg.Governor.ExplicitLiteLLMGateway(backend)
+		return ep, m, fmt.Sprintf("gateway %q (Model Gateways tab)", gw.Name)
+	case config.LiteLLMRouteLegacyEnv:
+		return ep, m, "the " + config.LiteLLMEndpointEnv + " environment variable (overrides governor.litellm.endpoint)"
+	case config.LiteLLMRouteLegacyYAML:
+		return ep, m, "the legacy governor.litellm block (LiteLLM tab)"
 	}
-	if ep := strings.TrimSpace(lc.Endpoint); ep == "" || lc.ResolveEndpoint() != ep {
-		return "the " + config.LiteLLMEndpointEnv + " environment variable (overrides governor.litellm.endpoint)"
-	}
-	return "the legacy governor.litellm block (LiteLLM tab)"
+	return "", "", ""
 }
 
 // appendInferenceRouteDiagnostic adds the route line to a gateway probe's
@@ -103,6 +108,24 @@ func (s *Server) appendInferenceRouteDiagnostic(gw config.GatewayConfig, probe m
 		return
 	}
 	line := inferenceRouteDiagnostic(s.deps.Config, gw.Name, gw.Endpoint, testedKey)
+	if line == "" {
+		return
+	}
+	text, _ := probe["diagnostic"].(string)
+	probe["diagnostic"] = text + "\n" + line
+	probe["route"] = line
+}
+
+// appendInferenceRouteForForm adds the route line to a probe run from the
+// UNSAVED gateway form (discover). The form's endpoint and key are not yet
+// what agents use, so no divergence warning is raised; the line simply shows
+// the route in force right now, identical to what the saved-gateway Test
+// prints for the same configuration.
+func (s *Server) appendInferenceRouteForForm(gw config.GatewayConfig, probe map[string]interface{}) {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	line := inferenceRouteDiagnostic(s.deps.Config, gw.Name, "", "")
 	if line == "" {
 		return
 	}
