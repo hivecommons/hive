@@ -45,6 +45,50 @@ func TestCmdInceptionStateReportsPhaseAndQuestions(t *testing.T) {
 	}
 }
 
+func TestCmdInceptionStateReportsKickError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":     true,
+			"active": true,
+			"state": map[string]any{
+				"phase":      "capture",
+				"mode":       "greenfield",
+				"idea_text":  "Build a hive",
+				"kick_error": "brainstorm could not be started: agent brainstorm not found",
+			},
+		})
+	}))
+	defer ts.Close()
+
+	s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
+	s.client = ts.Client()
+	got, err := s.cmdInception(context.Background(), "state")
+	if err != nil {
+		t.Fatalf("cmdInception returned error: %v", err)
+	}
+	if !strings.Contains(got, "❌ brainstorm could not be started") {
+		t.Fatalf("state reply %q missing kick error", got)
+	}
+}
+
+func TestCmdInceptionStartSurfacesBrainstormRefusal(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"inception needs the brainstorm agent, which this hive does not run"}`, http.StatusConflict)
+	}))
+	defer ts.Close()
+
+	s := NewService(&recordingBackend{}, Config{DashboardURL: ts.URL}, discardLogger())
+	s.client = ts.Client()
+	ctx := context.WithValue(context.Background(), commandRoleContextKey{}, "owner")
+	got, err := s.cmdInception(ctx, "start build a hive")
+	if err != nil {
+		t.Fatalf("cmdInception returned error: %v", err)
+	}
+	if !strings.HasPrefix(got, "❌") || !strings.Contains(got, "brainstorm agent") {
+		t.Fatalf("reply = %q, want brainstorm refusal", got)
+	}
+}
+
 func TestCmdInceptionAnswerPostsQuestionID(t *testing.T) {
 	var answerBody map[string]map[string]string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

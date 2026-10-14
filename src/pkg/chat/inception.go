@@ -32,6 +32,7 @@ type inceptionStateResponse struct {
 		Answers   map[string]string   `json:"answers"`
 		FactSlugs []string            `json:"fact_slugs"`
 		Proposed  []inceptionFact     `json:"proposed_facts,omitempty"`
+		KickError string              `json:"kick_error,omitempty"`
 	} `json:"state"`
 }
 
@@ -157,6 +158,9 @@ func (s *Service) cmdInceptionState(ctx context.Context) (string, error) {
 	}
 	if state.State.RepoURL != "" {
 		lines = append(lines, fmt.Sprintf("Repo: %s", state.State.RepoURL))
+	}
+	if state.State.KickError != "" {
+		lines = append(lines, "❌ "+state.State.KickError)
 	}
 	if len(state.State.Questions) > 0 {
 		lines = append(lines, formatInceptionQuestions(state.State.Questions, state.State.Answers))

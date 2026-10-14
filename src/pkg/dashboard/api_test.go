@@ -40,7 +40,8 @@ func testDeps(t *testing.T) *Dependencies {
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}, AIAuthor: "bot"},
 		GitHub:  config.GitHubConfig{Token: "tok"},
 		Agents: map[string]config.AgentConfig{
-			"scanner": {Backend: "claude", Model: "sonnet", Enabled: true},
+			"scanner":    {Backend: "claude", Model: "sonnet", Enabled: true},
+			"brainstorm": {Backend: "claude", Model: "sonnet", Enabled: true},
 		},
 		Governor: config.GovernorConfig{
 			EvalIntervalS: 300,
