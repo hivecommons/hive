@@ -3959,10 +3959,10 @@
         padding-right: var(--sp-3) !important;
       }
       #acmm-badge {
-        max-width: 58px;
-        overflow: hidden;
-        text-overflow: clip;
         white-space: nowrap;
+      }
+      #acmm-badge .acmm-badge-name {
+        display: none;
       }
       .oc-health-badge .nav-chip__label,
       #oc-settings-btn .nav-chip__label,
@@ -4224,6 +4224,140 @@
         height: 48px;
         right: max(12px, env(safe-area-inset-right));
         bottom: max(12px, env(safe-area-inset-bottom));
+      }
+      /* Collapsed-section summaries reflow on narrow screens instead of
+         hanging off the right edge of the card (#11807). Short summaries stay
+         on the title row; strips and tile rows take a full row of their own. */
+      .dash-card.collapsed .dash-card-summary {
+        flex: 1 1 auto;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        text-align: left;
+        row-gap: var(--sp-2);
+        min-width: 0;
+        max-width: 100%;
+        white-space: normal;
+      }
+      .mini-summary-strip,
+      .audit-collapsed-summary,
+      .review-queue-collapsed,
+      .agents-collapsed-tiles,
+      .repos-collapsed-tiles,
+      .advisory-collapsed-advice,
+      .debug-quota-strip {
+        flex: 1 1 100%;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        height: auto;
+      }
+      .mini-summary-strip,
+      .audit-collapsed-summary,
+      .review-queue-collapsed,
+      .debug-quota-strip {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        overflow: visible;
+      }
+      .review-queue-collapsed-main {
+        flex-wrap: wrap;
+      }
+      .audit-last-entry {
+        max-width: 100%;
+      }
+      /* Tile rows scroll sideways with a visible thin scrollbar; tiles keep
+         their two-line layout instead of being cut at 26px. */
+      .agents-collapsed-tiles,
+      .repos-collapsed-tiles,
+      .advisory-collapsed-advice {
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding-bottom: var(--sp-1);
+        scrollbar-width: thin;
+        -webkit-overflow-scrolling: touch;
+      }
+      .acmm-collapsed-pill {
+        white-space: normal;
+        max-width: 100%;
+      }
+      /* Diagnostics headline: API text, budget pill and quota meters stack. */
+      .debug-headline {
+        flex-wrap: wrap;
+      }
+      .debug-headline-main {
+        flex: 1 1 100%;
+        flex-wrap: wrap;
+        row-gap: var(--sp-2);
+        overflow: visible;
+      }
+      .debug-headline-api,
+      .debug-headline-tokens {
+        flex: 1 1 100%;
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .debug-headline-mini {
+        flex: 1 1 100%;
+        min-width: 0;
+        margin-left: var(--sp-0);
+      }
+      .debug-quota-chip {
+        flex: 1 1 100%;
+        max-width: 100%;
+        height: auto;
+        min-height: var(--nav-chip-h);
+        padding-top: var(--sp-1);
+        padding-bottom: var(--sp-1);
+        white-space: normal;
+        overflow-wrap: anywhere;
+      }
+      .debug-quota-label {
+        flex: 1 1 auto;
+        max-width: none;
+      }
+      .debug-quota-frac {
+        margin-left: auto;
+      }
+      /* Headline tiles (cost, throughput) shrink below --metric-tile-min
+         rather than overflowing the card. */
+      .cost-grid.sec-headline {
+        grid-template-columns: repeat(auto-fit, minmax(min(var(--metric-tile-min), 100%), 1fr));
+      }
+      .cost-stat,
+      .token-stat {
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .cost-stat > *,
+      .token-stat > * {
+        min-width: 0;
+      }
+      .cost-stat svg,
+      .token-stat svg,
+      .prt-tile-spark svg {
+        max-width: 100%;
+        height: auto;
+      }
+      .spark-row {
+        flex-wrap: wrap;
+      }
+      .token-model-chip {
+        max-width: 100%;
+        min-width: 0;
+        flex-wrap: wrap;
+        white-space: normal;
+      }
+      /* Long unbroken tokens (test names, URLs) wrap inside facts/advice. */
+      .kb-fact-snippet,
+      .advisory-agent-body,
+      #kb-subs-content,
+      .config-body {
+        overflow-wrap: anywhere;
+      }
+      .gov-matrix td.continuous,
+      .gov-matrix td.name-col {
+        overflow-wrap: anywhere;
+        white-space: normal;
       }
     }
     @media (max-width: 480px) {
@@ -31151,7 +31285,8 @@ function burnAreaChart() {
       };
       const topbarBadge = document.getElementById('acmm-badge');
       if (topbarBadge) {
-        topbarBadge.innerHTML = escapeHtml(acmmLevelLabel(level).replace(' ', ' · '));
+        const [levelCode, ...levelName] = acmmLevelLabel(level).split(' ');
+        topbarBadge.innerHTML = escapeHtml(levelCode) + (levelName.length ? `<span class="acmm-badge-name"> · ${escapeHtml(levelName.join(' '))}</span>` : '');
         topbarBadge.title = 'ACMM ' + acmmLevelLabel(level) + ' — click to change maturity level';
         tint(topbarBadge);
       }
