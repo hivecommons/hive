@@ -34,7 +34,7 @@ func TestOverviewServerClassifierAndCSVParity9102(t *testing.T) {
 	script.WriteString(`
 const REPO_ISSUE_BAND_DEFAULTS = {
   waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
-  doneLabels: ['hive/already-done', 'hive/covered-by-pr', 'hive/likely-done'],
+  doneLabels: ['hive/already-done', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
   staleDays: 14
 };
 const MS_PER_DAY = 24 * 60 * 60 * 1000;

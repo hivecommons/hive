@@ -85,7 +85,7 @@ func TestRepoLegendRedesign(t *testing.T) {
 const assert = require('node:assert/strict');
 const REPO_ISSUE_BAND_DEFAULTS = {
   waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
-  doneLabels: ['hive/already-done', 'hive/covered-by-pr', 'hive/likely-done'],
+  doneLabels: ['hive/already-done', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
   staleDays: 14
 };
 const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];

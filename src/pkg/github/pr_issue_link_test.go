@@ -210,7 +210,7 @@ func TestSyncIssuePRClaimLabels_LinksStrongOpenClaims(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/graphql"):
 			graphql(w, r)
 		case strings.Contains(r.URL.Path, "/labels"):
-			_, _ = w.Write([]byte(`{"name":"hive/covered-by-pr"}`))
+			_, _ = w.Write([]byte(`{"name":"ok"}`))
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}

@@ -102,7 +102,17 @@ const (
 	ClaimLedgerPath = "/data/pr-claims.json"
 
 	// CoveredByPRLabel marks an open issue with an API-verified open PR relation.
-	CoveredByPRLabel = "hive/covered-by-pr"
+	// The bee replaced the `hive/covered-by-pr` spelling (hivecommons/hive#11888)
+	// so the issue list carries hive's own glyph next to GitHub's PR icon.
+	CoveredByPRLabel = "🐝 covered by PR"
+	// LegacyCoveredByPRLabel is the pre-#11888 spelling. Readers accept both
+	// during the transition; EnsureCoveredByPRLabel renames it in place on the
+	// first sweep so existing issues keep the label without per-issue writes.
+	LegacyCoveredByPRLabel = "hive/covered-by-pr"
+	// CoveredByPRLabelColor is the hive-amber label colour.
+	CoveredByPRLabelColor = "f5a623"
+	// CoveredByPRLabelDescription is the label description hive creates it with.
+	CoveredByPRLabelDescription = "Hive verified that an open PR references or claims this issue; still actionable until confirmed"
 	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
 	// that is not yet a resolved/closed issue.
 	LikelyDoneLabel = "hive/likely-done"
@@ -1711,7 +1721,7 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 		issue.LinkedPRs = append(issue.LinkedPRs, link)
 	}
 	if claim.MergedPR {
-		issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+		issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		if issueHasLabel(issue.Labels, VerifiedOpenLabel) {
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
 		} else {
@@ -1744,7 +1754,7 @@ func annotateIssueReopenedAfterMerge(issue *Issue, claim IssueClaim) {
 	if !seen {
 		issue.LinkedPRs = append(issue.LinkedPRs, link)
 	}
-	issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+	issue.Labels = removeCoveredByPRLabel(issue.Labels)
 	issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
 	cc := claimContext(claim, ClaimDecisionReopenedAfterMerge)
 	cc.MergedPR = false
@@ -1931,16 +1941,24 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		}
 		likelyWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen
 		if coveredWanted {
-			if err := client.EnsureIssueLabel(ctx, issue.Repo, CoveredByPRLabel, "1d76db", "Hive verified that an open PR references or claims this issue; still actionable until confirmed"); err != nil && logger != nil {
+			if err := client.EnsureCoveredByPRLabel(ctx, issue.Repo); err != nil && logger != nil {
 				logger.Warn("ensuring covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			} else if HasCoveredByPRLabel(originalLabels) {
+				// Already carried (under either spelling after the in-place
+				// rename); re-adding would only spend a write.
 			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{CoveredByPRLabel}); err != nil && logger != nil {
 				logger.Warn("adding covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
-		} else if issueHasLabel(originalLabels, CoveredByPRLabel) {
-			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, CoveredByPRLabel); err != nil && logger != nil {
-				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+		} else if HasCoveredByPRLabel(originalLabels) {
+			for _, name := range []string{CoveredByPRLabel, LegacyCoveredByPRLabel} {
+				if !issueHasLabel(originalLabels, name) {
+					continue
+				}
+				if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, name); err != nil && logger != nil {
+					logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "label", name, "error", err)
+				}
 			}
-			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+			issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		}
 		if likelyWanted {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && logger != nil {

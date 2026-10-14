@@ -16,7 +16,7 @@ const (
 
 var (
 	defaultIssueWaitingLabels = []string{"blocked", "needs-decision", "2-discussing", "Epic", "needs-human", "needs-triage"}
-	defaultIssueDoneLabels    = []string{"hive/already-done", "hive/covered-by-pr", "hive/likely-done"}
+	defaultIssueDoneLabels    = []string{"hive/already-done", "🐝 covered by PR", "hive/covered-by-pr", "hive/likely-done"}
 	prHumanGateLabels         = []string{"needs-human", "needs-decision", "2-discussing"}
 	issueBandOrder            = []string{"ready", "in-progress", "agent-filed", "waiting", "done"}
 	prBandOrder               = []string{"waiting", "eligible", "blocked", "in-review", "open", "draft"}

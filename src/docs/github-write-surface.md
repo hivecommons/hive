@@ -79,7 +79,7 @@ as fact (`issue_request_label.go`):
   queues a merge;
 - the hold labels (`hold`, `on-hold`, `hold/review`) — they block one;
 - everything in the `hive/` namespace, including `hive/claimed-by-<agent>`
-  (use `claim`), `hive/in-progress`, `hive/covered-by-pr`, `hive/likely-done`
+  (use `claim`), `hive/in-progress`, `🐝 covered by PR`, `hive/likely-done`
   and `hive/verified-open`;
 - the labels that record a person's decision or an escalation:
   `approved-direction`, `design-approved`, `needs-human`, `needs-decision`,

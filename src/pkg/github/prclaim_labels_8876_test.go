@@ -73,7 +73,7 @@ func TestIssuePRClaimLabels8876_RemovesStaleCoveredLabelWhenMerged(t *testing.T)
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[]`))
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/issues/7/labels/"):
-			if strings.Contains(r.URL.Path, "covered-by-pr") {
+			if strings.Contains(r.URL.Path, "covered") {
 				deletedCovered = true
 			}
 			w.WriteHeader(http.StatusOK)

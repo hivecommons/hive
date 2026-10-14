@@ -344,7 +344,7 @@ in exactly one band, while non-winning states remain as badges on the pill:
    `2-discussing`, `Epic`, `needs-human`, or `needs-triage`. Note that the
    `needs-triage` *label* lands here, not in the Needs triage band.
 5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
-   `hive/covered-by-pr`, and `hive/likely-done`: an agent believes the work
+   `🐝 covered by PR` (formerly `hive/covered-by-pr`), and `hive/likely-done`: an agent believes the work
    landed; verify and close.
 
 Precedence is confirm & close → needs human → claimed → needs triage → unclaimed,
@@ -359,7 +359,7 @@ Operators can tune only the display taxonomy under `dashboard.issue_bands`:
 dashboard:
   issue_bands:
     waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
-    done_labels: [hive/already-done, hive/covered-by-pr, hive/likely-done]
+    done_labels: [hive/already-done, "🐝 covered by PR", hive/covered-by-pr, hive/likely-done]
     stale_days: 14
 ```
 
@@ -394,7 +394,7 @@ queueing.
 
 ## Linked PR issue signals
 
-Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull request related to that issue. Open PRs apply `hive/covered-by-pr`; merged PRs on still-open issues apply `hive/likely-done` and render as `🔗 #N merged`. These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage. The status payload exposes the same evidence as `linked_prs: [{number, state, merged, url, closing}]` on each `github.Issue`.
+Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull request related to that issue. Open PRs apply `🐝 covered by PR`; merged PRs on still-open issues apply `hive/likely-done` and render as `🔗 #N merged`. These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage. The status payload exposes the same evidence as `linked_prs: [{number, state, merged, url, closing}]` on each `github.Issue`.
 
 ## Review pipeline board
 
