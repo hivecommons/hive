@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -134,4 +135,17 @@ func TestResetAndResumeClearRestartStormBreaker(t *testing.T) {
 		t.Fatalf("resume did not clear breaker fields: %+v", m.agents["scanner"])
 	}
 	m.mu.RUnlock()
+}
+
+func TestCompactPaneTailRedactsSecrets(t *testing.T) {
+	pane := "starting\nvisit https://github.com/login/device\nfirst copy your one-time code: ABCD-1234\nANTHROPIC_API_KEY='sk-ant-abcdef123456'\ntoken ghp_abcdefghijklmnop1234\nlast line\n"
+	tail := compactPaneTail(pane, 8)
+	for _, secret := range []string{"ABCD-1234", "sk-ant-abcdef123456", "ghp_abcdefghijklmnop1234"} {
+		if strings.Contains(tail, secret) {
+			t.Fatalf("compactPaneTail leaked %q: %q", secret, tail)
+		}
+	}
+	if !strings.Contains(tail, "starting") || !strings.Contains(tail, "last line") {
+		t.Fatalf("compactPaneTail dropped non-secret lines: %q", tail)
+	}
 }

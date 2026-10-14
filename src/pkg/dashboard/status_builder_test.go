@@ -1460,3 +1460,32 @@ func TestDashboardAgentReviewCapable(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildAgents_RedactsLastErrorAndPausedReason(t *testing.T) {
+	cfg := &config.Config{Agents: map[string]config.AgentConfig{
+		"scanner": {ID: "scanner", Backend: "claude", Enabled: true},
+	}}
+	statuses := map[string]*agent.AgentProcess{
+		"scanner": {
+			Name:         "scanner",
+			Config:       config.AgentConfig{Backend: "claude"},
+			State:        agent.StateRunning,
+			OutputBuffer: agent.NewRingBuffer(10),
+			LastError:    "copilot hung: your one-time code: ABCD-1234 | key sk-ant-abcdef123456",
+			PausedReason: "restart storm: ghp_abcdefghijklmnop1234 sk-ant-abcdef123456",
+		},
+	}
+	agents := buildAgents(statuses, cfg, governor.State{Mode: governor.ModeIdle})
+	if len(agents) != 1 {
+		t.Fatalf("agents len = %d, want 1", len(agents))
+	}
+	got := agents[0].LastError + "\n" + agents[0].PausedReason
+	for _, secret := range []string{"ABCD-1234", "sk-ant-abcdef123456", "ghp_abcdefghijklmnop1234"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("status payload leaked %q: %q", secret, got)
+		}
+	}
+	if agents[0].LastError == "" || agents[0].PausedReason == "" {
+		t.Fatalf("lastError/pausedReason should remain populated: %q / %q", agents[0].LastError, agents[0].PausedReason)
+	}
+}

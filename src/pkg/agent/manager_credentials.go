@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 // sharedCopilotConfigPath and sharedClaudeCredentialPath are vars (not consts)
@@ -254,7 +255,9 @@ func compactPaneTail(output string, maxLines int) string {
 	}
 	var lines []string
 	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
+		// Redact per line: the device-code line redactor is line-anchored and
+		// would swallow the whole tail once the lines are joined.
+		line = strings.TrimSpace(logscrub.RedactPaneTokens(logscrub.ScrubString(line)))
 		if line == "" {
 			continue
 		}

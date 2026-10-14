@@ -1,0 +1,1 @@
+- agent: diagnostic pane tail in lastError/pausedReason is redacted like other pane-derived status fields (#11889)
