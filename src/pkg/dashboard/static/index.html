@@ -32707,6 +32707,12 @@ function burnAreaChart() {
       markDirty('backends', key, _configState.data.backends[key]);
     }
 
+    function markClassifierList(key, value) {
+      _configState.data.classifier = _configState.data.classifier || {};
+      _configState.data.classifier[key] = splitConfigLines(value);
+      markDirty('classifier', key, _configState.data.classifier[key]);
+    }
+
     function renderGovDashboard(dash) {
       const bands = dash.issue_bands || {};
       const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
@@ -39289,6 +39295,7 @@ function burnAreaChart() {
       const formalMinACMMLevel = f.formalMinACMMLevel || 5;
       const publicationAvailable = f.publicationAvailable === true;
       const publicationMinACMMLevel = f.publicationMinACMMLevel || 3;
+      const cls = (_configState.data || {}).classifier || {};
       const amSelfOn = am.self_authored !== false; // nil/undefined = enabled
       const amChecks = Array.isArray(am.required_checks) ? am.required_checks : [];
       const amBots = Array.isArray(am.bot_authors) ? am.bot_authors : [];
@@ -39414,6 +39421,15 @@ function burnAreaChart() {
           <div class="config-field" style="margin-top:10px">
             <label>Private disclosure channel ${settingHelpMark('audit-campaign', 'publication', 'Private disclosure channel', `Where security-sensitive findings go instead of a public issue: repo:owner/name files them in that private repository, notify sends only the title and finding hash to the operator notifier. A sensitive finding with no channel is refused and audited, never filed publicly.`)}</label>
             <input type="text" value="${esc(f.publicationPrivateChannel || '')}" placeholder="repo:owner/security-intake or notify" data-change-action="markDirty" data-arg0="features" data-arg1="publicationPrivateChannel" data-arg-types="s,s,w">
+          </div>
+        </div>
+
+        <div class="overview-settings-section">
+          <h3>Tier classifier</h3>
+          <p class="text-muted fs-base">Override the issue-title keywords that map work to Simple or Complex tiers. Empty lists keep the built-in defaults.</p>
+          <div class="config-field-row">
+            <div class="config-field"><label>Simple keywords ${yamlHint('classifier.simple_keywords[]')} ${settingHelpMark('settings', 'features', 'Simple keywords', `Title substrings that classify an issue as Tier Simple. Leave empty to keep the built-in default set.`)}</label><textarea rows="4" data-change-action="markClassifierList" data-arg0="simple_keywords" data-arg-types="s,v">${esc((cls.simple_keywords || []).join('\n'))}</textarea><div class="config-help">Effective defaults: ${esc((cls.simpleKeywords || []).join(', ') || 'none')}</div></div>
+            <div class="config-field"><label>Complex signals ${yamlHint('classifier.complex_signals[]')} ${settingHelpMark('settings', 'features', 'Complex signals', `Title substrings that classify an issue as Tier Complex. Leave empty to keep the built-in default set.`)}</label><textarea rows="4" data-change-action="markClassifierList" data-arg0="complex_signals" data-arg-types="s,v">${esc((cls.complex_signals || []).join('\n'))}</textarea><div class="config-help">Effective defaults: ${esc((cls.complexSignals || []).join(', ') || 'none')}</div></div>
           </div>
         </div>
 
@@ -42131,6 +42147,14 @@ function burnAreaChart() {
             });
             if (!backendsRes.ok) throw new Error(await saveErrorMessage(backendsRes));
             _configState.data.backends = await backendsRes.json().catch(() => _configState.data.backends);
+          } else if (_configState.type === 'governor' && section === 'classifier') {
+            const clsRes = await fetch('/api/config/classifier', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!clsRes.ok) throw new Error(await saveErrorMessage(clsRes));
+            _configState.data.classifier = await clsRes.json().catch(() => _configState.data.classifier);
           } else {
             const res = await fetch(`${base}/${section}`, {
               method: 'PUT',

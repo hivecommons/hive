@@ -195,7 +195,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"backends":              backendsPolicyResponse(cfg),
 		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
-		"classifier":            classifierSectionResponse(),
+		"classifier":            classifierSectionResponse(cfg),
 		"features":              s.featuresSectionWithLinked(cfg),
 		"review":                reviewSectionResponse(cfg),
 		"review_bots":           reviewBotsSectionResponse(cfg),
@@ -1855,12 +1855,17 @@ func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
 // which title keywords map issues to the Simple/Complex tiers. classify.SetLanes
 // already surfaces per-agent lane_keywords per-agent; these are the analogous
 // global tier lists.
-func classifierSectionResponse() map[string]interface{} {
+func classifierSectionResponse(cfgs ...*config.Config) map[string]interface{} {
 	simple, complex := classify.TierKeywords()
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"simpleKeywords": simple,
 		"complexSignals": complex,
 	}
+	if len(cfgs) > 0 && cfgs[0] != nil {
+		out["simple_keywords"] = append([]string{}, cfgs[0].Classifier.SimpleKeywords...)
+		out["complex_signals"] = append([]string{}, cfgs[0].Classifier.ComplexSignals...)
+	}
+	return out
 }
 
 // liteLLMProbeResult runs the live probe against the effective endpoint
