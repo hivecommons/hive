@@ -1,9 +1,11 @@
 package hub
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -496,5 +498,58 @@ func TestManualUpgradeUnaffectedByMode(t *testing.T) {
 	// The stored mode must be untouched by a manual upgrade.
 	if got := loadSaaSHive("h1"); got == nil || got.AutoUpgradeMode != AutoUpgradeModeDaily {
 		t.Errorf("manual upgrade changed the schedule: %+v", got)
+	}
+}
+
+func TestEffectiveAutoUpgradeSchedule(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		mode    string
+		channel string
+		want    string
+	}{
+		{"candidate honors daily by default", "", AutoUpgradeModeDaily, ReleaseChannelCandidate, AutoUpgradeModeDaily},
+		{"candidate opt-out bypasses daily", "false", AutoUpgradeModeDaily, ReleaseChannelCandidate, autoUpgradeScheduleCandidateBypass},
+		{"candidate opt-out bypasses weekly", "false", AutoUpgradeModeWeekly, ReleaseChannelCandidate, autoUpgradeScheduleCandidateBypass},
+		{"stable keeps daily when env opts out", "false", AutoUpgradeModeDaily, ReleaseChannelStable, AutoUpgradeModeDaily},
+		{"plain branch keeps daily when env opts out", "false", AutoUpgradeModeDaily, "", AutoUpgradeModeDaily},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(candidateRespectAutoUpgradeScheduleEnv, tc.env)
+			if got := effectiveAutoUpgradeSchedule(tc.mode, tc.channel); got != tc.want {
+				t.Errorf("effectiveAutoUpgradeSchedule(%q, %q) = %q, want %q", tc.mode, tc.channel, got, tc.want)
+			}
+		})
+	}
+}
+
+// The audit line pairs the effective schedule with the decision reason so a
+// candidate bypass is distinguishable from an in-window daily fire.
+func TestAutoUpgradeAuditFieldsBypassVsDailyWindow(t *testing.T) {
+	t.Setenv(candidateRespectAutoUpgradeScheduleEnv, "false")
+	now := mustET(t, 2026, time.October, 14, 12, 48)
+
+	bypass := shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-10-13", ReleaseChannelCandidate, now)
+	if !bypass.Allowed || bypass.Reason != "candidate channel tracks each published image" ||
+		effectiveAutoUpgradeSchedule(AutoUpgradeModeDaily, ReleaseChannelCandidate) != autoUpgradeScheduleCandidateBypass {
+		t.Errorf("candidate bypass = %+v, want allowed with bypass reason and schedule", bypass)
+	}
+
+	inWindow := shouldAutoUpgradeNowForChannel(AutoUpgradeModeDaily, "2026-10-13", ReleaseChannelStable, mustET(t, 2026, time.October, 14, 13, 5))
+	if !inWindow.Allowed || inWindow.Reason != "daily window open" ||
+		effectiveAutoUpgradeSchedule(AutoUpgradeModeDaily, ReleaseChannelStable) != AutoUpgradeModeDaily {
+		t.Errorf("in-window daily = %+v, want allowed with daily window reason and schedule", inWindow)
+	}
+}
+
+func TestMyHiveEntryExposesEffectiveSchedule(t *testing.T) {
+	b, err := json.Marshal(MyHiveEntry{AutoUpgradeSchedule: autoUpgradeScheduleCandidateBypass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"autoUpgradeSchedule":"candidate-bypass"`) {
+		t.Errorf("payload %s missing autoUpgradeSchedule", b)
 	}
 }

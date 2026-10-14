@@ -3079,6 +3079,7 @@
        channel points at a digest that is not any tracked branch's latest, and
        the UI must render that honestly rather than guessing a branch. */
     var _releaseChannels = [];
+    var _candidateBypassesSchedule = false;
     var _channelTargets = [];
     var _stablePromotion = {auto_promote: true, soak_hours: 24, maintained_hives: []};
     /* Parent domain for hosted-tenant URLs, from the server (hub_spoke_domain).
@@ -5959,6 +5960,7 @@
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.release_channels) _releaseChannels = data.release_channels;
+        _candidateBypassesSchedule = !!data.candidate_bypasses_schedule;
         if (data.channel_targets) _channelTargets = data.channel_targets;
         if (data.stable_promotion) _stablePromotion = data.stable_promotion;
         if (data.hub_spoke_domain) _hubSpokeDomain = data.hub_spoke_domain;
@@ -7125,6 +7127,9 @@
               var cbTitle = cbT && cbT.branch
                 ? 'Currently ' + cbT.branch + ' ' + (cbT.sha || '') + ' — the hive follows this channel as it is re-pointed'
                 : 'Moving release channel — the hive follows it as it is re-pointed';
+              if (cb === 'candidate' && _candidateBypassesSchedule) {
+                cbTitle += '. Warning: candidate ignores the daily/weekly upgrade window and upgrades on every published image';
+              }
               /* Label carries the channel's CURRENT branch — "stable (v4)" —
                  while the switch VALUE stays the bare channel name: the hive
                  is pinned to the moving tag, not to the branch it happens to
@@ -7356,6 +7361,7 @@
             var mode = h.autoUpgrade
               ? ((h.autoUpgradeMode === AUTO_UPGRADE_DAILY || h.autoUpgradeMode === AUTO_UPGRADE_WEEKLY) ? h.autoUpgradeMode : AUTO_UPGRADE_INSTANT)
               : AUTO_UPGRADE_OFF;
+            var scheduleBypass = h.autoUpgrade && h.autoUpgradeSchedule === 'candidate-bypass';
             var opts = '';
             for (var oi = 0; oi < AUTO_UPGRADE_OPTIONS.length; oi++) {
               var opt = AUTO_UPGRADE_OPTIONS[oi];
@@ -7374,6 +7380,15 @@
             d.setAttribute('style', 'font-size:0.65rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);' +
               'height:' + AUTO_SELECT_H_PX + 'px;min-width:' + AUTO_SELECT_MIN_W_PX + 'px;padding:0 ' + AUTO_SELECT_PAD_X_PX + 'px;cursor:pointer;vertical-align:middle;line-height:' + AUTO_SELECT_H_PX + 'px');
             d.innerHTML = opts;
+            if (scheduleBypass) {
+              /* Candidate tracks each published image, so the stored daily/weekly
+                 option is not in effect; show that instead of the stale "1p". */
+              var bypassTitle = 'Candidate channel tracks each published image — the ' + mode + ' upgrade window is bypassed';
+              d.innerHTML = '<option value="' + escAttr(mode) + '" selected>⚡ every image (candidate)</option>';
+              d.disabled = true;
+              d.setAttribute('aria-label', 'Auto-upgrade: every published image (candidate channel)');
+              d.title = bypassTitle;
+            }
             autoUpgradeCheck = d.outerHTML;
           }
           var shaMsg = _commitMessages[sha] || _latestSHAMessages[branchName] || '';

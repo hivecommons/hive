@@ -43,7 +43,10 @@ type MyHiveEntry struct {
 	// AutoUpgradeMode is always sent NORMALIZED (never empty when autoUpgrade is
 	// on) so the dashboard can render the effective mode without re-deriving the
 	// legacy empty-means-instant rule in JavaScript.
-	AutoUpgradeMode     string                 `json:"autoUpgradeMode,omitempty"`
+	AutoUpgradeMode string `json:"autoUpgradeMode,omitempty"`
+	// AutoUpgradeSchedule is the EFFECTIVE schedule: the configured mode, or
+	// "candidate-bypass" when a candidate-channel hive ignores the window.
+	AutoUpgradeSchedule string                 `json:"autoUpgradeSchedule,omitempty"`
 	NextUpdateAt        string                 `json:"nextUpdateAt,omitempty"`
 	NextUpdateStatus    string                 `json:"nextUpdateStatus,omitempty"`
 	UpgradeWhyNotNow    string                 `json:"upgradeWhyNotNow,omitempty"`
@@ -958,6 +961,9 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		// the same resolution the auto-upgrade engine uses — not the branch
 		// tip. A :stable spoke at the channel's commit is 0 behind here even
 		// when CommitsBehindStableV4 says 128.
+		if result[i].AutoUpgrade {
+			result[i].AutoUpgradeSchedule = effectiveAutoUpgradeSchedule(result[i].AutoUpgradeMode, result[i].TrackedChannel)
+		}
 		if result[i].TrackedChannel == ReleaseChannelStable && result[i].AutoUpgrade {
 			result[i].NextUpdateAt = stableNextUpdateAt
 			result[i].NextUpdateStatus = stableNextUpdateStatus
@@ -1161,11 +1167,12 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		// own "channel -> image" block above the per-branch rows, and offers
 		// them as branch-switch targets. The association is resolved from
 		// registry digests (cached), never hardcoded to a branch name.
-		"release_channels":  ReleaseChannels(),
-		"channel_targets":   channelTargets,
-		"stable_promotion":  stablePromotion,
-		"hub_auto_upgrade":  isHubAutoUpgrade(),
-		"hub_upgrade_state": s.hubUpgradeState(),
+		"release_channels":            ReleaseChannels(),
+		"candidate_bypasses_schedule": !candidateAutoUpgradeScheduleOverride(),
+		"channel_targets":             channelTargets,
+		"stable_promotion":            stablePromotion,
+		"hub_auto_upgrade":            isHubAutoUpgrade(),
+		"hub_upgrade_state":           s.hubUpgradeState(),
 		// Kill-switch state rides the top-level payload (NOT the hive-row
 		// shape, so no HIVES_CACHE_VERSION bump): the dashboard shows a
 		// prominent banner while anything is paused, and admins get toggles.
