@@ -147,7 +147,8 @@ func TestNormalizeAutoUpdatePeriod(t *testing.T) {
 		"instant": "instant",
 		"daily":   "daily",
 		"weekly":  "weekly",
-		"":        autoUpdatePeriodUnknown,
+		"":        "daily",
+		"  ":      "daily",
 		"bogus":   autoUpdatePeriodUnknown,
 	} {
 		if got := normalizeAutoUpdatePeriod(in); got != want {

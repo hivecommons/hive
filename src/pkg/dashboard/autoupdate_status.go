@@ -123,15 +123,15 @@ type autoUpdateInputs struct {
 }
 
 // normalizeAutoUpdatePeriod maps a stored/legacy auto_upgrade_mode onto a
-// concrete, displayable period. An empty or unrecognised value is reported as
-// "unknown" rather than silently assumed to be instant: the spoke genuinely
-// does not know its schedule, and #6963 is precisely about not dressing an
-// unknown up as a definite answer.
+// concrete, displayable period. An empty value is daily, matching the hub's
+// normalizeAutoUpgradeMode (#11822). An unrecognised value is reported as
+// "unknown" rather than assumed: #6963 is about not dressing an unknown up as
+// a definite answer.
 func normalizeAutoUpdatePeriod(mode string) string {
 	switch strings.TrimSpace(strings.ToLower(mode)) {
 	case autoUpdatePeriodInstant:
 		return autoUpdatePeriodInstant
-	case autoUpdatePeriodDaily:
+	case autoUpdatePeriodDaily, "":
 		return autoUpdatePeriodDaily
 	case autoUpdatePeriodWeekly:
 		return autoUpdatePeriodWeekly
