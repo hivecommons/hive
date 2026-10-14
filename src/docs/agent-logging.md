@@ -259,6 +259,13 @@ read the logs of the last several runs — not just the latest —
   `source:` line says which was used. A transcript over
   `HIVE_KICK_LOG_MAX_BYTES` keeps its head and tail around a
   `[… N bytes omitted …]` marker. The default, `scrollback`, is unchanged.
+  The source is also a dashboard setting: **Settings → Logging → Kick log
+  source** (config key `governor.logging.kick_log_source`) offers
+  *Scrollback*, *CLI transcript* and *Auto*, applies to the next kick without
+  a restart, and the kick history page shows each archive's `source`. A
+  `HIVE_KICK_LOG_SOURCE` set on the deployment wins over the saved setting;
+  the control is then shown disabled with the effective value and a "set by
+  `HIVE_KICK_LOG_SOURCE`" note.
 - **Retention.** Per agent, the newest **10** archives are kept
   (`HIVE_KICK_LOG_RETENTION`; `0` disables archiving) within a **64 MiB**
   per-agent size cap (`HIVE_KICK_LOG_MAX_BYTES`); the oldest files are pruned

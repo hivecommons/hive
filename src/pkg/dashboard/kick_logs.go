@@ -93,12 +93,20 @@ table{border-collapse:collapse;margin-top:1rem}td,th{padding:.3rem .9rem;text-al
 	} else {
 		// #9580: the column is the archived kick's START time (KickLogInfo.
 		// Timestamp), not when the archive file was written — see kick_logs.go.
-		_, _ = fmt.Fprint(w, `<table><tr><th>kick started (UTC)</th><th>trigger</th><th>size</th><th></th></tr>`)
+		// #11762: the source column is the archive header's source: line
+		// (transcript or scrollback), so a tester switching the kick log
+		// source can confirm what each archive was built from without
+		// opening it. Archives older than the header field show a dash.
+		_, _ = fmt.Fprint(w, `<table><tr><th>kick started (UTC)</th><th>trigger</th><th>source</th><th>size</th><th></th></tr>`)
 		for _, info := range infos {
 			id := html.EscapeString(info.ID)
+			source := `<span class="muted">—</span>`
+			if info.Source != "" {
+				source = html.EscapeString(info.Source)
+			}
 			_, _ = fmt.Fprintf(w,
-				`<tr><td>%s</td><td>%s</td><td>%d B</td><td><a href="/api/agents/%s/kicks/%s" target="_blank">view</a></td></tr>`,
-				info.Timestamp.UTC().Format(time.RFC3339), html.EscapeString(info.Reason), info.SizeBytes, esc, id)
+				`<tr><td>%s</td><td>%s</td><td>%s</td><td>%d B</td><td><a href="/api/agents/%s/kicks/%s" target="_blank">view</a></td></tr>`,
+				info.Timestamp.UTC().Format(time.RFC3339), html.EscapeString(info.Reason), source, info.SizeBytes, esc, id)
 		}
 		_, _ = fmt.Fprint(w, `</table>`)
 	}

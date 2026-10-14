@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Kick log transcript source (hivecommons/hive#11762, #9579).
@@ -21,25 +23,31 @@ import (
 // collapse their own output ("(N lines hidden)", repainted frames), so even a
 // complete capture cannot reproduce the commands an agent ran. Copilot CLI and
 // Claude Code persist the whole conversation as JSONL under the agent's HOME;
-// when HIVE_KICK_LOG_SOURCE asks for it, the kick log is rendered from that
+// when the kick log source asks for it, the kick log is rendered from that
 // transcript instead. The transcript is located with the same resume-handle
 // walk the PR follow-up path uses (backend_resume.go) and is read only at
 // archive time and on a live full-log read — no watchers, no polling.
+//
+// The source is governor.logging.kick_log_source (Settings → Logging → Kick
+// logs), overridden by HIVE_KICK_LOG_SOURCE; see config/kick_log_source.go for
+// the precedence. main.go injects the live resolver with
+// SetKickLogSourceResolver so a dashboard change applies to the next archive
+// or live read without a restart; without a resolver only the env var is read.
 
 const (
 	// kickLogSourceEnv selects what a kick log is built from.
-	kickLogSourceEnv = "HIVE_KICK_LOG_SOURCE"
+	kickLogSourceEnv = config.KickLogSourceEnvVar
 
 	// kickLogSourceScrollback is today's tmux capture-pane path (default).
-	kickLogSourceScrollback = "scrollback"
+	kickLogSourceScrollback = config.KickLogSourceScrollback
 	// kickLogSourceTranscript renders the backend CLI's own transcript,
 	// falling back to scrollback (with a warning) when none is usable so a
 	// kick never loses its log.
-	kickLogSourceTranscript = "transcript"
+	kickLogSourceTranscript = config.KickLogSourceTranscript
 	// kickLogSourceAuto renders the transcript when the backend has a reader
 	// and the transcript exists and parses, else scrollback. Backends without
 	// a reader fall back silently.
-	kickLogSourceAuto = "auto"
+	kickLogSourceAuto = config.KickLogSourceAuto
 
 	// kickTranscriptOmittedFormat marks the middle of an over-cap transcript.
 	kickTranscriptOmittedFormat = "\n[… %d bytes omitted …]\n"
@@ -61,12 +69,40 @@ var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]
 // kickLogSourceFromEnv resolves HIVE_KICK_LOG_SOURCE; unset or unknown values
 // keep the scrollback default.
 func kickLogSourceFromEnv() string {
-	switch v := strings.ToLower(strings.TrimSpace(os.Getenv(kickLogSourceEnv))); v {
-	case kickLogSourceTranscript, kickLogSourceAuto:
-		return v
-	default:
+	return config.NormalizeKickLogSource(os.Getenv(kickLogSourceEnv))
+}
+
+// SetKickLogSourceResolver injects the resolver for the kick log source.
+// Called from main.go with a closure over the live config
+// (LoggingConfig.ResolveKickLogSource, which already applies the env
+// override), so a source changed from the dashboard applies to the next
+// archive or live full-log read without a restart. A nil fn clears it,
+// restoring the boot-time env-only value.
+func (m *Manager) SetKickLogSourceResolver(fn func() string) {
+	// Atomic store — no m.mu — because the source is read from paths that
+	// already hold m.mu (archiveKickLogLocked, kickLogSourceLocked).
+	if fn == nil {
+		m.kickLogSourceResolver.Store(nil)
+		return
+	}
+	m.kickLogSourceResolver.Store(&fn)
+}
+
+// currentKickLogSource is the source in force now: the resolver's answer when
+// one is injected, else the boot-time value.
+func (m *Manager) currentKickLogSource() string {
+	if fnp := m.kickLogSourceResolver.Load(); fnp != nil && *fnp != nil {
+		return config.NormalizeKickLogSource((*fnp)())
+	}
+	if m.kickLogSource == "" {
 		return kickLogSourceScrollback
 	}
+	return m.kickLogSource
+}
+
+// KickLogSource reports the kick log source in force now.
+func (m *Manager) KickLogSource() string {
+	return m.currentKickLogSource()
 }
 
 // kickTranscriptTarget is the lock-free snapshot of what locating an agent's
@@ -98,10 +134,9 @@ func (m *Manager) kickTranscriptTargetLocked(agent *AgentProcess) kickTranscript
 	return t
 }
 
-// usesKickTranscript reports whether the configured source ever tries the
-// transcript.
-func (m *Manager) usesKickTranscript() bool {
-	return m.kickLogSource == kickLogSourceTranscript || m.kickLogSource == kickLogSourceAuto
+// usesKickTranscript reports whether source ever tries the transcript.
+func usesKickTranscript(source string) bool {
+	return source == kickLogSourceTranscript || source == kickLogSourceAuto
 }
 
 // loadKickTranscript renders the agent's current CLI transcript as plain text,
@@ -138,13 +173,13 @@ func loadKickTranscript(t kickTranscriptTarget) (string, error) {
 // transcript is preferred, capped to the per-agent byte cap; a missing or
 // unparseable transcript falls back to the scrollback with one warning.
 func (m *Manager) kickLogContent(t kickTranscriptTarget, capture func() (string, error)) (content, source string, err error) {
-	if m.usesKickTranscript() {
+	if configured := m.currentKickLogSource(); usesKickTranscript(configured) {
 		text, terr := loadKickTranscript(t)
 		if terr == nil {
 			return capKickTranscript(text, m.kickLogMaxBytes), kickLogSourceTranscript, nil
 		}
-		if m.logger != nil && (m.kickLogSource == kickLogSourceTranscript || !errors.Is(terr, errNoKickTranscriptReader)) {
-			m.logger.Warn("kick log: transcript unavailable, using scrollback", "name", t.agentName, "source", m.kickLogSource, "error", terr)
+		if m.logger != nil && (configured == kickLogSourceTranscript || !errors.Is(terr, errNoKickTranscriptReader)) {
+			m.logger.Warn("kick log: transcript unavailable, using scrollback", "name", t.agentName, "source", configured, "error", terr)
 		}
 	}
 	content, err = capture()
@@ -154,7 +189,7 @@ func (m *Manager) kickLogContent(t kickTranscriptTarget, capture func() (string,
 // kickLogSourceLocked names the source a live full-log read would use now,
 // without logging. Callers must hold m.mu (read or write).
 func (m *Manager) kickLogSourceLocked(agent *AgentProcess) string {
-	if !m.usesKickTranscript() {
+	if !usesKickTranscript(m.currentKickLogSource()) {
 		return kickLogSourceScrollback
 	}
 	if _, err := loadKickTranscript(m.kickTranscriptTargetLocked(agent)); err != nil {

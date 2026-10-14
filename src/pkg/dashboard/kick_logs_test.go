@@ -179,3 +179,30 @@ func TestHandleAgentKickHistoryPage_EmptyHistory(t *testing.T) {
 		t.Fatalf("unknown agent: status = %d, want 404", rec.Code)
 	}
 }
+
+// The history page and list endpoint surface the archive header's source:
+// line (#11762) so a tester can tell transcript from scrollback archives
+// without opening them; header-less archives show a dash.
+func TestHandleAgentKickHistoryPage_ShowsSource(t *testing.T) {
+	s, id := kickHistoryServer(t, "==== hive kick log ====\nagent: scanner\nsource: transcript\n=======================\nbody\n")
+	rec := doGet(s, "/api/agents/scanner/kicks")
+	var infos []agent.KickLogInfo
+	if err := json.Unmarshal(rec.Body.Bytes(), &infos); err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != id || infos[0].Source != "transcript" {
+		t.Fatalf("infos = %+v, want source transcript", infos)
+	}
+	page := doGet(s, "/agents/scanner/kicks")
+	if page.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", page.Code)
+	}
+	if body := page.Body.String(); !strings.Contains(body, "<th>source</th>") || !strings.Contains(body, "<td>transcript</td>") {
+		t.Errorf("history page missing source column:\n%s", body)
+	}
+
+	s2, _ := kickHistoryServer(t, "no header")
+	if body := doGet(s2, "/agents/scanner/kicks").Body.String(); !strings.Contains(body, `<span class="muted">—</span>`) {
+		t.Errorf("header-less archive should show a dash:\n%s", body)
+	}
+}

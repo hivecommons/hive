@@ -190,14 +190,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"ttlSeconds":         cfg.Governor.Sensing.TTLSeconds,
 			"pullbackSeconds":    cfg.Governor.Sensing.PullbackSeconds,
 		},
-		"logging": map[string]interface{}{
-			"dir":        cfg.Governor.Logging.Dir,
-			"maxSizeMB":  cfg.Governor.Logging.MaxSizeMB,
-			"maxAgeDays": cfg.Governor.Logging.MaxAgeDays,
-			"maxBackups": cfg.Governor.Logging.MaxBackups,
-			"compress":   cfg.Governor.Logging.Compress,
-			"level":      cfg.Governor.Logging.Level,
-		},
+		"logging":               loggingSectionResponse(cfg),
 		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
 		"classifier":            classifierSectionResponse(),
@@ -1112,6 +1105,27 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// loggingSectionResponse builds the Logging tab payload. kickLogSource is the
+// saved governor.logging.kick_log_source ("" when unset); kickLogSourceEffective
+// is what the next kick log will actually use, with HIVE_KICK_LOG_SOURCE
+// applied, and kickLogSourceEnvLocked says when that env var is the reason the
+// two differ so the dialog can lock the select and say why (#11762, #9579).
+func loggingSectionResponse(cfg *config.Config) map[string]interface{} {
+	l := cfg.Governor.Logging
+	return map[string]interface{}{
+		"dir":                    l.Dir,
+		"maxSizeMB":              l.MaxSizeMB,
+		"maxAgeDays":             l.MaxAgeDays,
+		"maxBackups":             l.MaxBackups,
+		"compress":               l.Compress,
+		"level":                  l.Level,
+		"kickLogSource":          l.KickLogSource,
+		"kickLogSourceEffective": l.ResolveKickLogSource(),
+		"kickLogSourceEnvLocked": l.KickLogSourceOrigin() == config.KickLogSourceOriginEnv,
+		"kickLogSources":         config.KickLogSources(),
+	}
+}
+
 func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -1123,6 +1137,9 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 		MaxBackups int    `json:"maxBackups"`
 		Compress   *bool  `json:"compress"`
 		Level      string `json:"level"`
+		// KickLogSource is a pointer so an absent key leaves the setting
+		// untouched; "" resets it to the default (scrollback).
+		KickLogSource *string `json:"kickLogSource"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -1130,6 +1147,10 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateGovernorLogging(s.deps.Config.Governor.Logging.Dir, body.MaxSizeMB, body.MaxAgeDays); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.KickLogSource != nil && strings.TrimSpace(*body.KickLogSource) != "" && !config.ValidKickLogSource(*body.KickLogSource) {
+		jsonError(w, fmt.Sprintf("kickLogSource must be one of %s", strings.Join(config.KickLogSources(), ", ")), http.StatusBadRequest)
 		return
 	}
 
@@ -1153,6 +1174,15 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "level must be one of: debug, info, warn, error", http.StatusBadRequest)
 			return
 		}
+	}
+	if body.KickLogSource != nil {
+		// Applied to the next kick by the resolver main.go injects into the
+		// agent manager; nothing to push here.
+		v := strings.TrimSpace(*body.KickLogSource)
+		if v != "" {
+			v = config.NormalizeKickLogSource(v)
+		}
+		s.deps.Config.Governor.Logging.KickLogSource = v
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after logging update", "error", err)

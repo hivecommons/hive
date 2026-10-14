@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -50,6 +51,16 @@ const (
 	// archive's header, mirroring KickRecord.Snippet's truncation.
 	kickLogPromptSnippetLen = 120
 
+	// kickLogHeaderMaxBytes bounds how much of an archive is read to find
+	// its header's source: line. The header is a dozen short lines plus a
+	// prompt snippet of kickLogPromptSnippetLen, so 4 KiB always covers it.
+	kickLogHeaderMaxBytes = 4096
+	// kickLogHeaderEnd closes the header kickLogHeaderLocked writes.
+	kickLogHeaderEnd = "======================="
+	// kickLogHeaderSourceKey is the header line naming what the body was
+	// built from (kickLogSourceScrollback or kickLogSourceTranscript).
+	kickLogHeaderSourceKey = "source: "
+
 	// Archive directories and files are owner-only: they are written and
 	// served by the hive process itself, and raw pane content may hold
 	// secrets that the dashboard redacts only at serve time — peer agent
@@ -74,6 +85,10 @@ type KickLogInfo struct {
 	// Reason says what triggered the snapshot: "kick" (a newer kick rotated
 	// this one out), "restart", or "shutdown" (pod roll / hive upgrade).
 	Reason string `json:"reason"`
+	// Source is the header's source: line — "scrollback" or "transcript"
+	// (#11762) — so a listing can say which without opening the file. Empty
+	// for archives written before the header carried one.
+	Source string `json:"source,omitempty"`
 }
 
 // kickLogSettingsFromEnv resolves the archive root, per-agent retention
@@ -242,7 +257,7 @@ func (m *Manager) kickLogHeaderLocked(agent *AgentProcess, stampKey string, now 
 		model = "default"
 	}
 	return fmt.Sprintf(
-		"==== hive kick log ====\nagent: %s\n%s: %s\nreason: %s\nkick_started: %s\nkick_prompt: %s\nhive_version: %s\nhive_commit: %s\nbackend: %s\nmodel: %s\nsource: %s\ntmux_session: %s\n=======================\n",
+		"==== hive kick log ====\nagent: %s\n%s: %s\nreason: %s\nkick_started: %s\nkick_prompt: %s\nhive_version: %s\nhive_commit: %s\nbackend: %s\nmodel: %s\n"+kickLogHeaderSourceKey+"%s\ntmux_session: %s\n"+kickLogHeaderEnd+"\n",
 		agent.Name,
 		stampKey,
 		now.UTC().Format(time.RFC3339),
@@ -378,12 +393,34 @@ func readKickLogDir(dir string) ([]KickLogInfo, error) {
 			Timestamp: kickLogTimestamp(e.Name(), fi.ModTime()),
 			SizeBytes: fi.Size(),
 			Reason:    kickLogReason(e.Name()),
+			Source:    kickLogHeaderSource(filepath.Join(dir, e.Name())),
 		})
 	}
 	// Filename timestamps sort lexicographically == chronologically; sort by
 	// name descending for newest-first.
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ID > infos[j].ID })
 	return infos, nil
+}
+
+// kickLogHeaderSource reads the source: line out of an archive's header,
+// returning "" when the file cannot be read or the header has none.
+func kickLogHeaderSource(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, kickLogHeaderMaxBytes)
+	n, _ := io.ReadFull(f, buf)
+	for _, line := range strings.Split(string(buf[:n]), "\n") {
+		if line == kickLogHeaderEnd {
+			return ""
+		}
+		if v, ok := strings.CutPrefix(line, kickLogHeaderSourceKey); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 // kickLogTimestamp parses the archive time from a filename, falling back to

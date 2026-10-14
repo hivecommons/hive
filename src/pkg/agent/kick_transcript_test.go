@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 const (
@@ -331,5 +333,79 @@ func TestCaptureFullLog_TranscriptSource(t *testing.T) {
 	}
 	if h := m.FullLogHeader("scanner"); !strings.Contains(h, "source: transcript\n") {
 		t.Errorf("header with a transcript:\n%s", h)
+	}
+}
+
+// The injected resolver (main.go's closure over governor.logging) wins over
+// the boot-time env value and is re-read on every archive, so a source
+// changed from Settings applies to the next kick without a restart.
+func TestKickLogSourceResolver_LiveApply(t *testing.T) {
+	m, agent, dir, home := transcriptTestManager(t, "copilot", kickLogSourceScrollback)
+	writeTestTranscript(t, home, "copilot", readTranscriptFixture(t, "copilot_events.jsonl"))
+	// Distinct kick starts keep the two archive filenames apart.
+	firstKick := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	agent.LastKick = &firstKick
+	if got := m.KickLogSource(); got != kickLogSourceScrollback {
+		t.Fatalf("KickLogSource() before resolver = %q", got)
+	}
+
+	live := config.LoggingConfig{KickLogSource: config.KickLogSourceTranscript}
+	m.SetKickLogSourceResolver(func() string { return live.ResolveKickLogSource() })
+	if got := m.KickLogSource(); got != kickLogSourceTranscript {
+		t.Fatalf("KickLogSource() with resolver = %q, want transcript", got)
+	}
+	if !m.archiveKickLogLocked(agent, "kick") {
+		t.Fatal("archive not written")
+	}
+	if body := newestArchiveBody(t, m, dir); !strings.Contains(body, "source: transcript\n") {
+		t.Errorf("resolver-selected transcript not used:\n%s", body)
+	}
+
+	live.KickLogSource = "bogus"
+	if got := m.KickLogSource(); got != kickLogSourceScrollback {
+		t.Errorf("unknown resolver value = %q, want scrollback", got)
+	}
+	secondKick := firstKick.Add(time.Second)
+	agent.LastKick = &secondKick
+	if !m.archiveKickLogLocked(agent, "kick") {
+		t.Fatal("second archive not written")
+	}
+	if body := newestArchiveBody(t, m, dir); !strings.Contains(body, "source: scrollback\n") {
+		t.Errorf("changed source not applied to the next archive:\n%s", body)
+	}
+
+	m.SetKickLogSourceResolver(nil)
+	if got := m.KickLogSource(); got != kickLogSourceScrollback {
+		t.Errorf("KickLogSource() after clearing resolver = %q", got)
+	}
+}
+
+// ListKickLogs reports each archive's header source so the history page can
+// show transcript vs scrollback without opening the file.
+func TestListKickLogs_ReportsHeaderSource(t *testing.T) {
+	m, agent, dir, home := transcriptTestManager(t, "copilot", kickLogSourceTranscript)
+	writeTestTranscript(t, home, "copilot", readTranscriptFixture(t, "copilot_events.jsonl"))
+	if !m.archiveKickLogLocked(agent, "kick") {
+		t.Fatal("archive not written")
+	}
+	legacy := filepath.Join(dir, "scanner", "20200101-000000.000-kick.log")
+	if err := os.WriteFile(legacy, []byte("no header at all\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	infos, err := m.ListKickLogs("scanner")
+	if err != nil {
+		t.Fatalf("ListKickLogs: %v", err)
+	}
+	if len(infos) != 2 {
+		t.Fatalf("archives = %+v, want 2", infos)
+	}
+	if infos[0].Source != kickLogSourceTranscript {
+		t.Errorf("newest source = %q, want transcript", infos[0].Source)
+	}
+	if infos[1].Source != "" {
+		t.Errorf("legacy source = %q, want empty", infos[1].Source)
+	}
+	if got := kickLogHeaderSource(filepath.Join(dir, "missing.log")); got != "" {
+		t.Errorf("missing file source = %q", got)
 	}
 }

@@ -3479,6 +3479,12 @@ type LoggingConfig struct {
 	MaxBackups int    `yaml:"max_backups"`
 	Compress   bool   `yaml:"compress"`
 	Level      string `yaml:"level"`
+	// KickLogSource selects what per-kick agent logs (archives and the live
+	// full log) are built from: KickLogSourceScrollback (tmux capture, the
+	// default), KickLogSourceTranscript (the backend CLI's own transcript) or
+	// KickLogSourceAuto. Empty or unknown means scrollback; KickLogSourceEnvVar
+	// overrides it for one process. See kick_log_source.go.
+	KickLogSource string `yaml:"kick_log_source,omitempty" json:"kick_log_source,omitempty"`
 }
 
 // LiteLLM key/endpoint resolution defaults. hive.yaml stores only the env

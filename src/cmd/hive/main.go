@@ -2177,6 +2177,13 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	b.agentMgr.SetRepoAutoMergeEnabledResolver(func(repo string) bool {
 		return b.cfg.RepoAutoMergeEnabled(repo)
 	})
+	// Kick log source (#11762, #9579): governor.logging.kick_log_source from
+	// Settings → Logging, with HIVE_KICK_LOG_SOURCE still winning. A closure
+	// for the same reason as explain mode above — the next archive or live
+	// full-log read must honour a change made from the dashboard.
+	b.agentMgr.SetKickLogSourceResolver(func() string {
+		return b.cfg.Governor.Logging.ResolveKickLogSource()
+	})
 	// The launch path also needs to know WHICH FILE the key came from, so it can
 	// check that file is readable by the agent UID rather than only by the hive
 	// process. Returns a loggable source string, never the key value.

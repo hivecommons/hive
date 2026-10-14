@@ -37511,6 +37511,35 @@ function burnAreaChart() {
         </div>`;
     }
 
+    // Kick log source (#11762, #9579): what per-kick agent logs are built from.
+    // Mirrors config.KickLogSources(); the labels explain the choice because
+    // the values alone ("auto") do not.
+    const KICK_LOG_SOURCES = [
+      { value: 'scrollback', label: 'Scrollback (tmux capture — default)' },
+      { value: 'transcript', label: 'CLI transcript' },
+      { value: 'auto', label: 'Auto (transcript when the backend has a reader, else scrollback)' },
+    ];
+
+    function renderGovKickLogSource(l) {
+      const envLocked = !!l.kickLogSourceEnvLocked;
+      const saved = l.kickLogSource || 'scrollback';
+      const effective = l.kickLogSourceEffective || saved;
+      const shown = envLocked ? effective : saved;
+      const label = v => ((KICK_LOG_SOURCES.find(o => o.value === v) || {}).label || v);
+      const options = KICK_LOG_SOURCES.map(o => '<option value="' + o.value + '"' + (shown === o.value ? ' selected' : '') + '>' + esc(o.label) + '</option>').join('');
+      const lockNote = envLocked
+        ? `<p class="fs-sm text-muted mt-3 mb-0">Set by <code>HIVE_KICK_LOG_SOURCE</code> on the deployment: kick logs currently use <b>${esc(label(effective))}</b>. The saved setting (<b>${esc(label(saved))}</b>) applies once that variable is unset.</p>`
+        : '';
+      return `
+        <hr class="config-section-rule">
+        <div class="config-subgroup">Kick logs</div>
+        <div class="config-field">
+          <label>Kick log source ${settingHelpMark('agent-logging', 'per-kick-log-history', 'Kick log source', `What each per-kick agent log — the archives on an agent&apos;s 🕘 kick history page and the live full log — is built from. <b>Scrollback</b> (default) is the tmux capture of what the CLI painted; tool output the CLI collapsed (&quot;(N lines hidden)&quot;) is not in it. <b>CLI transcript</b> renders the backend&apos;s own session transcript as plain text instead: every turn and every tool call with its full arguments (the shell command) and full output, timestamped, for this kick only. Transcript readers exist today for Copilot CLI and Claude Code; a backend without one, or a missing or unparseable transcript, falls back to the scrollback with one warning in the hive log. <b>Auto</b> uses the transcript when the backend has a reader and the transcript is usable, else the scrollback, silently. Applies to the next kick without a restart. Every log&apos;s header carries a <code>source:</code> line (also the source column on the kick history page) so you can verify which was used. <code>HIVE_KICK_LOG_SOURCE</code> on the deployment overrides this setting.`)}</label>
+          <select data-change-action="markDirty" data-arg0="logging" data-arg1="kickLogSource" data-arg-types="s,s,v"${envLocked ? ' disabled' : ''}>${options}</select>
+          ${lockNote}
+        </div>`;
+    }
+
     function renderGovLogging(l) {
       const levels = ['debug', 'info', 'warn', 'error'];
       return `
@@ -37533,7 +37562,8 @@ function burnAreaChart() {
         <div class="config-toggle">
           <div class="config-toggle-switch ${l.compress !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="logging" data-key="compress"></div>
           <span class="config-toggle-label">Compress Rotated Files ${settingHelpMark('settings', 'logging', 'Compress Rotated Files', `Gzip-compress rotated log files to save disk space. Typically reduces log file size by ~90%. Enabled by default.`)}</span>
-        </div>`;
+        </div>
+        ${renderGovKickLogSource(l)}`;
     }
 
     function securityPostureStripHtml() {

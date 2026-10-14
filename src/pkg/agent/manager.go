@@ -737,9 +737,14 @@ type Manager struct {
 	kickLogDir       string
 	kickLogRetention int
 	kickLogMaxBytes  int64
-	// kickLogSource is HIVE_KICK_LOG_SOURCE (kick_transcript.go); "" behaves
-	// as kickLogSourceScrollback.
-	kickLogSource string
+	// kickLogSource is the boot-time HIVE_KICK_LOG_SOURCE (kick_transcript.go);
+	// "" behaves as kickLogSourceScrollback. kickLogSourceResolver, when
+	// injected (SetKickLogSourceResolver), replaces it with the live
+	// governor.logging.kick_log_source so a dashboard change applies to the
+	// next kick without a restart. Same atomic.Pointer discipline as
+	// explainModeDefaultResolver: read on paths that already hold m.mu.
+	kickLogSource         string
+	kickLogSourceResolver atomic.Pointer[func() string]
 	// buildInfo supplies hive_version/hive_commit for kick log headers.
 	buildInfo func() (version, commit string)
 }
