@@ -1799,6 +1799,18 @@ func (e *InceptionEngine) SetWikiName(name string) {
 	}
 }
 
+// SetKickError records (or clears, with "") a failed brainstorm kick.
+func (e *InceptionEngine) SetKickError(msg string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state != nil {
+		e.state.KickError = msg
+		if err := e.saveState(); err != nil {
+			e.logger.Warn("failed to persist kick error", "error", err)
+		}
+	}
+}
+
 func (e *InceptionEngine) IncrementAutoFactCount(count int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

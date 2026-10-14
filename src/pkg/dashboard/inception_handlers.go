@@ -44,6 +44,11 @@ func (s *Server) handleInceptionStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.brainstormAgentAvailable() {
+		jsonError(w, errBrainstormUnavailable, http.StatusConflict)
+		return
+	}
+
 	if req.Force {
 		if _, err := s.deps.Inception.ArchiveCurrentCampaign(); err != nil {
 			jsonError(w, err.Error(), http.StatusInternalServerError)
@@ -98,6 +103,11 @@ func (s *Server) handleInceptionScan(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := readJSON(r, &req); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if !s.brainstormAgentAvailable() {
+		jsonError(w, errBrainstormUnavailable, http.StatusConflict)
 		return
 	}
 
@@ -829,6 +839,7 @@ func (s *Server) kickBrainstorm() {
 				s.logger.Warn("SendKick after /clear failed, trying RestartWithBootstrap", "error", err)
 				if err2 := s.restartBrainstormWithBootstrap(s.deps.Ctx, "brainstorm", msg); err2 != nil {
 					s.logger.Warn("failed to restart brainstorm for inception", "error", err2)
+					s.recordBrainstormKickFailure(err2)
 				}
 			} else {
 				s.logger.Info("inception kick sent via /clear + SendKick")
@@ -838,6 +849,7 @@ func (s *Server) kickBrainstorm() {
 			s.logger.Debug("no running session, using RestartWithBootstrap", "error", clearErr)
 			if err := s.restartBrainstormWithBootstrap(s.deps.Ctx, "brainstorm", msg); err != nil {
 				s.logger.Warn("failed to restart brainstorm for inception", "error", err)
+				s.recordBrainstormKickFailure(err)
 			}
 		}
 
@@ -845,6 +857,28 @@ func (s *Server) kickBrainstorm() {
 			s.deps.Governor.RecordKick("brainstorm")
 		}
 	}()
+}
+
+const errBrainstormUnavailable = "inception needs the brainstorm agent, which this hive does not run"
+
+// brainstormAgentAvailable reports whether the hive runs an enabled brainstorm
+// agent. Without a live agent manager there is nothing to kick, so it does not
+// block the start.
+func (s *Server) brainstormAgentAvailable() bool {
+	if s.deps.AgentMgr == nil || s.deps.Config == nil {
+		return true
+	}
+	cfg, ok := s.deps.Config.Agents["brainstorm"]
+	return ok && cfg.Enabled
+}
+
+// recordBrainstormKickFailure persists a failed kick on the inception state so
+// `!inception state` and the API report it instead of a silent capture phase.
+func (s *Server) recordBrainstormKickFailure(err error) {
+	if s.deps.Inception == nil {
+		return
+	}
+	s.deps.Inception.SetKickError(fmt.Sprintf("brainstorm could not be started: %v — run cannot progress; use !inception reset and try again", err))
 }
 
 var kickBrainstormClearDelay = time.Second
