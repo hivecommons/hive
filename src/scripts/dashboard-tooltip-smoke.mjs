@@ -104,7 +104,8 @@ async function main() {
         host.innerHTML = '<label>' + label + ' <a class="config-info section-help-mark" href="#" aria-describedby="tip-' + label + '">?<span id="tip-' + label + '" class="config-tooltip" role="tooltip">' + label + ' help text</span></a></label>';
         document.getElementById('config-body').appendChild(host);
         const trigger = host.querySelector('.config-info');
-        trigger.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        // focusin opens synchronously; hover waits CONFIG_TOOLTIP_OPEN_DELAY_MS.
+        trigger.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
         const portal = document.getElementById('config-tooltip-portal');
         const tr = trigger.getBoundingClientRect();
         const pr = portal.getBoundingClientRect();

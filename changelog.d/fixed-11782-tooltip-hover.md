@@ -1,0 +1,1 @@
+- Dashboard help tooltips (`.config-info` ⓘ / `?` marks) now hide when the pointer leaves the trigger and popover, on Escape, outside click, scroll/resize, and whenever a modal opens; the popover stays open while hovering its buttons/links, opens after a short hover-intent delay, and only one is open at a time (#11782).

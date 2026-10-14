@@ -2973,6 +2973,9 @@
       pointer-events: none;
     }
     .config-tooltip-portal { display: block; position: fixed; }
+    /* The author `display: block` above outranks the UA `[hidden] { display: none }`
+       rule, so without this the portal stayed on screen after `portal.hidden = true`. */
+    .config-tooltip-portal[hidden] { display: none; }
     .config-info:hover .config-tooltip, .config-info:focus-within .config-tooltip { display: none; }
     .section-help-mark { text-decoration: none; }
     .section-help-mark .section-help-tip-action { display: block; margin-top: var(--sp-2); color: var(--muted); }
@@ -26451,38 +26454,85 @@ function burnAreaChart() {
         .replace(/\r/g, '');
     }
 
+    // ── Shared help-tooltip helper ──
+    // Every `.config-info` trigger (card "?" marks, settings help marks, Overview
+    // ⓘ terms) renders its `.config-tooltip` into one body-level fixed portal.
+    // Contract: hover opens after a short delay, focus opens immediately, moving
+    // into the portal keeps it open (some tooltips carry buttons/links), leaving
+    // both trigger and portal hides after a short grace, and Escape / outside
+    // click / scroll / resize / any modal opening hide it. Only one is open at a
+    // time. Hide decisions never depend on trigger identity, because the strip
+    // that owns a trigger may re-render (detaching it) while it is hovered.
     const CONFIG_TOOLTIP_EDGE_PAD_PX = 8;
     const CONFIG_TOOLTIP_GAP_PX = 6;
     const CONFIG_TOOLTIP_DEFAULT_WIDTH_PX = 240;
+    const CONFIG_TOOLTIP_OPEN_DELAY_MS = 120;
+    const CONFIG_TOOLTIP_CLOSE_GRACE_MS = 150;
+    const CONFIG_TOOLTIP_PORTAL_ID = 'config-tooltip-portal';
     let _configTooltipTrigger = null;
     let _configTooltipOriginalDescribedBy = '';
+    let _configTooltipOpenTimer = 0;
+    let _configTooltipCloseTimer = 0;
 
     function configTooltipPortal() {
-      let portal = document.getElementById('config-tooltip-portal');
+      let portal = document.getElementById(CONFIG_TOOLTIP_PORTAL_ID);
       if (!portal) {
         portal = document.createElement('div');
         portal.id = 'config-tooltip-portal';
         portal.className = 'config-tooltip config-tooltip-portal';
         portal.setAttribute('role', 'tooltip');
+        portal.hidden = true;
         document.body.appendChild(portal);
       }
       return portal;
     }
 
+    function configTooltipIsOpen() {
+      const portal = document.getElementById(CONFIG_TOOLTIP_PORTAL_ID);
+      return !!(_configTooltipTrigger && portal && !portal.hidden);
+    }
+
+    function configTooltipOwns(node) {
+      if (!node || typeof node.nodeType !== 'number') return false;
+      if (_configTooltipTrigger && _configTooltipTrigger.contains(node)) return true;
+      const portal = document.getElementById(CONFIG_TOOLTIP_PORTAL_ID);
+      return !!(portal && !portal.hidden && portal.contains(node));
+    }
+
+    function configTooltipHovered() {
+      const portal = document.getElementById(CONFIG_TOOLTIP_PORTAL_ID);
+      try {
+        return !!((_configTooltipTrigger && _configTooltipTrigger.isConnected && _configTooltipTrigger.matches(':hover'))
+          || (portal && !portal.hidden && portal.matches(':hover')));
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function cancelConfigTooltipOpen() {
+      if (_configTooltipOpenTimer) { clearTimeout(_configTooltipOpenTimer); _configTooltipOpenTimer = 0; }
+    }
+
+    function cancelConfigTooltipClose() {
+      if (_configTooltipCloseTimer) { clearTimeout(_configTooltipCloseTimer); _configTooltipCloseTimer = 0; }
+    }
+
     function positionConfigTooltip(info) {
-      if (!info) return;
+      if (!info || !info.isConnected) return;
       const sourceTip = info.querySelector('.config-tooltip');
       if (!sourceTip) return;
+      cancelConfigTooltipOpen();
+      cancelConfigTooltipClose();
       const portal = configTooltipPortal();
+      if (_configTooltipTrigger !== info) {
+        if (_configTooltipTrigger) hideConfigTooltip();
+        _configTooltipTrigger = info;
+        _configTooltipOriginalDescribedBy = info.getAttribute('aria-describedby') || '';
+      }
       const extraClasses = Array.from(sourceTip.classList).filter(c => c !== 'config-tooltip').join(' ');
       portal.className = ('config-tooltip config-tooltip-portal ' + extraClasses).trim();
       portal.innerHTML = sourceTip.innerHTML;
       portal.hidden = false;
-      if (_configTooltipTrigger !== info) {
-        if (_configTooltipTrigger) hideConfigTooltip(_configTooltipTrigger);
-        _configTooltipTrigger = info;
-        _configTooltipOriginalDescribedBy = info.getAttribute('aria-describedby') || '';
-      }
       info.setAttribute('aria-describedby', portal.id);
       const rect = info.getBoundingClientRect();
       const tipW = portal.offsetWidth || CONFIG_TOOLTIP_DEFAULT_WIDTH_PX;
@@ -26499,26 +26549,79 @@ function burnAreaChart() {
       portal.style.top = top + 'px';
     }
 
-    function hideConfigTooltip(info) {
-      if (!info || info !== _configTooltipTrigger) return;
-      const portal = document.getElementById('config-tooltip-portal');
-      if (portal) portal.hidden = true;
-      if (_configTooltipOriginalDescribedBy) info.setAttribute('aria-describedby', _configTooltipOriginalDescribedBy);
-      else info.removeAttribute('aria-describedby');
-      _configTooltipTrigger = null;
-      _configTooltipOriginalDescribedBy = '';
+    function scheduleConfigTooltipOpen(info) {
+      if (!info) return;
+      cancelConfigTooltipOpen();
+      if (info === _configTooltipTrigger && configTooltipIsOpen()) { cancelConfigTooltipClose(); return; }
+      _configTooltipOpenTimer = setTimeout(() => {
+        _configTooltipOpenTimer = 0;
+        positionConfigTooltip(info);
+      }, CONFIG_TOOLTIP_OPEN_DELAY_MS);
     }
 
-    document.addEventListener('mouseover', (e) => positionConfigTooltip(e.target.closest('.config-info')));
-    document.addEventListener('focusin', (e) => positionConfigTooltip(e.target.closest('.config-info')));
-    document.addEventListener('mouseout', (e) => {
-      const info = e.target.closest('.config-info');
-      if (!info || (e.relatedTarget && info.contains(e.relatedTarget))) return;
-      hideConfigTooltip(info);
-    });
-    document.addEventListener('focusout', (e) => hideConfigTooltip(e.target.closest('.config-info')));
-    window.addEventListener('scroll', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); }, true);
-    window.addEventListener('resize', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); });
+    // Hides whatever is open. Returns true when a tooltip was actually open.
+    function hideConfigTooltip() {
+      cancelConfigTooltipOpen();
+      cancelConfigTooltipClose();
+      const wasOpen = configTooltipIsOpen();
+      const portal = document.getElementById(CONFIG_TOOLTIP_PORTAL_ID);
+      if (portal) portal.hidden = true;
+      const info = _configTooltipTrigger;
+      if (info) {
+        if (_configTooltipOriginalDescribedBy) info.setAttribute('aria-describedby', _configTooltipOriginalDescribedBy);
+        else info.removeAttribute('aria-describedby');
+      }
+      _configTooltipTrigger = null;
+      _configTooltipOriginalDescribedBy = '';
+      return wasOpen;
+    }
+
+    function scheduleConfigTooltipHide() {
+      cancelConfigTooltipOpen();
+      if (!configTooltipIsOpen()) return;
+      cancelConfigTooltipClose();
+      _configTooltipCloseTimer = setTimeout(() => {
+        _configTooltipCloseTimer = 0;
+        if (configTooltipHovered()) return;
+        hideConfigTooltip();
+      }, CONFIG_TOOLTIP_CLOSE_GRACE_MS);
+    }
+
+    function configTooltipPointerOver(target) {
+      const info = target && target.closest ? target.closest('.config-info') : null;
+      if (info) { scheduleConfigTooltipOpen(info); return; }
+      if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
+      // Pointer is over something else: a sibling, a modal overlay that now
+      // covers the trigger, or the strip that replaced a detached trigger.
+      scheduleConfigTooltipHide();
+    }
+
+    function configTooltipPointerOut(target, relatedTarget) {
+      if (configTooltipOwns(relatedTarget)) return;
+      if (relatedTarget && relatedTarget.closest && relatedTarget.closest('.config-info')) return;
+      const info = target && target.closest ? target.closest('.config-info') : null;
+      if (info || configTooltipOwns(target)) scheduleConfigTooltipHide();
+    }
+
+    function configTooltipFocusIn(target) {
+      const info = target && target.closest ? target.closest('.config-info') : null;
+      if (info) { positionConfigTooltip(info); return; }
+      if (configTooltipOwns(target)) { cancelConfigTooltipClose(); return; }
+      if (configTooltipIsOpen()) hideConfigTooltip();
+    }
+
+    function configTooltipFocusOut(target, relatedTarget) {
+      if (configTooltipOwns(relatedTarget)) return;
+      if (configTooltipOwns(target)) scheduleConfigTooltipHide();
+    }
+
+    document.addEventListener('mouseover', (e) => configTooltipPointerOver(e.target));
+    document.addEventListener('mouseout', (e) => configTooltipPointerOut(e.target, e.relatedTarget));
+    document.addEventListener('focusin', (e) => configTooltipFocusIn(e.target));
+    document.addEventListener('focusout', (e) => configTooltipFocusOut(e.target, e.relatedTarget));
+    document.addEventListener('click', (e) => { if (configTooltipIsOpen() && !configTooltipOwns(e.target)) hideConfigTooltip(); });
+    window.addEventListener('scroll', () => { if (configTooltipIsOpen()) hideConfigTooltip(); }, true);
+    window.addEventListener('resize', () => { if (configTooltipIsOpen()) hideConfigTooltip(); });
 
     // ── Event delegation for actions with user-controlled data ──
     // Eliminates XSS via inline data-action="func" data-arg0="${unsafeValue}" injection.
@@ -30672,6 +30775,8 @@ function burnAreaChart() {
     let _hiveModalSequence = 0;
     function hiveRememberModalOpen(el) {
       if (!el) return el;
+      // A modal covers every help-tooltip trigger; never leave a tooltip floating over it.
+      if (typeof hideConfigTooltip === 'function') hideConfigTooltip();
       _hiveModalSequence++;
       if (!el.dataset) el.dataset = {};
       el.dataset.hiveModalSequence = String(_hiveModalSequence);
@@ -30690,6 +30795,9 @@ function burnAreaChart() {
       function add(el, close, fallbackRank) {
         if (!hiveOverlayIsOpen(el)) return;
         candidates.push({ el: el, close: close, rank: hiveOverlayRank(el, fallbackRank), order: hiveModalOrder(el, candidates.length) });
+      }
+      if (typeof configTooltipIsOpen === 'function' && configTooltipIsOpen()) {
+        candidates.push({ el: document.getElementById(CONFIG_TOOLTIP_PORTAL_ID), close: hideConfigTooltip, rank: 40000, order: candidates.length });
       }
       const installHintBtn = document.getElementById('gh-app-install-id-hint-btn');
       if (installHintBtn && installHintBtn.getAttribute('aria-expanded') === 'true') {

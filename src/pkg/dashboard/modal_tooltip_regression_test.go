@@ -90,8 +90,8 @@ func TestHelpTooltipsUseBodyFixedPortal11269(t *testing.T) {
 		"portal.id = 'config-tooltip-portal'",
 		"document.body.appendChild(portal)",
 		"const rect = info.getBoundingClientRect()",
-		"window.addEventListener('scroll', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); }, true)",
-		"window.addEventListener('resize', () => { if (_configTooltipTrigger) positionConfigTooltip(_configTooltipTrigger); })",
+		"window.addEventListener('scroll', () => { if (configTooltipIsOpen()) hideConfigTooltip(); }, true)",
+		"window.addEventListener('resize', () => { if (configTooltipIsOpen()) hideConfigTooltip(); })",
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("tooltip anchoring regression guard missing %q", want)
@@ -105,5 +105,24 @@ func TestHelpTooltipsUseBodyFixedPortal11269(t *testing.T) {
 	}
 	if strings.Contains(jsFunc(t, html, "positionConfigTooltip"), "pageX") || strings.Contains(jsFunc(t, html, "positionConfigTooltip"), "offsetParent") {
 		t.Fatal("tooltip positioning must use trigger viewport rects, not page coordinates or offset parents")
+	}
+}
+
+// The portal's author `display: block` outranks the UA `[hidden]` rule, so the
+// stylesheet must restate `display: none` for `[hidden]` or tooltips never close.
+func TestHelpTooltipPortalHidesWhenHiddenAttributeSet(t *testing.T) {
+	html := indexHTML(t)
+	rule := cssRule(t, html, ".config-tooltip-portal[hidden]")
+	if !strings.Contains(rule, "display: none") {
+		t.Fatalf(".config-tooltip-portal[hidden] must set display: none, got %s", rule)
+	}
+	for _, want := range []string{
+		"if (typeof hideConfigTooltip === 'function') hideConfigTooltip();",
+		"close: hideConfigTooltip, rank: 40000",
+		"const CONFIG_TOOLTIP_CLOSE_GRACE_MS = 150",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("tooltip dismissal guard missing %q", want)
+		}
 	}
 }
