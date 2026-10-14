@@ -1913,6 +1913,16 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			continue
 		}
 		coveredWanted := ok && claim.PRNumber > 0 && !claim.MergedPR
+		if coveredWanted && claim.Closing && (claim.PRRepo == "" || strings.EqualFold(claim.PRRepo, issue.Repo)) {
+			// PRs opened outside the hive-open-pr relay still get their
+			// Development-sidebar link (hivecommons/hive#11888); memoised per
+			// pair, so this costs one GraphQL query per new claim, not per tick.
+			if res, err := client.EnsureClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
+				logger.Warn("linking issue to non-default-branch PR failed", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+			} else if res.Linked && logger != nil {
+				logger.Info("linked issue to non-default-branch PR so the issue list shows it", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base)
+			}
+		}
 		verifiedOpen := issueHasLabel(originalLabels, VerifiedOpenLabel)
 		if verifiedOpen {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, VerifiedOpenLabel, "6a737d", "Hive verified that a likely/already-done claim did not finish this issue; keep open for more work"); err != nil && logger != nil {
