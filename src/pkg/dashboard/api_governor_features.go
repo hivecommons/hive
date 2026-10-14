@@ -165,6 +165,27 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	if body.AutonomyPromoteAfter != nil && *body.AutonomyPromoteAfter < 0 {
+		jsonError(w, "autonomyPromoteAfter must be 0 (default) or greater", http.StatusBadRequest)
+		return
+	}
+	if body.AutonomyCooldownDays != nil && *body.AutonomyCooldownDays < 0 {
+		jsonError(w, "autonomyCooldownDays must be 0 (default) or greater", http.StatusBadRequest)
+		return
+	}
+	if body.AutonomyMaxLevel != nil && *body.AutonomyMaxLevel != 0 &&
+		(*body.AutonomyMaxLevel < config.MinACMMLevel || *body.AutonomyMaxLevel > config.MaxACMMLevel) {
+		jsonError(w, fmt.Sprintf("autonomyMaxLevel must be %d-%d", config.MinACMMLevel, config.MaxACMMLevel), http.StatusBadRequest)
+		return
+	}
+	if body.AutonomyDemoteOn != nil {
+		switch strings.ToLower(strings.TrimSpace(*body.AutonomyDemoteOn)) {
+		case "", "rollback", "rework", "either":
+		default:
+			jsonError(w, "autonomyDemoteOn must be one of rollback, rework, either", http.StatusBadRequest)
+			return
+		}
+	}
 	if body.ExtFlueMode != nil && !config.ValidFlueBindingMode(*body.ExtFlueMode) {
 		jsonError(w, fmt.Sprintf("extFlueMode must be one of %s", strings.Join(config.FlueBindingModes(), ", ")), http.StatusBadRequest)
 		return
@@ -313,7 +334,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		cfg.Autonomy.PromoteAfter = *body.AutonomyPromoteAfter
 	}
 	if body.AutonomyDemoteOn != nil {
-		cfg.Autonomy.DemoteOn = strings.TrimSpace(*body.AutonomyDemoteOn)
+		cfg.Autonomy.DemoteOn = strings.ToLower(strings.TrimSpace(*body.AutonomyDemoteOn))
 	}
 	if body.AutonomyMaxLevel != nil {
 		cfg.Autonomy.MaxLevel = *body.AutonomyMaxLevel

@@ -1,0 +1,1 @@
+- The Settings → Features tab now exposes the `autonomy.*` policy (`auto_promote`, `auto_demote`, `promote_after`, `cooldown_days`, `max_level`, `demote_on`), and the governor features API rejects out-of-range autonomy values instead of saving them (#11855).
