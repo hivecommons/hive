@@ -3519,6 +3519,14 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 					b.dashSrv.AuditLog("system", "github_app_check", "result=no GitHub client: "+b.appAuthFailure, "")
 					return false
 				}
+				// #11791: heal a wrong-account installation BEFORE asking the
+				// installation about coverage. After an org transfer the
+				// configured org no longer matches the installation's account,
+				// and the coverage check below — asked of the OLD installation
+				// — answers "repo not covered" and returns, so Re-check could
+				// never adopt the new org's installation without a restart.
+				// Rediscovery is TTL-cached, so this costs nothing on repeat.
+				healGitHubAppInstallation(b.ctx, b.ghClient.AppAuth(), b.cfg, b.logger)
 				// #4360: ask about repo COVERAGE before attempting a read.
 				// A repo the installation does not cover answers 404, which is
 				// indistinguishable from "no such repo" and used to be reported
@@ -3546,10 +3554,6 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				// wrong installation). Verify write capability before letting
 				// the handler clear the banner, so Re-check can't produce a
 				// clears-then-returns flip-flop.
-				// Before reporting a wrong-account installation, try to fix it:
-				// this is the exact case rediscovery exists for. Cached by TTL,
-				// so a repeated re-check does not re-hit the API.
-				healGitHubAppInstallation(b.ctx, b.ghClient.AppAuth(), b.cfg, b.logger)
 				// Shared verdict with the boot and advisory-digest paths. Re-check
 				// previously branched on `diag != ""` while boot branched on the
 				// error string, which is how the two came to disagree about the
