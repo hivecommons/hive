@@ -184,6 +184,9 @@ func TestEnrichCIStatus_NoRequiredCheckObservedMakesNoMissingClaim(t *testing.T)
 		checkRuns: []map[string]any{
 			{"name": "some-unrelated-check", "status": "completed", "conclusion": "success"},
 		},
+		// The required contexts exist, as commit statuses; only a context
+		// absent from both listings is "never created" (#11892).
+		statuses: []string{"validate", "dco"},
 	}
 	pr := enrichOnePR(t, p, map[string]bool{"validate": true, "dco": true})
 	if pr.Protection == nil {
