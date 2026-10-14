@@ -263,12 +263,14 @@ func (m *Manager) SetBuildInfo(fn func() (version, commit string)) {
 
 // FullLogHeader returns the kick log header for the agent's live full log
 // (captured/live variant of the archive header), or "" when the agent is
-// unknown or has no session.
+// unknown or has no live session. The tmux session name is assigned at
+// construction for every agent, so liveness is a has-session probe, not a
+// non-empty name.
 func (m *Manager) FullLogHeader(name string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	agent, ok := m.agents[name]
-	if !ok || agent.tmuxSession == "" {
+	if !ok || agent.tmuxSession == "" || !m.tmuxSessionExistsForAgent(agent) {
 		return ""
 	}
 	return m.kickLogHeaderLocked(agent, "captured", time.Now(), "live")

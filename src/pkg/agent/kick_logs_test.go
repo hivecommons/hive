@@ -486,6 +486,9 @@ func TestSanitizeKickLogComponent(t *testing.T) {
 // for the archived/captured and reason lines.
 func TestFullLogHeader_MatchesArchiveHeader(t *testing.T) {
 	m, agent, dir := kickLogTestManager(t, "run output\n")
+	origExists := tmuxSessionExists
+	tmuxSessionExists = func(*Manager, *AgentProcess) bool { return true }
+	t.Cleanup(func() { tmuxSessionExists = origExists })
 	kickAt := time.Date(2026, 8, 20, 7, 0, 0, 0, time.UTC)
 	agent.LastKick = &kickAt
 	agent.LastKickMessage = "scan"
@@ -527,6 +530,12 @@ func TestFullLogHeader_UnknownAgentOrNoSession(t *testing.T) {
 	m, agent, _ := kickLogTestManager(t, "x")
 	if got := m.FullLogHeader("nope"); got != "" {
 		t.Errorf("unknown agent header = %q, want empty", got)
+	}
+	origExists := tmuxSessionExists
+	tmuxSessionExists = func(*Manager, *AgentProcess) bool { return false }
+	t.Cleanup(func() { tmuxSessionExists = origExists })
+	if got := m.FullLogHeader("scanner"); got != "" {
+		t.Errorf("dead-session header = %q, want empty", got)
 	}
 	agent.tmuxSession = ""
 	if got := m.FullLogHeader("scanner"); got != "" {
