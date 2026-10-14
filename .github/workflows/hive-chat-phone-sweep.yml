@@ -6,9 +6,15 @@
 # test sees because it lives in the panel, the chip list and the reply text).
 #
 # By default the job boots its own throwaway hive (#11870): `hive` built from
-# this checkout, a minimal config with the placeholder github.app_id (the
-# supported dashboard-only boot, no GitHub credentials) and a random owner
-# dashboard token generated per run, so the sweep needs no repo vars/secrets.
+# this checkout with a minimal config: the placeholder github.app_id (the
+# supported dashboard-only boot, no GitHub credentials) and NO dashboard
+# token. A token-secured hive answers a bare browser load of `/` with the
+# device-flow sign-in page (the SPA only gets its token from the local
+# gateway or a pasted prompt), so Playwright never reaches #hiveChatFab; the
+# token-less boot is the documented open/dev mode that admits the loopback
+# caller as owner. It lives for one job on an ephemeral runner, so the open
+# dashboard is never reachable by anyone else, and the sweep needs no repo
+# vars/secrets.
 # Manual runs can still target a live v6 test hive (the src/test HIVE_URL +
 # HIVE_TOKEN convention): dispatch with `live: true` (and optionally
 # `live_url`), which reads vars.HIVE_CHAT_SWEEP_URL and
@@ -109,16 +115,18 @@ jobs:
         if: steps.cfg.outputs.boot == 'true'
         working-directory: src
         run: go build -o "$RUNNER_TEMP/ci-hive/hive" ./cmd/hive
-      - name: Boot throwaway hive with a seeded owner token
+      - name: Boot throwaway hive (token-less open/dev dashboard)
         if: steps.cfg.outputs.boot == 'true'
         run: |
           dir="$RUNNER_TEMP/ci-hive"
-          token="$(openssl rand -hex 32)"
-          echo "::add-mask::$token"
           # The hive writes runtime state under /data; give the runner user one.
           [ -w /data ] || { sudo -n mkdir -p /data && sudo -n chown "$(id -u):$(id -g)" /data; } || true
           # Throwaway config: placeholder github.app_id is the supported
           # dashboard-only boot (no GitHub credentials, agents never start).
+          # No dashboard token on purpose: with one set, GET / is the
+          # device-flow sign-in page, not the SPA, and the sweep never finds
+          # #hiveChatFab. Token-less, the dashboard admits the browser as
+          # owner (pkg/dashboard/server.go authenticate, "open by design").
           cat > "$dir/hive.yaml" <<YAML
           project:
             org: hive-chat-sweep
@@ -134,16 +142,23 @@ jobs:
           dashboard:
             port: ${CI_HIVE_PORT}
           YAML
-          HIVE_CONFIG="$dir/hive.yaml" HIVE_DASHBOARD_TOKEN="$token" \
+          # Unset so a runner-wide value can never turn the boot back into a
+          # token-secured (sign-in page) dashboard.
+          env -u HIVE_DASHBOARD_TOKEN -u DASHBOARD_AUTH_TOKEN HIVE_CONFIG="$dir/hive.yaml" \
             nohup "$dir/hive" --config "$dir/hive.yaml" > "$dir/hive.log" 2>&1 &
           echo $! > "$dir/hive.pid"
           url="http://127.0.0.1:${CI_HIVE_PORT}"
           for _ in $(seq 1 90); do
             code="$(curl -s -o /dev/null -w '%{http_code}' "$url/" || true)"
-            if [ "$code" != '000' ]; then
+            if [ "$code" = '200' ]; then
               echo "CI hive answering at $url (HTTP $code)"
-              { echo "HIVE_URL=$url"; echo "HIVE_TOKEN=$token"; } >> "$GITHUB_ENV"
+              echo "HIVE_URL=$url" >> "$GITHUB_ENV"
               exit 0
+            fi
+            if [ "$code" = '401' ]; then
+              echo "::error::CI-booted hive answered GET / with HTTP 401 (sign-in page), so a dashboard token is configured; the sweep needs the token-less boot"
+              tail -n 200 "$dir/hive.log"
+              exit 1
             fi
             if ! kill -0 "$(cat "$dir/hive.pid")" 2>/dev/null; then break; fi
             sleep 2
