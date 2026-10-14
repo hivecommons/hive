@@ -1,10 +1,12 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/beads"
 )
@@ -420,9 +422,41 @@ func (s *Server) chatKnowledgeWorkSourcesAnswer() string {
 	return strings.Join(lines, "\n")
 }
 
+const chatKnowledgeSearchLimit = 5
+
+// chatKnowledgeSearchTerms maps the knowledge chips to a search query.
+func chatKnowledgeSearchTerms(query string) string {
+	q := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), "?"))
+	lower := strings.ToLower(q)
+	if i := strings.Index(lower, "search docs for"); i >= 0 {
+		return strings.TrimSpace(q[i+len("search docs for"):])
+	}
+	if strings.Contains(lower, "what changed in") {
+		return strings.TrimSpace(q[strings.Index(lower, "what changed in")+len("what changed in"):])
+	}
+	return q
+}
+
 func (s *Server) chatKnowledgeSearchUnavailableAnswer(query string) string {
 	if s.deps != nil && s.deps.Knowledge != nil {
-		return "Knowledge search is configured, but Hive Chat has no deterministic handler for `" + strings.TrimSpace(query) + "` yet. Use the Knowledge panel search endpoint or ask a narrower command."
+		terms := chatKnowledgeSearchTerms(query)
+		if terms == "" {
+			return "Usage: `search docs for <topic>`"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		facts := s.deps.Knowledge.SearchAll(ctx, terms, "", chatKnowledgeSearchLimit)
+		if len(facts) == 0 {
+			return "No knowledge results for `" + terms + "`."
+		}
+		if len(facts) > chatKnowledgeSearchLimit {
+			facts = facts[:chatKnowledgeSearchLimit]
+		}
+		lines := []string{"Knowledge results for `" + terms + "`:"}
+		for _, f := range facts {
+			lines = append(lines, "- "+firstRunNonEmpty(f.Title, f.Slug)+" ("+f.Slug+")")
+		}
+		return strings.Join(lines, "\n")
 	}
 	return "Knowledge search is unavailable: no chat model/responder or knowledge API is configured for Hive Chat. Configure the dashboard chat responder or knowledge vault, then retry `" + strings.TrimSpace(query) + "`."
 }
@@ -504,6 +538,6 @@ func (s *Server) chatInceptionRelayStateAnswer() string {
 	} else {
 		parts = append(parts, "spec runs visible: 0")
 	}
-	parts = append(parts, "If a relay follow-up is missing, it is because Hive Chat has no asynchronous dashboard bot responder for this text; this command now reports the local relay state directly.")
+	parts = append(parts, "If a relay follow-up is missing, it is because Hive Chat has no asynchronous dashboard bot responder for this text; this command now reports the local relay state directly")
 	return "Inception relay state: " + strings.Join(parts, "; ") + "."
 }

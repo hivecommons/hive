@@ -250,6 +250,9 @@ func (s *Service) cmdRunsSpec(ctx context.Context, target string) (string, error
 		return "❌ Failed to start spec run", nil
 	}
 	if err := s.dashboardPost(ctx, "/api/runs/spec", body); err != nil {
+		if strings.HasPrefix(err.Error(), "HTTP 400") {
+			return "❌ Usage: `!runs spec <owner/repo#n>`", nil
+		}
 		return fmt.Sprintf("❌ Failed to start spec run `%s`: %s", target, err), nil
 	}
 	return fmt.Sprintf("✅ Started spec run `%s`.", target), nil
@@ -264,6 +267,9 @@ func (s *Service) cmdRunsDesign(ctx context.Context, target string) (string, err
 		return "❌ Failed to start design run", nil
 	}
 	if err := s.dashboardPost(ctx, "/api/runs/spec", body); err != nil {
+		if strings.HasPrefix(err.Error(), "HTTP 400") {
+			return "❌ Usage: `!runs design <owner/repo#n>`", nil
+		}
 		return fmt.Sprintf("❌ Failed to start design run `%s`: %s", target, err), nil
 	}
 	return fmt.Sprintf("✅ Started design run `%s` via Spektacular.", target), nil

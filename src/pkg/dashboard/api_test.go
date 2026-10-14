@@ -1848,3 +1848,15 @@ func TestGovernorNotificationsRejectsNonOwner(t *testing.T) {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
 }
+
+func TestChatKnowledgeSearchTerms(t *testing.T) {
+	for _, tc := range []struct{ query, want string }{
+		{"Search docs for relay setup", "relay setup"},
+		{"What changed in v5?", "v5"},
+		{"search docs for", ""},
+	} {
+		if got := chatKnowledgeSearchTerms(tc.query); got != tc.want {
+			t.Errorf("chatKnowledgeSearchTerms(%q) = %q, want %q", tc.query, got, tc.want)
+		}
+	}
+}
