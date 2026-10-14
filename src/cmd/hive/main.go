@@ -4892,6 +4892,44 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					return
 				}
 
+				// Drain in-flight kicks before exiting (#11876): on a fast release
+				// channel the restart cadence is shorter than a long-lane turn, so
+				// exiting immediately cut most of those turns. While any kicked
+				// turn is still running, defer (the hub re-sends UpgradeTo every
+				// heartbeat) and withhold new kicks; proceed once the turns end or
+				// hub.upgrade_drain_timeout_s elapses.
+				if b.agentMgr != nil {
+					inFlight := agentKicksInFlight(b.agentMgr.AllStatuses(), b.startTime)
+					drainTimeout := b.cfg.Hub.EffectiveUpgradeDrainTimeout()
+					dec := selfUpgradeDrain.decide(targetSHA, inFlight, drainTimeout, selfUpgradeDrainNow())
+					switch {
+					case !dec.Proceed:
+						b.logger.Info("self-upgrade deferred: draining in-flight agent kicks",
+							"target", targetSHA,
+							"current", gitShort,
+							"in_flight", dec.InFlight,
+							"waited", dec.Waited.Round(time.Second),
+							"max_wait_remaining", dec.Remaining.Round(time.Second),
+							"drain_timeout", drainTimeout,
+						)
+						return
+					case dec.TimedOut:
+						b.logger.Warn("self-upgrade drain timed out: proceeding and cutting in-flight kicks",
+							"target", targetSHA,
+							"current", gitShort,
+							"cut_kicks", dec.InFlight,
+							"waited", dec.Waited.Round(time.Second),
+							"drain_timeout", drainTimeout,
+						)
+					case dec.Waited > 0:
+						b.logger.Info("self-upgrade drain complete: no agent kicks in flight",
+							"target", targetSHA,
+							"current", gitShort,
+							"waited", dec.Waited.Round(time.Second),
+						)
+					}
+				}
+
 				// Record the attempt BEFORE acting: if the process dies mid-upgrade the
 				// next boot must still see an incremented count, otherwise a crash loop
 				// would retry without ever exhausting the budget.
@@ -6936,6 +6974,14 @@ func runEvalCycle(
 			"last_rebuff", providerBudgetLastRebuff, "probe_interval", providerBudgetProbeInterval)
 	}
 	messages = kickGate.Kept
+	// Self-upgrade drain (#11876): a hub-instructed upgrade is waiting for
+	// in-flight kicks to end, so starting new turns would only feed the
+	// restart. Withheld kicks stay due and go out from the new process.
+	if target, draining := selfUpgradeDrain.Active(selfUpgradeDrainNow()); draining && len(messages) > 0 {
+		logger.Info("self-upgrade drain: withholding new agent kicks",
+			"target", target, "withheld", pendingKickAgentsFromMessages(messages))
+		messages = nil
+	}
 	govState.PendingKicks = pendingKickAgentsFromMessages(messages)
 	gov.SetPendingKicks(govState.PendingKicks)
 	if notifyProviderBudget {

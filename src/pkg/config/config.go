@@ -4994,6 +4994,11 @@ type HubConfig struct {
 	AutoUpgrade         bool   `yaml:"auto_upgrade"`
 	AutoUpgradeMode     string `yaml:"auto_upgrade_mode,omitempty"`
 	ContributeSuspended bool   `yaml:"contribute_suspended"`
+	// UpgradeDrainTimeoutS bounds how long a hub-instructed self-upgrade waits
+	// for in-flight agent kicks to finish (new kicks are withheld meanwhile)
+	// before exiting anyway. 0/unset uses the default (45 min); a negative
+	// value disables draining. Resolve with EffectiveUpgradeDrainTimeout.
+	UpgradeDrainTimeoutS int `yaml:"upgrade_drain_timeout_s,omitempty" json:"upgrade_drain_timeout_s,omitempty"`
 	// TaskStatusPush controls the separate task-status push loop, not the core
 	// heartbeat or hub-managed upgrade/config delivery. Nil defaults to true.
 	// HIVE_HUB_TASK_STATUS_PUSH overrides it; resolve with TaskStatusPushEnabled.

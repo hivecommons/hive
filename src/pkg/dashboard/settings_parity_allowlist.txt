@@ -404,6 +404,7 @@ hub.task_status_push # TODO #11854
 hub.tier_limits.<key>.max_concurrent # TODO #11854
 hub.tier_limits.<key>.max_per_day # TODO #11854
 hub.tier_limits.<key>.max_per_hour # TODO #11854
+hub.upgrade_drain_timeout_s # TODO #11854
 intent.alignment_model # TODO #11854
 intent.docs_path_patterns[] # TODO #11854
 intent.enforce # TODO #11854

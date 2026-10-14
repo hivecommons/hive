@@ -1,0 +1,1 @@
+- Hub-instructed self-upgrades now drain first: while any agent's kicked turn is still running the spoke defers the restart and withholds new kicks, then upgrades once those turns end or `hub.upgrade_drain_timeout_s` (default 45 min; negative disables) elapses, logging any kicks it had to cut (#11876).
