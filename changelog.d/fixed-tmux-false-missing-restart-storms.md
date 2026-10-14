@@ -1,0 +1,1 @@
+- Treat duplicate-session crash recovery as a live tmux session and log failed tmux probes so false missing-session checks do not inflate restart storm counts.

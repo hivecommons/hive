@@ -26,23 +26,52 @@ type restartStormPlan struct {
 
 func (m *Manager) restartWithStormBreaker(ctx context.Context, name, reason, detail string) (bool, error) {
 	plan := m.planAutomaticRestart(name, reason, detail, time.Now())
+	if handled, didRestart, err := m.applyRestartStormPlan(name, reason, plan, func() error {
+		return m.RestartWithReason(ctx, name, reason)
+	}); handled {
+		return didRestart, err
+	}
+	return true, nil
+}
+
+func (m *Manager) recoverMissingSessionWithStormBreaker(ctx context.Context, name, reason, detail string) (bool, error) {
+	plan := m.planAutomaticRestart(name, reason, detail, time.Now())
+	if handled, didRestart, err := m.applyRestartStormPlan(name, reason, plan, func() error {
+		restarted, err := m.RestartMissingSessionWithReason(ctx, name, reason)
+		if err != nil {
+			return err
+		}
+		if !restarted {
+			return errMissingSessionAlreadyAlive
+		}
+		return err
+	}); handled {
+		if err == errMissingSessionAlreadyAlive {
+			return false, nil
+		}
+		return didRestart, err
+	}
+	return true, nil
+}
+
+func (m *Manager) applyRestartStormPlan(name, reason string, plan restartStormPlan, restart func() error) (bool, bool, error) {
 	switch {
 	case plan.pauseReason != "":
 		if m.logger != nil {
 			m.logger.Warn("automatic restart suppressed by restart-storm breaker",
 				"agent", name, "reason", reason, "trigger", plan.pauseTrigger, "pause_reason", plan.pauseReason)
 		}
-		return false, m.Pause(name, plan.pauseTrigger, plan.pauseReason)
+		return true, false, m.Pause(name, plan.pauseTrigger, plan.pauseReason)
 	case plan.backoff > 0:
 		if m.logger != nil {
 			m.logger.Warn("automatic restart backed off by restart-storm breaker",
 				"agent", name, "reason", reason, "backoff", plan.backoff.Round(time.Second))
 		}
-		return false, nil
+		return true, false, nil
 	case !plan.allowed:
-		return false, nil
+		return true, false, nil
 	default:
-		return true, m.RestartWithReason(ctx, name, reason)
+		return true, true, restart()
 	}
 }
 

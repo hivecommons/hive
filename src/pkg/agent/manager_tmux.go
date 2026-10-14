@@ -415,7 +415,20 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 // replace this and observe the calls.
 var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
 	cmd := m.tmuxCmd(agent, "has-session", "-t", agent.tmuxSession)
-	return cmd.Run() == nil
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return true
+	}
+	if m != nil && m.logger != nil && agent != nil {
+		m.logger.Warn("tmux has-session failed",
+			"name", agent.Name,
+			"session", agent.tmuxSession,
+			"uid", agent.UID,
+			"socket", agent.tmuxSocket,
+			"error", err,
+			"stderr", strings.TrimSpace(string(output)))
+	}
+	return false
 }
 
 func (m *Manager) tmuxSessionExistsForAgent(agent *AgentProcess) bool {
