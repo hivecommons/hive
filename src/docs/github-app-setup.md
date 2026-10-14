@@ -40,8 +40,10 @@ Fine-grained PATs are supported — the token is sent as a plain bearer, same as
 | Issues | Read and write | Read and write | Read and write |
 | Pull requests | Read | Read | Read and write |
 | Checks | Read | Read | Read |
-| Actions | Read | Read | Read |
+| Actions | Read | Read | Read (Read and write to release held workflow runs on trusted-bot PRs, see below) |
 | Commit statuses | Read | Read | Read |
+
+**Actions: Read and write** is optional at L5–L6: it lets the self-merge sweep approve `pull_request` workflow runs GitHub holds for approval on the App's own and trusted-bot PR heads (same-repository branches only; see "Held and never-started required checks" in [operator-reference.md](operator-reference.md)). With Read only, those PRs are reported as `required-check-held:<ctx>` and a person approves the runs.
 
 Organization permission: **Members: Read** where contributor/owner identification is configured. Note that Issues read-and-write is needed even at advisory tiers because digests are posted as issue comments.
 
