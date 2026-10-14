@@ -1,0 +1,83 @@
+# Hive Chat phone sweep (#11852) — drives the dashboard 💬 panel from a
+# headless Chromium on the Playwright `Pixel 7` profile and sends every
+# suggestion chip, every cheat-sheet chip and every `!help` command. It fails
+# when one gets no reply, a `no deterministic handler` reply, `HTTP 4xx/5xx`
+# text or an empty-argument error (the #11828/#11829/#11837 class that no Go
+# test sees because it lives in the panel, the chip list and the reply text).
+#
+# No CI job boots a hive with a browser session yet, so this follows the
+# live-endpoint convention of src/test (HIVE_URL + HIVE_TOKEN): point
+# vars.HIVE_CHAT_SWEEP_URL at a v6 test hive and store its owner dashboard
+# token in secrets.HIVE_CHAT_SWEEP_TOKEN (or a seeded `hive_session` cookie in
+# secrets.HIVE_CHAT_SWEEP_SESSION). Unconfigured, the job only syntax-checks
+# the script and skips with a notice.
+#
+# Message-list heights at 412x839 and 412x480 (on-screen keyboard) are
+# recorded in the log and screenshots only; minimums are enforced once #11836
+# lands. Non-required: not a branch-protection context.
+name: Hive Chat phone sweep
+
+on:
+  schedule:
+    - cron: '23 5,17 * * *'
+  workflow_dispatch:
+  pull_request:
+    branches: [v6]
+    paths:
+      - '.github/scripts/hive-chat-phone-sweep.js'
+      - '.github/workflows/hive-chat-phone-sweep.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'live' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  sweep:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    continue-on-error: false
+    env:
+      HIVE_URL: ${{ vars.HIVE_CHAT_SWEEP_URL }}
+      HIVE_TOKEN: ${{ secrets.HIVE_CHAT_SWEEP_TOKEN }}
+      HIVE_SESSION: ${{ secrets.HIVE_CHAT_SWEEP_SESSION }}
+      SWEEP_OUT: ${{ github.workspace }}/hive-chat-sweep
+      PLAYWRIGHT_VERSION: '1.55.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Syntax check sweep script
+        run: node --check .github/scripts/hive-chat-phone-sweep.js
+      - name: Check live hive configuration
+        id: cfg
+        run: |
+          if [ -z "$HIVE_URL" ] || { [ -z "$HIVE_TOKEN" ] && [ -z "$HIVE_SESSION" ]; }; then
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Skipping Hive Chat phone sweep: set vars.HIVE_CHAT_SWEEP_URL and secrets.HIVE_CHAT_SWEEP_TOKEN (or HIVE_CHAT_SWEEP_SESSION) for a v6 test hive.'
+            exit 0
+          fi
+          echo 'run=true' >> "$GITHUB_OUTPUT"
+      - name: Install Playwright Chromium
+        if: steps.cfg.outputs.run == 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p sweep-deps && cd sweep-deps
+          npm install --no-save --no-package-lock --ignore-scripts "playwright@${PLAYWRIGHT_VERSION}"
+          npx --no-install playwright install --with-deps chromium
+          echo "NODE_PATH=$PWD/node_modules" >> "$GITHUB_ENV"
+      - name: Sweep chips and !help commands (Pixel 7)
+        if: steps.cfg.outputs.run == 'true'
+        run: node .github/scripts/hive-chat-phone-sweep.js
+      - name: Upload screenshots
+        if: always() && steps.cfg.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hive-chat-phone-sweep
+          path: hive-chat-sweep/
+          if-no-files-found: ignore
+          retention-days: 14
