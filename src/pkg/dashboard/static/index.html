@@ -2743,6 +2743,8 @@
     .settings-search-hit-label { font-weight: 700; color: var(--text); margin-bottom: var(--sp-1); }
     .settings-search-hit-meta { color: var(--muted); font-size: var(--fs-xs); line-height: 1.45; }
     .settings-search-key { display: inline-block; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); border-radius: var(--r-sm); padding: var(--sp-0) var(--sp-2); }
+    .settings-yaml-hint { margin-left: var(--sp-2); color: var(--muted); font-size: var(--fs-xs); font-weight: 500; letter-spacing: 0; text-transform: none; }
+    .settings-yaml-hint code { font-family: var(--font-mono); }
     .settings-search-mark { background: color-mix(in srgb, var(--amber) 35%, transparent); color: var(--text); border-radius: var(--r-sm); padding: var(--sp-0) var(--sp-1); }
     .settings-search-empty { text-align: center; color: var(--muted); padding: var(--sp-9); border: 1px dashed var(--border); border-radius: var(--r); background: color-mix(in srgb, var(--surface) 72%, transparent); }
 
@@ -31073,7 +31075,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -32140,6 +32142,7 @@ function burnAreaChart() {
       switch (tab) {
         case 'General': return renderGovGeneral();
         case 'Appearance': return renderGovAppearance();
+        case 'Dashboard': return renderGovDashboard(d.dashboard || {});
         case 'Agents': return renderGovAgents(d.agents || []);
         case 'Thresholds': return renderGovThresholds(d);
         case 'Labels': return renderGovLabels(d.labels || [], d.holdLabels || [], d.requireLabels || []);
@@ -32448,6 +32451,76 @@ function burnAreaChart() {
     var _themeState = { loaded:false, theme:'hive', theme_overrides:{}, catalog:[], effective:null };
     const HONEYCOMB_WATERMARK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 1l27 15.5v31L28 63 1 47.5v-31zM28 34l27 15.5v31L28 96 1 80.5v-31z' fill='none' stroke='%23e0a33a' stroke-opacity='.09'/%3E%3C/svg%3E";
 
+    function yamlHint(path) {
+      return '<span class="settings-yaml-hint">YAML <code>' + esc(path) + '</code></span>';
+    }
+
+    function splitConfigLines(value) {
+      return String(value || '').split(/\r?\n|,/).map(s => s.trim()).filter(Boolean);
+    }
+
+    function parseSettingsMap(value) {
+      const out = {};
+      String(value || '').split(/\r?\n/).forEach(line => {
+        line = line.trim();
+        if (!line) return;
+        const idx = line.indexOf('=');
+        const key = (idx >= 0 ? line.slice(0, idx) : line).trim();
+        const val = (idx >= 0 ? line.slice(idx + 1) : '').trim();
+        if (key && val) out[key] = val;
+      });
+      return out;
+    }
+
+    function settingsMapText(map) {
+      return Object.keys(map || {}).sort().map(k => k + '=' + (map || {})[k]).join('\n');
+    }
+
+    function markDashboardList(key, value) {
+      _configState.data.dashboard = _configState.data.dashboard || {};
+      _configState.data.dashboard[key] = splitConfigLines(value);
+      markDirty('dashboard', key, _configState.data.dashboard[key]);
+    }
+
+    function markDashboardNames(value) {
+      const names = parseSettingsMap(value);
+      _configState.data.dashboard = _configState.data.dashboard || {};
+      _configState.data.dashboard.authorized_user_names = names;
+      markDirty('dashboard', 'authorized_user_names', names);
+    }
+
+    function markDashboardIssueBands(key, value) {
+      const d = _configState.data.dashboard = _configState.data.dashboard || {};
+      const bands = d.issue_bands = Object.assign({}, d.issue_bands || {});
+      bands[key] = key === 'stale_days' ? Math.max(0, parseInt(value || '0', 10) || 0) : splitConfigLines(value);
+      markDirty('dashboard', 'issue_bands', bands);
+    }
+
+    function renderGovDashboard(dash) {
+      const bands = dash.issue_bands || {};
+      const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
+      return '<div class="config-section">' +
+        '<h3>Dashboard runtime</h3>' +
+        '<p class="text-muted fs-base">Settings from <code>dashboard.*</code>. Port, proxy, and token changes may require restart or re-authentication.</p>' +
+        '<div class="config-field-row">' +
+          '<div class="config-field"><label>Port ' + yamlHint('dashboard.port') + '</label><input type="number" min="1" max="65535" value="' + esc(String(dash.port || 3001)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="port" data-arg-types="s,s,N"><div class="config-help">Requires restart.</div></div>' +
+          '<div class="config-field"><label>Agent poll interval (seconds) ' + yamlHint('dashboard.agent_poll_interval_s') + '</label><input type="number" min="1" value="' + esc(String(dash.agent_poll_interval_s || 0)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="agent_poll_interval_s" data-arg-types="s,s,N"></div>' +
+        '</div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.strategy_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="strategy_lab"></div><span class="config-toggle-label">Strategy Lab ' + yamlHint('dashboard.strategy_lab') + '</span></div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
+        '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
+        '<h3>Access allowlist</h3>' +
+        '<div class="config-field"><label>Authorized users ' + yamlHint('dashboard.authorized_users[]') + '</label><textarea rows="5" data-change-action="markDashboardList" data-arg0="authorized_users" data-arg-types="s,v">' + esc((dash.authorized_users || []).join('\n')) + '</textarea><div class="config-help">One user per line; append <code>:read</code>, <code>:read-write</code>, or <code>:owner</code> for explicit roles.</div></div>' +
+        '<div class="config-field"><label>Authorized user display names ' + yamlHint('dashboard.authorized_user_names.<key>') + '</label><textarea rows="4" placeholder="ibmid:123=Jane Doe" data-change-action="markDashboardNames" data-arg-types="v">' + esc(settingsMapText(dash.authorized_user_names || {})) + '</textarea></div>' +
+        '<h3>Issue bands</h3>' +
+        '<div class="config-field-row">' +
+          '<div class="config-field"><label>Waiting labels ' + yamlHint('dashboard.issue_bands.waiting_labels[]') + '</label><textarea rows="4" data-change-action="markDashboardIssueBands" data-arg0="waiting_labels" data-arg-types="s,v">' + esc((bands.waiting_labels || []).join('\n')) + '</textarea></div>' +
+          '<div class="config-field"><label>Done labels ' + yamlHint('dashboard.issue_bands.done_labels[]') + '</label><textarea rows="4" data-change-action="markDashboardIssueBands" data-arg0="done_labels" data-arg-types="s,v">' + esc((bands.done_labels || []).join('\n')) + '</textarea></div>' +
+        '</div>' +
+        '<div class="config-field"><label>Stale after days ' + yamlHint('dashboard.issue_bands.stale_days') + '</label><input type="number" min="0" value="' + esc(String(bands.stale_days || 0)) + '" data-change-action="markDashboardIssueBands" data-arg0="stale_days" data-arg-types="s,N"></div>' +
+      '</div>';
+    }
+
     function renderDashboardTimezoneSettings() {
       const pref = dashboardTimeZonePreference();
       const serverTz = validDashboardTimeZone(_dashboardServerTimeZone) || '';
@@ -32494,6 +32567,8 @@ function burnAreaChart() {
       const current = _themeState.theme || 'hive';
       const overrides = _themeState.theme_overrides || {};
       const bg = overrides.background || {};
+      const fonts = overrides.fonts || {};
+      const tokens = overrides.tokens || {};
       const customCSS = overrides.custom_css || '';
       const honeyOn = bg.image === HONEYCOMB_WATERMARK;
       const bgScope = bg.scope || 'page';
@@ -32516,11 +32591,17 @@ function burnAreaChart() {
         + '<p style="font-size:.8rem;color:var(--muted);margin-bottom:var(--sp-5)">Choose a hive-wide dashboard theme. Owners can layer safe CSS tokens, a background image, and capped custom CSS on top of any preset.</p>'
         + '<div class="theme-actions"><button class="hv-btn btn-secondary btn" data-action="resetThemeToPreset">Reset to preset</button><button class="hv-btn btn-secondary btn" data-action="saveThemeOverrides">Apply background/CSS</button><span style="color:var(--muted);font-size:.76rem">Current: <code>' + esc(current) + '</code></span></div>'
         + cards
-        + '<div class="config-field-row"><div class="config-field"><label>Background image URL</label><input id="theme-bg-url" type="text" value="' + esc(bg.image || '') + '" placeholder="https://example.org/background.svg"></div>'
-        + '<div class="config-field"><label>Background opacity: <span id="theme-bg-opacity-value">' + esc(String(bg.opacity || 0.08)) + '</span></label><input id="theme-bg-opacity" type="range" min="0" max="1" step="0.01" value="' + esc(String(bg.opacity || 0.08)) + '" data-input-action="updateThemeOpacityLabel"></div></div>'
-        + '<div class="config-field"><label for="theme-bg-scope">Watermark on</label><select id="theme-bg-scope"><option value="page"' + (bgScope === 'page' ? ' selected' : '') + '>Page</option><option value="cards"' + (bgScope === 'cards' ? ' selected' : '') + '>Cards</option><option value="both"' + (bgScope === 'both' ? ' selected' : '') + '>Both</option></select></div>'
+        + '<div class="config-field-row"><div class="config-field"><label>Background image URL ' + yamlHint('dashboard.theme_overrides.background.image') + '</label><input id="theme-bg-url" type="text" value="' + esc(bg.image || '') + '" placeholder="https://example.org/background.svg"></div>'
+        + '<div class="config-field"><label>Background opacity: <span id="theme-bg-opacity-value">' + esc(String(bg.opacity || 0.08)) + '</span> ' + yamlHint('dashboard.theme_overrides.background.opacity') + '</label><input id="theme-bg-opacity" type="range" min="0" max="1" step="0.01" value="' + esc(String(bg.opacity || 0.08)) + '" data-input-action="updateThemeOpacityLabel"></div></div>'
+        + '<div class="config-field-row4"><div class="config-field"><label for="theme-bg-scope">Watermark on ' + yamlHint('dashboard.theme_overrides.background.scope') + '</label><select id="theme-bg-scope"><option value="page"' + (bgScope === 'page' ? ' selected' : '') + '>Page</option><option value="cards"' + (bgScope === 'cards' ? ' selected' : '') + '>Cards</option><option value="both"' + (bgScope === 'both' ? ' selected' : '') + '>Both</option></select></div>'
+        + '<div class="config-field"><label>Position ' + yamlHint('dashboard.theme_overrides.background.position') + '</label><input id="theme-bg-position" type="text" value="' + esc(bg.position || '') + '" placeholder="center center"></div>'
+        + '<div class="config-field"><label>Size ' + yamlHint('dashboard.theme_overrides.background.size') + '</label><input id="theme-bg-size" type="text" value="' + esc(bg.size || '') + '" placeholder="cover"></div>'
+        + '<div class="config-field"><label>Attachment ' + yamlHint('dashboard.theme_overrides.background.attachment') + '</label><select id="theme-bg-attachment"><option value=""' + (!bg.attachment ? ' selected' : '') + '>(default)</option><option value="fixed"' + (bg.attachment === 'fixed' ? ' selected' : '') + '>fixed</option><option value="scroll"' + (bg.attachment === 'scroll' ? ' selected' : '') + '>scroll</option></select></div></div>'
         + '<label class="config-toggle" style="margin:4px 0 14px"><span class="config-toggle-switch' + (honeyOn ? ' on' : '') + '" data-action="toggleHoneycombWatermark"></span><span class="config-toggle-label">Use honeycomb watermark</span></label>'
-        + '<div class="config-field"><label>Custom CSS</label><textarea id="theme-custom-css" rows="10" data-input-action="updateThemeByteCount" placeholder=".panel { border-radius: 2px; }">' + esc(customCSS) + '</textarea><div class="theme-byte-count"><span id="theme-css-bytes">' + utf8Bytes(customCSS) + '</span> / 32768 bytes</div></div>'
+        + '<div class="config-field-row"><div class="config-field"><label>UI font ' + yamlHint('dashboard.theme_overrides.fonts.ui') + '</label><input id="theme-font-ui" type="text" value="' + esc(fonts.ui || '') + '" placeholder="Inter, system-ui, sans-serif"></div>'
+        + '<div class="config-field"><label>Mono font ' + yamlHint('dashboard.theme_overrides.fonts.mono') + '</label><input id="theme-font-mono" type="text" value="' + esc(fonts.mono || '') + '" placeholder="JetBrains Mono, monospace"></div></div>'
+        + '<div class="config-field"><label>CSS token overrides ' + yamlHint('dashboard.theme_overrides.tokens.<key>') + '</label><textarea id="theme-token-overrides" rows="5" placeholder="--accent=#e0a33a">' + esc(settingsMapText(tokens)) + '</textarea><div class="config-help">One allowlisted CSS token per line as <code>--token=value</code>.</div></div>'
+        + '<div class="config-field"><label>Custom CSS ' + yamlHint('dashboard.theme_overrides.custom_css') + '</label><textarea id="theme-custom-css" rows="10" data-input-action="updateThemeByteCount" placeholder=".panel { border-radius: 2px; }">' + esc(customCSS) + '</textarea><div class="theme-byte-count"><span id="theme-css-bytes">' + utf8Bytes(customCSS) + '</span> / 32768 bytes</div></div>'
         + '<div id="theme-save-status" style="font-size:.76rem;color:var(--muted)"></div></div>';
     }
 
@@ -32545,9 +32626,17 @@ function burnAreaChart() {
       const bgURL = (document.getElementById('theme-bg-url') || {}).value || '';
       const opacity = parseFloat((document.getElementById('theme-bg-opacity') || {}).value || '0.08');
       const scope = (document.getElementById('theme-bg-scope') || {}).value || 'page';
+      const position = ((document.getElementById('theme-bg-position') || {}).value || '').trim();
+      const size = ((document.getElementById('theme-bg-size') || {}).value || '').trim();
+      const attachment = ((document.getElementById('theme-bg-attachment') || {}).value || '').trim();
+      const fontUI = ((document.getElementById('theme-font-ui') || {}).value || '').trim();
+      const fontMono = ((document.getElementById('theme-font-mono') || {}).value || '').trim();
+      const tokens = parseSettingsMap((document.getElementById('theme-token-overrides') || {}).value || '');
       const css = (document.getElementById('theme-custom-css') || {}).value || '';
       const overrides = { custom_css: css };
-      if (bgURL.trim()) overrides.background = { image: bgURL.trim(), scope: scope, opacity: Number.isFinite(opacity) ? opacity : 0.08, attachment: 'fixed' };
+      if (Object.keys(tokens).length) overrides.tokens = tokens;
+      if (fontUI || fontMono) overrides.fonts = { ui: fontUI, mono: fontMono };
+      if (bgURL.trim()) overrides.background = { image: bgURL.trim(), scope: scope, opacity: Number.isFinite(opacity) ? opacity : 0.08, position: position, size: size, attachment: attachment || 'fixed' };
       return overrides;
     }
     async function putTheme(theme, overrides) {
@@ -34380,7 +34469,7 @@ function burnAreaChart() {
           <input type="text" id="hub-snapshot-url" value="${esc(snapUrl)}" data-change-action="markDirty" data-arg0="hub" data-arg1="snapshot_url" data-arg-types="s,s,v" ${hub.auto_snapshot ? 'disabled style="opacity:0.5"' : ''} placeholder="${hub.auto_snapshot ? '' : 'https://your-site.com/dashboard-preview'}">
         </div>
         <div class="config-field">
-          <label>Snapshot frame allowlist ${settingHelpMark('snapshots', '', 'Snapshot frame allowlist', `Exact HTTPS origins allowed to embed the public read-only /snapshot page. Empty keeps frame-ancestors 'none' and X-Frame-Options: DENY. X-Frame-Options is omitted for /snapshot only when this allowlist is non-empty because XFO cannot express allowlists.`)}</label>
+          <label>Snapshot frame allowlist ${yamlHint('dashboard.snapshot_frame_ancestors[]')} ${settingHelpMark('snapshots', '', 'Snapshot frame allowlist', `Exact HTTPS origins allowed to embed the public read-only /snapshot page. Empty keeps frame-ancestors 'none' and X-Frame-Options: DENY. X-Frame-Options is omitted for /snapshot only when this allowlist is non-empty because XFO cannot express allowlists.`)}</label>
           <div style="display:flex;flex-wrap:wrap;gap:var(--sp-2);margin-bottom:var(--sp-3)">${frameAncestors.map(function(o) { return '<span style="display:inline-flex;align-items:center;gap:var(--sp-2);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);font-size:0.72rem;background:rgba(96,165,250,0.15);color:var(--blue);border:1px solid rgba(96,165,250,0.3)">' + esc(o) + ' <span data-action="removeHubFilter" data-arg0="snapshot_frame_ancestors" data-arg1="' + esc(o) + '" style="cursor:pointer;opacity:0.7">✕</span></span>';}).join('') || '<span style="font-size:0.72rem;color:var(--muted)">No origins allowed — /snapshot cannot be framed.</span>'}</div>
           <textarea rows="3" style="width:100%;font-family:var(--font-mono);font-size:0.72rem;resize:vertical" placeholder="https://docs.projectbluefin.io" data-change-action="setSnapshotFrameAncestorsFromText" data-arg-types="v">${esc(frameAncestors.join('\n'))}</textarea>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">One exact origin per line: <code>https://host</code> or <code>https://host:port</code>. Paths, http://, credentials, and wildcards are rejected.</span>
@@ -41773,6 +41862,14 @@ function burnAreaChart() {
               body: JSON.stringify(values)
             });
             if (!rvRes.ok) throw new Error(await saveErrorMessage(rvRes));
+          } else if (_configState.type === 'governor' && section === 'dashboard') {
+            const dashRes = await fetch('/api/config/dashboard', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(values)
+            });
+            if (!dashRes.ok) throw new Error(await saveErrorMessage(dashRes));
+            _configState.data.dashboard = await dashRes.json().catch(() => _configState.data.dashboard);
           } else {
             const res = await fetch(`${base}/${section}`, {
               method: 'PUT',

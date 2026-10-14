@@ -191,6 +191,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"pullbackSeconds":    cfg.Governor.Sensing.PullbackSeconds,
 		},
 		"logging":               loggingSectionResponse(cfg),
+		"dashboard":             dashboardSettingsResponse(cfg),
 		"litellm":               litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory":            trajectorySectionResponse(&cfg.Governor),
 		"classifier":            classifierSectionResponse(),

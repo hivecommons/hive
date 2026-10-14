@@ -28154,6 +28154,83 @@
         }
       }
     },
+    "/api/config/dashboard": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dashboard settings",
+        "description": "Owner-only read of dashboard runtime, access, and issue-band settings. Secret values such as dashboard.auth_token are masked and reported only as configured/not configured.",
+        "responses": {
+          "200": {
+            "description": "Dashboard settings"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Update dashboard settings",
+        "description": "Owner-only update for dashboard.port, dashboard.agent_poll_interval_s, dashboard.strategy_lab, dashboard.auth_token, dashboard.authorized_users, dashboard.authorized_user_names, dashboard.hub_proxied, and dashboard.issue_bands.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "port": {
+                    "type": "integer"
+                  },
+                  "agent_poll_interval_s": {
+                    "type": "integer"
+                  },
+                  "strategy_lab": {
+                    "type": "boolean"
+                  },
+                  "auth_token": {
+                    "type": "string"
+                  },
+                  "authorized_users": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "authorized_user_names": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "hub_proxied": {
+                    "type": "boolean"
+                  },
+                  "issue_bands": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated dashboard settings"
+          },
+          "400": {
+            "description": "Invalid dashboard settings"
+          },
+          "403": {
+            "description": "Owner access required"
+          }
+        }
+      }
+    },
     "/api/config/dashboard/theme": {
       "get": {
         "tags": [
