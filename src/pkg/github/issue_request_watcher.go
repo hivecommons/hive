@@ -458,12 +458,14 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			c.denyIssueRequest(path, req, "issue claim refused: "+reason, nowFn)
 			return
 		}
-		// Apply a namespaced ownership label (App bots can't be assignees).
-		label := claimLabelPrefix + sanitizeAgentName(req.Agent)
-		err = c.AddLabels(ctx, req.Repo, req.Number, []string{label})
+		// Apply a namespaced ownership label (App bots can't be assignees)
+		// and, when enabled, hive/in-progress — the timestamped "an agent
+		// started a PR for this" signal (see issue_inprogress.go).
+		err = c.AddLabels(ctx, req.Repo, req.Number, c.inProgressLabelsForClaim(req.Agent))
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
+			c.markInProgressStarted(ctx, req.Repo, req.Number, req.Agent, nowFn())
 		}
 	case "comment":
 		err = c.CreateIssueComment(ctx, req.Repo, req.Number, body)

@@ -108,7 +108,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				}
 				if label {
 					run("claimed label", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.AddLabels(ctx, c.Repo, c.Issue, []string{claims.LabelClaimed})
+						return gh.AddLabels(ctx, c.Repo, c.Issue, claimLabelsFor(c))
 					})
 				}
 			}()
@@ -133,6 +133,11 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 					run("remove claimed label", c, func(ctx context.Context, gh *github.Client) error {
 						return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.LabelClaimed)
 					})
+					if c.Kind == claims.KindAgent {
+						run("remove in-progress label", c, func(ctx context.Context, gh *github.Client) error {
+							return gh.RemoveLabel(ctx, c.Repo, c.Issue, github.InProgressLabel)
+						})
+					}
 					// The preempted label names the holder this claim DISPLACED,
 					// not the holder being released.
 					if c.TakenFrom != "" {
@@ -152,6 +157,18 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 			}()
 		},
 	}
+}
+
+// claimLabelsFor returns the labels mirrored onto an issue for a new claim:
+// `claimed` for every kind, plus hive/in-progress for a hive agent's own
+// claim — the agent claim is recorded on its start signal (#10527), which is
+// exactly the "an agent began a PR for this" instant the label states.
+func claimLabelsFor(c claims.Claim) []string {
+	labels := []string{claims.LabelClaimed}
+	if c.Kind == claims.KindAgent {
+		labels = append(labels, github.InProgressLabel)
+	}
+	return labels
 }
 
 // claimsInflightLookup makes the ledger a scheduler in-flight source: an

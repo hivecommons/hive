@@ -5533,7 +5533,7 @@
         <h3 style="font-size:1rem;margin:18px 0 8px">Issue claims and GitHub footprint</h3>
 
         <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">Why did an agent comment or label my issue as claimed?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply a visible <code>hive/claimed-by-&lt;agent&gt;</code> label and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
+        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply visible <code>hive/claimed-by-&lt;agent&gt;</code> and <code>hive/in-progress</code> labels (with a timestamped <code>hive:claim</code> start marker) and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
         <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Claims are issue writes, so they require the same ACMM issue-writing permission as comments and issue creation. The optional claim-expiry feature is default-off under <code>governor.claims.enabled</code>; when off, ordinary work assignment still relies on the existing queue/lease rules.</p>
 
         <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How much GitHub footprint should I expect?</h4>
@@ -13720,7 +13720,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (labels.has('blocked')) kinds.push('issue:blocked');
       if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('issue:needs-decision');
       if (labels.has('epic')) kinds.push('issue:epic');
-      if (issueLabels.some(l => l === 'claimed' || l.startsWith('hive/claimed-by-')) || ((issue && issue.assignees) || []).length) kinds.push('issue:claimed');
+      if (issueLabels.some(l => l === 'claimed' || l === 'hive/in-progress' || l.startsWith('hive/claimed-by-')) || ((issue && issue.assignees) || []).length) kinds.push('issue:claimed');
       if (info && info.role) kinds.push('issue:role');
       if (issueIsStale(issue)) kinds.push('issue:stale');
       if (Array.isArray(issue && issue.linked_prs) && issue.linked_prs.length) kinds.push('issue:linked-pr');
@@ -18777,6 +18777,7 @@ function burnAreaChart() {
     function v4KindClass(kind) {
       switch (kind) {
         case 'kicked':
+        case 'started':
         case 'pr_opened': return 'blue';
         case 'merged': return 'green';
         case 'blocked': return 'red';
@@ -19077,9 +19078,9 @@ function burnAreaChart() {
 
     // Short chip labels for the journey stage axis; keys are the closed Kind
     // set served by /api/lifecycle-timeline.
-    const LC_STAGE_AXIS = ['enumerated', 'classified', 'kicked', 'pr_opened', 'merged', 'blocked'];
+    const LC_STAGE_AXIS = ['enumerated', 'classified', 'kicked', 'started', 'pr_opened', 'merged', 'blocked'];
     const LC_STAGE_LABEL = {
-      enumerated: 'enum', classified: 'class', kicked: 'kick',
+      enumerated: 'enum', classified: 'class', kicked: 'kick', started: 'start',
       pr_opened: 'pr', merged: 'merged', blocked: 'blocked'
     };
 
@@ -19125,7 +19126,7 @@ function burnAreaChart() {
 
     function lcStageLabel(kind) {
       const labels = {
-        enumerated: 'Enumerated', classified: 'Classified', kicked: 'Kicked', pr_opened: 'PR opened',
+        enumerated: 'Enumerated', classified: 'Classified', kicked: 'Kicked', started: 'Started', pr_opened: 'PR opened',
         merged: 'Merged', blocked: 'Blocked', stage_completed: 'Stage completed', stage_receipt: 'Stage receipt',
         stage_approval: 'Stage approval'
       };

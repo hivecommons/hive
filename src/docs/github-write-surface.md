@@ -40,7 +40,7 @@ Each relay authorizes a request in this order. It stops at the first refusal.
 | `open_pr` | `pr_request_watcher.go` (`/var/run/hive-metrics/pr-requests`) | `hive-open-pr` | `agent_pr_created` | yes | yes / PR number |
 | `create_issue` | `issue_request_watcher.go` kind `issue` (`.../issue-requests`) | `hive-open-issue` | `agent_issue_created` (or `agent_issue_rejected_duplicate`) | yes | yes / issue number |
 | `comment` | `issue_request_watcher.go` kind `comment` | `hive-open-issue comment` | `agent_comment_created` | yes | yes / issue or PR number |
-| `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` | yes | yes / issue number |
+| `claim` | `issue_request_watcher.go` kind `claim` | `hive-open-issue claim` | `agent_issue_claimed` (adds `hive/claimed-by-<agent>` + `hive/in-progress` and one timestamped `hive:claim` marker comment; the pr-request watcher and enumeration sweep remove `hive/in-progress`) | yes | yes / issue number |
 | `close_issue` | `issue_request_watcher.go` kind `close` | `hive-open-issue close` | `agent_issue_closed` (`pr_closed` when the number is a PR) | yes | yes / issue or PR number |
 | `label` | `issue_request_watcher.go` kind `label` (`.../issue-requests`) | `hive-open-issue label` (also reached by `gh issue edit --add-label`/`--remove-label` and `gh pr edit --add-label`/`--remove-label`, which the `gh` wrapper translates into this relay) | `agent_label_applied` | yes | yes / issue or PR number |
 | `request_review` | `issue_request_watcher.go` kind `request_review` (`.../issue-requests`) | `hive-open-issue request-review` (also reached by `gh pr edit --add-reviewer`, which the `gh` wrapper translates into this relay) | `agent_review_requested` | yes | yes / PR number |
@@ -79,8 +79,8 @@ as fact (`issue_request_label.go`):
   queues a merge;
 - the hold labels (`hold`, `on-hold`, `hold/review`) — they block one;
 - everything in the `hive/` namespace, including `hive/claimed-by-<agent>`
-  (use `claim`), `hive/covered-by-pr`, `hive/likely-done` and
-  `hive/verified-open`;
+  (use `claim`), `hive/in-progress`, `hive/covered-by-pr`, `hive/likely-done`
+  and `hive/verified-open`;
 - the labels that record a person's decision or an escalation:
   `approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
   `blocked`.

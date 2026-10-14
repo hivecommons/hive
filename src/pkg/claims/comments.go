@@ -32,17 +32,8 @@ func PreemptedLabel(holder string) string { return LabelPreemptedPrefix + holder
 // the human-readable line states the time-to-live instead of an end time.
 func ClaimComment(c Claim) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s", markerClaim, c.Holder, c.Kind)
-	if c.HolderID != "" && c.HolderID != c.Holder {
-		fmt.Fprintf(&b, " id=%s", c.HolderID)
-	}
-	if c.Session != "" {
-		fmt.Fprintf(&b, " session=%s", c.Session)
-	}
-	if c.Hive != "" {
-		fmt.Fprintf(&b, " hive=%s", c.Hive)
-	}
-	fmt.Fprintf(&b, " until=%s -->\n", c.ExpiresAt.UTC().Format(time.RFC3339))
+	b.WriteString(ClaimMarker(c))
+	b.WriteString("\n")
 	// The visible text never prints a clock time: the comment is posted once,
 	// while renewals only move the ledger's expiry (#10926), so a fixed time
 	// would go stale and read as a lapsed claim.
@@ -53,6 +44,29 @@ func ClaimComment(c Claim) string {
 		b.WriteString(" The claim renews while the work continues and lapses after a period without activity.")
 	}
 	b.WriteString(" Reply `/unclaim` to release, or `/claim` to take it over if you outrank the holder.")
+	return b.String()
+}
+
+// ClaimMarker renders the machine-readable claim marker alone. at= is the
+// instant the claim was asserted (omitted when unknown) so a reader can tell
+// when work started, not only when the hold lapses; pkg/issueclaim parses
+// both keys.
+func ClaimMarker(c Claim) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<!-- %s who=%s kind=%s", markerClaim, c.Holder, c.Kind)
+	if c.HolderID != "" && c.HolderID != c.Holder {
+		fmt.Fprintf(&b, " id=%s", c.HolderID)
+	}
+	if c.Session != "" {
+		fmt.Fprintf(&b, " session=%s", c.Session)
+	}
+	if c.Hive != "" {
+		fmt.Fprintf(&b, " hive=%s", c.Hive)
+	}
+	if !c.ClaimedAt.IsZero() {
+		fmt.Fprintf(&b, " at=%s", c.ClaimedAt.UTC().Format(time.RFC3339))
+	}
+	fmt.Fprintf(&b, " until=%s -->", c.ExpiresAt.UTC().Format(time.RFC3339))
 	return b.String()
 }
 

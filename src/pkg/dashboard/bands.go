@@ -403,7 +403,7 @@ func issueAgentRole(labels []string) string {
 func issueClaimed(labels []string) bool {
 	for _, label := range labels {
 		lower := strings.ToLower(label)
-		if lower == "claimed" || strings.HasPrefix(lower, "hive/claimed-by-") {
+		if lower == "claimed" || lower == "hive/in-progress" || strings.HasPrefix(lower, "hive/claimed-by-") {
 			return true
 		}
 	}

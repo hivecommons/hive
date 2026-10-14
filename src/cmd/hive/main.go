@@ -8914,7 +8914,32 @@ func applyDuplicatePRGuard(
 		return
 	}
 	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
+	// hive/in-progress runs after the PR-claim guard so an issue whose PR just
+	// opened sheds the start mark here, and a lapsed mark frees the issue
+	// before kicks are built. Independent of governor.claims: the label is
+	// read from the issue, the marker from the comment, on every hive.
+	if withheld := github.SweepInProgressIssues(ctx, ghClient, actionable, time.Now(), logger); withheld > 0 {
+		logger.Info("in-progress guard applied", "withheld", withheld)
+	}
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
+}
+
+// inProgressSetting resolves the hive/in-progress label setting from config.
+// The label follows the claims label mirror: an operator who set
+// governor.claims.label: false asked for no hive-managed claim labels, and
+// gets none here either; otherwise the start signal is always labelled. The
+// mark lasts the agent claim TTL, so both the ledger and the label agree on
+// when an agent's hold lapses.
+func inProgressSetting(cfg *config.Config) github.InProgressSetting {
+	if cfg == nil {
+		return github.InProgressSetting{}
+	}
+	_, agentTTL, _, _ := cfg.Governor.Claims.EffectiveTTLs()
+	return github.InProgressSetting{
+		Enabled: !(cfg.Governor.Claims.IsEnabled() && !cfg.Governor.Claims.LabelEnabled()),
+		HiveID:  cfg.HiveID,
+		TTL:     agentTTL,
+	}
 }
 
 func logCloseOnMergeResults(logger *slog.Logger, msg string, results []github.CloseOnMergeResult) {
@@ -9081,6 +9106,7 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	client.SetIssueClaims(func() (bool, time.Duration) {
 		return cfg.Governor.Claims.Enabled, cfg.Governor.Claims.EffectiveTTL()
 	})
+	client.SetInProgress(func() github.InProgressSetting { return inProgressSetting(cfg) })
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },

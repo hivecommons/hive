@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
@@ -157,5 +158,40 @@ func TestLedgerHasContributor(t *testing.T) {
 	b := &boot{issueClaims: l}
 	if !b.relayContributor("relay-dev") {
 		t.Error("boot predicate must read the ledger")
+	}
+}
+
+// A hive agent's claim mirrors hive/in-progress next to `claimed`; a human or
+// contributor claim does not — the label states that an AGENT began a PR.
+func TestClaimLabelsFor(t *testing.T) {
+	agent := claimLabelsFor(claims.Claim{Kind: claims.KindAgent})
+	if len(agent) != 2 || agent[0] != claims.LabelClaimed || agent[1] != github.InProgressLabel {
+		t.Fatalf("agent labels = %v", agent)
+	}
+	for _, kind := range []claims.Kind{claims.KindHuman, claims.KindContributor, claims.KindExternal} {
+		if got := claimLabelsFor(claims.Claim{Kind: kind}); len(got) != 1 || got[0] != claims.LabelClaimed {
+			t.Fatalf("%s labels = %v, want only claimed", kind, got)
+		}
+	}
+}
+
+func TestInProgressSetting(t *testing.T) {
+	if set := inProgressSetting(nil); set.Enabled {
+		t.Fatal("nil config must disable")
+	}
+	cfg := &config.Config{HiveID: "hive-a"}
+	set := inProgressSetting(cfg)
+	if !set.Enabled || set.HiveID != "hive-a" || set.TTL != claims.DefaultAgentTTL {
+		t.Fatalf("default setting = %+v", set)
+	}
+	off := false
+	cfg.Governor.Claims = config.ClaimsConfig{Enabled: true, Label: &off, AgentTTLS: 600}
+	set = inProgressSetting(cfg)
+	if set.Enabled {
+		t.Fatal("claims on with label:false must disable the in-progress label too")
+	}
+	cfg.Governor.Claims.Label = nil
+	if set = inProgressSetting(cfg); !set.Enabled || set.TTL != 10*time.Minute {
+		t.Fatalf("agent_ttl_s not honoured: %+v", set)
 	}
 }

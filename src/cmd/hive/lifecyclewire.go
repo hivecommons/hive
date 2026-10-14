@@ -115,6 +115,34 @@ func recordPROpened(rec lifecycleRecorder, org, agent, repo string, number int, 
 	span.End()
 }
 
+// recordStarted records a started stage from the agent start-signal hook
+// (#10527): the agent's own `hive-open-issue claim`, comment, label or
+// `hive-open-pr --issues` request on an issue. The store keeps FirstAt on
+// re-recording, so a later signal on the same issue refreshes the stage
+// without moving the start instant.
+func recordStarted(rec lifecycleRecorder, org, agent, repo string, number int, signal string) {
+	if rec == nil {
+		return
+	}
+	store := rec.LifecycleTimeline()
+	if store == nil {
+		return
+	}
+	ref := timelineRef(org, repo, number)
+	if ref == "" {
+		return
+	}
+	event := timeline.Event{
+		IssueRef: ref,
+		Kind:     timeline.KindStarted,
+		Agent:    agent,
+		Attrs:    map[string]string{"signal": signal},
+	}
+	_, span := tracing.StartTimelineSpan(context.Background(), event)
+	store.Record(event)
+	span.End()
+}
+
 // recordBlocked records a blocked stage when the escalation machinery hands a
 // PR to a human (needs-human), carrying the evidence the operator needs to
 // read the row. Called from runEscalationSweep on the newly-escalated path

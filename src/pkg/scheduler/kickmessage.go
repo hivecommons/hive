@@ -445,6 +445,10 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 		message = s.addWorkflowPushCeiling(agentName, message)
 		message = s.addQuestionAnswerContract(agentName, message, issues)
 		message = addGovernorWorkSourceRule(message)
+		// The start signal (hive/in-progress) is a property of how the hive
+		// tracks work, not of any one policy file, so it is stated here for
+		// every kick that lists issues — a customized template cannot omit it.
+		message = addInProgressClaimRule(message, issues)
 		if idleReason == "" {
 			message = addConcreteKickClosingInstruction(message)
 		}
@@ -566,6 +570,23 @@ func addGovernorWorkSourceRule(message string) string {
 		return message[:newline+1] + "\n" + governorWorkSourceRule + "\n" + message[newline+1:]
 	}
 	return governorWorkSourceRule + "\n" + message
+}
+
+// inProgressClaimRule tells the agent to mark the issue it is about to
+// implement BEFORE it starts. The `claim` request is the hive's start signal:
+// it applies `hive/in-progress` (plus `hive/claimed-by-<agent>`) and posts a
+// timestamped marker, so a maintainer, another hive scanning the same repo and
+// the SLA metrics all learn the instant work began rather than when the PR
+// appeared. Re-running it is a harmless no-op; a PR naming the issue clears it.
+const inProgressClaimRule = "Before you start implementing a fix for an issue from your list — before the worktree, before the first edit — run `hive-open-issue claim --repo <owner/repo> <issue-number>` for that issue. It labels the issue `hive/in-progress` so the hive, the maintainers and other hives can see work has started and when. Claim one issue at a time, only the one you are about to work; do not claim the whole list. Issues already labelled `hive/in-progress` or `claimed` are someone else's: leave them alone."
+
+// addInProgressClaimRule appends inProgressClaimRule to a kick that lists at
+// least one issue and does not already carry it.
+func addInProgressClaimRule(message string, issues []github.Issue) string {
+	if message == "" || len(issues) == 0 || strings.Contains(message, "hive-open-issue claim --repo") {
+		return message
+	}
+	return strings.TrimRight(message, "\n") + "\n\n" + inProgressClaimRule + "\n"
 }
 
 const concreteKickClosingInstruction = "Begin now: pick the authorized repo you covered least recently and do your role's work there this session, filing issues/PRs through the hive relays as documented above. Do not ask for clarification — no human is attached to this session; if something is ambiguous, make the conservative choice and note it in your output."

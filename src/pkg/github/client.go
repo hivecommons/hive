@@ -154,6 +154,9 @@ type Client struct {
 	// false → no comment is fetched, no Issue carries claim fields. Read live
 	// so a Features-panel toggle applies without a client rebuild.
 	issueClaims func() (enabled bool, ttl time.Duration)
+	// inProgress resolves the hive/in-progress start-signal setting (see
+	// issue_inprogress.go). Nil → the label is not applied or swept.
+	inProgress func() InProgressSetting
 	// mttrIssueCache remembers issue creation times used by the MTTR dashboard
 	// card so the hourly metrics pass does not refetch the same referenced issue
 	// every cycle. Guarded by mttrIssueMu.

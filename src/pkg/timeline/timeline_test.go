@@ -486,7 +486,7 @@ func TestRecordViaRecorderInterface(t *testing.T) {
 
 func TestKnownKinds(t *testing.T) {
 	kinds := KnownKinds()
-	want := []Kind{KindEnumerated, KindClassified, KindKicked, KindPROpened, KindMerged, KindBlocked}
+	want := []Kind{KindEnumerated, KindClassified, KindKicked, KindStarted, KindPROpened, KindMerged, KindBlocked}
 	if len(kinds) != len(want) {
 		t.Fatalf("KnownKinds = %v", kinds)
 	}

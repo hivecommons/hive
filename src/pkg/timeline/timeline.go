@@ -58,6 +58,11 @@ const (
 	KindClassified Kind = "classified"
 	// KindKicked: an agent was kicked to work the issue.
 	KindKicked Kind = "kicked"
+	// KindStarted: an agent signalled it began a PR for the issue (its
+	// `hive-open-issue claim` or first relay write on it — the instant the
+	// hive/in-progress label states). Sits between kicked and pr_opened so
+	// kick→start and start→PR are both measurable.
+	KindStarted Kind = "started"
 	// KindPROpened: a pull request was opened for the issue.
 	KindPROpened Kind = "pr_opened"
 	// KindMerged: the pull request merged (terminal, success).
@@ -77,7 +82,7 @@ const (
 
 // progressKinds are the non-terminal stages in furthest-first order, used to
 // derive a Journey's current stage.
-var progressKinds = []Kind{KindPROpened, KindStageCompleted, KindKicked, KindClassified, KindEnumerated}
+var progressKinds = []Kind{KindPROpened, KindStageCompleted, KindStarted, KindKicked, KindClassified, KindEnumerated}
 
 // Event is a single lifecycle datapoint. It is a plain value type with JSON
 // tags so producers and the FromSpan shim can stay decoupled from the Store's
@@ -854,6 +859,8 @@ func stageLabel(kind Kind) string {
 		return "Classified"
 	case KindKicked:
 		return "Kicked"
+	case KindStarted:
+		return "Started"
 	case KindPROpened:
 		return "PR opened"
 	case KindMerged:
@@ -977,6 +984,8 @@ var spanKindMap = map[string]Kind{
 	"governor.kick":       KindKicked,
 	"agent.kick":          KindKicked,
 	"agent.kicked":        KindKicked,
+	"agent.started":       KindStarted,
+	"issue.started":       KindStarted,
 	"pr.opened":           KindPROpened,
 	"pr.open":             KindPROpened,
 	"pr.merged":           KindMerged,
@@ -986,6 +995,7 @@ var spanKindMap = map[string]Kind{
 	"lifecycle.enumerate": KindEnumerated,
 	"lifecycle.classify":  KindClassified,
 	"lifecycle.kick":      KindKicked,
+	"lifecycle.started":   KindStarted,
 	"lifecycle.pr_opened": KindPROpened,
 	"lifecycle.merged":    KindMerged,
 	"lifecycle.blocked":   KindBlocked,
@@ -1033,6 +1043,7 @@ func KnownKinds() []Kind {
 		KindEnumerated,
 		KindClassified,
 		KindKicked,
+		KindStarted,
 		KindPROpened,
 		KindMerged,
 		KindBlocked,

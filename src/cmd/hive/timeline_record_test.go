@@ -333,3 +333,21 @@ func TestRunEscalationSweepRecordsBlockedJourney(t *testing.T) {
 		t.Fatalf("blocked stage evidence = %+v", j.Stages[timeline.KindBlocked])
 	}
 }
+
+// TestRecordStarted is the agent-start hook's recorder: the hive/in-progress
+// claim becomes the "started" stage so kicked→started→pr_opened spans exist.
+func TestRecordStarted(t *testing.T) {
+	recordStarted(nil, "acme", "scanner", "acme/widgets", 3, "claim")
+	recordStarted(&fakeLifecycleRecorder{store: nil}, "acme", "scanner", "acme/widgets", 3, "claim")
+
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordStarted(rec, "acme", "scanner", "acme/widgets", 3, "claim")
+	j, ok := rec.store.Journey("widgets#3")
+	if !ok || j.Current != timeline.KindStarted || j.Agent != "scanner" {
+		t.Fatalf("journey = %+v ok=%v", j, ok)
+	}
+	recordStarted(rec, "acme", "scanner", "", 3, "claim")
+	if got := len(rec.store.Journeys(0)); got != 1 {
+		t.Fatalf("empty repo recorded; journeys = %d", got)
+	}
+}

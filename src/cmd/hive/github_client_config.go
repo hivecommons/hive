@@ -339,6 +339,11 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	// client can be configured before it is built.
 	client.SetAgentStartHook(func(agentName, repo string, issue int, signal string) {
 		recordAgentStart(b.issueClaims, b.cfg.Project.Org, agentName, repo, issue, signal, b.logger)
+		// The same signal is the journey's "started" stage: the instant the
+		// hive/in-progress label states, and the kick→start / start→PR
+		// boundary the per-repo SLA metrics read. Recorded whether or not the
+		// claims ledger is on.
+		recordStarted(b.dashSrv, b.cfg.Project.Org, agentName, repo, issue, signal)
 	})
 	// PR follow-up session resume (#9583, default off): remember which live
 	// CLI session authored this PR, and the PR's handoff note, so its

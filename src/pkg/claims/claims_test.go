@@ -515,3 +515,22 @@ func TestSetPolicyAppliesToNewAndRenewedClaims(t *testing.T) {
 		t.Fatalf("empty policy must fall back to defaults: expires=%v err=%v", res.Claim.ExpiresAt, err)
 	}
 }
+
+// ClaimMarker carries at= when the claim instant is known, so a reader (and
+// pkg/issueclaim) can tell when work STARTED, not only when the hold lapses.
+func TestClaimMarkerCarriesStartInstant(t *testing.T) {
+	started := time.Date(2026, 10, 14, 15, 0, 0, 0, time.UTC)
+	c := Claim{Repo: "o/r", Issue: 4, Holder: "scanner", HolderID: "scanner", Kind: KindAgent, Hive: "h1",
+		ClaimedAt: started, ExpiresAt: started.Add(2 * time.Hour)}
+	want := "<!-- hive:claim who=scanner kind=agent hive=h1 at=2026-10-14T15:00:00Z until=2026-10-14T17:00:00Z -->"
+	if got := ClaimMarker(c); got != want {
+		t.Fatalf("ClaimMarker = %q, want %q", got, want)
+	}
+	if got := ClaimComment(c); !strings.HasPrefix(got, want+"\n") {
+		t.Fatalf("ClaimComment must open with the marker:\n%s", got)
+	}
+	c.ClaimedAt = time.Time{}
+	if got := ClaimMarker(c); strings.Contains(got, "at=") {
+		t.Fatalf("unknown start must omit at=: %q", got)
+	}
+}
