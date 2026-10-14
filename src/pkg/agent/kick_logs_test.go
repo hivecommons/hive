@@ -92,6 +92,8 @@ func TestArchiveKickLogLocked_WritesHeaderAndContent(t *testing.T) {
 	kickAt := time.Date(2026, 8, 20, 7, 0, 0, 0, time.UTC)
 	agent.LastKick = &kickAt
 	agent.LastKickMessage = "scan the repo\nand report"
+	agent.ModelOverride = "opus"
+	m.buildInfo = func() (string, string) { return "1.2.3", "abc1234" }
 
 	if !m.archiveKickLogLocked(agent, "kick") {
 		t.Fatal("archiveKickLogLocked returned false, want an archive written")
@@ -117,6 +119,11 @@ func TestArchiveKickLogLocked_WritesHeaderAndContent(t *testing.T) {
 		"reason: kick",
 		"kick_started: 2026-08-20T07:00:00Z",
 		"kick_prompt: scan the repo and report", // newline flattened
+		"hive_version: 1.2.3",
+		"hive_commit: abc1234",
+		"backend: claude",
+		"model: opus",
+		"tmux_session: hive-scanner-kicklog-test",
 		"run output line 2",
 	} {
 		if !strings.Contains(body, want) {
@@ -472,5 +479,57 @@ func TestSanitizeKickLogComponent(t *testing.T) {
 		if got := sanitizeKickLogComponent(in); got != want {
 			t.Errorf("sanitizeKickLogComponent(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The live full log header must match the archive header byte for byte except
+// for the archived/captured and reason lines.
+func TestFullLogHeader_MatchesArchiveHeader(t *testing.T) {
+	m, agent, dir := kickLogTestManager(t, "run output\n")
+	kickAt := time.Date(2026, 8, 20, 7, 0, 0, 0, time.UTC)
+	agent.LastKick = &kickAt
+	agent.LastKickMessage = "scan"
+	m.buildInfo = func() (string, string) { return "1.2.3", "abc1234" }
+
+	if !m.archiveKickLogLocked(agent, "kick") {
+		t.Fatal("archive not written")
+	}
+	infos, err := m.ListKickLogs("scanner")
+	if err != nil || len(infos) != 1 {
+		t.Fatalf("ListKickLogs = %v, %v", infos, err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "scanner", infos[0].ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveHeader := strings.SplitAfter(string(data), "=======================\n")[0]
+	live := m.FullLogHeader("scanner")
+
+	strip := func(h string) string {
+		var keep []string
+		for _, l := range strings.Split(h, "\n") {
+			if strings.HasPrefix(l, "archived: ") || strings.HasPrefix(l, "captured: ") || strings.HasPrefix(l, "reason: ") {
+				continue
+			}
+			keep = append(keep, l)
+		}
+		return strings.Join(keep, "\n")
+	}
+	if strip(live) != strip(archiveHeader) {
+		t.Errorf("headers differ beyond stamp/reason:\nlive:\n%s\narchive:\n%s", live, archiveHeader)
+	}
+	if !strings.Contains(live, "captured: ") || !strings.Contains(live, "reason: live\n") || strings.Contains(live, "archived: ") {
+		t.Errorf("live header stamp/reason wrong:\n%s", live)
+	}
+}
+
+func TestFullLogHeader_UnknownAgentOrNoSession(t *testing.T) {
+	m, agent, _ := kickLogTestManager(t, "x")
+	if got := m.FullLogHeader("nope"); got != "" {
+		t.Errorf("unknown agent header = %q, want empty", got)
+	}
+	agent.tmuxSession = ""
+	if got := m.FullLogHeader("scanner"); got != "" {
+		t.Errorf("no-session header = %q, want empty", got)
 	}
 }

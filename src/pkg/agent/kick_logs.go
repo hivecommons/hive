@@ -184,7 +184,6 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 	}
 
 	now := time.Now()
-	kickStarted := "unknown"
 	// filenameTime is the basis for both the archive's filename and the
 	// KickLogInfo.Timestamp it is later parsed back into. #9580: this used to
 	// be `now` (when archiving happened), which for the common "kick" reason
@@ -195,17 +194,9 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 	// only for the "no kick ever recorded" case a fresh session start hits.
 	filenameTime := now
 	if agent.LastKick != nil {
-		kickStarted = agent.LastKick.UTC().Format(time.RFC3339)
 		filenameTime = *agent.LastKick
 	}
-	header := fmt.Sprintf(
-		"==== hive kick log ====\nagent: %s\narchived: %s\nreason: %s\nkick_started: %s\nkick_prompt: %s\n=======================\n",
-		agent.Name,
-		now.UTC().Format(time.RFC3339),
-		reason,
-		kickStarted,
-		truncateStr(strings.ReplaceAll(agent.LastKickMessage, "\n", " "), kickLogPromptSnippetLen),
-	)
+	header := m.kickLogHeaderLocked(agent, "archived", now, reason)
 
 	dir := m.agentKickLogDir(agent.Name)
 	if err := os.MkdirAll(dir, kickLogDirMode); err != nil {
@@ -226,6 +217,61 @@ func (m *Manager) archiveKickLogBytesLocked(agent *AgentProcess, reason string) 
 	// framing, and counting it would credit every interruption with a constant
 	// few hundred bytes of work that the agent never produced.
 	return len(content)
+}
+
+// kickLogHeaderLocked builds the framing prepended to a kick log. The archive
+// (stampKey "archived") and the live full log (stampKey "captured", reason
+// "live") share it so the two differ only in those two fields. Callers must
+// hold m.mu (read or write).
+func (m *Manager) kickLogHeaderLocked(agent *AgentProcess, stampKey string, now time.Time, reason string) string {
+	kickStarted := "unknown"
+	if agent.LastKick != nil {
+		kickStarted = agent.LastKick.UTC().Format(time.RFC3339)
+	}
+	version, commit := "unknown", "unknown"
+	if m.buildInfo != nil {
+		version, commit = m.buildInfo()
+	}
+	model := agent.effectiveModel()
+	if model == "" {
+		model = "default"
+	}
+	return fmt.Sprintf(
+		"==== hive kick log ====\nagent: %s\n%s: %s\nreason: %s\nkick_started: %s\nkick_prompt: %s\nhive_version: %s\nhive_commit: %s\nbackend: %s\nmodel: %s\ntmux_session: %s\n=======================\n",
+		agent.Name,
+		stampKey,
+		now.UTC().Format(time.RFC3339),
+		reason,
+		kickStarted,
+		truncateStr(strings.ReplaceAll(agent.LastKickMessage, "\n", " "), kickLogPromptSnippetLen),
+		version,
+		commit,
+		agent.effectiveBackend(),
+		model,
+		agent.tmuxSession,
+	)
+}
+
+// SetBuildInfo injects the source of the hive version and commit recorded in
+// kick log headers. It is a func so pkg/agent stays free of pkg/dashboard,
+// which owns the build info the version endpoint serves.
+func (m *Manager) SetBuildInfo(fn func() (version, commit string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buildInfo = fn
+}
+
+// FullLogHeader returns the kick log header for the agent's live full log
+// (captured/live variant of the archive header), or "" when the agent is
+// unknown or has no session.
+func (m *Manager) FullLogHeader(name string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	agent, ok := m.agents[name]
+	if !ok || agent.tmuxSession == "" {
+		return ""
+	}
+	return m.kickLogHeaderLocked(agent, "captured", time.Now(), "live")
 }
 
 // rotateKickLogOnKickLocked runs at the top of deliverKickLocked, before any

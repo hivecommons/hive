@@ -531,6 +531,13 @@ func SetGitVersion(hash, short string) {
 	versionShort = short
 }
 
+// BuildInfo returns the hive version and full commit the dashboard version
+// endpoint reports, for other packages that need to stamp them (kick logs).
+func BuildInfo() (version, commit string) {
+	version, _ = fleetReportBuildInfo()
+	return version, versionHash
+}
+
 // SetGitBranch records the branch the running binary was built from so the
 // version check and Upgrade affordance compare against the right upstream.
 func SetGitBranch(branch string) {

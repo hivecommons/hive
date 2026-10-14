@@ -732,6 +732,8 @@ type Manager struct {
 	kickLogDir       string
 	kickLogRetention int
 	kickLogMaxBytes  int64
+	// buildInfo supplies hive_version/hive_commit for kick log headers.
+	buildInfo func() (version, commit string)
 }
 
 // SetACMMLevel updates the cached ACMM level used by agentMode() when

@@ -2152,6 +2152,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// asymmetric revert: an agent switched to a gateway backend came back on
 	// its config backend but with the switched model still applied, producing
 	// launch-dead hybrids like `pi --model gpt-5.6-luna`.
+	b.agentMgr.SetBuildInfo(dashboard.BuildInfo)
 	b.agentMgr.SetGatewayBackendChecker(func(backend string) bool {
 		return b.cfg.Governor.ResolveGateway(backend) != nil &&
 			!strings.EqualFold(backend, "") // empty is the default, not a named backend
