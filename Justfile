@@ -2452,6 +2452,11 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # else) — the relay is meant to run forever and reconnect, so this is the
     # right shape. Stated for the reader; not settable here.
     YAML+="      restartPolicy: Always"$'\n'
+    # Optional sandbox runtime (e.g. gvisor, kata); omitted entirely when unset
+    # so the default manifest is unchanged. The RuntimeClass must already exist.
+    if [[ -n "${HIVE_K8S_RUNTIME_CLASS:-}" ]]; then
+      YAML+="      runtimeClassName: ${HIVE_K8S_RUNTIME_CLASS}"$'\n'
+    fi
     YAML+="      containers:"$'\n'
     YAML+="        - name: contributor"$'\n'
     YAML+="          image: ${IMAGE}"$'\n'

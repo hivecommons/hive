@@ -94,6 +94,17 @@ contains "limits CPU to the shared ceiling"    "$OUT" "cpu: \"2\""
 contains "single replica"                     "$OUT" "replicas: 1"
 contains "interim credential note defers to #2537" "$OUT" "#2537"
 
+# HIVE_K8S_RUNTIME_CLASS is optional: absent by default, emitted when set.
+if printf '%s' "$OUT" | grep -q "runtimeClassName"; then
+  echo "  FAIL: runtimeClassName emitted without HIVE_K8S_RUNTIME_CLASS"
+  FAIL=$((FAIL + 1))
+else
+  echo "  PASS: no runtimeClassName when HIVE_K8S_RUNTIME_CLASS is unset"
+  PASS=$((PASS + 1))
+fi
+RC_OUT="$(cd "$REPO_ROOT" && HOME="$FAKE_HOME" ANTHROPIC_API_KEY="" HIVE_K8S_RUNTIME_CLASS=gvisor just contribute-k8s hive-contributor 2>/dev/null)"
+contains "HIVE_K8S_RUNTIME_CLASS sets runtimeClassName" "$RC_OUT" "      runtimeClassName: gvisor"
+
 # ── Placeholder discipline: no real token bytes leak; still base64 placeholders. ──
 if printf '%s' "$OUT" | grep -q "GH_TOKEN: cGxhY2Vob2xkZXItZ2gtdG9rZW4="; then
   echo "  PASS: Secret carries the base64 placeholder token (templated, not raw)"
