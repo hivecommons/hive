@@ -42399,6 +42399,10 @@ function burnAreaChart() {
             <span class="config-toggle-label">Require review-swarm approval before merge ${settingHelpMark('review-swarm', 'configuration', 'Require review-swarm approval before merge', `When on, a PR is not merge-eligible until the reviewer agents record an aggregate approval. Off by default, which preserves the existing behaviour of not consulting review verdicts at all. Typically used at ACMM L4 and above.`)}</span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${rv.shadow ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="shadow"></div>
+            <span class="config-toggle-label">Shadow-evaluate the review gate (record only) ${settingHelpMark('review-swarm', 'configuration', 'Shadow-evaluate the review gate', `Evaluates the review-approval gate without enforcing it and records whether it would have held each merge-eligible PR on the PR&apos;s evidence bundle. Never blocks a merge, and never weakens Require review-swarm approval when that is on. Off by default.`)}</span>
+          </div>
+          <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.fan_out ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="fan_out"></div>
             <span class="config-toggle-label">Fan out to multiple reviewers in parallel ${yamlHint('review.fan_out')} ${settingHelpMark('review-swarm', 'configuration', 'Fan out to multiple reviewers in parallel', `Runs the configured reviewer agents concurrently instead of one after another, bounded by Max parallel reviews. Faster on PRs with several reviewers, at the cost of more agents running at once.`)}</span>
           </div>

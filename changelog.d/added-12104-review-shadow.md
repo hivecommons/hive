@@ -1,0 +1,1 @@
+- Added `review.shadow` (default false): evaluates the review-approval gate without enforcing it and records `shadow.review_gate.would_have_held` on the PR evidence bundle and in the audit log. It never blocks a merge or weakens `require_approval`. Fixes #12104.

@@ -8143,7 +8143,11 @@ type EscalationConfig struct {
 // value preserves existing behavior: merge eligibility does not require a
 // review-verdicts.json aggregate approval unless an operator opts in.
 type ReviewConfig struct {
-	RequireApproval    bool     `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
+	RequireApproval bool `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
+	// Shadow evaluates the approval gate without enforcing it, recording
+	// shadow.review_gate.would_have_held on the evidence bundle. It never
+	// blocks a merge and never weakens an enabled require_approval.
+	Shadow             bool     `yaml:"shadow,omitempty" json:"shadow,omitempty"`
 	FanOut             bool     `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
 	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
 	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
