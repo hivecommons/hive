@@ -2278,11 +2278,13 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
 	autoMergeOpts := automerge.Options{
-		Logger:              b.logger,
-		MergerAuthorizer:    trustedMergerFunc(b.cfg),
-		TrustedAuthorizer:   trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy: trustedAuthorPolicyFunc(b.cfg),
-		SentinelLabel:       func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		Logger:                 b.logger,
+		MergerAuthorizer:       trustedMergerFunc(b.cfg),
+		TrustedAuthorizer:      trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(b.cfg),
+		ContributorLanePolicy:  contributorLanePolicyFunc(b.cfg),
+		ContributorLaneVerdict: contributorLaneVerdictFunc(b.cfg, b.logger),
+		SentinelLabel:          func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -8511,10 +8513,12 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		*lastRun = now
 	}
 	opts := automerge.Options{
-		Logger:              logger,
-		MergerAuthorizer:    trustedMergerFunc(cfg),
-		TrustedAuthorizer:   trustedAuthorFunc(cfg),
-		TrustedAuthorPolicy: trustedAuthorPolicyFunc(cfg),
+		Logger:                 logger,
+		MergerAuthorizer:       trustedMergerFunc(cfg),
+		TrustedAuthorizer:      trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy:  contributorLanePolicyFunc(cfg),
+		ContributorLaneVerdict: contributorLaneVerdictFunc(cfg, logger),
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
@@ -8559,6 +8563,23 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 			result.Merged = append(result.Merged, trustedResult.Merged...)
 			if len(trustedResult.Merged) > 0 || trustedResult.Seen > 0 {
 				logger.Info("trusted-author automerge sweep complete", "seen", trustedResult.Seen, "merged", len(trustedResult.Merged), "skipped", trustedResult.Skipped)
+			}
+		}
+	}
+	remaining = automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
+	if remaining > 0 && opts.ContributorLanePolicy().Enabled {
+		laneResult, laneErr := automerge.SweepContributorLaneAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
+			MaxMerges: remaining,
+			Audit:     audit,
+		})
+		if laneErr != nil {
+			logger.Warn("contributor-lane automerge sweep failed", "error", laneErr)
+		} else {
+			result.Seen += laneResult.Seen
+			result.Skipped += laneResult.Skipped
+			result.Merged = append(result.Merged, laneResult.Merged...)
+			if len(laneResult.Merged) > 0 || laneResult.Seen > 0 {
+				logger.Info("contributor-lane automerge sweep complete", "seen", laneResult.Seen, "merged", len(laneResult.Merged), "skipped", laneResult.Skipped)
 			}
 		}
 	}

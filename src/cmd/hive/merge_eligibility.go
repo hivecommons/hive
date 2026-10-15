@@ -68,6 +68,79 @@ func trustedAuthorPolicyFunc(cfg *config.Config) func() automerge.TrustedAuthorP
 	}
 }
 
+// contributorLanePolicyFunc reads auto_merge.contributor_lane.* through cfg
+// on every call so a config reload takes effect without a restart.
+func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorLanePolicy {
+	return func() automerge.ContributorLanePolicy {
+		if cfg == nil {
+			return automerge.ContributorLanePolicy{}
+		}
+		p := cfg.AutoMerge.ContributorLane
+		return automerge.ContributorLanePolicy{
+			Enabled:                p.IsEnabled(),
+			HiveID:                 cfg.HiveID,
+			Soak:                   time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
+			RequireReviewerVerdict: p.EffectiveRequireReviewerVerdict(),
+			Repos:                  p.RepoSet(),
+			ExcludeLabels:          p.ExcludeLabelSet(),
+		}
+	}
+}
+
+// contributorLaneReviewerConfigured reports whether any enabled, unpaused
+// agent is a reviewer under the dispatcher's own rule (review.ReviewCapable).
+// With no reviewer the contributor-lane verdict gate is vacuous: there is
+// nobody to produce a verdict, so requiring one would stall every PR.
+func contributorLaneReviewerConfigured(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	allowed := review.ReviewerAgentSet(cfg.Review.ReviewerAgents)
+	for name, ac := range cfg.EnabledAgents() {
+		if ac.Paused || ac.OnDemand {
+			continue
+		}
+		cap := review.AgentCapability{
+			Name: name, Enabled: true, Role: ac.Role,
+			LaneKeywords: ac.LaneKeywords, DetectKeywords: ac.DetectKeywords, Aliases: ac.Aliases,
+		}
+		if review.ReviewCapable(cap, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+// contributorLaneVerdictFunc answers the contributor-lane reviewer gate from
+// the same durable review-verdicts.json the merge-eligibility gate reads
+// (review.Artifact.HasAggregateApproval). An unreadable artifact with a
+// reviewer configured fails closed: Configured=true, Approved=false.
+func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automerge.ContributorLaneVerdictFunc {
+	return func(repo string, number int, headSHA string) automerge.ContributorLaneVerdict {
+		if !contributorLaneReviewerConfigured(cfg) {
+			return automerge.ContributorLaneVerdict{}
+		}
+		artifact, err := review.LoadArtifact("")
+		if err != nil {
+			if logger != nil {
+				logger.Warn("contributor-lane verdict gate: review-verdicts.json unavailable; failing closed", "error", err)
+			}
+			return automerge.ContributorLaneVerdict{Configured: true}
+		}
+		approved := artifact.HasAggregateApproval(repo, number, headSHA)
+		return automerge.ContributorLaneVerdict{Configured: true, Approved: approved, Verdict: contributorLaneVerdictText(artifact, repo, number, headSHA)}
+	}
+}
+
+func contributorLaneVerdictText(artifact review.Artifact, repo string, number int, headSHA string) string {
+	for _, item := range artifact.Items {
+		if item.Number == number && strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) && strings.TrimSpace(item.HeadSHA) == strings.TrimSpace(headSHA) {
+			return string(item.Verdict)
+		}
+	}
+	return ""
+}
+
 func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func(repo, login string) github.SentinelAuthorTrust {
 	return func(repo, login string) github.SentinelAuthorTrust {
 		login = strings.TrimSpace(login)

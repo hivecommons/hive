@@ -39545,6 +39545,13 @@ function burnAreaChart() {
       const amTrustedAuthorRepoSet = new Set(amTrustedAuthorRepos.map(r => String(r).toLowerCase()));
       const amTrustedAuthorRoleOptions = amTrustedAuthorRoles.map(r => `<option value="${esc(r)}"${r === amTrustedAuthorRole ? ' selected' : ''}>${esc(r)}</option>`).join('');
       const amTrustedAuthorRepoOptions = watchedRepos.map(r => `<option value="${esc(r)}"${amTrustedAuthorRepoSet.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('');
+      const amContributorLane = am.contributor_lane || {};
+      const amContributorLaneOn = amContributorLane.enabled !== false; // nil/undefined = enabled
+      const amContributorLaneVerdict = amContributorLane.require_reviewer_verdict !== false;
+      const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 120;
+      const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
+      const amContributorLaneRepoSet = new Set((Array.isArray(amContributorLane.repos) ? amContributorLane.repos : []).map(r => String(r).toLowerCase()));
+      const amContributorLaneRepoOptions = watchedRepos.map(r => `<option value="${esc(r)}"${amContributorLaneRepoSet.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('');
       const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
       const amBotRow = (b) => `<div class="config-toggle am-bot-row" data-bot-login="${esc(b.login)}">
               <div class="config-toggle-switch am-bot-switch ${b.trusted ? 'on' : ''}" data-action="gh97" data-arg0="${esc(b.login)}" data-arg-types="s" role="switch" aria-checked="${b.trusted ? 'true' : 'false'}"></div>
@@ -39852,6 +39859,37 @@ function burnAreaChart() {
               <label for="am-trusted-authors-repos">Repositories</label>
               <select id="am-trusted-authors-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh102" class="am-trusted-authors-repos">${amTrustedAuthorRepoOptions}</select>
               <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Eligibility still requires green CI, mergeable state, no excluded label, no outstanding CHANGES_REQUESTED review, and no fork non-member.</p>
+            </div>
+          </div>
+          <div class="config-field" id="am-contributor-lane">
+            <label>Contributor-lane auto-merge ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Contributor-lane auto-merge', `Merges PRs that this hive's own contributor lane produced: the linked issue must carry a hive:claim marker (kind=contributor) posted by this hive's App naming the PR author, CI must be green on the current head for the soak window, the reviewer verdict must approve when a reviewer agent is configured, and Sentinel must have no blocking finding. Default on so trusted hive-produced work lands without a maintainer /lgtm.`)}</label>
+            <div class="config-toggle mt-3">
+              <div id="am-contributor-lane-enabled" class="config-toggle-switch ${amContributorLaneOn ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneOn ? 'true' : 'false'}"></div>
+              <span class="config-toggle-label">Enable contributor-lane tier ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Enable contributor-lane tier', `Default on. Turn off to make hive-produced contributor PRs wait for a human /lgtm + /approve again.`)}</span>
+            </div>
+            <div class="config-field-row mt-4">
+              <div class="config-field">
+                <label for="am-contributor-lane-soak-minutes">Soak minutes ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Soak minutes', `How long the current head must stay green before the tier merges it (default 120). A new push restarts the soak.`)}</label>
+                <input id="am-contributor-lane-soak-minutes" type="number" min="0" step="1" value="${amContributorLaneSoak}" data-change-action="gh104">
+              </div>
+              <div class="config-field">
+                <label>Reviewer verdict ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Reviewer verdict', `When on (the default), a configured reviewer agent must have recorded an approving verdict for the current head. Hives with no reviewer agent treat this gate as satisfied.`)}</label>
+                <div class="config-toggle">
+                  <div id="am-contributor-lane-require-reviewer-verdict" class="config-toggle-switch ${amContributorLaneVerdict ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneVerdict ? 'true' : 'false'}"></div>
+                  <span class="config-toggle-label">Require approving verdict ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Require approving verdict', `When on (the default), the configured reviewer agent must have recorded an approving verdict for the current head before the contributor-lane tier merges.`)}</span>
+                </div>
+              </div>
+            </div>
+            <div class="config-field mt-4">
+              <label for="am-contributor-lane-exclude-labels">Excluded labels</label>
+              <input id="am-contributor-lane-exclude-labels" type="text" value="${esc(amContributorLaneLabels.join(', '))}" placeholder="hold, do-not-merge, needs-human, blocked, needs-rebase" data-change-action="gh104">
+              <p class="am-trusted-authors-note">Any listed label keeps the PR out of this tier; defaults are shown when unset.</p>
+            </div>
+            <div class="config-field mt-4">
+              <label for="am-contributor-lane-repos">Repositories</label>
+              <select id="am-contributor-lane-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh104" class="am-trusted-authors-repos">${amContributorLaneRepoOptions}</select>
+              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, claim-author-mismatch, claim-other-hive, no-verdict, soaking, sentinel-blocked).</p>
+              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>.</p>
             </div>
           </div>
         </div>
@@ -40795,6 +40833,12 @@ function burnAreaChart() {
       complianceSetData(['auto_merge', 'trusted_authors', key], value);
     }
 
+    function complianceStageContributorLane(key, value) {
+      const staged = ((_configState.dirty || {})['auto-merge'] || {}).contributor_lane || {};
+      markDirty('auto-merge', 'contributor_lane', Object.assign({}, staged, { [key]: value }));
+      complianceSetData(['auto_merge', 'contributor_lane', key], value);
+    }
+
     // Where each mapped setting lives in Settings. `stage` exists only for
     // booleans the owning section's endpoint can write; every other mapping
     // gets an "Open setting" link to its tab, or a hint when it is
@@ -40804,6 +40848,8 @@ function burnAreaChart() {
       'auto_merge.self_authored': { tab: 'Features', stage: v => { markDirty('auto-merge', 'self_authored', v); complianceSetData(['auto_merge', 'self_authored'], v); } },
       'auto_merge.trusted_authors.enabled': { tab: 'Features', stage: v => complianceStageTrustedAuthors('enabled', v) },
       'auto_merge.trusted_authors.require_github_permission': { tab: 'Features', stage: v => complianceStageTrustedAuthors('require_github_permission', v) },
+      'auto_merge.contributor_lane.enabled': { tab: 'Features', stage: v => complianceStageContributorLane('enabled', v) },
+      'auto_merge.contributor_lane.require_reviewer_verdict': { tab: 'Features', stage: v => complianceStageContributorLane('require_reviewer_verdict', v) },
       'auto_merge.required_checks': { tab: 'Features' },
       'sentinel.enabled': { tab: 'Security', stage: v => markSentinelDirty('enabled', v) },
       'sentinel.disabled_behaviors': { tab: 'Security' },
@@ -41535,6 +41581,22 @@ function burnAreaChart() {
         enabled: !!(enabled && enabled.classList.contains('on')),
         require_role: role ? role.value : 'merger',
         require_github_permission: !!(permission && permission.classList.contains('on')),
+        exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
+        repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : []
+      });
+    }
+
+    function markDirtyContributorLane() {
+      const enabled = document.getElementById('am-contributor-lane-enabled');
+      const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');
+      const soak = document.getElementById('am-contributor-lane-soak-minutes');
+      const labels = document.getElementById('am-contributor-lane-exclude-labels');
+      const repos = document.getElementById('am-contributor-lane-repos');
+      const soakMinutes = soak ? parseInt(soak.value, 10) : 120;
+      markDirty('auto-merge', 'contributor_lane', {
+        enabled: !!(enabled && enabled.classList.contains('on')),
+        soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 120,
+        require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : []
       });
@@ -45231,6 +45293,12 @@ function burnAreaChart() {
       },
       gh101: function (event, A) { markDirtyTrustedAuthors(); },
       gh102: function (event, A) { markDirtyTrustedAuthors(); },
+      gh103: function (event, A) {
+        const isOn = this.classList.toggle('on');
+        this.setAttribute('aria-checked', isOn ? 'true' : 'false');
+        markDirtyContributorLane();
+      },
+      gh104: function (event, A) { markDirtyContributorLane(); },
       gh95: function (event, A) {
         const input = document.getElementById('rv-new-perspective');
         const name = (input.value || '').trim().toLowerCase();

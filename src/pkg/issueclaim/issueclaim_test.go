@@ -41,6 +41,21 @@ func TestParseMarker_FindsMarkerInsideLongerComment(t *testing.T) {
 	}
 }
 
+func TestParseMarker_ReadsKindAndHive(t *testing.T) {
+	body := "<!-- hive:claim who=mrbobbytables kind=contributor id=mrbobbytables:sess hive=hive-prod at=2026-09-23T01:30:00Z until=2026-09-23T05:30:00Z -->\n🔒 Claimed."
+	claim, ok := ParseMarker(body)
+	if !ok {
+		t.Fatal("hub-shaped marker did not parse")
+	}
+	if claim.Identity != "mrbobbytables" || claim.Kind != "contributor" || claim.Hive != "hive-prod" {
+		t.Fatalf("kind/hive lost: %+v", claim)
+	}
+	legacy, ok := ParseMarker(Marker("agent-1", started, expires))
+	if !ok || legacy.Kind != "contributor" || legacy.Hive != "" {
+		t.Fatalf("Marker() has kind=contributor and no hive, got ok=%v %+v", ok, legacy)
+	}
+}
+
 func TestParseMarker_AcceptsLegacyMarker(t *testing.T) {
 	body := LegacyMarker("agent-1", started, expires) + "\nClaimed by agent-1."
 	claim, ok := ParseMarker(body)

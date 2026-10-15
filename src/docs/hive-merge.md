@@ -246,6 +246,70 @@ switch, repository allow-list (select none for all watched repos), required
 role (`merger` or `owner`), GitHub permission requirement, and excluded labels
 so hosted spokes can opt in without editing `hive.yaml`.
 
+### Contributor-lane auto-merge
+
+`auto_merge.contributor_lane` is a fourth sweep tier, **default on**, for PRs
+that this hive's own contributor lane produced. When Hive claims an issue for
+a contributor it posts an App-authored `<!-- hive:claim who=<login>
+kind=contributor hive=<hive-id> ... -->` marker on the issue; the contributor's
+PR then closes that issue with `Fixes #N`. Before this tier existed such a PR
+was skipped by every lane (`untrusted-author-role` from the trusted-author tier,
+`not-app-authored` from the App tier) and waited indefinitely for a human
+`/lgtm` + `/approve`, even though the hive had already vetted and reviewed the
+work. The maintainer position is that work the hive trusted enough to hand out
+should land unattended once it is green, so the tier ships enabled; set
+`enabled: false` to restore the wait-for-human behaviour.
+
+A PR merges through this tier only when all of the following hold:
+
+- The PR body closes a same-repo issue (`Fixes`/`Closes`/`Resolves #N`) whose
+  App-authored `hive:claim` marker has `kind=contributor`, `who=` equal to the
+  PR author, and `hive=` equal to this hive's `hive_id`. Markers from other
+  commenters, other kinds, other authors or other hives are rejected with
+  distinct skip reasons (`contributor-lane:no-claim`,
+  `contributor-lane:claim-author-mismatch`, `contributor-lane:claim-other-hive`).
+- Required CI is green on the current head, using the same merge-CI gate as
+  the App self-merge tier.
+- When a reviewer agent is configured, `review-verdicts.json` records an
+  approving aggregate verdict for the current head
+  (`require_reviewer_verdict`, default `true`). With no reviewer agent the
+  gate is vacuous. Missing or failing verdicts skip with
+  `contributor-lane:no-verdict`.
+- Sentinel has no blocking finding (`contributor-lane:sentinel-blocked`), the
+  reporter-trust gate has not held the PR (`contributor-lane:reporter-trust-hold`),
+  and no reviewer has an outstanding `CHANGES_REQUESTED`.
+- No excluded label (`hold`, `do-not-merge*`, `needs-human`, `blocked`,
+  `needs-rebase` by default), not draft, mergeable, no human-merge path.
+- The head SHA has stayed green for `soak_minutes` (default 120). The first
+  green sighting per (repo, PR, head) is tracked in process; a new push restarts
+  the soak and the skip reason reports the time left
+  (`contributor-lane:soaking(remaining=1h30m0s)`).
+
+Merges squash through the same effect-claimed `MergePR` path as the other tiers,
+log `automerge merged tier=contributor-lane`, record the sweep audit, and leave
+one comment: `Merged by hive contributor-lane auto-merge: CI green for ≥120m,
+reviewer verdict approve, claim by @author on #N verified.`
+
+```yaml
+auto_merge:
+  contributor_lane:
+    enabled: true                 # default on; false restores the human /lgtm wait
+    soak_minutes: 120
+    require_reviewer_verdict: true
+    repos: []                     # optional allow-list; empty = all watched repos
+    exclude_labels:
+      - hold
+      - do-not-merge
+      - needs-human
+      - blocked
+      - needs-rebase
+```
+
+The block is editable from **Settings → Features → Auto Merge →
+Contributor-lane auto-merge** (enable switch, soak minutes, reviewer-verdict
+switch, excluded labels, repository allow-list) through the same owner-only
+`GET/PUT /api/config/auto-merge` overlay.
+
 ## Usage
 
 ```sh
