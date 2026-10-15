@@ -1,0 +1,1 @@
+- Expose governor claims, rotation and trajectory settings in the dashboard Settings dialog.

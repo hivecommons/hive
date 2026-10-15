@@ -31380,6 +31380,9 @@ function burnAreaChart() {
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
       { tab: 'Features', section: 'Question Auto-Close', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
+      { tab: 'Features', section: 'Issue claims', label: 'Claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s' },
+      { tab: 'Features', section: 'Provider rotation', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s' },
+      { tab: 'General', section: 'Trajectory Review', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
@@ -38895,10 +38898,10 @@ function burnAreaChart() {
     // "use the default"; a saved change applies to claims made or renewed
     // afterwards without a restart. Owner-only, like the PUT it feeds.
     const CLAIMS_TTL_FIELDS = [
-      { key: 'claimsHumanTtlS', label: 'Human claims', yaml: 'human_ttl_s', tip: 'How long a person\'s claim holds an issue before it lapses unless renewed. Falls back to ttl_s, then 4 hours.' },
-      { key: 'claimsAgentTtlS', label: 'Agent claims', yaml: 'agent_ttl_s', tip: 'How long the claim recorded when one of this hive\'s agents starts on a kicked issue lasts. Defaults to 2 hours.' },
-      { key: 'claimsContributorTtlS', label: 'Contributor claims', yaml: 'contributor_ttl_s', tip: 'How long a relay contributor\'s claim lasts. Defaults to 30 minutes, the relay lease length.' },
-      { key: 'claimsMaxTtlS', label: 'Maximum claim', yaml: 'max_ttl_s', tip: 'Cap on any requested claim lifetime; the three lifetimes above may not exceed it. Defaults to 24 hours.' },
+      { key: 'claimsHumanTtlS', label: 'Human claims', yaml: 'human_ttl_s', yamlKey: 'governor.claims.human_ttl_s', tip: 'How long a person\'s claim holds an issue before it lapses unless renewed. Falls back to ttl_s, then 4 hours.' },
+      { key: 'claimsAgentTtlS', label: 'Agent claims', yaml: 'agent_ttl_s', yamlKey: 'governor.claims.agent_ttl_s', tip: 'How long the claim recorded when one of this hive\'s agents starts on a kicked issue lasts. Defaults to 2 hours.' },
+      { key: 'claimsContributorTtlS', label: 'Contributor claims', yaml: 'contributor_ttl_s', yamlKey: 'governor.claims.contributor_ttl_s', tip: 'How long a relay contributor\'s claim lasts. Defaults to 30 minutes, the relay lease length.' },
+      { key: 'claimsMaxTtlS', label: 'Maximum claim', yaml: 'max_ttl_s', yamlKey: 'governor.claims.max_ttl_s', tip: 'Cap on any requested claim lifetime; the three lifetimes above may not exceed it. Defaults to 24 hours.' },
     ];
 
     function claimsTTLSplit(secs) {
@@ -38928,7 +38931,7 @@ function burnAreaChart() {
         const d = claimsTTLSplit(f[fd.key] || defaults[fd.key] || 0);
         const isSet = !!set[fd.key];
         return `<div class="config-field" data-claims-ttl="${fd.key}">
-            <label>${esc(fd.label)} ${settingHelpMark('settings', 'features', fd.label, `${esc(fd.tip)} (governor.claims.${fd.yaml})`)}</label>
+            <label>${esc(fd.label)} ${yamlHint(fd.yamlKey)} ${settingHelpMark('settings', 'features', fd.label, `${esc(fd.tip)} (governor.claims.${fd.yaml})`)}</label>
             <div class="claims-ttl-controls">
               <input type="number" min="1" step="1" class="claims-ttl-input" value="${d.value}" aria-label="${esc(fd.label)} lifetime"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
               <select aria-label="${esc(fd.label)} unit"${off} data-change-action="claimsTTLChanged" data-arg0="${fd.key}" data-arg-types="s">
@@ -39699,8 +39702,8 @@ function burnAreaChart() {
           </div>
           ${rotationOn ? `
             <div class="config-field-row" style="margin-top:10px">
-              <div class="config-field"><label>Threshold percent ${settingHelpMark('settings', 'features', 'Threshold percent', `Usage percentage from 1 to 100 at which a subscription provider is considered exhausted. Defaults to 85.`)}</label><input type="number" min="1" max="100" step="1" value="${f.rotationThresholdPct || 85}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationThresholdPct" data-arg-types="s,s,N"></div>
-              <div class="config-field"><label>High-volume cadence seconds ${settingHelpMark('settings', 'features', 'High-volume cadence seconds', `Agents with a cadence at or below this value never rotate onto subscription providers. Defaults to 1800 seconds.`)}</label><input type="number" min="1" step="1" value="${f.rotationHighVolumeCadenceS || 1800}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationHighVolumeCadenceS" data-arg-types="s,s,N"></div>
+              <div class="config-field"><label>Threshold percent ${yamlHint('governor.rotation.threshold_pct')} ${settingHelpMark('settings', 'features', 'Threshold percent', `Usage percentage from 1 to 100 at which a subscription provider is considered exhausted. Defaults to 85.`)}</label><input type="number" min="1" max="100" step="1" value="${f.rotationThresholdPct || 85}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationThresholdPct" data-arg-types="s,s,N"></div>
+              <div class="config-field"><label>High-volume cadence seconds ${yamlHint('governor.rotation.high_volume_cadence_s')} ${settingHelpMark('settings', 'features', 'High-volume cadence seconds', `Agents with a cadence at or below this value never rotate onto subscription providers. Defaults to 1800 seconds.`)}</label><input type="number" min="1" step="1" value="${f.rotationHighVolumeCadenceS || 1800}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationHighVolumeCadenceS" data-arg-types="s,s,N"></div>
             </div>
             <div class="config-field" style="margin-top:10px">
               <label>Providers ${settingHelpMark('settings', 'features', 'Providers', `Map provider names to their class, backing Hive backend IDs from /api/config/backends, and an optional monthly allowance for plans that report consumption but not entitlement.`)}</label>
@@ -39921,7 +39924,7 @@ function burnAreaChart() {
           <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--sp-5);flex-wrap:wrap">
             <div class="config-toggle m-0">
               <div class="config-toggle-switch ${trajOn ? 'on' : ''}" data-action="toggleTrajectoryReview" data-arg-types="t"></div>
-              <span class="config-toggle-label" style="font-weight:600">Trajectory Review</span>
+              <span class="config-toggle-label" style="font-weight:600">Trajectory Review ${yamlHint('governor.trajectory.enabled')}</span>
             </div>
             <span style="font-family:monospace;font-size:0.72rem;padding:2px 10px;border-radius:var(--r-pill);background:color-mix(in srgb, ${trajStatusColor} 14%, transparent);border:1px solid color-mix(in srgb, ${trajStatusColor} 45%, transparent);color:${trajStatusColor}">${esc(trajStatus)}</span>
           </div>
@@ -39935,20 +39938,24 @@ function burnAreaChart() {
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px">
             <div>
-              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer model ${settingHelpMark('trajectory-review', 'configuration', 'Reviewer model', `Model id sent to the reviewer endpoint. Empty = the Governor's LiteLLM default model. A cheap-but-capable model is right; a tiny model gives weaker verdicts (fails open, so it catches less rather than false-pausing).`)}</label>
+              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer model ${yamlHint('governor.trajectory.model')} ${settingHelpMark('trajectory-review', 'configuration', 'Reviewer model', `Model id sent to the reviewer endpoint. Empty = the Governor's LiteLLM default model. A cheap-but-capable model is right; a tiny model gives weaker verdicts (fails open, so it catches less rather than false-pausing).`)}</label>
               <input type="text" value="${esc(traj.model || '')}" placeholder="${esc(trajModel || 'litellm default')}" data-change-action="saveTrajectoryField" data-arg0="model" data-arg-types="s,v" style="width:100%">
             </div>
             <div>
-              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Review interval (sec) ${settingHelpMark('trajectory-review', 'configuration', 'Review interval (sec)', `How often the lane reviews running agents. Floored by the Governor eval interval. Empty/0 = default (600s).`)}</label>
+              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Review interval (sec) ${yamlHint('governor.trajectory.interval_s')} ${settingHelpMark('trajectory-review', 'configuration', 'Review interval (sec)', `How often the lane reviews running agents. Floored by the Governor eval interval. Empty/0 = default (600s).`)}</label>
               <input type="number" min="0" value="${trajInterval || ''}" placeholder="600" data-change-action="gh42" style="width:100%">
             </div>
+            <div class="config-field m-0">
+              <label>Transcript lines ${yamlHint('governor.trajectory.transcript_lines')} ${settingHelpMark('trajectory-review', 'configuration', 'Transcript lines', `Caps how many trailing transcript lines are sent to the reviewer. Bounds token cost and keeps the review focused on recent behavior. Empty/0 = default (120).`)}</label>
+              <input type="number" min="0" step="1" value="${traj.transcriptLines || ''}" placeholder="120" data-change-action="saveTrajectoryField" data-arg0="transcriptLines" data-arg-types="s,N">
+            </div>
             <div style="grid-column:1 / -1">
-              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer endpoint ${settingHelpMark('trajectory-review', 'configuration', 'Reviewer endpoint', `OpenAI-compatible base URL for the reviewer (LiteLLM / vLLM / llm-d). Empty = inherit the Governor's LiteLLM endpoint. The API key is inherited from LiteLLM or set in hive.yaml (governor.trajectory.api_key_env/api_key_file); a bare vLLM server needs none.`)}</label>
+              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer endpoint ${yamlHint('governor.trajectory.endpoint')} ${settingHelpMark('trajectory-review', 'configuration', 'Reviewer endpoint', `OpenAI-compatible base URL for the reviewer (LiteLLM / vLLM / llm-d). Empty = inherit the Governor's LiteLLM endpoint. The API key is inherited from LiteLLM or set in hive.yaml (governor.trajectory.api_key_env/api_key_file); a bare vLLM server needs none.`)}</label>
               <input type="text" value="${esc(traj.endpoint || '')}" placeholder="${trajEndpoint ? esc(trajEndpoint) + '  (inherited from LiteLLM)' : 'https://litellm-or-vllm-or-llmd:port'}" data-change-action="saveTrajectoryField" data-arg0="endpoint" data-arg-types="s,v" style="width:100%">
               <span style="font-size:var(--fs-2xs);margin-top:3px;display:block;color:${trajOn && !trajEndpoint ? 'var(--amber)' : 'var(--muted)'}">Resolved: ${trajEndpoint ? esc(trajEndpoint) + ' (' + esc(traj.endpointSource || '') + (traj.hasKey ? ', key set' : ', no key') + ')' : (trajOn ? 'none — Trajectory Review is ON but no agents are being reviewed. Set an endpoint above (or a Governor LiteLLM endpoint) to activate it.' : 'none — reviewer will not run')}</span>
             </div>
             <div style="grid-column:1 / -1">
-              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">On divergence</label>
+              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">On divergence ${yamlHint('governor.trajectory.on_divergence')}</label>
               <div style="display:flex;gap:14px;font-size:0.8rem">
                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="traj-div" ${trajDiv === 'pause' ? 'checked' : ''} data-change-action="saveTrajectoryField" data-arg0="onDivergence" data-arg1="pause"> Pause the agent &amp; alert</label>
                 <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="traj-div" ${trajDiv === 'alert' ? 'checked' : ''} data-change-action="saveTrajectoryField" data-arg0="onDivergence" data-arg1="alert"> Alert only (don't pause)</label>
