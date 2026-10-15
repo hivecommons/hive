@@ -30485,6 +30485,7 @@ function burnAreaChart() {
           html += row('Next update', value('unknown', 'The hub has not reported when the next update is expected'), 'unknown');
         }
       }
+      if (au.heldReason) html += row('Held', value(au.heldReason, 'The scheduled update window opened but the hub held the upgrade' + (au.heldAt ? ' at ' + au.heldAt : '') + ': ' + au.heldReason), au.heldReason);
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
@@ -35351,6 +35352,7 @@ function burnAreaChart() {
           var next = au.nextUpdateAt || (au.nextUpdateStatus === 'none' ? 'none queued (stable is current)' : (au.nextUpdateStatus === 'paused' ? 'paused' : 'unknown'));
           rows += '<div>Next update: ' + escapeHtml(next) + '</div>';
         }
+        if (au.heldReason) rows += '<div class="text-warn">Scheduled update held' + (au.heldAt ? ' at ' + escapeHtml(au.heldAt) : '') + ': ' + escapeHtml(au.heldReason) + '</div>';
         if (au.lastAttemptAt) rows += '<div>Last attempt: ' + escapeHtml(au.lastAttemptAt) + '</div>';
         if (au.lastError) rows += '<div class="text-danger">Last error: ' + escapeHtml(au.lastError) + '</div>';
         el.style.color = 'var(--muted)';

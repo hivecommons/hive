@@ -258,3 +258,45 @@ const defaultUpgradeWaveSize = 10
 func upgradeWaveSize() int {
 	return settingOrEnv(getScaleSettings().UpgradeWaveSize, "HIVE_UPGRADE_WAVE_SIZE", defaultUpgradeWaveSize)
 }
+
+// autoUpgradeHoldNow is the clock the hold recording reads; a var so tests can
+// open a daily window deterministically.
+var autoUpgradeHoldNow = time.Now
+
+// scheduledUpgradeWindowOpen reports whether a daily/weekly hive's window is
+// open right now, i.e. the schedule itself would let it upgrade this cycle.
+// Instant hives have no window and report false.
+func scheduledUpgradeWindowOpen(mode, lastFiredDate string, now time.Time) bool {
+	return shouldAutoUpgradeNow(mode, lastFiredDate, now).FireDate != ""
+}
+
+// noteScheduledUpgradeHold persists why a scheduled hive was not upgraded while
+// its window was open (#11196), or clears the record when reason is "". The
+// heartbeat relays it to the spoke so its dashboard can say WHY the 13:00
+// window passed without an upgrade instead of only showing the last one. It
+// writes only when the reason changes, so a hold that persists across poll
+// cycles costs one save, not one per cycle. Same re-read-before-save pattern as
+// recordAutoUpgradeFired; a save failure is logged, not fatal.
+func (s *HubServer) noteScheduledUpgradeHold(h *SaaSHive, reason string, now time.Time) {
+	if h == nil || h.AutoUpgradeHoldReason == reason {
+		return
+	}
+	at := time.Time{}
+	if reason != "" {
+		at = now.UTC()
+		s.logger.Info("scheduled auto-upgrade held while its window is open",
+			"hive_id", h.ID, "mode", normalizeAutoUpgradeMode(h.AutoUpgradeMode), "reason", reason)
+	}
+	h.AutoUpgradeHoldReason = reason
+	h.AutoUpgradeHoldAt = at
+	stored := loadSaaSHive(h.ID)
+	if stored == nil {
+		stored = h
+	}
+	stored.AutoUpgradeHoldReason = reason
+	stored.AutoUpgradeHoldAt = at
+	if err := saveSaaSHive(stored); err != nil {
+		s.logger.Warn("failed to persist scheduled auto-upgrade hold reason",
+			"hive_id", h.ID, "error", err)
+	}
+}

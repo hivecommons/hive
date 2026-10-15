@@ -2608,6 +2608,11 @@ type HeartbeatUpgradePolicy struct {
 	// send it — and must not be rendered as "no update coming".
 	NextUpdateAt     string `json:"next_update_at,omitempty"`
 	NextUpdateStatus string `json:"next_update_status,omitempty"`
+	// ScheduledHoldReason is why the hub did not apply this hive's daily/weekly
+	// upgrade while its window was open; ScheduledHoldAt (RFC3339 UTC) is when
+	// it was recorded. Empty when nothing is held or the hub is too old to say.
+	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
+	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
 }
 
 // Schedule values carried by HeartbeatUpgradePolicy.Schedule. These mirror

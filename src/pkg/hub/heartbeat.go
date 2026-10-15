@@ -481,6 +481,13 @@ type HeartbeatUpgradePolicy struct {
 	// that cooldown.
 	CooldownSeconds int    `json:"cooldown_seconds,omitempty"`
 	NextEligibleAt  string `json:"next_eligible_at,omitempty"`
+	// ScheduledHoldReason is why the hub did not apply this hub-managed
+	// daily/weekly hive's upgrade while its window was open (#11196), and
+	// ScheduledHoldAt (RFC3339 UTC) is when that was first recorded. Omitted
+	// when nothing is being held, so a spoke can explain a missed window
+	// instead of only showing the previous upgrade.
+	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
+	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
 }
 
 type TaskStatusPayload struct {

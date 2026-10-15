@@ -824,6 +824,16 @@ type SaaSHive struct {
 	// autoUpgradeCooldown() (#11825); persisted so a hub restart cannot reset
 	// the cooldown.
 	AutoUpgradeLastAt time.Time `json:"auto_upgrade_last_at,omitempty"`
+	// AutoUpgradeHoldReason / AutoUpgradeHoldAt record why the hub did NOT
+	// apply a daily/weekly hive's upgrade while its window was open (#11196):
+	// a target that would not resolve, a claim in flight, an undeliverable
+	// hive, a full wave, a debounce. Every one of those gates used to be a
+	// Debug log only, so a hive that skipped its 13:00 window looked the same
+	// as one with nothing to do. Persisted so the reason survives a hub
+	// restart and outlives the window itself; cleared when the hive is armed,
+	// reaches its target, or has its auto-upgrade setting changed.
+	AutoUpgradeHoldReason string    `json:"auto_upgrade_hold_reason,omitempty"`
+	AutoUpgradeHoldAt     time.Time `json:"auto_upgrade_hold_at,omitempty"`
 
 	// AutoUpgradePendingTarget / AutoUpgradePendingSince / AutoUpgradeCollapsed
 	// are the merge-driven upgrade DEBOUNCE state (#5391): the newest SHA seen
