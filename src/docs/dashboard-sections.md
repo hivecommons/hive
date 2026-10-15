@@ -434,7 +434,7 @@ Every open PR across the governed repos in one deterministic rank order (GET /ap
 
 An experimental planner that tries out changes to how Hive works and records what it learned.
 
-**What it tells you.** The Experiment Lab (formerly Strategy Lab) runs small experiments on Hive's own settings. It shows its goals, its plan and a ledger of results. The header shows the research question you set in the gear dialog, if there is one; otherwise nothing appears beside the title. Mode (Observe, Suggest, Evolve) and scope (Governor, Repo, Both) are shown by the buttons inside the card, not in the header.
+**What it tells you.** The Experiment Lab runs small experiments on Hive's own settings. It shows its goals, its plan and a ledger of results. The header shows the research question you set in the gear dialog, if there is one; otherwise nothing appears beside the title. Mode (Observe, Suggest, Evolve) and scope (Governor, Repo, Both) are shown by the buttons inside the card, not in the header.
 
 **How the numbers are worked out.** The ledger lists each experiment and its result. The section has no other numbers.
 

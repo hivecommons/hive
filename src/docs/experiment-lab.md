@@ -1,7 +1,7 @@
 # Experiment Lab (Nous) operator guide
 
-The Experiment Lab — formerly the Experiment Lab, internally and in the API
-called **Nous** — is a controlled experiment framework for the governor. It records a baseline of hive behavior,
+The Experiment Lab (formerly Strategy Lab; internally and in the API
+called **Nous**) is a controlled experiment framework for the governor. It records a baseline of hive behavior,
 designs experiments against governor (and optionally repo) parameters, and
 measures each one against that baseline before anything is applied for real.
 

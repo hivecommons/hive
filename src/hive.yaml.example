@@ -981,7 +981,7 @@ dashboard:
 #       scope: config
 
 # Experiment Lab (Nous) — controlled experiment framework for the governor.
-# Formerly the Strategy Lab. The dashboard section is hidden by default; show
+# The dashboard section is hidden by default; show
 # it with `dashboard.experiment_lab: true` (the old `dashboard.strategy_lab`
 # key is a deprecated alias for one release).
 # There is intentionally NO `nous:` block here: Nous has no YAML config
