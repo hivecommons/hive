@@ -3386,6 +3386,32 @@
     .nous-config-dialog > .nous-config-body { flex: 1 1 auto; min-height:0; overflow: auto; padding: var(--sp-6) var(--sp-8); }
     .nous-config-dialog > .nous-config-footer { flex: 0 0 auto; padding: var(--sp-5) var(--sp-8); border-top: 1px solid var(--border); }
     .nous-config-dialog h2 { font-size: var(--fs-lg); margin: var(--sp-0) var(--sp-0) var(--sp-6) var(--sp-0); display: flex; align-items: center; gap: var(--sp-4); }
+    /* Knowledge Sources dialog — a wide, fixed-height dialog with internal
+       scroll (the body stays the single scroller, #11786). The two-column
+       grid, section cards and form rhythm all use spacing tokens so the
+       content gets breathing room instead of hugging the 960px width it
+       used to be squeezed into; the ≤768px and landscape tiers below fold
+       it to one column inside the shared full-screen sheet. */
+    .nous-config-dialog.kb-sources-dialog { width: min(1480px, 94vw); height: min(92vh, 1100px); }
+    .nous-config-dialog.kb-sources-dialog > .nous-config-body { padding: var(--sp-6) var(--sp-9) var(--sp-9); }
+    .kb-sources-intro { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; margin-bottom: var(--sp-8); padding: var(--sp-6) var(--sp-7); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
+    .kb-sources-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-8) var(--sp-9); align-items: start; }
+    .kb-sources-col { display: flex; flex-direction: column; gap: var(--sp-8); min-width: 0; }
+    .kb-sources-section { padding: var(--sp-7); background: var(--surface); border: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); min-width: 0; }
+    .kb-sources-section > .row { flex-wrap: wrap; }
+    .kb-sources-note { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; margin-bottom: var(--sp-6); }
+    .kb-sources-section .empty-dashed { padding: var(--sp-8) var(--sp-6); }
+    .kb-sources-add { margin-top: var(--sp-7); }
+    .kb-sources-add > summary { padding: var(--sp-2) var(--sp-0); }
+    .kb-sources-form { gap: var(--sp-5); margin-top: var(--sp-5); }
+    .kb-sources-form > .row-end { margin-top: var(--sp-4); }
+    .kb-sources-inline { display: flex; align-items: center; gap: var(--sp-4); }
+    .kb-sources-inline > .field-input, .kb-sources-inline > .kb-search-box { flex: 1 1 auto; min-width: 0; }
+    .kb-sources-inline > .hv-btn { flex: 0 0 auto; white-space: nowrap; }
+    .kb-sources-textarea { width: 100%; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); color: var(--fg); font-size: var(--fs-sm); font-family: var(--font-mono); resize: vertical; min-height: 120px; box-sizing: border-box; }
+    .kb-sources-actions { margin-top: var(--sp-4); gap: var(--sp-4); flex-wrap: wrap; }
+    .kb-sources-file { font-size: var(--fs-xs); color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: var(--sp-2); }
+    .kb-sources-file input { font-size: var(--fs-xs); }
     .nous-config-section { margin-bottom: var(--sp-7); padding-bottom: var(--sp-6); border-bottom: 1px solid var(--border); }
     .nous-config-section:last-child { border-bottom: none; margin-bottom: var(--sp-0); padding-bottom: var(--sp-0); }
     .nous-config-section h3 { font-size: 0.85rem; color: var(--accent); margin: 0 0 10px 0; display: flex; align-items: center; gap: var(--sp-3); }
@@ -4100,6 +4126,22 @@
       .nous-config-body {
         padding: var(--sp-5);
       }
+      .nous-config-dialog.kb-sources-dialog > .nous-config-body {
+        padding: var(--sp-5);
+      }
+      .kb-sources-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--sp-6);
+      }
+      .kb-sources-col {
+        gap: var(--sp-6);
+      }
+      .kb-sources-section {
+        padding: var(--sp-5);
+      }
+      .kb-sources-inline {
+        flex-wrap: wrap;
+      }
       .config-footer,
       .feedback-footer {
         flex-wrap: wrap;
@@ -4551,6 +4593,23 @@
       .config-body,
       .feedback-body,
       .nous-config-body {
+        padding: var(--sp-4) var(--sp-5);
+      }
+      .nous-config-dialog.kb-sources-dialog > .nous-config-body {
+        padding: var(--sp-4) var(--sp-5);
+      }
+      .kb-sources-grid {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--sp-5);
+      }
+      .kb-sources-col {
+        gap: var(--sp-5);
+      }
+      .kb-sources-section {
+        padding: var(--sp-5);
+      }
+      .kb-sources-intro {
+        margin-bottom: var(--sp-5);
         padding: var(--sp-4) var(--sp-5);
       }
       .config-footer,
@@ -22765,7 +22824,12 @@ function burnAreaChart() {
     // ── Knowledge modals and actions ──
 
     function kbShowModal(title, bodyHtml, opts) {
+      // opts.dialogClass hands sizing to a stylesheet recipe (e.g.
+      // .kb-sources-dialog) instead of the inline width, so the mobile
+      // full-screen tiers and desktop sizing live in one place.
+      const dialogClass = (opts && opts.dialogClass) ? ' ' + opts.dialogClass : '';
       const dialogWidth = (opts && opts.width) || '600px';
+      const dialogStyle = dialogClass ? '' : ` style="width:${dialogWidth}"`;
       let overlay = document.getElementById('kb-modal-overlay');
       if (!overlay) {
         overlay = document.createElement('div');
@@ -22775,7 +22839,7 @@ function burnAreaChart() {
       }
       overlay.style.display = 'flex';
       hiveRememberModalOpen(overlay);
-      overlay.innerHTML = `<div class="nous-config-dialog" style="width:${dialogWidth}">
+      overlay.innerHTML = `<div class="nous-config-dialog${dialogClass}"${dialogStyle}>
         <h2 style="font-size:1rem;margin:var(--sp-0) var(--sp-0) var(--sp-0) var(--sp-0);padding:var(--sp-8) var(--sp-8) var(--sp-6);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
           ${title}
           <button class="hv-btn btn-icon btn-sm" data-action="kbCloseModal">✕</button>
@@ -23115,7 +23179,10 @@ function burnAreaChart() {
       // The dialog body (.nous-config-body) is the one scroll container —
       // a nested fixed-height scroller here left two competing scrollers and
       // the bottom of the form unreachable (#11786).
-      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content"><div class="kb-integrations-loading">Loading...</div></div>', { width: 'min(960px, 92vw)', maxHeight: '85vh' });
+      // Sizing lives in the .kb-sources-dialog recipe: a wide, fixed-height
+      // dialog on desktop so the two columns get breathing room, full-screen
+      // on the phone tiers.
+      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content"><div class="kb-integrations-loading">Loading...</div></div>', { dialogClass: 'kb-sources-dialog' });
       kbLoadSubscriptions();
     }
 
@@ -23137,24 +23204,24 @@ function burnAreaChart() {
         let html = '';
 
         // Explainer
-        html += '<div style="font-size:var(--fs-sm);color:var(--muted);line-height:1.5;margin-bottom:var(--sp-6);padding:10px;background:var(--surface);border-radius:var(--r);border:1px solid var(--border)">';
+        html += '<div class="kb-sources-intro">';
         html += '<strong class="text-default">How agents use knowledge sources</strong><br>';
         html += 'Before each kick, the primer queries all connected sources and injects the most relevant facts into the agent\'s dialog. Agents never talk to sources directly &mdash; knowledge is primed deterministically by file paths and keywords.';
         html += '</div>';
 
         // ── Two-column grid ──
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-7);align-items:start">';
+        html += '<div class="kb-sources-grid">';
 
         // ════ LEFT COLUMN: Connections ════
-        html += '<div>';
+        html += '<div class="kb-sources-col">';
 
         // ── Git Sources section ──
-        html += '<div class="mb-7">';
+        html += '<div class="kb-sources-section">';
         html += '<div class="row mb-4">';
         html += '<span class="title-sm">Git Sources</span>';
         html += '<span class="tag-chip">cloned &amp; indexed locally</span>';
         html += '</div>';
-        html += '<div class="muted-xs" style="margin-bottom:10px">Clone a GitHub repo locally. Hive indexes the markdown with Fisher-Rao scored search and syncs every 5 minutes.</div>';
+        html += '<div class="kb-sources-note">Clone a GitHub repo locally. Hive indexes the markdown with Fisher-Rao scored search and syncs every 5 minutes.</div>';
 
         if (gitSources && gitSources.length > 0) {
           for (const gs of gitSources) {
@@ -23179,8 +23246,8 @@ function burnAreaChart() {
           html += '<div class="empty-dashed">No git sources yet.</div>';
         }
 
-        html += '<details open style="margin-top:10px"><summary class="summary-label">Add Git Source</summary>';
-        html += '<div class="stack mt-4">';
+        html += '<details open class="kb-sources-add"><summary class="summary-label">Add Git Source</summary>';
+        html += '<div class="stack kb-sources-form">';
         html += '<input id="kb-gs-url" type="text" class="kb-search-box" placeholder="https://github.com/org/repo">';
         html += '<input id="kb-gs-name" type="text" class="kb-search-box" placeholder="Display name">';
         html += '<input id="kb-gs-subpath" type="text" class="kb-search-box" placeholder="Subpath (e.g. docs/skills)">';
@@ -23197,12 +23264,12 @@ function burnAreaChart() {
         html += '</div>';
 
         // ── Wiki Subscriptions section ──
-        html += '<div>';
+        html += '<div class="kb-sources-section">';
         html += '<div class="row mb-4">';
         html += '<span class="title-sm">Wiki Subscriptions</span>';
         html += '<span class="tag-chip">remote llm-wiki endpoint</span>';
         html += '</div>';
-        html += '<div class="muted-xs" style="margin-bottom:10px">A running llm-wiki HTTP service. Hive queries it via MCP at prime time &mdash; facts stay remote, only search results are fetched.</div>';
+        html += '<div class="kb-sources-note">A running llm-wiki HTTP service. Hive queries it via MCP at prime time &mdash; facts stay remote, only search results are fetched.</div>';
 
         if (subs && subs.length > 0) {
           for (const s of subs) {
@@ -23216,8 +23283,8 @@ function burnAreaChart() {
           html += '<div class="empty-dashed">No subscriptions yet.</div>';
         }
 
-        html += '<details open style="margin-top:10px"><summary class="summary-label">Add Subscription</summary>';
-        html += '<div class="stack mt-4">';
+        html += '<details open class="kb-sources-add"><summary class="summary-label">Add Subscription</summary>';
+        html += '<div class="stack kb-sources-form">';
         html += '<input id="kb-sub-url" type="text" class="kb-search-box" placeholder="https://wiki.example.com/mcp">';
         html += `<input id="kb-sub-name" type="text" class="kb-search-box" placeholder="Display name">`;
         html += `<select id="kb-sub-layer" class="field-input">
@@ -23234,15 +23301,15 @@ function burnAreaChart() {
         html += '</div>'; // end left column
 
         // ════ RIGHT COLUMN: Imports ════
-        html += '<div>';
+        html += '<div class="kb-sources-col">';
 
         // ── Import Documents section ──
-        html += '<div class="mb-7">';
+        html += '<div class="kb-sources-section">';
         html += '<div class="row mb-4">';
         html += '<span class="title-sm">Documents</span>';
         html += '<span class="tag-chip">PDF, HTML, DOCX, text</span>';
         html += '</div>';
-        html += '<div class="muted-xs" style="margin-bottom:10px">Import external documents from a URL. Content is parsed into chunks and stored as knowledge facts that agents can search and cite.</div>';
+        html += '<div class="kb-sources-note">Import external documents from a URL. Content is parsed into chunks and stored as knowledge facts that agents can search and cite.</div>';
 
         if (documents && documents.length > 0) {
           for (const d of documents) {
@@ -23263,8 +23330,8 @@ function burnAreaChart() {
           html += '<div class="empty-dashed">No documents imported yet.</div>';
         }
 
-        html += '<details open style="margin-top:10px"><summary class="summary-label">Import Document</summary>';
-        html += '<div class="stack mt-4">';
+        html += '<details open class="kb-sources-add"><summary class="summary-label">Import Document</summary>';
+        html += '<div class="stack kb-sources-form">';
         html += '<input id="kb-doc-url" type="text" class="kb-search-box" placeholder="https://arxiv.org/pdf/2309.06180">';
         html += '<input id="kb-doc-name" type="text" class="kb-search-box" placeholder="Name (optional, derived from URL)">';
         html += `<select id="kb-doc-layer" class="field-input">
@@ -23277,12 +23344,12 @@ function burnAreaChart() {
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbImportDocFromModal">Import</button>';
         html += '</div></div></details>';
 
-        html += '<details open style="margin-top:10px"><summary class="summary-label">📚 Import from Context7</summary>';
-        html += '<div class="stack mt-4">';
-        html += '<div style="font-size:0.72rem;color:var(--muted)">Search Context7 for library documentation (e.g. "vllm", "next.js", "kubernetes").</div>';
+        html += '<details open class="kb-sources-add"><summary class="summary-label">📚 Import from Context7</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += '<div class="muted-xs">Search Context7 for library documentation (e.g. "vllm", "next.js", "kubernetes").</div>';
         html += '<div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenContext7Integration">Configure in Integrations</button></div>';
-        html += '<div style="display:flex;gap:var(--sp-4)">';
-        html += '<input id="kb-ctx7-query" type="text" class="kb-search-box" placeholder="Search libraries..." style="flex:1">';
+        html += '<div class="kb-sources-inline">';
+        html += '<input id="kb-ctx7-query" type="text" class="kb-search-box" placeholder="Search libraries...">';
         html += '<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbCtx7Search">Search</button>';
         html += '</div>';
         html += '<div id="kb-ctx7-results" style="max-height:200px;overflow-y:auto"></div>';
@@ -23303,31 +23370,31 @@ function burnAreaChart() {
           return `<option value="${escapeHtml(l.type)}"${sel}>${escapeHtml(KB_LAYER_LABELS[l.type] || l.type)}</option>`;
         }).join('') || '<option value="" disabled selected>No channel yet — create one below</option>';
 
-        html += '<div>';
+        html += '<div class="kb-sources-section">';
         html += '<div class="row mb-4">';
         html += '<span class="title-sm">Import Facts</span>';
         html += '<span class="tag-chip">markdown or JSON</span>';
         html += '</div>';
-        html += '<div class="muted-xs" style="margin-bottom:10px">Paste markdown or JSON directly. Headings (# or ##) become separate facts. JSON should be an array of {title, body, type, tags} objects.</div>';
+        html += '<div class="kb-sources-note">Paste markdown or JSON directly. Headings (# or ##) become separate facts. JSON should be an array of {title, body, type, tags} objects.</div>';
 
-        html += '<details open style="margin-top:10px"><summary class="summary-label">Paste Content</summary>';
-        html += '<div class="stack mt-4">';
-        html += `<div style="display:flex;gap:var(--sp-4);align-items:center">`;
-        html += `<select id="kb-import-layer" class="field-input" style="flex:1">${layerOpts2}</select>`;
+        html += '<details open class="kb-sources-add"><summary class="summary-label">Paste Content</summary>';
+        html += '<div class="stack kb-sources-form">';
+        html += `<div class="kb-sources-inline">`;
+        html += `<select id="kb-import-layer" class="field-input">${layerOpts2}</select>`;
         html += `<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbNewChannel" title="Create a new knowledge channel to import into">+ New channel</button>`;
         html += `<button class="hv-btn btn-danger nous-btn" data-action="kbRemoveChannel" title="Remove the selected channel (stops it feeding agents; files remain on disk)">Remove</button>`;
         html += `</div>`;
-        html += `<div id="kb-newchannel-row" style="display:none;gap:var(--sp-4);align-items:center">`;
-        html += `<input id="kb-newchannel-name" type="text" class="kb-search-box" placeholder="New channel name (e.g. Runbooks)" style="flex:1" data-keydown-action="kbCreateChannel" data-prevent="1" data-keys="Enter">`;
+        html += `<div id="kb-newchannel-row" class="kb-sources-inline" style="display:none">`;
+        html += `<input id="kb-newchannel-name" type="text" class="kb-search-box" placeholder="New channel name (e.g. Runbooks)" data-keydown-action="kbCreateChannel" data-prevent="1" data-keys="Enter">`;
         html += `<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbCreateChannel">Create</button>`;
         html += `</div>`;
         html += `<select id="kb-import-format" class="field-input">
           <option value="markdown" selected>Markdown</option>
           <option value="json">JSON</option>
         </select>`;
-        html += '<textarea id="kb-import-content" rows="8" style="width:100%;padding:var(--sp-4);border:1px solid var(--border);border-radius:var(--r);background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:var(--font-mono);resize:vertical;min-height:120px;box-sizing:border-box" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
-        html += '<div style="display:flex;align-items:center;justify-content:space-between">';
-        html += '<label style="font-size:0.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:var(--sp-2)"><span>or load from file:</span><input type="file" accept=".md,.json,.txt" style="font-size:0.72rem" data-change-action="kbLoadFile" data-arg-types="t"></label>';
+        html += '<textarea id="kb-import-content" rows="8" class="kb-sources-textarea" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
+        html += '<div class="row-between kb-sources-actions">';
+        html += '<label class="kb-sources-file"><span>or load from file:</span><input type="file" accept=".md,.json,.txt" data-change-action="kbLoadFile" data-arg-types="t"></label>';
         html += '<button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitImport">Import</button>';
         html += '</div></div></details>';
         html += '</div>';
