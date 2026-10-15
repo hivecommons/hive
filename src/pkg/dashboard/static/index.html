@@ -31381,6 +31381,7 @@ function burnAreaChart() {
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
+      { tab: 'Security', section: 'Input Defense', label: 'ioscan', key: 'ioscan.enabled', text: 'ioscan input output scanning canaries fail mode classifier model warn block threshold ioscan.canaries ioscan.classifier.block_threshold ioscan.classifier.enabled ioscan.classifier.model ioscan.classifier.warn_threshold ioscan.enabled ioscan.fail_mode' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Hub', section: 'Release', label: 'Release channel', key: '', text: 'channel stable candidate edge release update stream' },
@@ -39029,6 +39030,7 @@ function burnAreaChart() {
         : '<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-4) var(--sp-0) var(--sp-0)">ioscan classifier fields are not present in this v4 backend yet; this disclosure will render them automatically when the API reports support.</p>';
 
       const inputDefense = `
+        <p class="config-help">YAML keys: <code>ioscan.enabled</code>, <code>ioscan.fail_mode</code>, <code>ioscan.canaries</code>, <code>ioscan.classifier.enabled</code>, <code>ioscan.classifier.model</code>, <code>ioscan.classifier.warn_threshold</code>, <code>ioscan.classifier.block_threshold</code>.</p>
         <div class="config-toggle">
           <div class="config-toggle-switch ${sec.ioscanEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanEnabled"></div>
           <span class="config-toggle-label">Input/Output scanning (ioscan) ${settingHelpMark('ioscan', '', 'Input/Output scanning (ioscan)', `Scan untrusted issue/PR text for prompt-injection and dangerous directives before agent kicks.`)}</span>

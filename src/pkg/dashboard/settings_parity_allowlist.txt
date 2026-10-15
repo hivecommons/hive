@@ -369,13 +369,6 @@ intent.enforce # TODO #11854
 intent.feature_signals[] # TODO #11854
 intent.guardrail_path_patterns[] # TODO #11854
 intent.test_path_patterns[] # TODO #11854
-ioscan.canaries # TODO #11854
-ioscan.classifier.block_threshold # TODO #11854
-ioscan.classifier.enabled # TODO #11854
-ioscan.classifier.model # TODO #11854
-ioscan.classifier.warn_threshold # TODO #11854
-ioscan.enabled # TODO #11854
-ioscan.fail_mode # TODO #11854
 issues.close_on_merge # TODO #11854
 issues.close_on_merge_backfill_interval # TODO #11854
 issues.close_on_merge_interval # TODO #11854

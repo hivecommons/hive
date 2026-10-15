@@ -1,0 +1,1 @@
+- Expose ioscan settings in the dashboard Settings dialog.
