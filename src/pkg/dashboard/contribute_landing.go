@@ -1197,20 +1197,26 @@ select.admin-act{min-width:0;max-width:100%%}
    rankings. Data is hydrated from scrubbed public endpoints; rendering uses
    textContent-only DOM construction below. */
 .lb-showcase-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:var(--sp-6);margin-bottom:var(--sp-7)}
-.battle-log-list{display:flex;flex-direction:column;gap:8px;padding:var(--sp-6)}
-.battle-log-line{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;align-items:center;gap:var(--sp-4);background:var(--surface-0);border:1px solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-4) var(--sp-5);font-size:var(--fs-base)}
-.battle-log-actor{font-weight:700;color:var(--text);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.battle-log-list{display:flex;flex-direction:column;padding:var(--sp-3) var(--sp-6) var(--sp-5)}
+.battle-log-line{display:grid;grid-template-columns:minmax(120px,max-content) auto minmax(0,1fr) max-content;align-items:center;gap:var(--sp-4);border-bottom:1px solid var(--line-subtle);padding:var(--sp-3) var(--sp-4);font-size:var(--fs-base);border-radius:var(--r)}
+.battle-log-line:last-child{border-bottom:none}
+.battle-log-line.hive-row-alt{background:color-mix(in srgb,var(--text) 4%%,transparent)}
+.battle-log-actor{font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
 .battle-log-icon{font-size:var(--fs-lg);filter:drop-shadow(0 0 6px color-mix(in srgb,var(--cc-amber) 35%%,transparent))}
-.battle-log-target{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.battle-log-time{font-size:var(--fs-xs);color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.hotw-video{width:100%%;border-radius:var(--r-lg);border:1px solid var(--line-strong);background:var(--surface-terminal);display:block}
+.battle-log-target{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.battle-log-target a{color:var(--cc-accent);text-decoration:none;font-weight:600}
+.battle-log-target a:hover{text-decoration:underline}
+.battle-log-time{font-size:var(--fs-xs);color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right;white-space:nowrap;min-width:5.5em}
+.hotw-video{width:100%%;border-radius:var(--r-lg);border:1px solid var(--line-strong);background:var(--surface-terminal);display:block;margin-bottom:var(--sp-5)}
 .hotw-body{padding:var(--sp-6)}
 .hotw-project{font-size:var(--fs-lg);font-weight:800;color:var(--text);margin-bottom:var(--sp-2)}
 .hotw-meta{font-size:var(--fs-sm);color:var(--text-muted);margin-bottom:var(--sp-5)}
+.hotw-empty{border:1px dashed var(--line-strong);border-radius:var(--r-lg);padding:var(--sp-6);margin-bottom:var(--sp-5);color:var(--text-muted);font-size:var(--fs-sm);line-height:1.5;text-align:center}
+.hotw-empty b{color:var(--text)}
 .hotw-links{display:flex;flex-wrap:wrap;gap:8px}
 .hotw-links a{font-size:var(--fs-sm);color:var(--cc-accent);text-decoration:none;border:1px solid var(--line-strong);border-radius:var(--r-pill);padding:var(--sp-2) var(--sp-5)}
 .hotw-links a:hover{border-color:var(--cc-accent)}
-@media(max-width:900px){.lb-showcase-grid{grid-template-columns:1fr}.battle-log-line{grid-template-columns:auto minmax(0,1fr);}.battle-log-actor{text-align:left}.battle-log-target,.battle-log-time{grid-column:2}}
+@media(max-width:900px){.lb-showcase-grid{grid-template-columns:1fr}.battle-log-line{grid-template-columns:auto minmax(0,1fr) max-content}.battle-log-actor{max-width:none}.battle-log-target{grid-column:1/span 3;white-space:normal}}
 /* "File an issue on this page" link (#2594) — a subtle footer affordance present
    on every tab. Quiet grey, matches the sober dashboard chrome; an outbound link. */
 .cc-page-foot{padding:26px 48px 34px;border-top:1px solid var(--line-subtle);margin-top:28px;display:flex;justify-content:center}
@@ -2904,14 +2910,29 @@ function loadBattleLog(){
 function renderBattleLog(events){
   var el=document.getElementById('battle-log-list'),cnt=document.getElementById('battle-log-count');if(!el)return;
   el.textContent='';
-  if(cnt)cnt.textContent=events.length+' events';
+  if(cnt)cnt.textContent=events.length+(events.length===1?' event':' events');
   if(!events.length){var empty=document.createElement('div');empty.className='ops-empty';empty.textContent='No public activity yet.';el.appendChild(empty);return;}
-  events.forEach(function(e){
-    var row=document.createElement('div');row.className='battle-log-line';
-    var actor=document.createElement('span');actor.className='battle-log-actor';actor.textContent=e.actor||'contributor';row.appendChild(actor);
+  events.forEach(function(e,i){
+    var row=document.createElement('div');row.className='battle-log-line'+(i%%2===1?' hive-row-alt':'');
+    var actor=document.createElement('span');actor.className='battle-log-actor';actor.textContent=e.actor||'contributor';actor.title=e.actor||'';row.appendChild(actor);
     var icon=document.createElement('span');icon.className='battle-log-icon';icon.setAttribute('aria-label',e.action||'acted');icon.textContent=e.icon||'⚡';row.appendChild(icon);
-    var target=document.createElement('span');target.className='battle-log-target';target.textContent=(e.action?e.action+' ':'')+(e.target||'the hive');row.appendChild(target);
-    var time=document.createElement('span');time.className='battle-log-time';var d=e.timestamp?new Date(e.timestamp):null;time.textContent=(d&&!isNaN(d.getTime()))?d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';row.appendChild(time);
+    var target=document.createElement('span');target.className='battle-log-target';
+    var verb=e.action?e.action+' ':'';
+    if(e.ref){
+      target.appendChild(document.createTextNode(verb));
+      var refNode;
+      if(e.url&&/^https:\/\/github\.com\//.test(e.url)){refNode=document.createElement('a');refNode.href=e.url;refNode.target='_blank';refNode.rel='noopener noreferrer';}
+      else{refNode=document.createElement('b');}
+      refNode.textContent=e.ref;target.appendChild(refNode);
+      if(e.title)target.appendChild(document.createTextNode(' · '+e.title));
+      target.title=(verb+e.ref+(e.title?': '+e.title:'')).trim();
+    }else{
+      var text=verb+(e.target||'the hive');target.textContent=text;target.title=text;
+    }
+    row.appendChild(target);
+    var time=document.createElement('span');time.className='battle-log-time';var d=e.timestamp?new Date(e.timestamp):null;
+    if(d&&!isNaN(d.getTime())){time.textContent=d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});time.title=d.toLocaleString();}
+    row.appendChild(time);
     el.appendChild(row);
   });
 }
@@ -2921,19 +2942,32 @@ function loadHiveOfWeek(){
     el.textContent='';var div=document.createElement('div');div.className='ops-empty';div.textContent='Could not load Hive of the Week.';el.appendChild(div);
   });
 }
+// renderHiveOfWeek shows the weekly Gource "bee swarm" render of the busiest
+// public project when the hub has one configured (video_url). Nothing on the
+// hub serves a default render, so without a URL the player is replaced by an
+// explanatory empty state instead of a black box (#12109).
 function renderHiveOfWeek(d){
   var el=document.getElementById('hotw-card'),cnt=document.getElementById('hotw-count');if(!el)return;
-  el.textContent='';
-  if(cnt)cnt.textContent=(d&&d.week)||'weekly';
-  var project=document.createElement('div');project.className='hotw-project';project.textContent=(d&&d.project)||'hive';el.appendChild(project);
-  var meta=document.createElement('div');meta.className='hotw-meta';meta.textContent=((d&&d.activity_count)||0)+' public events this week';el.appendChild(meta);
-  var video=document.createElement('video');video.className='hotw-video';video.controls=true;video.preload='metadata';if(d&&d.poster_url)video.poster=d.poster_url;
-  var source=document.createElement('source');source.type='video/mp4';source.src=(d&&d.video_url)||'/assets/hive-of-the-week/latest.mp4';video.appendChild(source);el.appendChild(video);
+  d=d||{};el.textContent='';
+  if(cnt)cnt.textContent=d.week||'weekly';
+  var count=Number(d.activity_count||0),featured=count>0&&d.project&&d.project!=='hive';
+  var project=document.createElement('div');project.className='hotw-project';project.textContent=featured?d.project:'No featured project yet';el.appendChild(project);
+  var meta=document.createElement('div');meta.className='hotw-meta';
+  meta.textContent=featured?(count+(count===1?' public event':' public events')+' this week'):'Only activity on repositories the hub lists as public counts toward the weekly feature.';el.appendChild(meta);
+  if(d.video_url){
+    var video=document.createElement('video');video.className='hotw-video';video.controls=true;video.preload='metadata';if(d.poster_url)video.poster=d.poster_url;
+    var source=document.createElement('source');source.type='video/mp4';source.src=d.video_url;video.appendChild(source);el.appendChild(video);
+  }else{
+    var empty=document.createElement('div');empty.className='hotw-empty';
+    var b=document.createElement('b');b.textContent='No weekly render yet.';empty.appendChild(b);
+    empty.appendChild(document.createTextNode(' Hive of the Week is a Gource bee-swarm replay of the featured project\u2019s public activity, rendered by the weekly workflow once a project is featured.'));
+    el.appendChild(empty);
+  }
   var links=document.createElement('div');links.className='hotw-links';
-  [['Source log',d&&d.gource_log_url],['Leaderboard',d&&d.leaderboard_url],['Video',d&&d.video_url]].forEach(function(pair){
+  [['Source log',d.gource_log_url],['Leaderboard',d.leaderboard_url],['Video',d.video_url]].forEach(function(pair){
     if(!pair[1])return;var a=document.createElement('a');a.href=pair[1];a.textContent=pair[0];links.appendChild(a);
   });
-  el.appendChild(links);
+  if(links.childNodes.length)el.appendChild(links);
 }
 function teamRows(rows){
   rows=(rows||[]).slice(0,5);
@@ -2945,11 +2979,14 @@ function teamRows(rows){
 }
 function renderTeamLeagues(data){
   var el=document.getElementById('team-leagues'),cnt=document.getElementById('teams-count');if(!el)return;
-  var total=(data.by_distro||[]).length+(data.by_os_family||[]).length+(data.by_agent||[]).length;
-  if(cnt)cnt.textContent=total+' leagues';
+  // A league is a non-empty group; headings are only rendered for those so the
+  // count and the body agree (#12109).
+  var groups=[['Distros',data.by_distro||[]],['OS families',data.by_os_family||[]],['Agents',data.by_agent||[]]].filter(function(g){return g[1].length;});
+  if(cnt)cnt.textContent=groups.length+(groups.length===1?' league':' leagues');
   var rare=data.rarest_setup;
   var rareHTML=rare?'<div class="ops-empty"><b>Rarest setup:</b> '+esc(rare.team||'Wildcard')+(rare.member?' · '+esc(rare.member):'')+(rare.kernel?' · kernel '+esc(rare.kernel):'')+'</div>':'';
-  el.innerHTML=rareHTML+'<div class="effective-section-title">Distros</div>'+teamRows(data.by_distro)+'<div class="effective-section-title">OS families</div>'+teamRows(data.by_os_family)+'<div class="effective-section-title">Agents</div>'+teamRows(data.by_agent);
+  if(!groups.length){el.innerHTML=rareHTML+'<div class="ops-empty">No opt-in team members yet.</div>';return;}
+  el.innerHTML=rareHTML+groups.map(function(g){return '<div class="effective-section-title">'+g[0]+'</div>'+teamRows(g[1]);}).join('');
 }
 
 var OPS_SORT_KEY='hive.ops.tableSort';
@@ -3388,7 +3425,12 @@ function loadMeStanding(){
     if(ccMeUsername!==u){ccMeUsername=u;if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}}
     fetch('/api/leaderboard/contributor/'+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(p){
       if(!p||!p.found){
-        mount.innerHTML='<div class="me-standing"><span><b>'+esc(u)+'</b> — ship a task to enter the standings.</span></div>';
+        // Standings count tasks shipped through the contributor relay, so a
+        // hub owner who merges PRs by hand is not "missing" work (#12109).
+        mount.innerHTML='<div class="me-standing"><span><b>'+esc(u)+'</b> — not on the board yet. Standings count tasks shipped through the contributor relay (<code>hive contribute</code>).</span>'
+          +'<a class="me-standing__link" href="/contribute" id="me-standing-join">How to join &#9656;</a></div>';
+        var join=document.getElementById('me-standing-join');
+        if(join)join.addEventListener('click',function(ev){var t=document.getElementById('ptab-onboarding');if(t&&typeof activateTab==='function'){ev.preventDefault();activateTab(t);}});
         return;
       }
       var place=(p.rank&&p.total)?('You stand <b>#'+p.rank+'</b> of '+p.total):'You are on the board';

@@ -161,8 +161,11 @@ func TestHiveOfWeekPayloadDefaultsAndEscaping(t *testing.T) {
 	if resp.Project != hiveGourceDefaultProject || resp.Week != "2026-W39" || resp.ActivityCount != 3 {
 		t.Fatalf("defaults = %+v", resp)
 	}
-	if resp.VideoURL != defaultHiveOfWeekVideoURL || resp.PosterURL != defaultHiveOfWeekPosterURL {
-		t.Fatalf("media defaults = %+v", resp)
+	if resp.VideoURL != "" || resp.PosterURL != "" || resp.EmbedHTML != "" {
+		t.Fatalf("media must be empty when no render is configured: %+v", resp)
+	}
+	if strings.Contains(resp.ReadmeMarkdown, "![") {
+		t.Fatalf("readme must not embed a missing video: %q", resp.ReadmeMarkdown)
 	}
 	if resp.GourceLogURL != "/api/leaderboard/gource-log?project=hive&week=2026-W39" {
 		t.Fatalf("gource log url = %q", resp.GourceLogURL)
@@ -307,7 +310,7 @@ func TestHiveOfWeekAPIRouteFallsBackToHiveWithoutActivity(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("json: %v", err)
 	}
-	if resp.Project != hiveGourceDefaultProject || resp.ActivityCount != 0 || resp.VideoURL != defaultHiveOfWeekVideoURL {
+	if resp.Project != hiveGourceDefaultProject || resp.ActivityCount != 0 || resp.VideoURL != "" {
 		t.Fatalf("resp = %+v", resp)
 	}
 }

@@ -121,3 +121,76 @@ func TestHiveOfWeekArchiveRequiresOwner(t *testing.T) {
 		t.Fatalf("archive without owner = %d, want 403", rec.Code)
 	}
 }
+
+func TestBattleLogStructuredTaskVerbsAndRefs(t *testing.T) {
+	t.Setenv("HIVE_PUBLIC_REPOS", "hivecommons/hive")
+	events := buildBattleLogEvents([]ActivityEntry{
+		{Timestamp: "2026-10-15T12:00:00Z", Username: "bee", Action: "completed", Task: "issue hivecommons/hive#12063: ✨ evidence: GET /api/hives/summary"},
+		{Timestamp: "2026-10-15T12:01:00Z", Username: "bee", Action: "completed", Task: "pr hivecommons/hive#12070: fix"},
+		{Timestamp: "2026-10-15T12:02:00Z", Username: "bee", Action: "picked up", Task: "issue hivecommons/hive#12071: next"},
+		{Timestamp: "2026-10-15T12:03:00Z", Username: "bee", Action: "completed", Task: "issue acme/private#7: secret work"},
+	}, 10)
+	if len(events) != 4 {
+		t.Fatalf("events = %d, want 4", len(events))
+	}
+	private, pickedUp, mergedPR, closedIssue := events[0], events[1], events[2], events[3]
+	if closedIssue.Action != "closed issue" || closedIssue.Ref != "hive#12063" || closedIssue.URL != "https://github.com/hivecommons/hive/issues/12063" {
+		t.Fatalf("closed issue = %+v", closedIssue)
+	}
+	if closedIssue.Title != "✨ evidence: GET /api/hives/summary" || strings.Contains(closedIssue.Target, "[project]") {
+		t.Fatalf("url path must not be scrubbed as a repo: %+v", closedIssue)
+	}
+	if mergedPR.Action != "merged PR" || mergedPR.URL != "https://github.com/hivecommons/hive/pull/12070" {
+		t.Fatalf("merged pr = %+v", mergedPR)
+	}
+	if pickedUp.Action != "picked up issue" || pickedUp.Target != "hive#12071: next" {
+		t.Fatalf("picked up = %+v", pickedUp)
+	}
+	if private.Ref != "#7" || private.URL != "" || private.Repo != "" || strings.Contains(private.Target, "acme") || strings.Contains(private.Target, "[project]") {
+		t.Fatalf("non-public repo must drop the repo name without a placeholder: %+v", private)
+	}
+}
+
+func TestBattleLogDedupesRepeatedJoins(t *testing.T) {
+	events := buildBattleLogEvents([]ActivityEntry{
+		{Timestamp: "2026-10-15T12:00:00Z", Username: "bee", Action: "joined"},
+		{Timestamp: "2026-10-15T12:05:00Z", Username: "bee", Action: "left"},
+		{Timestamp: "2026-10-15T12:15:00Z", Username: "bee", Action: "joined"},
+		{Timestamp: "2026-10-15T12:16:00Z", Username: "wasp", Action: "joined"},
+	}, 10)
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want one join per actor", events)
+	}
+	if events[0].Actor != "wasp" || events[1].Actor != "bee" || events[1].Timestamp != "2026-10-15T12:15:00Z" {
+		t.Fatalf("expected newest join kept per actor: %+v", events)
+	}
+}
+
+func TestScrubRepoRefsLeavesPathsAlone(t *testing.T) {
+	cases := map[string]string{
+		"GET /api/hives/summary":       "GET /api/hives/summary",
+		"see acme/widgets for details": "see [project] for details",
+		"acme/widgets#12 and b/c":      "[project]#12 and [project]",
+		"path a/b/c stays":             "path a/b/c stays",
+		"version 1.2/3 is not a repo":  "version [project] is not a repo",
+		"docs at https://x.y/z/w":      "docs at [link]",
+	}
+	for in, want := range cases {
+		if got := scrubBattleLogText(in); got != want {
+			t.Fatalf("scrubBattleLogText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestHiveOfWeekPayloadUsesConfiguredRender(t *testing.T) {
+	t.Setenv(hiveOfWeekVideoURLEnv, "https://github.com/hivecommons/hive/releases/download/hive-of-the-week/latest.mp4")
+	t.Setenv(hiveOfWeekPosterURLEnv, "https://github.com/hivecommons/hive/releases/download/hive-of-the-week/latest.jpg")
+	week := time.Date(2026, time.October, 12, 0, 0, 0, 0, time.UTC)
+	resp := hiveOfWeekPayload("hivecommons/hive", week, 4, httptest.NewRequest(http.MethodGet, "/api/leaderboard/hive-of-week", nil))
+	if !strings.HasSuffix(resp.VideoURL, "latest.mp4") || !strings.HasSuffix(resp.PosterURL, "latest.jpg") {
+		t.Fatalf("media = %+v", resp)
+	}
+	if !strings.Contains(resp.EmbedHTML, "<video") || !strings.Contains(resp.ReadmeMarkdown, "[![Hive of the Week: hivecommons/hive]") {
+		t.Fatalf("embed = %q readme = %q", resp.EmbedHTML, resp.ReadmeMarkdown)
+	}
+}
