@@ -25715,6 +25715,963 @@
         }
       }
     },
+    "/api/diag/agents/{name}/log": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Diagnostic read of an agent's live terminal log",
+        "description": "Wraps GET /api/agents/{name}/log (any authenticated role) in the structured text shape: the newest max_bytes of the scrubbed log. Read-only. Built for the admin MCP diagnostic reads (#11943): the wrapped endpoint is called as the caller, so its own role rule applies; a refusal keeps its status with a fixed message. The result is scrubbed as log lines are and stays under 128 KiB with truncation disclosed.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Agent name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "explain",
+            "in": "query",
+            "required": false,
+            "description": "only or hide, passed to the wrapped endpoint.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "required": false,
+            "description": "Newest bytes of text to return; default 65536, at most 131072 (larger values are clamped and max_bytes_clamped is set).",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diagnostic read of an agent's live terminal log result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "Always diag_text."
+                    },
+                    "read": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string",
+                      "description": "Fixed marker: text is untrusted content."
+                    },
+                    "content_type": {
+                      "type": "string",
+                      "description": "Content type of the wrapped plain-text endpoint."
+                    },
+                    "text": {
+                      "type": "string",
+                      "description": "Newest part of the scrubbed text."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "bytes_total": {
+                      "type": "integer",
+                      "description": "Full size of the wrapped response in bytes."
+                    },
+                    "bytes_returned": {
+                      "type": "integer"
+                    },
+                    "max_bytes": {
+                      "type": "integer"
+                    },
+                    "max_bytes_clamped": {
+                      "type": "boolean"
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "description": "What scrubbing replaced, by kind, with counts.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "pre_existing_marker_lines": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "403": {
+            "description": "The wrapped endpoint refused the caller's role"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        }
+      }
+    },
+    "/api/diag/agents/{name}/kicks": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Diagnostic list of an agent's archived kick logs",
+        "description": "Wraps GET /api/agents/{name}/kicks (any authenticated role); newest first, oldest entries dropped to fit. Read-only. Built for the admin MCP diagnostic reads (#11943): the wrapped endpoint is called as the caller, so its own role rule applies; a refusal keeps its status with a fixed message. The result is scrubbed as log lines are and stays under 128 KiB with truncation disclosed.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Agent name",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diagnostic list of an agent's archived kick logs result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "read": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string",
+                      "description": "Fixed marker: wrapped fields are untrusted content."
+                    },
+                    "kicks": {
+                      "type": "object",
+                      "description": "The wrapped endpoint's JSON, scrubbed; replaced by kicks_json_tail (newest part of its JSON text) only if trimming was not enough."
+                    },
+                    "kicks_json_tail": {
+                      "type": "string"
+                    },
+                    "bytes_total": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "trimmed": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "unit": {
+                            "type": "string"
+                          },
+                          "total": {
+                            "type": "integer"
+                          },
+                          "kept": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "description": "What scrubbing replaced, by kind, with counts.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "403": {
+            "description": "The wrapped endpoint refused the caller's role"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        }
+      }
+    },
+    "/api/diag/agents/{name}/kicks/{id}": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Diagnostic read of one archived kick log",
+        "description": "Wraps GET /api/agents/{name}/kicks/{id} (any authenticated role) in the structured text shape. Read-only. Built for the admin MCP diagnostic reads (#11943): the wrapped endpoint is called as the caller, so its own role rule applies; a refusal keeps its status with a fixed message. The result is scrubbed as log lines are and stays under 128 KiB with truncation disclosed.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "description": "Agent name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Kick log archive id, from the kicks list",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "required": false,
+            "description": "Newest bytes of text to return; default 65536, at most 131072 (larger values are clamped and max_bytes_clamped is set).",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diagnostic read of one archived kick log result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "Always diag_text."
+                    },
+                    "read": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string",
+                      "description": "Fixed marker: text is untrusted content."
+                    },
+                    "content_type": {
+                      "type": "string",
+                      "description": "Content type of the wrapped plain-text endpoint."
+                    },
+                    "text": {
+                      "type": "string",
+                      "description": "Newest part of the scrubbed text."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "bytes_total": {
+                      "type": "integer",
+                      "description": "Full size of the wrapped response in bytes."
+                    },
+                    "bytes_returned": {
+                      "type": "integer"
+                    },
+                    "max_bytes": {
+                      "type": "integer"
+                    },
+                    "max_bytes_clamped": {
+                      "type": "boolean"
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "description": "What scrubbing replaced, by kind, with counts.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "pre_existing_marker_lines": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "403": {
+            "description": "The wrapped endpoint refused the caller's role"
+          },
+          "404": {
+            "description": "Agent or archive not found"
+          }
+        }
+      }
+    },
+    "/api/diag/runs/{key}/log": {
+      "get": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "Diagnostic read of a run's stage log",
+        "description": "Wraps GET /api/runs/{key}/log (read role) in the structured text shape. Read-only. Built for the admin MCP diagnostic reads (#11943): the wrapped endpoint is called as the caller, so its own role rule applies; a refusal keeps its status with a fixed message. The result is scrubbed as log lines are and stays under 128 KiB with truncation disclosed.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Run key",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stage",
+            "in": "query",
+            "required": false,
+            "description": "Stage name, passed through.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "gen",
+            "in": "query",
+            "required": false,
+            "description": "Generation, passed through.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "description": "Tail lines, passed through.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "required": false,
+            "description": "Newest bytes of text to return; default 65536, at most 131072 (larger values are clamped and max_bytes_clamped is set).",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diagnostic read of a run's stage log result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "description": "Always diag_text."
+                    },
+                    "read": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string",
+                      "description": "Fixed marker: text is untrusted content."
+                    },
+                    "content_type": {
+                      "type": "string",
+                      "description": "Content type of the wrapped plain-text endpoint."
+                    },
+                    "text": {
+                      "type": "string",
+                      "description": "Newest part of the scrubbed text."
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "bytes_total": {
+                      "type": "integer",
+                      "description": "Full size of the wrapped response in bytes."
+                    },
+                    "bytes_returned": {
+                      "type": "integer"
+                    },
+                    "max_bytes": {
+                      "type": "integer"
+                    },
+                    "max_bytes_clamped": {
+                      "type": "boolean"
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "description": "What scrubbing replaced, by kind, with counts.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "pre_existing_marker_lines": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "403": {
+            "description": "The wrapped endpoint refused the caller's role"
+          },
+          "404": {
+            "description": "Run or log not found"
+          }
+        }
+      }
+    },
+    "/api/diag/runs/{key}/detail": {
+      "get": {
+        "tags": [
+          "Plan"
+        ],
+        "summary": "Diagnostic read of a run's detail",
+        "description": "Wraps GET /api/runs/{key}/detail (any authenticated role; pane tails need read-write there). raw_log keeps its newest bytes; events, stages, prs and notes their newest entries. Read-only. Built for the admin MCP diagnostic reads (#11943): the wrapped endpoint is called as the caller, so its own role rule applies; a refusal keeps its status with a fixed message. The result is scrubbed as log lines are and stays under 128 KiB with truncation disclosed.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "Run key",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diagnostic read of a run's detail result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "read": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string",
+                      "description": "Fixed marker: wrapped fields are untrusted content."
+                    },
+                    "detail": {
+                      "type": "object",
+                      "description": "The wrapped endpoint's JSON, scrubbed; replaced by detail_json_tail (newest part of its JSON text) only if trimming was not enough."
+                    },
+                    "detail_json_tail": {
+                      "type": "string"
+                    },
+                    "bytes_total": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "trimmed": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "unit": {
+                            "type": "string"
+                          },
+                          "total": {
+                            "type": "integer"
+                          },
+                          "kept": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "description": "What scrubbing replaced, by kind, with counts.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "403": {
+            "description": "The wrapped endpoint refused the caller's role"
+          },
+          "404": {
+            "description": "Run not found"
+          }
+        }
+      }
+    },
+    "/api/diag/health": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Diagnostic read of the deep health check",
+        "description": "Wraps GET /api/health/deep (public); returned whole. Read-only. Built for the admin MCP diagnostic reads (#11943): the wrapped endpoint is called as the caller, so its own role rule applies; a refusal keeps its status with a fixed message. The result is scrubbed as log lines are and stays under 128 KiB with truncation disclosed.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Diagnostic read of the deep health check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "read": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string",
+                      "description": "Fixed marker: wrapped fields are untrusted content."
+                    },
+                    "health": {
+                      "type": "object",
+                      "description": "The wrapped endpoint's JSON, scrubbed; replaced by health_json_tail (newest part of its JSON text) only if trimming was not enough."
+                    },
+                    "health_json_tail": {
+                      "type": "string"
+                    },
+                    "bytes_total": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "trimmed": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string"
+                          },
+                          "unit": {
+                            "type": "string"
+                          },
+                          "total": {
+                            "type": "integer"
+                          },
+                          "kept": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "description": "What scrubbing replaced, by kind, with counts.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "403": {
+            "description": "The wrapped endpoint refused the caller's role"
+          }
+        }
+      }
+    },
+    "/api/diag/prompt-history": {
+      "get": {
+        "tags": [
+          "History"
+        ],
+        "summary": "Diagnostic read of prompt history",
+        "description": "Wraps GET /api/prompt-history (read-write role). Entries newest first; every field scrubbed, each prompt cut at 8 KiB (cut, full_bytes), and the newest entries kept while the result fits. Read-only. Built for the admin MCP diagnostic reads (#11943): the wrapped endpoint is called as the caller, so its own role rule applies; a refusal keeps its status with a fixed message. The result is scrubbed as log lines are and stays under 128 KiB with truncation disclosed.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "description": "Agent name filter, passed through.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "windowHours",
+            "in": "query",
+            "required": false,
+            "description": "Window in hours, passed through.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diagnostic read of prompt history result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "read": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string"
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "window_hours": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ts": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "trigger": {
+                            "type": "string"
+                          },
+                          "prompt": {
+                            "type": "string"
+                          },
+                          "cut": {
+                            "type": "boolean"
+                          },
+                          "full_bytes": {
+                            "type": "integer"
+                          },
+                          "stored_truncated": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "entry_count": {
+                      "type": "integer"
+                    },
+                    "entries_total": {
+                      "type": "integer"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "cut_entries": {
+                      "type": "integer"
+                    },
+                    "entry_byte_cap": {
+                      "type": "integer"
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "description": "What scrubbing replaced, by kind, with counts.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "pre_existing_marker_lines": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "403": {
+            "description": "The wrapped endpoint refused the caller's role"
+          }
+        }
+      }
+    },
+    "/api/diag/config": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Diagnostic read of the effective configuration and its provenance",
+        "description": "Owner only, verified by this hive (dashboard token or a verified owner session); a role claimed in request headers is refused with 403. Lists every effective configuration key and environment name with the layer that set it; values are shown only for keys and names on value_list (known non-secret), all others only as set or not set. Shown values are scrubbed; the configuration file itself is never returned. Keys are paged with offset/next_offset. Read-only. Built for the admin MCP diagnostic reads (#11943): the wrapped endpoint is called as the caller, so its own role rule applies; a refusal keeps its status with a fixed message. The result is scrubbed as log lines are and stays under 128 KiB with truncation disclosed.",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Key offset from next_offset.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diagnostic read of the effective configuration and its provenance result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    },
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "set": {
+                            "type": "boolean"
+                          },
+                          "layer": {
+                            "type": "string"
+                          },
+                          "also_set_by": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "value": {
+                            "type": "string"
+                          },
+                          "value_shown": {
+                            "type": "boolean"
+                          },
+                          "value_cut": {
+                            "type": "boolean"
+                          },
+                          "value_hidden": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "key_count": {
+                      "type": "integer"
+                    },
+                    "keys_total": {
+                      "type": "integer"
+                    },
+                    "offset": {
+                      "type": "integer"
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_offset": {
+                      "type": "integer"
+                    },
+                    "env": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "set": {
+                            "type": "boolean"
+                          },
+                          "value": {
+                            "type": "string"
+                          },
+                          "value_hidden": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "env_total": {
+                      "type": "integer"
+                    },
+                    "env_truncated": {
+                      "type": "boolean"
+                    },
+                    "value_list": {
+                      "type": "object",
+                      "properties": {
+                        "config_keys": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "env_names": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "provenance": {
+                      "type": "object"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "description": "What scrubbing replaced, by kind, with counts.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "403": {
+            "description": "The wrapped endpoint refused the caller's role"
+          }
+        }
+      }
+    },
     "/api/prompt-history": {
       "get": {
         "tags": [

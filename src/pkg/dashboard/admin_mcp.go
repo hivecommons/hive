@@ -20,6 +20,10 @@ type dashboardAdminMCPProvider struct {
 	user          string
 	role          string
 	authorization string
+	// ownerVerified is true only when this hive's own authentication marked
+	// the outer request as a verified owner (dashboard token or verified
+	// owner session); see adminMCPOwnerVerified.
+	ownerVerified bool
 }
 
 func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +32,7 @@ func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {
 		user:          r.Header.Get("X-Hive-User"),
 		role:          r.Header.Get("X-Hive-Role"),
 		authorization: r.Header.Get("Authorization"),
+		ownerVerified: adminMCPOwnerVerified(r),
 	}
 	adminmcp.NewHandler(provider,
 		adminmcp.WithWritesEnabled(adminMCPWritesEnabled()),
@@ -71,6 +76,9 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 			return nil, err
 		}
 		return p.get(tool, path)
+	}
+	if adminmcp.DiagTool(tool) {
+		return p.readDiag(tool, args)
 	}
 	path, ok := adminMCPReadPath(tool, args)
 	if !ok {

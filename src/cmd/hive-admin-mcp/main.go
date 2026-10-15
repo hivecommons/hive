@@ -257,6 +257,9 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		}
 		return getPath(ctx, client, path)
 	}
+	if adminmcp.DiagTool(tool) {
+		return p.readDiag(ctx, tool, args)
+	}
 	path, ok := readPath(tool, args)
 	if !ok {
 		return nil, fmt.Errorf("unsupported admin MCP read tool %q", tool)

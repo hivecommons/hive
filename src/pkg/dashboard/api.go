@@ -510,6 +510,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 	// Per-agent Variables tab (#11458, api_variables.go).
 	s.registerAgentVariableRoutes()
+	// Admin MCP diagnostic reads (#11943, api_diag.go).
+	s.registerDiagRoutes()
 }
 
 var (

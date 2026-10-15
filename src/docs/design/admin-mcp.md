@@ -544,6 +544,66 @@ Phase 5 registers the fleet-level write operations under that contract:
   shallower queue, which raises agent cadence and spend — because the number alone does not tell
   an owner what it buys.
 
+### Diagnostic reads
+
+hivecommons/hive#11943 (child of #11941) adds read tools for the per-agent, per-run, health,
+prompt and configuration evidence an operator otherwise collects with a shell. Each tool
+(`pkg/adminmcp/tools_diag.go`) maps to one `GET /api/diag/...` route
+(`pkg/dashboard/api_diag.go`, `api_diag_config.go`). The route calls the existing dashboard
+endpoint through the mux as the caller, carrying only the user, role and verified-owner marker
+that this hive's authentication set. So the wrapped endpoint's own role rule decides access,
+and its response is left unchanged. Both read dispatchers (the in-hive provider in
+`admin_mcp_diag.go` and the stdio binary in `cmd/hive-admin-mcp/diag.go`) call these routes
+and nothing else. Neither applies `CapResult`. A refusal becomes the typed `ErrForbidden`
+(JSON-RPC `-32003`) without the hive's response body.
+
+| Tool | Route | Wraps | Gate |
+|---|---|---|---|
+| `agent_log_read` | `/api/diag/agents/{name}/log` | `/api/agents/{name}/log` | any authenticated role |
+| `agent_kicks_list` | `/api/diag/agents/{name}/kicks` | `/api/agents/{name}/kicks` | any authenticated role |
+| `agent_kick_read` | `/api/diag/agents/{name}/kicks/{id}` | `/api/agents/{name}/kicks/{id}` | any authenticated role |
+| `run_log_read` | `/api/diag/runs/{key}/log` | `/api/runs/{key}/log` | `RoleRead`, in `handleRunLog` |
+| `run_detail_read` | `/api/diag/runs/{key}/detail` | `/api/runs/{key}/detail` | any authenticated role; pane tails only for `paneTailViewer` |
+| `health_deep_read` | `/api/diag/health` | `/api/health/deep` | public |
+| `prompt_history_read` | `/api/diag/prompt-history` | `/api/prompt-history` | `RoleReadWrite`, in `handlePromptHistory` |
+| `config_effective_read` | `/api/diag/config` | the merge `/api/config/provenance` computes | `requireOwnerRole` (owner plus the hive-set verified marker) |
+
+- **Text shape.** Plain-text sources come back as `diag_text`: `text`, `content_type`,
+  `truncated`, `bytes_total` (the full size), `bytes_returned`, `max_bytes` (default 64 KiB,
+  clamped to 128 KiB with `max_bytes_clamped`), `redactions`. Only the newest `max_bytes`
+  plus a 16 KiB overlap is scrubbed. The overlap lets a private key cut by the window still be
+  recognised. The text keeps its newest part and starts on a line boundary where one is near.
+- **JSON shape.** JSON sources are scrubbed string by string. They come back under one key
+  (`kicks`, `detail`, `health`) with `truncated` and `trimmed[]` (`field`, `unit`, `total`,
+  `kept`). When the result would pass the cap, the oldest list entries and the oldest raw log
+  bytes are dropped first. If that is still not enough, the value is replaced by the newest
+  part of its JSON text (`<key>_json_tail`).
+- **Prompt history.** Each entry's agent, trigger and prompt are scrubbed. A prompt over 8 KiB
+  keeps its first 8 KiB and is flagged `cut` with `full_bytes`. Entries are kept newest first
+  while the result fits, with `entries_total` and `cut_entries` reported.
+- **Configuration.** The effective configuration is the seed merged with the dashboard overlay
+  by `config.MergeLayersYAML`, as provenance computes it. Every key of the effective
+  configuration and of each raw layer is listed with `layer`: the tracked provenance layer,
+  else the accepted overlay, else the seed (when no overlay was accepted, or for `github.*`
+  when the GitHub ratchet fired), else `default`, else `unset`. `also_set_by` lists the lower
+  layers it overrode. `provenance` adds the layer descriptions, overlay presence, rejection
+  and reason (quoted YAML removed), the last-good fallback and identity issues.
+- **Values.** A value is shown only for a key or environment name on the documented value
+  list. That list is returned in the result as `value_list`. Every other key or name is
+  `set` with `value_hidden: not_on_value_list`. An environment name the log-read secret rule
+  claims is never shown, even if listed. A listed value is scrubbed and cut at 1 KiB. A URL
+  with a login is withheld (`url_with_embedded_login`). Keys travel as values (`"key": ...`),
+  never as map keys, so the outbound key mask never hides them. No hash or fingerprint of any
+  value is returned. Keys are paged by size with `offset`/`next_offset`.
+- **Verified owner, both transports.** Through the in-hive endpoint, `config_effective_read`
+  is refused with `ErrOwnerUnverified` before any request unless `handleAdminMCP` saw the
+  owner role with the verified marker that `authenticate` sets only for the dashboard token,
+  the internal token or a verified owner session. `authenticate` deletes any inbound copy of
+  the marker. Over stdio, the hive's own authentication of the configured token decides, and
+  a 401/403 maps to the same typed error.
+
+These tools add no scrubber category, so `bin/contributor-relay.js` is unchanged.
+
 ## Deliberately absent, and why
 
 Recording the reason matters as much as recording the exclusion. A bare "out of scope" reads,

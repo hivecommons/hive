@@ -169,6 +169,58 @@ Meta tools:
 Write tools (`write_preview`, `write_confirm`) appear only when writes are on.
 On stdio, `select_hive` is also available.
 
+### Diagnostic reads
+
+These read-only tools (#11943) show what an operator would otherwise need a shell
+for. They work the same over HTTP and stdio. Each one wraps a dashboard endpoint
+and keeps that endpoint's role. Every result is scrubbed the way `log_read` lines
+are, stays under 128 KiB, and says what it cut. The shared `limit` does not apply.
+Results carry the `untrusted_content` marker.
+
+| Tool | Wraps | Required role | Returns |
+|------|-------|---------------|---------|
+| `agent_log_read` | `GET /api/agents/{name}/log` | Any authenticated role | The agent's live terminal log: the newest `max_bytes` (default 64 KiB, max 128 KiB); needs `agent`, optional `explain` (`only`/`hide`) |
+| `agent_kicks_list` | `GET /api/agents/{name}/kicks` | Any authenticated role | The agent's archived kick logs, newest first; needs `agent` |
+| `agent_kick_read` | `GET /api/agents/{name}/kicks/{id}` | Any authenticated role | One archived kick log, same bounds as `agent_log_read`; needs `agent`, `kick_id` |
+| `run_log_read` | `GET /api/runs/{key}/log` | Read | A run's stage log, same bounds; needs `run`, optional `stage`, `gen`, `tail` |
+| `run_detail_read` | `GET /api/runs/{key}/detail` | Any authenticated role (pane tails need read-write) | A run's detail; the oldest events, stages, PRs and notes and the oldest raw log bytes are dropped first; needs `run` |
+| `health_deep_read` | `GET /api/health/deep` | None (public) | The deep health check, whole |
+| `prompt_history_read` | `GET /api/prompt-history` | Read-write | Delivered prompts, newest first; each prompt cut at 8 KiB (`cut`, `full_bytes`); optional `agent`, `window_hours` |
+| `config_effective_read` | `GET /api/diag/config` (as `/api/config/provenance`) | Owner, verified by the hive | Every configuration key and environment name, with the layer that set it; optional `offset` |
+
+A plain-text log comes back as `{text, content_type, truncated, bytes_total,
+bytes_returned, max_bytes, redactions}`. The dashboard's own plain-text
+responses are not changed. A refused read returns the typed forbidden error.
+The error never includes the hive's response body.
+
+`config_effective_read` shows values only for the keys and names below. These
+are known not to hold secrets. Every other key or environment variable is shown
+only as set or not set. A listed value is still scrubbed. A listed URL that
+holds a login is withheld. The result also includes provenance: the layer that
+set each key, any lower layers it overrode (`also_set_by`), a rejected overlay
+and its reason, the last-good fallback, and the GitHub ratchet. The
+configuration file itself is never returned. Over HTTP, the hive must itself
+have authenticated the caller as owner, with the dashboard token or a verified
+owner session. An owner role claimed only in request headers is refused with
+the typed forbidden error `ErrOwnerUnverified`.
+
+- Configuration keys: `acmm_level`, `hive_id`, `project.org`, `project.name`,
+  `project.repos[*]`, `project.primary_repo`, `project.ai_author`,
+  `project.forge`, `hub.enabled`, `hub.url`, `hub.is_public`, `hub.hive_type`,
+  `hub.auto_upgrade`, `hub.auto_upgrade_mode`, `github.app_id`,
+  `github.installation_id`, `github.app_slug`, `github.api_url`,
+  `github.base_url`, `governor.eval_interval_s`, `governor.logging.dir`,
+  `governor.logging.level`, `governor.logging.max_size_mb`,
+  `governor.logging.max_age_days`, `governor.logging.max_backups`,
+  `governor.logging.compress`, `governor.logging.kick_log_source`,
+  `governor.logging.read_scan_max_mb`, `agents.*.backend`, `agents.*.model`,
+  `agents.*.enabled`, `agents.*.paused`
+- Environment names: `HIVE_CONFIG`, `HIVE_ADMIN_MCP_ENABLE_WRITES`,
+  `HIVE_ADMIN_MCP_PENDING_FILE`, `HOME`, `HOSTNAME`, `LANG`, `PATH`, `TZ`,
+  `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`
+
+See [design/admin-mcp.md](design/admin-mcp.md#diagnostic-reads).
+
 ## Writes
 
 Writes are off unless `HIVE_ADMIN_MCP_ENABLE_WRITES` is set on the process that

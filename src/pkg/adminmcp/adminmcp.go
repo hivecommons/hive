@@ -365,6 +365,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolExclusionCatalogue, "Return the askable catalogue of operations deliberately excluded from admin MCP."},
 		{ToolRefuseOperation, "Return the recorded refusal for an excluded or unavailable operation."},
 	}
+	defs = append(defs, diagToolDefs()...)
 	out := make([]map[string]any, 0, len(defs))
 	for _, d := range defs {
 		metadata := phaseOneMetadata()
@@ -379,6 +380,9 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 }
 
 func AllowedTool(name string) bool {
+	if DiagTool(name) {
+		return true
+	}
 	switch name {
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
@@ -451,6 +455,9 @@ func inputSchema(name string) map[string]any {
 	case ToolWriteConfirm:
 		props = map[string]any{"confirmation_id": map[string]any{"type": "string"}}
 		required = []string{"confirmation_id"}
+	}
+	if DiagTool(name) {
+		props, required = diagSchema(name)
 	}
 	return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
 }
