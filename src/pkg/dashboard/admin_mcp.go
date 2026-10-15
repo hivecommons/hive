@@ -110,9 +110,25 @@ func (p dashboardAdminMCPProvider) get(tool, path string) (any, error) {
 	}
 	p.server.mux.ServeHTTP(rec, req)
 	if rec.Code < http.StatusOK || rec.Code >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("admin MCP read %s returned HTTP %d", tool, rec.Code)
+		// Same wording as the standalone client's APIError so both transports
+		// give the caller the hive's reason; toolErr scrubs the text outbound.
+		if reason := adminMCPRefusalReason(rec.Body.Bytes()); reason != "" {
+			return nil, fmt.Errorf("Hive API returned HTTP %d: %s", rec.Code, reason)
+		}
+		return nil, fmt.Errorf("Hive API returned HTTP %d", rec.Code)
 	}
 	return decodeAdminMCPJSON(rec.Body.Bytes())
+}
+
+func adminMCPRefusalReason(body []byte) string {
+	reason := strings.TrimSpace(string(body))
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) == nil && payload.Error != "" {
+		reason = payload.Error
+	}
+	return reason
 }
 
 func adminMCPReadPath(tool string, args map[string]any) (string, bool) {
