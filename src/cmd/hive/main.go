@@ -6791,7 +6791,12 @@ func runEvalCycle(
 	// log so "agents_due" names the agents that are actually about to be
 	// kicked; anything gated out is reported in "agents_skipped" with its
 	// reason rather than vanishing silently.
-	agentsDue, agentsSkipped := partitionKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused)
+	agentsDue, agentsSkipped := partitionKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused, func(name string) string {
+		if st, err := agentMgr.GetStatusFast(name); err == nil && st != nil {
+			return st.PausedTrigger
+		}
+		return ""
+	})
 
 	logger.Info("governor eval complete",
 		"mode", govState.Mode,

@@ -211,7 +211,9 @@ func TestCapturePaneJoinsWrappedBlockedActionMarker(t *testing.T) {
 		t.Fatalf("joined capture did not keep blocked marker on one line; capture:\n%s", output)
 	}
 
-	m.checkBlockedThrash(agent.Name, matchedLine)
+	// The pane line itself is ASCII (the wrap-join is what is under test);
+	// prefix the helper's glyph so the joined text is judged as helper output.
+	m.checkBlockedThrash(agent.Name, blockedActionPrefix+matchedLine)
 	if st := m.thrash[agent.Name]; st == nil || len(st.times) != 1 {
 		t.Fatalf("joined blocked marker did not feed thrash detector; state=%v line=%q", st, matchedLine)
 	}

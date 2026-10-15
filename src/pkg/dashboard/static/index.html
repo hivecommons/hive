@@ -13615,6 +13615,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // sidebar/detail renderers) — the row badge must say "paused", not
         // "off", when the operator paused the agent.
         const agentPaused = agentData && agentData.paused === true;
+        // #12015: name non-operator pause triggers (thrash-breaker, login-detector…)
+        // inline so a breaker pause does not read like a cadence choice.
+        const pausedTrigger = agentPaused ? String(agentData.pausedTrigger || '') : '';
+        const pausedLabel = pausedTrigger && pausedTrigger !== 'dashboard-api' ? 'paused · ' + pausedTrigger : 'paused';
+        const pausedBadgeHtml = agentPaused ? `<span class="pause-badge" data-status="warn" title="${esc(pauseProvenanceLine(agentData))}">${esc(pausedLabel)}</span>` : '<span class="pause-badge" data-status="warn">paused</span>';
         const agentOff = agentData && agentData.offByCadence === true && !agentPaused;
         const agentOnDemand = agentData && agentData.onDemand === true;
         const agentDisabled = agentData && agentIsDisabled(agentData);
@@ -13632,14 +13637,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             const colCls = isActive ? `col-active mode-${m}` : '';
             const stateCls = isContinuous ? ' continuous' : showOnDemand ? ' on-demand' : showOff ? ' off' : showPaused ? ' paused' : '';
             const dot = (isActive && isWorking && !agentPaused && !showOff && !showOnDemand && !agentDisabled && !isContinuous) ? '<span class="active-dot"></span>' : '';
-            const badge = isContinuous ? '<span class="on-demand-badge" data-status="info">∞ continuous</span>' : showOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : showOff ? '<span class="off-badge" data-status="neutral" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. The agent is still enabled; this is a per-mode schedule gap, not the 0/1 switch.">no cadence</span>' : showPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : val;
+            const badge = isContinuous ? '<span class="on-demand-badge" data-status="info">∞ continuous</span>' : showOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : showOff ? '<span class="off-badge" data-status="neutral" title="No cadence configured for this mode — the governor never kicks this agent while the hive is in it. The agent is still enabled; this is a per-mode schedule gap, not the 0/1 switch.">no cadence</span>' : showPaused ? pausedBadgeHtml : val;
             if (agentDisabled) {
               return `<td class="${colCls} cadence-disabled-cell" title="${esc((agentData && (agentData.displayName || agentData.name)) || aname)} is disabled; cadence intervals apply again when the agent is enabled">${badge}</td>`;
             }
             return `<td class="${colCls}${stateCls}" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(aname)}" data-tab="Cadences" title="${esc(tip)}">${dot}${badge}</td>`;
           }).join('');
         const nameDot = isWorking ? '<span class="agent-dot"></span>' : '';
-        const pauseBadge = agentDisabled ? '<span class="off-badge" data-status="neutral" title="Disabled in config — the governor does not schedule this agent">off</span>' : agentOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : agentPaused ? '<span class="pause-badge" data-status="warn">paused</span>' : agentOff ? `<span class="off-badge" data-status="neutral">${esc(agentCadenceOffLabel())}</span>` : '';
+        const pauseBadge = agentDisabled ? '<span class="off-badge" data-status="neutral" title="Disabled in config — the governor does not schedule this agent">off</span>' : agentOnDemand ? '<span class="on-demand-badge" data-status="info">on demand</span>' : agentPaused ? pausedBadgeHtml : agentOff ? `<span class="off-badge" data-status="neutral">${esc(agentCadenceOffLabel())}</span>` : '';
         const continuousBadge = agentData && agentData.continuous === true ? ` <span class="on-demand-badge" data-status="${agentData.continuousBlocked && agentData.continuousBlocked !== 'not_in_mode' ? 'warn' : 'info'}" title="Continuous mode — re-kick after session end plus cool-down${continuousModes.length ? '; modes ' + esc(continuousModes.join(', ')) : ''}${agentData.continuousBlocked === 'budget' ? '; held by budget guard' : ''}">${esc(agentCadenceDisplay(agentData))}${agentData.continuousBlocked && agentData.continuousBlocked !== 'not_in_mode' ? ' held' : ''}</span>` : '';
         const displayLabel = (agentData && agentData.displayName) || aname;
         const powerCell = agentData
