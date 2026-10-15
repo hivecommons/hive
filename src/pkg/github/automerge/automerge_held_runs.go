@@ -56,6 +56,10 @@ const (
 	// github-actions[bot] is missing a context no held run will produce; the
 	// sweep nudged the bot to rebase (#11923).
 	requiredCheckNeverRanPrefix = "required-check-never-ran:"
+	// requiredCheckSkippedByDesignPrefix logs a required context counted as
+	// satisfied because its workflow concluded `skipped` on a trusted bot's head.
+	requiredCheckSkippedByDesignPrefix = "required-check-skipped-by-design:"
+	workflowRunConclusionSkipped       = "skipped"
 	// githubActionsBotLogin authors commits pushed with a workflow GITHUB_TOKEN.
 	githubActionsBotLogin = "github-actions[bot]"
 	// dependabotLogin is the only trusted bot that understands the rebase nudge.
@@ -137,6 +141,57 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 	}
 	c.info("automerge approved held workflow runs", "repo", displayRepo, "pr", number, "sha", headSHA, "approved", approved, "held", len(held), "missing", missing)
 	return approvedHeldWorkflowRunsReason
+}
+
+// recheckSkippedByDesign re-evaluates a `required-check-missing:` head for a
+// trusted-lane bot author, treating required contexts whose same-repo
+// workflow run concluded `skipped` as satisfied (#12004). A context with no
+// run at all ("never scheduled") stays missing. It returns the original
+// verdict unchanged when the shape does not apply.
+func (c *Engine) recheckSkippedByDesign(ctx context.Context, displayRepo, owner, repo, branch string, pr *gh.PullRequest, number int, headSHA string, headPushedAt time.Time, reason string) (bool, string, error) {
+	if c == nil || c.gh == nil || !strings.HasPrefix(reason, requiredCheckMissingPrefix) || c.isForkPR(pr) {
+		return false, reason, nil
+	}
+	if lane, ok := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); !ok || lane != "trusted-bot" {
+		return false, reason, nil
+	}
+	runs, _, err := c.gh.Actions.ListRepositoryWorkflowRuns(hgithub.WithRESTCaller(ctx, "hive:automerge_sweep"), owner, repo, &gh.ListWorkflowRunsOptions{
+		HeadSHA:     headSHA,
+		Event:       "pull_request",
+		ListOptions: gh.ListOptions{PerPage: workflowRunsPageSize},
+	})
+	if err != nil || runs == nil {
+		return false, reason, nil
+	}
+	skipped := skippedWorkflowRunNames(runs.WorkflowRuns, owner+"/"+repo)
+	if len(skipped) == 0 {
+		return false, reason, nil
+	}
+	green, newReason, err := c.commitGreenForPRSkipping(ctx, owner, repo, branch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx), skipped)
+	if err != nil || !green {
+		if err == nil && strings.HasPrefix(newReason, requiredCheckMissingPrefix) {
+			return false, reason, nil
+		}
+		return green, newReason, err
+	}
+	c.info("automerge required check skipped by design", "repo", displayRepo, "pr", number, "sha", headSHA, "reason", requiredCheckSkippedByDesignPrefix+strings.TrimPrefix(reason, requiredCheckMissingPrefix))
+	return true, "", nil
+}
+
+// skippedWorkflowRunNames returns the set of workflow
+// names whose same-repo run concluded `skipped`.
+func skippedWorkflowRunNames(runs []*gh.WorkflowRun, fullName string) map[string]bool {
+	skipped := make(map[string]bool)
+	for _, run := range runs {
+		if run == nil || !strings.EqualFold(run.GetConclusion(), workflowRunConclusionSkipped) {
+			continue
+		}
+		if run.GetHeadRepository() == nil || !strings.EqualFold(run.GetHeadRepository().GetFullName(), fullName) {
+			continue
+		}
+		skipped[run.GetName()] = true
+	}
+	return skipped
 }
 
 // heldSameRepoWorkflowRuns returns the runs waiting on approval whose head

@@ -1301,6 +1301,15 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, reason, err
 	}
 	if !green {
+		// A trusted bot's dependency-bump head never gets the contexts its
+		// workflow skips by design (#12004); re-evaluate treating those as
+		// satisfied. Every other required check must still be green.
+		green, reason, err = c.recheckSkippedByDesign(ctx, displayRepo, owner, repo, baseBranch, pr, number, evaluatedHeadSHA, headPushedAt, reason)
+		if err != nil {
+			return AutoMergeSweepEvent{}, reason, err
+		}
+	}
+	if !green {
 		// A missing required check on a trusted-lane head may be a workflow
 		// run GitHub is holding for approval; release it rather than polling
 		// forever (automerge_held_runs.go).
@@ -2130,6 +2139,10 @@ func (c *Engine) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 }
 
 func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache) (bool, string, error) {
+	return c.commitGreenForPRSkipping(ctx, owner, repo, branch, sha, prNumber, headPushedAt, expectedChecks, nil)
+}
+
+func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache, skippedByDesign map[string]bool) (bool, string, error) {
 	// The walk itself lives in hgithub.EvaluateCommitCI so the merge-request
 	// watcher's positive-confirmation gate (#6173) evaluates a SHA with the
 	// identical rules; only the required-set precedence is engine-specific.
@@ -2159,6 +2172,7 @@ func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha 
 		UnknownRequiredChecksServerEnforced: !requiredKnown && !positiveEvidenceGate,
 		RequiredKnownEmpty:                  positiveEvidenceGate,
 		RequireEvidence:                     !requiredKnown,
+		SkippedByDesign:                     skippedByDesign,
 		MinHeadAge:                          c.minHeadAge,
 		HeadPushedAt:                        headPushedAt,
 		Now:                                 c.now,

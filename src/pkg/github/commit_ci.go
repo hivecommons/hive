@@ -96,6 +96,9 @@ type CommitCIState struct {
 	// exists on the SHA. A required check that has not been created yet is
 	// "expected" in GitHub's vocabulary: not failed, not passed, not present.
 	MissingRequired []string
+	// SkippedByDesign lists required names that no check run reported but that
+	// CommitCIOptions.SkippedByDesign vouched for; they do not block.
+	SkippedByDesign []string
 	// Observed names every status context/check-run name seen on the SHA.
 	Observed map[string]bool
 	// InFlight counts every pending commit status and every not-yet-completed
@@ -135,9 +138,13 @@ type CommitCIOptions struct {
 	// block even when it is not in the known required set (ignorable and meta
 	// checks excepted), so a red non-required check cannot be merged past (#12101).
 	FailOnAnyFailedCheck bool
-	MinHeadAge           time.Duration
-	HeadPushedAt         time.Time
-	Now                  func() time.Time
+	// SkippedByDesign names required contexts the caller verified are skipped
+	// by their workflow on this head; when one has no check run it is treated
+	// as satisfied rather than missing (#12004).
+	SkippedByDesign map[string]bool
+	MinHeadAge      time.Duration
+	HeadPushedAt    time.Time
+	Now             func() time.Time
 	// RequireEvidence fails closed when no real successful CI check-run evidence
 	// exists. It is used when GitHub reports a known empty required-check set or
 	// the set is unknown, so Hive still requires positive CI evidence instead of
@@ -542,11 +549,17 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 
 	if requiredKnown {
 		for name := range required {
-			if !seen[name] {
-				st.MissingRequired = append(st.MissingRequired, name)
+			if seen[name] {
+				continue
 			}
+			if opts.SkippedByDesign[name] {
+				st.SkippedByDesign = append(st.SkippedByDesign, name)
+				continue
+			}
+			st.MissingRequired = append(st.MissingRequired, name)
 		}
 		sort.Strings(st.MissingRequired)
+		sort.Strings(st.SkippedByDesign)
 		if len(st.MissingRequired) > 0 {
 			block("required-check-missing:" + st.MissingRequired[0])
 		}
