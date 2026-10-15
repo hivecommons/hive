@@ -3588,6 +3588,14 @@
     .nous-trust-step.current { font-weight: 700; }
     .nous-trust-step .step-label { font-weight: 600; display: block; margin-bottom: var(--sp-1); }
     .nous-trust-step .step-desc { color: var(--muted); font-size: 0.65rem; }
+    /* Experiment Lab Configuration → Data (reset) section (RFC #11585).
+       Self-contained so it can be appended to the dialog independently. */
+    .nous-reset-section h3 { color: var(--red); }
+    .nous-reset-counts { display: flex; flex-wrap: wrap; gap: var(--sp-5); margin-bottom: var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-reset-counts strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+    .nous-reset-actions { display: flex; flex-wrap: wrap; gap: var(--sp-4); align-items: center; }
+    .nous-reset-actions .hv-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .nous-reset-note { font-size: var(--fs-sm); margin-top: var(--sp-3); }
 
     /* Knowledge Panel */
     .public-knowledge-control { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
@@ -23021,6 +23029,8 @@ function burnAreaChart() {
       }
       h += '</div>';
 
+      h += renderNousResetSection();
+
       // Save / Cancel
       h += '<div class="nous-config-btn-bar">';
       h += '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig" title="Discard all changes and close this dialog">Cancel</button>';
@@ -23038,6 +23048,84 @@ function burnAreaChart() {
 
     function toggleNousRepo(pill) {
       pill.classList.toggle('active');
+    }
+
+    // Data section of the Experiment Lab Configuration dialog (RFC #11585):
+    // what the lab has collected and the owner-only, audited resets.
+    // Counts come from the cached /api/nous/status; every reset re-fetches.
+    const NOUS_RESET_SNAPSHOT_BLOAT_FACTOR = 10;
+    const NOUS_SNAPSHOT_RETENTION_ISSUE_URL = 'https://github.com/hivecommons/hive/issues/12030';
+    const NOUS_RESET_SCOPES = {
+      baseline: { label: 'Reset baseline', title: 'Delete every baseline snapshot and return the lab to Observe mode. Learned principles and the experiment ledger are kept. Owner only, audited.',
+        confirm: 'Reset the baseline?', message: 'Every baseline snapshot is deleted and the mode returns to Observe so a fresh baseline is collected. The ledger and principles are kept. The previous files are moved to a trash folder on the hive volume, not destroyed.', ok: 'Reset baseline' },
+      knowledge: { label: 'Clear knowledge', title: 'Empty the experiment ledger and the learned principles. Baseline snapshots are kept. Owner only, audited.',
+        confirm: 'Clear learned knowledge?', message: 'The experiment ledger and every learned principle are emptied. Baseline snapshots are kept. The previous files are moved to a trash folder on the hive volume, not destroyed.', ok: 'Clear knowledge' },
+      all: { label: 'Reset everything', title: 'Delete the baseline, the ledger, the principles and any pending gate. Mode, scope and goals are kept. Owner only, audited.', danger: true,
+        confirm: 'Reset everything?', message: 'Deletes the baseline, the ledger, every principle and any pending gate, and returns the lab to Observe. Mode, scope and goals are configuration and are kept. Type RESET to confirm.', ok: 'Reset everything' },
+    };
+    function renderNousResetSection() {
+      const s = (_nousCache && _nousCache.status) || {};
+      const snapshots = Number(s.snapshotCount != null ? s.snapshotCount : s.snapshots) || 0;
+      const target = Number(s.snapshotTarget || s.baseline_target) || 0;
+      const principles = Number(s.principleCount != null ? s.principleCount : s.principles) || 0;
+      const experiments = Number(s.iterations) || (Array.isArray(_nousCache && _nousCache.ledger) ? _nousCache.ledger.length : 0);
+      const canReset = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      let h = '<div class="nous-config-section nous-reset-section" data-nous-reset-section>';
+      h += '<h3>🗑️ Data</h3>';
+      h += '<div class="nous-reset-counts">';
+      h += `<span title="Baseline snapshots on disk (one per evaluation cycle)">Snapshots <strong data-nous-count="snapshots">${formatCount(snapshots)}</strong></span>`;
+      h += `<span title="Learned principles in the store">Principles <strong data-nous-count="principles">${formatCount(principles)}</strong></span>`;
+      h += `<span title="Rows in the experiment ledger">Experiments <strong data-nous-count="experiments">${formatCount(experiments)}</strong></span>`;
+      h += '</div>';
+      h += '<div class="nous-reset-actions">';
+      for (const scope of Object.keys(NOUS_RESET_SCOPES)) {
+        const meta = NOUS_RESET_SCOPES[scope];
+        const title = canReset ? meta.title : 'Owner role required';
+        h += `<button type="button" class="hv-btn ${meta.danger ? 'btn-danger' : 'btn-secondary'} nous-btn nous-btn-reset" data-action="nousReset" data-arg0="${escapeHtml(scope)}" data-nous-reset="${escapeHtml(scope)}" title="${escapeHtml(title)}"${canReset ? '' : ' disabled'}>${escapeHtml(meta.label)}</button>`;
+      }
+      h += '<span class="text-muted nous-verdict-note">Resets are owner-only and audited; configuration is kept.</span>';
+      h += '</div>';
+      if (target > 0 && snapshots > target * NOUS_RESET_SNAPSHOT_BLOAT_FACTOR) {
+        h += `<div class="text-muted nous-reset-note" data-nous-reset-hint title="Snapshots keep accumulating after the baseline target is met">baseline target is ${formatCount(target)}; older snapshots are not pruned — see <a href="${NOUS_SNAPSHOT_RETENTION_ISSUE_URL}" target="_blank" rel="noopener" title="hivecommons/hive#12030">retention issue #12030</a></div>`;
+      }
+      h += '</div>';
+      return h;
+    }
+    async function nousReset(scope) {
+      if (!experimentLabEnabled()) return;
+      const meta = NOUS_RESET_SCOPES[scope];
+      if (!meta) { showToast('Unknown reset scope: ' + scope, 'error'); return; }
+      let ok;
+      if (scope === 'all') {
+        const typed = await hivePrompt({
+          title: meta.confirm, label: meta.message, placeholder: 'RESET', confirmLabel: meta.ok,
+          validate: (v) => v === 'RESET' ? true : 'Type RESET (all capitals) to confirm.',
+        });
+        ok = typed === 'RESET';
+      } else {
+        ok = await hiveConfirm({ title: meta.confirm, message: meta.message, confirmLabel: meta.ok, danger: true });
+      }
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/nous/reset', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ scope, confirm: 'RESET' }),
+        });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+          const parts = [];
+          if (j.removed_snapshots) parts.push(formatCount(j.removed_snapshots) + ' snapshots');
+          if (j.removed_ledger_entries) parts.push(formatCount(j.removed_ledger_entries) + ' ledger entries');
+          if (j.removed_principles) parts.push(formatCount(j.removed_principles) + ' principles');
+          showToast((parts.length ? 'Removed ' + parts.join(', ') : 'Nothing to remove') + ' · mode: ' + (j.mode || 'observe'), 'success');
+        } else if (r.status === 409) {
+          showToast(j.error || 'An experiment is active — abort it first, or reset everything', 'error');
+        } else {
+          showToast(j.error || 'Reset failed', 'error');
+        }
+        await fetchNousStatus();
+        openNousConfig();
+      } catch (e) { showToast('Reset failed: ' + e.message, 'error'); }
     }
 
     async function deleteNousPrinciple(id) {

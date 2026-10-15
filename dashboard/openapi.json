@@ -18392,6 +18392,94 @@
         }
       }
     },
+    "/api/nous/reset": {
+      "post": {
+        "tags": [
+          "Experiment Lab"
+        ],
+        "summary": "Reset Experiment Lab data (baseline snapshots, learned knowledge or everything)",
+        "description": "Wipes Nous data under data.nous_dir by scope. baseline removes snapshots/* and zeroes the snapshot counter (mode forced back to observe); knowledge truncates governor/ledger.json and governor/principles.json to empty arrays and invalidates the live knowledge cache; all does both plus gates/*. panel-config.json (mode, scope, goals, bounds, schedule) is never touched. Directories are moved to <nous_dir>/.trash/<timestamp>/ before removal so a crash cannot half-delete the store. Requires owner role; audited as nous_reset. Returns 409 when an experiment is active and scope is not all (abort it first).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "scope",
+                  "confirm"
+                ],
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "baseline",
+                      "knowledge",
+                      "all"
+                    ]
+                  },
+                  "confirm": {
+                    "type": "string",
+                    "description": "Must be exactly RESET.",
+                    "example": "RESET"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Reset completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "scope": {
+                      "type": "string",
+                      "example": "all"
+                    },
+                    "removed_snapshots": {
+                      "type": "integer"
+                    },
+                    "removed_ledger_entries": {
+                      "type": "integer"
+                    },
+                    "removed_principles": {
+                      "type": "integer"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "example": "observe"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scope, missing confirm, or malformed body"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Experiment Lab not enabled or reset store not wired"
+          },
+          "409": {
+            "description": "An experiment is active and scope is not all; abort it first"
+          },
+          "500": {
+            "description": "Store operation failed"
+          }
+        }
+      }
+    },
     "/api/nous/config/controllables": {
       "put": {
         "tags": [

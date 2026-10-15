@@ -412,6 +412,51 @@ tab, "Experiment engine", next to Role) and validated with
 `ValidateExperimentEngine`: it is accepted only on an agent whose role (after
 the same save) is `experimenter`.
 
+## Resetting data
+
+The Experiment Lab Configuration dialog (Settings → Experiment Lab → gear
+icon) ends with a **Data** section that shows the current snapshot /
+principle / experiment counts and three owner-only buttons. Each one calls
+`POST /api/nous/reset` with a JSON body of the form
+`{"scope": "<scope>", "confirm": "RESET"}`:
+
+| Button | `scope` | What is removed | What else happens |
+|---|---|---|---|
+| Reset baseline | `baseline` | `snapshots/*` | snapshot counter and `baseline_pct` return to 0, phase to `collecting`, mode forced back to `observe` |
+| Clear knowledge | `knowledge` | contents of `governor/ledger.json` and `governor/principles.json` (rewritten as empty arrays) | the live `KnowledgeReader` cache is invalidated, so the next status read reports 0 principles / 0 experiments |
+| Reset everything | `all` | both of the above plus `gates/*` | pending gate question and decision are cleared; mode forced back to `observe` |
+
+`panel-config.json` is **never** touched: mode, scope, goals, bounds and
+schedule are settings, not data. Only the mode is rewritten (to `observe`)
+after a `baseline` or `all` reset, because the baseline the other modes
+depend on is gone.
+
+Rules enforced by the handler:
+
+- Owner role required (403 otherwise); every call is audited as
+  `nous_reset` with the scope and the removed counts, or `nous_reset_failed`
+  with the error.
+- `confirm` must be exactly `RESET` and `scope` one of the three values
+  above, otherwise 400. The dashboard asks for a styled confirmation and, for
+  "Reset everything", makes you type `RESET`.
+- If the ledger contains an `active` experiment, `baseline` and `knowledge`
+  return 409 — abort the experiment first (`POST /api/nous/abort`). `all`
+  is always allowed because it removes the ledger as well.
+- A missing `data.nous_dir` (or a missing sub-directory) is a no-op success.
+
+The response is `{"ok": true, "scope": ..., "removed_snapshots": N,
+"removed_ledger_entries": N, "removed_principles": N, "mode": "observe"}`.
+
+Deletion is atomic per directory: `pkg/nousstore` renames the directory to
+`<nous_dir>/.trash/<timestamp>/<name>` and then removes it, so a crash
+mid-way leaves either the original or a complete trash copy, never a
+half-deleted tree. The newest trash entry is kept (older ones are pruned on
+the next reset) and `.trash` is excluded from spoke backups.
+
+If the snapshot count exceeds ten times the baseline target the Data section
+shows a hint that older snapshots are not pruned automatically — see the
+retention issue #12030.
+
 ## What does not exist today
 
 - Goals, bounds, schedule and the trust ladder are **not** read from YAML —

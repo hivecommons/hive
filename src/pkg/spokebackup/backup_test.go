@@ -242,6 +242,8 @@ func TestNousSkip(t *testing.T) {
 	cases := map[string]bool{
 		"snapshots":                 true,
 		"snapshots/1.json":          true,
+		".trash":                    true,
+		".trash/x/governor/l.json":  true,
 		"panel-config.json.tmp":     true,
 		"governor/ledger.json.tmp":  true,
 		"governor":                  false,

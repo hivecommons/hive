@@ -310,6 +310,10 @@ type NousState struct {
 	// PromotionStore, when set, is the durable promotion record (#11699);
 	// Promotions mirrors it. Nil keeps promotions in memory only.
 	PromotionStore NousPromotionStore `json:"-"`
+	// ResetStore, when set, performs the on-disk part of POST
+	// /api/nous/reset (RFC #11585); cmd/hive wires pkg/nousstore. Nil
+	// answers the endpoint with 404.
+	ResetStore NousResetStore `json:"-"`
 	// ArtifactSync, when set, triggers one immediate pass of the optional
 	// GitHub artifact mirror (#11701) and returns its result for the
 	// response body; cmd/hive wires it to pkg/nousartifacts only when
