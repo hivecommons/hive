@@ -47,6 +47,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Podman quick start](quickstart-podman.md) — the Quadlet/systemd standalone runtime path, including rootless/rootful notes, preflights, update, and rollback links.
 - [Kubernetes deployment](kubernetes-deployment.md) — the operator path for Kubernetes: prerequisites, namespace, secret, ConfigMap, PVC, Deployment, Service, Ingress, and published ports. The manifests it applies are [`src/deploy/k8s/`](../deploy/k8s/). See also [dashboard route and health checks](health-checks.md) and the Kubernetes CronJob in [backup and restore](backup-restore.md).
 - [Troubleshooting](troubleshooting.md) — container logs, config validation, agent tmux sessions, dashboard auth, GitHub credential checks, and GitHub App workflow-permission push rejections.
+- [Admin MCP reference](admin-mcp.md) — diagnostic reads for logs, startup output, request logs, agent terminals and kick logs, and crash/restart/memory evidence via the admin MCP: `log_sources`, `log_read` and its diagnostic read companions, and what still needs a host shell.
 - [Community and support](community.md) — Discord, contributor portal, issue tracker, and where to ask Hive Commons questions.
 - [Integration guide](integration-guide.md) — third-party extension surfaces for work source providers, ClankeR/Flue-style external execution, and Spektacular-backed Project Inception.
 - [Cross-cluster migration](cross-cluster-migration.md) — the manual procedure for moving a hive between clusters.
