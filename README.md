@@ -22,7 +22,7 @@ A terminal agent is a power tool: you hold it, aim it, and it stops when you sto
 2. **External context.** What the agent needs to know lives outside the model — in your repo, your knowledge base, your audit trail — and is re-injected each time, so nothing is forgotten and nothing is hallucinated from stale memory.
 3. **Prompts driven by deterministic facts.** The instructions an agent gets are templates filled from real data (the issue, the CI log, the diff, the trust level), not hand-tuned prose.
 
-Around that, Hive picks work from your real queue, sets limits in code with six trust levels (ACMM), checks before and after with deterministic filters and gates, writes every action to an audit log owned by a named human, and runs around the clock. Same agents you use today — governed, scheduled, scoped, and accountable.
+Around that, Hive picks work from your real queue, sets limits in code with six trust levels from the **AI Codebase Maturity Model (ACMM)** — a framework for how much autonomy a codebase is ready to give agents ([levels](#acmm-levels) · [paper](https://arxiv.org/abs/2604.09388)), checks before and after with deterministic filters and gates, writes every action to an audit log owned by a named human, and runs around the clock. Same agents you use today — governed, scheduled, scoped, and accountable.
 
 ## Hub and spoke
 

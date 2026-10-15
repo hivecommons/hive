@@ -15,7 +15,7 @@ A terminal agent is a power tool: you hold it, aim it, and it stops when you sto
 - **[Hive and spoke](architecture.md#8-hub--spoke):** a spoke is the running hive that serves repositories; a hub can register, provision, and observe multiple spokes.
 - **[Agents](agent-configuration.md):** configured AI workers with scopes, models, cadences, and permissions for specific lanes of work.
 - **[Governor](architecture.md#3-the-governor-loop--from-queue-depth-to-a-kick):** the scheduler and policy loop that decides what work is actionable and when agents should be kicked.
-- **[ACMM levels](acmm-policy-matrix.md):** the autonomy model that maps project maturity to what agents may observe, propose, open, review, or merge.
+- **[ACMM levels](acmm-policy-matrix.md):** the **AI Codebase Maturity Model** — six levels that map how mature a codebase's tests, reviews and security posture are to what agents may observe, propose, open, review, or merge ([paper](https://arxiv.org/abs/2604.09388)).
 - **[Hub](hosted-hub.md):** the hosted or self-hosted control plane for onboarding hives, heartbeats, fleet views, and hosted-spoke lifecycle.
 - **[Contributors and ClankeR relay](contributor-relay.md):** a way for trusted contributors to donate compute and run delegated work through hub-mediated roles.
 
