@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -480,6 +481,11 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		return res
 	}
 	if c.reporterConfirmationCloseGateReason(issue) != "" || closeOnMergeNeedsConfirmation(issue) {
+		if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partial() {
+			c.markPartiallyAddressed(ctx, issueRepo, issueNumber, pr.GetNumber(), issue, cov, opts)
+			res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
+			return res
+		}
 		body := closeOnMergeAwaitingComment(pr)
 		if _, _, err := c.client.Issues.CreateComment(WithRESTCaller(ctx, "hive:close_on_merge"), owner, repoName, issueNumber, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 			res.Action, res.Reason = CloseOnMergeNoop, "awaiting_comment_failed"
@@ -489,6 +495,11 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			opts.Logger.Warn("close-on-merge: ensuring likely-done label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
 		} else if err := c.AddLabels(ctx, issueRepo, issueNumber, []string{LikelyDoneLabel}); err != nil && opts.Logger != nil {
 			opts.Logger.Warn("close-on-merge: adding likely-done label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
+		}
+		if labelPresent(issueLabelNames(issue.Labels), PartiallyAddressedLabel) {
+			if err := c.RemoveLabel(ctx, issueRepo, issueNumber, PartiallyAddressedLabel); err != nil && opts.Logger != nil {
+				opts.Logger.Warn("close-on-merge: removing partially-addressed label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
+			}
 		}
 		res.Action, res.Reason = CloseOnMergeAwaiting, "needs_confirmation_or_human"
 		return res
@@ -508,6 +519,180 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	}
 	res.Action, res.Reason = CloseOnMergeClosed, "closed_completed"
 	return res
+}
+
+// closeOnMergeCoverage is how much of an issue a merged PR claims to cover
+// (#11931). hive/likely-done needs a closing keyword for the issue, no
+// remainder/out-of-scope paragraph in the PR body, and — when the issue cites
+// file paths — at least one cited path among the PR's changed files.
+type closeOnMergeCoverage struct {
+	Closing   bool
+	Remainder bool
+	Cited     []string
+	// FilesKnown is false when the changed-file list was not fetched or the
+	// fetch failed; the path rule is then not applied.
+	FilesKnown bool
+	Untouched  []string
+}
+
+func (cov closeOnMergeCoverage) partial() bool {
+	if !cov.Closing || cov.Remainder {
+		return true
+	}
+	return cov.FilesKnown && len(cov.Cited) > 0 && len(cov.Untouched) == len(cov.Cited)
+}
+
+func (c *Client) closeOnMergeCoverage(ctx context.Context, prRepo, issueRepo string, issueNumber int, pr *gh.PullRequest, issue *gh.Issue, opts CloseOnMergeOptions) closeOnMergeCoverage {
+	_, closing := FindClosingKeywordReference(pr.GetTitle()+"\n"+pr.GetBody(), prRepo, issueRepo, issueNumber)
+	cov := closeOnMergeCoverage{
+		Closing:   closing,
+		Remainder: prBodyHasRemainderSignal(pr.GetBody()),
+		Cited:     issueCitedPaths(issue.GetBody()),
+	}
+	if !cov.Closing || cov.Remainder || len(cov.Cited) == 0 {
+		return cov
+	}
+	owner, repoName := c.splitRepo(prRepo)
+	files, err := ListPRChangedFiles(WithRESTCaller(ctx, "hive:close_on_merge"), c.client, owner, repoName, pr)
+	if err != nil {
+		if opts.Logger != nil {
+			opts.Logger.Warn("close-on-merge: listing PR changed files failed; skipping cited-path check", "repo", prRepo, "pr", pr.GetNumber(), "issue", issueNumber, "error", err)
+		}
+		return cov
+	}
+	changed := make([]string, 0, len(files))
+	for _, f := range files {
+		changed = append(changed, f.Filename)
+	}
+	cov.FilesKnown = true
+	cov.Untouched = untouchedCitedPaths(cov.Cited, changed)
+	return cov
+}
+
+// markPartiallyAddressed labels the issue hive/partially-addressed and takes
+// hive/likely-done off. It posts no awaiting-confirmation comment: the issue
+// stays in the actionable pool for the remainder.
+func (c *Client) markPartiallyAddressed(ctx context.Context, issueRepo string, issueNumber, prNumber int, issue *gh.Issue, cov closeOnMergeCoverage, opts CloseOnMergeOptions) {
+	if opts.Logger != nil {
+		opts.Logger.Info("close-on-merge: merged PR covers only part of the issue; labelling partially-addressed",
+			"repo", issueRepo, "issue", issueNumber, "pr", prNumber,
+			"closing_keyword", cov.Closing, "remainder", cov.Remainder, "untouched", cov.Untouched)
+	}
+	if err := c.EnsureIssueLabel(ctx, issueRepo, PartiallyAddressedLabel, "fbca04", "A merged PR addressed only part of this issue; remainder still actionable"); err != nil && opts.Logger != nil {
+		opts.Logger.Warn("close-on-merge: ensuring partially-addressed label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
+	} else if err := c.AddLabels(ctx, issueRepo, issueNumber, []string{PartiallyAddressedLabel}); err != nil && opts.Logger != nil {
+		opts.Logger.Warn("close-on-merge: adding partially-addressed label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
+	}
+	if labelPresent(issueLabelNames(issue.Labels), LikelyDoneLabel) {
+		if err := c.RemoveLabel(ctx, issueRepo, issueNumber, LikelyDoneLabel); err != nil && opts.Logger != nil {
+			opts.Logger.Warn("close-on-merge: removing likely-done label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
+		}
+	}
+}
+
+// prRemainderSignalPattern matches PR-body prose that says the PR left part
+// of the work undone.
+var prRemainderSignalPattern = regexp.MustCompile(`(?i)\b(?:remainder|out[- ]of[- ]scope|this agent tier cannot|left undone|what remains|not (?:yet )?addressed)\b`)
+
+func prBodyHasRemainderSignal(body string) bool {
+	if extractRemainderSection(body) != "" {
+		return true
+	}
+	return prRemainderSignalPattern.MatchString(stripClosingFalsePositiveText(body))
+}
+
+var citedPathTokenPattern = regexp.MustCompile("`([^`\n]+)`")
+
+var citedPathExtensions = map[string]bool{
+	"go": true, "mod": true, "sum": true, "md": true, "mdx": true, "yml": true, "yaml": true,
+	"json": true, "js": true, "mjs": true, "cjs": true, "ts": true, "tsx": true, "jsx": true,
+	"py": true, "sh": true, "bash": true, "toml": true, "txt": true, "rs": true, "java": true,
+	"kt": true, "rb": true, "php": true, "c": true, "h": true, "cc": true, "cpp": true, "hpp": true,
+	"cs": true, "swift": true, "css": true, "scss": true, "html": true, "sql": true, "proto": true,
+	"tf": true, "xml": true, "ini": true, "cfg": true, "conf": true, "lock": true, "vue": true,
+	"svelte": true, "tpl": true, "tmpl": true, "gradle": true, "ps1": true, "dockerfile": true,
+}
+
+var citedPathBasenames = map[string]bool{
+	"Makefile": true, "Dockerfile": true, "Containerfile": true, "CODEOWNERS": true, "Gemfile": true,
+}
+
+// issueCitedPaths returns the backtick-quoted tokens in an issue body that
+// look like repository file paths (a known file extension or basename, or a
+// directory with a trailing slash), normalised and de-duplicated in order.
+// Line suffixes such as `:48` or `#L48` are dropped.
+func issueCitedPaths(body string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range citedPathTokenPattern.FindAllStringSubmatch(body, -1) {
+		p, ok := normalizeCitedPath(m[1])
+		if !ok || seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return out
+}
+
+func normalizeCitedPath(tok string) (string, bool) {
+	tok = strings.TrimSpace(tok)
+	if tok == "" || strings.Contains(tok, "://") || strings.ContainsAny(tok, " \t()<>{}[]=$*?,;\"'|!") {
+		return "", false
+	}
+	if i := strings.IndexAny(tok, ":#"); i >= 0 {
+		tok = tok[:i]
+	}
+	tok = strings.TrimPrefix(tok, "./")
+	tok = strings.TrimPrefix(tok, "/")
+	if tok == "" || strings.HasPrefix(tok, "-") || strings.HasPrefix(tok, "@") || strings.Contains(tok, "..") {
+		return "", false
+	}
+	if strings.HasSuffix(tok, "/") {
+		return tok, len(tok) > 1
+	}
+	base := path.Base(tok)
+	if citedPathBasenames[base] {
+		return tok, true
+	}
+	ext := strings.TrimPrefix(path.Ext(base), ".")
+	if ext == "" || !citedPathExtensions[strings.ToLower(ext)] {
+		return "", false
+	}
+	return tok, true
+}
+
+// untouchedCitedPaths returns the cited paths no changed file matches. A
+// cited directory matches any file under it; a cited path matches a changed
+// file when either is a slash-bounded suffix of the other, so a bare basename
+// or a path relative to a different root still counts.
+func untouchedCitedPaths(cited, changed []string) []string {
+	var out []string
+	for _, p := range cited {
+		if !citedPathTouched(p, changed) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func citedPathTouched(cited string, changed []string) bool {
+	for _, f := range changed {
+		f = strings.TrimPrefix(strings.TrimSpace(f), "/")
+		if f == "" {
+			continue
+		}
+		if strings.HasSuffix(cited, "/") {
+			if strings.HasPrefix(f, cited) || strings.Contains(f, "/"+cited) {
+				return true
+			}
+			continue
+		}
+		if f == cited || strings.HasSuffix(f, "/"+cited) || strings.HasSuffix(cited, "/"+f) {
+			return true
+		}
+	}
+	return false
 }
 
 func closeOnMergeNeedsConfirmation(issue *gh.Issue) bool {

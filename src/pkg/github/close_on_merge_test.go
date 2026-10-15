@@ -69,16 +69,18 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 		name       string
 		labels     []string
 		body       string
+		prBody     string
 		marker     bool
 		unmerged   bool
 		wantAction CloseOnMergeAction
 		wantPatch  bool
 	}{
 		{name: "plain open issue closes completed", wantAction: CloseOnMergeClosed, wantPatch: true},
-		{name: "needs confirmation marker gets likely done comment", body: "body\n\nhive: needs-confirmation", labels: []string{"bug"}, wantAction: CloseOnMergeAwaiting},
-		{name: "needs reporter gets likely done comment", labels: []string{"needs-reporter-confirmation"}, wantAction: CloseOnMergeAwaiting},
-		{name: "needs human gets likely done comment", labels: []string{"needs-human"}, wantAction: CloseOnMergeAwaiting},
-		{name: "epic gets likely done comment", labels: []string{"Epic"}, wantAction: CloseOnMergeAwaiting},
+		{name: "needs confirmation marker gets likely done comment", body: "body\n\nhive: needs-confirmation", labels: []string{"bug"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "needs reporter gets likely done comment", labels: []string{"needs-reporter-confirmation"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "needs human gets likely done comment", labels: []string{"needs-human"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "epic gets likely done comment", labels: []string{"Epic"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
+		{name: "refs-only PR is partially addressed, no awaiting comment", labels: []string{"needs-human"}, wantAction: CloseOnMergeSkipped},
 		{name: "existing marker noops", marker: true, wantAction: CloseOnMergeAlreadyDone},
 		{name: "unmerged PR noops", unmerged: true, wantAction: CloseOnMergeNoop},
 	} {
@@ -129,7 +131,11 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := newTestClient(t, srv, "o", []string{"r"})
-			pr := mergedTestPR(42, "hive[bot]", "scanner/fix-7", "Refs #7")
+			prBody := tc.prBody
+			if prBody == "" {
+				prBody = "Refs #7"
+			}
+			pr := mergedTestPR(42, "hive[bot]", "scanner/fix-7", prBody)
 			if tc.unmerged {
 				pr.Merged = gh.Ptr(false)
 				pr.MergedAt = nil
@@ -148,6 +154,9 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 			}
 			if tc.wantAction == CloseOnMergeAwaiting && (len(posted) != 1 || !strings.Contains(posted[0], "awaiting confirmation")) {
 				t.Fatalf("awaiting comment = %#v", posted)
+			}
+			if tc.wantAction == CloseOnMergeSkipped && (res.Reason != "partially_addressed" || len(posted) != 0) {
+				t.Fatalf("partial result = %+v, posted = %#v", res, posted)
 			}
 		})
 	}
