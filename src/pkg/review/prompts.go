@@ -629,15 +629,6 @@ const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspectiv
 const findingSchemaInstruction = "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
 	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional), review_scope (required for new reports; exactly \"in-scope\" or \"out-of-scope\"). A finding missing title, severity or summary, or carrying any other review_scope value, fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"
 
-func hasPerspective(ps []Perspective, want Perspective) bool {
-	for _, p := range ps {
-		if p == want {
-			return true
-		}
-	}
-	return false
-}
-
 func perspectiveNames(ps []Perspective) []string {
 	out := make([]string, 0, len(ps))
 	for _, p := range ps {
