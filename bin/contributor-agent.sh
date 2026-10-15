@@ -1214,4 +1214,18 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
-wait "$RELAY_PID"
+# `hivectl hives use` signals the container's PID 1 (this script) with USR1; the
+# relay's profile-switch handler lives in the child, so forward it (#12225).
+forward_usr1() {
+  kill -USR1 "$RELAY_PID" 2>/dev/null || true
+}
+trap forward_usr1 SIGUSR1
+
+# A trapped signal makes `wait` return early (128+signal), so re-wait until the
+# relay has really exited and keep its exit code.
+while true; do
+  wait "$RELAY_PID"
+  rc=$?
+  kill -0 "$RELAY_PID" 2>/dev/null || break
+done
+exit "$rc"
