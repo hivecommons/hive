@@ -40121,7 +40121,7 @@ function burnAreaChart() {
       const trajStats = traj.stats || null;
       const trajSkipReasons = trajStats && trajStats.skippedByReason ? Object.entries(trajStats.skippedByReason).map(([r, n]) => `${esc(r)}: ${n}`).join(', ') : '';
       const trajStatsHtml = trajStats
-        ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:6px">Reviews run: <b>${trajStats.reviewed || 0}</b> · skipped: <b>${trajStats.skipped || 0}</b>${trajSkipReasons ? ` (${trajSkipReasons})` : ''} · lane passes: ${trajStats.runs || 0}. Skips only happen when the agent is proven idle and the review is not overdue — never on an unchanged transcript.</div>`
+        ? `<div class="fs-xs text-muted mt-2">Reviews run: <b>${trajStats.reviewed || 0}</b> · skipped: <b>${trajStats.skipped || 0}</b>${trajSkipReasons ? ` (${trajSkipReasons})` : ''} · lane passes: ${trajStats.runs || 0}. Skips only happen when the agent is proven idle and the review is not overdue — never on an unchanged transcript.</div>`
         : '';
       const rotationOn = f.rotationEnabled === true;
       const rotationProviders = (f.rotationProviders && typeof f.rotationProviders === 'object') ? f.rotationProviders : {};
