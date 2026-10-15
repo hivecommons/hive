@@ -588,6 +588,33 @@ governor:
 
   `HIVE_BOB_TOKENS_PER_COIN`, `HIVE_BOB_USD_PER_COIN`, `HIVE_BOB_COIN_BUDGET`, and `HIVE_BOB_USD_BUDGET` override those values at runtime. `budget.usd` and `budget.coins.bob.budget` are first-class caps: set either or both. When both are positive, the governor trips on whichever cap is exhausted first and surfaces the exhausted unit. The Cost panel shows Bob coins alongside the configured USD equivalent so operators can enter and compare either unit. Coin conversion values are account-specific; always confirm the conversion with your Bob team rather than relying on Hive's built-in fallback values.
 
+### Kick size and the list caps
+
+Every kick is typed into the agent's terminal after a `/clear`, so the whole prompt is paid for — in model input tokens and in delivery time (about 400 runes/s, so roughly 2.5 s per KiB) — on every cadence tick. `governor.kick_limits.max_issues` / `max_prs` are the only knobs that change that size without editing a policy, which makes it tempting to lower them. The numbers below ([#12133](https://github.com/hivecommons/hive/issues/12133)) show why the shipped defaults stay at `100` / `50`.
+
+**Where the bytes go.** Measured with `go test ./pkg/scheduler -run TestKickSizeMeasurement -v` (an ACMM L6 `scanner` in `ISSUES_PRS_MERGE` on the shipped `scanner-automerge.md`, three authorised repos, 70-character titles, merge-eligible and CI-failing lists scaled with the backlog — 100 and 20 at the 302-PR row):
+
+| Open issues / PRs | Caps | Kick size | Of which lists |
+|---|---|---|---|
+| 0 / 0 | 100 / 50 | 32.9 KiB | — (policy, seams, overlays, repos) |
+| 10 / 5 | 100 / 50 | 35.8 KiB | 2.9 KiB |
+| 25 / 10 | 100 / 50 | 38.8 KiB | 5.9 KiB |
+| 40 / 20 | 100 / 50 | 43.1 KiB | 10.2 KiB |
+| 60 / 30 | 100 / 50 | 47.7 KiB | 14.8 KiB |
+| 100 / 50 | 100 / 50 | 56.8 KiB | 23.9 KiB |
+| 302 / 302 (the [#7368](https://github.com/hivecommons/hive/issues/7368) backlog) | 100 / 50 | 63.4 KiB | 30.5 KiB (issues 11.5, PRs 6.9, merge-eligible 4.8, CI-failing ≈ 7) |
+| 302 / 302 | 40 / 20 | 47.0 KiB | 14.1 KiB |
+
+The fixed cost — the policy text and the mandatory seams — is 32.9 KiB: 52 % of the worst-case kick and ~85 % of a typical one. Lowering the caps to `40` / `20` saves nothing until a repo set has more than 40 open issues or 20 open PRs, and at most ~16 KiB (≈ 40 s of typing) at the 302-PR extreme. It would also make the merge-eligible list drain a 100-PR automerge queue in five kicks instead of two, which at a 10-minute cadence is the starvation the caps were sized against ([`docs/scale-envelope.md`](scale-envelope.md)). The lever that actually moves kick size is the policy itself, not the list caps.
+
+**Watch it rather than guess.** Each rendered kick logs one line:
+
+```
+level=INFO msg="kick rendered" agent=scanner repo="" kick_bytes=58123 issues_total=137 issues_listed=100 prs_total=61 prs_listed=50 max_issues=100 max_prs=50
+```
+
+`kick_bytes` is the prompt as typed (canary preamble included). When `issues_listed` / `prs_listed` sit well below the caps on every kick, lowering them changes nothing; when `*_total` is persistently far above `*_listed`, the backlog — not the cap — is the problem, and the overflow marker in the prompt already tells the agent the list is partial. Per-agent kicks share the same global caps; set them under **Settings → Repos → Kick prompt list caps** or in `governor.kick_limits`, with `0` meaning unlimited.
+
 ### What consumes tokens while agents are paused
 
 Pausing agents (including the navbar fleet breaker) does not take the Hive instance down: the dashboard, governor scans, GitHub polling, token scanners, repo-cost collectors, telemetry/heartbeats, and provider-headroom probes can keep running. Those components should not make model calls by themselves. Model usage is expected from agent sessions reached through governor/manual/CEL/resume kicks; those kick paths share the same pause and budget gates. Knowledge priming reads configured knowledge stores and attaches facts to kicks; it does not independently call the model while every agent is paused. Provider-budget probes are the exception by design: after a provider spend-limit rebuff, Hive may release one kick after `governor.provider_budget.probe_interval_s` to test recovery.

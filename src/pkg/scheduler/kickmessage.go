@@ -297,6 +297,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 				msg += "\n" + s.buildReposSectionFor(agentName)
 			}
 			msg = s.addCanaryPreamble(agentName, msg)
+			s.logKickSize(agentName, repo, msg, targetIssues, targetActionable)
 			messages = append(messages, KickMessage{
 				Agent:     agentName,
 				Repo:      repo,
@@ -379,6 +380,41 @@ func (s *Scheduler) prCap() int {
 		return maxPRsPerKick
 	}
 	return s.cfg.Governor.KickLimits.PRsPerKick()
+}
+
+// logKickSize emits one structured line per rendered kick with the prompt's
+// byte size next to the list counts and caps that drove it (#12133). It is
+// the only per-kick size telemetry: the audit line in pkg/agent carries
+// message_len but not the counts, and prompt-history truncates at 32 KiB.
+// Operators tune governor.kick_limits from this line, not from guesswork —
+// see docs/operator-reference.md "Kick size and the list caps".
+func (s *Scheduler) logKickSize(agentName, repo, msg string, issues []github.Issue, actionable *github.ActionableResult) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	issueTotal, prTotal := len(issues), 0
+	if actionable != nil {
+		prTotal = len(actionable.PRs.Items)
+	}
+	s.logger.Info("kick rendered",
+		"agent", agentName,
+		"repo", repo,
+		"kick_bytes", len(msg),
+		"issues_total", issueTotal,
+		"issues_listed", min(issueTotal, capOrAll(s.issueCap(), issueTotal)),
+		"prs_total", prTotal,
+		"prs_listed", min(prTotal, capOrAll(s.prCap(), prTotal)),
+		"max_issues", s.issueCap(),
+		"max_prs", s.prCap(),
+	)
+}
+
+// capOrAll maps the kick_limits "0 = unlimited" convention onto a count.
+func capOrAll(limit, total int) int {
+	if limit <= 0 {
+		return total
+	}
+	return limit
 }
 
 // prListOverflowLine is the explicit marker appended when a PR list was cut
