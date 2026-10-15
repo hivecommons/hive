@@ -2,9 +2,12 @@ package fleetreport
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
 func fakeClock(start time.Time) (func() time.Time, func(time.Duration)) {
@@ -309,4 +312,177 @@ func TestShortMessageDiagnosticsAndLabelHelpers(t *testing.T) {
 			t.Fatalf("anonymous report carries %q", l)
 		}
 	}
+}
+
+// TestEveryRuntimeClassTriggerAndNonTriggerThresholds walks the whole
+// allow-list (#11881): each class is observed one step short of its
+// threshold (no evidence) and then across it (exactly one evidence row).
+func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
+	cases := []struct {
+		class   string
+		message string
+		// below drives the condition up to (but not across) its threshold;
+		// cross then makes it qualify.
+		below func(tr *RuntimeTracker, advance func(time.Duration))
+		cross func(tr *RuntimeTracker, advance func(time.Duration))
+	}{
+		{class: ClassRestartStorm, message: "restart storm: agent quality restarted 4 times in 10m"},
+		{class: ClassKickFailedRepeatedly, message: "kick undeliverable 3 times in a row (busy)"},
+		{class: ClassPanicRecovered, message: "panic in kickBrainstorm: runtime error: invalid memory address"},
+		{class: ClassModelDiscoveryDegraded, message: "model discovery failed: 502 bad gateway"},
+		{class: ClassInferenceAuthFailed, message: "litellm returned HTTP 401 unauthorized"},
+		{class: ClassAdvisoryPostFailed, message: "advisory digest post failed: HTTP 422"},
+		{class: ClassUpgradeStalled, message: "standalone upgrade helper did not finish within 10m0s"},
+		{class: ClassDataDiskPressure, message: "data disk pressure: disk-full: /data is 97% used (threshold 95%)"},
+		{class: ClassGitHubAppTokenMintFailed, message: "github app token mint failed: POST /app/installations/123/access_tokens: 401"},
+		{class: ClassUnexpectedHub5xx, message: "hub heartbeat returned HTTP 503"},
+		{class: ClassUnclassifiedRepeated, message: "weird error from somewhere"},
+	}
+	seen := map[string]bool{}
+	for _, tc := range cases {
+		seen[tc.class] = true
+		t.Run(tc.class, func(t *testing.T) {
+			now, advance := fakeClock(time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC))
+			tr := NewRuntimeTracker(now)
+			spec := Classes[tc.class]
+			observe := func() { tr.Observe(tc.class, "scope", tc.message, "") }
+			min := spec.MinCount
+			if min < 1 {
+				min = 1
+			}
+			// Non-trigger: one observation short of MinCount, or (for
+			// duration classes) every observation but before MinDuration.
+			if spec.MinDuration > 0 {
+				for i := 0; i < min; i++ {
+					observe()
+				}
+				advance(spec.MinDuration - time.Minute)
+				observe()
+			} else {
+				for i := 0; i < min-1; i++ {
+					observe()
+					advance(time.Second)
+				}
+			}
+			if ev := tr.Evidence(); len(ev) != 0 {
+				t.Fatalf("%s below threshold produced evidence: %#v", tc.class, ev)
+			}
+			// Trigger.
+			if spec.MinDuration > 0 {
+				advance(2 * time.Minute)
+			}
+			observe()
+			ev := tr.Evidence()
+			if len(ev) != 1 || ev[0].Class != tc.class || !ev[0].Attributable || ev[0].Component != spec.Component || ev[0].Severity != spec.Severity {
+				t.Fatalf("%s at threshold: evidence = %#v", tc.class, ev)
+			}
+			// A cleared condition stops producing evidence.
+			tr.Clear(tc.class, "scope")
+			if ev := tr.Evidence(); len(ev) != 0 {
+				t.Fatalf("%s cleared but still reported: %#v", tc.class, ev)
+			}
+		})
+	}
+	for class := range Classes {
+		if !seen[class] {
+			t.Errorf("class %s has no threshold case", class)
+		}
+	}
+}
+
+func TestRuntimeClassThresholdValues(t *testing.T) {
+	if got := Classes[ClassKickFailedRepeatedly].MinCount; got != 3 {
+		t.Fatalf("kick_failed_repeatedly MinCount = %d, want 3 consecutive", got)
+	}
+	if got := Classes[ClassModelDiscoveryDegraded].MinDuration; got != time.Hour {
+		t.Fatalf("model_discovery_degraded MinDuration = %s, want 1h", got)
+	}
+	if s := Classes[ClassUnclassifiedRepeated]; s.MinCount != 5 || s.Window != 10*time.Minute {
+		t.Fatalf("unclassified_error_repeated = %d in %s, want 5 in 10m", s.MinCount, s.Window)
+	}
+	if got := Classes[ClassUnexpectedHub5xx].MinCount; got != hub5xxStreak {
+		t.Fatalf("unexpected_http_5xx_from_hub MinCount = %d, want %d", got, hub5xxStreak)
+	}
+}
+
+func TestRuntimeFingerprintIgnoresIDsTimestampsAndPorts(t *testing.T) {
+	pairs := [][2]string{
+		{"hub heartbeat to 10.0.3.17:8443 failed at 2026-09-24T12:00:00Z", "hub heartbeat to 10.0.9.2:9443 failed at 2026-10-01T03:14:15Z"},
+		{"dial tcp 127.0.0.1:41235: connect: connection refused", "dial tcp 127.0.0.1:50001: connect: connection refused"},
+		{"request 3f2b9c1e-8d4a-4b7e-9c2d-1a2b3c4d5e6f failed after 1234ms", "request 9a8b7c6d-5e4f-4a3b-8c2d-0f1e2d3c4b5a failed after 87ms"},
+		{"installation 123456 token mint failed (pid 4242)", "installation 987 token mint failed (pid 17)"},
+	}
+	for _, p := range pairs {
+		if NormalizeMessage(p[0]) != NormalizeMessage(p[1]) {
+			t.Fatalf("volatile parts split the message:\n%q\n%q", NormalizeMessage(p[0]), NormalizeMessage(p[1]))
+		}
+		if RuntimeFingerprint(ClassUnexpectedHub5xx, p[0], "v5.1.0") != RuntimeFingerprint(ClassUnexpectedHub5xx, p[1], "v5.1.0") {
+			t.Fatalf("volatile parts changed the fingerprint: %q vs %q", p[0], p[1])
+		}
+		if RuntimeFingerprint(ClassUnexpectedHub5xx, p[0], "v5.1.0") == RuntimeFingerprint(ClassUnexpectedHub5xx, p[0], "v5.1.1") {
+			t.Fatalf("version change did not change the fingerprint for %q", p[0])
+		}
+		if RuntimeFingerprint(ClassUnexpectedHub5xx, p[0], "v5.1.0") == RuntimeFingerprint(ClassUpgradeStalled, p[0], "v5.1.0") {
+			t.Fatalf("class change did not change the fingerprint for %q", p[0])
+		}
+	}
+	if RuntimeFingerprint(ClassPanicRecovered, "panic in handler: nil map", "v5") == RuntimeFingerprint(ClassPanicRecovered, "panic in handler: index out of range", "v5") {
+		t.Fatal("different messages collapsed to one fingerprint")
+	}
+}
+
+func TestRuntimeDiagnosticsNeverCarryTokens(t *testing.T) {
+	secrets := []string{
+		"ghp_" + strings.Repeat("a", 36),
+		"ghs_" + strings.Repeat("B", 36),
+		"github_pat_" + strings.Repeat("c", 40),
+		"sk-hive-" + strings.Repeat("d", 24),
+		"sk-ant-" + strings.Repeat("e", 30),
+		"eyJ" + strings.Repeat("f", 24) + "." + strings.Repeat("g", 24) + "." + strings.Repeat("h", 24),
+		"Bearer " + strings.Repeat("i", 40),
+	}
+	// Secrets sit at the tail so they survive the size bound unless scrubbed.
+	diag := strings.Repeat("x", maxDiagnosticsBytes) + "\nhelper output:\n" + strings.Join(secrets, "\nAuthorization: ")
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	tr := NewRuntimeTracker(func() time.Time { return now })
+	for class := range Classes {
+		tr.Observe(class, "scope", "failed with "+strings.Join(secrets, " "), diag)
+	}
+	// Past every MinDuration, then enough observations to meet every
+	// MinCount inside every Window.
+	now = now.Add(2 * time.Hour)
+	for class := range Classes {
+		for i := 0; i < unclassifiedRepeatCount; i++ {
+			tr.Observe(class, "scope", "failed with "+strings.Join(secrets, " "), diag)
+		}
+	}
+	evs := tr.Evidence()
+	if len(evs) != len(Classes) {
+		t.Fatalf("expected one evidence per class, got %d", len(evs))
+	}
+	for _, ev := range evs {
+		if len(ev.Diagnostics) > maxDiagnosticsBytes+4 {
+			t.Fatalf("%s diagnostics not size-bounded: %d bytes", ev.Class, len(ev.Diagnostics))
+		}
+		fp := RuntimeFingerprint(ev.Class, ev.Message, "v5.1.0")
+		r := BuildRuntimeReport(Observation{}, ev, fp, "inst", "hosted-x", "v5.1.0", "abc", now)
+		comment := SeenComment(fp, "hosted-x", "v5.1.0", "oke", ev, now)
+		for _, s := range secrets {
+			for name, text := range map[string]string{"diagnostics": ev.Diagnostics, "message": ev.Message, "title": r.Title, "body": r.Body, "seen comment": comment} {
+				if strings.Contains(text, s) {
+					t.Fatalf("%s %s leaks %q:\n%s", ev.Class, name, s[:6], text)
+				}
+			}
+		}
+		if logscrubTokenLike(ev.Diagnostics) || logscrubTokenLike(r.Body) {
+			t.Fatalf("%s carries a token-like string:\n%s", ev.Class, r.Body)
+		}
+	}
+}
+
+// tokenLikeRE adds the sk- API-key shape to logscrub's GitHub/JWT pattern.
+var tokenLikeRE = regexp.MustCompile(`sk-[A-Za-z0-9]{6,}`)
+
+func logscrubTokenLike(s string) bool {
+	return logscrub.TokenPattern.MatchString(s) || tokenLikeRE.MatchString(s)
 }

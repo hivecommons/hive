@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claude"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -958,6 +959,9 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 		// token delivery is repaired — not a silent privilege escalation.
 		m.logger.Warn("per-agent scoped token NOT delivered — this agent's GitHub writes (gh + git push) will FAIL (no shared-cache fallback by design; see audit H3)",
 			"agent", agent.Name, "tier", tier, "error", err)
+		fleetreport.Observe(fleetreport.ClassGitHubAppTokenMintFailed, agent.Name, "github app token mint failed: "+err.Error(), "")
+	} else {
+		fleetreport.Clear(fleetreport.ClassGitHubAppTokenMintFailed, agent.Name)
 	}
 	// Additionally issue an opt-in short-lived mint token (no-op when the mint
 	// is disabled). This is additive and fail-safe — it never blocks launch.

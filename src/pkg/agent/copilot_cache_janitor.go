@@ -12,6 +12,9 @@ import (
 
 const (
 	DiskFullTrigger = "disk-full"
+	// DataDiskPressureKey scopes the data_disk_pressure self-report
+	// condition to the shared data volume rather than to each paused agent.
+	DataDiskPressureKey = "data"
 
 	copilotCachePruneAge      = 30 * time.Minute
 	copilotDataFullThreshold  = 95

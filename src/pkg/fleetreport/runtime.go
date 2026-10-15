@@ -46,6 +46,10 @@ const (
 	kickFailureStreak = 3
 	// degradedMinDuration is how long model discovery must stay degraded.
 	degradedMinDuration = time.Hour
+	// hub5xxStreak is how many consecutive 5xx answers from the hub (the
+	// condition is cleared on the next accepted request) make it reportable,
+	// so a single blip during a hub rollout is not filed upstream.
+	hub5xxStreak = 3
 	// runtimeEventTTL bounds how long a condition that is never cleared keeps
 	// producing evidence; anything older is dropped on the next snapshot.
 	runtimeEventTTL = 24 * time.Hour
@@ -87,7 +91,7 @@ var Classes = map[string]ClassSpec{
 	ClassUpgradeStalled:           {Component: "agent-lifecycle", Severity: "high", MinCount: 1, Keywords: []string{"upgrade stalled", "upgrade stall"}},
 	ClassDataDiskPressure:         {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"disk full", "disk pressure", "no space left"}},
 	ClassGitHubAppTokenMintFailed: {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
-	ClassUnexpectedHub5xx:         {Component: "dashboard", Severity: "medium", MinCount: 1, Keywords: []string{"hub 5", "hub returned 5"}},
+	ClassUnexpectedHub5xx:         {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},
 	ClassUnclassifiedRepeated:     {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow},
 }
 
@@ -198,7 +202,7 @@ func (t *RuntimeTracker) Observe(class, key, message, diagnostics string) {
 	if len(c.events) > unclassifiedRepeatCount*2 {
 		c.events = c.events[len(c.events)-unclassifiedRepeatCount*2:]
 	}
-	if msg := safeToken(message); msg != "" {
+	if msg := safeToken(logscrub.RedactPaneTokens(message)); msg != "" {
 		c.Message = msg
 	}
 	if d := boundDiagnostics(diagnostics); d != "" {
@@ -407,8 +411,10 @@ func ShortMessage(msg string) string {
 	return msg
 }
 
+// boundDiagnostics scrubs credential shapes (including the sk- API keys
+// logscrub.ScrubString leaves alone) and keeps the newest maxDiagnosticsBytes.
 func boundDiagnostics(d string) string {
-	d = strings.TrimSpace(logscrub.ScrubString(d))
+	d = strings.TrimSpace(logscrub.RedactPaneTokens(logscrub.ScrubString(d)))
 	if len(d) > maxDiagnosticsBytes {
 		d = "…\n" + d[len(d)-maxDiagnosticsBytes:]
 	}
