@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-15 (v5.170.0)
+
+### Added
+
+- Expose governor advisory digest and queue-health settings in the dashboard Settings dialog.
+
 ## 2026-10-15 (v5.169.0)
 
 ### Added
