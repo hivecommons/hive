@@ -442,7 +442,7 @@ An experimental planner that tries out changes to how Hive works and records wha
 
 **Example.** The lab proposes a faster schedule for one worker for a day. You approve it, and the ledger records the result.
 
-**When it appears.** Only when the Experiment Lab setting is on and the autonomy level is L4 or above. The autonomy level is how much Hive may do on its own, from L1 to L6.
+**When it appears.** Only when the Experiment Lab setting is on and the autonomy level is L3 or above. The autonomy level is how much Hive may do on its own, from L1 to L6. Turning the setting on adds the **Experiment Lab (nous)** sidebar entry and section on the next status refresh, without a page reload (#12076); the toggle's helper text names the L3 requirement. The parenthetical is the codename of the planner behind it, the same way the Inception entry reads "Inception (spektacular)".
 
 **Settings that change it.** `dashboard.experiment_lab: true` turns it on (`dashboard.strategy_lab` is a deprecated alias for one release). See [Experiment Lab](experiment-lab.md).
 

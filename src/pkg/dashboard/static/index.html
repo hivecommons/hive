@@ -5628,7 +5628,7 @@
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab</span></a>
+      <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Admin</div>
@@ -6007,7 +6007,7 @@
   </div>
 
   <div id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab (nous) <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
@@ -6882,11 +6882,11 @@
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
       'audit-section': { title: '📋 Audit Log', summary: '0 events today' },
       'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
-      'nous-section': { title: '🧪 Experiment Lab', summary: '—' },
+      'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—' },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'review-pipeline-subsection': { title: 'Pipeline', summary: '—' },
       'review-queue-subsection': { title: 'Queue', summary: '—' },
-      'nous-section': { title: '🧪 Experiment Lab', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
+      'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
@@ -33396,7 +33396,7 @@ function burnAreaChart() {
 
     const SETTINGS_SEARCH_STATIC_HITS = [
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
-      { tab: 'Features', section: 'Dashboard', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
+      { tab: 'Features', section: 'Dashboard', label: 'Experiment Lab (nous)', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab nous dashboard feature experimental planner sidebar section' },
       { tab: 'Features', section: 'Nous / Experiment Lab', label: 'Nous / Experiment Lab', key: 'nous.dispatcher', text: 'nous experiment lab experimenter dispatcher inline sdk gate poll fetch allowlist artifact repository branch path sync interval nous.dispatcher nous.gate_poll_seconds nous.fetch_allowlist nous.artifact_repo.repo nous.artifact_repo.branch nous.artifact_repo.path nous.artifact_repo.sync_interval_seconds' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Logging', section: 'Logging', label: 'Read scan bound (MB)', key: 'governor.logging.read_scan_max_mb', text: 'log read scan bound megabytes admin mcp log_read cursor' },
@@ -34069,7 +34069,7 @@ function burnAreaChart() {
       const ACMM_ADVISORY_MIN_LEVEL = 2;
       const ACMM_TOKENS_MIN_LEVEL = 3;
       const ACMM_REPOS_MIN_LEVEL = 2;
-      const ACMM_NOUS_MIN_LEVEL = 4;
+      const ACMM_NOUS_MIN_LEVEL = 3;
       const ACMM_CONTRIBUTORS_MIN_LEVEL = 2;
       const ACMM_LEADERBOARD_MIN_LEVEL = 2;
       const ACMM_DEBUG_MIN_LEVEL = 3;
@@ -34086,9 +34086,13 @@ function burnAreaChart() {
         level >= ACMM_REPOS_MIN_LEVEL ? show(reposSection, '') : hide(reposSection);
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
-        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
+        // #12076: the Experiment Lab (nous) section, its sidebar entry and the
+        // sidebar scope/mode summary need BOTH the dashboard.experiment_lab
+        // opt-in (applyDashboardFeatureVisibility) and ACMM L3+.
+        const nousVisible = experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL;
+        nousVisible ? show(nousSection, '') : hide(nousSection);
         const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
+        nousVisible ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 
@@ -34104,7 +34108,7 @@ function burnAreaChart() {
           if (section === 'repos-section' && level < ACMM_REPOS_MIN_LEVEL) hide(item);
           if (section === 'contributors-section' && level < ACMM_CONTRIBUTORS_MIN_LEVEL) hide(item);
           if (section === 'leaderboard-section' && level < ACMM_LEADERBOARD_MIN_LEVEL) hide(item);
-          if (section === 'nous-section' && (!experimentLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);
+          if (section === 'nous-section' && !nousVisible) hide(item);
         });
 
         // #7099: the pack-roster gate is NOT re-applied here. The server already
@@ -34810,6 +34814,60 @@ function burnAreaChart() {
       markDirty('classifier', key, _configState.data.classifier[key]);
     }
 
+    // #12076: the Experiment Lab (nous) section needs dashboard.experiment_lab
+    // AND ACMM L3+ (ACMM_NOUS_MIN_LEVEL in applyACMMVisibility). The toggle
+    // must say so at flip time, with the current level, so a spoke below L3
+    // never files "toggle does nothing" again.
+    const EXPERIMENT_LAB_MIN_ACMM_LEVEL = 3;
+    function currentACMMLevelForSettings() {
+      const lvl = Number(window._lastStatus && window._lastStatus.acmmLevel);
+      return Number.isFinite(lvl) ? lvl : 0;
+    }
+    function experimentLabACMMNotice(level) {
+      level = Number(level);
+      if (!Number.isFinite(level)) level = 0;
+      const requirement = 'Requires ACMM Level ' + EXPERIMENT_LAB_MIN_ACMM_LEVEL + ' or higher.';
+      if (level >= EXPERIMENT_LAB_MIN_ACMM_LEVEL) return { below: false, requirement, inline: '', toast: '' };
+      const where = 'Your hive is at Level ' + level + ' — Experiment Lab will appear once it reaches Level ' + EXPERIMENT_LAB_MIN_ACMM_LEVEL + '.';
+      return {
+        below: true,
+        requirement,
+        inline: where,
+        toast: 'Experiment Lab setting saved, but the section stays hidden until your hive reaches ACMM Level ' + EXPERIMENT_LAB_MIN_ACMM_LEVEL + ' (currently Level ' + level + ').',
+      };
+    }
+    // One helper renders the requirement/current-level line for every surface
+    // that exposes dashboard.experiment_lab: the Dashboard tab's toggle
+    // ("dashboard") and the Features tab's "Nous / Experiment Lab" card
+    // ("features"). `surface` keys the element ids so both can coexist in one
+    // dialog and the flip-time notice reaches whichever is rendered.
+    function experimentLabToggleHelpHTML(level, surface) {
+      const n = experimentLabACMMNotice(level);
+      const sfx = surface ? '-' + surface : '';
+      return '<div class="config-help" id="experiment-lab-acmm-help' + sfx + '" data-experiment-lab-acmm-help="1">' + esc(n.requirement) +
+        (n.below ? ' <span class="text-warn" id="experiment-lab-acmm-below' + sfx + '">' + esc(n.inline) + '</span>' : '') + '</div>' +
+        '<div class="config-help text-warn" id="experiment-lab-acmm-notice' + sfx + '" data-experiment-lab-acmm-notice="1" hidden></div>';
+    }
+    function experimentLabNoticeElements() {
+      return Array.prototype.slice.call(document.querySelectorAll('[data-experiment-lab-acmm-notice]'));
+    }
+    function noteExperimentLabToggle(isOn) {
+      const n = experimentLabACMMNotice(currentACMMLevelForSettings());
+      const notices = experimentLabNoticeElements();
+      if (!isOn || !n.below) {
+        notices.forEach(el => { el.hidden = true; el.textContent = ''; });
+        return;
+      }
+      const msg = 'The setting is saved when you click Save, but the Experiment Lab (nous) section and sidebar entry stay hidden until your hive reaches ACMM Level ' + EXPERIMENT_LAB_MIN_ACMM_LEVEL + ' (currently Level ' + currentACMMLevelForSettings() + ').';
+      notices.forEach(el => { el.textContent = msg; el.hidden = false; });
+      showToast(msg, 'warning');
+    }
+    function noteExperimentLabSaved(values) {
+      if (!values || values.experiment_lab !== true) return;
+      const n = experimentLabACMMNotice(currentACMMLevelForSettings());
+      if (n.below) showToast(n.toast, 'warning');
+    }
+
     function renderGovDashboard(dash) {
       const bands = dash.issue_bands || {};
       const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
@@ -34820,7 +34878,8 @@ function burnAreaChart() {
           '<div class="config-field"><label>Port ' + yamlHint('dashboard.port') + '</label><input type="number" min="1" max="65535" value="' + esc(String(dash.port || 3001)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="port" data-arg-types="s,s,N"><div class="config-help">Requires restart.</div></div>' +
           '<div class="config-field"><label>Agent poll interval (seconds) ' + yamlHint('dashboard.agent_poll_interval_s') + '</label><input type="number" min="1" value="' + esc(String(dash.agent_poll_interval_s || 0)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="agent_poll_interval_s" data-arg-types="s,s,N"></div>' +
         '</div>' +
-        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab (nous) ' + yamlHint('dashboard.experiment_lab') + ' <span class="text-muted">Adds the 🧪 Experiment Lab (nous) section and its sidebar entry on the next status refresh — no reload needed.</span></span></div>' +
+        experimentLabToggleHelpHTML(currentACMMLevelForSettings(), 'dashboard') +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
@@ -42149,7 +42208,8 @@ function burnAreaChart() {
         </div>
 
         <div class="qa-section">
-          <div class="qa-section-title">Nous / Experiment Lab ${settingHelpMark('experiment-lab', 'settings', 'Nous / Experiment Lab', `Runtime knobs for the Nous experimentation agent (<code>nous.*</code> in hive.yaml, RFC 11585). The panel itself is shown or hidden with <code>dashboard.experiment_lab</code> on the Dashboard tab; goals, bounds and schedule live in the Experiment Lab panel, not here.`)}</div>
+          <div class="qa-section-title">Nous / Experiment Lab ${settingHelpMark('experiment-lab', 'settings', 'Nous / Experiment Lab', `Runtime knobs for the Nous experimentation agent (<code>nous.*</code> in hive.yaml, RFC 11585). The panel itself is shown or hidden with <code>dashboard.experiment_lab</code> on the Dashboard tab and requires ACMM Level ${EXPERIMENT_LAB_MIN_ACMM_LEVEL} or higher; goals, bounds and schedule live in the Experiment Lab panel, not here.`)}</div>
+          ${experimentLabToggleHelpHTML(currentACMMLevelForSettings(), 'features')}
           <div class="config-field-row">
             <div class="config-field">
               <label>Dispatcher <code>nous.dispatcher</code> ${settingHelpMark('experiment-lab', 'experimenter-role-and-engine-contract', 'Nous dispatcher', `How Nous performs its LLM work. <code>inline</code> (default) runs inside the experimenter agent's own CLI session so Hive's scheduling, token budget and cost tracking apply; <code>sdk</code> has Nous call the model API directly, invisible to cost tracking. Env override: <code>HIVE_NOUS_DISPATCHER</code>.`)}</label>
@@ -43894,6 +43954,7 @@ function burnAreaChart() {
       const isOn = el.classList.toggle('on');
       if (el.hasAttribute('aria-checked')) el.setAttribute('aria-checked', isOn ? 'true' : 'false');
       markDirty(section, key, isOn);
+      if (section === 'dashboard' && key === 'experiment_lab') noteExperimentLabToggle(isOn);
     }
 
     function markCSVDirty(section, key, value) {
@@ -45360,6 +45421,12 @@ function burnAreaChart() {
               const ack = await res.json().catch(() => ({}));
               const spekMsg = spektacularApplyMessage(ack.spektacularApply);
               if (spekMsg) showToast(spekMsg.msg, spekMsg.level);
+            }
+            if (_configState.type === 'governor' && section === 'dashboard') {
+              // #12076: the write succeeded, but below ACMM L3 the Experiment
+              // Lab stays hidden — say so instead of letting a saved toggle
+              // look like a no-op.
+              noteExperimentLabSaved(values);
             }
             if (_configState.type === 'governor' && section === 'litellm') {
               // Saving the LiteLLM tab auto-runs the live connection test

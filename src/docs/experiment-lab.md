@@ -10,7 +10,7 @@ cadence, dispatcher, dependency fetch allowlist and the optional artifact
 repository — and every one of them is editable from **Settings → Features →
 Nous / Experiment Lab** (see [Settings](#settings)). Goals, bounds, schedule
 and the trust ladder are configured at runtime through the dashboard
-(Experiment Lab panel, ACMM level 4+) or directly through the `/api/nous/*`
+(Experiment Lab panel, ACMM level 3+) or directly through the `/api/nous/*`
 endpoints. This page documents
 that runtime configuration and the experiment lifecycle, verified against
 `pkg/dashboard/api.go`, `pkg/dashboard/deps.go`, `cmd/hive/main.go`, and the
@@ -26,11 +26,15 @@ logs a one-line deprecation at config load, and is folded into
 The `/api/nous/*` endpoints, `NousState` and the `nous-section` dashboard
 anchor keep their Nous names; only the user-facing label changed.
 
-Once enabled, the section only appears at **ACMM level 4 and
-above** (`ACMM_NOUS_MIN_LEVEL` in `pkg/dashboard/static/index.html`). Below
-that level the panel and sidebar summary are hidden entirely, though the
-`/api/nous/*` endpoints still respond. On a hive with no snapshots yet, the
-panel shows an explainer card instead of empty stats.
+Once enabled, the **Experiment Lab (nous)** sidebar entry and section appear
+on the next dashboard status refresh — no page reload — at **ACMM level 3 and
+above** (`ACMM_NOUS_MIN_LEVEL` in `pkg/dashboard/static/index.html`; it was
+L4 before #12076, which also made the Settings toggle say so). Both gates must
+pass: the flag on and the level at L3+. Below L3 the panel and sidebar summary
+are hidden, though the `/api/nous/*` endpoints still respond. The sidebar label
+follows the Inception convention ("Inception (spektacular)"): section name plus
+the lowercase codename of the planner behind it. On a hive with no snapshots
+yet, the panel shows an explainer card instead of empty stats.
 
 ## State and storage
 

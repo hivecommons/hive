@@ -461,8 +461,8 @@ func TestStaticNoStrategyLabCopy(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`<span class="oc-nav-text">Experiment Lab</span>`,
-		`🧪 Experiment Lab`,
+		`<span class="oc-nav-text">Experiment Lab (nous)</span>`,
+		`🧪 Experiment Lab (nous)`,
 		`Experiment Lab Configuration`,
 	} {
 		if !strings.Contains(string(body), want) {
