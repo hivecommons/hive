@@ -31911,19 +31911,37 @@ function burnAreaChart() {
     // Expands any disclosure hiding the row, scrolls it to the middle of the
     // dialog body (the scroll container — the overlay is fixed, so the page
     // behind does not move), flashes it, and moves focus to its control.
+    const SETTINGS_REVEAL_SETTLE_MS = 400;
+
+    // Instant (not smooth) scroll: the dialog body can be ~10k px tall and a
+    // smooth scroll over that distance lands short when content above the
+    // row changes height mid-way. The flash animation is the motion cue.
+    function settingsScrollRowIntoView(row) {
+      const body = document.getElementById('config-body');
+      if (typeof row.scrollIntoView === 'function') {
+        row.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+      } else if (body) {
+        body.scrollTop = Math.max(0, row.offsetTop - body.clientHeight / 2);
+      }
+    }
+
+    function settingsRowInView(row) {
+      const body = document.getElementById('config-body');
+      if (!body || typeof row.getBoundingClientRect !== 'function') return true;
+      const r = row.getBoundingClientRect(), b = body.getBoundingClientRect();
+      return r.top >= b.top && r.bottom <= b.bottom;
+    }
+
     function settingsRevealRow(row) {
       if (!row) return false;
       for (let cur = row.parentElement; cur; cur = cur.parentElement) {
         if (cur.tagName === 'DETAILS' && !cur.open) cur.open = true;
         if (cur.classList && cur.classList.contains('collapsed')) cur.classList.remove('collapsed');
       }
-      const reduceMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const body = document.getElementById('config-body');
-      if (typeof row.scrollIntoView === 'function') {
-        row.scrollIntoView({ block: 'center', inline: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' });
-      } else if (body) {
-        body.scrollTop = Math.max(0, row.offsetTop - body.clientHeight / 2);
-      }
+      settingsScrollRowIntoView(row);
+      // Tabs like Features keep filling in from their own fetches for a
+      // moment after rendering, which shifts the row; re-centre once settled.
+      setTimeout(() => { if (row.isConnected !== false && !settingsRowInView(row)) settingsScrollRowIntoView(row); }, SETTINGS_REVEAL_SETTLE_MS);
       row.classList.remove('cfg-row-flash');
       void row.offsetWidth; // restart the animation when the same row is hit twice
       row.classList.add('cfg-row-flash');
