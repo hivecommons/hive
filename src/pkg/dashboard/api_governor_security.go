@@ -23,6 +23,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		IoscanFailMode       *string `json:"ioscanFailMode"`
 		IoscanCanaries       *bool   `json:"ioscanCanaries"`
 		IntentEnforce        *bool   `json:"intentEnforce"`
+		IntentShadow         *bool   `json:"intentShadow"`
 		IntentAlignmentModel *string `json:"intentAlignmentModel"`
 		// Intent classifier lists. An empty list restores the built-in
 		// defaults (nil), matching how the intent package treats them.
@@ -138,6 +139,9 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.IntentEnforce != nil {
 		cfg.Intent.Enforce = *body.IntentEnforce
+	}
+	if body.IntentShadow != nil {
+		cfg.Intent.Shadow = *body.IntentShadow
 	}
 	if body.IntentAlignmentModel != nil {
 		cfg.Intent.AlignmentModel = strings.TrimSpace(*body.IntentAlignmentModel)
@@ -291,6 +295,7 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"ioscanFailMode":                     failMode,
 		"ioscanCanaries":                     cfg.Ioscan.CanariesEnabled(),
 		"intentEnforce":                      cfg.Intent.Enforce,
+		"intentShadow":                       cfg.Intent.Shadow,
 		"intentAlignmentModel":               cfg.Intent.AlignmentModel,
 		"intentTestPathPatterns":             nonNilStrings(cfg.Intent.TestPathPatterns),
 		"intentDocsPathPatterns":             nonNilStrings(cfg.Intent.DocsPathPatterns),

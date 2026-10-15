@@ -483,6 +483,7 @@ func TestPlatformSettingsRenderEveryKey(t *testing.T) {
 		{"renderGovFeatures", "auto_merge.trusted_authors.require_role", `id="am-trusted-authors-require-role" data-change-action="gh101"`},
 		{"renderEscalationSection", "escalation.threshold", `data-arg0="escalation" data-arg1="threshold" data-arg-types="s,s,N"`},
 		{"renderGovSecurity", "intent.enforce", `data-section="security" data-key="intentEnforce"`},
+		{"renderGovSecurity", "intent.shadow", `data-section="security" data-key="intentShadow"`},
 		{"renderGovSecurity", "intent.alignment_model", `securityModelInput('intentAlignmentModel'`},
 		{"renderGovSecurity", "sentinel.max_actions", `data-change-action="gh82"`},
 		{"renderGovSecurity", "sentinel.trusted_authors_block", `data-action="toggleSentinelTrustedAuthorsBlock"`},

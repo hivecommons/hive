@@ -40791,6 +40791,10 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${sec.intentEnforce ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="intentEnforce"></div>
           <span class="config-toggle-label">Enforce intent authorization on merges ${yamlHint('intent.enforce')} ${settingHelpMark('settings', 'security-and-access', 'Enforce intent authorization', `Off (report-only) by default. When on, a PR whose intent verdict or alignment check denies it is held from merging instead of only being logged.`)}</span>
         </div>
+        <div class="config-toggle" style="margin-top:10px">
+          <div class="config-toggle-switch ${sec.intentShadow ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="intentShadow"></div>
+          <span class="config-toggle-label">Shadow-evaluate intent authorization (record only) ${yamlHint('intent.shadow')} ${settingHelpMark('settings', 'security-and-access', 'Shadow-evaluate intent authorization', `Off by default. While enforcement is off, evaluates every merge as if it were on and records whether intent verification would have blocked it on the PR&apos;s evidence bundle and in the log. Never blocks a merge; ignored when enforcement is on.`)}</span>
+        </div>
         <details style="margin:10px 0 18px"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced intent</summary>
           <div class="config-field"><label>Alignment model ${yamlHint('intent.alignment_model')} ${settingHelpMark('settings', 'security-and-access', 'Intent alignment model', `Model that checks whether a PR&apos;s change matches the intent of the issue it fixes, using the configured reviewer endpoint. Empty leaves the alignment check off.`)}</label>${securityModelInput('intentAlignmentModel', sec.intentAlignmentModel || '', 'leave empty for default')}</div>
           ${intentListField('Test path patterns', 'intent.test_path_patterns[]', 'intentTestPathPatterns', 'testPathPatterns', 'Globs that mark a changed file as a test. A PR that deletes or weakens matching files needs stronger authorization.')}

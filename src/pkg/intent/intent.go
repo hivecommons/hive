@@ -158,6 +158,28 @@ func (v Verdict) BlocksMerge(enforce bool) bool {
 	return enforce && v.AgentPR && !v.MergeAllowed()
 }
 
+// BlockReason is the reason a merge lane reports when BlocksMerge refuses v:
+// the alignment rationale for an authorized-but-misaligned verdict, else the
+// authorization reason.
+func (v Verdict) BlockReason() string {
+	if v.Authorized && v.Alignment != nil && v.Alignment.Misaligned() {
+		return ReasonAlignmentMisaligned + ": " + v.Alignment.Rationale
+	}
+	return v.Reason
+}
+
+// ShadowConfidence is the confidence recorded with an intent.shadow
+// observation: the alignment model's confidence when it reported one in
+// (0,1], else 1 (the tier gate is deterministic).
+func (v Verdict) ShadowConfidence() float64 {
+	if v.Alignment != nil && v.Alignment.Model != nil {
+		if c := v.Alignment.Model.Confidence; c > 0 && c <= 1 {
+			return c
+		}
+	}
+	return 1
+}
+
 func Classify(pr PR, cfg Config) Classification {
 	if !pr.AgentAuthor {
 		return Classification{Tier: Tier0, Reason: "non-agent PR", AgentPR: false}

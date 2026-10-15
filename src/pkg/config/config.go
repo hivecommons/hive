@@ -800,7 +800,11 @@ type ClassifierConfig struct {
 // enforcement. The zero value is report-only with built-in path patterns, so an
 // absent intent: block preserves existing merge eligibility behavior.
 type IntentConfig struct {
-	Enforce               bool     `yaml:"enforce,omitempty" json:"enforce,omitempty"`
+	Enforce bool `yaml:"enforce,omitempty" json:"enforce,omitempty"`
+	// Shadow evaluates the intent gate as if enforce were on without acting
+	// on it, recording shadow.intent.would_have_blocked on the evidence
+	// bundle. It never blocks a merge and is ignored when Enforce is on.
+	Shadow                bool     `yaml:"shadow,omitempty" json:"shadow,omitempty"`
 	AlignmentModel        string   `yaml:"alignment_model,omitempty" json:"alignment_model,omitempty"`
 	TestPathPatterns      []string `yaml:"test_path_patterns,omitempty" json:"test_path_patterns,omitempty"`
 	DocsPathPatterns      []string `yaml:"docs_path_patterns,omitempty" json:"docs_path_patterns,omitempty"`

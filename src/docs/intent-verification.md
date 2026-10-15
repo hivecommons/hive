@@ -64,6 +64,17 @@ When enforcement is enabled, unauthorized agent-authored PRs are excluded from `
 
 A `misaligned` deterministic or model alignment verdict is treated the same as unauthorized when `intent.enforce: true`: the PR is excluded from `merge-eligible.json`. In report-only mode, Hive only records the verdict and creates an advisory bead describing the drift.
 
+### Shadow mode
+
+`intent.shadow` (default false) evaluates intent verification exactly as `enforce: true` would, without acting on it:
+
+```yaml
+intent:
+  shadow: true
+```
+
+While `enforce` is off, both merge lanes that share the refusal predicate — `merge-eligible.json` and the App self-merge sweep — compute the enforced verdict and record `shadow.intent.would_have_blocked` (with `reason`, `tier`, and `confidence`, the alignment model's confidence when it reported one, else 1) on the PR head's evidence bundle and in the log (`intent shadow gate`). In `merge-eligible.json` only PRs that are otherwise eligible are recorded. The self-merge sweep records an unavailable changed-file list as `would_have_blocked: true` with reason `intent-evidence`. Shadow never blocks a merge; with `enforce: true` it is ignored and enforcement behaves as above. Recording needs `evidence` enabled and an existing bundle for the head. The dashboard Settings → Security tab exposes the toggle.
+
 Optional pattern overrides:
 
 ```yaml
