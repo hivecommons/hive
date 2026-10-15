@@ -691,9 +691,12 @@ func (c *cliModelCache) lastGoodPath(backend string) string {
 
 // loadLastGood reads every persisted last-good catalog under lastGoodDir.
 // A missing or unreadable directory (dev machines, unit tests) is simply no
-// catalogs; a malformed file is ignored. Expiry is not applied here: it runs
-// at construction, before callers can pin c.now, so lastGoodFor enforces
-// cliModelLastGoodTTL against the cache's clock at read time instead.
+// catalogs; a malformed file is ignored. Age is NOT checked here: it runs
+// from newCLIModelCache before a caller can install its clock, so filtering
+// against the wall clock at load would silently drop a catalog the caller's
+// clock still considers fresh (#11994). lastGoodFor applies
+// cliModelLastGoodTTL with c.clock() on every read, which is the only place
+// the cutoff matters.
 func (c *cliModelCache) loadLastGood() {
 	if c.lastGoodDir == "" {
 		return
