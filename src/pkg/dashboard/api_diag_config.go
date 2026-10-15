@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	_ "embed"
 	"net/http"
 	"os"
 	"regexp"
@@ -20,39 +21,28 @@ import (
 // set. A "*" segment matches one map key (an agent name) and "[*]" any list
 // index. Adding a key here is a security decision: it must never name a
 // field that can carry a credential, a key or a URL with embedded login.
-var diagConfigValueKeys = []string{
-	"acmm_level",
-	"hive_id",
-	"project.org",
-	"project.name",
-	"project.repos[*]",
-	"project.primary_repo",
-	"project.ai_author",
-	"project.forge",
-	"hub.enabled",
-	"hub.url",
-	"hub.is_public",
-	"hub.hive_type",
-	"hub.auto_upgrade",
-	"hub.auto_upgrade_mode",
-	"github.app_id",
-	"github.installation_id",
-	"github.app_slug",
-	"github.api_url",
-	"github.base_url",
-	"governor.eval_interval_s",
-	"governor.logging.dir",
-	"governor.logging.level",
-	"governor.logging.max_size_mb",
-	"governor.logging.max_age_days",
-	"governor.logging.max_backups",
-	"governor.logging.compress",
-	"governor.logging.kick_log_source",
-	"governor.logging.read_scan_max_mb",
-	"agents.*.backend",
-	"agents.*.model",
-	"agents.*.enabled",
-	"agents.*.paused",
+//
+// The keys live in diag_config_value_keys.txt rather than in Go source so
+// that naming a hive.yaml key here does not count as the Settings UI
+// referencing it (see settings_parity_test.go).
+//
+//go:embed diag_config_value_keys.txt
+var diagConfigValueKeysFile string
+
+var diagConfigValueKeys = diagParseKeyList(diagConfigValueKeysFile)
+
+// diagParseKeyList reads one key per line, ignoring blank lines and lines
+// starting with "#".
+func diagParseKeyList(text string) []string {
+	var keys []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		keys = append(keys, line)
+	}
+	return keys
 }
 
 // diagEnvValueNames is the documented list of environment names known not to

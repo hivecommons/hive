@@ -1,0 +1,34 @@
+# Configuration keys the admin MCP effective-configuration read may show a
+# value for. See diagConfigValueKeys in api_diag_config.go before adding one.
+acmm_level
+hive_id
+project.org
+project.name
+project.repos[*]
+project.primary_repo
+project.ai_author
+project.forge
+hub.enabled
+hub.url
+hub.is_public
+hub.hive_type
+hub.auto_upgrade
+hub.auto_upgrade_mode
+github.app_id
+github.installation_id
+github.app_slug
+github.api_url
+github.base_url
+governor.eval_interval_s
+governor.logging.dir
+governor.logging.level
+governor.logging.max_size_mb
+governor.logging.max_age_days
+governor.logging.max_backups
+governor.logging.compress
+governor.logging.kick_log_source
+governor.logging.read_scan_max_mb
+agents.*.backend
+agents.*.model
+agents.*.enabled
+agents.*.paused
