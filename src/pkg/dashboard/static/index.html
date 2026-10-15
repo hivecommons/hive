@@ -31547,6 +31547,17 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Jev decisions', key: 'jev.provider', text: 'jev typed decisions provider openrouter typesafe model endpoint api key env timeout jev.provider jev.model jev.endpoint jev.api_key_env jev.timeout' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'Standalone deployment upgrades', key: 'deployment.podman_mode', text: 'deployment podman quadlet rootless rootful docker compose upgrade helper request dir deployment.podman_mode deployment.upgrade_helper deployment.upgrade_request_dir' },
+      { tab: 'Features', section: 'Review gate', label: 'Review evidence bundles', key: 'evidence.enabled', text: 'review evidence bundles audit signing key ed25519 evidence.enabled evidence.signing_key_file' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab and Gitea forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Token mint key and TTL', key: 'mint.max_ttl_seconds', text: 'token mint signing key path max ttl lifetime jwt mint.key_path mint.max_ttl_seconds' },
+      { tab: 'Features', section: 'Autonomy & ACMM', label: 'Design-first planning', key: 'planning.design_approved_label', text: 'planning design approved label architect revisions concurrent designs plan from label planning.design_approved_label planning.max_concurrent_designs planning.max_design_revisions planning.plan_from_label' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Superseded PR grace period', key: 'supersession_sweep.grace_period', text: 'supersession superseded grace period close contributor pr supersession_sweep.grace_period' },
+      { tab: 'Features', section: 'Quality loops & release health', label: 'Compliance posture windows', key: 'compliance.posture_checks.window_days', text: 'compliance posture look-back window history retention compliance.posture_checks.window_days compliance.posture_checks.history_days' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Swarm banner wording', key: 'swarm.event_name', text: 'swarm event name call to arms leaderboard title banner swarm.event_name swarm.call_to_arms swarm.leaderboard_title' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Tool approval inbox path', key: 'tool_approval.inbox_path', text: 'tool approval inbox pending approvals path tool_approval.inbox_path' },
+      { tab: 'Features', section: 'Auto-merge', label: 'Auto-merge sweep limits', key: 'auto_merge.min_head_age', text: 'auto merge max merges per sweep minimum head age required author role auto_merge.max_merges auto_merge.min_head_age auto_merge.trusted_authors.require_role' },
       { tab: 'Features', section: 'Integrations & observability', label: 'OpenTelemetry export', key: 'otel.enabled', text: 'otel opentelemetry export endpoint headers insecure sample ratio service name otel.enabled otel.endpoint otel.headers.<key> otel.insecure otel.sample_ratio otel.service_name' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
@@ -38636,7 +38647,7 @@ function burnAreaChart() {
           <span class="config-toggle-label">Escalation breaker enabled ${settingHelpMark('settings', 'health', 'Escalation breaker enabled', `${tip}`)}</span>
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Red-attempt threshold ${settingHelpMark('settings', 'health', 'Red-attempt threshold', `${tip}`)}</label><input type="number" min="0" placeholder="3" value="${e.threshold || ''}" data-change-action="markDirty" data-arg0="escalation" data-arg1="threshold" data-arg-types="s,s,N"></div>
+          <div class="config-field"><label>Red-attempt threshold ${yamlHint('escalation.threshold')} ${settingHelpMark('settings', 'health', 'Red-attempt threshold', `${tip}`)}</label><input type="number" min="0" placeholder="3" value="${e.threshold || ''}" data-change-action="markDirty" data-arg0="escalation" data-arg1="threshold" data-arg-types="s,s,N"></div>
         </div>`;
     }
 
@@ -39217,10 +39228,10 @@ function burnAreaChart() {
       const mergeGates = `
         <div class="config-toggle">
           <div class="config-toggle-switch ${sec.intentEnforce ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="intentEnforce"></div>
-          <span class="config-toggle-label">Enforce intent authorization on merges</span>
+          <span class="config-toggle-label">Enforce intent authorization on merges ${yamlHint('intent.enforce')} ${settingHelpMark('settings', 'security-and-access', 'Enforce intent authorization', `Off (report-only) by default. When on, a PR whose intent verdict or alignment check denies it is held from merging instead of only being logged.`)}</span>
         </div>
         <details style="margin:10px 0 18px"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced intent</summary>
-          <div class="config-field"><label>Alignment model</label>${securityModelInput('intentAlignmentModel', sec.intentAlignmentModel || '', 'leave empty for default')}</div>
+          <div class="config-field"><label>Alignment model ${yamlHint('intent.alignment_model')} ${settingHelpMark('settings', 'security-and-access', 'Intent alignment model', `Model that checks whether a PR&apos;s change matches the intent of the issue it fixes, using the configured reviewer endpoint. Empty leaves the alignment check off.`)}</label>${securityModelInput('intentAlignmentModel', sec.intentAlignmentModel || '', 'leave empty for default')}</div>
         </details>
 
         <div class="config-toggle">
@@ -39287,11 +39298,11 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${sn.trustedAuthorsBlock ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelTrustedAuthorsBlock"></div>
-          <span class="config-toggle-label">Block trusted authors ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
+          <span class="config-toggle-label">Block trusted authors ${yamlHint('sentinel.trusted_authors_block')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
         </div>
         <div class="config-field-row">
           <div class="config-field"><label>Alert label</label><input type="text" value="${esc(sn.label || 'sentinel-alert')}" placeholder="sentinel-alert" data-change-action="gh81" ${sn.enabled ? '' : 'disabled'}></div>
-          <div class="config-field"><label>Max alerts per sweep ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Max alerts per sweep ${yamlHint('sentinel.max_actions')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
         </div>
         <div class="config-field">
           <label>Sensitive files ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
@@ -39678,6 +39689,7 @@ function burnAreaChart() {
       const jevProviders = Array.isArray(f.jevProviders) ? f.jevProviders : ['openrouter', 'typesafe'];
       const dupSweepDefaults = f.duplicateSweepDefaults || {};
       const prFollowUpDefaults = f.prFollowUpDefaults || {};
+      const platformDefaults = f.platformDefaults || {};
       const publicationAvailable = f.publicationAvailable === true;
       const publicationMinACMMLevel = f.publicationMinACMMLevel || 3;
       const cls = (_configState.data || {}).classifier || {};
@@ -39774,8 +39786,12 @@ function burnAreaChart() {
             <span class="config-toggle-label">Auto-merge App-authored PRs ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-merge App-authored PRs', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</span>
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Max merges per sweep ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Max merges per sweep', `Caps how many PRs one sweep pass may merge. 0 or empty uses the default.`)}</label>
+            <label>Max merges per sweep ${yamlHint('auto_merge.max_merges')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Max merges per sweep', `Caps how many PRs one sweep pass may merge. 0 or empty uses the default.`)}</label>
             <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="3" data-change-action="gh71">
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Minimum head age ${yamlHint('auto_merge.min_head_age')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Minimum head age', `How old a PR head must be before the sweep trusts an unknown required-check set. Closes the window after a push where slow GitHub Actions checks have not registered yet. Positive Go duration such as 3m.`)}</label>
+            <input type="text" value="${esc(am.min_head_age || '')}" placeholder="3m0s" data-change-action="markDirty" data-arg0="auto-merge" data-arg1="min_head_age" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Required CI checks ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Required CI checks', `Comma-separated default status-check/check-run names the sweep must see green before merging, e.g. build-gate. For heterogeneous hives use auto_merge.repos.<repo>.required_checks per repository; keys may be bare repo names or owner/repo.`)}</label>
@@ -39798,7 +39814,7 @@ function burnAreaChart() {
             </div>
             <div class="config-field-row mt-4">
               <div class="config-field">
-                <label for="am-trusted-authors-require-role">Required author role</label>
+                <label for="am-trusted-authors-require-role">Required author role ${yamlHint('auto_merge.trusted_authors.require_role')}</label>
                 <select id="am-trusted-authors-require-role" data-change-action="gh101">${amTrustedAuthorRoleOptions}</select>
                 <p class="am-trusted-authors-note">Who holds these roles is defined by Authorized users on the Security tab; hosted hives manage read, read-write, merger, and owner roles on the hub's Manage Access screen — <a class="text-accent" href="#" data-action="openTrustedAuthorSecurityAccess" data-prevent="1">Open Security tab</a>.</p>
               </div>
@@ -39968,6 +39984,15 @@ function burnAreaChart() {
             <input type="number" min="0" step="1" id="rec-minready-input" value="${rvRec.min_ready_to_open || ''}" placeholder="1" data-change-action="gh84">
           </div>
         </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Review evidence ${settingHelpMark('settings', 'features', 'Review evidence', `Evidence bundles record what each hive review saw and decided, so a merge can be audited later.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.evidenceEnabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="evidenceEnabled"></div>
+            <span class="config-toggle-label">Write evidence bundles ${yamlHint('evidence.enabled')} ${settingHelpMark('settings', 'features', 'Write evidence bundles', `On by default. Off stops writing review evidence bundles. Applies to the next review.`)}</span>
+          </div>
+          <div class="config-field settings-subsection-row"><label>Signing key file ${yamlHint('evidence.signing_key_file')} ${settingHelpMark('settings', 'features', 'Evidence signing key file', `Path to an Ed25519 private key used to sign bundles. Empty means bundles are written unsigned. Only the path is shown; the key is never read by this dialog.`)}</label><input type="text" value="${esc(f.evidenceSigningKeyFile || '')}" placeholder="not set (bundles unsigned)" readonly aria-readonly="true"><div class="config-help">Read-only here: signing keys are provisioned on disk and set in hive.yaml.</div></div>
+        </div>
         `)}
 
         ${featuresSectionHtml('autonomy', `
@@ -40006,9 +40031,19 @@ function burnAreaChart() {
         <div class="settings-subsection">
           <div class="config-toggle">
             <div class="config-toggle-switch ${planOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="planFromLabel"></div>
-            <span class="config-toggle-label">Auto-plan from label ${settingHelpMark('settings', 'features', 'Auto-plan from label', `When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.`)}</span>
+            <span class="config-toggle-label">Auto-plan from label ${yamlHint('planning.plan_from_label')} ${settingHelpMark('settings', 'features', 'Auto-plan from label', `When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.`)}</span>
           </div>
           <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Auto-plan issues carrying the plan/epic label — L5+ only.</p>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Design-first planning ${settingHelpMark('settings', 'features', 'Design-first planning', `Issues with a design label get a design from the architect first; a human approves it with the approved label before it is broken down.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Design-approved label ${yamlHint('planning.design_approved_label')} ${settingHelpMark('settings', 'features', 'Design-approved label', `The label a human applies to approve a posted design. Applying a label needs triage on the repo. Empty uses ${esc(platformDefaults.planningDesignApprovedLabel || 'design-approved')}.`)}</label><input type="text" value="${esc(f.planningDesignApprovedLabel || '')}" placeholder="${esc(platformDefaults.planningDesignApprovedLabel || 'design-approved')}" data-change-action="markDirty" data-arg0="features" data-arg1="planningDesignApprovedLabel" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Max concurrent designs ${yamlHint('planning.max_concurrent_designs')} ${settingHelpMark('settings', 'features', 'Max concurrent designs', `How many designs may be posted and awaiting approval at once, so labeling a backlog does not starve the architect. 0 uses the default (${esc(String(platformDefaults.planningMaxConcurrentDesigns || 3))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.planningMaxConcurrentDesigns || ''))}" placeholder="${esc(String(platformDefaults.planningMaxConcurrentDesigns || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="planningMaxConcurrentDesigns" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Max design revisions ${yamlHint('planning.max_design_revisions')} ${settingHelpMark('settings', 'features', 'Max design revisions', `How many times the architect is asked to revise one design; past it the epic waits on a human. 0 uses the default (${esc(String(platformDefaults.planningMaxDesignRevisions || 3))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.planningMaxDesignRevisions || ''))}" placeholder="${esc(String(platformDefaults.planningMaxDesignRevisions || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="planningMaxDesignRevisions" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-help">Applies on the next planning pass. Plan and design label lists stay yaml-only.</div>
         </div>
         `)}
 
@@ -40063,6 +40098,14 @@ function burnAreaChart() {
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
         ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Superseded PR grace ${settingHelpMark('settings', 'features', 'Superseded PR grace', `Timing of the superseded-PR sweep.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Supersession grace period ${yamlHint('supersession_sweep.grace_period')} ${settingHelpMark('settings', 'features', 'Supersession grace period', `How long a superseded human-authored PR stays open after the supersession notice before it may be closed. Go duration; empty uses the default (${esc(platformDefaults.supersessionGracePeriod || '24h0m0s')}).`)}</label><input type="text" value="${esc(f.supersessionGracePeriod || '')}" placeholder="${esc(platformDefaults.supersessionGracePeriod || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="supersessionGracePeriod" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-help">Applies on the next sweep.</div>
+        </div>
         `)}
 
         ${featuresSectionHtml('agents', `
@@ -40193,6 +40236,45 @@ function burnAreaChart() {
             <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Signing key is provisioned on-disk, not here.</p>
           </div>
         </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Data directories ${settingHelpMark('settings', 'features', 'Data directories', `Where the hive keeps its persistent state. All paths sit on the persistent volume (/data by default).`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Metrics dir ${yamlHint('data.metrics_dir')} ${settingHelpMark('settings', 'features', 'Metrics dir', `Directory for metrics snapshots (default /data/metrics). Absolute path.`)}</label><input type="text" value="${esc(f.dataMetricsDir || '')}" placeholder="/data/metrics" data-change-action="markDirty" data-arg0="features" data-arg1="dataMetricsDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Logs dir ${yamlHint('data.logs_dir')} ${settingHelpMark('settings', 'features', 'Logs dir', `Directory for hive and agent logs (default /data/logs). Absolute path.`)}</label><input type="text" value="${esc(f.dataLogsDir || '')}" placeholder="/data/logs" data-change-action="markDirty" data-arg0="features" data-arg1="dataLogsDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Agent configs dir ${yamlHint('data.agents_dir')} ${settingHelpMark('settings', 'features', 'Agent configs dir', `Directory holding per-agent config overlays (default /data/agent-configs). Absolute path.`)}</label><input type="text" value="${esc(f.dataAgentsDir || '')}" placeholder="/data/agent-configs" data-change-action="markDirty" data-arg0="features" data-arg1="dataAgentsDir" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Claude sessions dir ${yamlHint('data.claude_sessions_dir')} ${settingHelpMark('settings', 'features', 'Claude sessions dir', `Where Claude Code keeps its session transcripts (default /data/home/.claude/projects). Absolute path.`)}</label><input type="text" value="${esc(f.dataClaudeSessionsDir || '')}" placeholder="/data/home/.claude/projects" data-change-action="markDirty" data-arg0="features" data-arg1="dataClaudeSessionsDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Copilot sessions dir ${yamlHint('data.copilot_sessions_dir')} ${settingHelpMark('settings', 'features', 'Copilot sessions dir', `Where Copilot CLI keeps its session state (default /data/home/.copilot/session-state). The session janitor prunes this directory. Absolute path.`)}</label><input type="text" value="${esc(f.dataCopilotSessionsDir || '')}" placeholder="/data/home/.copilot/session-state" data-change-action="markDirty" data-arg0="features" data-arg1="dataCopilotSessionsDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Bob sessions dir ${yamlHint('data.bob_sessions_dir')} ${settingHelpMark('settings', 'features', 'Bob sessions dir', `Where the Bob CLI keeps its session state (default /data/home/.bob). Absolute path.`)}</label><input type="text" value="${esc(f.dataBobSessionsDir || '')}" placeholder="/data/home/.bob" data-change-action="markDirty" data-arg0="features" data-arg1="dataBobSessionsDir" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field"><label>Session retention (days) ${yamlHint('data.session_retention_days')} ${settingHelpMark('settings', 'features', 'Session retention', `How many days of CLI session-state directories to keep before the janitor deletes them. Empty uses the default (${esc(String(platformDefaults.dataSessionRetentionDays || 7))}); 0 turns pruning off, which lets the volume grow without bound.`)}</label><input type="number" min="0" step="1" value="${esc(f.dataSessionRetentionDays || '')}" placeholder="${esc(String(platformDefaults.dataSessionRetentionDays || 7))}" data-change-action="markDirty" data-arg0="features" data-arg1="dataSessionRetentionDays" data-arg-types="s,s,w"></div>
+          <div class="config-help">Requires restart: these directories are read at boot. Existing files are not moved.</div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Token mint limits ${settingHelpMark('token-mint', '', 'Token mint limits', `Key location and lifetime cap for the Token Mint above.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Signing key path ${yamlHint('mint.key_path')} ${settingHelpMark('token-mint', '', 'Mint signing key path', `PEM path of the mint signing key; generated with 0600 permissions if absent. It must be on persistent storage and never readable outside the hive process. Only the path is shown.`)}</label><input type="text" value="${esc(f.mintKeyPath || '')}" placeholder="not set" readonly aria-readonly="true"><div class="config-help">Read-only here: the key is provisioned on disk and set in hive.yaml.</div></div>
+            <div class="config-field"><label>Max token TTL (seconds) ${yamlHint('mint.max_ttl_seconds')} ${settingHelpMark('token-mint', '', 'Mint max TTL', `Upper bound on a minted token's lifetime. 0 uses the default (${esc(String(platformDefaults.mintMaxTtlSeconds || 900))}s); the hard cap is ${esc(String(platformDefaults.mintHardCapTtlSeconds || 3600))}s.`)}</label><input type="number" min="0" max="${esc(String(platformDefaults.mintHardCapTtlSeconds || 3600))}" step="1" value="${esc(String(f.mintMaxTtlSeconds || ''))}" placeholder="${esc(String(platformDefaults.mintMaxTtlSeconds || 900))}" data-change-action="markDirty" data-arg0="features" data-arg1="mintMaxTtlSeconds" data-arg-types="s,s,N"><div class="config-help">Requires restart.</div></div>
+          </div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Tool approval inbox ${settingHelpMark('settings', 'features', 'Tool approval inbox', `Where pending operator tool approvals are stored.`)}</div>
+          <div class="config-field"><label>Inbox path ${yamlHint('tool_approval.inbox_path')} ${settingHelpMark('settings', 'features', 'Tool approval inbox path', `File that holds pending operator approvals. Empty uses /data/approvals/inbox.json on the persistent volume. Absolute path.`)}</label><input type="text" value="${esc(f.toolApprovalInboxPath || '')}" placeholder="/data/approvals/inbox.json" data-change-action="markDirty" data-arg0="features" data-arg1="toolApprovalInboxPath" data-arg-types="s,s,w"><div class="config-help">Requires restart.</div></div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Swarm banner ${settingHelpMark('settings', 'features', 'Swarm banner', `Default wording for swarm events. Per-repo themes override it from the swarm view.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Event name ${yamlHint('swarm.event_name')} ${settingHelpMark('settings', 'features', 'Swarm event name', `Name shown for a swarm event. Empty uses the default. HIVE_SWARM_EVENT_NAME overrides it.`)}</label><input type="text" maxlength="200" value="${esc(f.swarmEventName || '')}" placeholder="${esc(platformDefaults.swarmEventName || 'Swarm')}" data-change-action="markDirty" data-arg0="features" data-arg1="swarmEventName" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Call to arms ${yamlHint('swarm.call_to_arms')} ${settingHelpMark('settings', 'features', 'Swarm call to arms', `Rallying line shown when a swarm starts. Empty uses the default. HIVE_SWARM_CALL_TO_ARMS overrides it.`)}</label><input type="text" maxlength="200" value="${esc(f.swarmCallToArms || '')}" placeholder="${esc(platformDefaults.swarmCallToArms || 'All hands on deck!')}" data-change-action="markDirty" data-arg0="features" data-arg1="swarmCallToArms" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Leaderboard title ${yamlHint('swarm.leaderboard_title')} ${settingHelpMark('settings', 'features', 'Swarm leaderboard title', `Heading of the swarm leaderboard. Empty uses the default.`)}</label><input type="text" maxlength="200" value="${esc(f.swarmLeaderboardTitle || '')}" placeholder="${esc(platformDefaults.swarmLeaderboardTitle || 'Swarm leaderboard')}" data-change-action="markDirty" data-arg0="features" data-arg1="swarmLeaderboardTitle" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-help">Requires restart: the swarm view reads its default theme once.</div>
+        </div>
         `)}
 
         ${featuresSectionHtml('quality', `
@@ -40229,7 +40311,7 @@ function burnAreaChart() {
           </div>
           ${publicationAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Requires ACMM L${publicationMinACMMLevel}+</p>`}
           <div class="config-field" style="margin-top:10px">
-            <label>Campaign owner ${settingHelpMark('audit-campaign', 'publication', 'Campaign owner', `The maintainer principal every publication runs under and the actor on the outcome ledger. Publication stays off until an owner is named; the engine identity is never used.`)}</label>
+            <label>Campaign owner ${yamlHint('publication.owner')} ${settingHelpMark('audit-campaign', 'publication', 'Campaign owner', `The maintainer principal every publication runs under and the actor on the outcome ledger. Publication stays off until an owner is named; the engine identity is never used.`)}</label>
             <input type="text" value="${esc(f.publicationOwner || '')}" placeholder="maintainer login" data-change-action="markDirty" data-arg0="features" data-arg1="publicationOwner" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
@@ -40238,6 +40320,15 @@ function burnAreaChart() {
           </div>
         </div>
         ${renderGovReleaseSentinelSection((_configState.data || {}).release_sentinel || {})}
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Compliance posture windows ${settingHelpMark('settings', 'features', 'Compliance posture windows', `Look-back and retention of the compliance posture checks.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Posture look-back (days) ${yamlHint('compliance.posture_checks.window_days')} ${settingHelpMark('settings', 'features', 'Posture look-back', `How far back the posture checks that inspect merged PRs look, 1 to 90 days. 0 uses the default (${esc(String(platformDefaults.compliancePostureWindowDays || 30))}).`)}</label><input type="number" min="0" max="90" step="1" value="${esc(String(f.compliancePostureWindowDays || ''))}" placeholder="${esc(String(platformDefaults.compliancePostureWindowDays || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="compliancePostureWindowDays" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Posture history (days) ${yamlHint('compliance.posture_checks.history_days')} ${settingHelpMark('settings', 'features', 'Posture history', `How long posture-check results are kept, 30 to 1095 days. 0 uses the default (${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}).`)}</label><input type="number" min="0" max="1095" step="1" value="${esc(String(f.compliancePostureHistoryDays || ''))}" placeholder="${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}" data-change-action="markDirty" data-arg0="features" data-arg1="compliancePostureHistoryDays" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-help">Applies on the next posture pass.</div>
+        </div>
         `)}
 
         ${featuresSectionHtml('integrations', `
@@ -40275,6 +40366,29 @@ function burnAreaChart() {
           </div>
         </div>
         ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">GitLab and Gitea forges ${settingHelpMark('settings', 'features', 'GitLab and Gitea forges', `Used only when the project forge is set to gitlab or gitea. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>GitLab URL ${yamlHint('gitlab.gitlab_url')} ${settingHelpMark('settings', 'features', 'GitLab URL', `GitLab instance root, e.g. https://gitlab.example.com. Empty uses ${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}.`)}</label><input type="text" value="${esc(f.gitlabUrl || '')}" placeholder="${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>GitLab token env var ${yamlHint('gitlab.token_env')} ${settingHelpMark('settings', 'features', 'GitLab token env var', `The NAME of the environment variable holding the GitLab token, never the token itself.`)}</label><input type="text" value="${esc(f.gitlabTokenEnv || '')}" placeholder="${esc(platformDefaults.gitlabTokenEnv || 'GITLAB_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabTokenEnv" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Gitea URL ${yamlHint('gitea.gitea_url')} ${settingHelpMark('settings', 'features', 'Gitea URL', `Gitea or Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Gitea forge.`)}</label><input type="text" value="${esc(f.giteaUrl || '')}" placeholder="https://gitea.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Gitea token env var ${yamlHint('gitea.token_env')} ${settingHelpMark('settings', 'features', 'Gitea token env var', `The NAME of the environment variable holding the Gitea token, never the token itself.`)}</label><input type="text" value="${esc(f.giteaTokenEnv || '')}" placeholder="${esc(platformDefaults.giteaTokenEnv || 'GITEA_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-help">Requires restart: the forge client is built at boot.</div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Standalone deployment ${settingHelpMark('settings', 'features', 'Standalone deployment', `How the dashboard upgrade button reaches a Podman/Quadlet or Docker Compose host. Kubernetes hives upgrade through the hub and ignore these.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Podman mode ${yamlHint('deployment.podman_mode')} ${settingHelpMark('settings', 'features', 'Podman mode', `rootless or rootful, matching how the Quadlet units were installed. Unset means the dashboard cannot tell and shows the host upgrade command instead. HIVE_DEPLOYMENT_PODMAN_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="deploymentPodmanMode" data-arg-types="s,s,v"><option value=""${!f.deploymentPodmanMode ? ' selected' : ''}>not set</option>${['rootless', 'rootful'].map(m => `<option value="${m}"${f.deploymentPodmanMode === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
+            <div class="config-field"><label>Upgrade request dir ${yamlHint('deployment.upgrade_request_dir')} ${settingHelpMark('settings', 'features', 'Upgrade request dir', `Directory shared with the host where the dashboard drops an upgrade request for hive-upgrade.service to pick up. Must match the host side. HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR overrides it.`)}</label><input type="text" value="${esc(f.deploymentUpgradeRequestDir || '')}" placeholder="not set" data-change-action="markDirty" data-arg0="features" data-arg1="deploymentUpgradeRequestDir" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field"><label>Upgrade helper ${yamlHint('deployment.upgrade_helper')} ${settingHelpMark('settings', 'features', 'Upgrade helper', `Executable the dashboard runs for Docker Compose upgrades (default /usr/local/libexec/hive-dashboard-upgrade-helper). HIVE_DASHBOARD_UPGRADE_HELPER overrides it.`)}</label><input type="text" value="${esc(f.deploymentUpgradeHelper || '')}" placeholder="/usr/local/libexec/hive-dashboard-upgrade-helper" readonly aria-readonly="true"><div class="config-help">Read-only here: it names a program the dashboard executes, so it is changed in hive.yaml only.</div></div>
+          <div class="config-help">Read on each upgrade check, so no restart is needed.</div>
+        </div>
         `)}
 
         ${featuresSectionHtml('experimental', `

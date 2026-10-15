@@ -31,9 +31,9 @@ const (
 //     knobs scan_interval_s, max_fix_attempts, max_kicks, long_stall_days and
 //     recent_closed_window_s; the lane is built at startup, so these take
 //     effect after a restart)
-//   - mint              (Config.Mint.Enabled + Issuer — NOT KeyPath: the signing
-//     key is a secret/PEM path and the dashboard overlay is deliberately
-//     secret-free)
+//   - mint              (Config.Mint.Enabled + Issuer; KeyPath is returned
+//     read-only by featuresPlatformResponse and never written here, and the
+//     key's contents are never read)
 //   - plan_from_label   (Config.Planning.PlanFromLabel, a *bool tri-state)
 //   - quality.formal    (Config.Quality.Formal opt-in, ACMM L5+ effective gate)
 //   - review.plan_match (Config.Review.PlanMatch.Enabled, the plan_match
@@ -51,6 +51,10 @@ const (
 //     resume and handoff notes, hivecommons/hive#9583, default off)
 //   - issues, jev, duplicate_sweep, policies, turn.pr_follow_up windows and
 //     turn.reentrant gates (featuresOpsBody in api_governor_features_ops.go)
+//   - data, deployment, evidence, gitea, gitlab, mint.max_ttl_seconds,
+//     supersession_sweep, compliance.posture_checks, planning, swarm
+//     and tool_approval.inbox_path (featuresPlatformBody in
+//     api_governor_features_platform.go)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -144,6 +148,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		RotationAgents             *map[string]string                        `json:"rotationAgents"`
 
 		featuresOpsBody
+		featuresPlatformBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -262,10 +267,16 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	applyPlatform, err := body.featuresPlatformBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// --- apply ---
 	cfg := s.deps.Config
 	applyOps(cfg)
+	applyPlatform(cfg)
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -457,8 +468,8 @@ func claimsTTLsResponse(c config.ClaimsConfig) map[string]interface{} {
 
 // featuresSectionResponse builds the opt-in-features payload for the governor
 // config GET so the Features dialog can prefill its controls. The mint signing
-// key (Config.Mint.KeyPath) is intentionally never returned — only whether mint
-// is enabled and its issuer, keeping the response secret-free.
+// key path (Config.Mint.KeyPath) is returned read-only; the key itself is
+// never read, keeping the response secret-free.
 //
 // planFromLabel is reported as a tri-state: null when the key is unset (falls
 // back to the ACMM-level gate), otherwise the explicit true/false the operator
@@ -565,6 +576,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"retroLongStallDays":  retro.DefaultLongStallDays,
 	}
 	for k, v := range featuresOpsResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresPlatformResponse(cfg) {
 		out[k] = v
 	}
 	return out
