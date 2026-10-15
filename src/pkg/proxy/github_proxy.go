@@ -229,6 +229,8 @@ type GitHubProxy struct {
 	mu         sync.RWMutex
 	violations map[string]int // agent name -> blocked request count
 
+	writes writeCounters
+
 	certMu    sync.RWMutex
 	certCache map[string]cachedCert
 
@@ -1466,6 +1468,24 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 					blockReason = reason
 					blockCode = DenyReasonCanaryEgress
 				}
+			}
+		}
+
+		if !isLinear && agentName != internalCallerName {
+			isGraphQL := req.Method == "POST" && IsGraphQLPath(req.URL.Path)
+			isWrite := writeMethods[req.Method] && !gitUploadPackPath.MatchString(req.URL.Path)
+			if isGraphQL {
+				isWrite = graphQLMutation
+			}
+			if isWrite {
+				reason := ""
+				if blocked {
+					reason = blockCode
+					if reason == "" {
+						reason = DenyReasonUnknown
+					}
+				}
+				p.writes.record(mode.String(), reason)
 			}
 		}
 

@@ -19,17 +19,23 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		IoscanEnabled        *bool     `json:"ioscanEnabled"`
-		IoscanFailMode       *string   `json:"ioscanFailMode"`
-		IoscanCanaries       *bool     `json:"ioscanCanaries"`
-		IntentEnforce        *bool     `json:"intentEnforce"`
-		IntentAlignmentModel *string   `json:"intentAlignmentModel"`
-		ReviewRequire        *bool     `json:"reviewRequireApproval"`
-		ReviewFanOut         *bool     `json:"reviewFanOut"`
-		ReviewMaxParallel    *int      `json:"reviewMaxParallelReviews"`
-		ReviewReviewerAgents *[]string `json:"reviewReviewerAgents"`
-		ReviewFixerAgent     *string   `json:"reviewFixerAgent"`
-		AgentSandboxEnabled  *bool     `json:"agentSandboxEnabled"`
+		IoscanEnabled        *bool   `json:"ioscanEnabled"`
+		IoscanFailMode       *string `json:"ioscanFailMode"`
+		IoscanCanaries       *bool   `json:"ioscanCanaries"`
+		IntentEnforce        *bool   `json:"intentEnforce"`
+		IntentAlignmentModel *string `json:"intentAlignmentModel"`
+		// Intent classifier lists. An empty list restores the built-in
+		// defaults (nil), matching how the intent package treats them.
+		IntentTestPathPatterns      *[]string `json:"intentTestPathPatterns"`
+		IntentDocsPathPatterns      *[]string `json:"intentDocsPathPatterns"`
+		IntentGuardrailPathPatterns *[]string `json:"intentGuardrailPathPatterns"`
+		IntentFeatureSignals        *[]string `json:"intentFeatureSignals"`
+		ReviewRequire               *bool     `json:"reviewRequireApproval"`
+		ReviewFanOut                *bool     `json:"reviewFanOut"`
+		ReviewMaxParallel           *int      `json:"reviewMaxParallelReviews"`
+		ReviewReviewerAgents        *[]string `json:"reviewReviewerAgents"`
+		ReviewFixerAgent            *string   `json:"reviewFixerAgent"`
+		AgentSandboxEnabled         *bool     `json:"agentSandboxEnabled"`
 		// Sentinel (suspicious-activity alerts) is pointer-typed per field
 		// so an absent key means "unchanged" — a save that only toggled a
 		// behavior must not wipe the sensitive-path list.
@@ -126,6 +132,24 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	if body.IntentAlignmentModel != nil {
 		cfg.Intent.AlignmentModel = strings.TrimSpace(*body.IntentAlignmentModel)
 	}
+	for _, f := range []struct {
+		in  *[]string
+		dst *[]string
+	}{
+		{body.IntentTestPathPatterns, &cfg.Intent.TestPathPatterns},
+		{body.IntentDocsPathPatterns, &cfg.Intent.DocsPathPatterns},
+		{body.IntentGuardrailPathPatterns, &cfg.Intent.GuardrailPathPatterns},
+		{body.IntentFeatureSignals, &cfg.Intent.FeatureSignals},
+	} {
+		if f.in == nil {
+			continue
+		}
+		list := sanitizeStringSlice(*f.in)
+		if len(list) == 0 {
+			list = nil
+		}
+		*f.dst = list
+	}
 	if body.ReviewRequire != nil {
 		cfg.Review.RequireApproval = *body.ReviewRequire
 	}
@@ -209,6 +233,11 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"ioscanCanaries":                   cfg.Ioscan.CanariesEnabled(),
 		"intentEnforce":                    cfg.Intent.Enforce,
 		"intentAlignmentModel":             cfg.Intent.AlignmentModel,
+		"intentTestPathPatterns":           nonNilStrings(cfg.Intent.TestPathPatterns),
+		"intentDocsPathPatterns":           nonNilStrings(cfg.Intent.DocsPathPatterns),
+		"intentGuardrailPathPatterns":      nonNilStrings(cfg.Intent.GuardrailPathPatterns),
+		"intentFeatureSignals":             nonNilStrings(cfg.Intent.FeatureSignals),
+		"intentDefaults":                   intentDefaultsResponse(),
 		"reviewRequireApproval":            cfg.Review.RequireApproval,
 		"reviewFanOut":                     cfg.Review.FanOut,
 		"reviewMaxParallelReviews":         cfg.Review.EffectiveMaxParallelReviews(),
@@ -252,6 +281,18 @@ func sentinelSectionResponse(sc config.SentinelConfig) map[string]interface{} {
 		"trustedAuthorsBlock":   sc.TrustedAuthorsBlock,
 		"repos":                 nonNilStrings(sc.Repos),
 		"maxActions":            sc.MaxActionsOrDefault(),
+	}
+}
+
+// intentDefaultsResponse lists the built-in intent patterns an empty
+// intent.* list falls back to, so the UI can show them as placeholders.
+func intentDefaultsResponse() map[string][]string {
+	d := config.DefaultIntentConfig()
+	return map[string][]string{
+		"testPathPatterns":      d.TestPathPatterns,
+		"docsPathPatterns":      d.DocsPathPatterns,
+		"guardrailPathPatterns": d.GuardrailPathPatterns,
+		"featureSignals":        d.FeatureSignals,
 	}
 }
 

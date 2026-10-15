@@ -126,6 +126,28 @@ func TestSaaSAuthCheckAuthReturnIsExactPublicPath(t *testing.T) {
 	}
 }
 
+// The phone widget's read-only summary must bypass the hub's auth_request gate
+// (the widget has no browser session; the spoke authenticates the widget
+// token itself), but only that exact path: token mint/revoke and the rest of
+// /api/widget stay hub-private.
+func TestSaaSAuthCheckWidgetSummaryIsExactPublicPath(t *testing.T) {
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{"/api/widget/summary", true},
+		{"/api/widget/summary?ts=1", true},
+		{"/api/widget/token", false},
+		{"/api/widget", false},
+		{"/api/widget/summary/extra", false},
+		{"/api/widget/summaryx", false},
+	} {
+		if got := isSaaSPublicPath(tc.uri); got != tc.want {
+			t.Errorf("isSaaSPublicPath(%q) = %v, want %v", tc.uri, got, tc.want)
+		}
+	}
+}
+
 func TestSaaSAuthCheckGHUserStatusIsOnlyPublicAuthStatus(t *testing.T) {
 	for _, tc := range []struct {
 		uri  string

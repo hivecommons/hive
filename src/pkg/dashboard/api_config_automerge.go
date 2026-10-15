@@ -158,12 +158,13 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			ExcludeLabels           []string `json:"exclude_labels"`
 		} `json:"trusted_authors"`
 		ContributorLane *struct {
-			Enabled                *bool    `json:"enabled"`
-			SoakMinutes            *int     `json:"soak_minutes"`
-			RequireReviewerVerdict *bool    `json:"require_reviewer_verdict"`
-			Repos                  []string `json:"repos"`
-			ExcludeLabels          []string `json:"exclude_labels"`
-			RequireTiers           []string `json:"require_tiers"`
+			Enabled                 *bool    `json:"enabled"`
+			SoakMinutes             *int     `json:"soak_minutes"`
+			RequireReviewerVerdict  *bool    `json:"require_reviewer_verdict"`
+			Repos                   []string `json:"repos"`
+			ExcludeLabels           []string `json:"exclude_labels"`
+			RequireTiers            []string `json:"require_tiers"`
+			RegistryTiersSufficient *bool    `json:"registry_tiers_sufficient"`
 		} `json:"contributor_lane"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -300,6 +301,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			v := *body.ContributorLane.RequireReviewerVerdict
 			cfg.AutoMerge.ContributorLane.RequireReviewerVerdict = &v
 		}
+		if body.ContributorLane.RegistryTiersSufficient != nil {
+			v := *body.ContributorLane.RegistryTiersSufficient
+			cfg.AutoMerge.ContributorLane.RegistryTiersSufficient = &v
+		}
 		if body.ContributorLane.Repos != nil {
 			cfg.AutoMerge.ContributorLane.Repos = contributorLaneRepos
 		}
@@ -384,13 +389,14 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"roles":                     []string{config.RoleMerger, config.RoleOwner},
 		},
 		"contributor_lane": map[string]interface{}{
-			"enabled":                  cl.IsEnabled(),
-			"soak_minutes":             cl.EffectiveSoakMinutes(),
-			"require_reviewer_verdict": cl.EffectiveRequireReviewerVerdict(),
-			"repos":                    contributorLaneRepos,
-			"exclude_labels":           contributorLaneLabels,
-			"require_tiers":            cl.EffectiveRequireTiers(),
-			"grantable_tiers":          config.ContributorLaneGrantableTiers,
+			"enabled":                   cl.IsEnabled(),
+			"soak_minutes":              cl.EffectiveSoakMinutes(),
+			"require_reviewer_verdict":  cl.EffectiveRequireReviewerVerdict(),
+			"repos":                     contributorLaneRepos,
+			"exclude_labels":            contributorLaneLabels,
+			"require_tiers":             cl.EffectiveRequireTiers(),
+			"registry_tiers_sufficient": cl.EffectiveRegistryTiersSufficient(),
+			"grantable_tiers":           config.ContributorLaneGrantableTiers,
 		},
 	}
 }

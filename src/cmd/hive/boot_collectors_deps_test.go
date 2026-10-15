@@ -96,13 +96,14 @@ func TestBootCollectorsWithStartsEveryCollectorAndPersistsOnPVC(t *testing.T) {
 		t.Fatal("token collector not started with a stop channel")
 	}
 	sort.Strings(f.started)
-	if got := strings.Join(f.started, ","); got != "activity,fleet-stats,metrics,repo-cost" {
+	if got := strings.Join(f.started, ","); got != "activity,fleet-stats,launch-cost,metrics,repo-cost" {
 		t.Fatalf("started = %q", got)
 	}
 	for name, want := range map[string]string{
 		"fleet-stats": fleetStatsPersistPath,
 		"activity":    activityPersistPath,
 		"repo-cost":   repoCostPersistPath,
+		"launch-cost": launchCostPersistPath,
 	} {
 		if got := f.persisted[name]; got != want || !strings.HasPrefix(got, "/data/") {
 			t.Fatalf("persistence[%s] = %q, want %q", name, got, want)
@@ -117,7 +118,7 @@ func TestBootCollectorsWithStartsEveryCollectorAndPersistsOnPVC(t *testing.T) {
 	if len(f.lookups) != 0 {
 		t.Fatalf("configured ai_author must skip the token lookup, got %v", f.lookups)
 	}
-	if b.metricsCollector == nil || b.fleetStatsCollector == nil || b.activityCollector == nil || b.repoCostCollector == nil || b.refreshDashboard == nil {
+	if b.metricsCollector == nil || b.fleetStatsCollector == nil || b.activityCollector == nil || b.repoCostCollector == nil || b.launchCostCollector == nil || b.refreshDashboard == nil {
 		t.Fatal("collectors not handed off to boot")
 	}
 	// The token collector's stop channel is closed by the cleanup stack.

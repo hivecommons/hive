@@ -36,6 +36,7 @@ func TestCliPinChangeRefreshesModelOptions(t *testing.T) {
 		extractJSOneLiner(t, html, "_normalizeModel") + "\n" +
 		extractJSOneLiner(t, html, "_modelsEqual") + "\n" +
 		extractJSFunction(t, html, "refreshModelOptions") + "\n    }\n" +
+		modelSelectHelpersJS(t, html) +
 		`const MODELS = {
 			claude: [{value: 'claude-opus-5', label: 'claude-opus-5'}],
 			codex: [{value: 'gpt-6-luna', label: 'gpt-6-luna'}, {value: 'gpt-6-sol', label: 'gpt-6-sol'}],
@@ -64,7 +65,7 @@ func TestCliPinChangeRefreshesModelOptions(t *testing.T) {
 	}
 
 	for i, g := range got {
-		if !strings.Contains(g.HTML, `<option value="gpt-6-luna">`) || !strings.Contains(g.HTML, `<option value="gpt-6-sol">`) {
+		if !strings.Contains(g.HTML, `<option value="gpt-6-luna"`) || !strings.Contains(g.HTML, `<option value="gpt-6-sol"`) {
 			t.Errorf("case %d: codex models not offered: %s", i, g.HTML)
 		}
 	}
@@ -77,7 +78,7 @@ func TestCliPinChangeRefreshesModelOptions(t *testing.T) {
 		t.Errorf("offered current model not reselected: %+v", got[1])
 	}
 	if got[2].Value != "" || strings.Contains(got[2].HTML, "(current)") {
-		t.Errorf("empty model must stay on (from launch command): %+v", got[2])
+		t.Errorf("empty model must stay on the backend-default option: %+v", got[2])
 	}
 }
 

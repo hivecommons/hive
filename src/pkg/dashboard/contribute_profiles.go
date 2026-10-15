@@ -433,6 +433,24 @@ func findContributor(id string) *ContributorProfile {
 	return nil
 }
 
+// ContributorTrustTierByLogin returns the operator-set trust tier recorded in
+// this hive's contributor registry for a GitHub login (case-insensitive), or
+// ok=false when the login has no profile. It is the registry read behind the
+// contributor-lane auto-merge registry admission path (automerge.Options.
+// ContributorRegistryTier): the tier on the profile, not a claim marker, is
+// the operator's statement of trust for the login.
+func ContributorTrustTierByLogin(login string) (tier string, ok bool) {
+	login = strings.TrimSpace(strings.TrimPrefix(login, "@"))
+	if login == "" {
+		return "", false
+	}
+	p := findContributor(login)
+	if p == nil || !strings.EqualFold(p.GitHubUsername, login) {
+		return "", false
+	}
+	return p.TrustTier, true
+}
+
 func registrationTokenFromAuthorization(r *http.Request) string {
 	authz := r.Header.Get("Authorization")
 	if strings.HasPrefix(authz, "Bearer ") {

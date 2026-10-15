@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
@@ -77,15 +78,24 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 		}
 		p := cfg.AutoMerge.ContributorLane
 		return automerge.ContributorLanePolicy{
-			Enabled:                p.IsEnabled(),
-			HiveID:                 cfg.HiveID,
-			Soak:                   time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
-			RequireReviewerVerdict: p.EffectiveRequireReviewerVerdict(),
-			Repos:                  p.RepoSet(),
-			ExcludeLabels:          p.ExcludeLabelSet(),
-			RequireTiers:           p.RequireTierSet(),
+			Enabled:                 p.IsEnabled(),
+			HiveID:                  cfg.HiveID,
+			Soak:                    time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
+			RequireReviewerVerdict:  p.EffectiveRequireReviewerVerdict(),
+			Repos:                   p.RepoSet(),
+			ExcludeLabels:           p.ExcludeLabelSet(),
+			RequireTiers:            p.RequireTierSet(),
+			RegistryTiersSufficient: p.EffectiveRegistryTiersSufficient(),
 		}
 	}
+}
+
+// contributorRegistryTierFunc answers the contributor-lane registry
+// admission path from the contributor registry on the hive's PVC
+// (dashboard.ContributorTrustTierByLogin), so an operator-granted trusted
+// tier admits a contributor's PR without a linked issue or claim marker.
+func contributorRegistryTierFunc() automerge.ContributorRegistryTierFunc {
+	return dashboard.ContributorTrustTierByLogin
 }
 
 // contributorLaneReviewerConfigured reports whether any enabled, unpaused

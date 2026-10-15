@@ -1440,6 +1440,7 @@ func (b *boot) wireBootClosures() {
 			FleetStats:            b.fleetStatsCollector,
 			Activity:              b.activityCollector,
 			RepoCost:              b.repoCostCollector,
+			LaunchCost:            b.launchCostCollector,
 			BeadSynthesizer:       b.beadSynth,
 			KnowledgeConnectors:   b.knowledgeConnectorRuntime(),
 			KnowledgePublish:      b.knowledgePublishRuntime(),
@@ -2280,13 +2281,14 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
 	autoMergeOpts := automerge.Options{
-		Logger:                 b.logger,
-		MergerAuthorizer:       trustedMergerFunc(b.cfg),
-		TrustedAuthorizer:      trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(b.cfg),
-		ContributorLanePolicy:  contributorLanePolicyFunc(b.cfg),
-		ContributorLaneVerdict: contributorLaneVerdictFunc(b.cfg, b.logger),
-		SentinelLabel:          func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		Logger:                  b.logger,
+		MergerAuthorizer:        trustedMergerFunc(b.cfg),
+		TrustedAuthorizer:       trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(b.cfg),
+		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
+		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
+		ContributorRegistryTier: contributorRegistryTierFunc(),
+		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -2943,6 +2945,16 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.repoCostCollector = collect.NewRepoCostCollector(b.dashSrv.GetAudit(), b.tokenCollector, "", b.logger)
 	deps.enablePersistence("repo-cost", b.repoCostCollector, repoCostPersistPath)
 	deps.startCollector(b.ctx, "repo-cost", b.repoCostCollector)
+
+	// Launch attribution (#12128): the kick path records which issue / PR /
+	// head SHA each delivered kick was launched for (tokenCollector.RecordLaunch
+	// in runEvalCycle); this collector joins those records against the same
+	// usage timeline repo-cost uses and caches /api/launch-cost. Read-only —
+	// the governor window budget remains the single enforced budget.
+	b.tokenCollector.SetLaunchLog(tokens.NewLaunchLog(tokens.DefaultLaunchLogPath, b.logger))
+	b.launchCostCollector = collect.NewLaunchCostCollector(b.tokenCollector, b.logger)
+	deps.enablePersistence("launch-cost", b.launchCostCollector, launchCostPersistPath)
+	deps.startCollector(b.ctx, "launch-cost", b.launchCostCollector)
 
 	// Persistent hourly metrics behind the Operations + Leaderboard sparklines
 	// (queue depth, tasks/hour, fleet size, per-contributor completions). The
@@ -7059,6 +7071,14 @@ func runEvalCycle(
 				// start signal (recordAgentStart), not here.
 				recordAgentKickListings(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
 
+				// #12128: record which issue/PR/head SHA this kick was launched
+				// for, so /api/launch-cost can place the turn's spend. Review
+				// kicks carry the PR head; governor kicks carry the issue refs.
+				if tokenCollector != nil {
+					reviewKick, isReview := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]
+					tokenCollector.RecordLaunch(launchRecordForKick(msg, reviewKick, isReview, time.Now()))
+				}
+
 				// Log token state at time of kick for cost attribution
 				if tokenCollector != nil {
 					if summary := tokenCollector.Summary(); summary != nil {
@@ -8551,12 +8571,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		*lastRun = now
 	}
 	opts := automerge.Options{
-		Logger:                 logger,
-		MergerAuthorizer:       trustedMergerFunc(cfg),
-		TrustedAuthorizer:      trustedAuthorFunc(cfg),
-		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(cfg),
-		ContributorLanePolicy:  contributorLanePolicyFunc(cfg),
-		ContributorLaneVerdict: contributorLaneVerdictFunc(cfg, logger),
+		Logger:                  logger,
+		MergerAuthorizer:        trustedMergerFunc(cfg),
+		TrustedAuthorizer:       trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
+		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
+		ContributorRegistryTier: contributorRegistryTierFunc(),
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }

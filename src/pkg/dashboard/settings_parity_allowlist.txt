@@ -321,10 +321,6 @@ hub.tier_limits.<key>.max_concurrent # TODO #11854
 hub.tier_limits.<key>.max_per_day # TODO #11854
 hub.tier_limits.<key>.max_per_hour # TODO #11854
 hub.upgrade_drain_timeout_s # TODO #11854
-intent.docs_path_patterns[] # TODO #11854
-intent.feature_signals[] # TODO #11854
-intent.guardrail_path_patterns[] # TODO #11854
-intent.test_path_patterns[] # TODO #11854
 knowledge.agent_scopes.<key>.include_states[] # TODO #11854
 knowledge.agent_scopes.<key>.layers[] # TODO #11854
 knowledge.agent_scopes.<key>.repos[] # TODO #11854
@@ -500,10 +496,6 @@ runs.triage.min_body_chars # TODO #11854
 runs.triage.spec_labels[] # TODO #11854
 runs.wait_severity # TODO #11854
 runs.wait_timeout_seconds # TODO #11854
-sentinel.disabled_behaviors[] # TODO #11854
-sentinel.exempt_logins[] # TODO #11854
-sentinel.repos[] # TODO #11854
-sentinel.sensitive_paths[] # TODO #11854
 swarm.themes.<key>.call_to_arms # TODO #11854
 swarm.themes.<key>.event_name # TODO #11854
 swarm.themes.<key>.leaderboard_title # TODO #11854

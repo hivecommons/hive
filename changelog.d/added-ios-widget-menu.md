@@ -1,0 +1,1 @@
+- Dashboard avatar menu gains **📱 iPhone widget**, which hands the Scriptable widget script (now served by every spoke at `/ios-widget/hive-widget.js`) to Scriptable and runs its setup pre-filled with this hive's URL; reveals an App Store link when Scriptable is not installed.

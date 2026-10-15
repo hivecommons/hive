@@ -147,3 +147,18 @@ func TestBotTakeoverAutoMergeConfigDefaultsOnAndHonorsExplicitOff(t *testing.T) 
 		t.Fatal("explicit auto_merge.bot_takeover.enabled: false must disable the takeover")
 	}
 }
+
+// registry_tiers_sufficient defaults on so an operator-granted registry tier
+// admits a contributor-lane PR without a claim marker; an explicit false
+// turns the registry path off.
+func TestContributorLaneAutoMergeConfigRegistryTiersSufficient(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if !cfg.EffectiveRegistryTiersSufficient() {
+		t.Fatal("registry_tiers_sufficient must default to true")
+	}
+	off := false
+	cfg.RegistryTiersSufficient = &off
+	if cfg.EffectiveRegistryTiersSufficient() {
+		t.Fatal("explicit registry_tiers_sufficient: false must turn the registry path off")
+	}
+}

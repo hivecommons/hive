@@ -109,6 +109,7 @@ type boot struct {
 	fleetStatsCollector           *collect.FleetStatsCollector
 	activityCollector             *collect.ActivityCollector
 	repoCostCollector             *collect.RepoCostCollector
+	launchCostCollector           *collect.LaunchCostCollector
 	lastActionable                atomic.Pointer[github.ActionableResult]
 	evalCycles                    uint64
 	knowledgeAPI                  *knowledge.KnowledgeAPI

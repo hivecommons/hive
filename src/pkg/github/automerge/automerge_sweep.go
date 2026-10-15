@@ -87,6 +87,10 @@ type Options struct {
 	// ContributorLaneVerdict reports the reviewer verdict for a PR head. nil
 	// means no reviewer is configured, which satisfies the verdict gate.
 	ContributorLaneVerdict ContributorLaneVerdictFunc
+	// ContributorRegistryTier looks up a PR author's operator-set trust tier
+	// in this hive's contributor registry for the contributor-lane registry
+	// admission path. nil means only the claim-marker path admits.
+	ContributorRegistryTier ContributorRegistryTierFunc
 	// ContributorSoak overrides the process-wide soak tracker. nil shares
 	// the package default so one-shot engines still soak across ticks.
 	ContributorSoak *ContributorSoakTracker
@@ -131,6 +135,7 @@ type Engine struct {
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
 	trustedAuthorizer                 TrustedAuthorizer
 	contributorLanePolicy             func() ContributorLanePolicy
+	contributorRegistryTier           ContributorRegistryTierFunc
 	contributorLaneVerdict            ContributorLaneVerdictFunc
 	contributorSoak                   *ContributorSoakTracker
 	sentinelLabel                     func() string
@@ -175,6 +180,7 @@ func New(transport Transport, opts Options) *Engine {
 		trustedAuthorizer:                 opts.TrustedAuthorizer,
 		contributorLanePolicy:             opts.ContributorLanePolicy,
 		contributorLaneVerdict:            opts.ContributorLaneVerdict,
+		contributorRegistryTier:           opts.ContributorRegistryTier,
 		contributorSoak:                   opts.ContributorSoak,
 		sentinelLabel:                     opts.SentinelLabel,
 		minHeadAge:                        opts.MinHeadAge,

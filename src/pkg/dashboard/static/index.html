@@ -8,6 +8,9 @@
   <meta property="og:description" content="Real-time dashboard for a Hive AI agent swarm. Monitor agents, governor mode, issues, PRs, and contributor activity across open source projects.">
   <meta property="og:type" content="website">
   <title>Hive Dashboard</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="Hive">
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/components.css">
   <style>
@@ -1902,6 +1905,56 @@
     .repo-issue-band, .repo-pr-band { margin-bottom:var(--sp-2); }
     .repo-issue-band-title, .repo-pr-band-title { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; margin:var(--sp-2) var(--sp-0) var(--sp-1); }
     .repo-issue-band-items, .repo-pr-band-items { display:flex; flex-direction:column; gap:var(--sp-2); }
+    /* Faceted label filter inside project cards (#12172) */
+    .hf-section { margin-top:var(--sp-3); border-top:1px dashed var(--border); padding-top:var(--sp-2); }
+    .hf-header { display:flex; align-items:center; gap:var(--sp-2); cursor:pointer; color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; user-select:none; }
+    .hf-header .section-chevron { font-size:var(--fs-2xs); }
+    .hf-header .hf-count { margin-left:var(--sp-1); }
+    .hf-header .hf-edit { margin-left:auto; border:0; background:transparent; color:var(--accent); font:inherit; font-weight:700; letter-spacing:0; text-transform:none; cursor:pointer; padding:0 var(--sp-1); }
+    .hf-body { display:flex; flex-direction:column; gap:var(--sp-1); margin-top:var(--sp-2); overflow:hidden; transition:max-height 0.25s ease; }
+    .hf-body.collapsed { max-height:0; margin-top:0; }
+    .hf-empty { color:var(--muted); font-size:var(--fs-2xs); font-style:italic; }
+    .hf-item { display:flex; align-items:center; gap:var(--sp-2); min-width:0; font-size:var(--fs-xs); line-height:1.3; }
+    .hf-item-link { display:inline-flex; align-items:center; gap:var(--sp-1); min-width:0; color:inherit; text-decoration:none; flex:1 1 auto; }
+    .hf-item-link:hover .hf-item-title { text-decoration:underline; }
+    .hf-item-icon { display:inline-flex; width:0.85em; height:0.85em; color:var(--muted); flex:0 0 auto; }
+    .hf-item-icon svg { width:100%; height:100%; }
+    .hf-item-icon.pr { color:var(--purple); }
+    .hf-item-num { color:var(--muted); font-weight:700; flex:0 0 auto; }
+    .hf-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+    .hf-item-labels { display:inline-flex; gap:var(--sp-1); flex:0 0 auto; max-width:45%; overflow:hidden; }
+    .hf-item-age { color:var(--muted); font-size:var(--fs-2xs); flex:0 0 auto; white-space:nowrap; }
+    .hf-label { display:inline-block; padding:var(--sp-1) var(--sp-3); border-radius:var(--r-pill); border:1px solid color-mix(in srgb, var(--pill-c, var(--muted)) 45%, transparent); background:color-mix(in srgb, var(--pill-c, var(--muted)) 12%, transparent); color:var(--pill-c, var(--muted)); font-size:var(--fs-2xs); font-weight:700; line-height:1.2; white-space:nowrap; max-width:11rem; overflow:hidden; text-overflow:ellipsis; }
+    .hf-label.hf-label-direction, .hf-label.hf-label-decision { --pill-c: var(--status-attention); }
+    .hf-label.hf-label-spec, .hf-label.hf-label-signal { --pill-c: var(--yellow); }
+    .hf-label.hf-label-human { --pill-c: var(--orange); }
+    .hf-label.hf-label-hold { --pill-c: var(--muted); border-style:dashed; }
+    .hf-editor { border:1px solid var(--border); border-radius:var(--r); background:var(--card-bg); padding:var(--sp-3) var(--sp-4); margin:var(--sp-0) var(--sp-0) var(--sp-4); display:flex; flex-direction:column; gap:var(--sp-3); font-size:var(--fs-xs); }
+    .hf-editor[hidden] { display:none; }
+    .hf-row { display:flex; align-items:center; gap:var(--sp-2); flex-wrap:wrap; min-width:0; }
+    .hf-row-label { color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; min-width:4.5rem; }
+    .hf-chip { display:inline-flex; align-items:center; gap:var(--sp-1); border:1px solid var(--border); border-radius:var(--r-pill); background:transparent; color:var(--fg); font:inherit; font-size:var(--fs-2xs); font-weight:600; line-height:1.2; padding:var(--sp-1) var(--sp-4); cursor:pointer; white-space:nowrap; max-width:16rem; overflow:hidden; text-overflow:ellipsis; }
+    .hf-chip:hover { border-color:var(--accent); }
+    .hf-chip.active { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--accent); }
+    .hf-chip.hf-chip-exclude { text-decoration:line-through; opacity:0.85; }
+    .hf-chip.hf-chip-modified { border-style:dashed; }
+    .hf-chip-count { color:var(--muted); font-weight:700; }
+    .hf-chip.active .hf-chip-count { color:inherit; }
+    .hf-chip-x { border:0; background:transparent; color:inherit; font:inherit; line-height:1; padding:0 0 0 var(--sp-1); cursor:pointer; opacity:0.7; }
+    .hf-chip-x:hover { opacity:1; }
+    .hf-facets { display:grid; grid-template-columns:repeat(auto-fit, minmax(14rem, 1fr)); gap:var(--sp-3); }
+    .hf-facet-group { display:flex; flex-direction:column; gap:var(--sp-1); min-width:0; }
+    .hf-facet-group.hf-facet-labels { grid-column:1 / -1; }
+    .hf-facet-title { display:flex; align-items:center; gap:var(--sp-2); color:var(--muted); font-size:var(--fs-2xs); font-weight:800; letter-spacing:0.08em; text-transform:uppercase; }
+    .hf-facet-chips { display:flex; flex-wrap:wrap; gap:var(--sp-1); }
+    .hf-input { border:1px solid var(--border); border-radius:var(--r); background:var(--bg); color:var(--fg); font:inherit; font-size:var(--fs-xs); padding:var(--sp-1) var(--sp-2); min-width:12rem; }
+    .hf-mode { display:inline-flex; border:1px solid var(--border); border-radius:var(--r-pill); overflow:hidden; }
+    .hf-mode button { border:0; background:transparent; color:var(--muted); font:inherit; font-size:var(--fs-2xs); font-weight:700; padding:var(--sp-1) var(--sp-4); cursor:pointer; }
+    .hf-mode button.active { background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--accent); }
+    .hf-confirm { display:inline-flex; align-items:center; gap:var(--sp-2); color:var(--status-attention); font-size:var(--fs-2xs); font-weight:700; }
+    .hf-editor-close { margin-left:auto; font-size:var(--fs-sm); }
+    .hf-link { border:0; background:transparent; color:var(--accent); font:inherit; font-size:var(--fs-2xs); cursor:pointer; padding:0; text-decoration:underline; }
+    .hf-muted { color:var(--muted); font-size:var(--fs-2xs); }
     .repo-issue-pill.waiting { --component-status: var(--status-attention); --pill-c: var(--status-attention); }
     .repo-issue-pill.done { --component-status: var(--status-ok); --pill-c: var(--status-ok); }
     .repo-issue-pill.in-progress { --pill-c: var(--yellow); --component-status: var(--status-warn); }
@@ -2389,6 +2442,9 @@
     .cost-sort-ind { display: inline-block; margin-left: var(--sp-2); font-size: var(--fs-2xs); color: var(--accent); }
     .cost-table td { padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
     .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
+    .cost-table .ccenter { text-align: center; }
+    .cost-table th.cright { text-align: right; }
+    .cost-disclaimer.cost-sub-disclaimer { margin: var(--sp-2) var(--sp-0) var(--sp-4); }
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
     .cost-table td.csession { color: var(--muted); font-family: var(--font-mono); }
     .cost-table td.ctime { color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
@@ -2604,6 +2660,20 @@
     .feedback-header { flex:0 0 auto; position: sticky; top: 0; z-index: 2; display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-6); padding:var(--sp-8); border-bottom:1px solid var(--border); background:var(--panel); }
     .feedback-header h2 { margin:0 0 var(--sp-2); }
     .feedback-intro { color:var(--muted); margin:0; line-height:1.45; }
+    .iphone-widget-modal { max-width: 560px; width: min(94vw, 560px); padding: var(--sp-0); display:flex; flex-direction:column; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow:hidden; }
+    .iphone-widget-body { padding: var(--sp-6) var(--sp-8) var(--sp-8); overflow:auto; line-height:1.5; }
+    .iphone-widget-steps { margin: var(--sp-2) 0 var(--sp-4); padding-left: 1.4em; }
+    .iphone-widget-steps li { margin-bottom: var(--sp-5); }
+    .iphone-widget-steps .hv-btn { margin-top: var(--sp-2); }
+    .iphone-widget-status { display:block; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
+    .iphone-widget-fallback { margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--status-warn); border-radius: var(--radius); background: var(--panel-2, var(--panel)); }
+    .iphone-widget-fallback .hv-btn { margin: var(--sp-2) 0 0; }
+    .iphone-widget-token-link { margin-left: var(--sp-3); font-size: var(--fs-sm); }
+    .iphone-widget-note { color: var(--muted); font-size: var(--fs-sm); margin: 0 0 var(--sp-4); }
+    .iphone-widget-qr { margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2, var(--panel)); }
+    .iphone-widget-qr img { display:block; width: 200px; height: 200px; margin: var(--sp-2) 0; background: var(--infra-logo-chip-bg); padding: var(--sp-2); border-radius: var(--radius); image-rendering: pixelated; }
+    .iphone-widget-qr code { word-break: break-all; font-size: var(--fs-sm); }
+    .iphone-widget-qr .hv-btn { margin: var(--sp-2) var(--sp-2) 0 0; }
     .feedback-body { flex:1 1 auto; min-height:0; overflow:hidden; display:flex; flex-direction:column; padding:var(--sp-8); }
     .feedback-footer { flex:0 0 auto; position: sticky; bottom:0; z-index:2; display:flex; justify-content:flex-end; gap:var(--sp-4); padding:var(--sp-6) var(--sp-8); border-top:1px solid var(--border); background:var(--panel); }
     .feedback-tabs, .feedback-segmented { display:inline-flex; gap:var(--sp-1); padding:var(--sp-1); border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg-soft); }
@@ -5603,6 +5673,7 @@
           <div class="avatar-menu-divider"></div>
           <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
           <button type="button" id="oc-gh-menu-widget" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/widget" data-arg1="hive-widget.json" data-arg-types="s,s" title="View Übersicht widget JSON">⬇ Widget</button>
+          <button type="button" id="oc-gh-menu-iphone-widget" class="avatar-menu-item" data-action="openIPhoneWidgetModal" title="Put this hive on your iPhone Home Screen">📱 iPhone widget</button>
           <button type="button" id="oc-gh-menu-download" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/config/download" data-arg1="hive.yaml" data-arg-types="s,s" hidden>View hive.yaml</button>
           <button type="button" id="oc-gh-menu-config-export" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/config/export" data-arg1="hive-config.json" data-arg-types="s,s" hidden>Export effective config (JSON)</button>
           <div class="avatar-menu-divider"></div>
@@ -5724,10 +5795,20 @@
       <div class="repos-toolbar" id="repos-toolbar" aria-label="Project actions">
         <span id="repos-overview-filter-chip" class="repo-filtered-chip" hidden></span>
         <button class="hv-btn btn-secondary btn" id="repos-clear-pill-filter-btn" data-action="clearRepoPillFilter" data-stop="1" title="Clear the active repository pill filter" hidden>Clear filter</button>
+        <button class="hv-btn btn-secondary btn" id="repos-filter-editor-btn" data-action="hfToggleEditor" data-stop="1" aria-pressed="false" title="Faceted label filter: pick labels, text terms and facets; the matching issues and PRs show in a Filter section inside every project card. Save and name selections to recall them later.">🔎 Filter</button>
         <button class="hv-btn btn-secondary btn" id="repos-rescan-btn" data-action="reposForceRescan" data-stop="1" title="Scan monitored projects for issue and pull request changes now instead of waiting for the governor's next eval cycle (read-only — no agents are kicked; server-debounced)">🔄 Rescan</button>
         <button class="hv-btn btn-secondary btn" id="repos-reset-layout-btn" data-action="resetRepoCardWidths" data-stop="1" title="Reset project card widths and tile order to the default layout (this browser only)" style="display:none">↔️ Reset layout</button>
       </div>
       <div id="repos-legend" class="repo-legend"></div>
+      <!-- Faceted label filter editor (#12172). One global selection, rendered
+           inside every project card as a collapsible "Filter" section; saved
+           filters persist per hive in localStorage (hive-label-filters:<hiveId>). -->
+      <div id="hf-editor" class="hf-editor" hidden aria-label="Project filter editor">
+        <div id="hf-presets" class="hf-row hf-presets"></div>
+        <div id="hf-manage" class="hf-row hf-manage"></div>
+        <div id="hf-facets" class="hf-facets"></div>
+        <div id="hf-terms" class="hf-row hf-text"></div>
+      </div>
       <!-- Read-only view of project.issue_filter: which issues agents may
            initiate work on, by label. Hidden unless a filter is configured;
            populated from /api/config at boot. Enforcement lives server-side
@@ -6477,6 +6558,179 @@
       if (tab === 'reports') await loadFeedbackReports(true);
     }
     function closeFeedbackModal() { const el = document.getElementById('feedback-overlay'); if (el) el.remove(); }
+
+    // ---- iPhone widget (Scriptable) hand-off -------------------------------
+    // Opens Scriptable in context: first `scriptable:///add` imports the widget
+    // script served by this spoke, then `scriptable:///run/Hive?url=<this hive>`
+    // runs its setup with the hive URL pre-filled. If the custom scheme does not
+    // take the page to the background within a short grace period, Scriptable is
+    // not installed and the App Store link is revealed. No native dialogs.
+    const IPHONE_WIDGET_SCRIPT_PATH = '/ios-widget/hive-widget.js';
+    const IPHONE_WIDGET_SCRIPT_NAME = 'Hive';
+    const IPHONE_WIDGET_APP_STORE_URL = 'https://apps.apple.com/app/scriptable/id1405459188';
+    const IPHONE_WIDGET_DOCS_URL = 'https://github.com/hivecommons/hive/blob/v5/src/docs/ios-widget.md';
+    const IPHONE_WIDGET_SCHEME_GRACE_MS = 1800;
+    function iphoneWidgetIsIOS() {
+      const ua = navigator.userAgent || '';
+      return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    }
+    function iphoneWidgetHiveURL() { return location.origin; }
+    function openIPhoneWidgetModal() {
+      if (typeof closeGHUserMenu === 'function') closeGHUserMenu();
+      if (document.getElementById('iphone-widget-overlay')) return;
+      const overlay = document.createElement('div');
+      overlay.id = 'iphone-widget-overlay';
+      overlay.className = 'config-overlay';
+      hiveRememberModalOpen(overlay);
+      const onIOS = iphoneWidgetIsIOS();
+      const hiveURL = iphoneWidgetHiveURL();
+      overlay.innerHTML = `<div class="config-modal iphone-widget-modal" role="dialog" aria-modal="true" aria-labelledby="iphone-widget-title-h">
+        <header class="feedback-header">
+          <div><h2 id="iphone-widget-title-h" class="modal-h">📱 iPhone widget</h2><p class="feedback-intro">Put <strong>${escapeHtml(hiveURL.replace(/^https?:\/\//, ''))}</strong> on your Home Screen: open issues, open PRs and your-turn counts with sparklines. Runs in the free Scriptable app.</p></div>
+          <button class="config-close" data-action="closeIPhoneWidgetModal" aria-label="Close iPhone widget dialog">&times;</button>
+        </header>
+        <div class="feedback-body iphone-widget-body">
+          ${onIOS ? '' : '<p class="iphone-widget-note">You are not on an iPhone. Open this hive on your phone and pick <em>iPhone widget</em> from the avatar menu there, or follow the <a href="' + IPHONE_WIDGET_DOCS_URL + '" target="_blank" rel="noopener noreferrer">manual steps ↗</a>.</p>'}
+          <ol class="iphone-widget-steps">
+            <li><strong>Add the widget script to Scriptable.</strong><br>
+              <button type="button" class="hv-btn btn-primary btn-sm" data-action="iphoneWidgetAddScript">Add script to Scriptable</button>
+              <button type="button" class="hv-btn btn-secondary btn-sm" data-action="iphoneWidgetCopyScriptURL">Copy script URL</button>
+              <span class="iphone-widget-status" id="iphone-widget-add-status"></span>
+              <div class="iphone-widget-fallback" id="iphone-widget-not-installed" hidden>Scriptable did not open — it is probably not installed. <a class="hv-btn btn-secondary btn-sm" href="${IPHONE_WIDGET_APP_STORE_URL}" target="_blank" rel="noopener noreferrer">Get Scriptable (free) ↗</a> then come back and tap the button again.</div>
+            </li>
+            <li><strong>Set it up for this hive.</strong> Owners: create a <strong>read-only widget token</strong> — it can only read this widget's numbers, never change anything — and scan the QR code with the iPhone camera (or tap <em>Open in Scriptable</em> on the phone). Scriptable stores the hive URL and token in the iOS Keychain.<br>
+              <button type="button" class="hv-btn btn-primary btn-sm" data-action="iphoneWidgetMintToken">Create widget token &amp; QR</button>
+              <button type="button" class="hv-btn btn-secondary btn-sm" data-action="iphoneWidgetRevokeToken">Revoke widget token</button>
+              <span class="iphone-widget-status" id="iphone-widget-token-status"></span>
+              <div class="iphone-widget-qr" id="iphone-widget-qr" hidden></div>
+              <span class="iphone-widget-status">Not the owner? Use a GitHub token instead (fine-grained, no repository permissions — it just proves who you are):</span>
+              <button type="button" class="hv-btn btn-secondary btn-sm" data-action="iphoneWidgetRunSetup">Set up this hive in Scriptable</button>
+              <a class="iphone-widget-token-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create token ↗</a>
+            </li>
+            <li><strong>Add the widget.</strong> Long-press the Home Screen → <strong>+</strong> → <strong>Scriptable</strong> → medium size → Add. Then long-press it → <strong>Edit Widget</strong> → Script: <strong>${IPHONE_WIDGET_SCRIPT_NAME}</strong>.</li>
+          </ol>
+          <p class="iphone-widget-note">Several hives? Add one widget per hive and set its <em>Parameter</em> to that hive's URL. <a href="${IPHONE_WIDGET_DOCS_URL}" target="_blank" rel="noopener noreferrer">Full guide ↗</a></p>
+        </div>
+      </div>`;
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closeIPhoneWidgetModal(); });
+      document.body.appendChild(overlay);
+      iphoneWidgetRefreshTokenStatus();
+    }
+    function closeIPhoneWidgetModal() { const el = document.getElementById('iphone-widget-overlay'); if (el) el.remove(); }
+    // Navigate to a custom-scheme URL and report whether the page went to the
+    // background (the only web-visible sign the app took the hand-off).
+    function iphoneWidgetOpenScheme(url) {
+      return new Promise((resolve) => {
+        let settled = false;
+        const done = (ok) => { if (settled) return; settled = true; document.removeEventListener('visibilitychange', onHide); resolve(ok); };
+        const onHide = () => { if (document.visibilityState === 'hidden') done(true); };
+        document.addEventListener('visibilitychange', onHide);
+        setTimeout(() => done(document.visibilityState === 'hidden'), IPHONE_WIDGET_SCHEME_GRACE_MS);
+        location.href = url;
+      });
+    }
+    async function iphoneWidgetAddScript() {
+      const status = document.getElementById('iphone-widget-add-status');
+      const notInstalled = document.getElementById('iphone-widget-not-installed');
+      if (notInstalled) notInstalled.hidden = true;
+      if (status) status.textContent = 'Fetching script…';
+      let script = '';
+      try {
+        const resp = await fetch(IPHONE_WIDGET_SCRIPT_PATH, { credentials: 'same-origin', cache: 'no-cache' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        script = await resp.text();
+      } catch (err) {
+        if (status) status.textContent = '';
+        showToast('Could not load the widget script from this hive: ' + (err && err.message ? err.message : err), 'error');
+        return;
+      }
+      if (status) status.textContent = 'Opening Scriptable…';
+      const url = 'scriptable:///add?scriptName=' + encodeURIComponent(IPHONE_WIDGET_SCRIPT_NAME) + '&scriptContent=' + encodeURIComponent(script);
+      const ok = await iphoneWidgetOpenScheme(url);
+      if (status) status.textContent = ok ? 'Sent to Scriptable — tap “Add” there, then come back for step 2.' : '';
+      if (!ok && notInstalled) notInstalled.hidden = false;
+    }
+    async function iphoneWidgetRunSetup() {
+      const url = 'scriptable:///run/' + encodeURIComponent(IPHONE_WIDGET_SCRIPT_NAME) + '?url=' + encodeURIComponent(iphoneWidgetHiveURL()) + '&setup=1';
+      const ok = await iphoneWidgetOpenScheme(url);
+      if (!ok) {
+        const notInstalled = document.getElementById('iphone-widget-not-installed');
+        if (notInstalled) notInstalled.hidden = false;
+        showToast('Scriptable did not open. Install it (step 1) and make sure the script is named “' + IPHONE_WIDGET_SCRIPT_NAME + '”.', 'error');
+      }
+    }
+    // Read-only widget token (owner only): the server returns the plaintext
+    // once, plus a QR of the scriptable:///run deep link carrying it. The token
+    // is shown here and never stored by the browser.
+    async function iphoneWidgetRefreshTokenStatus() {
+      const status = document.getElementById('iphone-widget-token-status');
+      if (!status) return;
+      try {
+        const resp = await fetch('/api/widget/token', { credentials: 'same-origin', cache: 'no-cache' });
+        if (!resp.ok) { status.textContent = ''; return; }
+        const d = await resp.json();
+        status.textContent = d.configured ? ('A widget token exists (created ' + (d.createdAt || 'earlier') + '; last used ' + (d.lastUsedAt || 'never') + '). Creating a new one replaces it.') : 'No widget token yet.';
+      } catch { status.textContent = ''; }
+    }
+    async function iphoneWidgetMintToken() {
+      const box = document.getElementById('iphone-widget-qr');
+      const status = document.getElementById('iphone-widget-token-status');
+      if (status) status.textContent = 'Creating widget token…';
+      let d = null;
+      try {
+        const resp = await fetch('/api/widget/token', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hiveUrl: iphoneWidgetHiveURL() }) });
+        d = await resp.json().catch(() => null);
+        if (!resp.ok || !d || !d.token) throw new Error((d && d.error) || ('HTTP ' + resp.status));
+      } catch (err) {
+        if (status) status.textContent = '';
+        showToast('Could not create a widget token: ' + (err && err.message ? err.message : err), 'error');
+        return;
+      }
+      if (status) status.textContent = 'Widget token created. It is shown only once — any earlier widget token no longer works.';
+      if (!box) return;
+      box.textContent = '';
+      if (d.qrDataUrl) {
+        const img = document.createElement('img');
+        img.src = d.qrDataUrl;
+        img.alt = 'QR code: open this hive in Scriptable with the widget token';
+        box.appendChild(img);
+      }
+      const open = document.createElement('a');
+      open.className = 'hv-btn btn-secondary btn-sm';
+      open.href = d.setupUrl;
+      open.textContent = 'Open in Scriptable';
+      box.appendChild(open);
+      const p = document.createElement('div');
+      p.className = 'iphone-widget-status';
+      p.append('Token (for manual setup): ');
+      const code = document.createElement('code');
+      code.textContent = d.token;
+      p.appendChild(code);
+      box.appendChild(p);
+      box.hidden = false;
+    }
+    async function iphoneWidgetCopyScriptURL() {
+      const url = iphoneWidgetHiveURL() + IPHONE_WIDGET_SCRIPT_PATH;
+      try {
+        await navigator.clipboard.writeText(url);
+        showToast('Script URL copied: ' + url, 'success');
+      } catch {
+        showToast('Copy failed — the script is at ' + url, 'info', true);
+      }
+    }
+    async function iphoneWidgetRevokeToken() {
+      const box = document.getElementById('iphone-widget-qr');
+      try {
+        const resp = await fetch('/api/widget/token', { method: 'DELETE', credentials: 'same-origin' });
+        const d = await resp.json().catch(() => null);
+        if (!resp.ok) throw new Error((d && d.error) || ('HTTP ' + resp.status));
+        if (box) { box.textContent = ''; box.hidden = true; }
+        showToast(d && d.revoked ? 'Widget token revoked — widgets using it stop updating.' : 'There was no widget token to revoke.', 'success');
+      } catch (err) {
+        showToast('Could not revoke the widget token: ' + (err && err.message ? err.message : err), 'error');
+      }
+      iphoneWidgetRefreshTokenStatus();
+    }
     async function feedbackAddFiles(files) {
       if (!files) return;
       for (const f of Array.from(files)) {
@@ -16603,6 +16857,633 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         : `<span class="pill-state" title="${esc(s.label)}">${esc(s.glyph)}</span>`).join('');
     }
 
+    // ── Label filter (hf) pure helpers (begin) ──────────────────────────────
+    // Faceted label filter for the project cards (hivecommons/hive#12172).
+    // Everything between the begin/end markers is DOM-free so
+    // TestDashboardLabelFilterHelpers can run it under node.
+    const HF_STORE_PREFIX = 'hive-label-filters:';
+    const HF_STORE_VERSION = 1;
+    const HF_DEFAULT_PRESET_KEY = 'preset:needs-human';
+    const HF_KINDS = Object.freeze([{ key: 'issue', label: 'Issues' }, { key: 'pr', label: 'PRs' }]);
+    const HF_STATES = Object.freeze([
+      { key: 'unclaimed', label: 'Unclaimed', tip: 'Issue with no assignee or live claim' },
+      { key: 'claimed', label: 'Claimed', tip: 'Issue assigned, claimed or withheld behind a claim' },
+      { key: 'parked', label: 'Parked', tip: 'Held or hard-suppressed — out of every agent lane' },
+      { key: 'covered-by-pr', label: 'Covered by PR', tip: 'Issue hive has verified a PR covers' }
+    ]);
+    const HF_AUTHORS = Object.freeze([
+      { key: 'hive', label: 'Hive', tip: 'Filed by this hive\u2019s agents' },
+      { key: 'human', label: 'Human', tip: 'Filed by a person' },
+      { key: 'bot', label: 'Bot', tip: 'Filed by another bot (renovate, dependabot, …)' }
+    ]);
+    const HF_LABEL_TONE = Object.freeze({ 'needs-direction': 'direction', 'needs-decision': 'decision', 'needs-spec': 'spec', 'needs-signal': 'signal', 'needs-human': 'human' });
+    const HF_TEXT_DEBOUNCE_MS = 250;
+    const HF_MAX_ROW_LABELS = 3;
+
+    function hfEmptyFilter() {
+      return { labels: [], terms: [], kinds: [], states: [], authors: [], matchAll: false };
+    }
+    function hfNormalizeFilter(raw) {
+      const f = hfEmptyFilter();
+      if (!raw || typeof raw !== 'object') return f;
+      const strs = v => Array.isArray(v) ? v.map(x => String(x == null ? '' : x).trim()).filter(Boolean) : [];
+      f.labels = Array.from(new Set(strs(raw.labels).map(l => l.toLowerCase())));
+      f.terms = Array.from(new Set(strs(raw.terms).map(t => { const p = hfParseTerm(t); return p ? p.raw : ''; }).filter(Boolean)));
+      f.kinds = strs(raw.kinds).filter(k => HF_KINDS.some(x => x.key === k));
+      f.states = strs(raw.states).filter(k => HF_STATES.some(x => x.key === k));
+      f.authors = strs(raw.authors).filter(k => HF_AUTHORS.some(x => x.key === k));
+      f.matchAll = !!raw.matchAll;
+      return f;
+    }
+    /** Canonical string for equality checks: label order matters (it is the sort priority); the rest is order-free. */
+    function hfFilterSignature(filter) {
+      const f = hfNormalizeFilter(filter);
+      return JSON.stringify([f.labels, f.terms.slice().sort(), f.kinds.slice().sort(), f.states.slice().sort(), f.authors.slice().sort(), f.matchAll]);
+    }
+    function hfFilterIsEmpty(filter) {
+      const f = hfNormalizeFilter(filter);
+      return !f.labels.length && !f.terms.length && !f.kinds.length && !f.states.length && !f.authors.length;
+    }
+    /**
+     * One text chip: `-` prefix excludes, surrounding quotes make a phrase,
+     * otherwise every word must appear (AND within a term). Plain substring —
+     * users never type regex.
+     */
+    function hfParseTerm(raw) {
+      let s = String(raw == null ? '' : raw).trim();
+      if (!s) return null;
+      let negate = false;
+      if (s.charAt(0) === '-') { negate = true; s = s.slice(1).trim(); if (!s) return null; }
+      let phrase = false;
+      const quoted = /^"(.*)"$/.exec(s) || /^\u201c(.*)\u201d$/.exec(s);
+      if (quoted) { phrase = true; s = quoted[1].trim(); }
+      s = s.toLowerCase();
+      if (!s) return null;
+      const words = phrase ? [s.replace(/\s+/g, ' ')] : s.split(/\s+/).filter(Boolean);
+      return { raw: (negate ? '-' : '') + (phrase ? '"' + words[0] + '"' : words.join(' ')), negate, phrase, words };
+    }
+    function hfTermHits(term, haystack) {
+      return !!term && term.words.every(w => haystack.indexOf(w) >= 0);
+    }
+    function hfAuthorKind(item, aiAuthor) {
+      if (!item) return 'human';
+      const author = String(item.author || '').trim();
+      if (item.app_authored || item.hive_attributed || (aiAuthor && author && author.toLowerCase() === String(aiAuthor).toLowerCase())) return 'hive';
+      if (/\[bot\]$/i.test(author) || /-bot$|\bbot\b/i.test(author)) return 'bot';
+      return 'human';
+    }
+    /** Normalise one snapshot record into a filterable entry. kind is 'issue' or 'pr'. */
+    function hfEntry(kind, item, repo, opts) {
+      const o = opts || {};
+      const labels = (item && Array.isArray(item.labels) ? item.labels : []).map(l => String(l == null ? '' : l).trim()).filter(Boolean);
+      const states = new Set();
+      if (o.held || o.bucket === 'filtered') states.add('parked');
+      if (kind === 'issue') {
+        const claimed = (Array.isArray(item.assignees) && item.assignees.length > 0) || !!item.claimed_by || o.bucket === 'claimed' || o.bucket === 'claimed_by_pr';
+        states.add(claimed ? 'claimed' : 'unclaimed');
+        if (o.coveringPR) states.add('covered-by-pr');
+      }
+      const hay = [item.title || '', '#' + (item.number || ''), labels.join(' '), item.body || ''].join('\n').toLowerCase();
+      return {
+        kind, item, repo: repo || item.repo || '', held: !!o.held, bucket: o.bucket || '',
+        number: Number(item.number || 0), title: String(item.title || ''), url: String(item.url || ''),
+        labels, labelsLower: new Set(labels.map(l => l.toLowerCase())), states, authorKind: hfAuthorKind(item, o.aiAuthor),
+        createdAt: Date.parse(item.created_at || '') || 0, updatedAt: Date.parse(item.updated_at || item.created_at || '') || 0,
+        haystack: hay
+      };
+    }
+    function hfSplitTerms(filter) {
+      const parsed = (filter.terms || []).map(hfParseTerm).filter(Boolean);
+      return { positive: parsed.filter(t => !t.negate), negative: parsed.filter(t => t.negate) };
+    }
+    /** Labels + positive text terms form one criteria pool, combined by matchAll (AND) or any (OR). Negative terms always exclude. */
+    function hfCriteriaMatch(filter, entry, terms) {
+      const t = terms || hfSplitTerms(filter);
+      if (t.negative.some(term => hfTermHits(term, entry.haystack))) return false;
+      const checks = [];
+      (filter.labels || []).forEach(l => checks.push(entry.labelsLower.has(String(l).toLowerCase())));
+      t.positive.forEach(term => checks.push(hfTermHits(term, entry.haystack)));
+      if (!checks.length) return true;
+      return filter.matchAll ? checks.every(Boolean) : checks.some(Boolean);
+    }
+    function hfGroupMatch(selected, has) {
+      return !selected || !selected.length || selected.some(has);
+    }
+    function hfGroupsMatch(filter, entry, skip) {
+      return (skip === 'kinds' || hfGroupMatch(filter.kinds, k => k === entry.kind))
+        && (skip === 'states' || hfGroupMatch(filter.states, k => entry.states.has(k)))
+        && (skip === 'authors' || hfGroupMatch(filter.authors, k => k === entry.authorKind));
+    }
+    function hfEntryMatches(filter, entry, terms) {
+      return hfGroupsMatch(filter, entry) && hfCriteriaMatch(filter, entry, terms);
+    }
+    function hfMatchingEntries(filter, entries) {
+      const f = hfNormalizeFilter(filter);
+      const terms = hfSplitTerms(f);
+      return (entries || []).filter(e => hfEntryMatches(f, e, terms));
+    }
+    /** Priority index of the first filter label the entry carries; Infinity when none (or the filter has no labels). */
+    function hfLabelRank(filter, entry) {
+      const labels = (filter && filter.labels) || [];
+      for (let i = 0; i < labels.length; i++) if (entry.labelsLower.has(String(labels[i]).toLowerCase())) return i;
+      return Infinity;
+    }
+    /** Preset label priority first, then newest-first. */
+    function hfSortEntries(entries, filter) {
+      return (entries || []).slice().sort((a, b) => {
+        const ra = hfLabelRank(filter, a), rb = hfLabelRank(filter, b);
+        if (ra !== rb) return ra < rb ? -1 : 1;
+        return (b.createdAt - a.createdAt) || (b.number - a.number);
+      });
+    }
+    /**
+     * Live facet counts. Labels: entries that pass the kind/state/author
+     * groups and the negative terms and carry the label (independent of the
+     * other positive criteria, so the chips read "how many would this add").
+     * Other groups: entries matching the filter with that group swapped for
+     * the single value.
+     */
+    function hfFacetCounts(filter, entries) {
+      const f = hfNormalizeFilter(filter);
+      const terms = hfSplitTerms(f);
+      const labels = new Map();
+      const kinds = {}, states = {}, authors = {};
+      (entries || []).forEach(e => {
+        if (hfGroupsMatch(f, e) && !terms.negative.some(t => hfTermHits(t, e.haystack))) {
+          e.labels.forEach(l => {
+            const key = l.toLowerCase();
+            const cur = labels.get(key) || { label: l, count: 0 };
+            cur.count++;
+            labels.set(key, cur);
+          });
+        }
+        const crit = hfCriteriaMatch(f, e, terms);
+        if (crit && hfGroupsMatch(f, e, 'kinds')) kinds[e.kind] = (kinds[e.kind] || 0) + 1;
+        if (crit && hfGroupsMatch(f, e, 'states')) e.states.forEach(s => { states[s] = (states[s] || 0) + 1; });
+        if (crit && hfGroupsMatch(f, e, 'authors')) authors[e.authorKind] = (authors[e.authorKind] || 0) + 1;
+      });
+      f.labels.forEach(l => { if (!labels.has(l)) labels.set(l, { label: l, count: 0 }); });
+      return { labels, kinds, states, authors };
+    }
+    function hfToggleIn(list, value) {
+      const idx = list.indexOf(value);
+      if (idx >= 0) list.splice(idx, 1); else list.push(value);
+      return list;
+    }
+    function hfPresetFilter(preset) {
+      return hfNormalizeFilter({ labels: (preset && preset.labels) || [], states: (preset && preset.states) || [] });
+    }
+    function hfLabelToneClass(label) {
+      const key = String(label || '').toLowerCase();
+      if (HF_LABEL_TONE[key]) return 'hf-label-' + HF_LABEL_TONE[key];
+      if (/^hold(\/|$)|^on-hold$|hold\//.test(key)) return 'hf-label-hold';
+      return '';
+    }
+    function hfDefaultStore() {
+      return { v: HF_STORE_VERSION, activeKey: HF_DEFAULT_PRESET_KEY, active: null, saved: [], hiddenPresets: [], presetPins: {}, order: [] };
+    }
+    function hfNormalizeStore(raw) {
+      const d = hfDefaultStore();
+      if (!raw || typeof raw !== 'object') return d;
+      d.activeKey = typeof raw.activeKey === 'string' ? raw.activeKey : d.activeKey;
+      d.active = raw.active ? hfNormalizeFilter(raw.active) : null;
+      d.saved = Array.isArray(raw.saved) ? raw.saved.filter(s => s && s.id && s.name).map(s => ({ id: String(s.id), name: String(s.name).slice(0, 60), filter: hfNormalizeFilter(s.filter), pinned: !!s.pinned })) : [];
+      d.hiddenPresets = Array.isArray(raw.hiddenPresets) ? raw.hiddenPresets.map(String) : [];
+      d.presetPins = raw.presetPins && typeof raw.presetPins === 'object' ? Object.assign({}, raw.presetPins) : {};
+      d.order = Array.isArray(raw.order) ? raw.order.map(String) : [];
+      return d;
+    }
+    /** Resolve the key ('preset:<key>' | 'saved:<id>' | '') to {name, filter, source}. */
+    function hfResolveKey(store, presets, key) {
+      if (key && key.indexOf('preset:') === 0) {
+        const p = (presets || []).find(x => 'preset:' + x.key === key);
+        if (p) return { key, name: p.label, filter: hfPresetFilter(p), source: 'preset', preset: p };
+      }
+      if (key && key.indexOf('saved:') === 0) {
+        const s = (store.saved || []).find(x => 'saved:' + x.id === key);
+        if (s) return { key, name: s.name, filter: hfNormalizeFilter(s.filter), source: 'saved', saved: s };
+      }
+      return { key: '', name: 'Custom', filter: hfEmptyFilter(), source: 'custom' };
+    }
+    /** The filter in force: the explicit edit if there is one, else the active preset/saved filter. */
+    function hfActiveFilter(store, presets) {
+      if (store.active) return hfNormalizeFilter(store.active);
+      return hfResolveKey(store, presets, store.activeKey).filter;
+    }
+    function hfPinnedKeys(store, presets) {
+      const keys = [];
+      (presets || []).forEach(p => {
+        const k = 'preset:' + p.key;
+        const pinned = Object.prototype.hasOwnProperty.call(store.presetPins || {}, p.key) ? !!store.presetPins[p.key] : k === HF_DEFAULT_PRESET_KEY;
+        if (pinned && (store.hiddenPresets || []).indexOf(p.key) < 0) keys.push(k);
+      });
+      (store.saved || []).forEach(s => { if (s.pinned) keys.push('saved:' + s.id); });
+      const order = store.order || [];
+      return keys.sort((a, b) => {
+        const ia = order.indexOf(a), ib = order.indexOf(b);
+        return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib) || keys.indexOf(a) - keys.indexOf(b);
+      });
+    }
+    function hfNewId() {
+      return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    }
+    // ── Label filter (hf) pure helpers (end) ────────────────────────────────
+
+    let _hfStore = null;
+    let _hfStoreKey = '';
+    const _hfUI = { editorOpen: false, confirmDelete: '', showHidden: false, draftTerm: '', textTimer: null };
+    function hfStoreKey() { return HF_STORE_PREFIX + miniHiveKey(); }
+    function hfStore() {
+      const key = hfStoreKey();
+      if (!_hfStore || _hfStoreKey !== key) {
+        let raw = null;
+        try { raw = JSON.parse(localStorage.getItem(key) || 'null'); } catch (e) { raw = null; }
+        _hfStore = hfNormalizeStore(raw);
+        _hfStoreKey = key;
+      }
+      return _hfStore;
+    }
+    function hfSaveStore() {
+      try { localStorage.setItem(hfStoreKey(), JSON.stringify(hfStore())); } catch (e) { /* storage unavailable */ }
+    }
+    function hfPresets() {
+      const list = ((window._lastStatus || {}).labelPresets) || [];
+      return Array.isArray(list) ? list.filter(p => p && p.key) : [];
+    }
+    function hfVisiblePresets() {
+      const hidden = hfStore().hiddenPresets || [];
+      return hfPresets().filter(p => hidden.indexOf(p.key) < 0);
+    }
+    function hfCurrent() {
+      const store = hfStore();
+      const presets = hfPresets();
+      const resolved = hfResolveKey(store, presets, store.activeKey);
+      const filter = hfActiveFilter(store, presets);
+      const modified = !!store.active && hfFilterSignature(store.active) !== hfFilterSignature(resolved.filter);
+      return { store, presets, resolved, filter, modified, name: resolved.name };
+    }
+    /** Every open issue/PR of a repo as filter entries, from the snapshot the card already renders. */
+    function hfRepoEntries(repo) {
+      if (!repo) return [];
+      const name = repo.full || repo.name || '';
+      const aiAuthor = window._aiAuthor || '';
+      const seen = new Set();
+      const out = [];
+      const push = (kind, item, opts) => {
+        if (!item || !item.number) return;
+        const key = kind + ':' + item.number;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(hfEntry(kind, item, name, Object.assign({ aiAuthor }, opts)));
+      };
+      (repo.actionableIssues || []).forEach(i => push('issue', i, { coveringPR: !!issueCoveringPR(i) }));
+      (repo.heldIssues || []).forEach(i => push('issue', i, { held: true, coveringPR: !!issueCoveringPR(i) }));
+      (repo.nonActionableIssues || []).forEach(i => push('issue', i, { bucket: String(i.bucket || ''), coveringPR: !!issueCoveringPR(i) }));
+      (repo.openPrs || []).forEach(p => push('pr', p, {}));
+      (repo.heldPrs || []).forEach(p => push('pr', p, { held: true }));
+      return out;
+    }
+    function hfAllEntries(repos) {
+      return (repos || (window._lastStatus || {}).repos || []).reduce((acc, r) => acc.concat(hfRepoEntries(r)), []);
+    }
+    /** Filter with the still-being-typed text term folded in, for live counts. */
+    function hfEffectiveFilter(filter) {
+      const draft = hfParseTerm(_hfUI.draftTerm);
+      if (!draft) return filter;
+      const f = hfNormalizeFilter(filter);
+      if (f.terms.indexOf(draft.raw) < 0) f.terms = f.terms.concat([draft.raw]);
+      return f;
+    }
+    function hfSectionId(repoFull) {
+      return 'hf-repo-' + String(repoFull || '').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    }
+    function hfSectionCollapsed(sectionId, count) {
+      let raw = null;
+      try { raw = localStorage.getItem(SECTION_LS_PREFIX + sectionId); } catch (e) { raw = null; }
+      if (raw === '1') return true;
+      if (raw === '0') return false;
+      return count === 0;
+    }
+    const HF_PR_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M4.5 3a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm0 10a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0ZM3.75 5.25v5.5h-1.5v-5.5h1.5ZM14.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Zm-.75-2.25h-1.5V6.5a1 1 0 0 0-1-1H9.56l1.22 1.22-1.06 1.06L6.69 4.75l3.03-3.03 1.06 1.06L9.56 4h1.69a2.5 2.5 0 0 1 2.5 2.5v4.25Z"/></svg>';
+    const HF_ISSUE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm9 3a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm-.25-6.25v4h-1.5v-4h1.5Z"/></svg>';
+    function hfRowLabels(entry, filter) {
+      const wanted = (filter && filter.labels) || [];
+      let show = entry.labels.filter(l => wanted.indexOf(l.toLowerCase()) >= 0);
+      show.sort((a, b) => wanted.indexOf(a.toLowerCase()) - wanted.indexOf(b.toLowerCase()));
+      if (!show.length) show = entry.labels.slice();
+      const extra = show.length - HF_MAX_ROW_LABELS;
+      return show.slice(0, HF_MAX_ROW_LABELS).map(l => `<span class="hf-label ${hfLabelToneClass(l)}" title="${esc(l)}">${esc(l)}</span>`).join('')
+        + (extra > 0 ? `<span class="hf-label" title="${esc(entry.labels.join(', '))}">+${extra}</span>` : '');
+    }
+    function hfRowHtml(entry, filter) {
+      const base = (window._githubBaseUrl || 'https://github.com') + '/' + entry.repo;
+      const url = entry.url || (base + (entry.kind === 'pr' ? '/pull/' : '/issues/') + entry.number);
+      const age = pillAge(entry.item.created_at);
+      const tip = (entry.kind === 'pr' ? 'PR ' : 'Issue ') + '#' + entry.number + ': ' + entry.title + (entry.item.author ? ' — @' + entry.item.author : '') + (entry.labels.length ? ' — labels: ' + entry.labels.join(', ') : '') + (entry.held ? ' — held' : '') + (entry.bucket ? ' — ' + entry.bucket : '');
+      return `<div class="hf-item hf-item-${entry.kind}"><a class="hf-item-link" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="hf-item-icon ${entry.kind}">${entry.kind === 'pr' ? HF_PR_ICON : HF_ISSUE_ICON}</span><span class="hf-item-num">#${entry.number}</span><span class="hf-item-title">${esc(entry.title)}</span></a><span class="hf-item-labels">${hfRowLabels(entry, filter)}</span><span class="hf-item-age" title="${esc(entry.item.created_at || '')}">${esc(age)}</span></div>`;
+    }
+    /** The collapsible "Filter" section inside one repo card. */
+    function hfRepoSectionHtml(repo) {
+      const cur = hfCurrent();
+      const repoFull = repo.full || repo.name || '';
+      const filter = hfEffectiveFilter(cur.filter);
+      const entries = hfSortEntries(hfMatchingEntries(filter, hfRepoEntries(repo)), filter);
+      const id = hfSectionId(repoFull);
+      const collapsed = hfSectionCollapsed(id, entries.length);
+      const name = cur.name + (cur.modified ? ' *' : '');
+      const rows = entries.length ? entries.map(e => hfRowHtml(e, filter)).join('') : `<div class="hf-empty">${hfFilterIsEmpty(filter) ? 'No filter — open the editor to pick labels or text' : 'Nothing in ' + esc(repoFull) + ' matches this filter'}</div>`;
+      return `<div class="hf-section${collapsed ? ' collapsed' : ''}" id="${id}" data-hf-repo="${esc(repoFull)}" data-hf-count="${entries.length}">`
+        + `<div class="hf-header" role="button" tabindex="0" aria-expanded="${collapsed ? 'false' : 'true'}" aria-controls="${id}-body" data-action="hfToggleSection" data-keydown-action="hfToggleSection" data-keys="Enter, " data-arg0="${id}" data-arg-types="s" title="${esc(cur.filter.labels.length ? 'Labels: ' + cur.filter.labels.join(', ') : 'Filtered view')}${esc(cur.filter.terms.length ? ' · text: ' + cur.filter.terms.join(', ') : '')}"><span class="section-chevron${collapsed ? ' collapsed' : ''}">▼</span><span class="hf-title">Filter · ${esc(name)}</span><span class="badge-count hf-count"${entries.length ? '' : ' data-zero'}>${entries.length}</span><button type="button" class="hf-edit" data-action="hfOpenEditor" data-stop="1" title="Edit the filter (applies to every project card)">edit</button></div>`
+        + `<div class="hf-body${collapsed ? ' collapsed' : ''}" id="${id}-body">${rows}</div></div>`;
+    }
+    function hfToggleSection(sectionId) {
+      const section = document.getElementById(sectionId);
+      if (!section) return;
+      const body = section.querySelector('.hf-body');
+      const collapsed = !section.classList.contains('collapsed');
+      writeSectionCollapsedKey(sectionId, collapsed);
+      if (!collapsed) {
+        // Make the default explicit so an empty section the user opened stays open.
+        try { localStorage.setItem(SECTION_LS_PREFIX + sectionId, '0'); } catch (e) { /* storage unavailable */ }
+      }
+      section.classList.toggle('collapsed', collapsed);
+      if (body) body.classList.toggle('collapsed', collapsed);
+      const chevron = section.querySelector('.section-chevron');
+      if (chevron) chevron.classList.toggle('collapsed', collapsed);
+      const header = section.querySelector('.hf-header');
+      if (header) header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+    function hfRerender() {
+      if (typeof renderRepos === 'function' && window._lastStatus) renderRepos(window._lastStatus.repos || []);
+      hfRenderEditor(true);
+      if (typeof hfRenderPinned === 'function') hfRenderPinned();
+    }
+    function hfSetActive(filter) {
+      const store = hfStore();
+      store.active = hfNormalizeFilter(filter);
+      hfSaveStore();
+      hfRerender();
+    }
+    function hfActivate(key) {
+      const store = hfStore();
+      store.activeKey = String(key || '');
+      store.active = null;
+      _hfUI.confirmDelete = '';
+      hfSaveStore();
+      hfRerender();
+    }
+    function hfOpenEditor() {
+      _hfUI.editorOpen = true;
+      hfRenderEditor();
+      const el = document.getElementById('hf-editor');
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+    function hfToggleEditor() {
+      _hfUI.editorOpen = !_hfUI.editorOpen;
+      hfRenderEditor();
+    }
+    function hfToggleLabel(label) {
+      const f = hfCurrent().filter;
+      hfToggleIn(f.labels, String(label).toLowerCase());
+      hfSetActive(f);
+    }
+    function hfToggleFacet(group, value) {
+      const f = hfCurrent().filter;
+      if (!Array.isArray(f[group])) return;
+      hfToggleIn(f[group], value);
+      hfSetActive(f);
+    }
+    function hfSetMatchAll(on) {
+      const f = hfCurrent().filter;
+      f.matchAll = !!on;
+      hfSetActive(f);
+    }
+    function hfAddTerm(raw) {
+      const term = hfParseTerm(raw);
+      _hfUI.draftTerm = '';
+      if (!term) { hfRerender(); return; }
+      const f = hfCurrent().filter;
+      if (f.terms.indexOf(term.raw) < 0) f.terms.push(term.raw);
+      hfSetActive(f);
+      const input = document.getElementById('hf-term-input');
+      if (input) { input.value = ''; input.focus(); }
+    }
+    function hfRemoveTerm(raw) {
+      const f = hfCurrent().filter;
+      f.terms = f.terms.filter(t => t !== raw);
+      hfSetActive(f);
+    }
+    function hfTermInput(value) {
+      _hfUI.draftTerm = String(value || '');
+      if (_hfUI.textTimer) clearTimeout(_hfUI.textTimer);
+      _hfUI.textTimer = setTimeout(() => {
+        _hfUI.textTimer = null;
+        hfRenderFacets();
+        if (typeof renderRepos === 'function' && window._lastStatus) renderRepos(window._lastStatus.repos || []);
+        if (typeof hfRenderPinned === 'function') hfRenderPinned();
+      }, HF_TEXT_DEBOUNCE_MS);
+    }
+    function hfTermKey(event) {
+      const input = event && event.target;
+      if (!input) return;
+      if (event.key === 'Enter' || event.key === ',') {
+        event.preventDefault();
+        hfAddTerm(input.value);
+      } else if (event.key === 'Escape') {
+        input.value = '';
+        hfTermInput('');
+      }
+    }
+    function hfReset() {
+      const store = hfStore();
+      store.activeKey = '';
+      store.active = hfEmptyFilter();
+      hfSaveStore();
+      hfRerender();
+    }
+    function hfSaveAsNew() {
+      const cur = hfCurrent();
+      const input = document.getElementById('hf-name-input');
+      const name = String((input && input.value) || '').trim();
+      if (!name) { showToast('Give the filter a name first', 'error'); if (input) input.focus(); return; }
+      if (hfFilterIsEmpty(cur.filter)) { showToast('Pick at least one label, facet or text term before saving', 'error'); return; }
+      const id = hfNewId();
+      cur.store.saved.push({ id, name: name.slice(0, 60), filter: hfNormalizeFilter(cur.filter), pinned: false });
+      cur.store.activeKey = 'saved:' + id;
+      cur.store.active = null;
+      hfSaveStore();
+      showToast('Saved filter “' + name + '”', 'success');
+      hfRerender();
+    }
+    function hfUpdateSaved() {
+      const cur = hfCurrent();
+      if (cur.resolved.source !== 'saved') return;
+      cur.resolved.saved.filter = hfNormalizeFilter(cur.filter);
+      cur.store.active = null;
+      hfSaveStore();
+      showToast('Updated “' + cur.resolved.saved.name + '”', 'success');
+      hfRerender();
+    }
+    function hfRenameSaved() {
+      const cur = hfCurrent();
+      if (cur.resolved.source !== 'saved') return;
+      const input = document.getElementById('hf-name-input');
+      const name = String((input && input.value) || '').trim();
+      if (!name) { showToast('Enter the new name first', 'error'); if (input) input.focus(); return; }
+      cur.resolved.saved.name = name.slice(0, 60);
+      hfSaveStore();
+      hfRerender();
+    }
+    function hfAskDelete(id) {
+      _hfUI.confirmDelete = String(id || '');
+      hfRenderEditor();
+    }
+    function hfDeleteSaved(id) {
+      const store = hfStore();
+      const victim = store.saved.find(s => s.id === id);
+      store.saved = store.saved.filter(s => s.id !== id);
+      if (store.activeKey === 'saved:' + id) { store.activeKey = ''; store.active = victim ? hfNormalizeFilter(victim.filter) : hfEmptyFilter(); }
+      _hfUI.confirmDelete = '';
+      hfSaveStore();
+      if (victim) showToast('Deleted filter “' + victim.name + '”', 'info');
+      hfRerender();
+    }
+    function hfHidePreset(key) {
+      const store = hfStore();
+      if (store.hiddenPresets.indexOf(key) < 0) store.hiddenPresets.push(key);
+      if (store.activeKey === 'preset:' + key) { store.activeKey = ''; store.active = hfCurrent().filter; }
+      hfSaveStore();
+      hfRerender();
+    }
+    function hfUnhidePreset(key) {
+      const store = hfStore();
+      store.hiddenPresets = store.hiddenPresets.filter(k => k !== key);
+      hfSaveStore();
+      hfRerender();
+    }
+    function hfToggleShowHidden() {
+      _hfUI.showHidden = !_hfUI.showHidden;
+      hfRenderEditor();
+    }
+    function hfTogglePin(key) {
+      const store = hfStore();
+      const presets = hfPresets();
+      const pinned = hfPinnedKeys(store, presets).indexOf(key) >= 0;
+      if (key.indexOf('preset:') === 0) store.presetPins[key.slice('preset:'.length)] = !pinned;
+      else if (key.indexOf('saved:') === 0) { const s = store.saved.find(x => 'saved:' + x.id === key); if (s) s.pinned = !pinned; }
+      hfSaveStore();
+      hfRerender();
+    }
+    function hfChipHtml(label, active, action, arg, count, tip, extraClass) {
+      return `<button type="button" class="hf-chip${active ? ' active' : ''}${extraClass ? ' ' + extraClass : ''}" data-action="${action}" data-arg0="${esc(arg)}" data-arg-types="s" title="${esc(tip || label)}">${esc(label)}${count == null ? '' : ` <span class="hf-chip-count">${count}</span>`}</button>`;
+    }
+    function hfFacetsHtml(cur, entries) {
+      const filter = hfEffectiveFilter(cur.filter);
+      const counts = hfFacetCounts(filter, entries);
+      const labelRows = Array.from(counts.labels.values()).sort((a, b) => {
+        const sa = filter.labels.indexOf(a.label.toLowerCase()), sb = filter.labels.indexOf(b.label.toLowerCase());
+        if ((sa >= 0) !== (sb >= 0)) return sa >= 0 ? -1 : 1;
+        if (sa >= 0 && sb >= 0) return sa - sb;
+        return b.count - a.count || a.label.localeCompare(b.label);
+      });
+      const labelChips = labelRows.length ? labelRows.map(r => hfChipHtml(r.label, filter.labels.indexOf(r.label.toLowerCase()) >= 0, 'hfToggleLabel', r.label, r.count, r.count + ' open item' + (r.count === 1 ? '' : 's') + ' carry ' + r.label)).join('') : '<span class="hf-muted">No labels on any open item yet</span>';
+      const group = (title, defs, key, countMap, tipFn) => `<div class="hf-facet-group hf-facet-${key}"><div class="hf-facet-title">${title}</div><div class="hf-facet-chips">${defs.map(d => hfChipHtml(d.label, filter[key].indexOf(d.key) >= 0, 'hfToggleFacet' + key.charAt(0).toUpperCase() + key.slice(1), d.key, countMap[d.key] || 0, tipFn ? tipFn(d) : d.tip || d.label)).join('')}</div></div>`;
+      const mode = `<span class="hf-mode" title="How selected labels and text terms combine"><button type="button" class="${filter.matchAll ? '' : 'active'}" data-action="hfSetMatchAll" data-arg0="false" data-arg-types="j">match any</button><button type="button" class="${filter.matchAll ? 'active' : ''}" data-action="hfSetMatchAll" data-arg0="true" data-arg-types="j">match all</button></span>`;
+      return `<div class="hf-facet-group hf-facet-labels"><div class="hf-facet-title">Labels ${mode}</div><div class="hf-facet-chips">${labelChips}</div></div>`
+        + group('Type', HF_KINDS, 'kinds', counts.kinds)
+        + group('State', HF_STATES, 'states', counts.states)
+        + group('Author', HF_AUTHORS, 'authors', counts.authors);
+    }
+    function hfTermsHtml(cur) {
+      const terms = cur.filter.terms.map(t => {
+        const p = hfParseTerm(t);
+        const tip = p && p.negate ? 'Excludes items whose title, number, labels or body contain ' + t.slice(1) : (p && p.phrase ? 'Exact phrase' : 'Every word must appear');
+        return `<span class="hf-chip active${p && p.negate ? ' hf-chip-exclude' : ''}" title="${esc(tip)}">${esc(t)}<button type="button" class="hf-chip-x" data-action="hfRemoveTerm" data-arg0="${esc(t)}" data-arg-types="s" aria-label="Remove ${esc(t)}">×</button></span>`;
+      }).join('');
+      return `<span class="hf-row-label">Text</span>${terms}<input id="hf-term-input" class="hf-input" type="text" autocomplete="off" spellcheck="false" placeholder="keyword · &quot;exact phrase&quot; · -exclude · Enter adds" value="${esc(_hfUI.draftTerm)}" data-input-action="hfTermInput" data-keydown-action="hfTermKey" data-keys="*" data-arg-types="v" title="Case-insensitive match over title, number, labels and body excerpt. Quote a phrase, prefix - to exclude. Enter or comma adds the chip.">`;
+    }
+    function hfManageHtml(cur) {
+      const store = cur.store;
+      const r = cur.resolved;
+      const saved = r.source === 'saved';
+      const preset = r.source === 'preset';
+      const pinned = hfPinnedKeys(store, cur.presets).indexOf(r.key) >= 0;
+      const bits = [];
+      bits.push(`<input id="hf-name-input" class="hf-input" type="text" maxlength="60" placeholder="${saved ? 'New name' : 'Name this filter'}" value="${esc(saved ? r.name : '')}" data-keydown-action="hfNameKey" data-keys="Enter" data-arg-types="e" title="Name for Save as new / Rename">`);
+      bits.push(`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="hfSaveAsNew" title="Save the current selection as a new named filter">Save as new</button>`);
+      if (saved && cur.modified) bits.push(`<button type="button" class="hv-btn btn-primary btn-sm" data-action="hfUpdateSaved" title="Overwrite “${esc(r.name)}” with the current selection">Update “${esc(r.name)}”</button>`);
+      if (saved) bits.push(`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="hfRenameSaved" title="Rename to the name typed on the left">Rename</button>`);
+      if (saved) {
+        if (_hfUI.confirmDelete === r.saved.id) bits.push(`<span class="hf-confirm">Delete “${esc(r.name)}”? <button type="button" class="hv-btn btn-danger btn-sm" data-action="hfDeleteSaved" data-arg0="${esc(r.saved.id)}" data-arg-types="s">Delete</button><button type="button" class="hv-btn btn-secondary btn-sm" data-action="hfAskDelete" data-arg0="" data-arg-types="s">Cancel</button></span>`);
+        else bits.push(`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="hfAskDelete" data-arg0="${esc(r.saved.id)}" data-arg-types="s" title="Delete this saved filter">Delete</button>`);
+      }
+      if (preset) bits.push(`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="hfHidePreset" data-arg0="${esc(r.preset.key)}" data-arg-types="s" title="Hide this built-in preset from the chips row (restore it from “hidden”)">Hide preset</button>`);
+      if (saved || preset) bits.push(`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="hfTogglePin" data-arg0="${esc(r.key)}" data-arg-types="s" aria-pressed="${pinned ? 'true' : 'false'}" title="${pinned ? 'Unpin from the sidebar' : 'Pin to the sidebar with a live count across all projects'}">${pinned ? '★ Pinned' : '☆ Pin to sidebar'}</button>`);
+      bits.push(`<button type="button" class="hv-btn btn-secondary btn-sm" data-action="hfReset" title="Clear every facet and text term">Clear</button>`);
+      if (cur.modified && !saved) bits.push(`<span class="hf-muted">Unsaved changes to ${esc(r.name)}</span>`);
+      return bits.join('');
+    }
+    function hfNameKey(event) {
+      if (!event || event.key !== 'Enter') return;
+      event.preventDefault();
+      if (hfCurrent().resolved.source === 'saved') hfRenameSaved(); else hfSaveAsNew();
+    }
+    function hfPresetsRowHtml(cur, entries) {
+      const store = cur.store;
+      const chips = [];
+      const countFor = f => hfMatchingEntries(f, entries).length;
+      hfVisiblePresets().forEach(p => {
+        const key = 'preset:' + p.key;
+        chips.push(hfChipHtml(p.label, store.activeKey === key, 'hfActivate', key, countFor(hfPresetFilter(p)), (p.description || p.label) + (p.labels && p.labels.length ? ' — ' + p.labels.join(', ') : ''), store.activeKey === key && cur.modified ? 'hf-chip-modified' : ''));
+      });
+      store.saved.forEach(s => {
+        const key = 'saved:' + s.id;
+        chips.push(hfChipHtml((s.pinned ? '★ ' : '') + s.name, store.activeKey === key, 'hfActivate', key, countFor(s.filter), 'Saved filter' + (s.filter.labels.length ? ' — ' + s.filter.labels.join(', ') : '') + (s.filter.terms.length ? ' — ' + s.filter.terms.join(', ') : ''), store.activeKey === key && cur.modified ? 'hf-chip-modified' : ''));
+      });
+      if (!store.activeKey) chips.push(hfChipHtml('Custom', true, 'hfActivate', '', countFor(cur.filter), 'The current unsaved selection'));
+      const hidden = hfPresets().filter(p => store.hiddenPresets.indexOf(p.key) >= 0);
+      let hiddenHtml = '';
+      if (hidden.length) {
+        hiddenHtml = `<button type="button" class="hf-link" data-action="hfToggleShowHidden">${hidden.length} hidden</button>`
+          + (_hfUI.showHidden ? hidden.map(p => `<button type="button" class="hf-chip" data-action="hfUnhidePreset" data-arg0="${esc(p.key)}" data-arg-types="s" title="Restore the ${esc(p.label)} preset">↩ ${esc(p.label)}</button>`).join('') : '');
+      }
+      return `<span class="hf-row-label">Filter</span>${chips.join('')}${hiddenHtml}<button type="button" class="hf-chip-x hf-editor-close" data-action="hfToggleEditor" aria-label="Close the filter editor" title="Close">×</button>`;
+    }
+    function hfRenderFacets() {
+      const el = document.getElementById('hf-facets');
+      if (!el) return;
+      const cur = hfCurrent();
+      setIfChanged(el, hfFacetsHtml(cur, hfAllEntries()));
+    }
+    function hfRenderEditor(force) {
+      const el = document.getElementById('hf-editor');
+      if (!el) return;
+      el.hidden = !_hfUI.editorOpen;
+      const btn = document.getElementById('repos-filter-editor-btn');
+      if (btn) btn.setAttribute('aria-pressed', _hfUI.editorOpen ? 'true' : 'false');
+      if (!_hfUI.editorOpen) return;
+      const cur = hfCurrent();
+      const entries = hfAllEntries();
+      const presetsEl = document.getElementById('hf-presets');
+      const manageEl = document.getElementById('hf-manage');
+      const termsEl = document.getElementById('hf-terms');
+      const facetsEl = document.getElementById('hf-facets');
+      // A poll-time repaint must not yank the caret out of a field the user is typing in.
+      const active = document.activeElement;
+      const typingIn = node => !force && !!active && active.tagName === 'INPUT' && !!node && node.contains(active);
+      if (presetsEl) setIfChanged(presetsEl, hfPresetsRowHtml(cur, entries));
+      if (manageEl && !typingIn(manageEl)) setIfChanged(manageEl, hfManageHtml(cur));
+      if (termsEl && !typingIn(termsEl)) setIfChanged(termsEl, hfTermsHtml(cur));
+      if (facetsEl) setIfChanged(facetsEl, hfFacetsHtml(cur, entries));
+    }
+    function hfSummaryLabel() {
+      const cur = hfCurrent();
+      return cur.name + (cur.modified ? ' *' : '');
+    }
+    function hfToggleFacetKinds(value) { hfToggleFacet('kinds', value); }
+    function hfToggleFacetStates(value) { hfToggleFacet('states', value); }
+    function hfToggleFacetAuthors(value) { hfToggleFacet('authors', value); }
+
     function renderRepos(repos) {
       refreshSectionCardShell('repos-section');
       if (_repoResizeDrag || _repoOrderDrag) return;
@@ -16926,9 +17807,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl)}/pulls" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
-          </div>${pillsHtml}
+          </div>${pillsHtml}${hfRepoSectionHtml(r)}
         </div>`;
       }).join(''));
+      hfRenderEditor();
     }
 
     /**
@@ -17850,9 +18732,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // label notes the scope so users know why non-entitled models are gone.
         const labelSuffix = data.fallback ? ' (common alias, unverified)'
           : (data.entitled ? ' (your key)' : '');
-        const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
+        const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix, suffix: labelSuffix }));
         INFERENCE_MODELS[backend] = models;
-        _inferenceModelCache[backend] = { models, ts: now, fallback: !!data.fallback, entitled: !!data.entitled };
+        _inferenceModelCache[backend] = {
+          models, ts: now, fallback: !!data.fallback, entitled: !!data.entitled,
+          // default_model: what an agent on this backend uses when it names
+          // none; entitledModels: the FULL set the gateway's team may use, so
+          // a stored model outside it can be flagged (#9945).
+          defaultModel: data.default_model || '',
+          entitledModels: Array.isArray(data.entitled_models) ? data.entitled_models : null,
+        };
         // A real (non-fallback) discovery may have changed the entitlement-
         // filtered model set — reconcile agents/defaults whose selected model
         // is no longer available. No-op when the list is a static fallback or
@@ -17985,7 +18874,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             detail: `⚠ model discovery ${b.degraded ? 'degraded' : 'failed'} — ${b.degraded ? 'this list is live but is not the catalog the CLI uses' : 'showing the static fallback list'}. ${b.discovery.error}`,
           }) : null));
           if (b.reasoning_efforts) MODEL_REASONING_EFFORTS[b.id] = b.reasoning_efforts;
-          const models = (b.models || []).map(m => ({ value: m, label: (b.id === 'omp' ? m : m.split('/').pop()) + labelSuffix }));
+          const models = (b.models || []).map(m => ({ value: m, label: (b.id === 'omp' ? m : m.split('/').pop()) + labelSuffix, suffix: labelSuffix }));
           if (!models.length) return; // keep prior (possibly fallback) list rather than blanking the dropdown
           BACKEND_MODELS[b.id] = models;
           // A degraded list is not authority either: absence from it proves
@@ -19213,6 +20102,11 @@ function burnAreaChart() {
       // intra-session timing to join against). A repo with no attributable cost
       // shows "—", never "$0.00": those are different facts.
       const repoTable = costRepoTableHtml(lastRepoCost);
+      // ── Estimated cost by work item (#12128) ──
+      // Spend placed against the issue / PR / head SHA each kick was launched
+      // for. Attribution only — never a gate; the governor window budget is
+      // the single enforced budget.
+      const launchTable = costLaunchTableHtml(lastLaunchCost);
       const allTimeCost = costAllTimeEstimate(est);
       const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs', cost.count_available, cost.count_status);
       const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues', cost.count_available, cost.count_status);
@@ -19247,6 +20141,7 @@ function burnAreaChart() {
           </table></div>
           ${sandboxTable}
           ${repoTable}
+          ${launchTable}
           ${sessionTable}
           ${unpricedNote}
           ${costTokenBudgetHtml()}`;
@@ -19260,6 +20155,57 @@ function burnAreaChart() {
     // Held outside renderCost so a transient /api/repo-cost failure leaves the
     // last good table in place rather than blanking the section.
     let lastRepoCost = null;
+    let lastLaunchCost = null;
+
+    // COST_LAUNCH_MAX_ROWS bounds the by-work-item table; the API carries the
+    // full list for anyone who wants it.
+    const COST_LAUNCH_MAX_ROWS = 15;
+
+    function costLaunchRowHtml(r) {
+      const usd = (r.launch_usd === null || r.launch_usd === undefined)
+        ? `<span class="cagents-zero" title="Launched, but no usage could be attributed to this work item yet. Not $0.00 — unobserved.">—</span>`
+        : (r.source === 'estimated_tier' ? `<span title="tier estimate">~${fmtUSD(r.launch_usd)}</span>` : fmtUSD(r.launch_usd));
+      const share = (r.share_usd === null || r.share_usd === undefined) ? '—' : fmtUSD(r.share_usd);
+      const heads = (r.head_shas || []).length
+        ? `<span class="cagents-badge" title="${esc((r.head_shas || []).map(h => h.slice(0, 7)).join(', '))}">${(r.head_shas || []).length}</span>`
+        : `<span class="cagents-zero">—</span>`;
+      const kind = r.kind === 'pr' ? 'PR' : (r.kind === 'issue' ? 'issue' : 'work');
+      return `<tr>
+        <td class="cmodel" title="${esc((r.agents || []).join(', '))}">${esc(r.ref || '?')} <span class="text-muted">${kind}</span></td>
+        <td class="cnum ccenter" title="launches that named this work item (repeat spend)">${Number(r.launches) || 0}</td>
+        <td class="cnum ccenter">${heads}</td>
+        <td class="cnum">${fmtTokens(r.launch_tokens)}</td>
+        <td class="cnum" title="even split of each launch's spend across the refs it named: ${esc(share)}">${usd}</td>
+      </tr>`;
+    }
+
+    function costLaunchTableHtml(lc) {
+      if (!lc || !lc.ready) return '';
+      const refs = (lc.by_ref || []).slice(0, COST_LAUNCH_MAX_ROWS);
+      const rows = refs.map(costLaunchRowHtml).join('');
+      const total = Number(lc.total_tokens) || 0;
+      const rate = total > 0 ? Math.round((Number(lc.attributed_tokens) || 0) / total * 100) : null;
+      const more = (lc.by_ref || []).length > refs.length ? ` · showing top ${refs.length} of ${(lc.by_ref || []).length}` : '';
+      return `<div class="cost-subsection" data-cost-sub="launch">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-launch-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="launch" data-keys="*" title="Estimated cost per issue / PR, from the work each kick was launched for joined against per-message token timing. Inferred, not measured. Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost by work item <span class="cost-badge est">inferred</span></div>
+        <div class="cost-sub-body" id="cost-sub-launch-body">
+        <div class="cost-subtitle">Tokens are owned by the most recent recorded kick for the same agent (up to ${Number(lc.ownership_hours) || '?'}h). ${rate === null ? '' : `<strong>${rate}%</strong> of tokens attributable`} · ${lc.window_hours ? Math.round(lc.window_hours / 24) + 'd window' : 'window unknown'} · ${Number(lc.launches_retained) || 0} launches${more}.</div>
+        <div class="cost-disclaimer cost-sub-disclaimer">A governor kick names many issues at once: "est. $" is the whole spend of every launch that named the item (an upper bound); hover for the even-split share. Only governor and review-swarm kicks are recorded. Not a bill, not a budget.</div>
+        <table class="cost-table table-compact">
+          <thead><tr><th>work item</th><th class="ccenter">launches</th><th class="ccenter">heads</th><th class="cright">tokens</th><th class="cright">est. $</th></tr></thead>
+          <tbody>${rows || '<tr><td class="text-muted" colspan="5">no launches recorded yet</td></tr>'}</tbody>
+        </table>
+        </div>
+      </div>`;
+    }
+
+    async function fetchLaunchCost() {
+      try {
+        const r = await fetch('/api/launch-cost');
+        if (!r.ok) return;
+        lastLaunchCost = await r.json();
+      } catch (e) { /* transient — keep the last good attribution */ }
+    }
 
     // Render a single row of the by-repo table. usd is a POINTER server-side:
     // null means "no attributable cost", which is NOT $0.00 — a repo can be
@@ -19331,7 +20277,7 @@ function burnAreaChart() {
 
     async function fetchCost() {
       try {
-        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost()]);
+        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost(), fetchLaunchCost()]);
         if (!resp.ok) return;
         const cost = await resp.json();
         renderCost(cost);
@@ -35789,6 +36735,10 @@ function burnAreaChart() {
       const _liveAgent = (window._lastAgents || []).find(a => a.name === agentName);
       const _agentBackend = (_liveAgent && _liveAgent.cli) || g.cliPinValue || '';
       const _modelOpts = modelsForBackend(_agentBackend) || [];
+      // Rendered synchronously from the cache; once live discovery for an
+      // inference backend answers, the Model select is rebuilt in place so
+      // its default label and "not allowed by gateway" flag are current.
+      setTimeout(() => ensureModelOptionsForBackend(_agentBackend), 0);
       const _bobSessionLabel = g.bobSessionLabel || '';
       const _bobSessionPrefix = g.bobSessionPrefix || '';
       const _bobEffectiveLabel = _bobSessionLabel
@@ -35940,11 +36890,9 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-field">
-          <label>Model ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Model', `Override the LLM model for this agent. Select "(from launch command)" to let the CLI choose its default. The governor may downgrade models automatically when budget is tight, unless Model Lock is enabled in Governor Health settings.`)}</label>
-          <select id="cfg-model" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">
-            <option value="">(from launch command)</option>
-            ${_modelOpts.map(m => `<option value="${m.value}" ${_modelsEqual(g.model, m.value) ? 'selected' : ''}>${m.label}</option>`).join('')}
-            ${(g.model && !_modelOpts.some(m => _modelsEqual(g.model, m.value))) ? `<option value="${esc(g.model)}" selected>${esc(g.model)} (current)</option>` : ''}
+          <label>Model ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Model', `Per-agent model override. Precedence: this model if set → otherwise the backend default (a gateway's default_model from Settings → Model Gateways, or the CLI's own default). Pick "(backend default — …)" to clear the per-agent model. A model marked "not allowed by gateway" fails every call with a 403. The governor may downgrade models automatically when budget is tight, unless Model Lock is enabled in Governor Health settings.`)}</label>
+          <select id="cfg-model" title="${esc(MODEL_PRECEDENCE_TITLE)}" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">
+            ${modelSelectOptionsHtml(_agentBackend, g.model || '', _modelOpts)}
           </select>
         </div>
         <div class="config-field">
@@ -39303,6 +40251,22 @@ function burnAreaChart() {
       return '<input type="text" list="security-model-options" value="' + esc(value || '') + '" placeholder="' + esc(placeholder || 'model id') + '" data-change-action="markDirty" data-arg0="features" data-arg1="' + key + '" data-arg-types="s,s,w">';
     }
 
+    /* intentListField renders one intent.* list. Empty means the built-in
+       defaults, which are shown as the placeholder. */
+    function intentListField(label, yaml, key, defaultsKey, help) {
+      const sec = (_configState.data && _configState.data.security) || {};
+      const values = Array.isArray(sec[key]) ? sec[key] : [];
+      const defaults = ((sec.intentDefaults || {})[defaultsKey]) || [];
+      return '<div class="config-field"><label>' + esc(label) + ' ' + yamlHint(yaml) + ' ' + settingHelpMark('settings', 'security-and-access', label, esc(help) + ' One entry per line; leave empty to use the built-in defaults.') + '</label>' +
+        '<textarea rows="4" class="mono" placeholder="' + esc(defaults.join('\n')) + '" data-change-action="markSecurityLines" data-arg0="' + esc(key) + '" data-arg-types="s,v">' + esc(values.join('\n')) + '</textarea></div>';
+    }
+
+    function markSecurityLines(key, value) {
+      const list = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (_configState.data && _configState.data.security) _configState.data.security[key] = list;
+      markDirty('security', key, list);
+    }
+
     function parseSecurityList(value) {
       return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
     }
@@ -39629,6 +40593,10 @@ function burnAreaChart() {
         </div>
         <details style="margin:10px 0 18px"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced intent</summary>
           <div class="config-field"><label>Alignment model ${yamlHint('intent.alignment_model')} ${settingHelpMark('settings', 'security-and-access', 'Intent alignment model', `Model that checks whether a PR&apos;s change matches the intent of the issue it fixes, using the configured reviewer endpoint. Empty leaves the alignment check off.`)}</label>${securityModelInput('intentAlignmentModel', sec.intentAlignmentModel || '', 'leave empty for default')}</div>
+          ${intentListField('Test path patterns', 'intent.test_path_patterns[]', 'intentTestPathPatterns', 'testPathPatterns', 'Globs that mark a changed file as a test. A PR that deletes or weakens matching files needs stronger authorization.')}
+          ${intentListField('Docs path patterns', 'intent.docs_path_patterns[]', 'intentDocsPathPatterns', 'docsPathPatterns', 'Globs that mark a changed file as documentation. Docs-only and test-only changes skip the alignment check.')}
+          ${intentListField('Guardrail path patterns', 'intent.guardrail_path_patterns[]', 'intentGuardrailPathPatterns', 'guardrailPathPatterns', 'Globs for policy, workflow and ownership files. Any PR touching one is classified in the highest intent tier.')}
+          ${intentListField('Feature signals', 'intent.feature_signals[]', 'intentFeatureSignals', 'featureSignals', 'Words in a PR title or label that mark it as a new feature, which needs an approved plan or human approval.')}
         </details>
 
         <div class="config-toggle">
@@ -39702,16 +40670,16 @@ function burnAreaChart() {
           <div class="config-field"><label>Max alerts per sweep ${yamlHint('sentinel.max_actions')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
         </div>
         <div class="config-field">
-          <label>Sensitive files ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
+          <label>Sensitive files ${yamlHint('sentinel.sensitive_paths[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
           <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
         </div>
         <div class="config-field">
-          <label>Behaviors ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>
+          <label>Behaviors ${yamlHint('sentinel.disabled_behaviors[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>
           ${snBehaviors}
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Exempt logins ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
-          <div class="config-field"><label>Repos (optional allow-list)</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Exempt logins ${yamlHint('sentinel.exempt_logins[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Repos (optional allow-list) ${yamlHint('sentinel.repos[]')}</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
         </div>`;
 
       return `
@@ -40105,6 +41073,7 @@ function burnAreaChart() {
       const amContributorLane = am.contributor_lane || {};
       const amContributorLaneOn = amContributorLane.enabled !== false; // nil/undefined = enabled
       const amContributorLaneVerdict = amContributorLane.require_reviewer_verdict !== false;
+      const amContributorLaneRegistry = amContributorLane.registry_tiers_sufficient !== false;
       const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 120;
       const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
       const amContributorLaneTiers = Array.isArray(amContributorLane.require_tiers) && amContributorLane.require_tiers.length ? amContributorLane.require_tiers : ['merger','trusted'];
@@ -40265,6 +41234,13 @@ function burnAreaChart() {
                   <span class="config-toggle-label">Require approving verdict ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Require approving verdict', `When on (the default), the configured reviewer agent must have recorded an approving verdict for the current head before the contributor-lane tier merges.`)}</span>
                 </div>
               </div>
+              <div class="config-field">
+                <label>Registry tier admits ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Registry tier admits', `When on (the default), a PR whose author holds a required tier on their contributor-registry profile is admitted without a linked issue or hive:claim marker (logged as contributor-lane:registry-trusted). Off requires the claim marker for everyone.`)}</label>
+                <div class="config-toggle">
+                  <div id="am-contributor-lane-registry-tiers-sufficient" class="config-toggle-switch ${amContributorLaneRegistry ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneRegistry ? 'true' : 'false'}"></div>
+                  <span class="config-toggle-label">Admit by registry tier ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Admit by registry tier', `When on (the default), the operator-set trust tier on the author's contributor profile satisfies the tier requirement on its own; every other gate (CI, reviewer verdict, soak, diff fences) still applies.`)}</span>
+                </div>
+              </div>
             </div>
             <div class="config-field mt-4">
               <label for="am-contributor-lane-exclude-labels">Excluded labels</label>
@@ -40274,8 +41250,8 @@ function burnAreaChart() {
             <div class="config-field mt-4">
               <label for="am-contributor-lane-repos">Repositories</label>
               <select id="am-contributor-lane-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh104" class="am-trusted-authors-repos">${amContributorLaneRepoOptions}</select>
-              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked).</p>
-              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
+              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, no-linked-issue, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked); a registry-admitted PR logs <code>contributor-lane:registry-trusted</code>.</p>
+              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
             </div>
           </div>
         </div>
@@ -41604,6 +42580,7 @@ function burnAreaChart() {
       'auto_merge.trusted_authors.require_github_permission': { tab: 'Features', stage: v => complianceStageTrustedAuthors('require_github_permission', v) },
       'auto_merge.contributor_lane.enabled': { tab: 'Features', stage: v => complianceStageContributorLane('enabled', v) },
       'auto_merge.contributor_lane.require_reviewer_verdict': { tab: 'Features', stage: v => complianceStageContributorLane('require_reviewer_verdict', v) },
+      'auto_merge.contributor_lane.registry_tiers_sufficient': { tab: 'Features', stage: v => complianceStageContributorLane('registry_tiers_sufficient', v) },
       'auto_merge.required_checks': { tab: 'Features' },
       'sentinel.enabled': { tab: 'Security', stage: v => markSentinelDirty('enabled', v) },
       'sentinel.disabled_behaviors': { tab: 'Security' },
@@ -42343,6 +43320,7 @@ function burnAreaChart() {
     function markDirtyContributorLane() {
       const enabled = document.getElementById('am-contributor-lane-enabled');
       const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');
+      const registry = document.getElementById('am-contributor-lane-registry-tiers-sufficient');
       const soak = document.getElementById('am-contributor-lane-soak-minutes');
       const labels = document.getElementById('am-contributor-lane-exclude-labels');
       const repos = document.getElementById('am-contributor-lane-repos');
@@ -42352,6 +43330,7 @@ function burnAreaChart() {
         enabled: !!(enabled && enabled.classList.contains('on')),
         soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 120,
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
+        registry_tiers_sufficient: !!(registry && registry.classList.contains('on')),
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],
         require_tiers: tiers ? tiers.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
@@ -42801,11 +43780,78 @@ function burnAreaChart() {
       const current = sel.value;
       const opts = modelsForBackend(backend) || [];
       const match = opts.find(m => _modelsEqual(current, m.value));
-      let html = '<option value="">(from launch command)</option>';
-      html += opts.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join('');
-      if (current && !match) html += `<option value="${esc(current)}">${esc(current)} (current)</option>`;
-      sel.innerHTML = html;
+      sel.innerHTML = modelSelectOptionsHtml(backend, current, opts);
+      sel.title = MODEL_PRECEDENCE_TITLE;
       sel.value = match ? match.value : current;
+    }
+
+    // MODEL_PRECEDENCE_TITLE is the Model select's tooltip: which model an
+    // agent really sends, in precedence order (#9945 — an operator could not
+    // tell that "(from launch command)" meant "no per-agent model").
+    const MODEL_PRECEDENCE_TITLE = 'Which model this agent sends: 1) the per-agent model chosen here, if any; 2) otherwise the backend default — a gateway\'s default_model (Settings → Model Gateways) or, for a CLI backend, the model the CLI itself picks. A model the gateway\'s team is not allowed fails every call with a 403, so prefer the backend default unless you need a specific allowed model.';
+
+    // fullModelLabel shows the complete gateway model id (e.g.
+    // rits/zai-org/glm-5-3, not just glm-5-3) with any discovery suffix, so
+    // the option is recognisable as the id the gateway card shows (#9945).
+    // Lists built without a suffix (static CLI catalogs) keep their label.
+    function fullModelLabel(m) {
+      return m.suffix !== undefined ? m.value + m.suffix : m.label;
+    }
+
+    // inferenceBackendDefaultModel is the model an agent on backend uses when
+    // it names none, as reported by /api/inference/models ("" when unknown).
+    function inferenceBackendDefaultModel(backend) {
+      const c = _inferenceModelCache[canonicalInferenceBackendName(backend)] || _inferenceModelCache[backend];
+      return (c && c.defaultModel) || '';
+    }
+
+    // modelDisallowedByGateway is true when the gateway's last entitlement
+    // signal (key-info probe or a "team not allowed" 403) is known and does
+    // not include model — the agent will 403 on every call with it.
+    function modelDisallowedByGateway(backend, model) {
+      if (!model) return false;
+      const c = _inferenceModelCache[canonicalInferenceBackendName(backend)] || _inferenceModelCache[backend];
+      if (!c || !c.entitled) return false;
+      const entitled = c.entitledModels || (c.models || []).map(m => m.value);
+      return !entitled.some(e => _modelIdMatches(e, model));
+    }
+
+    // modelDefaultOptionLabel names the "no per-agent model" choice by what
+    // it resolves to, replacing the opaque "(from launch command)".
+    function modelDefaultOptionLabel(backend) {
+      const def = inferenceBackendDefaultModel(backend);
+      if (def) return `(backend default — ${def})`;
+      if (isInferenceBackendName(backend)) return '(backend default — the gateway\'s default_model, Settings → Model Gateways)';
+      return `(backend default — chosen by the ${backend || 'CLI'} CLI)`;
+    }
+
+    // modelSelectOptionsHtml builds the agent config dialog's Model options:
+    // the backend-default choice first, every offered model with its FULL id,
+    // and — when the current model is not offered — a "(current)" option that
+    // says when the gateway does not allow it, so an operator looking at
+    // "aws/claude-sonnet-4-6 (current — not allowed by gateway)" knows why
+    // the agent is failing and what to pick instead (#9945).
+    function modelSelectOptionsHtml(backend, current, opts) {
+      const models = opts || modelsForBackend(backend) || [];
+      let html = `<option value="">${esc(modelDefaultOptionLabel(backend))}</option>`;
+      html += models.map(m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}</option>`).join('');
+      if (current && !models.some(m => _modelsEqual(current, m.value))) {
+        const note = modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
+        html += `<option value="${esc(current)}" selected>${esc(current)}${note}</option>`;
+      }
+      return html;
+    }
+
+    // ensureModelOptionsForBackend refreshes the dialog's Model select once
+    // live discovery for an inference backend has answered, so the default
+    // label and the "not allowed" flag reflect the gateway rather than a cold
+    // cache on first open.
+    function ensureModelOptionsForBackend(backend) {
+      if (!isInferenceBackendName(backend) || typeof fetchInferenceModels !== 'function') return;
+      fetchInferenceModels(canonicalInferenceBackendName(backend)).then(() => {
+        const sel = document.getElementById('cfg-model');
+        if (sel) refreshModelOptions(backend);
+      }).catch(() => {});
     }
 
     function updateLaunchCmd(cli) {

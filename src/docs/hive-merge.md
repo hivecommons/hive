@@ -296,17 +296,40 @@ accepted, never the auto-promoted `newcomer`/`contributor`), and `verified=true`
 /api/contribute/reissue-token`). Markers written before these fields existed
 read as `newcomer`/unverified and are refused.
 
+The marker is not the only statement of trust the hive holds. The operator
+sets each contributor's trust tier on their profile in the hive's contributor
+registry (**Contribute → Admin**, `POST /api/contribute/admin/contributors/
+{id}/trust`), and that tier is what the claim marker copies when the relay
+leases an issue. So the tier also admits a PR directly from the registry
+(`registry_tiers_sufficient`, default `true`): if the PR author's profile
+carries a tier in `require_tiers`, no linked issue or marker is needed. Live
+on hive's own hive a contributor the operator had marked `trusted` was still
+skipped with `contributor-lane:no-linked-issue` because the PR body said
+`Part of #N` rather than `Fixes #N`, and with `contributor-lane:no-claim` when
+the issue had been claimed outside the relay; the registry path admits both.
+Every other gate below still applies to a registry-admitted PR. Set
+`registry_tiers_sufficient: false` to require the marker for everyone.
+
 A PR merges through this tier only when all of the following hold:
 
-- The PR body closes a same-repo issue (`Fixes`/`Closes`/`Resolves #N`) whose
-  App-authored `hive:claim` marker has `kind=contributor`, `who=` equal to the
-  PR author, and `hive=` equal to this hive's `hive_id`. Markers from other
-  commenters, other kinds, other authors or other hives are rejected with
-  distinct skip reasons (`contributor-lane:no-claim`,
-  `contributor-lane:claim-author-mismatch`, `contributor-lane:claim-other-hive`).
-- The marker's `tier=` is in `require_tiers`
-  (`contributor-lane:claim-tier-untrusted`) and it says `verified=true`
-  (`contributor-lane:claim-unverified`).
+- The PR author is admitted by one of two paths:
+  - **Registry**: the author's contributor-registry profile has a trust tier in
+    `require_tiers`. The sweep logs `contributor-lane admitted
+    reason=contributor-lane:registry-trusted registry_tier=<tier>` and the
+    merge log carries `admitted_by=contributor-lane:registry-trusted`. A
+    profile at `newcomer`/`contributor`/`revoked`, no profile at all, or
+    `registry_tiers_sufficient: false` falls through to the marker path with
+    that path's skip reasons unchanged.
+  - **Claim marker**: the PR body closes a same-repo issue
+    (`Fixes`/`Closes`/`Resolves #N`) whose App-authored `hive:claim` marker has
+    `kind=contributor`, `who=` equal to the PR author, and `hive=` equal to this
+    hive's `hive_id`. Markers from other commenters, other kinds, other authors
+    or other hives are rejected with distinct skip reasons
+    (`contributor-lane:no-claim`, `contributor-lane:claim-author-mismatch`,
+    `contributor-lane:claim-other-hive`); a body with no closing keyword skips
+    with `contributor-lane:no-linked-issue`. The marker's `tier=` must be in
+    `require_tiers` (`contributor-lane:claim-tier-untrusted`) and it must say
+    `verified=true` (`contributor-lane:claim-unverified`).
 - GitHub's `author_association` for the PR author is `OWNER`, `MEMBER`,
   `COLLABORATOR` or `CONTRIBUTOR`; `NONE`, `FIRST_TIMER`,
   `FIRST_TIME_CONTRIBUTOR` or a missing value skip with
@@ -333,9 +356,11 @@ A PR merges through this tier only when all of the following hold:
   (`contributor-lane:soaking(remaining=1h30m0s)`).
 
 Merges squash through the same effect-claimed `MergePR` path as the other tiers,
-log `automerge merged tier=contributor-lane`, record the sweep audit, and leave
-one comment: `Merged by hive contributor-lane auto-merge: CI green for ≥120m,
-reviewer verdict approve, claim by @author on #N verified.`
+log `automerge merged tier=contributor-lane admitted_by=<path>`, record the
+sweep audit, and leave one comment naming the admission path: `Merged by hive
+contributor-lane auto-merge: CI green for ≥120m, reviewer verdict approve,
+claim by @author on #N verified.` for the marker path, or `… @author holds the
+trusted tier in this hive's contributor registry.` for the registry path.
 
 ```yaml
 auto_merge:
@@ -353,6 +378,7 @@ auto_merge:
     require_tiers:                # operator-granted tiers only (trusted, merger, advisor)
       - trusted
       - merger
+    registry_tiers_sufficient: true   # a require_tiers tier on the author's registry profile admits without a claim marker
 ```
 
 The block is editable from **Settings → Features → Auto Merge →

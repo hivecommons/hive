@@ -74,7 +74,22 @@ The collector keeps the latest aggregate in memory and writes `/data/token-summa
 - `/api/status` includes token/cost fields used by the dashboard.
 - `/api/cost` returns estimated cost from token counts × the static price table plus native spend for gateways that report it (OpenRouter `/key`, LiteLLM `/key/info`). Estimated rows are labelled `estimated`; rows whose model has no exact table entry are marked with `unpriced_models` and shown as tier estimates. Native gateway rows are labelled `native`. The estimated payload also includes `window_start` / `window_end` when session timestamps are available, so dashboard tables can state the covered usage window.
 - `/api/repo-activity` is phase 1 of per-repo cost attribution: it reports audited output counts per repo and per `(repo, agent)` from `repo=` audit entries, plus an explicit `unattributed` bucket for output events with no repo. It reports activity only, not dollars; cost must not be smeared across repos until timestamped token joins exist.
+- `/api/repo-cost` is phase 3: a cached interval join of the same audited `repo=` events against the per-message usage timeline, with mandatory `unattributed` and `backend_unsupported` buckets so Σ buckets == total.
+- `/api/launch-cost` is launch attribution (#12128, RFC #12134): spend placed against the **issue / PR / head SHA** each kick was launched for. See [Launch attribution](#launch-attribution) below.
 - Cost estimates are not invoices. Subscription plans, self-hosted inference, negotiated rates, and provider billing semantics can differ from list prices.
+
+## Launch attribution
+
+The kick path records a `LaunchRecord` (`pkg/tokens/launch.go`) each time the governor or the review swarm delivers a kick: agent, trigger (`governor-eval`, `review-<kind>`), cadence-target repo, and the work refs the kick named. Governor kicks carry the issue refs placed in the message (`owner/repo#N`, or the verbatim external key for Linear/Jira work); review-swarm kicks carry one PR ref **with its head SHA**. Records are appended to `/data/launch-attribution.jsonl` (bounded ring, compacted in place) and attached to the token collector (`Collector.SetLaunchLog` / `RecordLaunch` / `Launches`).
+
+`pkg/dashboard/collect/launch_cost.go` joins those records against the same `UsageEvent` timeline `/api/repo-cost` uses, with the same pricing table and the same honesty rules:
+
+- A launch is an *opening* event: usage is owned by the most recent recorded launch for the same agent, until the next launch or `LaunchOwnershipMax` (6h), whichever comes first. Usage before an agent's first retained launch, past the horizon, or outside the repo-cost window (14 days) is `unattributed`; backends without a per-message timeline land in `backend_unsupported`. Σ `by_launch` + `unattributed` + `backend_unsupported` == total.
+- `by_ref` aggregates every launch that named a ref. `launches` is the repeat-spend counter (how many kicks named it, including kicks that produced no usage), `head_shas` lists the distinct PR heads launched against, `launch_tokens` / `launch_usd` are the undivided totals of every launch naming the ref (upper bound), and `share_tokens` / `share_usd` split each launch evenly across the refs it named (exact for single-PR review kicks).
+- USD is `null` when nothing was attributed — never `$0.00`.
+- `?ref=owner/repo#N` narrows `by_ref` and `by_launch` to one work item; totals stay whole-window.
+
+The dashboard Cost panel renders the top rows as "cost by work item". Manual `send-kick` and startup prompts do not record launches, so their spend stays unattributed. This is visibility only: nothing here gates or budgets a kick, and the governor window budget remains the single enforced budget.
 
 ## Metering diagnostics and zero-token health
 

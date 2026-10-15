@@ -39,9 +39,9 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 		rawBorderRadii: 53,
 	},
 	"hub static pages": {
-		inlineStyles:   946,
-		rawColors:      450,
-		rawFontSizes:   427,
+		inlineStyles:   945,
+		rawColors:      448,
+		rawFontSizes:   426,
 		rawPadding:     164,
 		rawBorderRadii: 104,
 	},

@@ -325,6 +325,17 @@ func externalRefMatchesIssue(ref string, refs []IssueRef) bool {
 	return false
 }
 
+// DefaultConfig returns copies of the built-in patterns used when the
+// corresponding intent.* list is empty, so callers can show them.
+func DefaultConfig() Config {
+	return Config{
+		TestPathPatterns:      append([]string(nil), defaultTestPathPatterns...),
+		DocsPathPatterns:      append([]string(nil), defaultDocsPathPatterns...),
+		GuardrailPathPatterns: append([]string(nil), defaultGuardrailPathPatterns...),
+		FeatureSignals:        append([]string(nil), defaultFeatureSignals...),
+	}
+}
+
 func withDefaults(cfg Config) Config {
 	if len(cfg.TestPathPatterns) == 0 {
 		cfg.TestPathPatterns = defaultTestPathPatterns

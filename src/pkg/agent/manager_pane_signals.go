@@ -176,6 +176,21 @@ type blockingPrompt struct {
 	label string // for the audit log
 }
 
+const (
+	// claudeAutoModeNoticeMarker / claudeAutoModeNoticeFooter identify Claude
+	// Code's auto-mode classifier notice, verbatim from a live FMA pane
+	// (#9945): "We're changing auto mode to no longer charge for classifier
+	// requests in Claude Code. … Enter to continue · Esc to cancel". Both
+	// must be present so a kick that merely mentions auto mode cannot match.
+	claudeAutoModeNoticeMarker = "classifier requests in Claude Code"
+	claudeAutoModeNoticeFooter = "Enter to continue"
+	claudeAutoModeNoticeLabel  = "claude auto-mode classifier notice"
+	// claudeAutoModeNoticeFooterLines is how many trailing non-blank lines
+	// the footer may sit in for the notice to count as live (the footer
+	// itself plus a possible status/spinner line under it).
+	claudeAutoModeNoticeFooterLines = 2
+)
+
 var blockingPrompts = []blockingPrompt{
 	{
 		backend: "claude",
@@ -188,6 +203,29 @@ var blockingPrompts = []blockingPrompt{
 		},
 		key:   "Down",
 		label: "claude workspace trust",
+	},
+	{
+		backend: "claude",
+		// Claude Code's auto-mode classifier notice (#9945). It appears
+		// MID-RUN, at the first checked tool call, not at startup, so the
+		// 60s dismissInferencePrompts window never sees it; only this
+		// lifetime watcher can. Enter continues the held action and the
+		// notice never returns in that session; Esc cancels the turn. New
+		// inference sessions launch with CLAUDE_CODE_AUTO_MODE_SERVER=0 so
+		// the notice is not shown at all — this entry rescues panes that
+		// were already running when that landed, and any session whose
+		// settings re-enable the server check.
+		//
+		// The footer must be on the LAST non-blank lines: once Enter is
+		// pressed the CLI resumes and draws output below the notice, and the
+		// lingering text must not read as a live modal (it would hold the
+		// readiness gate and re-fire Enter every trustReanswerAfter).
+		match: func(p string) bool {
+			return strings.Contains(p, claudeAutoModeNoticeMarker) &&
+				strings.Contains(paneTail(p, claudeAutoModeNoticeFooterLines), claudeAutoModeNoticeFooter)
+		},
+		key:   "",
+		label: claudeAutoModeNoticeLabel,
 	},
 	{
 		backend: "copilot",

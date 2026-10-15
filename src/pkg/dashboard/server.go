@@ -404,6 +404,11 @@ type StatusPayload struct {
 	OverviewTotals   FrontendOverviewTotals    `json:"overviewTotals"`
 	ActionableNow    FrontendActionableNow     `json:"actionableNow"`
 	OverviewCoverage *FrontendOverviewCoverage `json:"overviewCoverage,omitempty"`
+	// LabelPresets are the built-in label-filter presets the Projects cards'
+	// faceted filter offers (hivecommons/hive#12172). Served rather than
+	// hard-coded in the page so the "Needs human" preset is the same
+	// hard-suppress / hold label set the enumeration parks on.
+	LabelPresets []FrontendLabelPreset `json:"labelPresets,omitempty"`
 	// SLA is the fleet-wide Delivery SLA roll-up (spans, 30-day history,
 	// stale in-progress issues, targets); per-repo blocks sit on each repo.
 	SLA *FrontendSLA `json:"sla,omitempty"`
@@ -1877,6 +1882,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				r.Header.Set("X-Hive-Role", config.RoleOwner)
 				r.Header.Set(ownerRoleVerifiedHeader, "true")
 			}
+		}
+
+		// Read-only widget token (#12147): admits ONLY a GET of the widget
+		// summary path, as a read-role identity. It is never consulted for any
+		// other path, so it cannot reach a mutation or stand in for a session.
+		if !trusted && widgetTokenAuthenticates(r) {
+			trusted = true
+			widgetTokenIdentity(r)
 		}
 
 		if !trusted && r.URL.Path == "/api/knowledge/export" {

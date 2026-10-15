@@ -8532,6 +8532,14 @@ type ContributorLaneAutoMergeConfig struct {
 	// newcomer and contributor are reached by self-registration and
 	// automatic promotion, so they never confer unattended merge.
 	RequireTiers []string `yaml:"require_tiers,omitempty" json:"require_tiers,omitempty"`
+	// RegistryTiersSufficient admits a PR whose author holds a RequireTiers
+	// tier in this hive's contributor registry (the operator-set trust tier
+	// on the contributor profile) without a linked issue or hive:claim
+	// marker. nil/unset means ON. With it off, only the claim-marker path
+	// admits a PR, so a trusted contributor's PR that references rather
+	// than closes its issue, or was claimed outside the relay, waits for a
+	// human (`contributor-lane:no-linked-issue` / `no-claim`).
+	RegistryTiersSufficient *bool `yaml:"registry_tiers_sufficient,omitempty" json:"registry_tiers_sufficient,omitempty"`
 }
 
 // DefaultContributorLaneRequireTiers is the contributor-lane tier allow-list
@@ -8564,6 +8572,12 @@ func (c ContributorLaneAutoMergeConfig) EffectiveSoakMinutes() int {
 
 func (c ContributorLaneAutoMergeConfig) EffectiveRequireReviewerVerdict() bool {
 	return c.RequireReviewerVerdict == nil || *c.RequireReviewerVerdict
+}
+
+// EffectiveRegistryTiersSufficient reports whether a RequireTiers tier in
+// the contributor registry admits a PR without a claim marker (default on).
+func (c ContributorLaneAutoMergeConfig) EffectiveRegistryTiersSufficient() bool {
+	return c.RegistryTiersSufficient == nil || *c.RegistryTiersSufficient
 }
 
 func (c ContributorLaneAutoMergeConfig) RepoSet() map[string]bool {

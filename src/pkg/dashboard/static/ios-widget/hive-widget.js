@@ -8,10 +8,16 @@
 // and actionable PRs, each with a sparkline. Tapping the widget opens the
 // hive dashboard (the same mobile page you get from "Add to Home Screen").
 //
-// Setup: run the script once inside Scriptable. It asks for the hive URL and
-// a GitHub token, stores the token in the iOS Keychain (never in the widget
-// parameter), and shows a preview. Then add a Scriptable widget to the Home
-// Screen, pick this script, and set the widget parameter to the hive URL.
+// Setup: scan the QR code from the dashboard's "iPhone widget" dialog (the
+// owner mints a read-only widget token there), or run the script once inside
+// Scriptable. It stores the hive URL and token in the iOS Keychain (never in
+// the widget parameter) and shows a preview. Then add a Scriptable widget to
+// the Home Screen, pick this script, and set the widget parameter to the hive
+// URL.
+//
+// Preferred auth: the hive's read-only widget token (`hwt_…`), sent as
+// `X-Hive-Widget-Token` to `/api/widget/summary` — the only endpoint it can
+// read. Alternative: a GitHub token, as below.
 //
 // Auth: the hub's auth-check accepts `Authorization: Bearer <GitHub token>`
 // for any user already allowed on the hive, so no server-side change is
@@ -21,6 +27,8 @@
 const VERSION = "1";
 const KEYCHAIN_TOKEN_KEY = "hive.widget.github-token";
 const KEYCHAIN_URL_KEY = "hive.widget.default-url";
+const KEYCHAIN_WIDGET_TOKEN_PREFIX = "hive.widget.read-token:";
+const WIDGET_TOKEN_PREFIX = "hwt_";
 const HISTORY_DAYS = 7;
 const HISTORY_BUCKET_MIN = 15; // one locally kept sample per 15 minutes
 const SPARK_POINTS = 48;      // points drawn per sparkline
@@ -66,12 +74,31 @@ function token() {
   return Keychain.contains(KEYCHAIN_TOKEN_KEY) ? Keychain.get(KEYCHAIN_TOKEN_KEY) : "";
 }
 
+// Widget tokens are per hive, so they are keyed by the hive URL.
+function widgetTokenKey(base) {
+  return KEYCHAIN_WIDGET_TOKEN_PREFIX + normalizeURL(base);
+}
+
+function widgetToken(base) {
+  if (!base) return "";
+  const k = widgetTokenKey(base);
+  return Keychain.contains(k) ? Keychain.get(k) : "";
+}
+
+function isWidgetToken(t) {
+  return typeof t === "string" && t.startsWith(WIDGET_TOKEN_PREFIX);
+}
+
+function hasCredential(base) {
+  return !!(widgetToken(base) || token());
+}
+
 async function setup() {
   const a = new Alert();
   a.title = "Hive widget setup";
-  a.message = "Hive dashboard URL and a GitHub token (fine-grained, no repo permissions). The token is stored in the iOS Keychain.";
+  a.message = "Hive dashboard URL and either the hive's read-only widget token (hwt_…, from the dashboard's iPhone widget dialog) or a GitHub token (fine-grained, no repo permissions). The token is stored in the iOS Keychain.";
   a.addTextField("https://<hive>.hive.hivecommons.dev", hiveURL());
-  a.addSecureTextField("GitHub token", token());
+  a.addSecureTextField("Widget token or GitHub token", widgetToken(hiveURL()) || token());
   a.addAction("Save");
   a.addCancelAction("Cancel");
   if ((await a.present()) === -1) return false;
@@ -82,7 +109,12 @@ async function setup() {
     return false;
   }
   Keychain.set(KEYCHAIN_URL_KEY, url);
-  Keychain.set(KEYCHAIN_TOKEN_KEY, tok);
+  if (isWidgetToken(tok)) {
+    Keychain.set(widgetTokenKey(url), tok);
+  } else {
+    Keychain.set(KEYCHAIN_TOKEN_KEY, tok);
+    if (Keychain.contains(widgetTokenKey(url))) Keychain.remove(widgetTokenKey(url));
+  }
   return true;
 }
 
@@ -91,7 +123,10 @@ async function setup() {
 async function getJSON(base, path) {
   const req = new Request(base + path);
   req.timeoutInterval = FETCH_TIMEOUT_S;
-  req.headers = { Authorization: "Bearer " + token(), Accept: "application/json" };
+  const wt = widgetToken(base);
+  req.headers = wt
+    ? { "X-Hive-Widget-Token": wt, Accept: "application/json" }
+    : { Authorization: "Bearer " + token(), Accept: "application/json" };
   const body = await req.loadString();
   const status = req.response ? req.response.statusCode : 0;
   if (status !== 200) throw new Error("HTTP " + status + " " + path);
@@ -149,10 +184,16 @@ async function loadData(base) {
   const state = loadLocal(base);
   let live = null, err = null;
   try {
-    const [hist, summary] = await Promise.all([
-      getJSON(base, "/api/history?hours=168"),
-      getJSON(base, "/api/status/summary"),
-    ]);
+    let hist, summary;
+    if (widgetToken(base)) {
+      summary = await getJSON(base, "/api/widget/summary");
+      hist = summary.history;
+    } else {
+      [hist, summary] = await Promise.all([
+        getJSON(base, "/api/history?hours=168"),
+        getJSON(base, "/api/status/summary"),
+      ]);
+    }
     const incoming = (Array.isArray(hist) ? hist : []).map(pointToSample).filter((s) => s.t > 0);
     state.samples = mergeSamples(state.samples || [], incoming);
     const agents = Array.isArray(summary.agents) ? summary.agents : [];
@@ -336,12 +377,25 @@ function buildWidget(base, data, family) {
 // ------------------------------------------------------------------ main
 
 async function main() {
+  // Launched from the hive dashboard's "iPhone widget" menu item as
+  // scriptable:///run/Hive?url=<hive>: adopt that hive as the default so the
+  // setup form only needs the token.
+  const q = args.queryParameters || {};
+  // The dashboard's QR code / "Open in Scriptable" link also hands over the
+  // read-only widget token as widgetToken=hwt_…; store it for that hive.
+  const handedURL = normalizeURL(q.url);
+  if (handedURL && !config.runsInWidget) Keychain.set(KEYCHAIN_URL_KEY, handedURL);
+  const handedWidgetToken = (q.widgetToken || "").trim();
+  if (handedURL && isWidgetToken(handedWidgetToken) && !config.runsInWidget) {
+    Keychain.set(widgetTokenKey(handedURL), handedWidgetToken);
+  }
+
   let base = hiveURL();
-  if (!config.runsInWidget && (!base || !token() || args.queryParameters.setup)) {
+  if (!config.runsInWidget && (!base || !hasCredential(base) || (q.setup && !handedWidgetToken))) {
     if (!(await setup())) { Script.complete(); return; }
     base = hiveURL();
   }
-  if (!base || !token()) {
+  if (!base || !hasCredential(base)) {
     const w = new ListWidget();
     w.backgroundColor = C.bg;
     const t = w.addText("🐝 Hive\nOpen Scriptable and run this script once to set the hive URL and token.");
