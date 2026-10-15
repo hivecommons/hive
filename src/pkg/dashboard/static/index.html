@@ -12751,18 +12751,121 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       });
       const html = cards.join('');
       if (el.innerHTML !== html) {
-        el.innerHTML = html;
+        // Patch the existing cards in place instead of replacing the grid's
+        // innerHTML. A wholesale replacement destroyed every card node each
+        // refresh, so (a) the browser's scroll anchor (Chrome) was lost with
+        // it and (b) the terminal tail panes (.doing) of cards scrolled above
+        // the viewport grew or shrank with new log lines and pushed the rows
+        // the reader was looking at — the whole page appeared to jump on
+        // every SSE tick, worst in Safari which has no scroll anchoring.
+        const tailFollow = agentTailFollowState(el);
+        morphAgentGrid(el, html);
         for (const [id, val] of Object.entries(savedInputs)) {
           const inp = document.getElementById(id);
-          if (inp) inp.value = val;
+          if (inp && inp.value !== val) inp.value = val;
         }
-        if (focusedId) {
+        if (focusedId && document.activeElement?.id !== focusedId) {
           const prev = document.getElementById(focusedId);
-          if (prev) prev.focus();
+          if (prev) { try { prev.focus({ preventScroll: true }); } catch (e) { prev.focus(); } }
         }
-        el.querySelectorAll('.doing').forEach(d => { d.scrollTop = d.scrollHeight; });
+        // Element-local scrollTop only — never scrollIntoView, which would
+        // move the window. Keep following the tail only when the reader was
+        // already at the bottom (or the pane is new); otherwise hold their
+        // place in the log.
+        el.querySelectorAll('.doing').forEach(d => {
+          const card = d.closest('.agent-card');
+          const key = card ? card.getAttribute('data-agent') : '';
+          if (!(key in tailFollow) || tailFollow[key]) d.scrollTop = d.scrollHeight;
+        });
         el.querySelectorAll('[data-agent-resize-y][data-agent-height]').forEach(d => { d.style.height = `${d.dataset.agentHeight}px`; });
       }
+    }
+
+    // Per-agent "was the terminal tail scrolled to the bottom?" snapshot taken
+    // before a re-render, so the post-render auto-follow respects a reader who
+    // scrolled up inside a pane.
+    const AGENT_TAIL_BOTTOM_SLACK_PX = 4;
+    function agentTailFollowState(grid) {
+      const out = {};
+      grid.querySelectorAll('.agent-card').forEach(card => {
+        const d = card.querySelector('.doing');
+        if (!d) return;
+        out[card.getAttribute('data-agent')] = d.scrollTop + d.clientHeight >= d.scrollHeight - AGENT_TAIL_BOTTOM_SLACK_PX;
+      });
+      return out;
+    }
+
+    // Keyed reconcile of the agents grid: cards are matched by data-agent,
+    // kept in the DOM, moved into the new order, and patched node-by-node so
+    // scroll positions (window, .agent-card-details, .doing), focus, typed
+    // input and inline sizes survive a refresh. Cards no longer present are
+    // removed; new ones are inserted at their position.
+    function morphAgentGrid(grid, html) {
+      const tpl = document.createElement('template');
+      tpl.innerHTML = html;
+      const existing = new Map();
+      Array.from(grid.children).forEach(c => {
+        const k = c.getAttribute && c.getAttribute('data-agent');
+        if (k && c.classList.contains('agent-card') && !existing.has(k)) existing.set(k, c);
+        else c.remove();
+      });
+      let cursor = grid.firstChild;
+      Array.from(tpl.content.children).forEach(nextCard => {
+        const k = nextCard.getAttribute('data-agent');
+        let cur = k ? existing.get(k) : null;
+        if (cur) {
+          existing.delete(k);
+          morphDomNode(cur, nextCard);
+        } else {
+          cur = nextCard;
+        }
+        if (cur !== cursor) grid.insertBefore(cur, cursor);
+        else cursor = cursor.nextSibling;
+      });
+      existing.forEach(c => c.remove());
+    }
+
+    function morphDomNode(from, to) {
+      if (from.nodeType !== to.nodeType || (from.nodeType === 1 && from.tagName !== to.tagName)) {
+        from.replaceWith(to);
+        return;
+      }
+      if (from.nodeType !== 1) {
+        if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue;
+        return;
+      }
+      // Form controls carry live state (value, selectedness, open dropdown)
+      // that attribute patching can't reconcile — swap them only when their
+      // markup actually changed.
+      if (from.tagName === 'SELECT' || from.tagName === 'INPUT' || from.tagName === 'TEXTAREA') {
+        if (from.outerHTML !== to.outerHTML) from.replaceWith(to);
+        return;
+      }
+      morphDomAttributes(from, to);
+      const fromKids = Array.from(from.childNodes);
+      const toKids = Array.from(to.childNodes);
+      const n = Math.max(fromKids.length, toKids.length);
+      for (let i = 0; i < n; i++) {
+        const f = fromKids[i], t = toKids[i];
+        if (!t) { f.remove(); continue; }
+        if (!f) { from.appendChild(t); continue; }
+        morphDomNode(f, t);
+      }
+    }
+
+    function morphDomAttributes(from, to) {
+      const toAttrs = to.attributes;
+      for (let i = 0; i < toAttrs.length; i++) {
+        const a = toAttrs[i];
+        if (from.getAttribute(a.name) !== a.value) from.setAttribute(a.name, a.value);
+      }
+      Array.from(from.attributes).forEach(a => {
+        if (to.hasAttribute(a.name)) return;
+        // Inline style on a kept node was set from JS (resize-handle height,
+        // data-agent-height) — the card template never emits one, so keep it.
+        if (a.name === 'style') return;
+        from.removeAttribute(a.name);
+      });
     }
 
     function agentGridColumnCount(grid) {
@@ -26684,7 +26787,7 @@ function burnAreaChart() {
     // Remember the topmost visible section and the reader's offset within it,
     // so a repaint that resizes content above doesn't move them elsewhere.
     function captureScrollAnchor() {
-      const anchor = { el: null, top: 0, scrollY: window.scrollY };
+      const anchor = { el: null, top: 0, scrollY: window.scrollY, cardKey: '', cardTop: 0 };
       if (window.scrollY <= 0) return anchor;
       const sections = document.querySelectorAll('[data-dashboard-section]');
       for (let i = 0; i < sections.length; i++) {
@@ -26693,10 +26796,31 @@ function burnAreaChart() {
         const rect = el.getBoundingClientRect();
         if (rect.bottom > 0) { anchor.el = el; anchor.top = rect.top; break; }
       }
+      // A section's top is too coarse once the reader has scrolled INTO it:
+      // the agents grid is several rows of cards whose terminal tails grow
+      // with every refresh, so rows above the viewport change height while
+      // the section's top edge stays put. Anchor on the first card still in
+      // view instead, by key — the node may be rebuilt by the render.
+      if (anchor.el && anchor.top < 0) {
+        const cards = anchor.el.querySelectorAll('.agent-card[data-agent]');
+        for (let i = 0; i < cards.length; i++) {
+          const rect = cards[i].getBoundingClientRect();
+          if (rect.bottom > 0 && rect.height > 0) { anchor.cardKey = cards[i].getAttribute('data-agent'); anchor.cardTop = rect.top; break; }
+        }
+      }
       return anchor;
     }
 
     function restoreScrollAnchor(anchor) {
+      if (anchor.cardKey && anchor.el && anchor.el.isConnected) {
+        const safeKey = (window.CSS && CSS.escape) ? CSS.escape(anchor.cardKey) : String(anchor.cardKey).replace(/["\\]/g, '\\$&');
+        const card = anchor.el.querySelector(`.agent-card[data-agent="${safeKey}"]`);
+        if (card && card.getClientRects().length) {
+          const delta = card.getBoundingClientRect().top - anchor.cardTop;
+          if (delta) window.scrollBy(0, delta);
+          return;
+        }
+      }
       if (anchor.el && anchor.el.isConnected && anchor.el.getClientRects().length) {
         const delta = anchor.el.getBoundingClientRect().top - anchor.top;
         if (delta) window.scrollBy(0, delta);
