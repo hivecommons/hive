@@ -31380,6 +31380,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Question Auto-Close', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
+      { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Hub', section: 'Release', label: 'Release channel', key: '', text: 'channel stable candidate edge release update stream' },
@@ -38210,6 +38211,7 @@ function burnAreaChart() {
         <p style="font-size:var(--fs-sm);color:var(--muted);margin:0 0 10px">
           Observes each agent's actual terminal rather than its configured state, and can restart agents that are running but dead.
         </p>
+        <p class="config-help">YAML keys: <code>governor.watchdog.enabled</code>, <code>governor.watchdog.mode</code>, <code>governor.watchdog.auth_probe</code>, <code>governor.watchdog.probe_interval_s</code>, <code>governor.watchdog.liveness.shell_prompt_after</code>, <code>governor.watchdog.liveness.stuck_overlay_after</code>, <code>governor.watchdog.readiness.no_production_for</code>, <code>governor.watchdog.restart.backoff[]</code>, <code>governor.watchdog.restart.crash_loop_after</code>, <code>governor.watchdog.restart.healthy_reset</code>.</p>
         ${pausedBanner}${healBanner}${observeBanner}
         ${renderWatchdogActivityShell()}
         <div class="config-field-row">

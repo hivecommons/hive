@@ -280,16 +280,6 @@ governor.vllm.api_key_env # TODO #11854
 governor.vllm.api_key_file # TODO #11854
 governor.vllm.api_key_header # TODO #11854
 governor.vllm.endpoint # TODO #11854
-governor.watchdog.auth_probe # TODO #11854
-governor.watchdog.enabled # TODO #11854
-governor.watchdog.liveness.shell_prompt_after # TODO #11854
-governor.watchdog.liveness.stuck_overlay_after # TODO #11854
-governor.watchdog.mode # TODO #11854
-governor.watchdog.probe_interval_s # TODO #11854
-governor.watchdog.readiness.no_production_for # TODO #11854
-governor.watchdog.restart.backoff[] # TODO #11854
-governor.watchdog.restart.crash_loop_after # TODO #11854
-governor.watchdog.restart.healthy_reset # TODO #11854
 governor.work_source.github_projects.default_repo # TODO #11854
 governor.work_source.github_projects.iteration_field # TODO #11854
 governor.work_source.github_projects.org # TODO #11854
