@@ -3917,7 +3917,11 @@
     .debug-quota-ok { color: var(--green); }
     .debug-quota-warn { color: var(--yellow); }
     .debug-quota-bad { color: var(--red); }
-    .gh-api-budget-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); }
+    /* The per-caller table has six columns with full endpoint paths, so this tile spans two
+       grid cells (one 280px cell truncated Endpoint and hid Charged/Req/304/429 entirely).
+       min-width:0 stops the grid item from growing to the table's min-content width. */
+    .gh-api-budget-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-6); grid-column: span 2; min-width: 0; }
+    @media (max-width: 640px) { .gh-api-budget-card { grid-column: span 1; } }
     .gh-api-budget-label { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: var(--sp-4); font-weight: 600; }
     .gh-api-budget-row { display: flex; justify-content: space-between; align-items: center; font-size: var(--fs-sm); line-height: 1.45; }
     .gh-api-budget-strong { font-weight: 600; }
@@ -3927,8 +3931,15 @@
     .gh-api-budget-fill.debug-quota-ok { fill: var(--green); }
     .gh-api-budget-fill.debug-quota-warn { fill: var(--yellow); }
     .gh-api-budget-fill.debug-quota-bad { fill: var(--red); }
-    .gh-api-budget-table-wrap { overflow: auto; margin-top: var(--sp-4); }
-    .gh-api-budget-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+    .gh-api-budget-table-wrap { overflow-x: auto; max-width: 100%; margin-top: var(--sp-4); }
+    .gh-api-budget-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--fs-xs); }
+    .gh-api-budget-table th, .gh-api-budget-table td { text-align: left; padding: var(--sp-1) var(--sp-3) var(--sp-1) 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gh-api-budget-table th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
+    .gh-api-budget-col-caller { width: 28%; }
+    .gh-api-budget-col-endpoint { width: 44%; font-family: var(--font-mono); }
+    .gh-api-budget-col-num { width: 7%; text-align: right; font-variant-numeric: tabular-nums; }
+    .gh-api-budget-table th.gh-api-budget-col-num, .gh-api-budget-table td.gh-api-budget-col-num { text-align: right; padding-right: 0; padding-left: var(--sp-2); }
+    .gh-api-budget-table .gh-api-budget-empty { white-space: normal; }
     .gh-api-budget-empty { color: var(--muted); }
     @media (max-width: 640px) { .debug-headline-tokens { display: none; } }
     .dash-card-body { overflow: hidden; transition: max-height 200ms ease, opacity 200ms ease; max-height: none; opacity: 1; }
@@ -28133,7 +28144,11 @@ function burnAreaChart() {
       const top = (ghRate.top_consumers || ghRate.topConsumers || []).slice(0, 8);
       const barWidth = Math.max(0, Math.min(100, core.remainingPct));
       const bar = `<div id="gh-api-budget-core-bar" class="gh-api-budget-bar"><svg viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="gh-api-budget-track" x="0" y="0" width="100" height="6" rx="3"/><rect class="gh-api-budget-fill ${core.headlineClass}" x="0" y="0" width="${barWidth}" height="6" rx="3"/></svg></div>`;
-      const rows = top.map(c => `<tr><td>${esc(c.caller || 'unknown')}</td><td>${esc(c.endpoint || '')}</td><td>${Number(c.charged) || 0}</td><td>${Number(c.requests) || 0}</td><td>${Number(c.not_modified) || 0}</td><td>${Number(c.rate_limited) || 0}</td></tr>`).join('');
+      const rows = top.map(c => {
+        const caller = esc(c.caller || 'unknown');
+        const endpoint = esc(c.endpoint || '');
+        return `<tr><td class="gh-api-budget-col-caller" title="${caller}">${caller}</td><td class="gh-api-budget-col-endpoint" title="${endpoint}">${endpoint}</td><td class="gh-api-budget-col-num">${Number(c.charged) || 0}</td><td class="gh-api-budget-col-num">${Number(c.requests) || 0}</td><td class="gh-api-budget-col-num">${Number(c.not_modified) || 0}</td><td class="gh-api-budget-col-num">${Number(c.rate_limited) || 0}</td></tr>`;
+      }).join('');
       return `<div id="gh-api-budget-panel" class="gh-api-budget-card">
         <div class="gh-api-budget-label">GitHub API budget (1h)</div>
         <div class="gh-api-budget-row"><span>Core remaining</span><span class="gh-api-budget-strong">${core.remaining} / ${core.limit || '—'} (${core.remainingPct}% free)</span></div>
@@ -28141,7 +28156,7 @@ function burnAreaChart() {
         ${bar}
         <div class="gh-api-budget-table-wrap">
           <table id="gh-api-budget-consumers" class="gh-api-budget-table">
-            <thead><tr><th>Caller</th><th>Endpoint</th><th>Charged</th><th>Req</th><th>304</th><th>429</th></tr></thead>
+            <thead><tr><th class="gh-api-budget-col-caller">Caller</th><th class="gh-api-budget-col-endpoint">Endpoint</th><th class="gh-api-budget-col-num" title="Rate-limit points charged">Charged</th><th class="gh-api-budget-col-num" title="Requests">Req</th><th class="gh-api-budget-col-num" title="304 Not Modified (ETag hits)">304</th><th class="gh-api-budget-col-num" title="429 / rate-limited responses">429</th></tr></thead>
             <tbody>${rows || '<tr><td colspan="6" class="gh-api-budget-empty">No recent GitHub API traffic</td></tr>'}</tbody>
 
           </table>
