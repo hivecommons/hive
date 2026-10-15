@@ -835,6 +835,8 @@ jobs:
             echo "::error::empty package bucket — failing closed"
             exit 1
           fi
+          # -timeout=20m: pkg/dashboard alone nearly exhausts go test's default
+          # 10m on loaded PR runners (#12113) though each test runs seconds.
           SHUFFLE=""
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then SHUFFLE="-shuffle=on"; fi
           # shellcheck disable=SC2086 # PKGS and SHUFFLE are deliberate word-split lists
@@ -842,7 +844,7 @@ jobs:
             gotestsum --format=standard-verbose --rerun-fails=2 --rerun-fails-max-failures=5 \
             --rerun-fails-report=flaky-tests-rest-${{ matrix.idx }}.txt \
             --packages="$PKGS" --junitfile junit-rest-${{ matrix.idx }}.xml \
-            -- -short -race -count=1 -v $SHUFFLE -coverprofile=coverage-rest-${{ matrix.idx }}.out \
+            -- -short -race -count=1 -timeout=20m -v $SHUFFLE -coverprofile=coverage-rest-${{ matrix.idx }}.out \
             2>&1 | grep --line-buffered -vE '^=== (RUN|PAUSE|CONT) ' | tee test-rest-${{ matrix.idx }}.log
 
       - name: Surface flaky reruns

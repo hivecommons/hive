@@ -1,0 +1,1 @@
+- ci: give the `test (rest i/R)` shards a 20m `go test -timeout` so a loaded runner no longer trips the default 10m panic on `pkg/dashboard` (#12113).
