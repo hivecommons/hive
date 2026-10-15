@@ -691,7 +691,9 @@ func (c *cliModelCache) lastGoodPath(backend string) string {
 
 // loadLastGood reads every persisted last-good catalog under lastGoodDir.
 // A missing or unreadable directory (dev machines, unit tests) is simply no
-// catalogs; a malformed or expired file is ignored.
+// catalogs; a malformed file is ignored. Expiry is not applied here: it runs
+// at construction, before callers can pin c.now, so lastGoodFor enforces
+// cliModelLastGoodTTL against the cache's clock at read time instead.
 func (c *cliModelCache) loadLastGood() {
 	if c.lastGoodDir == "" {
 		return
@@ -700,7 +702,6 @@ func (c *cliModelCache) loadLastGood() {
 	if err != nil {
 		return
 	}
-	now := c.clock()
 	for _, p := range matches {
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -708,9 +709,6 @@ func (c *cliModelCache) loadLastGood() {
 		}
 		var f cliModelLastGoodFile
 		if json.Unmarshal(raw, &f) != nil || f.Backend == "" || len(f.Models) == 0 || f.At.IsZero() {
-			continue
-		}
-		if now.Sub(f.At) > cliModelLastGoodTTL {
 			continue
 		}
 		c.lastGood[f.Backend] = cliModelCacheEntry{
