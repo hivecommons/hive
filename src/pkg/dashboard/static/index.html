@@ -40791,7 +40791,7 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${sec.intentEnforce ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="intentEnforce"></div>
           <span class="config-toggle-label">Enforce intent authorization on merges ${yamlHint('intent.enforce')} ${settingHelpMark('settings', 'security-and-access', 'Enforce intent authorization', `Off (report-only) by default. When on, a PR whose intent verdict or alignment check denies it is held from merging instead of only being logged.`)}</span>
         </div>
-        <div class="config-toggle" style="margin-top:10px">
+        <div class="config-toggle">
           <div class="config-toggle-switch ${sec.intentShadow ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="intentShadow"></div>
           <span class="config-toggle-label">Shadow-evaluate intent authorization (record only) ${yamlHint('intent.shadow')} ${settingHelpMark('settings', 'security-and-access', 'Shadow-evaluate intent authorization', `Off by default. While enforcement is off, evaluates every merge as if it were on and records whether intent verification would have blocked it on the PR&apos;s evidence bundle and in the log. Never blocks a merge; ignored when enforcement is on.`)}</span>
         </div>
