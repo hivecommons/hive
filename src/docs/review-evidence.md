@@ -33,6 +33,7 @@ The machine-readable schema is [`pkg/evidence/schema/v1.json`](../pkg/evidence/s
 | `merge` | Present once merged: `actor`, `method`, `at`, `sha`. Absent before merge. |
 | `revert_of`, `followup_of` | Bundle ids of earlier merged PRs this PR reverts or follows up with a fix (see [Change-failure links](#change-failure-links)). |
 | `reverted_by`, `followed_up_by` | Bundle ids of later PRs that reverted or followed up this one. |
+| `shadow` | Optional. What shadow-mode gates would have done, recorded only: `review_gate` (`would_have_held`) and `intent` (`would_have_blocked`), each with `reason`, `tier`, `confidence` and `evaluated_at`. Absent unless a shadow gate ran; it never affects a merge ([#12103](https://github.com/hivecommons/hive/issues/12103)). |
 | `created_at`, `updated_at` | When the bundle was first written and last completed. |
 | `signed` | `true` only when a valid signing key produced `signature`. |
 | `hash` | Hex SHA-256 of the canonical encoding (see below). |

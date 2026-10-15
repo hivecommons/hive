@@ -1,0 +1,1 @@
+- Evidence bundles gain an optional `shadow` block (`review_gate.would_have_held`, `intent.would_have_blocked`, with reason, tier, confidence and evaluated_at) for recording what shadow-mode gates would have done; bundles without it are byte-identical and merge behaviour is unchanged. Fixes #12103.

@@ -160,7 +160,16 @@ func TestBundleMatchesSchema(t *testing.T) {
 	if err := Seal(linked, nil); err != nil {
 		t.Fatal(err)
 	}
-	for name, b := range map[string]*Bundle{"signed": signed, "unsigned": unsigned, "minimal": minimal, "linked": linked} {
+	yes, no := true, false
+	shadowed := sample()
+	shadowed.Shadow = &Shadow{
+		ReviewGate: &ShadowGate{WouldHaveHeld: &yes, Reason: "r", Tier: "T2", Confidence: 0.7, EvaluatedAt: t0},
+		Intent:     &ShadowGate{WouldHaveBlocked: &no, Confidence: 0, EvaluatedAt: t0},
+	}
+	if err := Seal(shadowed, nil); err != nil {
+		t.Fatal(err)
+	}
+	for name, b := range map[string]*Bundle{"signed": signed, "unsigned": unsigned, "minimal": minimal, "linked": linked, "shadowed": shadowed} {
 		t.Run(name, func(t *testing.T) {
 			if errs := validateSchema(root, root, toGeneric(t, b), "$"); len(errs) > 0 {
 				t.Fatalf("bundle does not validate against schema/v1.json:\n%s", strings.Join(errs, "\n"))
@@ -191,6 +200,13 @@ func TestSchemaRejectsInvalidBundles(t *testing.T) {
 		{"policy not object", func(m map[string]any) { m["policy"] = 3 }},
 		{"author model type", func(m map[string]any) { m["author"].(map[string]any)["model"] = 5 }},
 		{"revert_of not array", func(m map[string]any) { m["revert_of"] = "o/r#1@h" }},
+		{"shadow unknown field", func(m map[string]any) { m["shadow"] = map[string]any{"extra": 1} }},
+		{"shadow gate missing verdict", func(m map[string]any) {
+			m["shadow"] = map[string]any{"intent": map[string]any{"confidence": 0.5, "evaluated_at": "2026-10-08T12:00:00Z"}}
+		}},
+		{"shadow gate wrong flag", func(m map[string]any) {
+			m["shadow"] = map[string]any{"review_gate": map[string]any{"would_have_blocked": true, "confidence": 0.5, "evaluated_at": "2026-10-08T12:00:00Z"}}
+		}},
 		{"reverted_by empty id", func(m map[string]any) { m["reverted_by"] = []any{""} }},
 	}
 	for _, tc := range tests {

@@ -62,6 +62,7 @@ type Bundle struct {
 	FollowupOf       []string          `json:"followup_of,omitempty"`
 	RevertedBy       []string          `json:"reverted_by,omitempty"`
 	FollowedUpBy     []string          `json:"followed_up_by,omitempty"`
+	Shadow           *Shadow           `json:"shadow,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 	Signed           bool              `json:"signed"`
@@ -152,6 +153,25 @@ type MergeEvent struct {
 	SHA    string    `json:"sha"`
 }
 
+// Shadow records what shadow-mode gates would have done for the head SHA.
+// It is pure recording: nothing reads it to decide a merge.
+type Shadow struct {
+	ReviewGate *ShadowGate `json:"review_gate,omitempty"`
+	Intent     *ShadowGate `json:"intent,omitempty"`
+}
+
+// ShadowGate is one shadow gate observation. ReviewGate sets WouldHaveHeld
+// and Intent sets WouldHaveBlocked; a false value is kept (the gate ran and
+// would not have acted), which is why they are pointers.
+type ShadowGate struct {
+	WouldHaveHeld    *bool     `json:"would_have_held,omitempty"`
+	WouldHaveBlocked *bool     `json:"would_have_blocked,omitempty"`
+	Reason           string    `json:"reason,omitempty"`
+	Tier             string    `json:"tier,omitempty"`
+	Confidence       float64   `json:"confidence"`
+	EvaluatedAt      time.Time `json:"evaluated_at"`
+}
+
 // BundleID returns the canonical bundle identifier owner/repo#number@head.
 func BundleID(repo string, number int, head string) string {
 	return fmt.Sprintf("%s#%d@%s", repo, number, head)
@@ -238,6 +258,20 @@ func (b *Bundle) Validate() error {
 	if m := b.Merge; m != nil && (m.Actor == "" || m.Method == "" || m.SHA == "") {
 		bad("merge: actor, method and sha are required")
 	}
+	if sh := b.Shadow; sh != nil {
+		if g := sh.ReviewGate; g != nil {
+			if g.WouldHaveHeld == nil || g.WouldHaveBlocked != nil {
+				bad("shadow.review_gate: exactly would_have_held is required")
+			}
+			validateShadowGate("shadow.review_gate", g, bad)
+		}
+		if g := sh.Intent; g != nil {
+			if g.WouldHaveBlocked == nil || g.WouldHaveHeld != nil {
+				bad("shadow.intent: exactly would_have_blocked is required")
+			}
+			validateShadowGate("shadow.intent", g, bad)
+		}
+	}
 	for _, l := range []struct {
 		name string
 		ids  []string
@@ -252,6 +286,15 @@ func (b *Bundle) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func validateShadowGate(name string, g *ShadowGate, bad func(string, ...any)) {
+	if g.Confidence < 0 || g.Confidence > 1 {
+		bad("%s: confidence %v outside [0,1]", name, g.Confidence)
+	}
+	if g.EvaluatedAt.IsZero() {
+		bad("%s: evaluated_at is required", name)
+	}
 }
 
 // Canonical returns the deterministic JSON encoding of b: object keys sorted

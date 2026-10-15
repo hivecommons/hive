@@ -447,3 +447,53 @@ func TestUnsignedBundleWhenKeyAbsent(t *testing.T) {
 		t.Fatalf("JSON missing signed:false: %s", raw)
 	}
 }
+
+func TestShadowAbsentLeavesHashUnchanged(t *testing.T) {
+	b := sample()
+	canon, err := Canonical(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(canon), "shadow") {
+		t.Fatalf("canonical form of a bundle without shadow mentions it: %s", canon)
+	}
+	before, err := Hash(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Bundle
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Hash(&back)
+	if err != nil || after != before {
+		t.Fatalf("hash after round trip = %q, want %q (err %v)", after, before, err)
+	}
+}
+
+func TestValidateShadow(t *testing.T) {
+	yes := true
+	good := &ShadowGate{WouldHaveHeld: &yes, Confidence: 0.5, EvaluatedAt: t0}
+	b := sample()
+	b.Shadow = &Shadow{ReviewGate: good, Intent: &ShadowGate{WouldHaveBlocked: &yes, Confidence: 1, EvaluatedAt: t0}}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("valid shadow rejected: %v", err)
+	}
+	for name, sh := range map[string]*Shadow{
+		"review gate without flag": {ReviewGate: &ShadowGate{Confidence: 0.5, EvaluatedAt: t0}},
+		"review gate wrong flag":   {ReviewGate: &ShadowGate{WouldHaveBlocked: &yes, Confidence: 0.5, EvaluatedAt: t0}},
+		"intent without flag":      {Intent: &ShadowGate{Confidence: 0.5, EvaluatedAt: t0}},
+		"confidence range":         {ReviewGate: &ShadowGate{WouldHaveHeld: &yes, Confidence: 1.5, EvaluatedAt: t0}},
+		"missing evaluated_at":     {ReviewGate: &ShadowGate{WouldHaveHeld: &yes, Confidence: 0.5}},
+	} {
+		b := sample()
+		b.Shadow = sh
+		if err := b.Validate(); err == nil {
+			t.Errorf("%s: want error", name)
+		}
+	}
+}

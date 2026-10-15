@@ -66,6 +66,14 @@
     "followup_of": {"$ref": "#/$defs/bundle_ids"},
     "reverted_by": {"$ref": "#/$defs/bundle_ids"},
     "followed_up_by": {"$ref": "#/$defs/bundle_ids"},
+    "shadow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "review_gate": {"$ref": "#/$defs/shadow_review_gate"},
+        "intent": {"$ref": "#/$defs/shadow_intent"}
+      }
+    },
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"},
     "signed": {"type": "boolean"},
@@ -127,6 +135,30 @@
         "rule": {"type": "string", "minLength": 1},
         "summary": {"type": "string"},
         "paths": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "shadow_review_gate": {
+      "type": "object",
+      "required": ["would_have_held", "confidence", "evaluated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "would_have_held": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "tier": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evaluated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "shadow_intent": {
+      "type": "object",
+      "required": ["would_have_blocked", "confidence", "evaluated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "would_have_blocked": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "tier": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evaluated_at": {"type": "string", "format": "date-time"}
       }
     },
     "action": {
