@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/intent"
@@ -338,9 +339,49 @@ type mergeGates struct {
 	enforceIntent         bool
 	intentVerdicts        map[string]intent.Verdict
 	requireReviewApproval bool
+	shadowReview          bool
 	reviewArtifact        review.Artifact
 	reviewLoaded          bool
 	requiredChecks        map[string]bool
+}
+
+// reviewShadowGate evaluates the review-approval gate the way
+// require_approval would, without acting on it (review.shadow). It returns
+// nil when shadow is off. It must never influence the merge bucket.
+func reviewShadowGate(g mergeGates, fullRepo string, pr github.PullRequest, now time.Time) *evidence.ShadowGate {
+	if !g.shadowReview {
+		return nil
+	}
+	held, reason := false, ""
+	switch {
+	case !g.reviewLoaded:
+		held, reason = true, "review approval required, but review-verdicts.json is unavailable"
+	case !g.reviewArtifact.HasAggregateApproval(fullRepo, pr.Number, pr.HeadSHA):
+		held, reason = true, "awaiting review approval"
+	}
+	return &evidence.ShadowGate{WouldHaveHeld: &held, Reason: reason, Confidence: 1, EvaluatedAt: now}
+}
+
+// recordReviewShadow writes the review.shadow observation to the PR head's
+// evidence bundle and the audit log. Recording only: failures are logged and
+// never block a merge.
+func recordReviewShadow(cfg *config.Config, logger *slog.Logger, pr github.PullRequest, fullRepo string, g mergeGates, now time.Time) {
+	gate := reviewShadowGate(g, fullRepo, pr, now)
+	if gate == nil || cfg == nil {
+		return
+	}
+	logger.Info("review shadow gate", "repo", fullRepo, "number", pr.Number, "head", pr.HeadSHA, "would_have_held", *gate.WouldHaveHeld, "reason", gate.Reason)
+	if !cfg.Evidence.IsEnabled() {
+		return
+	}
+	key, err := evidence.LoadSigningKey(cfg.Evidence.SigningKeyPath())
+	if err != nil {
+		key = nil
+	}
+	path := github.ReviewEvidencePath("", fullRepo, pr.Number, pr.HeadSHA)
+	if err := github.MergeReviewEvidenceShadow(path, evidence.Shadow{ReviewGate: gate}, key); err != nil {
+		logger.Debug("review shadow: evidence not recorded", "repo", fullRepo, "number", pr.Number, "error", err)
+	}
 }
 
 // classifyMergeEligibility is THE merge-eligibility rule: the one place that
@@ -805,7 +846,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 	var escalated []failingPR
 	var reviewArtifact review.Artifact
 	reviewLoaded := false
-	if requireReviewApproval {
+	if requireReviewApproval || (cfg != nil && cfg.Review.Shadow) {
 		var err error
 		reviewArtifact, err = review.LoadArtifact("")
 		if err != nil {
@@ -835,6 +876,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		enforceIntent:         enforceIntent,
 		intentVerdicts:        intentVerdicts,
 		requireReviewApproval: requireReviewApproval,
+		shadowReview:          cfg != nil && cfg.Review.Shadow && !requireReviewApproval,
 		reviewArtifact:        reviewArtifact,
 		reviewLoaded:          reviewLoaded,
 		requiredChecks:        requiredChecks,
@@ -862,6 +904,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 
 		bucket, verdict, intentReason := classifyMergeEligibility(pr, held, fullRepo, prGates)
 		verdicts[github.MergeVerdictKey(pr)] = verdict
+		if bucket == mergeBucketEligible {
+			recordReviewShadow(cfg, logger, pr, fullRepo, prGates, time.Now())
+		}
 		if intentReason != "" {
 			iv := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]
 			logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", iv.Tier, "reason", intentReason)

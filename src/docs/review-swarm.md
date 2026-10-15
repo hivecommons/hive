@@ -221,6 +221,8 @@ The confidence score also feeds the **PR review queue** (`GET /api/review/queue`
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
 
+`review.shadow` (default false) evaluates the same approval gate (including the unavailable-artifact case) without enforcing it. A PR that is otherwise merge-eligible stays eligible; the result is recorded as `shadow.review_gate.would_have_held` (with reason and confidence) on the PR head's evidence bundle and logged. Shadow never blocks a merge and never weakens `require_approval: true`, which keeps blocking as above. Recording needs `evidence` enabled and an existing bundle for the head.
+
 `review.fan_out` is separately defaulted to false. When both `require_approval` and `fan_out` are true, the governor eval cycle plans review kicks for agent-authored PRs that do not yet have a fresh aggregate verdict for their current head SHA.
 
 ## Reviewer selection
