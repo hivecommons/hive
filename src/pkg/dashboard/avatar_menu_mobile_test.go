@@ -31,20 +31,31 @@ func TestNavAvatarMenuOpensOnMobile(t *testing.T) {
 
 	html := indexHTML(t)
 	fixedRE := regexp.MustCompile(`#oc-gh-user-menu\s*\{\s*position:\s*fixed;`)
+	clipRE := regexp.MustCompile(`\.oc-topbar-right\s*\{[^}]*overflow:\s*hidden;`)
 	for _, media := range []string{
 		`@media (max-width: 768px) {`,
 		`@media (max-width: 1024px) and (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {`,
 	} {
-		start := strings.Index(html, media)
-		if start < 0 {
-			t.Fatalf("missing media block %q", media)
+		// The same media query opens several blocks across the stylesheet;
+		// every block that clips .oc-topbar-right must also pin the menu.
+		clipping := 0
+		for rest := html; ; {
+			start := strings.Index(rest, media)
+			if start < 0 {
+				break
+			}
+			block := mediaBlockBody(rest[start:])
+			rest = rest[start+len(media):]
+			if !clipRE.MatchString(block) {
+				continue
+			}
+			clipping++
+			if !fixedRE.MatchString(block) {
+				t.Errorf("a %s block clips .oc-topbar-right but does not pin #oc-gh-user-menu with position: fixed", media)
+			}
 		}
-		block := mediaBlockBody(html[start:])
-		if !strings.Contains(block, `.oc-topbar-right`) || !strings.Contains(block, `overflow: hidden;`) {
-			t.Fatalf("%s no longer clips .oc-topbar-right; update this test if the layout changed", media)
-		}
-		if !fixedRE.MatchString(block) {
-			t.Errorf("%s clips .oc-topbar-right but does not pin #oc-gh-user-menu with position: fixed", media)
+		if clipping == 0 {
+			t.Fatalf("no %s block clips .oc-topbar-right any more; update this test if the layout changed", media)
 		}
 	}
 
