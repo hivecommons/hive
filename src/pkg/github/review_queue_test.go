@@ -625,3 +625,34 @@ func TestBuildReviewQueue_DispatchStatusForUnreviewed(t *testing.T) {
 		}
 	}
 }
+
+// An incomplete aggregate (every delivered perspective approved, some never
+// reported) is a review still being collected: the queue entry says what is
+// missing and whether the re-ask is in flight, and is not ranked as approved.
+func TestBuildReviewQueue_IncompleteAggregateShowsMissingAndDispatch(t *testing.T) {
+	opened := reviewQueueTestNow.Add(-3 * time.Hour)
+	dispatched := reviewQueueTestNow.Add(-10 * time.Minute)
+	prs := []PullRequest{{Repo: "acme/a", Number: 9, Title: "fix: partial", HeadSHA: "h9", CIStatus: "success", CreatedAt: opened}}
+	q := BuildReviewQueue(prs, ReviewQueueOptions{
+		Org: "acme",
+		Now: reviewQueueTestNow,
+		Verdicts: review.Artifact{Items: []review.Aggregate{{
+			Repo: "acme/a", Number: 9, HeadSHA: "h9", Verdict: review.VerdictIncomplete,
+			Reasons:      []string{"review coverage incomplete: missing docs-currency"},
+			Perspectives: map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictApprove},
+		}}},
+		Dispatch: review.DispatchState{Pending: []review.PendingReview{
+			{Repo: "acme/a", Number: 9, HeadSHA: "h9", Perspective: review.PerspectiveDocsCurrency, Dispatched: dispatched},
+		}},
+	})
+	e := findEntry(t, q, "acme/a", 9)
+	if !e.Reviewed {
+		t.Fatalf("incomplete aggregate should count as reviewed-at-head evidence: %+v", e)
+	}
+	if !hasReason(e, "review coverage incomplete: missing docs-currency") || !hasReason(e, "review dispatched 10m ago, no verdict yet") {
+		t.Fatalf("incomplete reasons = %v", e.Reasons)
+	}
+	if !e.PendingSince.Equal(dispatched) {
+		t.Fatalf("pending_since = %v, want %v", e.PendingSince, dispatched)
+	}
+}

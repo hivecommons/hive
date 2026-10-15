@@ -93,7 +93,8 @@ Aggregation rules are deterministic:
 3. Any explicit `requires_human` yields `requires_human`.
 4. Any `changes_requested` enters a fix cycle while below the fix cap.
 5. Every perspective in the hive's configured set approving (or, under `max_perspectives_per_pr`, every perspective the PR was eligible to receive) yields a merge-eligible aggregate.
-6. Missing perspectives or any other non-unanimous result requires human review.
+6. Every delivered perspective approving while some the PR is owed have not reported yields `incomplete`: not merge-eligible, not a human hold, with a reason naming the missing perspectives (`review coverage incomplete: missing docs-currency`). An incomplete head stays in the dispatcher: only the missing perspectives are re-asked (under `pending_ttl` / `max_redispatch`), never the ones whose reports already exist. Before this state existed a reviewer kick that died after its peers had reported left the head on a `requires_human` hold that no re-dispatch could clear (hivecommons/hive#12045).
+7. Any other non-unanimous result requires human review.
 
 Out-of-scope findings alone are normalized to an approving perspective for aggregation and confidence. They remain in the structured record, but they never lower the verdict or the 0–5 confidence score for the PR.
 
@@ -119,7 +120,7 @@ Out-of-scope findings follow `review.backlog` (destination, labels, per-PR daily
 | `approved` | A merge-eligible `approve` verdict on the current head, an `lgtm`/`approved`/`reviewer-passed` label, the escalation ledger's reviewer-passed SHA on the head, or an approving hive review on the head. The next action is merge, fix CI or wait for CI depending on the CI rollup. |
 | `fixing` | A fix is dispatched for the current head. |
 | `changes_requested` | The current head's verdict (or, without one, the hive's posted review) requests changes. |
-| `reviewing` | Review perspectives are dispatched for the current head and not yet aggregated. |
+| `reviewing` | Review perspectives are dispatched for the current head and not yet aggregated, or the head's aggregate is `incomplete` (every delivered perspective approved; the rest are still owed). |
 | `unreviewed` | None of the above; a verdict on an older head does not count once the head moves. |
 
 Each card also carries the reviewers (perspective and model), in-scope finding counts on the P0–P3 scale `review_bots.min_priority` uses (critical → P0, high → P1, medium → P2, low/info → P3), the loop counter against its cap, one next action and the reasons for the stage. The review queue lists open PRs only, so the endpoint does not return `merged` or `abandoned` cards yet.
@@ -270,6 +271,8 @@ Phase 2 adds dispatch state in `/data/review-dispatch-state.json`. Pending revie
 A pending entry is the planner's only record that a perspective was asked, so a reviewer whose kick turn dies — model timeout, proxy read timeout, pod restart — leaves entries that post no verdict and, with no expiry, made every perspective look covered until someone pushed a new commit (hivecommons/hive#12045 and #12025 sat at queue position 1 for hours with CI green and the contributor lane stuck at `no-verdict`). Each cycle the planner therefore expires pending entries older than `pending_ttl` (Go duration string, default `45m`; a negative value disables expiry) whose head still has no verdict in the artifact: the expired perspectives are dropped from state and re-dispatched in the same cycle, the governor logs `review pending expired repo=… pr=… head=… perspective=… age=… expiries=N`, and the state file's `redispatches[]` counts expiries per head. Entries younger than the TTL are left alone, so a review genuinely in flight is never re-kicked, and a verdict for the head settles it however old the entries are. The same expiry releases a `revise_verdicts_before` revisit whose reviewer died.
 
 The retry is bounded. Once a head's expiry count reaches `max_redispatch` (default 3) the planner stops re-kicking it, leaves the entries in place, and records a `requires_human` hold whose reason starts `review-dispatch-exhausted`; `review.human_decision_label` is applied the same way as for a reviewer's own requires_human verdict, and the governor logs `review dispatch exhausted; holding PR for a human`. A new push clears the counter and the hold along with the head's pending entries.
+
+Expiry also covers a head whose aggregate is `incomplete`: the delivered perspectives are taken off the pending list (their reports exist) and only the undelivered ones expire and re-dispatch, against the same per-head budget.
 
 The PR review queue (`GET /api/review/queue`) shows this state on unreviewed items: `pending_since` (first dispatch for the current head still pending) and `redispatch_count`, plus a reason such as `review dispatched 32m ago, no verdict yet (re-dispatched 2x after expiry)` or `review dispatch exhausted: …; waiting on a human` after the generic `not reviewed at this head` line.
 

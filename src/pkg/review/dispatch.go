@@ -366,6 +366,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			continue
 		}
 		revisiting := false
+		var delivered map[Perspective]Verdict
 		if agg, ok := artifact.AggregateFor(pr.Repo, pr.Number, pr.HeadSHA); ok {
 			// A verdict normally settles a PR until its head moves. That is
 			// right while the reviewer is sound, and a trap once a
@@ -373,37 +374,53 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			// by a known-broken reviewer stay frozen until someone happens to
 			// push a commit.
 			if !staleVerdictRevisitable(pr.Repo, agg, opts) {
-				plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
-				switch agg.Verdict {
-				case VerdictChangesRequested:
-					if fixPushAllowed(pr, opts) {
-						plan.dispatchFix(pr, agg, opts, now)
-					} else {
-						plan.withholdFix(pr, now)
+				if agg.Verdict == VerdictIncomplete {
+					// Every perspective that reported approved; some never
+					// reported. The head is not settled, it is under-asked:
+					// keep the delivered perspectives off the pending list
+					// (their reports exist) and let the normal missing-
+					// perspective path below re-ask only for the rest, under
+					// the same TTL and max_redispatch budget as any head.
+					plan.State.Pending = removePendingForPerspectives(plan.State.Pending, pr, agg.Perspectives)
+					delivered = agg.Perspectives
+					if plan.redispatchExhausted(pr) {
+						continue
 					}
-				case VerdictRequiresHuman:
-					plan.holdForHuman(pr, agg, now)
-				}
-				continue
-			}
-			// Pending entries are the lifetime record of what this head has
-			// already been asked, and a PR with a verdict always has them —
-			// so left in place they make every perspective look covered and
-			// the revisit silently never dispatches. Clear them so the whole
-			// set is asked again. But only once: a revisit already in flight
-			// shows as entries dispatched after the cutoff, and clearing
-			// those would re-kick the same PR every cycle until its new
-			// verdict lands.
-			if revisitInFlight(plan.State, pr, opts.ReviseVerdictsBefore) {
-				// A revisit whose reviewer died is stuck the same way an
-				// unreviewed head is: the stale verdict stands and nothing
-				// re-asks. Let the TTL release it.
-				if dropped := plan.expirePending(pr, opts, now); !dropped {
+					plan.expirePending(pr, opts, now)
+				} else {
+					plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+					switch agg.Verdict {
+					case VerdictChangesRequested:
+						if fixPushAllowed(pr, opts) {
+							plan.dispatchFix(pr, agg, opts, now)
+						} else {
+							plan.withholdFix(pr, now)
+						}
+					case VerdictRequiresHuman:
+						plan.holdForHuman(pr, agg, now)
+					}
 					continue
 				}
+			} else {
+				// Pending entries are the lifetime record of what this head has
+				// already been asked, and a PR with a verdict always has them —
+				// so left in place they make every perspective look covered and
+				// the revisit silently never dispatches. Clear them so the whole
+				// set is asked again. But only once: a revisit already in flight
+				// shows as entries dispatched after the cutoff, and clearing
+				// those would re-kick the same PR every cycle until its new
+				// verdict lands.
+				if revisitInFlight(plan.State, pr, opts.ReviseVerdictsBefore) {
+					// A revisit whose reviewer died is stuck the same way an
+					// unreviewed head is: the stale verdict stands and nothing
+					// re-asks. Let the TTL release it.
+					if dropped := plan.expirePending(pr, opts, now); !dropped {
+						continue
+					}
+				}
+				plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+				revisiting = true
 			}
-			plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
-			revisiting = true
 		} else if plan.redispatchExhausted(pr) {
 			continue
 		} else {
@@ -413,7 +430,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 		if len(prReviewers) == 0 || availableSlots <= 0 {
 			continue
 		}
-		missing := pendingMissingPerspectives(plan.State, pr, opts.Perspectives.List())
+		missing := pendingMissingPerspectives(plan.State, pr, opts.Perspectives.List(), delivered)
 		if len(missing) == 0 {
 			continue
 		}
@@ -937,12 +954,18 @@ func hasReviewCapability(a AgentCapability) bool {
 	return false
 }
 
-func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspectives []Perspective) []Perspective {
+// pendingMissingPerspectives lists the perspectives this head still needs
+// asked: not already dispatched (state.Pending) and not already reported
+// (delivered, the perspectives of an incomplete aggregate for this head).
+func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspectives []Perspective, delivered map[Perspective]Verdict) []Perspective {
 	pending := map[Perspective]bool{}
 	for _, p := range state.Pending {
 		if samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
 			pending[p.Perspective] = true
 		}
+	}
+	for p := range delivered {
+		pending[p] = true
 	}
 	if len(perspectives) == 0 {
 		perspectives = DefaultPerspectives
@@ -966,6 +989,20 @@ func revisitInFlight(state DispatchState, pr PullRequest, cutoff time.Time) bool
 		}
 	}
 	return false
+}
+
+// removePendingForPerspectives drops this head's pending entries for the
+// perspectives that have already reported, leaving the ones still owed so
+// their TTL keeps running.
+func removePendingForPerspectives(pending []PendingReview, pr PullRequest, reported map[Perspective]Verdict) []PendingReview {
+	out := pending[:0]
+	for _, p := range pending {
+		if _, done := reported[p.Perspective]; done && samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func removePendingForHead(pending []PendingReview, pr PullRequest) []PendingReview {

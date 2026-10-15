@@ -48,6 +48,13 @@ const (
 	VerdictChangesRequested Verdict = "changes_requested"
 	VerdictRequiresHuman    Verdict = "requires_human"
 	VerdictReject           Verdict = "reject"
+	// VerdictIncomplete is an aggregate-only state: every perspective that
+	// reported approved, but the head has not yet received every perspective
+	// it is owed. It is not a judgement — nothing disagreed and no human is
+	// needed — it is a review still in progress, and the dispatcher keeps
+	// asking for the missing perspectives. A perspective report may never
+	// carry it (see validVerdict).
+	VerdictIncomplete Verdict = "incomplete"
 )
 
 const (
@@ -307,15 +314,44 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		agg.FixCycle = true
 		return agg
 	}
-	if len(seenVerdicts) == 1 && seenVerdicts[VerdictApprove] && hasAllRequiredPerspectives(agg.Perspectives, opts.MaxPerspectivesPerPR, opts.Perspectives.Len()) {
-		agg.Verdict = VerdictApprove
-		agg.MergeEligible = true
+	if len(seenVerdicts) == 1 && seenVerdicts[VerdictApprove] {
+		if hasAllRequiredPerspectives(agg.Perspectives, opts.MaxPerspectivesPerPR, opts.Perspectives.Len()) {
+			agg.Verdict = VerdictApprove
+			agg.MergeEligible = true
+			return agg
+		}
+		// Every report that arrived approved; the set is just short. That is
+		// a review still in flight, not one a human must settle: labelling
+		// it requires_human parked the PR and stopped the dispatcher from
+		// ever asking for the perspective that never reported.
+		agg.Verdict = VerdictIncomplete
+		agg.Reasons = []string{incompleteCoverageReason(agg.Perspectives, opts)}
 		return agg
 	}
 	agg.Verdict = VerdictRequiresHuman
 	agg.RequiresHuman = true
 	agg.Reasons = []string{"review perspectives did not unanimously approve"}
 	return agg
+}
+
+// incompleteCoverageReason names the configured perspectives this head has
+// not yet received a report for. Under a per-PR cap the head may not be owed
+// all of them, so the reason also says how many more are needed.
+func incompleteCoverageReason(got map[Perspective]Verdict, opts AggregateOptions) string {
+	var missing []Perspective
+	for _, p := range opts.Perspectives.List() {
+		if _, ok := got[p]; !ok {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) == 0 {
+		return "review coverage incomplete"
+	}
+	required := requiredPerspectiveCount(opts.MaxPerspectivesPerPR, opts.Perspectives.Len())
+	if need := required - len(got); need > 0 && need < len(missing) {
+		return fmt.Sprintf("review coverage incomplete: %d more of %s", need, joinPerspectives(missing))
+	}
+	return "review coverage incomplete: missing " + joinPerspectives(missing)
 }
 
 // ScopeEffectiveReports returns copies of reports with out-of-scope findings
@@ -605,14 +641,7 @@ func severityRank(s outputschema.Severity) int {
 // on three -- holding it to five would make approve unreachable for the same
 // reason the cap did.
 func hasAllRequiredPerspectives(got map[Perspective]Verdict, maxPerPR, configured int) bool {
-	required := configured
-	if required <= 0 {
-		required = len(DefaultPerspectives)
-	}
-	if maxPerPR > 0 && maxPerPR < required {
-		required = maxPerPR
-	}
-	if len(got) < required {
+	if len(got) < requiredPerspectiveCount(maxPerPR, configured) {
 		return false
 	}
 	for _, v := range got {
@@ -621,6 +650,20 @@ func hasAllRequiredPerspectives(got map[Perspective]Verdict, maxPerPR, configure
 		}
 	}
 	return true
+}
+
+// requiredPerspectiveCount is how many perspectives a head must hear from
+// before its approvals count as unanimous: the configured set, capped by
+// max_perspectives_per_pr.
+func requiredPerspectiveCount(maxPerPR, configured int) int {
+	required := configured
+	if required <= 0 {
+		required = len(DefaultPerspectives)
+	}
+	if maxPerPR > 0 && maxPerPR < required {
+		required = maxPerPR
+	}
+	return required
 }
 
 func joinPerspectives(ps []Perspective) string {

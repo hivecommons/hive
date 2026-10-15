@@ -359,6 +359,14 @@ func buildReviewQueueEntry(pr PullRequest, full, key string, opts ReviewQueueOpt
 			reason += ": " + strings.Join(agg.Confidence.Reasons, "; ")
 		}
 		e.Reasons = append(e.Reasons, reason)
+		// An incomplete aggregate is a review still being collected, not a
+		// settled verdict: say what is missing and whether it is dispatched.
+		if agg.Verdict == review.VerdictIncomplete {
+			e.Reasons = append(e.Reasons, agg.Reasons...)
+			if reason := reviewQueueDispatchReason(&e, pr, full, opts, now); reason != "" {
+				e.Reasons = append(e.Reasons, reason)
+			}
+		}
 	} else {
 		e.ConfidenceBand = ReviewQueueBandNeedsAttention
 		e.Reasons = append(e.Reasons, "not reviewed at this head: confidence unknown, ranked as needs attention")

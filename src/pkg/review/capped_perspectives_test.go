@@ -27,9 +27,10 @@ func TestCappedHiveCanReachUnanimousApprove(t *testing.T) {
 	}
 
 	// With no cap the full set is still required: a single approve out of five
-	// is not unanimity, and must not become one.
+	// is not unanimity, and must not become one. Nor is it a human hold: the
+	// remaining four are simply not in yet.
 	uncapped := AggregateReports(reports, AggregateOptions{})
-	if uncapped.Verdict != VerdictRequiresHuman || uncapped.MergeEligible {
+	if uncapped.Verdict != VerdictIncomplete || uncapped.MergeEligible || uncapped.RequiresHuman {
 		t.Fatalf("uncapped hive approved on one perspective of %d: %+v", len(DefaultPerspectives), uncapped)
 	}
 }
