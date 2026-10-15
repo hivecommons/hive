@@ -6,12 +6,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/mint"
-	"github.com/hivecommons/hive/pkg/sessionprune"
 )
 
 // featuresPlatformBody is the part of the Features PUT that covers the small
@@ -207,8 +204,8 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 
 	if b.MintMaxTTLSeconds != nil {
 		v := *b.MintMaxTTLSeconds
-		if v < 0 || v > int(mint.HardCapTTL/time.Second) {
-			return nil, fmt.Errorf("mint max_ttl_seconds must be 0 (default) to %d", int(mint.HardCapTTL/time.Second))
+		if v < 0 || v > config.MintHardCapTTLSeconds {
+			return nil, fmt.Errorf("mint max_ttl_seconds must be 0 (default) to %d", config.MintHardCapTTLSeconds)
 		}
 		steps = append(steps, func(c *config.Config) { c.Mint.MaxTTLSeconds = v })
 	}
@@ -339,12 +336,12 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 		"toolApprovalInboxPath": cfg.ToolApproval.InboxPath,
 
 		"platformDefaults": map[string]interface{}{
-			"dataSessionRetentionDays":     sessionprune.DefaultRetentionDays,
+			"dataSessionRetentionDays":     config.DefaultSessionRetentionDays,
 			"giteaTokenEnv":                config.DefaultGiteaTokenEnv,
 			"gitlabUrl":                    config.DefaultGitLabURL,
 			"gitlabTokenEnv":               config.DefaultGitLabTokenEnv,
-			"mintMaxTtlSeconds":            int(mint.DefaultMaxTTL / time.Second),
-			"mintHardCapTtlSeconds":        int(mint.HardCapTTL / time.Second),
+			"mintMaxTtlSeconds":            config.MintDefaultMaxTTLSeconds,
+			"mintHardCapTtlSeconds":        config.MintHardCapTTLSeconds,
 			"supersessionGracePeriod":      github.DefaultSupersessionGracePeriod.String(),
 			"compliancePostureWindowDays":  config.DefaultCompliancePostureWindowDays,
 			"compliancePostureHistoryDays": config.DefaultCompliancePostureHistoryDays,

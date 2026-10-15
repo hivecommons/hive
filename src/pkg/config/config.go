@@ -408,6 +408,20 @@ type HookRule struct {
 	RateLimitPerMinute int `yaml:"rate_limit_per_minute,omitempty" json:"rate_limit_per_minute,omitempty"`
 }
 
+// MintDefaultMaxTTLSeconds and MintHardCapTTLSeconds mirror pkg/mint's
+// DefaultMaxTTL and HardCapTTL in seconds so consumers that may not import
+// pkg/mint (the dashboard import ratchet keeps pkg/dashboard off it) can
+// validate and describe MintConfig.MaxTTLSeconds. pkg/mint's parity test pins
+// them to the real constants.
+const (
+	MintDefaultMaxTTLSeconds = 15 * 60
+	MintHardCapTTLSeconds    = 60 * 60
+)
+
+// DefaultSessionRetentionDays mirrors pkg/sessionprune.DefaultRetentionDays
+// for the same reason; pkg/sessionprune's parity test pins it.
+const DefaultSessionRetentionDays = 7
+
 // MintConfig configures the OIDC token mint service (pkg/mint). It is additive
 // and DISABLED by default: an absent `mint:` block, or Enabled=false, leaves
 // existing behavior byte-identical. When enabled, the mint issues short-lived

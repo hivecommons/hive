@@ -42,7 +42,7 @@ var styleRatchetBaselines = map[string]styleRatchetCounts{
 		inlineStyles:   946,
 		rawColors:      450,
 		rawFontSizes:   427,
-		rawPadding:     165,
+		rawPadding:     164,
 		rawBorderRadii: 104,
 	},
 	"design system preview": {},
