@@ -685,6 +685,9 @@ governor:
 #   fan_out: false
 #   max_parallel_reviews: 5
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
+#   combined_perspectives: true # RECOMMENDED (#12126): one session + one comment covering every
+#                               # perspective; shared review boilerplate is sent once instead of once
+#                               # per perspective. Verdicts stay per-perspective. Default false.
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues
 #   max_out_of_scope_backlog_issues: 3   # cap per PR; 0 uses the default

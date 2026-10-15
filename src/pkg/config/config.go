@@ -8152,6 +8152,15 @@ type ReviewConfig struct {
 	// expensive part of a review (reading the diff and the surrounding tree)
 	// is done once instead of five times. The verdicts stay separate, so any
 	// single perspective can still withhold approval.
+	//
+	// Recommended on, but deliberately NOT default-on (hivecommons/hive#12126,
+	// decision recorded here and in docs/review-swarm.md): a plain bool's
+	// zero value is the dashboard toggle's "off", the relay derives its
+	// per-head review quota from this flag, combined dispatch sends one
+	// reviewer (not the fan-out set), and a single schema slip in a combined
+	// verdict discards every perspective at once. Flipping the zero value
+	// would change all of that under running hives mid-cycle. Operators opt
+	// in explicitly; the example config and docs promote it.
 	CombinedPerspectives bool `yaml:"combined_perspectives,omitempty" json:"combined_perspectives,omitempty"`
 	// MaxReviewsPerHead caps how many top-level hive reviews one PR head may
 	// receive before the relay refuses further ones (revisions and thread
