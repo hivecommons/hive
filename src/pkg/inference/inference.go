@@ -12,13 +12,16 @@ package inference
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/logread"
 	"github.com/hivecommons/hive/pkg/watsonx"
 )
 
@@ -143,6 +146,9 @@ const (
 	// localLiteLLMRestartDelay is the pause before restarting a crashed local
 	// litellm proxy, to avoid a tight crash loop.
 	localLiteLLMRestartDelay = 5 * time.Second
+	// localLiteLLMWaitDelay bounds how long a stopped proxy's output pipe
+	// may stay open after the proxy itself has exited.
+	localLiteLLMWaitDelay = 5 * time.Second
 )
 
 // LocalLiteLLMProxyURL is the endpoint the Go inference translator forwards
@@ -157,7 +163,17 @@ func LocalLiteLLMProxyURL() string {
 // Agents never talk to it directly — the Go translator stays in front so
 // per-agent attribution, mode enforcement, and the MITM proxy path are
 // preserved.
+//
+// The child's standard output and error, which nothing read before
+// hivecommons/hive#11944, are kept as the log source "litellm" (never added
+// to the container's output). If that file cannot be opened the output is
+// discarded as before.
 func SuperviseLocalLiteLLM(ctx context.Context, logger *slog.Logger) {
+	if ctx.Err() != nil {
+		return
+	}
+	stdout, stderr, closeOutput := openLiteLLMOutput(logger)
+	defer closeOutput()
 	for {
 		select {
 		case <-ctx.Done():
@@ -168,6 +184,10 @@ func SuperviseLocalLiteLLM(ctx context.Context, logger *slog.Logger) {
 			"--host", "127.0.0.1",
 			"--port", strconv.Itoa(LocalLiteLLMProxyPort),
 			"--config", localLiteLLMConfigPath)
+		cmd.Stdout, cmd.Stderr = stdout, stderr
+		// The kept output is copied through a pipe; a grandchild still
+		// holding it must not stall the restart loop.
+		cmd.WaitDelay = localLiteLLMWaitDelay
 		logger.Info("starting local litellm proxy",
 			"port", LocalLiteLLMProxyPort, "config", localLiteLLMConfigPath)
 		if err := cmd.Run(); err != nil {
@@ -181,4 +201,15 @@ func SuperviseLocalLiteLLM(ctx context.Context, logger *slog.Logger) {
 		case <-time.After(localLiteLLMRestartDelay):
 		}
 	}
+}
+
+// openLiteLLMOutput opens the litellm log source. When it cannot be opened the
+// writers are nil, so the child's output is discarded as it always was.
+func openLiteLLMOutput(logger *slog.Logger) (stdout, stderr io.Writer, closeOutput func()) {
+	output, err := logread.OpenOutputLog(logread.OutputDir(os.Getenv), logread.SourceLiteLLM)
+	if err != nil {
+		logger.Warn("local litellm proxy output is not kept", "error", err)
+		return nil, nil, func() {}
+	}
+	return output.Stream(logread.StreamStdout), output.Stream(logread.StreamStderr), func() { _ = output.Close() }
 }

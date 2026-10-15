@@ -449,6 +449,42 @@ setting.
   Every result carries the fixed `untrusted_content` marker: log text is data, never
   instructions.
 
+### Output and request log sources
+
+hivecommons/hive#11944 keeps four more sources for `log_read` / `log_sources`, so an operator
+can see why the dashboard failed to start or refused a request without a shell on the host.
+They are written under `HIVE_OUTPUT_LOG_DIR` (default `/data/.hive/logs`, the hive's data
+volume: no new mount, port or socket) by the process that produces them; the container
+start-up script, its process launch, PIDs, signal handling and exit codes are unchanged.
+
+| Source | What it keeps | Captured by | Also on the container's output |
+|---|---|---|---|
+| `proxy` | Everything the dashboard auth proxy (`src/proxy/server.js`) prints, including the `[SECURITY]` refusal before it exits | `src/proxy/output_log.js` tees `process.stdout` / `process.stderr` in-process | Yes, unchanged |
+| `hive-output` | What the hive prints before its own log (`hive.log`) is set up: boot lines, a config that fails to load | the early JSON logger in `cmd/hive` writes through an `io.MultiWriter` | Yes, unchanged |
+| `litellm` | The local litellm proxy's output, discarded before | `inference.SuperviseLocalLiteLLM` points the child's stdout/stderr at the source | No |
+| `requests` | The dashboard request log, one record per request | middleware outside the dashboard auth chain (`pkg/dashboard/request_log.go`) | No |
+
+- **Line shape.** `proxy`, `hive-output` and `litellm` lines are stored as
+  `{"time","stream","text"}`, so each line keeps the time it was printed and its `stream`
+  (`stdout` or `stderr`); `level` is taken from the text when it is itself a slog JSON
+  record. `requests` lines are slog JSON with `method`, `path` (query values removed, keys
+  kept), `status`, `duration_ms` and `auth`.
+- **Auth outcome.** `auth` is `public` (a route that needs no sign-in), `ok` (admitted on a
+  route that needs it), `failed` (credentials presented and refused) or `none` (no
+  credentials on a route that needs them). Terminal traffic handled by the auth proxy itself, and requests the
+  gateway refuses before they reach the dashboard, are not in the request log. Recording keeps
+  websocket upgrades and streamed responses working (the wrapped writer still flushes and
+  hijacks).
+- **Bounds.** Each source keeps at most 5 files of 10 MiB (`<source>.log` plus rotated
+  `<source>-<UTC time>.log`) and nothing older than 7 days; the oldest file is removed when a
+  bound is hit, checked on every rotation, on open and hourly. Files are `0600` and the
+  directory `0700`, owned by the hive runtime user, so agent users cannot read them.
+- **Availability.** `proxy` is not available on an image without the auth proxy (the hub
+  image), and `litellm` is not available unless `governor.litellm.local_proxy` is on; both
+  say why. A source that is available but has printed nothing yet reads as empty.
+- **Failure.** If the directory cannot be used the output still goes where it went before and
+  is simply not kept; nothing about start-up changes.
+
 ### Write
 
 | Tool area | Endpoint(s) | Hive-side gate |

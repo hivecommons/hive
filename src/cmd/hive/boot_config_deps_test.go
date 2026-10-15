@@ -382,7 +382,7 @@ func TestDefaultBootConfigDeps_IsFullyWired(t *testing.T) {
 		d.reconcileUpgradeOutcome == nil || d.acquireLock == nil || d.readUpgradeMarker == nil ||
 		d.clearUpgradeMarker == nil || d.runHub == nil || d.loadConfig == nil || d.fileLogger == nil ||
 		d.hiveID == nil || d.stat == nil || d.initTracing == nil || d.loadReachState == nil ||
-		d.notifySignals == nil {
+		d.notifySignals == nil || d.earlyOutput == nil {
 		t.Fatal("defaultBootConfigDeps left a seam nil; production boot would panic")
 	}
 }

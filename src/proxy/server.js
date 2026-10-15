@@ -5,6 +5,11 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { installOutputLog } from './output_log.js';
+
+// Keep everything this proxy prints as the "proxy" log source (#11944); it
+// still goes to the container's stdout/stderr unchanged.
+installOutputLog();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

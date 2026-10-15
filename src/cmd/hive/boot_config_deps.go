@@ -31,7 +31,11 @@ type bootConfigDeps struct {
 	args []string
 	// stdout receives the --version line and the config-check report.
 	stdout, stderr io.Writer
-	getenv         func(key string) string
+	// earlyOutput wraps stdout for the logger used before the configured log
+	// is set up, so that output is also kept as the hive-output log source
+	// (#11944). nil writes to stdout alone.
+	earlyOutput func(stdout io.Writer, getenv func(string) string) io.Writer
+	getenv      func(key string) string
 	// exit terminates the process. In production it never returns; a fake
 	// must stop the phase some other way (panic with a sentinel), because the
 	// code after each exit call assumes it did not come back.
@@ -72,11 +76,12 @@ type bootConfigDeps struct {
 
 func defaultBootConfigDeps() bootConfigDeps {
 	return bootConfigDeps{
-		args:   os.Args,
-		stdout: os.Stdout,
-		stderr: os.Stderr,
-		getenv: os.Getenv,
-		exit:   os.Exit,
+		args:        os.Args,
+		stdout:      os.Stdout,
+		stderr:      os.Stderr,
+		earlyOutput: teeEarlyOutput,
+		getenv:      os.Getenv,
+		exit:        os.Exit,
 		parseFlags: func(defaultConfigPath string) string {
 			configPath := flag.String("config", defaultConfigPath, "path to hive.yaml config file")
 			flag.Parse()

@@ -165,6 +165,15 @@ type Request struct {
 type Options struct {
 	// LogDir is the hive's log directory (governor.logging.dir).
 	LogDir string
+	// OutputDir holds the output sources (proxy, hive-output, litellm,
+	// requests); see OutputDir.
+	OutputDir string
+	// AuthProxyInstalled is true when this image runs the dashboard auth
+	// proxy; the hub image does not.
+	AuthProxyInstalled bool
+	// LocalLiteLLM is true when the hive runs its local litellm proxy
+	// (governor.litellm.local_proxy).
+	LocalLiteLLM bool
 	// WorkBoundBytes lowers DefaultWorkBoundBytes when positive.
 	WorkBoundBytes int64
 	// Secrets redacts this hive's own secret values; nil redacts none.
@@ -204,11 +213,15 @@ func ClampLines(n int) (int, bool) {
 // Sources lists every source name this hive knows, each marked available or
 // not with a reason.
 func Sources(opts Options) SourcesResult {
+	list := make([]SourceInfo, 0, len(sourceSpecs))
+	for _, spec := range sourceSpecs {
+		list = append(list, spec.info(opts))
+	}
 	return SourcesResult{
 		Type:      "log_sources",
 		Untrusted: UntrustedMarker,
 		Default:   SourceHive,
-		Sources:   []SourceInfo{hiveSourceInfo(opts.LogDir)},
+		Sources:   list,
 	}
 }
 
@@ -234,17 +247,18 @@ func Read(req Request, opts Options) *Result {
 		Coverage:       Coverage{WorkBoundBytes: WorkBound(opts.WorkBoundBytes)},
 	}
 	res.LinesApplied, res.LinesClamped = ClampLines(req.Lines)
-	if req.Source != SourceHive {
+	spec, ok := lookupSource(req.Source)
+	if !ok {
 		res.Status = StatusNotAvailable
 		res.Reason = "this hive offers no log source with that name; list the sources with log_sources (GET /api/logs/sources)"
 		return res
 	}
-	if info := hiveSourceInfo(opts.LogDir); !info.Available {
+	if info := spec.info(opts); !info.Available {
 		res.Status = StatusNotAvailable
 		res.Reason = info.Reason
 		return res
 	}
-	newScan(req, opts, res).run()
+	newScan(req, opts, res, spec).run()
 	return res
 }
 

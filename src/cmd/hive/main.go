@@ -911,7 +911,11 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// No authoritative image outside a cluster means tracking stays unknown.
 	dashboard.SetDeploymentImageSource(deps.selfImage)
 
-	b.logger = slog.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	early := deps.stdout
+	if deps.earlyOutput != nil {
+		early = deps.earlyOutput(deps.stdout, deps.getenv)
+	}
+	b.logger = slog.New(logscrub.NewHandler(slog.NewJSONHandler(early, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(b.logger)
 
 	// Process singleton: refuse to become a second hive process in this

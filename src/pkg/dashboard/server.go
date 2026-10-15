@@ -444,6 +444,11 @@ type Server struct {
 	// nousIssueFiler overrides the forge client for promoted Experiment Lab
 	// verdict issues (tests).
 	nousIssueFiler nousIssueFiler
+
+	// requestLog records each dashboard request (hivecommons/hive#11944,
+	// request_log.go). Start() opens it; nil disables recording, as in the
+	// tests built on Handler().
+	requestLog *slog.Logger
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
@@ -1513,7 +1518,8 @@ func (s *Server) Start() error {
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
-	handler := s.withServerTiming(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))
+	s.openRequestLog()
+	handler := s.withRequestLog(s.withServerTiming(s.authenticatedMux()))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -2392,7 +2398,7 @@ async function poll(interval,flowId){
 </script></body></html>`
 
 func (s *Server) Handler() http.Handler {
-	return s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))
+	return s.withRequestLog(s.authenticatedMux())
 }
 
 func (s *Server) roleEnforcement(next http.Handler) http.Handler {

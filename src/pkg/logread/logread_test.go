@@ -152,7 +152,7 @@ func TestSourcesAndUnknownSource(t *testing.T) {
 	dir := t.TempDir()
 	writePlain(t, dir, HiveLogFilename, recs(0, 2))
 	list := Sources(Options{LogDir: dir})
-	if list.Default != SourceHive || len(list.Sources) != 1 || !list.Sources[0].Available || !list.Sources[0].Default || list.Untrusted != UntrustedMarker {
+	if list.Default != SourceHive || len(list.Sources) != len(sourceSpecs) || !list.Sources[0].Available || !list.Sources[0].Default || list.Untrusted != UntrustedMarker {
 		t.Fatalf("sources = %+v", list)
 	}
 	for _, tc := range []struct {

@@ -158,8 +158,8 @@ capped at 256 KiB.
 | `prs_by_band` | Pull requests grouped by band; optional `repo`, `band`, `stale`, `held`, `offset` |
 | `review_queue` | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset` |
 | `governor_setup_proposal` | Proposed governor setup, each setting with a reason and the write operation and args that apply it |
-| `log_sources` | Log sources this hive can read, each available or not with a reason; `hive` is the default |
-| `log_read` | The hive's own log, newest matching lines oldest first, scrubbed; optional `source`, `lines` (default 100, max 1000), `since`/`until` (RFC 3339 with offset), `min_level`, `include`, `exclude`, `cursor`. Needs the read-write role. Not capped by `limit`; see [design/admin-mcp.md](design/admin-mcp.md#log-read) |
+| `log_sources` | Log sources this hive can read, each available or not with a reason; `hive` is the default, plus `proxy`, `hive-output`, `litellm` and `requests` (see [design/admin-mcp.md](design/admin-mcp.md#output-and-request-log-sources)) |
+| `log_read` | The hive's own log (or another `log_sources` source), newest matching lines oldest first, scrubbed; optional `source`, `lines` (default 100, max 1000), `since`/`until` (RFC 3339 with offset), `min_level`, `include`, `exclude`, `cursor`. Needs the read-write role. Not capped by `limit`; see [design/admin-mcp.md](design/admin-mcp.md#log-read) |
 
 Meta tools:
 

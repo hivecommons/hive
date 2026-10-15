@@ -48,10 +48,15 @@ func hiveSourceInfo(dir string) SourceInfo {
 	return info
 }
 
-// hiveFiles lists the hive log and its rotated history, newest first. When a
-// rotated file exists both plain and compressed, compression is still in
-// progress and the complete plain copy is read.
-func hiveFiles(dir string) ([]logFile, error) {
+// hiveFiles lists the hive log and its rotated history, newest first.
+func hiveFiles(dir string) ([]logFile, error) { return historyFiles(dir, "hive") }
+
+// historyFiles lists <stem>.log and its rotated <stem>-<time>.log[.gz]
+// history, newest first. When a rotated file exists both plain and
+// compressed, compression is still in progress and the complete plain copy is
+// read.
+func historyFiles(dir, stem string) ([]logFile, error) {
+	currentName, prefix := stem+".log", stem+"-"
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -64,20 +69,20 @@ func hiveFiles(dir string) ([]logFile, error) {
 			continue
 		}
 		name := e.Name()
-		if name == HiveLogFilename {
+		if name == currentName {
 			current = &logFile{path: filepath.Join(dir, name), name: name, current: true}
 			continue
 		}
-		stem, gz := strings.CutSuffix(name, ".gz")
-		if !strings.HasPrefix(stem, "hive-") || !strings.HasSuffix(stem, ".log") {
+		base, gz := strings.CutSuffix(name, ".gz")
+		if !strings.HasPrefix(base, prefix) || !strings.HasSuffix(base, ".log") {
 			continue
 		}
-		stamp, err := time.Parse(backupTimeFormat, strings.TrimSuffix(strings.TrimPrefix(stem, "hive-"), ".log"))
+		stamp, err := time.Parse(backupTimeFormat, strings.TrimSuffix(strings.TrimPrefix(base, prefix), ".log"))
 		if err != nil {
 			continue
 		}
 		if !gz {
-			plain[stem] = true
+			plain[base] = true
 		}
 		backups = append(backups, logFile{path: filepath.Join(dir, name), name: name, gz: gz, stamp: stamp})
 	}

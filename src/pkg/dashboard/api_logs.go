@@ -80,8 +80,9 @@ func parseLogReadRequest(r *http.Request) (logread.Request, string) {
 }
 
 func (s *Server) logReadOptions(secrets *logread.SecretScrubber) logread.Options {
-	opts := logread.Options{Secrets: secrets}
+	opts := logread.Options{Secrets: secrets, OutputDir: outputLogDir(), AuthProxyInstalled: authProxyInstalled()}
 	if s.deps != nil && s.deps.Config != nil {
+		opts.LocalLiteLLM = s.deps.Config.Governor.LiteLLM.LocalProxy
 		logging := s.deps.Config.Governor.Logging
 		opts.LogDir = logging.Dir
 		if logging.ReadScanMaxMB > 0 {

@@ -18,6 +18,7 @@ type position struct {
 }
 
 type scan struct {
+	spec    sourceSpec
 	req     Request
 	opts    Options
 	res     *Result
@@ -43,9 +44,10 @@ type scan struct {
 	stopReason string
 }
 
-func newScan(req Request, opts Options, res *Result) *scan {
+func newScan(req Request, opts Options, res *Result, spec sourceSpec) *scan {
 	bound := WorkBound(opts.WorkBoundBytes)
 	s := &scan{
+		spec:       spec,
 		req:        req,
 		opts:       opts,
 		res:        res,
@@ -65,10 +67,15 @@ func newScan(req Request, opts Options, res *Result) *scan {
 }
 
 func (s *scan) run() {
-	files, err := hiveFiles(s.opts.LogDir)
+	files, err := historyFiles(s.spec.dir(s.opts), s.spec.stem)
+	if s.spec.name != SourceHive && (errors.Is(err, os.ErrNotExist) || err == nil && len(files) == 0) {
+		// An output source whose process has not written its first line yet.
+		s.finish()
+		return
+	}
 	if err != nil || len(files) == 0 {
 		s.res.Status = StatusNotAvailable
-		s.res.Reason = "the hive's log files cannot be listed"
+		s.res.Reason = "the source's log files cannot be listed"
 		return
 	}
 	if files[0].current {
@@ -184,9 +191,10 @@ func (s *scan) scanFile(f *logFile, end int64) error {
 	} else if len(lines) > 0 && !f.current && r.data[len(r.data)-1] != '\n' && end < 0 && !r.partial {
 		s.res.PartialFiles = append(s.res.PartialFiles, f.name)
 	}
+	heads := lineHeads(lines, s.spec.stamped)
 	spans := keySpans(lines)
 	for i := len(lines) - 1; i >= 0 && !s.stopped; i-- {
-		s.consider(position{file: f, head: r.head, offset: offsets[i]}, lines[i], spans[i])
+		s.consider(position{file: f, head: r.head, offset: offsets[i]}, lines[i], spans[i], heads[i])
 	}
 	if s.stopped {
 		return nil
@@ -260,9 +268,9 @@ func splitRegion(data []byte, base int64) ([]string, []int64) {
 	return lines, offsets
 }
 
-func (s *scan) consider(pos position, raw string, spans []span) {
+func (s *scan) consider(pos position, raw string, spans []span, head lineHead) {
 	s.lastExamined = &pos
-	when, level := parseHead(raw)
+	when, level := head.when, head.level
 	if !when.IsZero() {
 		if s.newest.IsZero() || when.After(s.newest) {
 			s.newest = when
@@ -308,7 +316,7 @@ func (s *scan) consider(pos position, raw string, spans []span) {
 		s.more()
 		return
 	}
-	line := Line{Source: s.res.Source, Level: level, Text: text, PreExistingMarker: pre}
+	line := Line{Source: s.res.Source, Level: level, Stream: head.stream, Text: text, PreExistingMarker: pre}
 	if !when.IsZero() {
 		line.Time = when.UTC().Format(time.RFC3339Nano)
 	}

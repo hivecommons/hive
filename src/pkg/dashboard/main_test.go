@@ -84,6 +84,9 @@ func TestMain(m *testing.M) {
 	// the production default in api.go, but point package tests at this run's
 	// private directory before any test can construct a dashboard server.
 	promptTemplateSaveDir = filepath.Join(testDataDir, "policies")
+	// The request log and the output log sources (#11944) default to
+	// /data/.hive/logs, which on a hive host is the REAL directory.
+	outputLogDir = func() string { return filepath.Join(testDataDir, "logs") }
 	// Disk counterpart: the data_disk health check samples the REAL /data on
 	// a live hive host or CI runner, which may legitimately sit above a
 	// threshold and would turn every HealthSummary "ok" assertion in this
