@@ -25636,6 +25636,98 @@
         }
       }
     },
+    "/api/launch-cost": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get per-issue / PR / head-SHA launch cost attribution",
+        "description": "Returns the cached launch-cost collector snapshot: token spend joined against the issue, PR, and head SHA each governor or review-swarm kick was launched for (#12128). by_ref carries a repeat-spend `launches` counter, distinct `head_shas`, undivided `launch_*` totals and even-split `share_*` figures per work item; by_launch lists each delivered kick. Mandatory `unattributed` and `backend_unsupported` buckets keep the sum equal to total_tokens. Attribution only — never a budget gate. Reports ready=false with empty lists (never a fabricated $0.00) before the collector's first tick.",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "query",
+            "required": false,
+            "description": "Narrow by_ref and by_launch to one work key such as owner/repo#123; totals stay whole-window.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "launchCostResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ready": {
+                      "type": "boolean"
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "by_launch": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "by_ref": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "unattributed": {
+                      "type": "object"
+                    },
+                    "backend_unsupported": {
+                      "type": "object"
+                    },
+                    "total_usd": {
+                      "type": "number"
+                    },
+                    "attributed_tokens": {
+                      "type": "integer"
+                    },
+                    "total_tokens": {
+                      "type": "integer"
+                    },
+                    "launches_retained": {
+                      "type": "integer"
+                    },
+                    "window_hours": {
+                      "type": "integer"
+                    },
+                    "ownership_hours": {
+                      "type": "integer"
+                    },
+                    "price_table_date": {
+                      "type": "string"
+                    },
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "limitations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "collected_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/repos/pause": {
       "post": {
         "tags": [

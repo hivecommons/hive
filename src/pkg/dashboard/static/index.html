@@ -2389,6 +2389,9 @@
     .cost-sort-ind { display: inline-block; margin-left: var(--sp-2); font-size: var(--fs-2xs); color: var(--accent); }
     .cost-table td { padding: var(--table-cell-pad-y) var(--table-cell-pad-x); border-bottom: var(--line-width) solid var(--line-subtle); }
     .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
+    .cost-table .ccenter { text-align: center; }
+    .cost-table th.cright { text-align: right; }
+    .cost-disclaimer.cost-sub-disclaimer { margin: var(--sp-2) var(--sp-0) var(--sp-4); }
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
     .cost-table td.csession { color: var(--muted); font-family: var(--font-mono); }
     .cost-table td.ctime { color: var(--muted); font-family: var(--font-mono); white-space: nowrap; }
@@ -19188,6 +19191,11 @@ function burnAreaChart() {
       // intra-session timing to join against). A repo with no attributable cost
       // shows "—", never "$0.00": those are different facts.
       const repoTable = costRepoTableHtml(lastRepoCost);
+      // ── Estimated cost by work item (#12128) ──
+      // Spend placed against the issue / PR / head SHA each kick was launched
+      // for. Attribution only — never a gate; the governor window budget is
+      // the single enforced budget.
+      const launchTable = costLaunchTableHtml(lastLaunchCost);
       const allTimeCost = costAllTimeEstimate(est);
       const prUnit = costPerUnitDisplay(allTimeCost.usd, cost.merged_prs, 'hive-attributed merged PRs', cost.count_available, cost.count_status);
       const issueUnit = costPerUnitDisplay(allTimeCost.usd, cost.closed_issues, 'hive-attributed closed issues', cost.count_available, cost.count_status);
@@ -19222,6 +19230,7 @@ function burnAreaChart() {
           </table></div>
           ${sandboxTable}
           ${repoTable}
+          ${launchTable}
           ${sessionTable}
           ${unpricedNote}
           ${costTokenBudgetHtml()}`;
@@ -19235,6 +19244,57 @@ function burnAreaChart() {
     // Held outside renderCost so a transient /api/repo-cost failure leaves the
     // last good table in place rather than blanking the section.
     let lastRepoCost = null;
+    let lastLaunchCost = null;
+
+    // COST_LAUNCH_MAX_ROWS bounds the by-work-item table; the API carries the
+    // full list for anyone who wants it.
+    const COST_LAUNCH_MAX_ROWS = 15;
+
+    function costLaunchRowHtml(r) {
+      const usd = (r.launch_usd === null || r.launch_usd === undefined)
+        ? `<span class="cagents-zero" title="Launched, but no usage could be attributed to this work item yet. Not $0.00 — unobserved.">—</span>`
+        : (r.source === 'estimated_tier' ? `<span title="tier estimate">~${fmtUSD(r.launch_usd)}</span>` : fmtUSD(r.launch_usd));
+      const share = (r.share_usd === null || r.share_usd === undefined) ? '—' : fmtUSD(r.share_usd);
+      const heads = (r.head_shas || []).length
+        ? `<span class="cagents-badge" title="${esc((r.head_shas || []).map(h => h.slice(0, 7)).join(', '))}">${(r.head_shas || []).length}</span>`
+        : `<span class="cagents-zero">—</span>`;
+      const kind = r.kind === 'pr' ? 'PR' : (r.kind === 'issue' ? 'issue' : 'work');
+      return `<tr>
+        <td class="cmodel" title="${esc((r.agents || []).join(', '))}">${esc(r.ref || '?')} <span class="text-muted">${kind}</span></td>
+        <td class="cnum ccenter" title="launches that named this work item (repeat spend)">${Number(r.launches) || 0}</td>
+        <td class="cnum ccenter">${heads}</td>
+        <td class="cnum">${fmtTokens(r.launch_tokens)}</td>
+        <td class="cnum" title="even split of each launch's spend across the refs it named: ${esc(share)}">${usd}</td>
+      </tr>`;
+    }
+
+    function costLaunchTableHtml(lc) {
+      if (!lc || !lc.ready) return '';
+      const refs = (lc.by_ref || []).slice(0, COST_LAUNCH_MAX_ROWS);
+      const rows = refs.map(costLaunchRowHtml).join('');
+      const total = Number(lc.total_tokens) || 0;
+      const rate = total > 0 ? Math.round((Number(lc.attributed_tokens) || 0) / total * 100) : null;
+      const more = (lc.by_ref || []).length > refs.length ? ` · showing top ${refs.length} of ${(lc.by_ref || []).length}` : '';
+      return `<div class="cost-subsection" data-cost-sub="launch">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-launch-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="launch" data-keys="*" title="Estimated cost per issue / PR, from the work each kick was launched for joined against per-message token timing. Inferred, not measured. Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost by work item <span class="cost-badge est">inferred</span></div>
+        <div class="cost-sub-body" id="cost-sub-launch-body">
+        <div class="cost-subtitle">Tokens are owned by the most recent recorded kick for the same agent (up to ${Number(lc.ownership_hours) || '?'}h). ${rate === null ? '' : `<strong>${rate}%</strong> of tokens attributable`} · ${lc.window_hours ? Math.round(lc.window_hours / 24) + 'd window' : 'window unknown'} · ${Number(lc.launches_retained) || 0} launches${more}.</div>
+        <div class="cost-disclaimer cost-sub-disclaimer">A governor kick names many issues at once: "est. $" is the whole spend of every launch that named the item (an upper bound); hover for the even-split share. Only governor and review-swarm kicks are recorded. Not a bill, not a budget.</div>
+        <table class="cost-table table-compact">
+          <thead><tr><th>work item</th><th class="ccenter">launches</th><th class="ccenter">heads</th><th class="cright">tokens</th><th class="cright">est. $</th></tr></thead>
+          <tbody>${rows || '<tr><td class="text-muted" colspan="5">no launches recorded yet</td></tr>'}</tbody>
+        </table>
+        </div>
+      </div>`;
+    }
+
+    async function fetchLaunchCost() {
+      try {
+        const r = await fetch('/api/launch-cost');
+        if (!r.ok) return;
+        lastLaunchCost = await r.json();
+      } catch (e) { /* transient — keep the last good attribution */ }
+    }
 
     // Render a single row of the by-repo table. usd is a POINTER server-side:
     // null means "no attributable cost", which is NOT $0.00 — a repo can be
@@ -19306,7 +19366,7 @@ function burnAreaChart() {
 
     async function fetchCost() {
       try {
-        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost()]);
+        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory(), fetchRepoCost(), fetchLaunchCost()]);
         if (!resp.ok) return;
         const cost = await resp.json();
         renderCost(cost);
