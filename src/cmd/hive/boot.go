@@ -209,6 +209,9 @@ type boot struct {
 	lastSupersessionSweep time.Time
 	lastIssueUnparkSweep  time.Time
 	lastSentinelSweep     time.Time
+	lastGFISweep          time.Time
+	// gfi is good-first-issue curation state (good_first_issue.*).
+	gfi *gfiState
 
 	// reviewEvents queues webhook-triggered review dispatch and reviewWake
 	// carries its wakes to the governor loop (hivecommons/hive#11091).

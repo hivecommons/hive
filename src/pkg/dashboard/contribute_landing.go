@@ -2871,6 +2871,7 @@ function tabFromLocation(){
   // Surface the trusted-invite banner if we arrived via ?invite=<token> (#2598).
   try{loadContributorThemes();}catch(e){console.error('loadContributorThemes failed',e);}
   try{initInviteBanner();}catch(e){console.error('initInviteBanner failed',e);}
+  try{initGoodFirstIssueBanner();}catch(e){console.error('initGoodFirstIssueBanner failed',e);}
   // Build the tab-aware "file an issue" link on load even when we DON'T activate
   // (bare /contribute = onboarding, no activateTab call). Guarded.
   try{ccUpdateReportLink((target&&target.getAttribute('data-panel'))||'tab-onboarding');}catch(e){}
@@ -3711,6 +3712,27 @@ function initInviteBanner(){
   banner.innerHTML='<b>You were invited to contribute.</b> Follow the setup below to join &mdash; '
     +'you’ll come in as a <b>newcomer</b>, credited to whoever invited you. '
     +'<span class="invite-tier">The invite records attribution only; it does not change your tier.</span>';
+  banner.hidden=false;
+}
+
+// initGoodFirstIssueBanner greets a visitor who followed a hive-curated
+// good-first-issue welcome comment (?issue=<owner/repo>#<n>). Informational:
+// it names the issue they came from and says the relay will offer them work
+// once they are set up. The parameter is only displayed, never fetched or
+// trusted; it is stashed so a later queue view can surface the same issue.
+function initGoodFirstIssueBanner(){
+  var banner=document.getElementById('invite-banner');
+  if(!banner||!banner.hidden)return;
+  var ref='';
+  try{ref=new URLSearchParams(window.location.search).get('issue')||'';}catch(e){ref='';}
+  var m=/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d{1,9})$/.exec(ref.trim());
+  if(!m)return;
+  try{window.sessionStorage.setItem('hive.gfi_issue',m[1]+'#'+m[2]);}catch(e){}
+  var url='https://github.com/'+m[1]+'/issues/'+m[2];
+  banner.innerHTML='<b>Welcome from a good first issue.</b> You followed hive’s invitation on '
+    +'<a href="'+esc(url)+'" target="_blank" rel="noopener">'+esc(m[1]+'#'+m[2])+'</a>. '
+    +'Finish the setup below and sign in with GitHub; claiming through this relay stamps the issue so hive leaves it to you. '
+    +'<span class="invite-tier">Bring your own coding agent — a PR that says <b>Fixes #'+esc(m[2])+'</b>, DCO-signed, merges on green CI without waiting on a human.</span>';
   banner.hidden=false;
 }
 

@@ -490,6 +490,9 @@ func (s *Server) featuresSectionWithLinked(cfg *config.Config) map[string]interf
 	for k, v := range s.featuresLinkedView() {
 		out[k] = v
 	}
+	if fn := s.goodFirstIssueStats.Load(); fn != nil && *fn != nil {
+		out["goodFirstIssueStats"] = (*fn)()
+	}
 	return out
 }
 

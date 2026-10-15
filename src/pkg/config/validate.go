@@ -161,6 +161,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Review.Severity.Validate(); err != nil {
 		return err
 	}
+	if err := ValidateGoodFirstIssue(c.GoodFirstIssue); err != nil {
+		return err
+	}
 	if err := c.Review.Backlog.Validate(); err != nil {
 		return err
 	}

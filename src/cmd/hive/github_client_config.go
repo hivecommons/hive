@@ -345,7 +345,11 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	// kick listed to it is its start signal; that is when the agent claim (and
 	// its 🔒 comment) is recorded. The ledger is read per call because the
 	// client can be configured before it is built.
+	gfiRelease := gfiReleaseOnHiveStart(b.ctx, b.cfg, b.gfiState(), func() *github.Client { return b.ghClient }, b.dashSrv, b.logger)
 	client.SetAgentStartHook(func(agentName, repo string, issue int, signal string) {
+		// A hive agent starting on an advertised good-first-issue withdraws
+		// the advertisement (label off, welcome comment superseded).
+		gfiRelease(agentName, repo, issue, signal)
 		recordAgentStart(b.issueClaims, b.cfg.Project.Org, agentName, repo, issue, signal, b.logger)
 		// The same signal is the journey's "started" stage: the instant the
 		// hive/in-progress label states, and the kick→start / start→PR

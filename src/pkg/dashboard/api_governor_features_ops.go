@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -46,6 +48,12 @@ type featuresOpsBody struct {
 
 	ReentrantTurnEnabled                *bool `json:"reentrantTurnEnabled"`
 	ReentrantTurnBackgroundFleetEnabled *bool `json:"reentrantTurnBackgroundFleetEnabled"`
+
+	GoodFirstIssueEnabled     *bool   `json:"goodFirstIssueEnabled"`
+	GoodFirstIssueInterval    *string `json:"goodFirstIssueInterval"`
+	GoodFirstIssueMaxPerRepo  *int    `json:"goodFirstIssueMaxPerRepo"`
+	GoodFirstIssueMaxPerSweep *int    `json:"goodFirstIssueMaxPerSweep"`
+	GoodFirstIssueMinAge      *string `json:"goodFirstIssueMinAge"`
 }
 
 // envVarNamePattern is the shape of a POSIX environment variable name.
@@ -227,6 +235,38 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 		steps = append(steps, func(c *config.Config) { c.Turn.Reentrant.BackgroundFleetEnabled = v })
 	}
 
+	if b.GoodFirstIssueEnabled != nil || b.GoodFirstIssueInterval != nil || b.GoodFirstIssueMaxPerRepo != nil ||
+		b.GoodFirstIssueMaxPerSweep != nil || b.GoodFirstIssueMinAge != nil {
+		g := cur.GoodFirstIssue
+		if b.GoodFirstIssueEnabled != nil {
+			g.Enabled = *b.GoodFirstIssueEnabled
+		}
+		if b.GoodFirstIssueInterval != nil {
+			d, err := parseSettingsDuration("good_first_issue interval", *b.GoodFirstIssueInterval)
+			if err != nil {
+				return nil, err
+			}
+			g.Interval = d
+		}
+		if b.GoodFirstIssueMinAge != nil {
+			d, err := parseSettingsDuration("good_first_issue min_age", *b.GoodFirstIssueMinAge)
+			if err != nil {
+				return nil, err
+			}
+			g.MinAge = d
+		}
+		if b.GoodFirstIssueMaxPerRepo != nil {
+			g.MaxPerRepo = *b.GoodFirstIssueMaxPerRepo
+		}
+		if b.GoodFirstIssueMaxPerSweep != nil {
+			g.MaxPerSweep = *b.GoodFirstIssueMaxPerSweep
+		}
+		if err := config.ValidateGoodFirstIssue(g); err != nil {
+			return nil, err
+		}
+		steps = append(steps, func(c *config.Config) { c.GoodFirstIssue = g })
+	}
+
 	return func(c *config.Config) {
 		for _, step := range steps {
 			step(c)
@@ -302,5 +342,17 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 
 		"reentrantTurnEnabled":                cfg.Turn.Reentrant.Enabled,
 		"reentrantTurnBackgroundFleetEnabled": cfg.Turn.Reentrant.BackgroundFleetEnabled,
+
+		"goodFirstIssueEnabled":     cfg.GoodFirstIssue.Enabled,
+		"goodFirstIssueInterval":    settingsDurationString(cfg.GoodFirstIssue.Interval),
+		"goodFirstIssueMaxPerRepo":  cfg.GoodFirstIssue.MaxPerRepo,
+		"goodFirstIssueMaxPerSweep": cfg.GoodFirstIssue.MaxPerSweep,
+		"goodFirstIssueMinAge":      settingsDurationString(cfg.GoodFirstIssue.MinAge),
+		"goodFirstIssueDefaults": map[string]string{
+			"goodFirstIssueInterval":    config.DefaultGoodFirstIssueInterval.String(),
+			"goodFirstIssueMaxPerRepo":  strconv.Itoa(gfi.DefaultMaxPerRepo),
+			"goodFirstIssueMaxPerSweep": strconv.Itoa(gfi.DefaultMaxPerSweep),
+			"goodFirstIssueMinAge":      gfi.DefaultMinAge.String(),
+		},
 	}
 }

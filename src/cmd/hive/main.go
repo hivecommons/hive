@@ -41,6 +41,7 @@ import (
 	"github.com/hivecommons/hive/pkg/extwork"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/governor"
@@ -3494,7 +3495,10 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
-	b.dashSrv.InstallClaimHooks(githubClaimHooks(b.ctx, b.cfg, func() *github.Client { return b.ghClient }, b.logger))
+	ghClientFn := func() *github.Client { return b.ghClient }
+	b.dashSrv.InstallClaimHooks(gfiClaimHooks(b.ctx, b.cfg, b.gfiState(), ghClientFn, b.dashSrv, b.logger,
+		githubClaimHooks(b.ctx, b.cfg, ghClientFn, b.logger)))
+	b.dashSrv.SetGoodFirstIssueStats(func() gfi.Stats { return b.gfiState().sweeper.Stats() })
 	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
 	// Forge App tab inventory: the resolved active key path and the per-app-id
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the

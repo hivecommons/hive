@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
@@ -27,6 +28,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
 	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -384,6 +386,9 @@ type Server struct {
 	hiveAdviceLoaded bool
 
 	githubAppRecheckFn func() bool
+	// goodFirstIssueStats provides the good-first-issue curation counters
+	// (selected / released / converted) the Features card shows.
+	goodFirstIssueStats atomic.Pointer[func() gfi.Stats]
 
 	// forgeAppInventoryFn supplies the Forge App tab's key inventory from
 	// cmd/hive (resolved active key path + per-app-id PVC keys, fingerprints
@@ -2734,6 +2739,16 @@ func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth)
 		s.deps.GHClient = client
 		s.deps.GHAppAuth = auth
 	}
+}
+
+// SetGoodFirstIssueStats installs the provider of good-first-issue curation
+// counters; nil removes it.
+func (s *Server) SetGoodFirstIssueStats(fn func() gfi.Stats) {
+	if fn == nil {
+		s.goodFirstIssueStats.Store(nil)
+		return
+	}
+	s.goodFirstIssueStats.Store(&fn)
 }
 
 func (s *Server) SetGitHubAppRecheckFn(fn func() bool) {

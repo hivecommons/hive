@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -135,6 +136,9 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	}
 	if labels["epic"] {
 		signals = append(signals, Signal{Glyph: "◆", Label: "epic"})
+	}
+	if labels[gfi.Label] {
+		signals = append(signals, Signal{Glyph: "🌱", Label: "good first issue — curated for new contributors"})
 	}
 	if inProgress {
 		signals = append(signals, Signal{Glyph: "👤", Label: "assigned or claimed"})

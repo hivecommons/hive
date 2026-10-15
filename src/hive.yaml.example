@@ -69,6 +69,31 @@ project:
 # sentinel:
 #   trusted_authors_block: false  # set true to block trusted authors too
 
+# Optional hive-curated `good first issue` advertising (default off). A
+# periodic sweep scores open, unclaimed issues; the few that qualify get
+# GitHub's canonical `good first issue` + `help wanted` labels and ONE welcome
+# comment that pitches the issue to contributors bringing their own coding
+# agent and links this hive's relay page (<dashboard.public_url>/contribute?
+# issue=<owner/repo>#<n>). Not a hold: when a hive agent starts the issue the
+# label comes off and the comment is marked superseded. Needs
+# dashboard.public_url (or a hub-assigned dashboard URL).
+# See docs/good-first-issue.md.
+# good_first_issue:
+#   enabled: true
+#   interval: 1h            # sweep cadence
+#   max_per_repo: 5         # issues wearing the label per repo, including hand-labelled
+#   max_per_sweep: 2        # new selections per repo per pass
+#   min_age: 24h            # never advertise an issue younger than this
+#   min_body_chars: 80
+#   max_body_chars: 4000
+#   max_packages: 2         # source directories an issue may mention
+#   min_score: 2            # positive signals required
+#   reselect_cooldown: 168h # a released issue stays out this long
+#   exclude_labels: [kind/epic, epic, meta, security]  # replaces the built-in list
+#   repos: []               # empty = every watched repo
+#   docs_url: https://github.com/hivecommons/hive/blob/v5/src/docs
+#   comment_template: ""    # text/template over gfi.Vars; must contain {{ .Marker }}
+
 # Optional contributor help/community links. Shown on /contribute Onboarding,
 # Operations, and printed by relays when they connect. Empty/omitted defaults to
 # Hive's contributor docs and issue tracker. URLs must be absolute http(s).

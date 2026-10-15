@@ -153,6 +153,9 @@ type Config struct {
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
 	DuplicateSweep DuplicateSweepConfig `yaml:"duplicate_sweep,omitempty" json:"duplicate_sweep,omitempty"`
+	// GoodFirstIssue is hive-curated `good first issue` advertising for
+	// contributors who bring their own coding agent. Default off.
+	GoodFirstIssue GoodFirstIssueConfig `yaml:"good_first_issue,omitempty" json:"good_first_issue,omitempty"`
 	// SupersessionSweep tunes the superseded-PR sweep. Closing human-authored
 	// PRs is opt-in (hivecommons/hive#11418); the default only comments.
 	SupersessionSweep SupersessionSweepConfig `yaml:"supersession_sweep,omitempty" json:"supersession_sweep,omitempty"`
