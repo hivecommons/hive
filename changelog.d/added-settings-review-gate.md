@@ -1,0 +1,1 @@
+- Expose review gate settings in the dashboard Settings dialog.
