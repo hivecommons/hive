@@ -123,3 +123,12 @@ A push changes `head_sha`, so earlier verdicts no longer describe the code. Hive
 ## Not covered
 
 A bundle shows what Hive recorded. It does not prove who a reviewer's identity is, does not make the operator's policy accept automated review, and is not a compliance claim of any kind.
+
+## Monthly complexity snapshot (report-only)
+
+`pkg/evidence/complexity` writes one maintainability snapshot per repo per
+month to `/data/evidence/<org>/<repo>/complexity/<YYYY-MM>.json`: Go
+cyclomatic complexity (total, mean, max, functions over a threshold, top
+hotspots) plus static-analysis finding counts per tool. An existing month is
+never overwritten. It is report-only and never blocks a merge (RFC #12062,
+#12072); it feeds the dashboard maintainability panel and the study.

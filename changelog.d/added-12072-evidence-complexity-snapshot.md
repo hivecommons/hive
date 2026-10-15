@@ -1,0 +1,1 @@
+- Evidence: report-only monthly complexity and static-analysis snapshot package (`pkg/evidence/complexity`) writing `/data/evidence/<org>/<repo>/complexity/<YYYY-MM>.json`. Fixes #12072.
