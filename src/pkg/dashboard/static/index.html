@@ -31376,6 +31376,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Stall Replan', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Features', section: 'Dashboard', label: 'Strategy Lab', key: 'dashboard.strategy_lab', text: 'strategy_lab Strategy Lab dashboard feature experimental planner' },
+      { tab: 'Features', section: 'Question Auto-Close', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
@@ -40009,6 +40010,11 @@ function burnAreaChart() {
         </div>`;
     }
 
+
+    function markQuestionAutocloseLabels(value) {
+      markDirty('question-autoclose', 'labels', splitConfigLines(value));
+    }
+
     // renderGovQuestionAutocloseSection renders the question auto-close
     // toggle (hivecommons/hive#9584 dashboard follow-up): once the hive has
     // answered a `question`-labelled issue, it closes automatically after
@@ -40027,9 +40033,13 @@ function burnAreaChart() {
           <div class="qa-section-title">Question Auto-Close</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${qaOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="question-autoclose" data-key="enabled"></div>
-            <span class="config-toggle-label">Auto-close answered questions ${settingHelpMark('settings', 'features', 'Auto-close answered questions', `Once the hive posts an answer on a question-labelled issue, it closes the issue after the window below unless the author reacts 👎 to the answer. Off by default.`)}</span>
+            <span class="config-toggle-label">Auto-close answered questions ${yamlHint('governor.question_autoclose.enabled')} ${settingHelpMark('settings', 'features', 'Auto-close answered questions', `Once the hive posts an answer on a question-labelled issue, it closes the issue after the window below unless the author reacts 👎 to the answer. Off by default.`)}</span>
           </div>
-          <div class="config-field qa-hours"><label>Objection window (hours) ${settingHelpMark('settings', 'features', 'Objection window (hours)', `How long an answered question stays open for the author to object before it is closed. Minimum 1 hour; default 4.`)}</label><input type="number" min="1" step="1" value="${qa.hours || 4}" placeholder="4" data-change-action="markDirty" data-arg0="question-autoclose" data-arg1="hours" data-arg-types="s,s,N"></div>
+          <div class="config-field qa-hours"><label>Objection window (hours) ${yamlHint('governor.question_autoclose.hours')} ${settingHelpMark('settings', 'features', 'Objection window (hours)', `How long an answered question stays open for the author to object before it is closed. Minimum 1 hour; default 4.`)}</label><input type="number" min="1" step="1" value="${qa.hours || 4}" placeholder="4" data-change-action="markDirty" data-arg0="question-autoclose" data-arg1="hours" data-arg-types="s,s,N"></div>
+          <div class="config-field-row qa-hours">
+            <div class="config-field"><label>Question labels ${yamlHint('governor.question_autoclose.labels[]')} ${settingHelpMark('settings', 'features', 'Question labels', `Issue labels that mark an issue as an operator question eligible for the answer/objection close flow. One label per line; empty uses the shipped default.`)}</label><textarea rows="3" data-change-action="markQuestionAutocloseLabels" data-arg-types="v">${esc((qa.labels || []).join('\n'))}</textarea></div>
+            <div class="config-field"><label>Human handoff label ${yamlHint('governor.question_autoclose.human_label')} ${settingHelpMark('settings', 'features', 'Human handoff label', `Label applied when auto-close should hand the issue back to a human instead of closing it. Empty uses the shipped default.`)}</label><input type="text" value="${esc(qa.human_label || '')}" placeholder="needs-human" data-change-action="markDirty" data-arg0="question-autoclose" data-arg1="human_label" data-arg-types="s,s,w"></div>
+          </div>
           <div class="qa-schedule">
             <div class="qa-schedule-label">Live schedule</div>
             <div id="qa-schedule-host">${qaOn ? '<div class="qa-note">Loading…</div>' : '<div class="qa-note">Enable auto-close to see the live schedule.</div>'}</div>

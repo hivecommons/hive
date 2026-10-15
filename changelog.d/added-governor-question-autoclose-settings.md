@@ -1,0 +1,1 @@
+- Expose governor question auto-close settings in the dashboard Settings dialog.
