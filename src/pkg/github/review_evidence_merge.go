@@ -165,6 +165,67 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 	return b
 }
 
+// recordReviewEvidenceCI stores the CI conclusion on the head's existing
+// bundle when merge eligibility is evaluated, so a bundle carries a captured
+// verdict even when the merge-time capture fails. It never starts a bundle,
+// never touches a merged one, writes only when the checks or status changed
+// (the capture time of an unchanged verdict stays put, so no hash churn), and
+// logs and swallows every failure: it must not affect a merge decision.
+func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status string, runs []*gh.CheckRun) {
+	if c == nil || head == "" || number <= 0 || len(runs) == 0 {
+		return
+	}
+	settings, ok := c.reviewEvidenceSettings(repo)
+	if !ok {
+		return
+	}
+	ci := evidenceCIFromRuns(runs, time.Now())
+	ci.Status = status
+
+	reviewEvidenceMu.Lock()
+	defer reviewEvidenceMu.Unlock()
+	path := ReviewEvidencePath("", repo, number, head)
+	b, err := LoadReviewEvidence(path)
+	if err != nil || b.Merge != nil {
+		return
+	}
+	if !b.CI.CapturedAt.IsZero() && b.CI.Status == ci.Status && sameEvidenceChecks(b.CI.Checks, ci.Checks) {
+		return
+	}
+	b.CI = ci
+	b.UpdatedAt = ci.CapturedAt
+	if err := b.Validate(); err != nil {
+		c.logger.Warn("review evidence: CI snapshot invalid, not written",
+			slog.String("path", path), slog.String("error", err.Error()))
+		return
+	}
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		key = nil
+	}
+	if err := evidence.Seal(b, key); err != nil {
+		c.logger.Warn("review evidence: could not seal CI snapshot",
+			slog.String("path", path), slog.String("error", err.Error()))
+		return
+	}
+	if err := writeReviewEvidence(path, b); err != nil {
+		c.logger.Warn("review evidence: could not write CI snapshot",
+			slog.String("path", path), slog.String("error", err.Error()))
+	}
+}
+
+func sameEvidenceChecks(a, b []evidence.Check) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // Human action kinds recorded in Bundle.HumanActions.
 const (
 	ReviewEvidenceActionApproval     = "approval"
@@ -225,6 +286,11 @@ func reviewEvidenceCI(ctx context.Context, client *gh.Client, owner, name, head 
 		}
 		opts.Page = resp.NextPage
 	}
+	return evidenceCIFromRuns(runs, now), nil
+}
+
+// evidenceCIFromRuns summarizes the latest run of each check, sorted by name.
+func evidenceCIFromRuns(runs []*gh.CheckRun, now time.Time) evidence.CI {
 	ci := evidence.CI{CapturedAt: now.UTC()}
 	for _, cr := range latestCheckRunsByNameAndApp(runs) {
 		checkName := strings.TrimSpace(cr.GetName())
@@ -240,7 +306,7 @@ func reviewEvidenceCI(ctx context.Context, client *gh.Client, owner, name, head 
 		}
 		ci.Checks = append(ci.Checks, evidence.Check{Name: checkName, Conclusion: conclusion, URL: cr.GetHTMLURL()})
 	}
-	return ci, nil
+	return ci
 }
 
 // reviewEvidenceHumanActions lists the human actions on the PR that the bundle
