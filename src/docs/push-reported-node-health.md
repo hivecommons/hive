@@ -47,7 +47,9 @@ metadata:
   name: hive-node-health-reader-${NS}
 rules:
 - apiGroups: [""]
-  resources: ["nodes"]
+  # nodes: capacity/conditions; nodes/proxy: kubelet stats/summary for disk;
+  # pods (cluster-wide list): per-node running-pod counts. All read-only.
+  resources: ["nodes", "nodes/proxy", "pods"]
   verbs: ["get", "list"]
 - apiGroups: ["metrics.k8s.io"]
   resources: ["nodes"]
