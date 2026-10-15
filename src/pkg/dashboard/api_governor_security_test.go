@@ -55,6 +55,67 @@ func TestGovernorSecurityEndpointUpdatesOverlayFields(t *testing.T) {
 	}
 }
 
+func TestGovernorSecurityIntentListsRoundTrip(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Intent.DocsPathPatterns = []string{"docs/**"}
+
+	rec := doPut(s, "/api/config/governor/security", map[string]any{
+		"intentTestPathPatterns":      []string{" **/*_test.go ", "", "e2e/**"},
+		"intentGuardrailPathPatterns": []string{"policies/**"},
+		"intentFeatureSignals":        []string{"feat"},
+		"intentDocsPathPatterns":      []string{},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT security = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	in := deps.Config.Intent
+	if strings.Join(in.TestPathPatterns, ",") != "**/*_test.go,e2e/**" ||
+		strings.Join(in.GuardrailPathPatterns, ",") != "policies/**" ||
+		strings.Join(in.FeatureSignals, ",") != "feat" {
+		t.Fatalf("intent lists not saved: %+v", in)
+	}
+	if in.DocsPathPatterns != nil {
+		t.Fatalf("empty docs list must restore defaults (nil), got %#v", in.DocsPathPatterns)
+	}
+
+	body := decodeJSON(t, doGet(s, "/api/config/governor"))
+	sec := body["security"].(map[string]any)
+	if got := sec["intentTestPathPatterns"].([]any); len(got) != 2 {
+		t.Fatalf("intentTestPathPatterns = %#v", got)
+	}
+	if got := sec["intentDocsPathPatterns"].([]any); len(got) != 0 {
+		t.Fatalf("intentDocsPathPatterns = %#v, want []", got)
+	}
+	defaults := sec["intentDefaults"].(map[string]any)
+	if len(defaults["docsPathPatterns"].([]any)) == 0 || len(defaults["featureSignals"].([]any)) == 0 {
+		t.Fatalf("intentDefaults missing built-in patterns: %#v", defaults)
+	}
+}
+
+func TestSecuritySettingsRenderIntentAndSentinelLists(t *testing.T) {
+	body := extractJSFunction(t, indexHTML(t), "renderGovSecurity")
+	for _, yaml := range []string{
+		"intent.test_path_patterns[]",
+		"intent.docs_path_patterns[]",
+		"intent.guardrail_path_patterns[]",
+		"intent.feature_signals[]",
+	} {
+		if !strings.Contains(body, "intentListField(") || !strings.Contains(body, "'"+yaml+"'") {
+			t.Errorf("renderGovSecurity has no intent list control for %s", yaml)
+		}
+	}
+	for _, yaml := range []string{
+		"sentinel.sensitive_paths[]",
+		"sentinel.disabled_behaviors[]",
+		"sentinel.exempt_logins[]",
+		"sentinel.repos[]",
+	} {
+		if !strings.Contains(body, "yamlHint('"+yaml+"')") {
+			t.Errorf("renderGovSecurity has no YAML-key hint for %s", yaml)
+		}
+	}
+}
+
 func TestGovernorSecurityRejectsInvalidFailMode(t *testing.T) {
 	s, deps := apiServer(t)
 	rec := doPut(s, "/api/config/governor/security", map[string]any{"ioscanFailMode": "panic"})

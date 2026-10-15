@@ -39270,6 +39270,22 @@ function burnAreaChart() {
       return '<input type="text" list="security-model-options" value="' + esc(value || '') + '" placeholder="' + esc(placeholder || 'model id') + '" data-change-action="markDirty" data-arg0="features" data-arg1="' + key + '" data-arg-types="s,s,w">';
     }
 
+    /* intentListField renders one intent.* list. Empty means the built-in
+       defaults, which are shown as the placeholder. */
+    function intentListField(label, yaml, key, defaultsKey, help) {
+      const sec = (_configState.data && _configState.data.security) || {};
+      const values = Array.isArray(sec[key]) ? sec[key] : [];
+      const defaults = ((sec.intentDefaults || {})[defaultsKey]) || [];
+      return '<div class="config-field"><label>' + esc(label) + ' ' + yamlHint(yaml) + ' ' + settingHelpMark('settings', 'security-and-access', label, esc(help) + ' One entry per line; leave empty to use the built-in defaults.') + '</label>' +
+        '<textarea rows="4" class="mono" placeholder="' + esc(defaults.join('\n')) + '" data-change-action="markSecurityLines" data-arg0="' + esc(key) + '" data-arg-types="s,v">' + esc(values.join('\n')) + '</textarea></div>';
+    }
+
+    function markSecurityLines(key, value) {
+      const list = String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (_configState.data && _configState.data.security) _configState.data.security[key] = list;
+      markDirty('security', key, list);
+    }
+
     function parseSecurityList(value) {
       return String(value || '').split(',').map(s => s.trim()).filter(Boolean);
     }
@@ -39596,6 +39612,10 @@ function burnAreaChart() {
         </div>
         <details style="margin:10px 0 18px"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced intent</summary>
           <div class="config-field"><label>Alignment model ${yamlHint('intent.alignment_model')} ${settingHelpMark('settings', 'security-and-access', 'Intent alignment model', `Model that checks whether a PR&apos;s change matches the intent of the issue it fixes, using the configured reviewer endpoint. Empty leaves the alignment check off.`)}</label>${securityModelInput('intentAlignmentModel', sec.intentAlignmentModel || '', 'leave empty for default')}</div>
+          ${intentListField('Test path patterns', 'intent.test_path_patterns[]', 'intentTestPathPatterns', 'testPathPatterns', 'Globs that mark a changed file as a test. A PR that deletes or weakens matching files needs stronger authorization.')}
+          ${intentListField('Docs path patterns', 'intent.docs_path_patterns[]', 'intentDocsPathPatterns', 'docsPathPatterns', 'Globs that mark a changed file as documentation. Docs-only and test-only changes skip the alignment check.')}
+          ${intentListField('Guardrail path patterns', 'intent.guardrail_path_patterns[]', 'intentGuardrailPathPatterns', 'guardrailPathPatterns', 'Globs for policy, workflow and ownership files. Any PR touching one is classified in the highest intent tier.')}
+          ${intentListField('Feature signals', 'intent.feature_signals[]', 'intentFeatureSignals', 'featureSignals', 'Words in a PR title or label that mark it as a new feature, which needs an approved plan or human approval.')}
         </details>
 
         <div class="config-toggle">
@@ -39669,16 +39689,16 @@ function burnAreaChart() {
           <div class="config-field"><label>Max alerts per sweep ${yamlHint('sentinel.max_actions')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
         </div>
         <div class="config-field">
-          <label>Sensitive files ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
+          <label>Sensitive files ${yamlHint('sentinel.sensitive_paths[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
           <textarea rows="8" class="mono" data-change-action="gh83" ${sn.enabled ? '' : 'disabled'}>${esc(snPaths.join('\n'))}</textarea>
         </div>
         <div class="config-field">
-          <label>Behaviors ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>
+          <label>Behaviors ${yamlHint('sentinel.disabled_behaviors[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Behaviors', `Heuristics evaluated against each PR's title, author and diff. Switch one off to stop it raising alerts.`)}</label>
           ${snBehaviors}
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Exempt logins ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
-          <div class="config-field"><label>Repos (optional allow-list)</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Exempt logins ${yamlHint('sentinel.exempt_logins[]')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Exempt logins', `Comma-separated GitHub logins never flagged (e.g. the org's release bot). Use sparingly — maintainers should still be reviewed when touching OWNERS.`)}</label><input type="text" value="${esc((sn.exemptLogins || []).join(', '))}" placeholder="release-bot" data-change-action="gh84" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Repos (optional allow-list) ${yamlHint('sentinel.repos[]')}</label><input type="text" value="${esc((sn.repos || []).join(', '))}" placeholder="all project repos" data-change-action="gh85" ${sn.enabled ? '' : 'disabled'}></div>
         </div>`;
 
       return `
