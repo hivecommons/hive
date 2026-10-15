@@ -42,6 +42,9 @@ const (
 	StatusOK            = "ok"
 	StatusNotAvailable  = "not_available"
 	StatusCursorExpired = "cursor_expired"
+	// StatusIncomplete marks a read that stopped on its work bound with a
+	// next_cursor: scanning can continue, so zero or few lines are not final.
+	StatusIncomplete = "incomplete"
 
 	StoppedWorkBound    = "work_bound"
 	StoppedFileTooLarge = "history_file_exceeds_work_bound"

@@ -367,7 +367,9 @@ func (s *scan) finish() {
 	for i, j := 0, len(s.collected)-1; i < j; i, j = i+1, j-1 {
 		s.collected[i], s.collected[j] = s.collected[j], s.collected[i]
 	}
-	s.res.Lines = s.collected
+	if s.collected != nil {
+		s.res.Lines = s.collected
+	}
 	s.res.LineCount = len(s.collected)
 	kinds := make([]string, 0, len(s.counts))
 	for k := range s.counts {
@@ -391,5 +393,8 @@ func (s *scan) finish() {
 		if t, digest, ok := fileIdentity(s.nextCursor.head); ok {
 			s.res.NextCursor = encodeCursor(cursor{Source: s.res.Source, Time: t, Digest: digest, Offset: s.nextCursor.offset})
 		}
+	}
+	if s.incomplete && s.stopReason == StoppedWorkBound && s.res.NextCursor != "" {
+		s.res.Status = StatusIncomplete
 	}
 }

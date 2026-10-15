@@ -422,8 +422,10 @@ setting.
   and no field name contains a word the outbound key mask hides. Each call scans at most
   64 MiB of log (decompressed bytes count); `governor.logging.read_scan_max_mb` can lower
   that. A call that stops early says so in `coverage` (`complete: false`, `stopped_reason`,
-  `covered_from`/`covered_until`) and still returns a `next_cursor`, so zero matches from an
-  incomplete scan never reads as "no matches".
+  `covered_from`/`covered_until`). When it stopped on the scan bound it also answers
+  `status: incomplete` with a `next_cursor`; following the cursor continues the scan, so zero
+  matches from an incomplete scan never reads as "no matches". `lines` is always an array,
+  `[]` when nothing matched.
 - **Filters.** `since`/`until` must be RFC 3339 with an explicit offset (an offset-less value
   is refused); the applied window is reported in UTC with `hive_now`. `min_level` drops lower
   levels and counts unlevelled lines it dropped (`unlevelled_dropped`). `include` and

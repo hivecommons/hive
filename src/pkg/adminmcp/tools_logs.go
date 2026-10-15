@@ -154,6 +154,6 @@ func logReadSchema() map[string]any {
 			"items":       map[string]any{"type": "string"},
 			"description": "Case-insensitive literal texts; a scrubbed line containing any of them is dropped.",
 		},
-		"cursor": map[string]any{"type": "string", "description": "next_cursor from the previous answer, to read the next older page. A cursor that can no longer be honoured returns status cursor_expired."},
+		"cursor": map[string]any{"type": "string", "description": "next_cursor from the previous answer, to read the next older page. Follow it also after a status incomplete answer, which stopped on its scan bound before covering the request. A cursor that can no longer be honoured returns status cursor_expired."},
 	}
 }

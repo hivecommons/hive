@@ -90,7 +90,7 @@ func readAll(t *testing.T, req Request, opts Options) ([]string, int) {
 	var pages [][]string
 	for calls := 1; calls < 1000; calls++ {
 		res := Read(req, opts)
-		if res.Status != StatusOK {
+		if res.Status != StatusOK && res.Status != StatusIncomplete {
 			t.Fatalf("page %d: status %s (%s)", calls, res.Status, res.Reason)
 		}
 		pages = append(pages, texts(res))
@@ -413,6 +413,9 @@ func TestReadWorkBound(t *testing.T) {
 	if res.LineCount != 0 || res.Coverage.Complete || res.Coverage.StoppedReason != StoppedWorkBound || res.NextCursor == "" {
 		t.Fatalf("incomplete scan must say so: count=%d coverage=%+v cursor=%q", res.LineCount, res.Coverage, res.NextCursor)
 	}
+	if res.Status != StatusIncomplete {
+		t.Fatalf("status = %s, want %s", res.Status, StatusIncomplete)
+	}
 	if res.Coverage.WorkBoundBytes != 1024 || res.Coverage.ScannedBytes > 1024 || res.Coverage.CoveredFrom == "" {
 		t.Fatalf("coverage = %+v", res.Coverage)
 	}
@@ -425,6 +428,74 @@ func TestReadWorkBound(t *testing.T) {
 		if !strings.Contains(text, fmt.Sprintf("line %04d", i)) {
 			t.Fatalf("gap or overlap at %d: %q", i, text)
 		}
+	}
+}
+
+// TestReadWindowBeyondWorkBound: a window wholly older than one work bound
+// answers status incomplete with no lines and a cursor, never a bare "ok" that
+// reads as "no matches"; following the cursor reaches the matching lines.
+func TestReadWindowBeyondWorkBound(t *testing.T) {
+	dir := t.TempDir()
+	writePlain(t, dir, backupName(0), recs(0, 10))
+	writePlain(t, dir, HiveLogFilename, recs(10, 200))
+	opts := Options{LogDir: dir, WorkBoundBytes: 1024}
+	req := Request{Lines: 5, Since: base.Add(2 * time.Second), Until: base.Add(6 * time.Second)}
+
+	res := Read(req, opts)
+	if res.Status != StatusIncomplete || res.LineCount != 0 || res.HasMore || res.NextCursor == "" {
+		t.Fatalf("first answer: status=%s count=%d has_more=%v cursor=%q", res.Status, res.LineCount, res.HasMore, res.NextCursor)
+	}
+	if res.Coverage.Complete || res.Coverage.StoppedReason != StoppedWorkBound {
+		t.Fatalf("coverage = %+v", res.Coverage)
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte(`"lines":[]`)) || !bytes.Contains(b, []byte(`"status":"incomplete"`)) {
+		t.Fatalf("encoded first answer = %s", b)
+	}
+
+	var got []string
+	for calls := 0; res.Status == StatusIncomplete; calls++ {
+		if calls > 100 {
+			t.Fatal("paging did not reach the window")
+		}
+		req.Cursor = res.NextCursor
+		res = Read(req, opts)
+		got = append(texts(res), got...)
+	}
+	if res.Status != StatusOK {
+		t.Fatalf("final status = %s (%s)", res.Status, res.Reason)
+	}
+	if len(got) != 5 {
+		t.Fatalf("got %q, want lines 2..6", got)
+	}
+	for i, text := range got {
+		if !strings.Contains(text, fmt.Sprintf("line %04d", i+2)) {
+			t.Fatalf("line %d = %q", i, text)
+		}
+	}
+}
+
+// TestReadNoMatchEncodesEmptyLines: a complete read with no match returns
+// lines as [] (the OpenAPI schema's array), never null.
+func TestReadNoMatchEncodesEmptyLines(t *testing.T) {
+	dir := t.TempDir()
+	writePlain(t, dir, HiveLogFilename, recs(0, 20))
+	res := Read(Request{Include: "matches nothing"}, Options{LogDir: dir})
+	if res.Status != StatusOK || !res.Coverage.Complete || res.LineCount != 0 || res.HasMore || res.NextCursor != "" {
+		t.Fatalf("status=%s coverage=%+v count=%d has_more=%v cursor=%q", res.Status, res.Coverage, res.LineCount, res.HasMore, res.NextCursor)
+	}
+	if res.Lines == nil {
+		t.Fatal("lines is nil")
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte(`"lines":[]`)) {
+		t.Fatalf("lines must encode as []: %s", b)
 	}
 }
 
