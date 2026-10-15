@@ -782,7 +782,8 @@ func TestScanFallsBackToCompressedTwin(t *testing.T) {
 	dir := t.TempDir()
 	writeGz(t, dir, backupName(0)+".gz", recs(0, 3))
 	res := &Result{Source: SourceHive, LinesApplied: 10}
-	s := newScan(Request{}, Options{LogDir: dir}, res)
+	spec, _ := lookupSource(SourceHive)
+	s := newScan(Request{}, Options{LogDir: dir}, res, spec)
 	f := &logFile{path: filepath.Join(dir, backupName(0)), name: backupName(0)}
 	if err := s.scanFile(f, -1); err != nil || len(s.collected) != 3 || !f.gz {
 		t.Fatalf("err=%v collected=%d gz=%v", err, len(s.collected), f.gz)
