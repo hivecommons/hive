@@ -1102,8 +1102,10 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 	}
 	// Self-report (#11868): the tracker only surfaces this once it has
 	// persisted for an hour, so a transient discovery blip never files.
-	fleetreport.Observe(fleetreport.ClassModelDiscoveryDegraded, backend,
-		fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served), r.discoveryErr)
+	if r.discoveryErr != copilotHTTPCatalogOnlyErr {
+		fleetreport.Observe(fleetreport.ClassModelDiscoveryDegraded, backend,
+			fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served), r.discoveryErr)
+	}
 	if s.audit != nil {
 		s.audit.Log("system", auditActionModelDiscoveryFailed, auditDetail(
 			"backend", backend,
@@ -1306,7 +1308,7 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	// Copilot CLI's model catalog. The SDK helper path above is the only clean
 	// Copilot discovery source because it drives the pinned CLI itself (#8418).
 	out.degraded = true
-	out.discoveryErr = "serving the HTTP chat-completions catalog, which is not the CLI's"
+	out.discoveryErr = copilotHTTPCatalogOnlyErr
 	if sdkErr != "" {
 		// The HTTP probe answered, but it is the chat-completions catalog,
 		// not the CLI's: real ids, wrong inventory. Serve it, say so, and
@@ -1315,6 +1317,11 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	}
 	return out
 }
+
+// copilotHTTPCatalogOnlyErr is the discovery error when no SDK helper is
+// installed and the HTTP catalog is the only source: an expected steady state
+// on such hives, shown in the dropdown but not worth a fleet self-report.
+const copilotHTTPCatalogOnlyErr = "serving the HTTP chat-completions catalog, which is not the CLI's"
 
 // cliModelStaleTimeLayout renders when a stale catalog was discovered, in
 // UTC, for the dropdown reason and the audit log.

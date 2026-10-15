@@ -1,0 +1,1 @@
+- Stop self-reporting `model_discovery_degraded` when a hive simply has no Copilot SDK helper and serves the HTTP chat-completions catalog, an expected steady state.
