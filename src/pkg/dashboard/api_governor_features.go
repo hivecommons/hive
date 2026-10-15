@@ -154,6 +154,17 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		AutonomyMaxLevel     *int    `json:"autonomyMaxLevel"`
 		AutonomyCooldownDays *int    `json:"autonomyCooldownDays"`
 
+		// Nous / Experiment Lab (nous.* in hive.yaml, RFC #11585). A nil
+		// pointer leaves the key alone; an empty fetch allowlist is a real
+		// value (deny every fetch), distinct from the absent default.
+		NousDispatcher                  *string   `json:"nousDispatcher"`
+		NousGatePollSeconds             *int      `json:"nousGatePollSeconds"`
+		NousFetchAllowlist              *[]string `json:"nousFetchAllowlist"`
+		NousArtifactRepo                *string   `json:"nousArtifactRepo"`
+		NousArtifactBranch              *string   `json:"nousArtifactBranch"`
+		NousArtifactPath                *string   `json:"nousArtifactPath"`
+		NousArtifactSyncIntervalSeconds *int      `json:"nousArtifactSyncIntervalSeconds"`
+
 		RotationEnabled            *bool                                     `json:"rotationEnabled"`
 		RotationThresholdPct       *int                                      `json:"rotationThresholdPct"`
 		RotationHighVolumeCadenceS *int                                      `json:"rotationHighVolumeCadenceS"`
@@ -319,6 +330,17 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		autonomyDemoteOn = canonical
+	}
+	// Nous / Experiment Lab: validate the patched section with the config
+	// package's own rules so the dialog and `hive.yaml` agree on what loads.
+	nousNext, nousErr := patchNousConfig(cfg.Nous, nousPatch{
+		dispatcher: body.NousDispatcher, gatePollSeconds: body.NousGatePollSeconds, fetchAllowlist: body.NousFetchAllowlist,
+		artifactRepo: body.NousArtifactRepo, artifactBranch: body.NousArtifactBranch, artifactPath: body.NousArtifactPath,
+		artifactSyncIntervalSeconds: body.NousArtifactSyncIntervalSeconds,
+	})
+	if nousErr != nil {
+		jsonError(w, nousErr.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// --- apply ---
@@ -493,6 +515,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.AutonomyCooldownDays != nil {
 		cfg.Autonomy.CooldownDays = *body.AutonomyCooldownDays
 	}
+	cfg.Nous = nousNext
 	if body.ExtFlueEnabled != nil {
 		cfg.Runs.External.Flue.Enabled = *body.ExtFlueEnabled
 	}
@@ -659,6 +682,7 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	otelCfg := cfg.EffectiveOTel()
 	acmmLevel := cfg.ACMMLevelOrZero()
 	rotationCfg := cfg.Governor.Rotation
+	nousArtifact := cfg.Nous.ArtifactRepo.Resolve(os.Getenv)
 	out := map[string]interface{}{
 		"ioscanEnabled":                       cfg.Ioscan.IsEnabled(),
 		"tracingEnabled":                      otelCfg.Enabled,
@@ -734,6 +758,20 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"autonomyDemoteOn":                    cfg.Autonomy.EffectiveDemoteOn(),
 		"autonomyMaxLevel":                    cfg.Autonomy.EffectiveMaxLevel(config.MaxACMMLevel),
 		"autonomyCooldownDays":                cfg.Autonomy.EffectiveCooldownDays(),
+		"nousDispatcher":                      cfg.Nous.Dispatcher,
+		"nousDispatcherEffective":             cfg.Nous.ResolvedDispatcher(),
+		"nousDispatcherValues":                config.NousDispatcherValues(),
+		"nousGatePollSeconds":                 cfg.Nous.GatePollSeconds,
+		"nousGatePollSecondsEffective":        int(cfg.Nous.GatePollInterval().Seconds()),
+		"nousFetchAllowlist":                  cfg.Nous.FetchAllowlist,
+		"nousFetchAllowlistEffective":         cfg.Nous.ResolvedFetchAllowlist(),
+		"nousArtifactRepo":                    cfg.Nous.ArtifactRepo.Repo,
+		"nousArtifactBranch":                  cfg.Nous.ArtifactRepo.Branch,
+		"nousArtifactPath":                    cfg.Nous.ArtifactRepo.Path,
+		"nousArtifactSyncIntervalSeconds":     cfg.Nous.ArtifactRepo.SyncIntervalSeconds,
+		"nousArtifactSyncMinSeconds":          int(config.MinNousArtifactSyncInterval.Seconds()),
+		"nousArtifactEnabled":                 nousArtifact.Enabled,
+		"nousArtifactRepoEffective":           nousArtifact.Repo,
 		"rotationEnabled":                     rotationCfg.Enabled,
 		"rotationThresholdPct":                rotationCfg.EffectiveThreshold(),
 		"rotationHighVolumeCadenceS":          rotationCfg.EffectiveHighVolumeCadenceS(),

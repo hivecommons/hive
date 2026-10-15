@@ -618,7 +618,6 @@ agents.<key>.advisor.instructions # TODO #11854
 agents.<key>.advisor.max_consecutive_blocks # TODO #11854
 agents.<key>.advisor.model # TODO #11854
 agents.<key>.advisor.timeout_s # TODO #11854
-agents.<key>.engine # TODO #11854
 agents.<key>.mode_owner # TODO #11854
 agents.<key>.standby.auto_dispatch # TODO #11854
 agents.<key>.standby.daily_cap_per_contributor # TODO #11854
@@ -752,13 +751,6 @@ notifications.telegram.allowed_users[] # TODO #11854
 notifications.telegram.bot_token # TODO #11854
 notifications.telegram.chat_id # TODO #11854
 notifications.telegram.enabled # TODO #11854
-nous.artifact_repo.branch # TODO #11854
-nous.artifact_repo.path # TODO #11854
-nous.artifact_repo.repo # TODO #11854
-nous.artifact_repo.sync_interval_seconds # TODO #11854
-nous.dispatcher # TODO #11854
-nous.fetch_allowlist[] # TODO #11854
-nous.gate_poll_seconds # TODO #11854
 planning.design_approved_status # TODO #11854
 planning.design_requested_status # TODO #11854
 project.repo_policies[].merge_strategy # TODO #11854

@@ -1,0 +1,1 @@
+- Settings → Features gains a "Nous / Experiment Lab" section exposing nous.dispatcher, nous.gate_poll_seconds, nous.fetch_allowlist and nous.artifact_repo.{repo,branch,path,sync_interval_seconds}, and the agent dialog exposes agents.<name>.engine; all are validated with the config package rules and found by the settings search (#12026).

@@ -5,11 +5,13 @@ called **Nous** — is a controlled experiment framework for the governor. It re
 designs experiments against governor (and optionally repo) parameters, and
 measures each one against that baseline before anything is applied for real.
 
-**There is no `nous:` block in `hive.yaml` or `hive.yaml.example`.** Despite
-what `src/README.md` used to say, Nous has no YAML config surface beyond the
-`data.nous_dir` storage root — it is configured at runtime through the
-dashboard (Experiment Lab panel, ACMM level 4+) or directly through the
-`/api/nous/*` endpoints. This page documents
+The `nous:` block in `hive.yaml` carries only runtime knobs — gate poll
+cadence, dispatcher, dependency fetch allowlist and the optional artifact
+repository — and every one of them is editable from **Settings → Features →
+Nous / Experiment Lab** (see [Settings](#settings)). Goals, bounds, schedule
+and the trust ladder are configured at runtime through the dashboard
+(Experiment Lab panel, ACMM level 4+) or directly through the `/api/nous/*`
+endpoints. This page documents
 that runtime configuration and the experiment lifecycle, verified against
 `pkg/dashboard/api.go`, `pkg/dashboard/deps.go`, `cmd/hive/main.go`, and the
 dashboard's `renderNousConfig()`/`renderNous()` UI code.
@@ -34,8 +36,8 @@ panel shows an explainer card instead of empty stats.
 
 All Nous state lives under one durable root on the PVC — `/data/nous` by
 default, configurable with `data.nous_dir` and overridable at runtime with
-`HIVE_NOUS_DATA_DIR` (RFC #11585 part 1, #11694). The only other Nous key in
-`hive.yaml` is `nous.gate_poll_seconds` (see [Gate protocol](#gate-protocol)):
+`HIVE_NOUS_DATA_DIR` (RFC #11585 part 1, #11694). The other Nous keys in
+`hive.yaml` live under `nous:` and are listed in [Settings](#settings):
 
 | What | Where (relative to `data.nous_dir`) | Written by |
 |---|---|---|
@@ -334,11 +336,38 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
    made in `suggest` mode — `evolve` runs approved-pattern experiments without
    per-experiment approval.
 
+## Settings
+
+Every `nous.*` key in `hive.yaml` has a control in **Settings → Features →
+Nous / Experiment Lab** (#12026; the same pattern as the Autonomy policy
+group, #11855). Saving goes through the existing
+`PUT /api/config/governor/features` path, is owner-only, and is validated
+with the same rules `hive.yaml` loading applies (`NousConfig.Validate`), so a
+value the dialog accepts is exactly a value the hive will load. Typing
+"nous", "experiment", "gate" or "artifact" into the settings search finds the
+group. The panel's visibility toggle, `dashboard.experiment_lab`, stays on the
+Dashboard tab.
+
+| Control | Key | Env override | Notes |
+|---|---|---|---|
+| Dispatcher | `nous.dispatcher` | `HIVE_NOUS_DISPATCHER` | Select: `inline` (default) or `sdk`. Empty stores the default. The dialog notes when the env var overrides the saved value. |
+| Gate poll (seconds) | `nous.gate_poll_seconds` | `HIVE_NOUS_GATE_POLL_INTERVAL` | `0` means the 15s default; negative is rejected. |
+| Dependency fetch allowlist | `nous.fetch_allowlist` | `HIVE_NOUS_FETCH_ALLOWLIST` | Comma-separated exact lowercase hostnames. **Saving an empty field writes an empty list, which denies every fetch**; the field's help text says so and shows whether the key is currently absent (default `github.com`) or empty. Enter `github.com` to restore the default host. |
+| Repository | `nous.artifact_repo.repo` | `HIVE_NOUS_ARTIFACT_REPO` | `owner/name`; empty keeps the mirror off. |
+| Branch | `nous.artifact_repo.branch` | `HIVE_NOUS_ARTIFACT_BRANCH` | Empty resolves the repository's default branch. Ref-unsafe names are rejected even while the repo is empty. |
+| Path | `nous.artifact_repo.path` | `HIVE_NOUS_ARTIFACT_PATH` | Relative, no `..`; empty means `campaigns`. |
+| Sync interval (seconds) | `nous.artifact_repo.sync_interval_seconds` | `HIVE_NOUS_ARTIFACT_SYNC_INTERVAL` | `0` means the 300s default; the 30s floor is applied at resolve time. |
+
+`agents.<name>.engine` is exposed in the agent configuration dialog (General
+tab, "Experiment engine", next to Role) and validated with
+`ValidateExperimentEngine`: it is accepted only on an agent whose role (after
+the same save) is `experimenter`.
+
 ## What does not exist today
 
-- The `nous:` block in `hive.yaml` carries only `gate_poll_seconds`. Goals,
-  bounds, schedule and the trust ladder are **not** read from YAML — they live
-  in `panel-config.json` under `data.nous_dir` and are set through the API.
+- Goals, bounds, schedule and the trust ladder are **not** read from YAML —
+  they live in `panel-config.json` under `data.nous_dir` and are set through
+  the API, not through the Settings dialog.
 - No environment-variable override for the confidence threshold or decay
   rate shown in the dashboard's Principle Store section — those fields exist
   in the UI but are not wired to `NOUS_CONFIDENCE_THRESHOLD` /

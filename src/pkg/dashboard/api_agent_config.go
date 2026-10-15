@@ -148,6 +148,8 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"sortOrder":           agentCfg.SortOrder,
 			"beadRole":            agentCfg.BeadRole,
 			"role":                agentCfg.Role,
+			"engine":              agentCfg.Engine,
+			"engineValues":        experimentEngineValues(),
 			"kickTemplate":        agentCfg.KickTemplate,
 			"promptSource":        agentCfg.PromptSource,
 			"definitionSource":    agentCfg.DefinitionSource,
@@ -536,6 +538,23 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if v, ok := body["role"]; ok {
 		if s, ok := v.(string); ok {
 			agentCfg.Role = sanitizeString(s)
+		}
+	}
+	if v, ok := body["engine"]; ok {
+		// agents.<name>.engine (RFC #11585 part 5) is only meaningful on an
+		// experimenter; validate against the role as it will be after this
+		// save so "set role and engine together" works in one PUT.
+		if str, ok := v.(string); ok {
+			engine := strings.ToLower(strings.TrimSpace(sanitizeString(str)))
+			role := agentCfg.Role
+			if role == "" {
+				role = name
+			}
+			if err := config.ValidateExperimentEngine(role, engine); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			agentCfg.Engine = engine
 		}
 	}
 	if v, ok := body["kickTemplate"]; ok {

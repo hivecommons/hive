@@ -100,6 +100,29 @@ var ValidExperimentEngines = map[string]bool{ExperimentEngineNous: true}
 // ValidNousDispatchers is the closed set nous.dispatcher may name.
 var ValidNousDispatchers = map[string]bool{NousDispatcherInline: true, NousDispatcherSDK: true}
 
+// NousDispatcherValues lists the dispatchers nous.dispatcher may name, in
+// the order the Settings dialog presents them (the default first).
+func NousDispatcherValues() []string {
+	out := []string{DefaultNousDispatcher}
+	for _, v := range strings.Split(sortedKeys(ValidNousDispatchers), ", ") {
+		if v != DefaultNousDispatcher {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// CanonicalNousDispatcher trims and lower-cases v and reports whether the
+// result is a recognised nous.dispatcher value. The empty string is accepted
+// and means "use the default".
+func CanonicalNousDispatcher(v string) (string, bool) {
+	v = normalizeNousDispatcher(v)
+	if v == "" {
+		return "", true
+	}
+	return v, ValidNousDispatchers[v]
+}
+
 // NousConfig is the `nous:` section of hive.yaml.
 type NousConfig struct {
 	// GatePollSeconds is the pending-gate poll cadence in seconds. Zero or

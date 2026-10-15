@@ -111,3 +111,33 @@ func TestNousValidateFetchAllowlist(t *testing.T) {
 		t.Fatalf("empty config: %v", err)
 	}
 }
+
+func TestNousDispatcherValuesAndCanonical(t *testing.T) {
+	vals := NousDispatcherValues()
+	if len(vals) != len(ValidNousDispatchers) || vals[0] != DefaultNousDispatcher {
+		t.Fatalf("NousDispatcherValues() = %v, want default first and one entry per valid dispatcher", vals)
+	}
+	seen := map[string]bool{}
+	for _, v := range vals {
+		if !ValidNousDispatchers[v] || seen[v] {
+			t.Fatalf("NousDispatcherValues() = %v contains an unknown or duplicate entry %q", vals, v)
+		}
+		seen[v] = true
+	}
+	for _, tc := range []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"", "", true},
+		{"  ", "", true},
+		{"inline", "inline", true},
+		{" SDK ", "sdk", true},
+		{"carrier-pigeon", "carrier-pigeon", false},
+	} {
+		got, ok := CanonicalNousDispatcher(tc.in)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("CanonicalNousDispatcher(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}

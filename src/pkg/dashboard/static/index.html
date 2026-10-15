@@ -33324,6 +33324,7 @@ function burnAreaChart() {
     const SETTINGS_SEARCH_STATIC_HITS = [
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
       { tab: 'Features', section: 'Dashboard', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
+      { tab: 'Features', section: 'Nous / Experiment Lab', label: 'Nous / Experiment Lab', key: 'nous.dispatcher', text: 'nous experiment lab experimenter dispatcher inline sdk gate poll fetch allowlist artifact repository branch path sync interval nous.dispatcher nous.gate_poll_seconds nous.fetch_allowlist nous.artifact_repo.repo nous.artifact_repo.branch nous.artifact_repo.path nous.artifact_repo.sync_interval_seconds' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Logging', section: 'Logging', label: 'Read scan bound (MB)', key: 'governor.logging.read_scan_max_mb', text: 'log read scan bound megabytes admin mcp log_read cursor' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
@@ -37418,6 +37419,13 @@ function burnAreaChart() {
           <div class="config-field">
             <label>Role ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Role', `Semantic role for behavioral dispatch (e.g. scanner, reviewer, architect). Used by lane routing and kick templates.`)}</label>
             <input type="text" id="cfg-agent-role" value="${esc(g.role || '')}" placeholder="e.g. scanner, reviewer" data-change-action="markDirty" data-arg0="general" data-arg1="role" data-arg-types="s,s,v">
+          </div>
+          <div class="config-field">
+            <label>Experiment engine ${yamlHint('agents.<key>.engine')} ${settingHelpMark('experiment-lab', 'experimenter-role-and-engine-contract', 'Experiment engine', `Which experimentation engine an agent with role <code>experimenter</code> runs. Empty means the default (nous). Setting it on any other role is rejected, because nothing else reads the field.`)}</label>
+            <select id="cfg-agent-engine" data-change-action="markDirty" data-arg0="general" data-arg1="engine" data-arg-types="s,s,v">
+              <option value=""${!(g.engine || '') ? ' selected' : ''}>(role default)</option>
+              ${(g.engineValues || ['nous']).map(v => `<option value="${esc(v)}"${(g.engine || '') === v ? ' selected' : ''}>${esc(v)}</option>`).join('')}
+            </select>
           </div>
           <div class="config-field">
             <label>Kick Template ${settingHelpMark('agent-configuration', 'kick-templates-what-an-agent-is-told-to-do', 'Kick Template', `Prompt template file used when the governor kicks this agent. Located in the prompts directory.`)}</label>
@@ -42065,6 +42073,50 @@ function burnAreaChart() {
             </div>
           </div>
           <div class="qa-note">Both toggles are opt-in; the ACMM advisor keeps recommending changes for a human to apply while they are off.</div>
+        </div>
+
+        <div class="qa-section">
+          <div class="qa-section-title">Nous / Experiment Lab ${settingHelpMark('experiment-lab', 'settings', 'Nous / Experiment Lab', `Runtime knobs for the Nous experimentation agent (<code>nous.*</code> in hive.yaml, RFC 11585). The panel itself is shown or hidden with <code>dashboard.experiment_lab</code> on the Dashboard tab; goals, bounds and schedule live in the Experiment Lab panel, not here.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Dispatcher <code>nous.dispatcher</code> ${settingHelpMark('experiment-lab', 'experimenter-role-and-engine-contract', 'Nous dispatcher', `How Nous performs its LLM work. <code>inline</code> (default) runs inside the experimenter agent's own CLI session so Hive's scheduling, token budget and cost tracking apply; <code>sdk</code> has Nous call the model API directly, invisible to cost tracking. Env override: <code>HIVE_NOUS_DISPATCHER</code>.`)}</label>
+              <select data-change-action="markDirty" data-arg0="features" data-arg1="nousDispatcher" data-arg-types="s,s,v">
+                <option value=""${!(f.nousDispatcher || '') ? ' selected' : ''}>(default — ${esc((f.nousDispatcherValues || ['inline'])[0])})</option>
+                ${(f.nousDispatcherValues || ['inline', 'sdk']).map(v => `<option value="${esc(v)}"${(f.nousDispatcher || '') === v ? ' selected' : ''}>${esc(v)}</option>`).join('')}
+              </select>
+              ${f.nousDispatcherEffective && f.nousDispatcherEffective !== (f.nousDispatcher || (f.nousDispatcherValues || ['inline'])[0]) ? `<div class="config-help">HIVE_NOUS_DISPATCHER overrides this setting: the effective dispatcher is <b>${esc(f.nousDispatcherEffective)}</b>.</div>` : ''}
+            </div>
+            <div class="config-field">
+              <label>Gate poll (seconds) <code>nous.gate_poll_seconds</code> ${settingHelpMark('experiment-lab', 'gate-protocol', 'Nous gate poll', `How often the hive re-reads <code>&lt;nous_dir&gt;/gates/pending.json</code> for a gate the agent is waiting on and pings the owner. 0 means the default (15s). GET /api/nous/gate-pending also checks on demand, so this only bounds how late the owner notification can be. Env override: <code>HIVE_NOUS_GATE_POLL_INTERVAL</code>.`)}</label>
+              <input type="number" min="0" step="1" value="${esc(String(f.nousGatePollSeconds || 0))}" placeholder="${esc(String(f.nousGatePollSecondsEffective || 15))}" data-change-action="markDirty" data-arg0="features" data-arg1="nousGatePollSeconds" data-arg-types="s,s,N">
+            </div>
+          </div>
+          <div class="config-field">
+            <label>Dependency fetch allowlist <code>nous.fetch_allowlist[]</code> ${settingHelpMark('experiment-lab', 'pinned-campaign-dependencies', 'Nous fetch allowlist', `Exact lowercase DNS hostnames <code>hive nous-setup</code> may fetch pinned campaign dependencies from, comma-separated. No wildcards, schemes, ports or IP literals. Absent means <code>github.com</code>; an explicitly empty list denies every fetch. Env override: <code>HIVE_NOUS_FETCH_ALLOWLIST</code> (comma-separated).`)}</label>
+            <input type="text" value="${esc((f.nousFetchAllowlist || []).join(', '))}" placeholder="${esc((f.nousFetchAllowlistEffective || ['github.com']).join(', '))}" data-change-action="markCSVDirty" data-arg0="features" data-arg1="nousFetchAllowlist" data-arg-types="s,s,w">
+            <div class="config-help">${f.nousFetchAllowlist === null || f.nousFetchAllowlist === undefined ? 'Not set in hive.yaml — the default applies. ' : (f.nousFetchAllowlist.length === 0 ? '<b>Empty list: every dependency fetch is denied.</b> ' : '')}Saving an empty field writes an empty list (deny all); enter <code>github.com</code> to restore the default host.</div>
+          </div>
+          <div class="qa-section-title">Artifact repository <code>nous.artifact_repo</code> ${settingHelpMark('experiment-lab', 'optional-github-artifact-repository', 'Nous artifact repository', `Optional GitHub repository each finished campaign folder is mirrored to as a pull request, using the hive's own identity. Leave the repository empty to keep the mirror off. Env overrides: <code>HIVE_NOUS_ARTIFACT_REPO</code>, <code>HIVE_NOUS_ARTIFACT_BRANCH</code>, <code>HIVE_NOUS_ARTIFACT_PATH</code>, <code>HIVE_NOUS_ARTIFACT_SYNC_INTERVAL</code>.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Repository <code>nous.artifact_repo.repo</code> ${settingHelpMark('experiment-lab', 'optional-github-artifact-repository', 'Artifact repository', `Destination as <code>owner/name</code>. Empty keeps the mirror off (no GitHub call is made). Env override: <code>HIVE_NOUS_ARTIFACT_REPO</code>.`)}</label>
+              <input type="text" value="${esc(f.nousArtifactRepo || '')}" placeholder="owner/name" data-change-action="markDirty" data-arg0="features" data-arg1="nousArtifactRepo" data-arg-types="s,s,v">
+              ${f.nousArtifactRepoEffective && f.nousArtifactRepoEffective !== (f.nousArtifactRepo || '') ? `<div class="config-help">HIVE_NOUS_ARTIFACT_REPO overrides this setting: the mirror targets <b>${esc(f.nousArtifactRepoEffective)}</b>.</div>` : ''}
+            </div>
+            <div class="config-field">
+              <label>Branch <code>nous.artifact_repo.branch</code> ${settingHelpMark('experiment-lab', 'optional-github-artifact-repository', 'Artifact branch', `Pull-request target branch. Empty resolves the repository's default branch at sync time. Env override: <code>HIVE_NOUS_ARTIFACT_BRANCH</code>.`)}</label>
+              <input type="text" value="${esc(f.nousArtifactBranch || '')}" placeholder="(repository default)" data-change-action="markDirty" data-arg0="features" data-arg1="nousArtifactBranch" data-arg-types="s,s,v">
+            </div>
+            <div class="config-field">
+              <label>Path <code>nous.artifact_repo.path</code> ${settingHelpMark('experiment-lab', 'optional-github-artifact-repository', 'Artifact path', `Folder inside the repository that holds one directory per campaign. Relative, no "..". Empty means <code>campaigns</code>. Env override: <code>HIVE_NOUS_ARTIFACT_PATH</code>.`)}</label>
+              <input type="text" value="${esc(f.nousArtifactPath || '')}" placeholder="campaigns" data-change-action="markDirty" data-arg0="features" data-arg1="nousArtifactPath" data-arg-types="s,s,v">
+            </div>
+            <div class="config-field">
+              <label>Sync interval (seconds) <code>nous.artifact_repo.sync_interval_seconds</code> ${settingHelpMark('experiment-lab', 'optional-github-artifact-repository', 'Artifact sync interval', `How often the hive looks for finished campaigns that have not been mirrored yet. 0 means the default (300s); values below ${esc(String(f.nousArtifactSyncMinSeconds || 30))}s are raised to that floor. Env override: <code>HIVE_NOUS_ARTIFACT_SYNC_INTERVAL</code>.`)}</label>
+              <input type="number" min="0" step="1" value="${esc(String(f.nousArtifactSyncIntervalSeconds || 0))}" placeholder="300" data-change-action="markDirty" data-arg0="features" data-arg1="nousArtifactSyncIntervalSeconds" data-arg-types="s,s,N">
+            </div>
+          </div>
+          <div class="qa-note">Mirror status: ${f.nousArtifactEnabled ? 'on' : 'off'}. The mirror promotes nothing — a verdict still needs an owner's explicit Promote in the Experiment Lab panel.</div>
         </div>
 
         <div style="margin-top:18px;padding-top:var(--sp-6);border-top:1px solid var(--border)">
