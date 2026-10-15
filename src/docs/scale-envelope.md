@@ -82,6 +82,42 @@ what made the restart-during-delivery loop of
 That is the general shape of scale failure here: an unbounded list does not fail
 by being big, it fails by widening a timing window somewhere else.
 
+## Kick layout: static prefix first
+
+Provider prompt caching (Anthropic, OpenAI) only reuses a **byte-identical
+prefix**, so the typed kick is laid out static-first
+([#12125](https://github.com/hivecommons/hive/issues/12125)). The order is fixed
+in `src/pkg/scheduler/kick_layout.go` and asserted by
+`TestKickLayoutStaticPrefixIsCacheable`:
+
+| # | Block | Varies |
+|---|---|---|
+| 1 | `SECURITY CANARY` preamble | every kick (random, opt-in `ioscan.canaries`; always first — [ADR-0008](adr/0008-ioscan-untrusted-input.md)) |
+| 2 | `[agent:<name>]` header | never |
+| 3 | governor work-source rule | never |
+| 4 | independent review section | per agent config |
+| 5 | workflow push ceiling | per agent mode |
+| 6 | formal quality capability | per role + config |
+| 7 | work tracker section | per work-source config |
+| 8 | resolved policy body (`${GH_AUTH}` is a constant; `${ISSUE_LIST}`/`${PR_LIST}`/… stay where the template puts them) | from the first list on |
+| 9 | `REPO-SCOPED CADENCE TARGET` | per cadence target |
+| 10 | `AUTHORIZED REPOS` | when repos are paused/scoped |
+| 11–14 | hold-gated PR coordination, red-PR and review-thread fix-before-new, PR follow-up handoff | every kick (data-bearing) |
+| 15–17 | guide flow line, in-flight note, question answer contract | every kick |
+| 18 | in-progress claim rule | whenever the kick lists issues |
+| 19 | closing instruction (`Begin now:`) | never; always last |
+
+So for a hive without canaries the cacheable prefix runs from byte 0 through
+the header, every static seam and the policy core up to the template's first
+dynamic list; with canaries it starts after one short random line. What did
+**not** change: `/clear` still precedes every kick, the canary is neither
+stabilised nor moved, the full contract is typed on every kick (no
+`--append-system-prompt-file`, no cached policy state), and every seam is still
+an unconditional post-resolution injection a customized template cannot omit —
+only the order moved. The data-bearing preflights (11–14) used to sit directly
+under the header, ahead of the policy body; they now sit at the tail, directly
+ahead of the closing instruction, so the body in front of them stays cacheable.
+
 ## Inventory of cap-triggered behaviours
 
 Every entry below was read in the tree at the cited symbol. "Tunable" means an
