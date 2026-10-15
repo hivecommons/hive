@@ -162,3 +162,42 @@ func TestHostedDeploymentImagePatchIncludesInitContainers(t *testing.T) {
 		}
 	}
 }
+
+func TestHeartbeatFallbackDirectPatchImageKeepsChannelTag(t *testing.T) {
+	const target = "d6e3221aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tests := []struct {
+		name string
+		saas *SaaSHive
+		want string
+	}{
+		{
+			name: "release-channel hive re-pulls its channel tag",
+			saas: &SaaSHive{TrackedChannel: ReleaseChannelStable},
+			want: "ghcr.io/" + ghcrRepoSpoke + ":stable",
+		},
+		{
+			name: "branch-tracking hive is pinned to the target SHA",
+			saas: &SaaSHive{},
+			want: "ghcr.io/" + ghcrRepoSpoke + ":d6e3221",
+		},
+		{
+			name: "non-channel tracked value falls back to the target SHA",
+			saas: &SaaSHive{TrackedChannel: "v5-latest"},
+			want: "ghcr.io/" + ghcrRepoSpoke + ":d6e3221",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := heartbeatFallbackDirectPatchImage(tt.saas, target)
+			if got != tt.want {
+				t.Fatalf("heartbeatFallbackDirectPatchImage() = %q, want %q", got, tt.want)
+			}
+			if !isReleaseChannel(tt.saas.TrackedChannel) {
+				return
+			}
+			if imageTagOf(sanitizeImageRef(got)) != tt.saas.TrackedChannel {
+				t.Fatalf("patched image %q would read as drift from tracked channel %q and be re-rolled", got, tt.saas.TrackedChannel)
+			}
+		})
+	}
+}
