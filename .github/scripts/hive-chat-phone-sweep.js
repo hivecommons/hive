@@ -71,7 +71,9 @@ const BAD = [
   const chips = await page.$$eval('[data-chat-suggestion], .hive-chat-example',
     els => els.map(e => e.getAttribute('data-chat-suggestion') || e.getAttribute('data-chat-example') || ''));
   const help = await send('!help', 0);
-  const commands = [...help.matchAll(/^\s*`(![a-z][a-z-]*)/gim)].map(m => m[1].toLowerCase());
+  // innerText of a rendered reply has no literal backtick once the dashboard
+  // renders `!cmd` as <code>, so the backtick is optional.
+  const commands = [...help.matchAll(/^\s*`?(![a-z][a-z-]*)/gim)].map(m => m[1].toLowerCase());
   const queue = [...new Set([...chips.filter(Boolean), ...commands])];
   if (!commands.length) failures.push('!help: listed no commands');
   for (let i = 0; i < queue.length; i++) await send(queue[i], i + 1);
