@@ -3927,3 +3927,35 @@ func TestSidebarDiskUsesInjectablePath(t *testing.T) {
 		t.Fatal("sidebar was not loaded from injected path")
 	}
 }
+
+func TestHandleNousStatus_ResearchQuestion(t *testing.T) {
+	cases := []struct {
+		name  string
+		scope string
+		goals interface{}
+		want  string
+	}{
+		{"governor scope", "governor", map[string]interface{}{"governorGoal": " gov? ", "repoGoal": "repo?"}, "gov?"},
+		{"repo scope", "repo", map[string]interface{}{"governorGoal": "gov?", "repoGoal": "repo?"}, "repo?"},
+		{"both falls back to repo", "both", map[string]interface{}{"governorGoal": "", "repoGoal": "repo?"}, "repo?"},
+		{"governor scope ignores repo goal", "governor", map[string]interface{}{"repoGoal": "repo?"}, ""},
+		{"no goals", "governor", nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, deps := apiServerWithNous(t)
+			deps.Nous.Status = map[string]interface{}{"scope": tc.scope}
+			if tc.goals != nil {
+				deps.Nous.Config = map[string]interface{}{"goals": tc.goals}
+			}
+			rec := doGet(s, "/api/nous/status")
+			var got map[string]interface{}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got["researchQuestion"] != tc.want {
+				t.Errorf("researchQuestion = %v, want %q", got["researchQuestion"], tc.want)
+			}
+		})
+	}
+}

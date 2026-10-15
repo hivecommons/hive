@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"strings"
 )
 
 func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
@@ -14,8 +15,36 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 	for k, v := range s.deps.Nous.Status {
 		status[k] = v
 	}
+	goals := s.deps.Nous.Config["goals"]
+	scope, _ := status["scope"].(string)
+	if scope == "" {
+		scope = s.deps.Nous.Scope
+	}
 	s.deps.Nous.Mu.Unlock()
+	status["researchQuestion"] = nousResearchQuestion(goals, scope)
 	jsonResponse(w, status)
+}
+
+// nousResearchQuestion picks the stored research question for the active
+// scope; "both" prefers the governor question and falls back to the repo one.
+func nousResearchQuestion(goals interface{}, scope string) string {
+	m, ok := goals.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	gov, _ := m["governorGoal"].(string)
+	repo, _ := m["repoGoal"].(string)
+	gov, repo = strings.TrimSpace(gov), strings.TrimSpace(repo)
+	if strings.EqualFold(scope, "repo") {
+		return repo
+	}
+	if gov != "" {
+		return gov
+	}
+	if strings.EqualFold(scope, "both") {
+		return repo
+	}
+	return ""
 }
 
 func (s *Server) handleNousLedger(w http.ResponseWriter, r *http.Request) {

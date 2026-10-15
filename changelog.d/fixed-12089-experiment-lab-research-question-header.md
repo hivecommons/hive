@@ -1,0 +1,1 @@
+- Experiment Lab header no longer shows the stale mode × scope pill (e.g. `OBSERVING · GOVERNOR`); it now shows the research question for the active scope as muted text when one is set, and nothing otherwise. `GET /api/nous/status` gains a `researchQuestion` field. Fixes #12089.

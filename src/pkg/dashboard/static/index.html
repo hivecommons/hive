@@ -254,6 +254,7 @@
     .dashboard-section-hidden { display: none !important; }
     @media (hover: none), (pointer: coarse) { .oc-nav-drag-handle, .oc-nav-hide-toggle { opacity: 1; } }
     .oc-nav-emoji { display: inline-flex; width: 18px; font-size: 0.9rem; flex-shrink: 0; justify-content: center; }
+    .nous-research-question { display: inline-block; max-width: 40ch; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: var(--sp-4); font-weight: 400; text-transform: none; letter-spacing: normal; }
     .oc-nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     .oc-nav-mode { flex-shrink: 0; font-size: 0.9rem; margin-left: var(--sp-1); transition: opacity 0.15s; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
     /* The hover-revealed row actions (⚙/✕) take the right edge — fade the
@@ -5848,7 +5849,7 @@
   </div>
 
   <div id="nous-section" data-dashboard-section="nous-section" data-feature="strategy_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Strategy Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Strategy Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-research-question" class="nous-research-question text-muted fs-sm" hidden></span></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
@@ -6890,7 +6891,7 @@
       const badges = newHeader.querySelector('.dash-card-badges');
       const actions = newHeader.querySelector('.dash-card-actions');
       const moveSource = oldHeader.parentElement === section ? oldHeader : oldHeader.parentElement;
-      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #nous-mode-badge, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
+      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #nous-research-question, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
       Array.from(moveSource.querySelectorAll('button[data-stop="1"], a[data-stop="1"], a[data-action]')).forEach(el => {
         if (el.matches('[data-dashboard-grip]')) return;
         el.setAttribute('data-stop', '1');
@@ -7945,8 +7946,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('audit-section', `${auditToday} events today`);
       if (typeof updateReviewSectionSummary === 'function') updateReviewSectionSummary();
       else { const rq = document.getElementById('review-queue-count'); setSectionSummary('review-queue-section', textOrDash(rq && rq.textContent)); }
-      const nous = document.getElementById('nous-mode-badge');
-      setSectionSummary('nous-section', textOrDash(nous && nous.textContent));
+      const nousRq = document.getElementById('nous-research-question');
+      const nousRqText = nousRq && !nousRq.hidden ? nousRq.textContent : '';
+      if (nousRqText) setSectionSummary('nous-section', nousRqText);
+      else { const nousSum = document.getElementById('nous-section-summary'); if (nousSum) { nousSum.innerHTML = ''; nousSum.title = ''; nousSum.removeAttribute('aria-label'); } }
       setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(window._kbCache || _kbCache || {})));
       const contrib = document.getElementById('contributors-status-badge');
       setSectionSummary('contributors-section', textOrDash(contrib && contrib.textContent));
@@ -20974,7 +20977,7 @@ function burnAreaChart() {
     function renderNous() {
       if (!strategyLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
-      const badge = document.getElementById('nous-mode-badge');
+      const rqEl = document.getElementById('nous-research-question');
       if (!panel || !_nousCache) return;
       const s = _nousCache.status || {};
       const ledger = _nousCache.ledger || [];
@@ -20983,22 +20986,24 @@ function burnAreaChart() {
       const scope = s.scope || 'governor';
       const phases = s.phases || {};
 
-      const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
-      const modeLabels = { observe: 'Observing', suggest: 'Suggesting', evolve: 'Evolving' };
+      const rq = String(s.researchQuestion || '').trim();
+      const setRq = (text) => {
+        if (!rqEl) return;
+        rqEl.textContent = text;
+        rqEl.title = text;
+        rqEl.hidden = !text;
+        if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);
+      };
 
       // Not configured server-side: explain what the lab is instead of a
       // control surface whose actions would all fail.
       if (s.status === 'not_configured') {
-        if (badge) { badge.textContent = 'not configured'; badge.style.background = 'var(--muted)'; badge.style.color = 'var(--bg)'; }
+        setRq('');
         panel.innerHTML = _nousExplainerCard();
         return;
       }
 
-      if (badge) {
-        badge.textContent = `${modeLabels[mode] || mode} · ${scope}`;
-        badge.style.background = modeColors[mode] || 'var(--muted)';
-        badge.style.color = 'white';
-      }
+      setRq(rq);
 
       // Update sidebar config — only show at ACMM L4+
       const NOUS_SIDEBAR_MIN_LEVEL = 4;
