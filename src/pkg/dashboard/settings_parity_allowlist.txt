@@ -377,6 +377,7 @@ knowledge.layers[].path # TODO #11854
 knowledge.layers[].shared # TODO #11854
 knowledge.layers[].type # TODO #11854
 knowledge.layers[].url # TODO #11854
+knowledge.primer.max_bytes # TODO #11854
 knowledge.primer.max_facts # TODO #11854
 knowledge.primer.merge_strategy # TODO #11854
 knowledge.primer.priority[] # TODO #11854
