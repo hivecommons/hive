@@ -1,0 +1,1 @@
+- Fixed the hub advancing and re-arming a new upgrade target for an auto-upgrade hive whose upgrade was merely slow (#12142): stale-upgrade recovery now leaves the target alone while the spoke's latest heartbeat still reports `Upgrading`, so a slow rollout no longer triggers extra rolls on top of the load that slowed it. Stuck-upgrade alerting is unchanged.

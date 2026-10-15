@@ -151,6 +151,57 @@ func TestTriggerAutoUpgradesRecoversStaleManualUpgrade(t *testing.T) {
 	}
 }
 
+// staleAutoUpgradeTarget runs triggerAutoUpgrades for an AutoUpgrade hive whose
+// latch is past staleUpgradeTimeout while a newer SHA exists, and returns the
+// armed heartbeat target and the registry entry afterwards.
+func staleAutoUpgradeTarget(t *testing.T, spokeReportsUpgrading bool) (string, RegistryEntry) {
+	t.Helper()
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	installScriptedKubectl(t)
+
+	remote := ClusterConfig{ID: "remote", InCluster: false, KubeconfigPath: "/tmp/kc", Context: "ctx"}
+	saveSaaSHive(&SaaSHive{ID: "auto-1", Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "remote"})
+	resetSHACaches(t)
+	latestSHAMu.Lock()
+	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "newer99"}
+	latestSHAMu.Unlock()
+
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "auto-1", GitBranch: "v2", GitHash: "old1234", Upgrading: true,
+		UpgradeTarget: "fc32ae4", UpgradeStartedAt: time.Now().Add(-2 * time.Hour),
+		SpokeReportedUpgrading: spokeReportsUpgrading,
+		LastHeartbeat:          time.Now().UTC().Add(-30 * time.Second).Format(time.RFC3339),
+	}}
+
+	s.triggerAutoUpgrades()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.heartbeatUpgrade["auto-1"], s.registry.Hives[0]
+}
+
+func TestTriggerAutoUpgradesStaleMidRolloutDoesNotAdvance(t *testing.T) {
+	armed, entry := staleAutoUpgradeTarget(t, true)
+	if entry.UpgradeTarget != "fc32ae4" {
+		t.Errorf("a spoke still reporting Upgrading must keep its target, got %q", entry.UpgradeTarget)
+	}
+	if armed != "" {
+		t.Errorf("a mid-rollout spoke must not be re-armed, heartbeatUpgrade = %q", armed)
+	}
+	if !entry.Upgrading || time.Since(entry.UpgradeStartedAt) < 119*time.Minute {
+		t.Errorf("the latch and its start clock must be untouched so stuck-upgrade alerting is unchanged, got Upgrading=%v started %v ago", entry.Upgrading, time.Since(entry.UpgradeStartedAt))
+	}
+}
+
+func TestTriggerAutoUpgradesStaleNotUpgradingStillAdvances(t *testing.T) {
+	armed, entry := staleAutoUpgradeTarget(t, false)
+	if entry.UpgradeTarget != "newer99" || armed != "newer99" {
+		t.Errorf("a stale upgrade the spoke is not rolling must advance to latest, target=%q armed=%q", entry.UpgradeTarget, armed)
+	}
+}
+
 // TestTriggerAutoUpgradesRecoversStaleDailyModeHiveHeldBySchedule pins the
 // #2496 half of the restructure: a daily-mode hive that already fired today is
 // held by the schedule gate ("already upgraded today") — but staleness
