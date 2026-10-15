@@ -9,6 +9,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -389,6 +390,19 @@ func TestRecordReviewEvidenceCI(t *testing.T) {
 		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", green)
 		if again := mustLoadBundle(t, root, "h1"); again.Hash != b.Hash || !again.CI.CapturedAt.Equal(b.CI.CapturedAt) {
 			t.Fatalf("unchanged verdict rewrote the bundle: %+v", again.CI)
+		}
+
+		// Same checks from the other source (GraphQL batch fills details_url,
+		// REST fills html_url): still nothing written.
+		greenWithURLs := []*gh.CheckRun{
+			evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "build", "completed", "success"),
+		}
+		for i, cr := range greenWithURLs {
+			cr.HTMLURL = gh.Ptr(fmt.Sprintf("https://example.com/runs/%d", i))
+		}
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", greenWithURLs)
+		if again := mustLoadBundle(t, root, "h1"); again.Hash != b.Hash {
+			t.Fatalf("URL-only difference rewrote the bundle: %+v", again.CI)
 		}
 
 		// A changed verdict is recorded.
