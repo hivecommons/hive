@@ -84,7 +84,7 @@ The kick path records a `LaunchRecord` (`pkg/tokens/launch.go`) each time the go
 
 `pkg/dashboard/collect/launch_cost.go` joins those records against the same `UsageEvent` timeline `/api/repo-cost` uses, with the same pricing table and the same honesty rules:
 
-- A launch is an *opening* event: usage is owned by the most recent recorded launch for the same agent, until the next launch or `LaunchOwnershipMax` (6h), whichever comes first. Usage before an agent's first retained launch, past the horizon, or outside the 24h window is `unattributed`; backends without a per-message timeline land in `backend_unsupported`. Σ `by_launch` + `unattributed` + `backend_unsupported` == total.
+- A launch is an *opening* event: usage is owned by the most recent recorded launch for the same agent, until the next launch or `LaunchOwnershipMax` (6h), whichever comes first. Usage before an agent's first retained launch, past the horizon, or outside the repo-cost window (14 days) is `unattributed`; backends without a per-message timeline land in `backend_unsupported`. Σ `by_launch` + `unattributed` + `backend_unsupported` == total.
 - `by_ref` aggregates every launch that named a ref. `launches` is the repeat-spend counter (how many kicks named it, including kicks that produced no usage), `head_shas` lists the distinct PR heads launched against, `launch_tokens` / `launch_usd` are the undivided totals of every launch naming the ref (upper bound), and `share_tokens` / `share_usd` split each launch evenly across the refs it named (exact for single-PR review kicks).
 - USD is `null` when nothing was attributed — never `$0.00`.
 - `?ref=owner/repo#N` narrows `by_ref` and `by_launch` to one work item; totals stay whole-window.
