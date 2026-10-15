@@ -34308,9 +34308,11 @@ function burnAreaChart() {
     // told operators to reconcile it.
     function renderGovLegacyLiteLLM() {
       const litellm = (_configState.data && _configState.data.litellm) || {};
+      const diverged = legacyLiteLLMDivergence(litellm);
       return `
-        <details id="legacy-litellm-section" class="card-inset mt-4">
-          <summary class="fw-semibold">Legacy LiteLLM endpoint (governor.litellm)${litellm.endpoint ? ' — ' + esc(litellm.endpoint) : ' — not set'}</summary>
+        <details id="legacy-litellm-section" class="card-inset mt-4"${diverged ? ' open' : ''}>
+          <summary class="fw-semibold">${diverged ? '⚠ ' : ''}Legacy LiteLLM endpoint (governor.litellm)${litellm.endpoint ? ' — ' + esc(litellm.endpoint) : ' — not set'}</summary>
+          <div id="legacy-litellm-divergence">${renderLegacyLiteLLMDivergence(diverged)}</div>
           <p class="text-muted fs-sm mt-2">
             The pre-gateways LiteLLM settings for the built-in <code>litellm</code> backend. When a gateway named
             <code>litellm</code> exists in the list above, agents use that gateway and this block only backs older
@@ -34321,6 +34323,50 @@ function burnAreaChart() {
           </p>
           ${renderGovLiteLLM(litellm)}
         </details>`;
+    }
+
+    // legacyLiteLLMDivergence returns {legacy, gateway} when a gateway named
+    // "litellm" is configured AND the legacy governor.litellm.endpoint points
+    // somewhere else — the #9945 state, where pre-#11794 builds sent the
+    // gateway's key to the legacy URL. null when they agree, when either side
+    // is unset, or when the gateway list has not loaded yet.
+    function legacyLiteLLMDivergence(litellm) {
+      const legacyURL = String(litellm && litellm.endpoint || '').trim();
+      if (!legacyURL) return null;
+      const gw = (_gateways || []).find(g => g && String(g.name || '').toLowerCase() === 'litellm');
+      const gatewayURL = gw ? String(gw.endpoint || '').trim() : '';
+      if (!gatewayURL) return null;
+      const norm = u => u.replace(/\/+$/, '').toLowerCase();
+      if (norm(legacyURL) === norm(gatewayURL)) return null;
+      return { legacy: legacyURL, gateway: gatewayURL };
+    }
+
+    function renderLegacyLiteLLMDivergence(diverged) {
+      if (!diverged) return '';
+      return `<div class="fs-sm mt-2" style="color:var(--red)" data-legacy-litellm-diverged>
+            ⚠ This legacy endpoint (<code>${esc(diverged.legacy)}</code>) is not the <code>litellm</code> gateway listed above
+            (<code>${esc(diverged.gateway)}</code>). Hives on builds before #11794 send the gateway's key to this legacy URL, so
+            inference fails with a 401 even though the gateway's Test passes. Set the Endpoint URL below to
+            <code>${esc(diverged.gateway)}</code> or clear it, then press Save.
+          </div>`;
+    }
+
+    // refreshLegacyLiteLLMDivergence re-evaluates the warning once the async
+    // gateway list arrives (renderGovLegacyLiteLLM paints before loadGateways
+    // resolves) and after a gateway save repoints the legacy block.
+    function refreshLegacyLiteLLMDivergence() {
+      const section = document.getElementById('legacy-litellm-section');
+      if (!section) return;
+      const litellm = (_configState.data && _configState.data.litellm) || {};
+      const diverged = legacyLiteLLMDivergence(litellm);
+      const host = document.getElementById('legacy-litellm-divergence');
+      if (host) host.innerHTML = renderLegacyLiteLLMDivergence(diverged);
+      const summary = section.querySelector('summary');
+      if (summary) {
+        const text = summary.textContent.replace(/^⚠\s*/, '');
+        summary.textContent = (diverged ? '⚠ ' : '') + text;
+      }
+      if (diverged) section.open = true;
     }
 
     // ---- vLLM / llm-d discovery auth (#4217) --------------------------------
@@ -34507,6 +34553,7 @@ function burnAreaChart() {
           .map(g => g.name)
           .filter(name => name);
         renderGatewaysList();
+        refreshLegacyLiteLLMDivergence();
         // Guided jump from a method switch (maybeOpenMethodConfig): if we were
         // sent here to configure a specific kind, open a fresh add-form already
         // preset to it (endpoint/preset filled) so the user lands on the form,
@@ -34973,6 +35020,15 @@ function burnAreaChart() {
         }
         showToast('Gateway "' + payload.name + '" saved', 'success');
         closeGatewayForm();
+        // The server carries the legacy governor.litellm block along with the
+        // "litellm" gateway (gateways.go legacyFollowsGateway); mirror that in
+        // the loaded config so the legacy section and its divergence warning
+        // reflect the new endpoint without a page reload.
+        if (payload.kind === 'litellm' && String(payload.name).toLowerCase() === 'litellm' && _configState.data) {
+          _configState.data.litellm = Object.assign({}, _configState.data.litellm || {}, { endpoint: payload.endpoint });
+          const legacyInput = document.querySelector('#legacy-litellm-section input[data-arg0="litellm"][data-arg1="endpoint"]');
+          if (legacyInput) legacyInput.value = payload.endpoint;
+        }
         loadGateways();
         // Close the loop back to the agent that sent the operator here: now
         // that the key is stored, re-run discovery for this method and push the
