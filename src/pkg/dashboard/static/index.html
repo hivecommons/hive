@@ -483,6 +483,8 @@
     #oc-gh-avatar-wrap { position: relative; }
     #oc-gh-avatar-wrap.layout-unsaved::after { content: ''; position: absolute; top: calc(-1 * var(--sp-1)); right: calc(-1 * var(--sp-1)); width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--amber); border: var(--line-width) solid var(--panel); box-shadow: var(--shadow-soft); }
     #oc-gh-avatar { object-fit: cover; cursor: pointer; border-color: var(--green); vertical-align: middle; }
+    .oc-gh-avatar-btn { display: inline-flex; flex: 0 0 auto; align-items: center; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: 0; cursor: pointer; border-radius: var(--r-pill); }
+    .oc-gh-avatar-btn:focus-visible { outline: 2px solid var(--accent, var(--green)); outline-offset: 2px; }
     .avatar-menu {
       position: absolute; right: 0; top: 34px; z-index: 9999;
       min-width: 240px; max-width: min(340px, calc(100vw - 24px));
@@ -4120,6 +4122,22 @@
         justify-content: flex-end;
         flex-wrap: nowrap;
       }
+      /* The right strip clips overflow so chips scroll instead of wrapping;
+         an absolutely-positioned dropdown inside it would be clipped away.
+         Pin the account menu to the viewport under the navbar instead and
+         let it scroll when taller than the phone screen. */
+      #oc-gh-user-menu {
+        position: fixed;
+        top: calc(var(--navbar-sticky-height) + env(safe-area-inset-top, 0px) + var(--sp-2));
+        right: max(var(--sp-5), env(safe-area-inset-right, 0px));
+        left: auto;
+        max-width: calc(100vw - 2 * max(var(--sp-5), env(safe-area-inset-right, 0px)));
+        max-height: calc(100vh - var(--navbar-sticky-height) - env(safe-area-inset-top, 0px) - var(--sp-7));
+        max-height: calc(100dvh - var(--navbar-sticky-height) - env(safe-area-inset-top, 0px) - var(--sp-7));
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        z-index: calc(var(--navbar-sticky-z) + 1);
+      }
       /* Topbar chips: resize through the nav-chip tokens so icon chips stay a
          square --tap-target and text chips keep their natural width. */
       .oc-topbar {
@@ -4591,6 +4609,22 @@
       }
       .oc-topbar-center {
         gap: var(--sp-2);
+      }
+      /* The right strip clips overflow so chips scroll instead of wrapping;
+         an absolutely-positioned dropdown inside it would be clipped away.
+         Pin the account menu to the viewport under the navbar instead and
+         let it scroll when taller than the phone screen. */
+      #oc-gh-user-menu {
+        position: fixed;
+        top: calc(var(--navbar-sticky-height) + env(safe-area-inset-top, 0px) + var(--sp-2));
+        right: max(var(--sp-5), env(safe-area-inset-right, 0px));
+        left: auto;
+        max-width: calc(100vw - 2 * max(var(--sp-5), env(safe-area-inset-right, 0px)));
+        max-height: calc(100vh - var(--navbar-sticky-height) - env(safe-area-inset-top, 0px) - var(--sp-7));
+        max-height: calc(100dvh - var(--navbar-sticky-height) - env(safe-area-inset-top, 0px) - var(--sp-7));
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        z-index: calc(var(--navbar-sticky-z) + 1);
       }
       .oc-topbar .nav-chip {
         flex: 0 0 auto;
@@ -5644,7 +5678,13 @@
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
-        <img id="oc-gh-avatar" class="nav-chip nav-chip--icon" src="" alt="" data-action="toggleGHUserMenu" title="GitHub account menu" aria-label="GitHub account menu">
+        <!-- The avatar sits inside a real <button>: iOS Safari only synthesises
+             a click from a tap on interactive elements, so a bare <img> with a
+             delegated document click handler never opened the menu on phones.
+             The button also gives the menu a keyboard-focusable trigger. -->
+        <button type="button" id="oc-gh-avatar-btn" class="oc-gh-avatar-btn" data-action="toggleGHUserMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-gh-user-menu" aria-label="GitHub account menu">
+          <img id="oc-gh-avatar" class="nav-chip nav-chip--icon" src="" alt="" title="GitHub account menu" aria-label="GitHub account menu">
+        </button>
         <div id="oc-gh-user-menu" class="avatar-menu" hidden>
           <div class="avatar-menu-identity"><span id="oc-gh-menu-user"></span><span id="oc-gh-menu-role" class="avatar-menu-role"></span></div>
           <div class="avatar-menu-label">This hive</div>
@@ -33139,6 +33179,7 @@ function burnAreaChart() {
     function hiveCloseGHUserMenu() {
       const menu = document.getElementById('oc-gh-user-menu');
       if (menu) menu.hidden = true;
+      if (typeof hiveSyncGHUserMenuTrigger === 'function') hiveSyncGHUserMenuTrigger();
     }
     function hiveDismissTopOverlay() {
       const candidates = [];
@@ -45289,15 +45330,23 @@ function burnAreaChart() {
       }
     }
 
+    function hiveSyncGHUserMenuTrigger() {
+      const menu = document.getElementById('oc-gh-user-menu');
+      const btn = document.getElementById('oc-gh-avatar-btn');
+      if (menu && btn) btn.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+    }
+
     function toggleGHUserMenu() {
       const menu = document.getElementById('oc-gh-user-menu');
       menu.hidden = !menu.hidden;
+      hiveSyncGHUserMenuTrigger();
     }
 
     document.addEventListener('click', function(e) {
       const wrap = document.getElementById('oc-gh-avatar-wrap');
       if (wrap && !wrap.contains(e.target)) {
         document.getElementById('oc-gh-user-menu').hidden = true;
+        hiveSyncGHUserMenuTrigger();
       }
     });
 
@@ -45340,7 +45389,7 @@ function burnAreaChart() {
         const label = btn.querySelector('.avatar-menu-backup-label');
         if (label) label.textContent = 'Backing up…';
       }
-      document.getElementById('oc-gh-user-menu').hidden = true;
+      hiveCloseGHUserMenu();
       showToast('Building encrypted backup — this can take a moment…', 'info');
       let url = null;
       try {
@@ -45381,7 +45430,7 @@ function burnAreaChart() {
     }
 
     async function ghLogout() {
-      document.getElementById('oc-gh-user-menu').hidden = true;
+      hiveCloseGHUserMenu();
       try {
         await fetch('/api/gh-user-auth/logout', { method: 'POST' });
       } catch (e) { /* ignore */ }
