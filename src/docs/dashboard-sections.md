@@ -433,15 +433,15 @@ Every open PR across the governed repos in one deterministic rank order (GET /ap
 
 ## Strategy Lab
 
-An experimental planner that tries out changes to how Hive works and records what it learned.
+An experimental planner that tries out code changes in your repositories and records what it learned.
 
-**What it tells you.** The Strategy Lab runs small experiments on Hive's own settings. It shows its goals, its plan and a ledger of results.
+**What it tells you.** The Strategy Lab runs small experiments on your repositories' code. It shows its goal, its plan and a ledger of results.
 
 **How the numbers are worked out.** The ledger lists each experiment and its result. The section has no other numbers.
 
-**What it is good for.** Try it only if you want Hive to tune itself. You approve or stop each experiment.
+**What it is good for.** Try it only if you want Hive to propose code changes on its own. You approve or stop each experiment.
 
-**Example.** The lab proposes a faster schedule for one worker for a day. You approve it, and the ledger records the result.
+**Example.** The lab proposes splitting a slow test package across two CI jobs. You approve it, and the ledger records the result.
 
 **When it appears.** Only when the Strategy Lab setting is on and the autonomy level is L4 or above. The autonomy level is how much Hive may do on its own, from L1 to L6.
 

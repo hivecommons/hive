@@ -1,9 +1,14 @@
 # Strategy Lab (Nous) operator guide
 
-The Strategy Lab — internally and in the API called **Nous** — is a controlled
-experiment framework for the governor. It records a baseline of hive behavior,
-designs experiments against governor (and optionally repo) parameters, and
-measures each one against that baseline before anything is applied for real.
+The Strategy Lab (the dashboard's **Experiment Lab**) — internally and in the
+API called **Nous** — is a controlled experiment framework for your
+repositories. It records a baseline of hive behavior, designs experiments
+against repo code (tests, CI config, automation scripts), and measures each
+one against that baseline before anything is applied for real.
+
+**The lab is repo-only.** Experiments on the hive's own runtime configuration
+(cadences, model assignments, thresholds) are out of scope and are not offered
+by the lab's UI or API.
 
 **There is no `nous:` block in `hive.yaml` or `hive.yaml.example`.** Despite
 what `src/README.md` used to say, Nous has no YAML config surface — it is
@@ -27,13 +32,13 @@ Nous state lives in three places, none of which is `hive.yaml`:
 
 | What | Where | Written by |
 |---|---|---|
-| Experiment ledger | `/var/run/nous/governor/ledger.json` | governor experiment loop, read at boot |
-| Learned principles | `/var/run/nous/governor/principles.json` | governor experiment loop, read at boot |
+| Experiment ledger | `/var/run/nous/governor/ledger.json` | experiment loop, read at boot (the path is historical; it holds repo experiments) |
+| Learned principles | `/var/run/nous/governor/principles.json` | experiment loop, read at boot |
 | Baseline snapshots | `/data/nous/snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` |
-| Mode, scope, goals, output mode, fast-fail bounds, schedule, controllable knobs | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard config dialog or direct API calls |
+| Mode, goals, output mode, repo targets, fast-fail bounds, schedule | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard config dialog or direct API calls |
 
 The in-memory `Config` map (goals/repos/output/fast_fail/schedule/
-controllables/principles sections) is **not currently persisted back to disk
+principles sections) is **not currently persisted back to disk
 across a process restart** — it is rebuilt from defaults each time the hive
 boots, while `loadNousState()` in `cmd/hive/main.go` reseeds only the ledger,
 principles, and snapshot count from the files above. Re-apply dashboard
@@ -42,7 +47,7 @@ configuration after a restart if you rely on non-default values.
 ## Experiment lifecycle
 
 1. **Collecting** — a fresh hive starts in this phase. Every evaluation cycle
-   that has a governor state writes a baseline snapshot
+   writes a baseline snapshot
    (`/data/nous/snapshots/<epoch-ms>.json`) with queue depth, MTTR, SLA
    violations, agents kicked, and token totals. The `NousBaselineTarget`
    constant (672 snapshots) is treated as "enough baseline" by the dashboard
@@ -50,11 +55,12 @@ configuration after a restart if you rely on non-default values.
 2. **Observing** — once at least one snapshot exists, phase auto-advances to
    `observing` (`refreshStatus()` in `pkg/dashboard/deps.go`).
 3. **Framing → Design → Design Review → Executing → Analysis → Findings
-   Review → Extraction** — the full per-scope phase sequence
+   Review → Extraction** — the full phase sequence
    (`NOUS_PHASES` in the dashboard JS) that a live experiment iteration walks
-   through. Phase and iteration are reported per scope (`governor`, `repo`)
-   through `GET /api/nous/phase` and the `phases` field the governor process
-   publishes into `NousState.Status`.
+   through. Phase and iteration are reported through `GET /api/nous/phase` and
+   the `phases.repo` block of `GET /api/nous/status`. Any other scope block the
+   experiment loop publishes into `NousState.Status` is dropped from the
+   response.
 4. **Gate decision** — a phase can pause for an operator decision. The
    dashboard surfaces this via `GET /api/nous/gate-pending`; an operator (or
    an owner-role automation) responds with
@@ -66,7 +72,7 @@ configuration after a restart if you rely on non-default values.
    proposal (`NousState.Status["pending"]`) shows Apply/Reject buttons in the
    dashboard, backed by `POST /api/nous/approve` and `POST /api/nous/abort`.
    A running experiment can be stopped early with the same Abort action,
-   which reverts the governor to its pre-experiment configuration.
+   which withdraws the proposed repo change.
 
 ## Trust ladder (mode)
 
@@ -75,21 +81,21 @@ required). The dashboard's trust-ladder widget documents the three modes:
 
 | Mode | Behavior |
 |---|---|
-| `observe` | Data collection only — governor configuration is never changed. |
+| `observe` | Data collection only — nothing is proposed or changed. |
 | `suggest` | Nous designs experiments but every proposal requires operator approval via `nous_approve`/`nous_abort` before it runs. |
 | `evolve` | Nous runs approved-pattern experiments autonomously and distills durable results into principles without per-experiment approval. |
 
 ## Scope
 
-Set with `PUT /api/nous/scope {"scope": "governor|repo|both"}` (owner role
-required):
+The lab is **repo-only**: experiments propose repo code changes (tests, CI
+config, automation scripts) and always require approval regardless of trust
+level. There is no scope selector in the dashboard, and `GET /api/nous/status`
+always reports `"scope": "repo"`.
 
-- `governor` — experiments adjust governor parameters (cadences, model
-  assignments, thresholds).
-- `repo` — experiments propose repo code changes (tests, CI config,
-  automation scripts). Repo-scope experiments always require approval
-  regardless of trust level, per the dashboard's own scope description.
-- `both` — alternates between governor- and repo-scope experiments.
+`PUT /api/nous/scope` is kept only for backward compatibility (owner role
+required). `{"scope": "repo"}` returns 200; any other value — including the
+former `governor` and `both` — returns `400 scope must be "repo": the
+Experiment Lab is repo-only` and leaves state untouched.
 
 ## Configuring goals, output, and bounds
 
@@ -100,19 +106,17 @@ endpoint, all requiring owner role and all triggering `refreshAndPersist()`:
 
 | Endpoint | Section | Fields (dashboard defaults shown) |
 |---|---|---|
-| `PUT /api/nous/config/goals` | `goals` | Governor and repo research questions — free-text hypotheses (e.g. "Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?"). |
+| `PUT /api/nous/config/goals` | `goals` | `repoGoal` — the free-text research question (e.g. "Can we cut CI time by 20% by sharding the slowest test package?"). A legacy `governorGoal` field is accepted but ignored. |
 | `PUT /api/nous/config/output` | `output` | Output mode — `state-only` (files + dashboard only), `issue` (opens a GitHub issue per proposal), or `issue+pr` (issue and PR pair); plus `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything Nous creates. |
-| `PUT /api/nous/config/repos` | `repos` | Which repos from `projectRepos` are eligible targets for repo-scope experiments. |
+| `PUT /api/nous/config/repos` | `repos` | Which repos from `projectRepos` are eligible experiment targets. |
 | `PUT /api/nous/config/fast-fail` | `fast_fail` | `queue_depth_max` (default 30), `mttr_max_minutes` (default 180), `budget_burn_rate_max_pct` (default 110) — see below. |
 | `PUT /api/nous/config/schedule` | `schedule` | `experiment_duration_hours` (default 4), `baseline_hours` (default 4), `cooldown_hours` (default 2). |
-| `PUT /api/nous/config/controllables` | `controllables` | Which governor knobs (cadences, models, thresholds) Nous is allowed to vary, each with an enabled flag and a type-appropriate range/enum. |
+| `PUT /api/nous/config/controllables` | `controllables` | Legacy endpoint, no longer used by the dashboard; it still stores whatever body it receives. |
 | `PUT /api/nous/config/principles` | `principles` | Principle-store settings (confidence threshold, decay rate) surfaced alongside the accumulated principle list. |
 | `DELETE /api/nous/principles/{id}` | — | Invalidates (removes) a single learned principle. Owner role required. |
 
-**Invariants** (governor parameters Nous will never touch, e.g. safety-
-critical thresholds) are shown read-only in the config dialog and are not
-settable through this API — they come from the campaign definition the
-governor experiment loop enforces, not from an operator-editable section.
+The config dialog no longer shows the controllable-knob or invariant lists;
+both described runtime-configuration experiments, which the lab does not run.
 
 ## Fast-fail bounds
 
@@ -158,8 +162,9 @@ an unreinforced principle loses confidence over time.
   `/var/run/nous/governor/principles.json`) even as ledger entries age out of
   the recent-history view.
 - **`GET /api/nous/status`** is the aggregate the dashboard polls to render
-  everything above in one call — mode, scope, phase, per-scope phase detail,
-  snapshot counts, and any pending proposal or active experiment.
+  everything above in one call — mode, phase, repo phase detail, snapshot
+  counts, the `researchQuestion`, and any pending proposal or active
+  experiment. `scope` is always `"repo"`.
 
 If `deps.Nous` is `nil` (nous state failed to initialize), `status` returns
 `{"status": "not_configured"}`, `ledger`/`principles` return empty arrays, and
@@ -172,9 +177,9 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
    pack), so the Strategy Lab section is visible in the dashboard sidebar.
 2. Leave mode at the default `observe` and let the hive run — no action is
    needed here. Snapshots accumulate automatically once per evaluation cycle.
-3. Open the Strategy Lab panel's gear icon to set a governor research
-   question (`PUT /api/nous/config/goals`) describing what you want Nous to
-   optimize.
+3. Open the Strategy Lab panel's gear icon to set the research question
+   (`PUT /api/nous/config/goals`) describing what you want Nous to optimize
+   in your repositories.
 4. Once the baseline progress bar reports sufficient coverage, switch mode to
    `suggest` (`PUT /api/nous/mode {"mode": "suggest"}`). Review each proposal
    that appears under "Pending Proposal" and Apply or Reject it.
@@ -186,8 +191,8 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 
 - No `nous:` key in `hive.yaml` or `hive.yaml.example` — do not add one to an
   operator's config expecting it to be read; it is ignored.
-- No persistence of the `goals`/`output`/`fast_fail`/`schedule`/
-  `controllables` config sections across a process restart beyond the ledger,
+- No persistence of the `goals`/`output`/`fast_fail`/`schedule` config
+  sections across a process restart beyond the ledger,
   principles, and snapshot count already described above.
 - No environment-variable override for the confidence threshold or decay
   rate shown in the dashboard's Principle Store section — those fields exist

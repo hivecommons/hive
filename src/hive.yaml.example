@@ -874,11 +874,11 @@ dashboard:
 #       env: EXAMPLE_TOKEN
 #       scope: config
 
-# Strategy Lab (Nous) — controlled experiment framework for the governor.
+# Strategy Lab (Nous) — repo-only controlled experiment framework.
 # There is intentionally NO `nous:` block here: Nous has no YAML config
 # surface. It is configured entirely at runtime through the dashboard
 # (Strategy Lab panel, ACMM level 4+) or the /api/nous/* endpoints.
-# See docs/strategy-lab.md for the experiment lifecycle, mode/scope,
+# See docs/strategy-lab.md for the experiment lifecycle, trust modes,
 # fast-fail bounds, schedule, and gate-decision flow.
 
 # Knowledge — 4-layer wiki system powered by llm-wiki (geronimo-iia/llm-wiki)

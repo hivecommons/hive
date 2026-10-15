@@ -9852,7 +9852,7 @@ func loadNousState(logger *slog.Logger) *dashboard.NousState {
 func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string) *dashboard.NousState {
 	state := &dashboard.NousState{
 		Mode:   "observe",
-		Scope:  "governor",
+		Scope:  dashboard.NousScopeRepo,
 		Phase:  "collecting",
 		Status: make(map[string]interface{}),
 		Config: make(map[string]interface{}),

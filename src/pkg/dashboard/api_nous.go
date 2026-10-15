@@ -11,40 +11,45 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deps.Nous.Mu.Lock()
-	status := make(map[string]interface{}, len(s.deps.Nous.Status))
+	status := make(map[string]interface{}, len(s.deps.Nous.Status)+2)
 	for k, v := range s.deps.Nous.Status {
 		status[k] = v
 	}
 	goals := s.deps.Nous.Config["goals"]
-	scope, _ := status["scope"].(string)
-	if scope == "" {
-		scope = s.deps.Nous.Scope
-	}
 	s.deps.Nous.Mu.Unlock()
-	status["researchQuestion"] = nousResearchQuestion(goals, scope)
+	// The Experiment Lab is repo-only: the reported scope is always "repo"
+	// and any governor phase block published by the experiment loop is
+	// dropped so the lab never surfaces governor data.
+	status["scope"] = NousScopeRepo
+	status["phases"] = nousRepoOnlyPhases(status["phases"])
+	status["researchQuestion"] = nousResearchQuestion(goals)
 	jsonResponse(w, status)
 }
 
-// nousResearchQuestion picks the stored research question for the active
-// scope; "both" prefers the governor question and falls back to the repo one.
-func nousResearchQuestion(goals interface{}, scope string) string {
+// nousRepoOnlyPhases returns phases restricted to the repo scope. A missing
+// or malformed phases block yields an empty object rather than nil so the
+// dashboard can index it unconditionally.
+func nousRepoOnlyPhases(phases interface{}) map[string]interface{} {
+	out := map[string]interface{}{}
+	m, ok := phases.(map[string]interface{})
+	if !ok {
+		return out
+	}
+	if repo, ok := m[NousScopeRepo]; ok {
+		out[NousScopeRepo] = repo
+	}
+	return out
+}
+
+// nousResearchQuestion returns the stored repo research question. The
+// legacy governorGoal field, if still present in goals, is ignored.
+func nousResearchQuestion(goals interface{}) string {
 	m, ok := goals.(map[string]interface{})
 	if !ok {
 		return ""
 	}
-	gov, _ := m["governorGoal"].(string)
 	repo, _ := m["repoGoal"].(string)
-	gov, repo = strings.TrimSpace(gov), strings.TrimSpace(repo)
-	if strings.EqualFold(scope, "repo") {
-		return repo
-	}
-	if gov != "" {
-		return gov
-	}
-	if strings.EqualFold(scope, "both") {
-		return repo
-	}
-	return ""
+	return strings.TrimSpace(repo)
 }
 
 func (s *Server) handleNousLedger(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +127,10 @@ func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated", "mode": body.Mode})
 }
 
+// handleNousScope keeps the legacy PUT /api/nous/scope endpoint for
+// compatibility, but the Experiment Lab is repo-only: "repo" is the only
+// accepted value and anything else (including the former "governor" and
+// "both") is rejected with 400.
 func (s *Server) handleNousScope(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -135,18 +144,18 @@ func (s *Server) handleNousScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body.Scope = sanitizeString(body.Scope)
-	if body.Scope == "" {
-		jsonError(w, "scope is required", http.StatusBadRequest)
+	body.Scope = strings.ToLower(sanitizeString(body.Scope))
+	if body.Scope != NousScopeRepo {
+		jsonError(w, `scope must be "repo": the Experiment Lab is repo-only`, http.StatusBadRequest)
 		return
 	}
 
 	if s.deps.Nous != nil {
-		s.deps.Nous.Scope = body.Scope
+		s.deps.Nous.Scope = NousScopeRepo
 	}
 
-	s.auditFromRequest(r, "nous_set_scope", auditDetail("scope", body.Scope), "")
-	okResponse(w, map[string]string{"status": "updated", "scope": body.Scope})
+	s.auditFromRequest(r, "nous_set_scope", auditDetail("scope", NousScopeRepo), "")
+	okResponse(w, map[string]string{"status": "updated", "scope": NousScopeRepo})
 }
 
 func (s *Server) handleNousPhase(w http.ResponseWriter, r *http.Request) {

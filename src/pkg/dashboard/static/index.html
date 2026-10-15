@@ -5541,7 +5541,7 @@
         <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
       </div>
       <div id="nous-sidebar-config" data-feature="strategy_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
-        <div><span id="nous-sb-scope" style="font-weight:600"></span> · <span id="nous-sb-mode"></span></div>
+        <div><span id="nous-sb-mode"></span></div>
         <div id="nous-sb-phase" style="opacity:0.8"></div>
       </div>
       <div class="oc-agent-actions" aria-label="Agent actions">
@@ -7048,7 +7048,7 @@
       'review-queue-section': { heading: 'Review', help: "Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order." },
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
-      'nous-section': { heading: 'Strategy Lab', help: 'An experimental planner that tries out changes to how Hive works and records what it learned.' },
+      'nous-section': { heading: 'Strategy Lab', help: 'An experimental planner that tries out code changes in your repositories and records what it learned.' },
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
@@ -22029,8 +22029,8 @@ function burnAreaChart() {
     }
 
     function _nousExplainerCard() {
-      return emptyStateCard('🧪', 'Strategy Lab — controlled experiments on your hive’s strategy',
-        'The Strategy Lab is the hive’s strategist: it designs controlled experiments on governor strategy — cadences, model assignments, thresholds — and measures each one against a recorded baseline of hive behavior. ' +
+      return emptyStateCard('🧪', 'Strategy Lab — controlled experiments on your repositories',
+        'The Strategy Lab is the hive’s strategist: it designs controlled experiments on your repositories’ code — tests, CI config, automation scripts — and measures each one against a recorded baseline of hive behavior. Every repo experiment is proposed as a pull request and always needs your approval before it lands. ' +
         '<strong>Observe</strong> only collects baseline data, <strong>Suggest</strong> proposes experiments for your approval, and <strong>Evolve</strong> runs them autonomously, distilling proven changes into principles. ' +
         'To get started, leave it in Observe while it builds a baseline (it needs a few days of snapshots), then switch to Suggest to review its first proposals.');
     }
@@ -22044,7 +22044,6 @@ function burnAreaChart() {
       const ledger = _nousCache.ledger || [];
       const principles = _nousCache.principles || [];
       const mode = s.mode || 'observe';
-      const scope = s.scope || 'governor';
       const phases = s.phases || {};
 
       const rq = String(s.researchQuestion || '').trim();
@@ -22071,24 +22070,14 @@ function burnAreaChart() {
       const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
       const currentACMM = window._lastStatus ? (window._lastStatus.acmmLevel || 0) : 0;
       const sbConfig = document.getElementById('nous-sidebar-config');
-      const sbScope = document.getElementById('nous-sb-scope');
       const sbMode = document.getElementById('nous-sb-mode');
       const sbPhase = document.getElementById('nous-sb-phase');
       if (sbConfig) {
         sbConfig.style.display = currentACMM >= NOUS_SIDEBAR_MIN_LEVEL ? '' : 'none';
-        if (sbScope) sbScope.textContent = scope;
         if (sbMode) { sbMode.textContent = mode; sbMode.style.color = modeColors[mode] || 'var(--muted)'; }
         if (sbPhase) {
-          const parts = [];
-          if (scope === 'governor' || scope === 'both') {
-            const gp = (phases.governor || {}).phase || 'IDLE';
-            parts.push('gov:' + gp);
-          }
-          if (scope === 'repo' || scope === 'both') {
-            const rp = (phases.repo || {}).phase || 'IDLE';
-            parts.push('repo:' + rp);
-          }
-          sbPhase.textContent = parts.join(' · ');
+          const rp = (phases.repo || {}).phase || 'IDLE';
+          sbPhase.textContent = 'repo:' + rp;
         }
       }
 
@@ -22106,7 +22095,7 @@ function burnAreaChart() {
       for (const m of ['observe', 'suggest', 'evolve']) {
         const active = m === mode ? ` active-${m}` : '';
         const titles = {
-          observe: 'Data collection only — governor unchanged',
+          observe: 'Data collection only — no changes proposed',
           suggest: 'Experiments require your approval',
           evolve: 'Fully autonomous experimentation',
         };
@@ -22114,30 +22103,16 @@ function burnAreaChart() {
       }
       html += '</div>';
 
-      // Scope toggle
-      html += '<div class="nous-mode-toggle" style="margin-bottom:14px">';
-      const scopeTitles = {
-        governor: 'Experiment with governor config (cadences, models, thresholds)',
-        repo: 'Experiment with repo code (always requires approval)',
-        both: 'Alternate between governor and repo experiments',
-      };
-      for (const sc of ['governor', 'repo', 'both']) {
-        const active = sc === scope ? ' active-suggest' : '';
-        html += `<button class="nous-mode-btn${active}" title="${scopeTitles[sc]}" data-action="nousSetScope" data-scope="${sc}" style="${sc === scope ? 'background:#7c3aed;color:white' : ''}">${sc.charAt(0).toUpperCase() + sc.slice(1)}</button>`;
-      }
-      html += '</div>';
-
-      // Phase progress per scope
+      // Phase progress (the lab is repo-only)
       const NOUS_PHASES = ['INIT', 'FRAMING', 'DESIGN', 'DESIGN_REVIEW', 'EXECUTING', 'ANALYSIS', 'FINDINGS_REVIEW', 'EXTRACTION'];
       const NOUS_PHASE_COUNT = NOUS_PHASES.length;
-      const phaseScopes = scope === 'both' ? ['governor', 'repo'] : [scope];
-      for (const ps of phaseScopes) {
-        const phaseInfo = phases[ps] || { phase: 'IDLE', iteration: 0 };
+      {
+        const phaseInfo = phases.repo || { phase: 'IDLE', iteration: 0 };
         if (phaseInfo.phase !== 'IDLE') {
           const phaseIdx = NOUS_PHASES.indexOf(phaseInfo.phase);
           const phasePct = phaseIdx >= 0 ? Math.round(((phaseIdx + 1) / NOUS_PHASE_COUNT) * 100) : 0;
           html += `<div style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-4)">`;
-          html += `<strong>${ps}</strong>: ${phaseInfo.phase} (iteration ${phaseInfo.iteration})`;
+          html += `<strong>repo</strong>: ${phaseInfo.phase} (iteration ${phaseInfo.iteration})`;
           html += `<div class="nous-progress"><div class="nous-progress-fill" style="width:${phasePct}%;background:#7c3aed"></div></div>`;
           html += '</div>';
         }
@@ -22233,7 +22208,7 @@ function burnAreaChart() {
         html += `<span>Queue limit: ${exp.fastFail.queueMax}</span>`;
         html += `<span>MTTR limit: ${exp.fastFail.mttrMax}min</span>`;
         html += '</div>';
-        html += `<button class="hv-btn btn-danger nous-btn nous-btn-abort" data-action="nousAbort" title="Immediately stop the running experiment and revert the governor to its pre-experiment configuration. Results collected so far will be saved for analysis.">Abort Experiment</button>`;
+        html += `<button class="hv-btn btn-danger nous-btn nous-btn-abort" data-action="nousAbort" title="Immediately stop the running experiment and withdraw its proposed repo change. Results collected so far will be saved for analysis.">Abort Experiment</button>`;
         html += '</div>';
       }
 
@@ -22254,7 +22229,7 @@ function burnAreaChart() {
           html += `<div style="font-size:0.72rem;color:var(--yellow)">Predicted: ${escapeHtml(JSON.stringify(p.predicted))}</div>`;
         }
         html += '<div style="margin-top:10px">';
-        html += '<button class="hv-btn btn-primary nous-btn nous-btn-approve" data-action="nousApprove" title="Approve this experiment proposal and start running it. The governor will apply the proposed parameter changes for the configured experiment duration.">Apply</button>';
+        html += '<button class="hv-btn btn-primary nous-btn nous-btn-approve" data-action="nousApprove" title="Approve this experiment proposal and start running it. Nous will open the proposed repo change and measure it for the configured experiment duration.">Apply</button>';
         html += '<button class="hv-btn btn-danger nous-btn nous-btn-reject" data-action="nousReject" title="Reject this experiment proposal. Nous will discard it and generate a new hypothesis based on collected data.">Reject</button>';
         html += '</div></div>';
       }
@@ -22334,18 +22309,6 @@ function burnAreaChart() {
       } catch (e) { showToast('Failed to change mode: ' + e.message, 'error'); }
     }
 
-    async function nousSetScope(scope) {
-      if (!strategyLabEnabled()) return;
-      try {
-        await fetch('/api/nous/scope', {
-          method: 'PUT', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ scope }),
-        });
-        fetchNousStatus();
-        showToast(`Scope set to: ${scope}`, 'success');
-      } catch (e) { showToast('Failed to change scope: ' + e.message, 'error'); }
-    }
-
     async function nousApprove() {
       if (!strategyLabEnabled()) return;
       try {
@@ -22368,7 +22331,7 @@ function burnAreaChart() {
 
     async function nousAbort() {
       if (!strategyLabEnabled()) return;
-      if (!(await hiveConfirm('Abort the active experiment? This will revert governor to default behavior.'))) return;
+      if (!(await hiveConfirm('Abort the active experiment? Its proposed repo change will be withdrawn.'))) return;
       try {
         const r = await fetch('/api/nous/abort', { method: 'POST' });
         const j = await r.json();
@@ -22416,12 +22379,9 @@ function burnAreaChart() {
 
       const camp = cfg.campaign || {};
       const repoCamp = cfg.repoCampaign || {};
-      const govCamp = cfg.govCampaign || {};
       const output = cfg.output || {};
       const ff = camp.fast_fail || {};
       const sched = camp.schedule || {};
-      const controllables = camp.controllables || [];
-      const invariants = camp.invariants || [];
       const principles = cfg.principles || [];
       const projectRepos = cfg.projectRepos || [];
       const repoTargets = cfg.repoTargets || [];
@@ -22459,9 +22419,7 @@ function burnAreaChart() {
       // Goal Definition
       h += '<div class="nous-config-section">';
       h += '<h3>🎯 Goal Definition</h3>';
-      h += '<label title="The hypothesis Nous will test through governor-scope experiments. Example: Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?">Governor Research Question</label>';
-      h += `<textarea id="nc-gov-goal" rows="2" title="Describe what you want Nous to optimize in the governor configuration (cadences, models, thresholds)">${escapeHtml(camp.research_question || '')}</textarea>`;
-      h += '<label style="margin-top:10px" title="The hypothesis Nous will test through repo-scope experiments (code changes). These always require approval regardless of trust level.">Repo Research Question</label>';
+      h += '<label title="The hypothesis Nous will test through repo experiments (code changes). These always require approval regardless of trust level. Example: Can we cut CI time by 20% by sharding the slowest test package?">Research Question</label>';
       h += `<textarea id="nc-repo-goal" rows="2" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(repoCamp.research_question || '')}</textarea>`;
       h += '</div>';
 
@@ -22487,7 +22445,7 @@ function burnAreaChart() {
 
       // Repo Targets
       h += '<div class="nous-config-section">';
-      h += '<h3>📂 Repo Targets <span style="font-weight:400;color:var(--muted);font-size:0.72rem">(for repo-scope experiments)</span></h3>';
+      h += '<h3>📂 Repo Targets</h3>';
       h += '<div style="display:flex;flex-wrap:wrap;gap:var(--sp-2)">';
       for (const repo of projectRepos) {
         const active = repoTargets.includes(repo) ? ' active' : '';
@@ -22519,28 +22477,6 @@ function burnAreaChart() {
       h += '</div>';
       h += '</div>';
 
-      // Controllable Knobs
-      h += '<div class="nous-config-section">';
-      h += '<h3>🎛️ Controllable Knobs</h3>';
-      h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-2)">';
-      for (const knob of controllables) {
-        const enabled = knob.enabled !== false;
-        const rangeInfo = knob.type === 'int' ? ` (${knob.min}–${knob.max})` : knob.type === 'enum' ? ` (${(knob.values || []).length} options)` : '';
-        h += `<label class="nous-config-check"><input type="checkbox" data-knob="${escapeHtml(knob.name)}" ${enabled ? 'checked' : ''}> <code>${escapeHtml(knob.name)}</code><span class="var-meta">${escapeHtml(rangeInfo)}</span></label>`;
-      }
-      h += '</div>';
-      h += '</div>';
-
-      // Invariants (display only)
-      h += '<div class="nous-config-section">';
-      h += '<h3>🔒 Invariants <span style="font-weight:400;color:var(--muted);font-size:0.72rem">(never touched by experiments)</span></h3>';
-      h += '<div style="display:flex;flex-wrap:wrap;gap:var(--sp-2)">';
-      for (const inv of invariants) {
-        h += `<span style="display:inline-block;padding:4px 10px;border-radius:var(--r);font-size:var(--fs-sm);background:rgba(220,38,38,0.1);color:#f87171;border:1px solid rgba(220,38,38,0.2)">${escapeHtml(inv)}</span>`;
-      }
-      h += '</div>';
-      h += '</div>';
-
       // Principle Store
       h += '<div class="nous-config-section">';
       h += '<h3>🧠 Principle Store</h3>';
@@ -22568,7 +22504,7 @@ function burnAreaChart() {
       // Save / Cancel
       h += '<div class="nous-config-btn-bar">';
       h += '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig" title="Discard all changes and close this dialog">Cancel</button>';
-      h += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Goals, output mode, repo targets, fast-fail bounds, timing, controllable knobs, and principle settings will be updated.">Save Configuration</button>';
+      h += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Research question, output mode, repo targets, fast-fail bounds, timing, and principle settings will be updated.">Save Configuration</button>';
       h += '</div>';
 
       h += '</div>';
@@ -22611,12 +22547,11 @@ function burnAreaChart() {
       const errors = [];
 
       // Goals
-      const govGoal = document.getElementById('nc-gov-goal')?.value;
       const repoGoal = document.getElementById('nc-repo-goal')?.value;
       try {
         const r = await fetch('/api/nous/config/goals', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ governorGoal: govGoal, repoGoal: repoGoal }),
+          body: JSON.stringify({ repoGoal }),
         });
         if (!r.ok) errors.push('goals: ' + (await r.json()).error);
       } catch (e) { errors.push('goals: ' + e.message); }
@@ -22668,16 +22603,6 @@ function burnAreaChart() {
         });
         if (!r.ok) errors.push('schedule: ' + (await r.json()).error);
       } catch (e) { errors.push('schedule: ' + e.message); }
-
-      // Controllables
-      const enabledKnobs = Array.from(document.querySelectorAll('[data-knob]:checked')).map(cb => cb.dataset.knob);
-      try {
-        const r = await fetch('/api/nous/config/controllables', {
-          method: 'PUT', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ enabled: enabledKnobs }),
-        });
-        if (!r.ok) errors.push('controllables: ' + (await r.json()).error);
-      } catch (e) { errors.push('controllables: ' + e.message); }
 
       // Principle settings
       const prinThresh = document.getElementById('nc-prin-thresh')?.value;
@@ -28664,7 +28589,6 @@ function burnAreaChart() {
         case 'ocToggleSidebarGroup': ocToggleSidebarGroup(el); break;
         case 'switchConfigTab': switchConfigTab(el.dataset.tab || el.dataset.arg0); break;
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
-        case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleContributorPRBaseSync': toggleContributorPRBaseSync(el); break;
         case 'toggleSentinelEnabled': toggleSentinelEnabled(el); break;

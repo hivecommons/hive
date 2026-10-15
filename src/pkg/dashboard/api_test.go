@@ -950,7 +950,7 @@ func TestHandleNousMode_Empty(t *testing.T) {
 func TestHandleNousScope(t *testing.T) {
 	s, deps := apiServer(t)
 	deps.Nous = &NousState{}
-	rec := doPut(s, "/api/nous/scope", map[string]interface{}{"scope": "org"})
+	rec := doPut(s, "/api/nous/scope", map[string]interface{}{"scope": "repo"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d", rec.Code)
 	}
