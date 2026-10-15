@@ -43,10 +43,9 @@ const (
 //   - publication       (Config.Publication: the audit campaign's authorized
 //     issue publisher, default off, ACMM L3+ effective gate, plus the private
 //     disclosure channel security-sensitive findings route to)
-//   - runs.external.flue (Enabled + Mode of the report-only Flue binding, #8361;
-//     endpoint and workflow version are yaml-only)
+//   - runs.external.flue (Enabled + Mode of the report-only Flue binding, #8361)
 //   - runs.external.omp  (Enabled + Mode of the report-only OMP workbench host,
-//     #8361 step 9; workflow version is yaml-only)
+//     #8361 step 9)
 //   - turn.pr_follow_up (Config.Turn.PRFollowUp.Enabled, PR follow-up session
 //     resume and handoff notes, hivecommons/hive#9583, default off)
 //   - issues, jev, duplicate_sweep, policies, turn.pr_follow_up windows and
@@ -55,6 +54,9 @@ const (
 //     supersession_sweep, compliance.posture_checks, planning, swarm
 //     and tool_approval.inbox_path (featuresPlatformBody in
 //     api_governor_features_platform.go)
+//   - runs.checkpoints, runs.wait_*, runs.triage scalars, runs.spektacular.recheck
+//     scalars, the Flue endpoint, every workflow_version and the vibe-kanban
+//     host (featuresRunsBody in api_governor_features_runs.go)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -114,12 +116,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		PublicationPrivateChannel *string `json:"publicationPrivateChannel"`
 		PublicationOwner          *string `json:"publicationOwner"`
 		// #8361: the report-only Flue external-execution binding. Endpoint
-		// and workflow version stay yaml-only; the dialog flips the toggle
-		// and picks the mode.
+		// and workflow version are in featuresRunsBody.
 		ExtFlueEnabled *bool   `json:"extFlueEnabled"`
 		ExtFlueMode    *string `json:"extFlueMode"`
 		// #8361 step 9: the OMP workbench host, an independent toggle beside
-		// the Flue one. Workflow version stays yaml-only.
+		// the Flue one. Workflow version is in featuresRunsBody.
 		ExtOMPEnabled *bool   `json:"extOmpEnabled"`
 		ExtOMPMode    *string `json:"extOmpMode"`
 
@@ -149,6 +150,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		featuresOpsBody
 		featuresPlatformBody
+		featuresRunsBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -272,11 +274,17 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	applyRuns, err := body.featuresRunsBody.prepare(s.deps.Config)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// --- apply ---
 	cfg := s.deps.Config
 	applyOps(cfg)
 	applyPlatform(cfg)
+	applyRuns(cfg)
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -478,8 +486,9 @@ func claimsTTLsResponse(c config.ClaimsConfig) map[string]interface{} {
 // only the server's ExternalExec seam knows (#8361).
 func (s *Server) featuresLinkedView() map[string]interface{} {
 	return map[string]interface{}{
-		"extFlueLinked": s.externalExecLinked(extExecEngineFlue),
-		"extOmpLinked":  s.externalExecLinked(extExecEngineOMP),
+		"extFlueLinked":       s.externalExecLinked(extExecEngineFlue),
+		"extOmpLinked":        s.externalExecLinked(extExecEngineOMP),
+		"extVibeKanbanLinked": s.externalExecLinked(extExecEngineVibeKanban),
 	}
 }
 
@@ -582,6 +591,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		out[k] = v
 	}
 	for k, v := range featuresPlatformResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresRunsResponse(cfg) {
 		out[k] = v
 	}
 	return out
