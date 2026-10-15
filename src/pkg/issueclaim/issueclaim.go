@@ -80,6 +80,12 @@ type Claim struct {
 	// Source says where the claim was read from: SourceMarker, SourceAssignee
 	// or SourceLease.
 	Source string
+	// Kind is the marker's kind= value (human, agent, contributor, external)
+	// when the claim came from a key/value marker; empty otherwise.
+	Kind string
+	// Hive is the marker's hive= value — the hive that recorded the claim —
+	// when present; empty otherwise.
+	Hive string
 }
 
 // Live reports whether the claim still stands at now: it has an identity and
@@ -158,7 +164,7 @@ func parseKeyValueMarker(body string) (Claim, bool) {
 			return Claim{}, false
 		}
 	}
-	return Claim{Identity: identity, StartedAt: started, ExpiresAt: expires, Source: SourceMarker}, true
+	return Claim{Identity: identity, StartedAt: started, ExpiresAt: expires, Source: SourceMarker, Kind: vals["kind"], Hive: vals["hive"]}, true
 }
 
 func parseLegacyMarker(body string) (Claim, bool) {

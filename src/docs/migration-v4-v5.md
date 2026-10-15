@@ -104,7 +104,8 @@ breaking requirements for an existing v4 config.
    ([UPGRADE.md](../../UPGRADE.md#hosted-hub-domain-cutover)).
 5. Compare local overlays with the v5 deployment assets you actually use:
    `src/deploy/k8s/deployment.yaml`, `src/docker-compose.yaml`, or the Podman
-   Quadlet docs linked from the root [README](../../README.md#quick-start).
+   standalone runtime guides for [Docker Compose](quickstart-docker-compose.md)
+   and [Podman](quickstart-podman.md).
 
 Do **not** add an out-of-band recursive `chown -R /data`. The v5 upgrade notes
 state that the entrypoint repairs the fixed root-phase paths non-recursively and
@@ -113,7 +114,7 @@ that no v5.0.0 `/data` schema migration is recorded.
 ## Kubernetes deployment
 
 The repository documents raw Kubernetes manifests under `src/deploy/k8s/` and a
-root README [Kubernetes deployment](../../README.md#kubernetes-deployment). It
+[Kubernetes deployment guide](kubernetes-deployment.md). It
 does **not** document a Helm chart in `src/docs`; if you maintain a private Helm
 chart, apply the same image, secret, ConfigMap, PVC, probe, and capability
 changes to your chart values/templates.
@@ -146,8 +147,8 @@ changes to your chart values/templates.
 
 ## Docker Compose deployment
 
-The root README documents Docker Compose as the default standalone runtime
-([Quick Start: Docker Compose](../../README.md#quick-start-docker-compose)).
+The [Docker Compose quick start](quickstart-docker-compose.md) documents Docker
+Compose as the default standalone runtime.
 
 1. Back up the Compose volume or bind mount that stores `/data`.
 2. Keep your existing `src/.env` and `src/hive.yaml`, then compare them with the
@@ -170,7 +171,7 @@ The root README documents Docker Compose as the default standalone runtime
 ## Podman / single-host deployment
 
 The repository's documented single-host Podman path is Quadlet, not a separate
-single-binary release ([Quick Start: Podman](../../README.md#quick-start-podman)).
+single-binary release ([Quick Start: Podman](quickstart-podman.md)).
 The same image-selection rules apply: use `stable` for production v5,
 `candidate` for a v5 canary, or a digest for reproducibility.
 

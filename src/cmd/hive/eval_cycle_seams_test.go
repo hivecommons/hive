@@ -523,22 +523,26 @@ func TestPartitionKickableAgents_ReportsSkippedWithReason(t *testing.T) {
 		"ondemand":   {OnDemand: true},
 		"supervisor": {},
 	}
-	paused := map[string]bool{"supervisor": true}
+	paused := map[string]bool{"supervisor": true, "reviewer": true}
+	triggers := map[string]string{"reviewer": "thrash-breaker"}
+	agents["reviewer"] = config.AgentConfig{}
 
 	kickable, skipped := partitionKickableAgents(
-		[]string{"scanner", "ondemand", "supervisor", "architect"},
+		[]string{"scanner", "ondemand", "supervisor", "architect", "reviewer"},
 		agents,
 		map[string]bool{"architect": true},
 		func(n string) bool { return paused[n] },
+		func(n string) string { return triggers[n] },
 	)
 
 	if len(kickable) != 1 || kickable[0] != "scanner" {
 		t.Errorf("kickable = %v, want [scanner]", kickable)
 	}
 	want := map[string]bool{
-		"ondemand (on-demand)":          true,
-		"supervisor (operator-paused)":  true,
-		"architect (on-demand-in-pack)": true,
+		"ondemand (on-demand)":                true,
+		"supervisor (operator-paused)":        true,
+		"architect (on-demand-in-pack)":       true,
+		"reviewer (paused by thrash-breaker)": true,
 	}
 	if len(skipped) != len(want) {
 		t.Fatalf("skipped = %v, want %d entries", skipped, len(want))
@@ -561,5 +565,22 @@ func TestFilterKickableAgents_StillReturnsNilWhenNothingKickable(t *testing.T) {
 	)
 	if got != nil {
 		t.Errorf("filterKickableAgents = %v, want nil", got)
+	}
+}
+
+// TestPausedSkipReason_NamesRealTrigger pins #12015: the eval-cycle
+// agents_skipped label names the real pause trigger instead of blaming an
+// operator for a breaker pause.
+func TestPausedSkipReason_NamesRealTrigger(t *testing.T) {
+	cases := map[string]string{
+		"":                 "operator-paused",
+		"dashboard-api":    "operator-paused",
+		"thrash-breaker":   "paused by thrash-breaker",
+		" login-detector ": "paused by login-detector",
+	}
+	for trigger, want := range cases {
+		if got := pausedSkipReason(trigger); got != want {
+			t.Errorf("pausedSkipReason(%q) = %q, want %q", trigger, got, want)
+		}
 	}
 }

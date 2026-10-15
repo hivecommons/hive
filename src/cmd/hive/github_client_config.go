@@ -318,6 +318,10 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRMerged,
 				fmt.Sprintf("repo=%s, number=%d, path=%s, actor=%s", obs.Repo, obs.Number, path, obs.Actor),
 				github.AttributionAgentGovernor, obs.Repo, obs.Number)
+			// #12007: link the PR's Fixes issues first (real created_at /
+			// merged_at), so issues started before issue-side recording
+			// existed close instead of lingering as stale in-progress.
+			backfillMergedPROnIssues(b.dashSrv, b.cfg.Project.Org, obs)
 			recordObservedMerge(b.dashSrv, b.cfg.Project.Org, obs.Repo, obs.Number, obs.ObservedAt, obs.Actor, path)
 		case github.PRStateClosed:
 			path := obs.Attribution

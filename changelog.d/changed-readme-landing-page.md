@@ -1,0 +1,1 @@
+- The root README is now a plain-language landing page, with the Docker Compose, Podman, and Kubernetes walkthroughs moved into dedicated `src/docs/` guides.

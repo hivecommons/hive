@@ -1,8 +1,14 @@
 # Hive introduction
 
-Hive is a governed fleet of AI coding agents for maintaining real GitHub and forge repositories. A hive helps with triage, fixes, reviews, release operations, and operational follow-up by watching the work a project already has — issues, pull requests, review queues, and health signals — then routing appropriate tasks to agents while deterministic guardrails handle filtering, permissions, merge eligibility, audit trails, and policy. Maintainers set the autonomy boundary through the Governor and ACMM levels, so Hive can range from advisory triage to carefully gated fixes and reviews without turning repository control over to an unconstrained model.
+Hive is a co-maintainer for your GitHub project that never sleeps. Point it at a repo and it watches the things that pile up — issues, pull requests, failing CI, CVEs, dependabot alerts — then sends AI coding agents (Claude, Copilot, Gemini, Goose…) to deal with them: triage, fixes, reviews, releases.
 
-Hive is for maintainers of busy open source projects who need help keeping queues moving, and for platform teams that want a repeatable operations plane for agent work across many repositories. It is especially useful when the hard part is not invoking one agent, but coordinating many agents with clear ownership, safety checks, and a path for human oversight.
+You decide how much it is allowed to do. Humans keep every decision that matters; agents do the chores.
+
+A terminal agent is a power tool: you hold it, aim it, and it stops when you stop. Hive is the workshop that runs the power tools for you on three rules:
+
+1. **Short-lived agents.** Every task starts a fresh agent with a clean context and ends it.
+2. **External context.** What the agent needs to know lives outside the model and is re-injected each time.
+3. **Prompts driven by deterministic facts.** Instructions are templates filled from real data, not hand-tuned prose.
 
 ## Core concepts
 
@@ -23,7 +29,7 @@ Hive is for maintainers of busy open source projects who need help keeping queue
 ## Ways to run Hive
 
 - **Hosted Hive Hub:** start at [`https://hive.hivecommons.dev`](https://hive.hivecommons.dev) and follow the [hosted onboarding guide](hosted-hub.md) for the no-cluster path.
-- **Self-hosted:** run your own spoke on [Kubernetes](../../README.md#kubernetes-deployment) or [Podman](../../README.md#quick-start-podman), or operate a [self-hosted hub](hub-deployment.md) for a fleet.
+- **Self-hosted:** run your own spoke on [Kubernetes](kubernetes-deployment.md), [Docker Compose](quickstart-docker-compose.md), or [Podman](quickstart-podman.md), or operate a [self-hosted hub](hub-deployment.md) for a fleet.
 
 ## Get started
 

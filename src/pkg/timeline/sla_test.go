@@ -83,6 +83,20 @@ func TestDeriveSLASamples_SkipsPRKeyedJourneysAndOpenEnds(t *testing.T) {
 	}
 }
 
+func TestSlaIssueJourney_PRWithStartedIsNotIssue(t *testing.T) {
+	pr := Journey{Ref: "hive#900", Stages: map[Kind]*Stage{
+		KindPROpened: {FirstAt: ms(slaNow.Add(-3 * time.Hour)), Attrs: map[string]string{AttrPRRef: "hive#900"}},
+		KindStarted:  {FirstAt: ms(slaNow.Add(-2 * time.Hour))},
+		KindMerged:   {FirstAt: ms(slaNow.Add(-time.Hour))},
+	}}
+	if slaIssueJourney(&pr) {
+		t.Fatal("PR journey with a stray started stage must not be an issue journey")
+	}
+	if samples := DeriveSLASamples([]Journey{pr}); len(samples) != 0 {
+		t.Fatalf("samples = %+v, want none", samples)
+	}
+}
+
 func TestPercentile_NearestRank(t *testing.T) {
 	vals := []float64{5, 1, 4, 2, 3}
 	cases := []struct {

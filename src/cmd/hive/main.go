@@ -2278,11 +2278,13 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
 	autoMergeOpts := automerge.Options{
-		Logger:              b.logger,
-		MergerAuthorizer:    trustedMergerFunc(b.cfg),
-		TrustedAuthorizer:   trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy: trustedAuthorPolicyFunc(b.cfg),
-		SentinelLabel:       func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		Logger:                 b.logger,
+		MergerAuthorizer:       trustedMergerFunc(b.cfg),
+		TrustedAuthorizer:      trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(b.cfg),
+		ContributorLanePolicy:  contributorLanePolicyFunc(b.cfg),
+		ContributorLaneVerdict: contributorLaneVerdictFunc(b.cfg, b.logger),
+		SentinelLabel:          func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -2687,6 +2689,12 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// here, after lifecycle persistence is enabled, so every producer records
 	// into a persisted store (#9614).
 	b.applyGitHubClientDashboardHooks(b.ghClient)
+	// #12007: fold the last week of merged PRs onto their Fixes issues so a
+	// freshly upgraded spoke does not report already-merged work as stale
+	// in-progress, and start→PR / open→merge have samples on day one.
+	if b.ghClient != nil && b.dashSrv != nil {
+		go backfillRecentMergedPRs(b.ctx, b.ghClient, b.dashSrv, b.cfg.Project.Org, time.Now(), b.logger)
+	}
 
 	// Seed token sparkline history now that the dashboard server exists
 	if len(b.pendingTokenSeed) > 0 {
@@ -6783,7 +6791,12 @@ func runEvalCycle(
 	// log so "agents_due" names the agents that are actually about to be
 	// kicked; anything gated out is reported in "agents_skipped" with its
 	// reason rather than vanishing silently.
-	agentsDue, agentsSkipped := partitionKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused)
+	agentsDue, agentsSkipped := partitionKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused, func(name string) string {
+		if st, err := agentMgr.GetStatusFast(name); err == nil && st != nil {
+			return st.PausedTrigger
+		}
+		return ""
+	})
 
 	logger.Info("governor eval complete",
 		"mode", govState.Mode,
@@ -8511,10 +8524,12 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		*lastRun = now
 	}
 	opts := automerge.Options{
-		Logger:              logger,
-		MergerAuthorizer:    trustedMergerFunc(cfg),
-		TrustedAuthorizer:   trustedAuthorFunc(cfg),
-		TrustedAuthorPolicy: trustedAuthorPolicyFunc(cfg),
+		Logger:                 logger,
+		MergerAuthorizer:       trustedMergerFunc(cfg),
+		TrustedAuthorizer:      trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy:  contributorLanePolicyFunc(cfg),
+		ContributorLaneVerdict: contributorLaneVerdictFunc(cfg, logger),
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
@@ -8559,6 +8574,23 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 			result.Merged = append(result.Merged, trustedResult.Merged...)
 			if len(trustedResult.Merged) > 0 || trustedResult.Seen > 0 {
 				logger.Info("trusted-author automerge sweep complete", "seen", trustedResult.Seen, "merged", len(trustedResult.Merged), "skipped", trustedResult.Skipped)
+			}
+		}
+	}
+	remaining = automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
+	if remaining > 0 && opts.ContributorLanePolicy().Enabled {
+		laneResult, laneErr := automerge.SweepContributorLaneAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
+			MaxMerges: remaining,
+			Audit:     audit,
+		})
+		if laneErr != nil {
+			logger.Warn("contributor-lane automerge sweep failed", "error", laneErr)
+		} else {
+			result.Seen += laneResult.Seen
+			result.Skipped += laneResult.Skipped
+			result.Merged = append(result.Merged, laneResult.Merged...)
+			if len(laneResult.Merged) > 0 || laneResult.Seen > 0 {
+				logger.Info("contributor-lane automerge sweep complete", "seen", laneResult.Seen, "merged", len(laneResult.Merged), "skipped", laneResult.Skipped)
 			}
 		}
 	}

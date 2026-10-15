@@ -309,9 +309,14 @@ advanced into the merge path.
 | `auto_merge.trusted_authors.require_role` | `merger` | Minimum `dashboard.authorized_users` role the PR author must hold (`merger` or `owner`). |
 | `auto_merge.trusted_authors.require_github_permission` | `true` | Also require GitHub to report author write access; API errors fail closed. Fork PRs still need this check even if the setting is false. |
 | `auto_merge.trusted_authors.exclude_labels` | `hold`, `do-not-merge`, `needs-human` | Labels that keep a PR out of trusted-author auto-merge. |
+| `auto_merge.contributor_lane.enabled` | `true` | Enables the contributor-lane tier: Hive merges a green, soaked PR whose linked issue carries this hive's App-authored `hive:claim kind=contributor` marker naming the PR author. Default on because the hive already vetted and handed out that work; set `false` to make such PRs wait for a human `/lgtm` + `/approve`. See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
+| `auto_merge.contributor_lane.soak_minutes` | `120` | How long the current head must stay green before the tier merges it; a new push restarts the soak. `0` merges on the first green sweep. |
+| `auto_merge.contributor_lane.require_reviewer_verdict` | `true` | Require an approving aggregate reviewer verdict for the current head when a reviewer agent is configured. Hives with no reviewer agent treat the gate as satisfied. |
+| `auto_merge.contributor_lane.repos` | empty = all watched repos | Optional repo allow-list for the contributor-lane tier (bare name or `owner/repo`). |
+| `auto_merge.contributor_lane.exclude_labels` | `hold`, `do-not-merge`, `needs-human`, `blocked`, `needs-rebase` | Labels that keep a PR out of contributor-lane auto-merge (`do-not-merge/*` always excluded). |
 
-Owners can edit `auto_merge.trusted_authors.*` from **Settings → Features →
-Auto-Merge → Trusted-author auto-merge**. The dashboard writes the same
+Owners can edit `auto_merge.trusted_authors.*` and `auto_merge.contributor_lane.*`
+from **Settings → Features → Auto-Merge**. The dashboard writes the same
 owner-only `/api/config/auto-merge` overlay as the other auto-merge controls, so
 hosted spoke changes survive restarts without editing `hive.yaml`.
 

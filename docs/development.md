@@ -195,7 +195,8 @@ There is no public `just lint` recipe in the current root `Justfile`; use `go ve
 
 ## Running Hive locally
 
-The quickest operator path remains Docker Compose from the root README:
+The quickest operator path remains Docker Compose; see the full quick start in
+[`src/docs/quickstart-docker-compose.md`](../src/docs/quickstart-docker-compose.md):
 
 ```bash
 cp src/hive.yaml.example src/hive.yaml

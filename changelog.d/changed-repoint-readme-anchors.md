@@ -1,0 +1,1 @@
+- Documentation links that still referred to root README quick-start anchors now point at the dedicated Docker Compose, Podman, and Kubernetes guide pages.

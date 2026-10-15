@@ -80,8 +80,16 @@ func TestPollTmuxOutputForAgent_WiresThrashBreaker(t *testing.T) {
 	// Drive a burst past the threshold (5 in 60s). One extra line absorbs a
 	// tick landing mid-burst; unique suffixes keep every line a distinct diff
 	// entry. All land well inside thrashWindow.
+	// The lines must be real command OUTPUT starting with the helper's "⛔ "
+	// glyph (#12015): a typed/echoed marker is displayed text, which the
+	// breaker deliberately ignores. printf's octal escapes keep the typed
+	// command ASCII while the rendered output carries the glyph.
 	for i := 0; i < thrashThreshold+1; i++ {
-		paneInject(t, session, fmt.Sprintf("git push blocked: advisory mode (attempt %d)", i))
+		cmd := fmt.Sprintf(`printf '\342\233\224 git push blocked: advisory mode (attempt %d)\n'`, i)
+		if err := testTmuxCommand("send-keys", "-t", session, "-l", cmd).Run(); err != nil {
+			t.Fatalf("send-keys: %v", err)
+		}
+		_ = testTmuxCommand("send-keys", "-t", session, "Enter").Run()
 	}
 
 	// The trip happens on the tick AFTER the burst renders, and Pause runs in

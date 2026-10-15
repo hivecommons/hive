@@ -8416,6 +8416,15 @@ type AutoMergeConfig struct {
 	// author must be in authorized_users at the configured role, and by default
 	// GitHub must also report push/maintain/admin permission on the repository.
 	TrustedAuthors TrustedAuthorAutoMergeConfig `yaml:"trusted_authors,omitempty" json:"trusted_authors,omitempty"`
+	// ContributorLane merges PRs that THIS hive's contributor lane produced
+	// for a contributor it dispatched (the linked issue carries the hive's
+	// own `hive:claim kind=contributor` marker naming the PR author and this
+	// hive) once CI is green, the reviewer verdict approves and the head has
+	// soaked. Default ON: the maintainer already trusted the hive to hand the
+	// work out, so a green hive-produced PR waiting for a manual `/lgtm` is
+	// the stall the lane exists to remove (#11756, #11840 sat green for hours
+	// as `untrusted-author-role` / `not-app-authored`).
+	ContributorLane ContributorLaneAutoMergeConfig `yaml:"contributor_lane,omitempty" json:"contributor_lane,omitempty"`
 	// HumanMergePaths maps owner/repo to glob patterns (same syntax as
 	// intent.guardrail_path_patterns) for paths a person must merge. Unset
 	// means no such paths. This key only declares the paths; enforcement
@@ -8437,6 +8446,80 @@ type TrustedAuthorAutoMergeConfig struct {
 	RequireRole             string   `yaml:"require_role,omitempty" json:"require_role,omitempty"`
 	RequireGitHubPermission *bool    `yaml:"require_github_permission,omitempty" json:"require_github_permission,omitempty"`
 	ExcludeLabels           []string `yaml:"exclude_labels,omitempty" json:"exclude_labels,omitempty"`
+}
+
+// ContributorLaneAutoMergeConfig is the policy for the contributor-lane
+// auto-merge tier (auto_merge.contributor_lane.*). Every field is optional;
+// the zero value is the default-on policy described on each field.
+type ContributorLaneAutoMergeConfig struct {
+	// Enabled turns the tier on. nil/unset means ON (see
+	// AutoMergeConfig.ContributorLane for why the default is on); an explicit
+	// `enabled: false` disables it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// SoakMinutes is how long the head SHA must stay unchanged and green
+	// before the tier merges. 0/unset means DefaultContributorLaneSoakMinutes.
+	SoakMinutes int `yaml:"soak_minutes,omitempty" json:"soak_minutes,omitempty"`
+	// RequireReviewerVerdict requires an approving aggregate reviewer verdict
+	// for the current head whenever a reviewer agent is enabled. nil/unset
+	// means ON. A hive with no reviewer agent satisfies the gate vacuously.
+	RequireReviewerVerdict *bool `yaml:"require_reviewer_verdict,omitempty" json:"require_reviewer_verdict,omitempty"`
+	// Repos restricts the tier to these repositories (bare name or
+	// owner/repo). Empty means every watched repository.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// ExcludeLabels keeps a PR out of the tier. nil means
+	// DefaultContributorLaneExcludeLabels.
+	ExcludeLabels []string `yaml:"exclude_labels,omitempty" json:"exclude_labels,omitempty"`
+}
+
+// DefaultContributorLaneSoakMinutes is the contributor-lane soak when
+// auto_merge.contributor_lane.soak_minutes is unset: two hours of unchanged,
+// green head gives a maintainer who does want to look a realistic window.
+const DefaultContributorLaneSoakMinutes = 120
+
+// DefaultContributorLaneExcludeLabels is the contributor-lane exclude set when
+// auto_merge.contributor_lane.exclude_labels is unset.
+var DefaultContributorLaneExcludeLabels = []string{"hold", "do-not-merge", "needs-human", "blocked", "needs-rebase"}
+
+func (c ContributorLaneAutoMergeConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+func (c ContributorLaneAutoMergeConfig) EffectiveSoakMinutes() int {
+	if c.SoakMinutes <= 0 {
+		return DefaultContributorLaneSoakMinutes
+	}
+	return c.SoakMinutes
+}
+
+func (c ContributorLaneAutoMergeConfig) EffectiveRequireReviewerVerdict() bool {
+	return c.RequireReviewerVerdict == nil || *c.RequireReviewerVerdict
+}
+
+func (c ContributorLaneAutoMergeConfig) RepoSet() map[string]bool {
+	return repoListSet(c.Repos)
+}
+
+func (c ContributorLaneAutoMergeConfig) ExcludeLabelSet() map[string]bool {
+	labels := c.ExcludeLabels
+	if labels == nil {
+		labels = DefaultContributorLaneExcludeLabels
+	}
+	set := make(map[string]bool, len(labels))
+	for _, label := range labels {
+		label = strings.ToLower(strings.TrimSpace(label))
+		if label == "" {
+			continue
+		}
+		set[label] = true
+	}
+	return set
+}
+
+func (c ContributorLaneAutoMergeConfig) Validate() error {
+	if c.SoakMinutes < 0 {
+		return fmt.Errorf("auto_merge.contributor_lane.soak_minutes must be 0 (default) or greater, got %d", c.SoakMinutes)
+	}
+	return nil
 }
 
 // DefaultAutoMergeMinHeadAge is the fail-closed post-push quiet period used

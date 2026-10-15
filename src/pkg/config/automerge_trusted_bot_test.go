@@ -70,3 +70,42 @@ func TestTrustedAuthorAutoMergeConfigDefaultsAndValidation(t *testing.T) {
 		t.Fatal("explicit require_github_permission: false should be honored")
 	}
 }
+
+func TestContributorLaneAutoMergeConfigDefaultsAndValidation(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if !cfg.IsEnabled() {
+		t.Fatal("contributor-lane automerge must default on")
+	}
+	if got := cfg.EffectiveSoakMinutes(); got != DefaultContributorLaneSoakMinutes {
+		t.Fatalf("default soak = %d, want %d", got, DefaultContributorLaneSoakMinutes)
+	}
+	if !cfg.EffectiveRequireReviewerVerdict() {
+		t.Fatal("default require_reviewer_verdict must be true")
+	}
+	labels := cfg.ExcludeLabelSet()
+	for _, want := range DefaultContributorLaneExcludeLabels {
+		if !labels[want] {
+			t.Fatalf("default exclude labels = %v, missing %q", labels, want)
+		}
+	}
+	if len(cfg.RepoSet()) != 0 {
+		t.Fatalf("empty repos should yield empty set, got %v", cfg.RepoSet())
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("zero config should validate: %v", err)
+	}
+	if err := (ContributorLaneAutoMergeConfig{SoakMinutes: -1}).Validate(); err == nil {
+		t.Fatal("negative soak_minutes should fail validation")
+	}
+	off := false
+	cfg = ContributorLaneAutoMergeConfig{Enabled: &off, RequireReviewerVerdict: &off, SoakMinutes: 30, Repos: []string{" Widget ", ""}, ExcludeLabels: []string{"Hold", " "}}
+	if cfg.IsEnabled() || cfg.EffectiveRequireReviewerVerdict() || cfg.EffectiveSoakMinutes() != 30 {
+		t.Fatalf("explicit values not honored: %+v", cfg)
+	}
+	if repos := cfg.RepoSet(); !repos["widget"] || len(repos) != 1 {
+		t.Fatalf("RepoSet = %v, want lower-cased trimmed widget", repos)
+	}
+	if ex := cfg.ExcludeLabelSet(); !ex["hold"] || len(ex) != 1 {
+		t.Fatalf("ExcludeLabelSet = %v, want hold only", ex)
+	}
+}

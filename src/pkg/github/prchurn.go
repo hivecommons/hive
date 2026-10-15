@@ -123,6 +123,13 @@ type PRTerminalObservation struct {
 	ObservedAt  time.Time
 	Actor       string
 	Attribution string
+	// CreatedAt, URL and Issues are set on merged observations: the PR's
+	// real open instant and the same-repo issues it closes (Fixes/Closes),
+	// so the lifecycle timeline can backfill pr_opened/merged onto those
+	// issues with the PR's own timestamps (hivecommons/hive#12007).
+	CreatedAt time.Time
+	URL       string
+	Issues    []int
 }
 
 type PRTerminalObservedHook func(PRTerminalObservation)

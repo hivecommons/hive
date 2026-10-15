@@ -48,8 +48,9 @@ const (
 //   - runs.external.omp  (Enabled + Mode of the report-only OMP workbench host,
 //     #8361 step 9; workflow version is yaml-only)
 //   - turn.pr_follow_up (Config.Turn.PRFollowUp.Enabled, PR follow-up session
-//     resume and handoff notes, hivecommons/hive#9583, default off; max_age
-//     and retention stay yaml-only)
+//     resume and handoff notes, hivecommons/hive#9583, default off)
+//   - issues, jev, duplicate_sweep, policies, turn.pr_follow_up windows and
+//     turn.reentrant gates (featuresOpsBody in api_governor_features_ops.go)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
@@ -141,6 +142,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		RotationHighVolumeCadenceS *int                                      `json:"rotationHighVolumeCadenceS"`
 		RotationProviders          *map[string]config.ProviderRotationConfig `json:"rotationProviders"`
 		RotationAgents             *map[string]string                        `json:"rotationAgents"`
+
+		featuresOpsBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -254,9 +257,15 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		}
 		autonomyDemoteOn = canonical
 	}
+	applyOps, err := body.featuresOpsBody.prepare(s.deps.Config)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// --- apply ---
 	cfg := s.deps.Config
+	applyOps(cfg)
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -554,6 +563,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"retroMaxFixAttempts": retro.DefaultMaxFixAttempts,
 		"retroMaxKicks":       retro.DefaultMaxKicks,
 		"retroLongStallDays":  retro.DefaultLongStallDays,
+	}
+	for k, v := range featuresOpsResponse(cfg) {
+		out[k] = v
 	}
 	return out
 }

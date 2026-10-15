@@ -32,6 +32,36 @@ var blockedActionMarkers = []string{
 	"blocked by hive policy",
 }
 
+// blockedActionPrefix is the glyph bin/git-credential-hive.sh writes at the
+// start of every policy-wall stderr line. Requiring it at line start is what
+// separates a real blocked attempt from an agent merely DISPLAYING a file that
+// contains the marker text (#12015): git diff (+/-), grep -n (N:), cat of a
+// shell script (echo "⛔ …") or Go source ("git push blocked: …") all put
+// something other than the glyph first.
+const blockedActionPrefix = "⛔ "
+
+// paneGutterChars are the leading decorations agent TUIs draw in front of a
+// tool's output (Claude's "⎿", box-drawing rails, status bullets). They are
+// stripped so the helper's own stderr still matches when rendered inside a
+// tool-output block.
+const paneGutterChars = " \t│┃▌⎿●"
+
+// isBlockedActionLine reports whether a pane line is the credential helper's
+// (or proxy's) own policy-wall output rather than echoed file content.
+func isBlockedActionLine(line string) bool {
+	trimmed := strings.TrimLeft(ansiEscapeRe.ReplaceAllString(line, ""), paneGutterChars)
+	rest, ok := strings.CutPrefix(trimmed, blockedActionPrefix)
+	if !ok {
+		return false
+	}
+	for _, marker := range blockedActionMarkers {
+		if strings.Contains(rest, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 type thrashState struct {
 	times    []time.Time
 	lastTrip time.Time
@@ -41,14 +71,7 @@ type thrashState struct {
 // past the threshold, pauses the agent asynchronously (never inline: this is
 // called from the output-capture goroutine and Pause takes m.mu).
 func (m *Manager) checkBlockedThrash(agent, line string) {
-	matched := false
-	for _, marker := range blockedActionMarkers {
-		if strings.Contains(line, marker) {
-			matched = true
-			break
-		}
-	}
-	if !matched {
+	if !isBlockedActionLine(line) {
 		return
 	}
 	now := time.Now()
