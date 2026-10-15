@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,15 +30,57 @@ var (
 	jsArgRe  = regexp.MustCompile(`[(,]\s*([A-Za-z_]\w*)\s*[,)]`)
 )
 
-// jsClosure returns the page functions reachable from roots (by name, so
-// functions passed as callbacks count), except
-// those the harness stubs.
-func jsClosure(t *testing.T, html string, skip map[string]bool, roots ...string) string {
+// yourTurnPage is the once-per-process analysis of index.html that every
+// your-turn script assembly shares: the set of top-level function names and
+// the source of each hoisted const. The markup is an embedded, immutable file,
+// so the analysis cannot go stale between tests, and doing it per test cost
+// several seconds of regexp scanning over a multi-megabyte page under -race —
+// enough, across the 11566/11569/11716 tests, to push pkg/dashboard past the
+// 10-minute `go test` budget on CI (#12163).
+type yourTurnPageAnalysis struct {
+	html    string
+	defined map[string]bool
+	consts  []string
+}
+
+var (
+	yourTurnPageOnce sync.Once
+	yourTurnPageData yourTurnPageAnalysis
+)
+
+func yourTurnPage(t *testing.T) *yourTurnPageAnalysis {
 	t.Helper()
-	defined := map[string]bool{}
-	for _, m := range jsDeclRe.FindAllStringSubmatch(html, -1) {
-		defined[m[1]] = true
-	}
+	html := indexHTML(t)
+	yourTurnPageOnce.Do(func() {
+		defined := map[string]bool{}
+		for _, m := range jsDeclRe.FindAllStringSubmatch(html, -1) {
+			defined[m[1]] = true
+		}
+		type positioned struct {
+			at  int
+			src string
+		}
+		var consts []positioned
+		for _, name := range yourTurnPageConsts {
+			if at, src := jsConst(html, name); src != "" {
+				consts = append(consts, positioned{at, src})
+			}
+		}
+		sort.Slice(consts, func(i, j int) bool { return consts[i].at < consts[j].at })
+		srcs := make([]string, 0, len(consts))
+		for _, c := range consts {
+			srcs = append(srcs, c.src)
+		}
+		yourTurnPageData = yourTurnPageAnalysis{html: html, defined: defined, consts: srcs}
+	})
+	return &yourTurnPageData
+}
+
+// jsClosure returns the page functions reachable from roots (by name, so
+// functions passed as callbacks count), except those the harness stubs.
+// defined is the page's top-level function census from yourTurnPage.
+func jsClosure(t *testing.T, html string, defined, skip map[string]bool, roots ...string) string {
+	t.Helper()
 	seen := map[string]bool{}
 	var out []string
 	var visit func(name string)
@@ -64,16 +107,29 @@ func jsClosure(t *testing.T, html string, skip map[string]bool, roots ...string)
 }
 
 // jsConst returns the top-level `const NAME = …;` statement, or "" when the
-// page has none.
+// page has none. A plain substring scan, not a multiline-anchored regexp: the
+// page is over 3 MB and this runs once per hoisted const.
 func jsConst(html, name string) (int, string) {
-	re := regexp.MustCompile(`(?m)^    const ` + regexp.QuoteMeta(name) + `\b`)
-	loc := re.FindStringIndex(html)
-	if loc == nil {
+	needle := "\n    const " + name
+	start := -1
+	for from := 0; from < len(html); {
+		i := strings.Index(html[from:], needle)
+		if i < 0 {
+			break
+		}
+		end := from + i + len(needle)
+		if end >= len(html) || !isJSIdentByte(html[end]) {
+			start = from + i + 1
+			break
+		}
+		from = end
+	}
+	if start < 0 {
 		return -1, ""
 	}
 	depth := 0
 	var quote byte
-	for i := loc[0]; i < len(html); i++ {
+	for i := start; i < len(html); i++ {
 		c := html[i]
 		if quote != 0 {
 			if c == '\\' {
@@ -92,11 +148,15 @@ func jsConst(html, name string) (int, string) {
 			depth--
 		case ';':
 			if depth == 0 {
-				return loc[0], html[loc[0] : i+1]
+				return start, html[start : i+1]
 			}
 		}
 	}
 	return -1, ""
+}
+
+func isJSIdentByte(c byte) bool {
+	return c == '_' || c == '$' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 var yourTurnPageConsts = []string{
@@ -113,25 +173,14 @@ var yourTurnPageConsts = []string{
 // are the test's own JavaScript.
 func yourTurnPageScript(t *testing.T, skip map[string]bool, body string, roots ...string) string {
 	t.Helper()
-	html := indexHTML(t)
-	type positioned struct {
-		at  int
-		src string
-	}
-	var consts []positioned
-	for _, name := range yourTurnPageConsts {
-		if at, src := jsConst(html, name); src != "" {
-			consts = append(consts, positioned{at, src})
-		}
-	}
-	sort.Slice(consts, func(i, j int) bool { return consts[i].at < consts[j].at })
+	page := yourTurnPage(t)
 	var script strings.Builder
 	script.WriteString(yourTurnFakeBrowser)
-	for _, c := range consts {
-		script.WriteString(c.src)
+	for _, src := range page.consts {
+		script.WriteString(src)
 		script.WriteByte('\n')
 	}
-	script.WriteString(jsClosure(t, html, skip, roots...))
+	script.WriteString(jsClosure(t, page.html, page.defined, skip, roots...))
 	script.WriteString("\n")
 	script.WriteString(body)
 	return script.String()

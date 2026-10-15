@@ -434,7 +434,7 @@ Every open PR across the governed repos in one deterministic rank order (GET /ap
 
 An experimental planner that tries out changes to how Hive works and records what it learned.
 
-**What it tells you.** The Experiment Lab (formerly Strategy Lab) runs small experiments on Hive's own settings. It shows its goals, its plan and a ledger of results.
+**What it tells you.** The Experiment Lab runs small experiments on Hive's own settings. It shows its goals, its plan and a ledger of results. The header shows the research question you set in the gear dialog, if there is one; otherwise nothing appears beside the title. Mode (Observe, Suggest, Evolve) and scope (Governor, Repo, Both) are shown by the buttons inside the card, not in the header.
 
 **How the numbers are worked out.** The ledger lists each experiment and its result. The section has no other numbers.
 
@@ -442,7 +442,7 @@ An experimental planner that tries out changes to how Hive works and records wha
 
 **Example.** The lab proposes a faster schedule for one worker for a day. You approve it, and the ledger records the result.
 
-**When it appears.** Only when the Experiment Lab setting is on and the autonomy level is L4 or above. The autonomy level is how much Hive may do on its own, from L1 to L6.
+**When it appears.** Only when the Experiment Lab setting is on and the autonomy level is L3 or above. The autonomy level is how much Hive may do on its own, from L1 to L6. Turning the setting on adds the **Experiment Lab (nous)** sidebar entry and section on the next status refresh, without a page reload (#12076); the toggle's helper text names the L3 requirement. The parenthetical is the codename of the planner behind it, the same way the Inception entry reads "Inception (spektacular)".
 
 **Settings that change it.** `dashboard.experiment_lab: true` turns it on (`dashboard.strategy_lab` is a deprecated alias for one release). See [Experiment Lab](experiment-lab.md).
 

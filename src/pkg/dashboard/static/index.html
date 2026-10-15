@@ -3548,7 +3548,9 @@
     /* Nous Config Panel */
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
        (also reused by the kb modals via className); z-index stays. */
-    .nous-config-overlay { z-index: 1000; }
+    /* Same layer as .config-overlay: the fixed navbar (--navbar-sticky-z 9400)
+       used to draw over the dialog header on every viewport. */
+    .nous-config-overlay { z-index: 10000; }
     .nous-config-dialog { width: min(900px, calc(100vw - var(--modal-gap) - var(--modal-gap))); max-width: calc(100vw - var(--modal-gap) - var(--modal-gap)); height: min(82vh, 760px); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; padding: var(--sp-0); overflow: hidden; }
     .nous-config-dialog > h2 { flex: 0 0 auto; padding: var(--sp-8) var(--sp-8) var(--sp-0); }
     .nous-config-dialog > .nous-config-body { flex: 1 1 auto; min-height:0; overflow: auto; padding: var(--sp-6) var(--sp-8); }
@@ -3570,6 +3572,7 @@
     .nous-config-pill { margin: var(--sp-1); cursor: pointer; transition: all 0.15s; }
     .nous-config-pill.active { --pill-c: var(--accent); }
     .nous-config-pill:hover { border-color: var(--accent); }
+    .nous-config-pill:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
     .nous-config-output-modes { flex:0 0 auto; display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
     .nous-config-btn-bar { display: flex; justify-content: flex-end; gap: var(--sp-4); margin-top: var(--sp-6); }
     /* .nous-config-btn(-save/-cancel) — primary/ghost buttons (system recipe) */
@@ -3588,6 +3591,78 @@
     .nous-trust-step.current { font-weight: 700; }
     .nous-trust-step .step-label { font-weight: 600; display: block; margin-bottom: var(--sp-1); }
     .nous-trust-step .step-desc { color: var(--muted); font-size: 0.65rem; }
+    /* Experiment Lab Configuration → Data (reset) section (RFC #11585).
+       Self-contained so it can be appended to the dialog independently. */
+    .nous-reset-section h3 { color: var(--red); }
+    .nous-reset-counts { display: flex; flex-wrap: wrap; gap: var(--sp-5); margin-bottom: var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-reset-counts strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+    .nous-reset-actions { display: flex; flex-wrap: wrap; gap: var(--sp-4); align-items: center; }
+    .nous-reset-actions .hv-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .nous-reset-note { font-size: var(--fs-sm); margin-top: var(--sp-3); }
+
+    /* Experiment Lab configuration dialog (.nous-lab-*): the same recipe as
+       the Knowledge Sources modal (#12000) — a wide fixed-size shell whose
+       body is the single scroller, a sticky header with its own Close, a
+       footer for Cancel/Save, and every section rendered as a padded card
+       instead of a hairline-divided run of text. Sizing overrides live on
+       the .nous-lab-dialog modifier so the base .nous-config-dialog shell
+       (shared with the kb modals) keeps its 900px recipe. */
+    .nous-config-dialog.nous-lab-dialog { width: min(1480px, 94vw); height: min(92vh, 1100px); }
+    .nous-config-dialog.nous-lab-dialog > h2 { margin: var(--sp-0); padding: var(--sp-6) var(--sp-8); border-bottom: var(--line-width) solid var(--border); justify-content: space-between; gap: var(--sp-5); }
+    .nous-config-dialog.nous-lab-dialog > h2 > .nous-lab-title { display: inline-flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+    .nous-config-dialog.nous-lab-dialog > h2 > .hv-btn { flex: 0 0 auto; }
+    .nous-config-dialog.nous-lab-dialog > .nous-config-body { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-8) var(--sp-9) var(--sp-9); font-size: var(--fs-base); line-height: 1.5; }
+    .nous-config-dialog.nous-lab-dialog > .nous-config-footer.nous-config-btn-bar { margin-top: var(--sp-0); flex-wrap: wrap; }
+    .nous-lab-loading { text-align: center; color: var(--muted); padding: var(--sp-9); }
+    .nous-lab-error { color: var(--red); padding: var(--sp-7) var(--sp-8); }
+    .nous-lab-dialog .nous-config-section { margin: var(--sp-0); padding: var(--sp-7); background: var(--surface); border: var(--line-width) solid var(--line-subtle); border-bottom: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); min-width: 0; }
+    .nous-lab-card-head { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-6); }
+    .nous-lab-eyebrow { color: var(--muted); font-size: var(--fs-2xs); font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+    .nous-lab-dialog .nous-config-section h3 { font-size: var(--fs-md); margin: var(--sp-0); line-height: var(--lh-tight); }
+    .nous-lab-dialog .nous-config-section h3 .nous-lab-h3-note { font-weight: 400; color: var(--muted); font-size: var(--fs-sm); }
+    .nous-lab-card-desc { margin: var(--sp-0); color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; max-width: 80ch; }
+    .nous-lab-dialog .nous-config-section label { font-size: var(--fs-sm); line-height: 1.4; margin-bottom: var(--sp-3); }
+    .nous-lab-dialog .nous-config-section textarea { max-width: 100ch; min-height: 64px; line-height: 1.5; box-sizing: border-box; }
+    .nous-lab-field { display: flex; flex-direction: column; min-width: 0; }
+    .nous-lab-field + .nous-lab-field { margin-top: var(--sp-6); }
+    .nous-lab-dialog .nous-config-row, .nous-lab-dialog .nous-config-row-2 { gap: var(--sp-6); margin-bottom: var(--sp-0); }
+    .nous-lab-dialog .nous-config-row-2 { max-width: 80ch; }
+    .nous-lab-dialog .nous-config-row > div, .nous-lab-dialog .nous-config-row-2 > div { min-width: 0; }
+    .nous-lab-dialog .nous-config-row input[type="number"], .nous-lab-dialog .nous-config-row-2 input[type="number"] { box-sizing: border-box; }
+    .nous-config-output-note { font-size: var(--fs-base); line-height: 1.55; max-width: 90ch; }
+    .nous-lab-checks { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-6); }
+    /* Beats `.nous-config-section label { display: block }`, which was
+       flattening the flex row and dropping the checkbox/text gap. */
+    .nous-lab-dialog .nous-config-section .nous-config-check { display: flex; align-items: flex-start; gap: var(--sp-4); font-size: var(--fs-base); line-height: 1.5; margin: var(--sp-0); padding: var(--sp-2) var(--sp-0); }
+    .nous-lab-dialog .nous-config-check input[type="checkbox"] { flex: 0 0 auto; margin: calc((1.5em - 16px) / 2) var(--sp-0) var(--sp-0); }
+    .nous-lab-dialog .nous-config-check > span { min-width: 0; }
+    .nous-lab-dialog .nous-config-check code { font-size: var(--fs-sm); line-height: inherit; padding: var(--sp-0) var(--sp-2); vertical-align: baseline; }
+    .nous-lab-dialog .nous-config-check .var-meta { margin-left: var(--sp-2); }
+    .nous-lab-knobs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-2) var(--sp-6); }
+    .nous-lab-chips { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+    .nous-lab-dialog .nous-config-pill { margin: var(--sp-0); }
+    .nous-lab-chips-note { margin-top: var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-lab-empty { padding: var(--sp-6); text-align: center; color: var(--muted); font-size: var(--fs-sm); border: var(--line-width) dashed var(--border); border-radius: var(--r); }
+    .nous-lab-invariant { display: inline-block; padding: var(--sp-2) var(--sp-5); border-radius: var(--r-pill); font-size: var(--fs-sm); background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--red); border: var(--line-width) solid color-mix(in srgb, var(--red) 25%, transparent); }
+    .nous-lab-principles { margin-top: var(--sp-6); max-height: 240px; overflow-y: auto; border-top: var(--line-width) solid var(--line-subtle); }
+    .nous-lab-dialog .nous-config-principle-row { font-size: var(--fs-base); padding: var(--sp-3) var(--sp-0); gap: var(--sp-5); }
+    .nous-lab-dialog .nous-config-principle-row .conf { font-size: var(--fs-sm); width: 44px; }
+    .nous-lab-dialog .nous-config-principle-row .del-btn { flex: 0 0 auto; }
+    /* Trust Ladder segmented control: equal cells, label and sublabel on
+       their own lines, active state is a tint + coloured text (button-system
+       convention) rather than the old solid semantic fill. */
+    .nous-lab-dialog .nous-trust-ladder { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: var(--sp-0); }
+    .nous-lab-dialog .nous-trust-step { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: var(--sp-2); padding: var(--sp-5) var(--sp-6); min-height: 64px; font: inherit; font-size: var(--fs-base); line-height: 1.4; background: var(--bg); color: var(--muted); }
+    .nous-lab-dialog .nous-trust-step .step-label { margin: var(--sp-0); font-weight: 700; }
+    .nous-lab-dialog .nous-trust-step .step-desc { font-size: var(--fs-sm); color: var(--muted); }
+    .nous-lab-dialog .nous-trust-step.current .step-desc { color: inherit; opacity: 0.85; }
+    .nous-lab-dialog .nous-trust-step.current[data-step="observe"] { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); border-color: color-mix(in srgb, var(--blue) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current[data-step="suggest"] { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current[data-step="evolve"] { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current + .nous-trust-step { border-left-color: transparent; }
+    .nous-lab-dialog .nous-trust-step:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); z-index: 1; }
+    .nous-lab-dialog .nous-trust-step:disabled { opacity: 0.6; cursor: not-allowed; }
+    .nous-lab-trust-note { margin-top: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
 
     /* Knowledge Panel */
     .public-knowledge-control { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
@@ -3822,6 +3897,8 @@
     .dash-card-action, .dash-card-actions > button, .dash-card-actions > a, .dash-card-actions > .hv-btn, .dash-card-actions > .config-gear { display: inline-flex !important; align-items: center; justify-content: center; min-height: 24px !important; height: 24px !important; padding: 0 var(--sp-3) !important; border-radius: var(--r-pill) !important; border: 1px solid var(--line-subtle) !important; background: color-mix(in srgb, var(--surface-2) 70%, transparent) !important; color: var(--text) !important; font-size: var(--fs-2xs) !important; font-weight: 700 !important; letter-spacing: 0.04em !important; text-decoration: none !important; line-height: 1 !important; white-space: nowrap; }
     .dash-card-action:hover, .dash-card-actions > button:hover, .dash-card-actions > a:hover { background: var(--surface-2) !important; border-color: var(--border) !important; }
     .dash-card-badge, .dash-card-badges > * { display: inline-flex !important; align-items: center; min-height: 22px !important; padding: 0 var(--sp-3) !important; border-radius: var(--r-pill) !important; font-size: var(--fs-2xs) !important; font-weight: 700 !important; letter-spacing: 0.04em !important; line-height: 1 !important; text-transform: uppercase; white-space: nowrap; }
+    .nous-research-question, .dash-card-badges > .nous-research-question { display: inline-block !important; max-width: min(48ch, 40vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: var(--sp-4); padding: 0 !important; font-size: var(--fs-sm) !important; font-weight: 500 !important; letter-spacing: 0 !important; text-transform: none; color: var(--muted); }
+    .nous-research-question[hidden] { display: none !important; }
     .dash-card-summary { display: none; font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); margin-left: var(--sp-4); text-align: right; white-space: nowrap; }
     .dash-card-actions:empty + .dash-card-summary, .dash-card-badges:empty + .dash-card-actions + .dash-card-summary { margin-left: auto; }
     .dash-card.collapsed .dash-card-summary { display: inline-flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
@@ -4128,8 +4205,8 @@
     @media (max-width: 600px) {
       /* .config-modal already goes fullscreen (incl. border-radius:0) in the
          600px block above; the duplicate rule that used to live here was dead.
-         The Experiment Lab dialog never got the same treatment — at 900px wide
-         with only max-width:95vw it is cramped on a phone. */
+         The Experiment Lab dialog goes fullscreen here too; its desktop
+         sizing and card layout live on the .nous-lab-dialog modifier. */
       .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts { padding: var(--sp-0); }
       .nous-config-dialog {
         width: 100vw; max-width: 100vw;
@@ -4264,6 +4341,31 @@
       .feedback-body,
       .nous-config-body {
         padding: var(--sp-5);
+      }
+      .nous-config-dialog.nous-lab-dialog > h2 {
+        padding-left: var(--sp-5);
+        padding-right: var(--sp-5);
+      }
+      .nous-config-dialog.nous-lab-dialog > .nous-config-body {
+        padding: var(--sp-5);
+        gap: var(--sp-6);
+      }
+      .nous-lab-dialog .nous-config-section {
+        padding: var(--sp-5);
+      }
+      .nous-lab-dialog .nous-config-row,
+      .nous-lab-dialog .nous-config-row-2,
+      .nous-lab-dialog .nous-trust-ladder,
+      .nous-lab-knobs {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .nous-lab-dialog .nous-trust-step { min-height: var(--tap-target); }
+      .nous-lab-dialog .nous-trust-step:first-child { border-radius: var(--r) var(--r) var(--sp-0) var(--sp-0); }
+      .nous-lab-dialog .nous-trust-step:last-child { border-radius: var(--sp-0) var(--sp-0) var(--r) var(--r); }
+      .nous-lab-dialog .nous-trust-step:not(:last-child) { border-right: var(--line-width) solid var(--border); border-bottom: none; }
+      .nous-lab-dialog .nous-trust-step.current + .nous-trust-step { border-left-color: var(--border); border-top-color: transparent; }
+      .nous-lab-dialog .nous-config-footer.nous-config-btn-bar {
+        padding-bottom: max(var(--sp-5), env(safe-area-inset-bottom));
       }
       .config-footer,
       .feedback-footer {
@@ -4717,6 +4819,32 @@
       .feedback-body,
       .nous-config-body {
         padding: var(--sp-4) var(--sp-5);
+      }
+      .nous-config-dialog.nous-lab-dialog > h2 {
+        padding-left: var(--sp-5);
+        padding-right: var(--sp-5);
+      }
+      .nous-config-dialog.nous-lab-dialog > .nous-config-body {
+        padding: var(--sp-4) var(--sp-5);
+        gap: var(--sp-5);
+      }
+      .nous-lab-dialog .nous-config-section {
+        padding: var(--sp-5);
+      }
+      .nous-lab-dialog .nous-config-row,
+      .nous-lab-dialog .nous-config-row-2,
+      .nous-lab-dialog .nous-trust-ladder,
+      .nous-lab-knobs {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .nous-lab-dialog .nous-trust-step { min-height: var(--tap-target); }
+      .nous-lab-dialog .nous-trust-step:first-child { border-radius: var(--r) var(--r) var(--sp-0) var(--sp-0); }
+      .nous-lab-dialog .nous-trust-step:last-child { border-radius: var(--sp-0) var(--sp-0) var(--r) var(--r); }
+      .nous-lab-dialog .nous-trust-step:not(:last-child) { border-right: var(--line-width) solid var(--border); border-bottom: none; }
+      .nous-lab-dialog .nous-trust-step.current + .nous-trust-step { border-left-color: var(--border); border-top-color: transparent; }
+      .nous-lab-dialog .nous-config-footer.nous-config-btn-bar {
+        padding-top: var(--sp-3);
+        padding-bottom: max(var(--sp-3), env(safe-area-inset-bottom));
       }
       .config-footer,
       .feedback-footer {
@@ -5628,7 +5756,7 @@
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab</span></a>
+      <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Admin</div>
@@ -6007,7 +6135,7 @@
   </div>
 
   <div id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab (nous) <span id="nous-research-question" class="nous-research-question" hidden></span></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
@@ -6882,11 +7010,11 @@
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
       'audit-section': { title: '📋 Audit Log', summary: '0 events today' },
       'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
-      'nous-section': { title: '🧪 Experiment Lab', summary: '—' },
+      'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—' },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'review-pipeline-subsection': { title: 'Pipeline', summary: '—' },
       'review-queue-subsection': { title: 'Queue', summary: '—' },
-      'nous-section': { title: '🧪 Experiment Lab', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
+      'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
@@ -7036,7 +7164,7 @@
       const badges = newHeader.querySelector('.dash-card-badges');
       const actions = newHeader.querySelector('.dash-card-actions');
       const moveSource = oldHeader.parentElement === section ? oldHeader : oldHeader.parentElement;
-      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #nous-mode-badge, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
+      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #nous-research-question, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
       Array.from(moveSource.querySelectorAll('button[data-stop="1"], a[data-stop="1"], a[data-action]')).forEach(el => {
         if (el.matches('[data-dashboard-grip]')) return;
         el.setAttribute('data-stop', '1');
@@ -8091,8 +8219,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('audit-section', `${auditToday} events today`);
       if (typeof updateReviewSectionSummary === 'function') updateReviewSectionSummary();
       else { const rq = document.getElementById('review-queue-count'); setSectionSummary('review-queue-section', textOrDash(rq && rq.textContent)); }
-      const nous = document.getElementById('nous-mode-badge');
-      setSectionSummary('nous-section', textOrDash(nous && nous.textContent));
+      const nous = document.getElementById('nous-research-question');
+      setSectionSummary('nous-section', textOrDash(nous && !nous.hidden && nous.textContent));
       setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(window._kbCache || _kbCache || {})));
       const contrib = document.getElementById('contributors-status-badge');
       setSectionSummary('contributors-section', textOrDash(contrib && contrib.textContent));
@@ -22282,10 +22410,30 @@ function burnAreaChart() {
         'To get started, leave it in Observe while it builds a baseline (it needs a few days of snapshots), then switch to Suggest to review its first proposals.');
     }
 
+    // Longest research question shown inline in the header; the full text
+    // is always in the tooltip.
+    const NOUS_RESEARCH_QUESTION_MAX_CHARS = 90;
+    function nousResearchQuestionText(value) {
+      return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+    }
+    function renderNousResearchQuestion(value) {
+      const el = document.getElementById('nous-research-question');
+      if (!el) return;
+      const q = nousResearchQuestionText(value);
+      if (!q) {
+        el.hidden = true;
+        el.textContent = '';
+        el.removeAttribute('title');
+        return;
+      }
+      el.hidden = false;
+      el.textContent = q.length > NOUS_RESEARCH_QUESTION_MAX_CHARS ? q.slice(0, NOUS_RESEARCH_QUESTION_MAX_CHARS - 1).trimEnd() + '…' : q;
+      el.setAttribute('title', 'Research question: ' + q);
+    }
+
     function renderNous() {
       if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
-      const badge = document.getElementById('nous-mode-badge');
       if (!panel || !_nousCache) return;
       const s = _nousCache.status || {};
       const ledger = _nousCache.ledger || [];
@@ -22295,20 +22443,17 @@ function burnAreaChart() {
       const phases = s.phases || {};
 
       const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
-      const modeLabels = { observe: 'Observing', suggest: 'Suggesting', evolve: 'Evolving' };
+
+      // Header: the research question for the active scope, or nothing. The
+      // old "OBSERVING · GOVERNOR" mode×scope pill (#330/#338) is gone (#12089);
+      // mode and scope live in the segmented controls below.
+      renderNousResearchQuestion(s.status === 'not_configured' ? '' : s.researchQuestion);
 
       // Not configured server-side: explain what the lab is instead of a
       // control surface whose actions would all fail.
       if (s.status === 'not_configured') {
-        if (badge) { badge.textContent = 'not configured'; badge.style.background = 'var(--muted)'; badge.style.color = 'var(--bg)'; }
         panel.innerHTML = _nousExplainerCard();
         return;
-      }
-
-      if (badge) {
-        badge.textContent = `${modeLabels[mode] || mode} · ${scope}`;
-        badge.style.background = modeColors[mode] || 'var(--muted)';
-        badge.style.color = 'white';
       }
 
       // Update sidebar config — only show at ACMM L4+
@@ -22730,10 +22875,6 @@ function burnAreaChart() {
         const isCurrent = btn.dataset.mode === mode;
         btn.classList.toggle('current', isCurrent);
         btn.setAttribute('aria-pressed', String(isCurrent));
-        btn.style.background = isCurrent ? (btn.dataset.color || '') : 'var(--bg)';
-        btn.style.color = isCurrent ? 'var(--bg)' : 'var(--muted)';
-        const desc = btn.querySelector('.step-desc');
-        if (desc) desc.style.color = isCurrent ? 'var(--bg)' : '';
       });
     }
 
@@ -22830,11 +22971,12 @@ function burnAreaChart() {
       if (!overlay) return;
       overlay.style.display = 'flex';
       hiveRememberModalOpen(overlay);
-      overlay.innerHTML = '<div class="nous-config-dialog"><div style="text-align:center;color:var(--muted);padding:40px">Loading configuration...</div></div>';
+      overlay.innerHTML = nousLabShell('<div class="nous-lab-loading">Loading configuration...</div>', '');
 
       const cfg = await fetchNousConfig();
       if (!cfg) {
-        overlay.innerHTML = '<div class="nous-config-dialog"><div style="color:var(--red);padding:var(--sp-7)">Failed to load config</div><div class="nous-config-btn-bar"><button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig">Close</button></div></div>';
+        overlay.innerHTML = nousLabShell('<div class="nous-lab-error">Failed to load config</div>',
+          '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig">Close</button>');
         return;
       }
       renderNousConfig(cfg);
@@ -22845,12 +22987,40 @@ function burnAreaChart() {
       if (overlay) overlay.style.display = 'none';
     }
 
+    // Dialog shell: fixed header (title + Close ×), the body as the single
+    // scroller, footer for the action bar. Same recipe as the Knowledge
+    // Sources modal (#12000); sizing lives on .nous-lab-dialog.
+    function nousLabShell(bodyHtml, footerHtml) {
+      let h = '<div class="nous-config-dialog nous-lab-dialog" role="dialog" aria-modal="true" aria-labelledby="nous-lab-title">';
+      h += '<h2 id="nous-lab-title"><span class="nous-lab-title">⚙️ Experiment Lab Configuration</span>';
+      h += '<button type="button" class="hv-btn btn-icon btn-sm" data-action="closeNousConfig" aria-label="Close Experiment Lab configuration">✕</button></h2>';
+      h += `<div class="nous-config-body">${bodyHtml}</div>`;
+      if (footerHtml) h += `<div class="nous-config-footer nous-config-btn-bar">${footerHtml}</div>`;
+      h += '</div>';
+      return h;
+    }
+
+    // Section card: eyebrow + heading + one-line description, then content.
+    function nousLabCardHead(eyebrow, heading, desc, note) {
+      let h = '<div class="nous-lab-card-head">';
+      h += `<span class="nous-lab-eyebrow">${escapeHtml(eyebrow)}</span>`;
+      h += `<h3>${heading}${note ? ` <span class="nous-lab-h3-note">${escapeHtml(note)}</span>` : ''}</h3>`;
+      if (desc) h += `<p class="nous-lab-card-desc">${desc}</p>`;
+      h += '</div>';
+      return h;
+    }
+
     function renderNousConfig(cfg) {
       const overlay = document.getElementById('nous-config-overlay');
       if (!overlay) return;
 
       const camp = cfg.campaign || {};
       const repoCamp = cfg.repoCampaign || {};
+      // Goals are stored under config.goals by PUT /api/nous/config/goals;
+      // campaign.research_question is the older read spelling (#12089).
+      const goals = cfg.goals || {};
+      const govQuestion = goals.governorGoal || goals.governor || camp.research_question || '';
+      const repoQuestion = goals.repoGoal || goals.repo || repoCamp.research_question || '';
       const govCamp = cfg.govCampaign || {};
       const output = cfg.output || {};
       const ff = camp.fast_fail || {};
@@ -22868,12 +23038,10 @@ function burnAreaChart() {
       const decayRate = configEnvVal(cfg, 'NOUS_DECAY_RATE_PER_WEEK', '0.05');
 
       let h = '';
-      h += '<div class="nous-config-dialog">';
-      h += '<h2>⚙️ Experiment Lab Configuration</h2>';
 
       // Trust Ladder
-      h += '<div class="nous-config-section">';
-      h += '<h3>Trust Ladder</h3>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Autonomy', 'Trust Ladder', 'How much Nous may do on its own. The current level is highlighted; click a step to change it (owner-only, audited).');
       h += '<div class="nous-trust-ladder" role="group" aria-label="Trust level">';
       const trustSteps = [
         { id: 'observe', label: 'Observe', desc: 'Data collection only', color: 'var(--blue)' },
@@ -22882,106 +23050,122 @@ function burnAreaChart() {
       ];
       // Each step is a real button wired to the same nousSetMode handler as
       // the section's segmented control; before #12039 these were inert divs.
+      // The current step is coloured by .nous-lab-dialog [data-step] rules
+      // rather than inline styles so the style ratchet stays flat.
       const canSetTrust = nousCanChangeMode();
       for (const step of trustSteps) {
         const isCurrent = step.id === mode;
-        const bg = isCurrent ? step.color : 'var(--bg)';
-        const fg = isCurrent ? 'var(--bg)' : 'var(--muted)';
-        h += `<button type="button" class="nous-trust-step${isCurrent ? ' current' : ''}" style="background:${bg};color:${fg}" data-action="nousSetMode" data-mode="${step.id}" data-color="${step.color}" aria-pressed="${isCurrent}" title="${escapeHtml(canSetTrust ? NOUS_MODE_TITLES[step.id] : NOUS_OWNER_ONLY_TITLE)}"${canSetTrust ? '' : ' disabled'}>`;
+        h += `<button type="button" class="nous-trust-step${isCurrent ? ' current' : ''}" data-step="${step.id}" data-action="nousSetMode" data-mode="${step.id}" data-color="${step.color}" aria-pressed="${isCurrent}" title="${escapeHtml(canSetTrust ? NOUS_MODE_TITLES[step.id] : NOUS_OWNER_ONLY_TITLE)}"${canSetTrust ? '' : ' disabled'}>`;
         h += `<span class="step-label">${escapeHtml(step.label)}</span>`;
-        h += `<span class="step-desc" style="color:${isCurrent ? 'var(--bg)' : ''}">${escapeHtml(step.desc)}</span>`;
+        h += `<span class="step-desc">${escapeHtml(step.desc)}</span>`;
         h += '</button>';
       }
       h += '</div>';
-      h += '<div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-3)">Click a step to change the trust level (owner-only, audited). The issue/PR output trail builds evidence for operators to advance it.</div>';
-      h += '</div>';
+      h += '<div class="nous-lab-trust-note">Click a step to change the trust level (owner-only, audited). The issue/PR output trail builds evidence for operators to advance it.</div>';
+      h += '</section>';
 
       // Goal Definition
-      h += '<div class="nous-config-section">';
-      h += '<h3>🎯 Goal Definition</h3>';
-      h += '<label title="The hypothesis Nous will test through governor-scope experiments. Example: Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?">Governor Research Question</label>';
-      h += `<textarea id="nc-gov-goal" rows="2" title="Describe what you want Nous to optimize in the governor configuration (cadences, models, thresholds)">${escapeHtml(camp.research_question || '')}</textarea>`;
-      h += '<label style="margin-top:10px" title="The hypothesis Nous will test through repo-scope experiments (code changes). These always require approval regardless of trust level.">Repo Research Question</label>';
-      h += `<textarea id="nc-repo-goal" rows="2" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(repoCamp.research_question || '')}</textarea>`;
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Hypotheses', '🎯 Goal Definition', 'What Nous should optimize, one research question per experiment scope.');
+      h += '<div class="nous-lab-field">';
+      h += '<label for="nc-gov-goal" title="The hypothesis Nous will test through governor-scope experiments. Example: Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?">Governor Research Question</label>';
+      h += `<textarea id="nc-gov-goal" rows="2" title="Describe what you want Nous to optimize in the governor configuration (cadences, models, thresholds)">${escapeHtml(govQuestion)}</textarea>`;
       h += '</div>';
+      h += '<div class="nous-lab-field">';
+      h += '<label for="nc-repo-goal" title="The hypothesis Nous will test through repo-scope experiments (code changes). These always require approval regardless of trust level.">Repo Research Question</label>';
+      h += `<textarea id="nc-repo-goal" rows="2" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(repoQuestion)}</textarea>`;
+      h += '</div>';
+      h += '</section>';
 
       // Output: promotion is manual (#11699). Verdicts are written to files
       // and read here; the owner picks Issue or Spektacular run on the
       // verdict card. Only the labels applied to promoted items are config.
-      h += '<div class="nous-config-section">';
-      h += '<h3>📤 Output</h3>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Verdicts & labels', '📤 Output', 'Where results land and which safety labels promoted items carry.');
       h += '<div class="text-muted nous-config-output-note" title="Nous writes its verdict to meta_findings.json and the dashboard reads it. Promoting a verdict to an issue or a Spektacular run is a manual, owner-only, audited action on the verdict card; there is no automatic output mode.">Verdicts are written to files and shown on the verdict card. Promotion is manual via the card\'s <strong>Promote</strong> buttons (Issue or Spektacular run); nothing is opened or run automatically.</div>';
-      h += '<div class="mt-4">';
-      h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'hold' label to any issues or PRs it creates. This prevents agents from acting on Nous-generated work items until an operator reviews them."><input type="checkbox" id="nc-auto-hold" ${output.autoHold ? 'checked' : ''}> Auto-apply <code>hold</code> label to Nous issues/PRs</label>`;
-      h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'do-not-merge' label to any PRs it creates. This prevents automated merge workflows from merging experiment PRs without operator review."><input type="checkbox" id="nc-auto-dnm" ${output.autoDoNotMerge ? 'checked' : ''}> Auto-apply <code>do-not-merge</code> label to Nous PRs</label>`;
+      h += '<div class="nous-lab-checks">';
+      h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'hold' label to any issues or PRs it creates. This prevents agents from acting on Nous-generated work items until an operator reviews them."><input type="checkbox" id="nc-auto-hold" ${output.autoHold ? 'checked' : ''}><span>Auto-apply <code>hold</code> label to Nous issues/PRs</span></label>`;
+      h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'do-not-merge' label to any PRs it creates. This prevents automated merge workflows from merging experiment PRs without operator review."><input type="checkbox" id="nc-auto-dnm" ${output.autoDoNotMerge ? 'checked' : ''}><span>Auto-apply <code>do-not-merge</code> label to Nous PRs</span></label>`;
       h += '</div>';
-      h += '</div>';
+      h += '</section>';
 
       // Repo Targets
-      h += '<div class="nous-config-section">';
-      h += '<h3>📂 Repo Targets <span style="font-weight:400;color:var(--muted);font-size:0.72rem">(for repo-scope experiments)</span></h3>';
-      h += '<div style="display:flex;flex-wrap:wrap;gap:var(--sp-2)">';
-      for (const repo of projectRepos) {
-        const active = repoTargets.includes(repo) ? ' active' : '';
-        const shortName = repo.includes('/') ? repo.split('/')[1] : repo;
-        h += `<div class="nous-config-pill${active}" data-repo="${escapeHtml(repo)}" data-action="toggleNousRepo" data-arg-types="t">`;
-        h += `<span>${escapeHtml(shortName)}</span>`;
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Scope', '📂 Repo Targets', 'Repos Nous may target for code experiments. Click a repo to toggle it; changes apply on Save.', '(for repo-scope experiments)');
+      if (projectRepos.length === 0) {
+        h += '<div class="nous-lab-empty">No project repos available &mdash; add repos to the hive before targeting experiments.</div>';
+      } else {
+        h += '<div class="nous-lab-chips" role="group" aria-label="Repo targets">';
+        for (const repo of projectRepos) {
+          const isActive = repoTargets.includes(repo);
+          const shortName = repo.includes('/') ? repo.split('/')[1] : repo;
+          h += `<div class="nous-config-pill${isActive ? ' active' : ''}" role="button" tabindex="0" aria-pressed="${isActive}" data-repo="${escapeHtml(repo)}" data-action="toggleNousRepo" data-keydown-action="toggleNousRepo" data-keys="Enter, " data-prevent="1" data-arg-types="t" title="${escapeHtml(repo)}">`;
+          h += `<span>${escapeHtml(shortName)}</span>`;
+          h += '</div>';
+        }
         h += '</div>';
+        h += `<div class="nous-lab-chips-note" id="nc-repo-summary">${nousRepoSummary(repoTargets.filter(r => projectRepos.includes(r)).length, projectRepos.length)}</div>`;
       }
-      h += '</div>';
-      h += '<div class="fs-xs text-muted mt-3">Select which repos Nous can target for code experiments. Click to toggle.</div>';
-      h += '</div>';
+      h += '</section>';
 
       // Campaign Parameters
-      h += '<div class="nous-config-section">';
-      h += '<h3>⚡ Fast-Fail Bounds</h3>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Guardrails', '⚡ Fast-Fail Bounds', 'An experiment aborts and reverts the moment any of these bounds is crossed.');
       h += '<div class="nous-config-row">';
-      h += `<div><label title="If the issue queue depth exceeds this number during an experiment, Nous immediately aborts and reverts. Prevents experiments from causing unacceptable issue buildup. Default: 30.">Queue Depth Max</label><input type="number" id="nc-ff-queue" value="${ff.queue_depth_max || 30}" min="5" max="100" title="Maximum allowed actionable issues before auto-abort (5-100)"></div>`;
-      h += `<div><label title="If the mean time to resolution exceeds this many minutes during an experiment, Nous immediately aborts. Prevents experiments from stalling issue resolution. Default: 180 (3 hours).">MTTR Max (min)</label><input type="number" id="nc-ff-mttr" value="${ff.mttr_max_minutes || 180}" min="30" max="1440" title="Maximum allowed MTTR in minutes before auto-abort (30-1440)"></div>`;
-      h += `<div><label title="If the token burn rate exceeds this percentage of the normal rate during an experiment, Nous aborts. Values above 100% allow higher-than-normal spending. Default: 110%.">Burn Rate Max %</label><input type="number" id="nc-ff-burn" value="${ff.budget_burn_rate_max_pct || 110}" min="80" max="200" title="Maximum burn rate as percentage of normal (80-200)"></div>`;
+      h += `<div><label for="nc-ff-queue" title="If the issue queue depth exceeds this number during an experiment, Nous immediately aborts and reverts. Prevents experiments from causing unacceptable issue buildup. Default: 30.">Queue Depth Max</label><input type="number" id="nc-ff-queue" value="${ff.queue_depth_max || 30}" min="5" max="100" title="Maximum allowed actionable issues before auto-abort (5-100)"></div>`;
+      h += `<div><label for="nc-ff-mttr" title="If the mean time to resolution exceeds this many minutes during an experiment, Nous immediately aborts. Prevents experiments from stalling issue resolution. Default: 180 (3 hours).">MTTR Max (min)</label><input type="number" id="nc-ff-mttr" value="${ff.mttr_max_minutes || 180}" min="30" max="1440" title="Maximum allowed MTTR in minutes before auto-abort (30-1440)"></div>`;
+      h += `<div><label for="nc-ff-burn" title="If the token burn rate exceeds this percentage of the normal rate during an experiment, Nous aborts. Values above 100% allow higher-than-normal spending. Default: 110%.">Burn Rate Max %</label><input type="number" id="nc-ff-burn" value="${ff.budget_burn_rate_max_pct || 110}" min="80" max="200" title="Maximum burn rate as percentage of normal (80-200)"></div>`;
       h += '</div>';
-      h += '</div>';
+      h += '</section>';
 
-      h += '<div class="nous-config-section">';
-      h += '<h3>⏱️ Experiment Timing</h3>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Schedule', '⏱️ Experiment Timing', 'How long Nous observes, experiments, and rests between runs.');
       h += '<div class="nous-config-row">';
-      h += `<div><label title="How long each experiment runs before Nous collects results. Longer durations give more statistical confidence. Default: 4 hours.">Duration (hours)</label><input type="number" id="nc-sched-dur" value="${sched.experiment_duration_hours || 4}" min="1" max="48" step="0.5" title="Experiment duration in hours (1-48)"></div>`;
-      h += `<div><label title="How many hours of baseline data Nous collects before its first experiment. More data means better comparison accuracy. Default: 4 hours.">Baseline (hours)</label><input type="number" id="nc-sched-base" value="${sched.baseline_hours || 4}" min="1" max="48" step="0.5" title="Baseline collection period in hours (1-48)"></div>`;
-      h += `<div><label title="Mandatory pause between experiments to let the system stabilize. Prevents confounding back-to-back results. Default: 2 hours.">Cooldown (hours)</label><input type="number" id="nc-sched-cool" value="${sched.cooldown_hours || 2}" min="0.5" max="24" step="0.5" title="Cooldown between experiments in hours (0.5-24)"></div>`;
+      h += `<div><label for="nc-sched-dur" title="How long each experiment runs before Nous collects results. Longer durations give more statistical confidence. Default: 4 hours.">Duration (hours)</label><input type="number" id="nc-sched-dur" value="${sched.experiment_duration_hours || 4}" min="1" max="48" step="0.5" title="Experiment duration in hours (1-48)"></div>`;
+      h += `<div><label for="nc-sched-base" title="How many hours of baseline data Nous collects before its first experiment. More data means better comparison accuracy. Default: 4 hours.">Baseline (hours)</label><input type="number" id="nc-sched-base" value="${sched.baseline_hours || 4}" min="1" max="48" step="0.5" title="Baseline collection period in hours (1-48)"></div>`;
+      h += `<div><label for="nc-sched-cool" title="Mandatory pause between experiments to let the system stabilize. Prevents confounding back-to-back results. Default: 2 hours.">Cooldown (hours)</label><input type="number" id="nc-sched-cool" value="${sched.cooldown_hours || 2}" min="0.5" max="24" step="0.5" title="Cooldown between experiments in hours (0.5-24)"></div>`;
       h += '</div>';
-      h += '</div>';
+      h += '</section>';
 
       // Controllable Knobs
-      h += '<div class="nous-config-section">';
-      h += '<h3>🎛️ Controllable Knobs</h3>';
-      h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-2)">';
-      for (const knob of controllables) {
-        const enabled = knob.enabled !== false;
-        const rangeInfo = knob.type === 'int' ? ` (${knob.min}–${knob.max})` : knob.type === 'enum' ? ` (${(knob.values || []).length} options)` : '';
-        h += `<label class="nous-config-check"><input type="checkbox" data-knob="${escapeHtml(knob.name)}" ${enabled ? 'checked' : ''}> <code>${escapeHtml(knob.name)}</code><span class="var-meta">${escapeHtml(rangeInfo)}</span></label>`;
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Search space', '🎛️ Controllable Knobs', 'Governor settings Nous is allowed to vary during an experiment.');
+      if (controllables.length === 0) {
+        h += '<div class="nous-lab-empty">No controllable knobs defined.</div>';
+      } else {
+        h += '<div class="nous-lab-knobs">';
+        for (const knob of controllables) {
+          const enabled = knob.enabled !== false;
+          const rangeInfo = knob.type === 'int' ? ` (${knob.min}–${knob.max})` : knob.type === 'enum' ? ` (${(knob.values || []).length} options)` : '';
+          h += `<label class="nous-config-check"><input type="checkbox" data-knob="${escapeHtml(knob.name)}" ${enabled ? 'checked' : ''}><span><code>${escapeHtml(knob.name)}</code><span class="var-meta">${escapeHtml(rangeInfo)}</span></span></label>`;
+        }
+        h += '</div>';
       }
-      h += '</div>';
-      h += '</div>';
+      h += '</section>';
 
       // Invariants (display only)
-      h += '<div class="nous-config-section">';
-      h += '<h3>🔒 Invariants <span style="font-weight:400;color:var(--muted);font-size:0.72rem">(never touched by experiments)</span></h3>';
-      h += '<div style="display:flex;flex-wrap:wrap;gap:var(--sp-2)">';
-      for (const inv of invariants) {
-        h += `<span style="display:inline-block;padding:4px 10px;border-radius:var(--r);font-size:var(--fs-sm);background:rgba(220,38,38,0.1);color:#f87171;border:1px solid rgba(220,38,38,0.2)">${escapeHtml(inv)}</span>`;
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Never touched', '🔒 Invariants', 'Settings experiments can never change, regardless of trust level.', '(never touched by experiments)');
+      if (invariants.length === 0) {
+        h += '<div class="nous-lab-empty">No invariants declared.</div>';
+      } else {
+        h += '<div class="nous-lab-chips">';
+        for (const inv of invariants) {
+          h += `<span class="nous-lab-invariant">${escapeHtml(inv)}</span>`;
+        }
+        h += '</div>';
       }
-      h += '</div>';
-      h += '</div>';
+      h += '</section>';
 
       // Principle Store
-      h += '<div class="nous-config-section">';
-      h += '<h3>🧠 Principle Store</h3>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Learned', '🧠 Principle Store', 'What Nous has concluded so far, and how much evidence it needs before recommending a change permanently.');
       h += '<div class="nous-config-row-2">';
-      h += `<div><label title="Minimum confidence score (0.0-1.0) a principle must reach before Nous recommends applying it permanently. Higher values require more experimental evidence. Default: 0.8.">Recommendation Threshold</label><input type="number" id="nc-prin-thresh" value="${confThresh}" min="0.1" max="1.0" step="0.05" title="Confidence threshold for permanent recommendations (0.1-1.0)"></div>`;
-      h += `<div><label title="How much a principle's confidence decays per week without reinforcing experimental evidence. Higher values require more frequent validation. Default: 0.05 (5% per week).">Decay Rate / Week</label><input type="number" id="nc-prin-decay" value="${decayRate}" min="0.01" max="0.5" step="0.01" title="Weekly confidence decay rate (0.01-0.5)"></div>`;
+      h += `<div><label for="nc-prin-thresh" title="Minimum confidence score (0.0-1.0) a principle must reach before Nous recommends applying it permanently. Higher values require more experimental evidence. Default: 0.8.">Recommendation Threshold</label><input type="number" id="nc-prin-thresh" value="${confThresh}" min="0.1" max="1.0" step="0.05" title="Confidence threshold for permanent recommendations (0.1-1.0)"></div>`;
+      h += `<div><label for="nc-prin-decay" title="How much a principle's confidence decays per week without reinforcing experimental evidence. Higher values require more frequent validation. Default: 0.05 (5% per week).">Decay Rate / Week</label><input type="number" id="nc-prin-decay" value="${decayRate}" min="0.01" max="0.5" step="0.01" title="Weekly confidence decay rate (0.01-0.5)"></div>`;
       h += '</div>';
       if (principles.length > 0) {
-        h += '<div style="margin-top:10px;max-height:200px;overflow-y:auto">';
+        h += '<div class="nous-lab-principles">';
         const sorted = [...principles].sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
         for (const p of sorted) {
           const conf = Math.round((p.confidence || 0) * 100);
@@ -22993,18 +23177,23 @@ function burnAreaChart() {
         }
         h += '</div>';
       } else {
-        h += '<div class="fs-sm text-muted mt-4">No principles accumulated yet.</div>';
+        h += '<div class="nous-lab-empty mt-6">No principles accumulated yet.</div>';
       }
-      h += '</div>';
+      h += '</section>';
+
+      h += renderNousResetSection();
 
       // Save / Cancel
-      h += '<div class="nous-config-btn-bar">';
-      h += '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig" title="Discard all changes and close this dialog">Cancel</button>';
-      h += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Goals, output labels, repo targets, fast-fail bounds, timing, controllable knobs, and principle settings will be updated.">Save Configuration</button>';
-      h += '</div>';
+      let footer = '';
+      footer += '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig" title="Discard all changes and close this dialog">Cancel</button>';
+      footer += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Goals, output labels, repo targets, fast-fail bounds, timing, controllable knobs, and principle settings will be updated.">Save Configuration</button>';
 
-      h += '</div>';
-      overlay.innerHTML = h;
+      overlay.innerHTML = nousLabShell(h, footer);
+    }
+
+    function nousRepoSummary(active, total) {
+      if (active === 0) return 'No repos watched yet — click a repo above to add it.';
+      return `${active} of ${total} repo${total === 1 ? '' : 's'} watched.`;
     }
 
     function configEnvVal(cfg, key, fallback) {
@@ -23014,6 +23203,88 @@ function burnAreaChart() {
 
     function toggleNousRepo(pill) {
       pill.classList.toggle('active');
+      pill.setAttribute('aria-pressed', String(pill.classList.contains('active')));
+      const summary = document.getElementById('nc-repo-summary');
+      const pills = document.querySelectorAll('.nous-config-pill[data-repo]');
+      if (summary) summary.textContent = nousRepoSummary(document.querySelectorAll('.nous-config-pill[data-repo].active').length, pills.length);
+    }
+
+    // Data section of the Experiment Lab Configuration dialog (RFC #11585):
+    // what the lab has collected and the owner-only, audited resets.
+    // Counts come from the cached /api/nous/status; every reset re-fetches.
+    const NOUS_RESET_SNAPSHOT_BLOAT_FACTOR = 10;
+    const NOUS_SNAPSHOT_RETENTION_ISSUE_URL = 'https://github.com/hivecommons/hive/issues/12030';
+    const NOUS_RESET_SCOPES = {
+      baseline: { label: 'Reset baseline', title: 'Delete every baseline snapshot and return the lab to Observe mode. Learned principles and the experiment ledger are kept. Owner only, audited.',
+        confirm: 'Reset the baseline?', message: 'Every baseline snapshot is deleted and the mode returns to Observe so a fresh baseline is collected. The ledger and principles are kept. The previous files are moved to a trash folder on the hive volume, not destroyed.', ok: 'Reset baseline' },
+      knowledge: { label: 'Clear knowledge', title: 'Empty the experiment ledger and the learned principles. Baseline snapshots are kept. Owner only, audited.',
+        confirm: 'Clear learned knowledge?', message: 'The experiment ledger and every learned principle are emptied. Baseline snapshots are kept. The previous files are moved to a trash folder on the hive volume, not destroyed.', ok: 'Clear knowledge' },
+      all: { label: 'Reset everything', title: 'Delete the baseline, the ledger, the principles and any pending gate. Mode, scope and goals are kept. Owner only, audited.', danger: true,
+        confirm: 'Reset everything?', message: 'Deletes the baseline, the ledger, every principle and any pending gate, and returns the lab to Observe. Mode, scope and goals are configuration and are kept. Type RESET to confirm.', ok: 'Reset everything' },
+    };
+    function renderNousResetSection() {
+      const s = (_nousCache && _nousCache.status) || {};
+      const snapshots = Number(s.snapshotCount != null ? s.snapshotCount : s.snapshots) || 0;
+      const target = Number(s.snapshotTarget || s.baseline_target) || 0;
+      const principles = Number(s.principleCount != null ? s.principleCount : s.principles) || 0;
+      const experiments = Number(s.iterations) || (Array.isArray(_nousCache && _nousCache.ledger) ? _nousCache.ledger.length : 0);
+      const canReset = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      let h = '<div class="nous-config-section nous-reset-section" data-nous-reset-section>';
+      h += '<h3>🗑️ Data</h3>';
+      h += '<div class="nous-reset-counts">';
+      h += `<span title="Baseline snapshots on disk (one per evaluation cycle)">Snapshots <strong data-nous-count="snapshots">${formatCount(snapshots)}</strong></span>`;
+      h += `<span title="Learned principles in the store">Principles <strong data-nous-count="principles">${formatCount(principles)}</strong></span>`;
+      h += `<span title="Rows in the experiment ledger">Experiments <strong data-nous-count="experiments">${formatCount(experiments)}</strong></span>`;
+      h += '</div>';
+      h += '<div class="nous-reset-actions">';
+      for (const scope of Object.keys(NOUS_RESET_SCOPES)) {
+        const meta = NOUS_RESET_SCOPES[scope];
+        const title = canReset ? meta.title : 'Owner role required';
+        h += `<button type="button" class="hv-btn ${meta.danger ? 'btn-danger' : 'btn-secondary'} nous-btn nous-btn-reset" data-action="nousReset" data-arg0="${escapeHtml(scope)}" data-nous-reset="${escapeHtml(scope)}" title="${escapeHtml(title)}"${canReset ? '' : ' disabled'}>${escapeHtml(meta.label)}</button>`;
+      }
+      h += '<span class="text-muted nous-verdict-note">Resets are owner-only and audited; configuration is kept.</span>';
+      h += '</div>';
+      if (target > 0 && snapshots > target * NOUS_RESET_SNAPSHOT_BLOAT_FACTOR) {
+        h += `<div class="text-muted nous-reset-note" data-nous-reset-hint title="Snapshots keep accumulating after the baseline target is met">baseline target is ${formatCount(target)}; older snapshots are not pruned — see <a href="${NOUS_SNAPSHOT_RETENTION_ISSUE_URL}" target="_blank" rel="noopener" title="hivecommons/hive#12030">retention issue #12030</a></div>`;
+      }
+      h += '</div>';
+      return h;
+    }
+    async function nousReset(scope) {
+      if (!experimentLabEnabled()) return;
+      const meta = NOUS_RESET_SCOPES[scope];
+      if (!meta) { showToast('Unknown reset scope: ' + scope, 'error'); return; }
+      let ok;
+      if (scope === 'all') {
+        const typed = await hivePrompt({
+          title: meta.confirm, label: meta.message, placeholder: 'RESET', confirmLabel: meta.ok,
+          validate: (v) => v === 'RESET' ? true : 'Type RESET (all capitals) to confirm.',
+        });
+        ok = typed === 'RESET';
+      } else {
+        ok = await hiveConfirm({ title: meta.confirm, message: meta.message, confirmLabel: meta.ok, danger: true });
+      }
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/nous/reset', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ scope, confirm: 'RESET' }),
+        });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+          const parts = [];
+          if (j.removed_snapshots) parts.push(formatCount(j.removed_snapshots) + ' snapshots');
+          if (j.removed_ledger_entries) parts.push(formatCount(j.removed_ledger_entries) + ' ledger entries');
+          if (j.removed_principles) parts.push(formatCount(j.removed_principles) + ' principles');
+          showToast((parts.length ? 'Removed ' + parts.join(', ') : 'Nothing to remove') + ' · mode: ' + (j.mode || 'observe'), 'success');
+        } else if (r.status === 409) {
+          showToast(j.error || 'An experiment is active — abort it first, or reset everything', 'error');
+        } else {
+          showToast(j.error || 'Reset failed', 'error');
+        }
+        await fetchNousStatus();
+        openNousConfig();
+      } catch (e) { showToast('Reset failed: ' + e.message, 'error'); }
     }
 
     async function deleteNousPrinciple(id) {
@@ -31848,6 +32119,9 @@ function burnAreaChart() {
     // Git version indicator
     const GIT_VERSION_POLL_MS = 300000;
     const VERSION_UPGRADE_STORAGE_KEY = 'hive.version.upgradeProgress';
+    // Last hub-initiated upgrade attempt adopted into the progress record
+    // (#12055), so an attempt that was dismissed/expired is not re-shown.
+    const VERSION_UPGRADE_HUB_SEEN_KEY = 'hive.version.upgradeHubAttempt';
     const VERSION_UPGRADE_DONE_MS = 30000;
     const VERSION_UPGRADE_LONG_MS = 15 * 60 * 1000;
     const VERSION_UPGRADE_POLL_MS = 5000;
@@ -31894,6 +32168,7 @@ function burnAreaChart() {
         startedAt: Number(st.startedAt || versionNowMs()),
         completedAt: st.completedAt ? Number(st.completedAt) : 0
       };
+      if (st.source) next.source = String(st.source);
       try { localStorage.setItem(VERSION_UPGRADE_STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
       return next;
     }
@@ -31915,7 +32190,7 @@ function burnAreaChart() {
       if (!st) return null;
       now = now || versionNowMs();
       if (!st.completedAt) {
-        st = versionWriteUpgradeProgress({ target: st.target, targetShort: st.targetShort || st.target, startedFrom: st.startedFrom || '', startedAt: st.startedAt, completedAt: now });
+        st = versionWriteUpgradeProgress({ target: st.target, targetShort: st.targetShort || st.target, startedFrom: st.startedFrom || '', startedAt: st.startedAt, completedAt: now, source: st.source });
       }
       _upgradeInProgress = false;
       _upgradeTargetHash = null;
@@ -31932,7 +32207,8 @@ function burnAreaChart() {
         versionClearUpgradeProgress();
         return null;
       }
-      const knownTarget = target.sha || policy.target_sha || policy.armed_target || target.short || v && v.stableV4Hash || v && v.latestHash || v && v.targetHash || '';
+      const markerTarget = v && v.upgradeMarker && v.upgradeMarker.target || '';
+      const knownTarget = target.sha || policy.target_sha || policy.armed_target || target.short || v && v.stableV4Hash || v && v.latestHash || v && v.targetHash || markerTarget || '';
       if (versionSameCommit(running, st.target)) {
         if (knownTarget && !versionSameCommit(knownTarget, st.target)) {
           versionClearUpgradeProgress();
@@ -31948,11 +32224,49 @@ function burnAreaChart() {
         versionClearUpgradeProgress();
         return null;
       }
+      // A hub-initiated attempt lives only as long as the spoke's upgrade
+      // marker: if the marker is gone and the target has not landed, the
+      // attempt was abandoned (unpublished target, stale marker cleared).
+      if (st.source === 'hub' && !st.completedAt && v && !(v.upgradeMarker && v.upgradeMarker.target)) {
+        versionClearUpgradeProgress();
+        return null;
+      }
       if (!knownTarget) {
         versionClearUpgradeProgress();
         return null;
       }
       if (!st.completedAt) {
+        _upgradeInProgress = true;
+        _upgradeTargetHash = st.target;
+      }
+      return st;
+    }
+
+    function versionHubUpgradeAttemptKey(um) {
+      if (!um || !um.target) return '';
+      return [String(um.target), String(um.requestedAt || ''), String(um.attempts || '')].map(function(part) { return part.trim(); }).join('|');
+    }
+
+    // Adopt a hub-initiated upgrade (#12055): the spoke's on-PVC upgrade marker
+    // reaches the dashboard as v.upgradeMarker, but the progress record that
+    // drives the bee animation was only ever written by the local Upgrade
+    // button. Mirror a live marker into that record so hub-driven upgrades get
+    // the same surfaces, once per attempt.
+    function versionAdoptHubUpgradeProgress(v, now) {
+      const um = v && v.upgradeMarker;
+      if (!um || um.failed || !um.target) return null;
+      now = now || versionNowMs();
+      const running = v.hash || v.short || '';
+      if (running && versionSameCommit(running, um.target)) return null;
+      const key = versionHubUpgradeAttemptKey(um);
+      let seen = '';
+      try { seen = localStorage.getItem(VERSION_UPGRADE_HUB_SEEN_KEY) || ''; } catch (_) {}
+      if (seen && seen === key) return null;
+      try { localStorage.setItem(VERSION_UPGRADE_HUB_SEEN_KEY, key); } catch (_) {}
+      const requestedAt = Date.parse(um.requestedAt || '');
+      const startedAt = isFinite(requestedAt) && requestedAt > 0 && now - requestedAt < VERSION_UPGRADE_LONG_MS ? requestedAt : now;
+      const st = versionWriteUpgradeProgress({ target: um.target, targetShort: versionShortSHA(um.target), startedFrom: um.current || running, startedAt: startedAt, source: 'hub' });
+      if (st) {
         _upgradeInProgress = true;
         _upgradeTargetHash = st.target;
       }
@@ -32460,6 +32774,7 @@ function burnAreaChart() {
           _upgradeTargetHash = null;
         }
         let upgradeProgress = typeof versionReconcileUpgradeProgress === 'function' ? versionReconcileUpgradeProgress(v) : null;
+        if (!upgradeProgress) upgradeProgress = versionAdoptHubUpgradeProgress(v);
         const upgradeCurrentHash = String(v.hash || '').toLowerCase();
         const upgradeTargetHash = String(_upgradeTargetHash || '').toLowerCase();
         const policyTargetHash = v.upgradePolicy && (v.upgradePolicy.target_sha || v.upgradePolicy.armed_target) || '';
@@ -33396,7 +33711,7 @@ function burnAreaChart() {
 
     const SETTINGS_SEARCH_STATIC_HITS = [
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
-      { tab: 'Features', section: 'Dashboard', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
+      { tab: 'Features', section: 'Dashboard', label: 'Experiment Lab (nous)', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab nous dashboard feature experimental planner sidebar section' },
       { tab: 'Features', section: 'Nous / Experiment Lab', label: 'Nous / Experiment Lab', key: 'nous.dispatcher', text: 'nous experiment lab experimenter dispatcher inline sdk gate poll fetch allowlist artifact repository branch path sync interval nous.dispatcher nous.gate_poll_seconds nous.fetch_allowlist nous.artifact_repo.repo nous.artifact_repo.branch nous.artifact_repo.path nous.artifact_repo.sync_interval_seconds' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Logging', section: 'Logging', label: 'Read scan bound (MB)', key: 'governor.logging.read_scan_max_mb', text: 'log read scan bound megabytes admin mcp log_read cursor' },
@@ -34069,7 +34384,7 @@ function burnAreaChart() {
       const ACMM_ADVISORY_MIN_LEVEL = 2;
       const ACMM_TOKENS_MIN_LEVEL = 3;
       const ACMM_REPOS_MIN_LEVEL = 2;
-      const ACMM_NOUS_MIN_LEVEL = 4;
+      const ACMM_NOUS_MIN_LEVEL = 3;
       const ACMM_CONTRIBUTORS_MIN_LEVEL = 2;
       const ACMM_LEADERBOARD_MIN_LEVEL = 2;
       const ACMM_DEBUG_MIN_LEVEL = 3;
@@ -34086,9 +34401,13 @@ function burnAreaChart() {
         level >= ACMM_REPOS_MIN_LEVEL ? show(reposSection, '') : hide(reposSection);
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
-        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
+        // #12076: the Experiment Lab (nous) section, its sidebar entry and the
+        // sidebar scope/mode summary need BOTH the dashboard.experiment_lab
+        // opt-in (applyDashboardFeatureVisibility) and ACMM L3+.
+        const nousVisible = experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL;
+        nousVisible ? show(nousSection, '') : hide(nousSection);
         const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
+        nousVisible ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 
@@ -34104,7 +34423,7 @@ function burnAreaChart() {
           if (section === 'repos-section' && level < ACMM_REPOS_MIN_LEVEL) hide(item);
           if (section === 'contributors-section' && level < ACMM_CONTRIBUTORS_MIN_LEVEL) hide(item);
           if (section === 'leaderboard-section' && level < ACMM_LEADERBOARD_MIN_LEVEL) hide(item);
-          if (section === 'nous-section' && (!experimentLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);
+          if (section === 'nous-section' && !nousVisible) hide(item);
         });
 
         // #7099: the pack-roster gate is NOT re-applied here. The server already
@@ -34810,6 +35129,60 @@ function burnAreaChart() {
       markDirty('classifier', key, _configState.data.classifier[key]);
     }
 
+    // #12076: the Experiment Lab (nous) section needs dashboard.experiment_lab
+    // AND ACMM L3+ (ACMM_NOUS_MIN_LEVEL in applyACMMVisibility). The toggle
+    // must say so at flip time, with the current level, so a spoke below L3
+    // never files "toggle does nothing" again.
+    const EXPERIMENT_LAB_MIN_ACMM_LEVEL = 3;
+    function currentACMMLevelForSettings() {
+      const lvl = Number(window._lastStatus && window._lastStatus.acmmLevel);
+      return Number.isFinite(lvl) ? lvl : 0;
+    }
+    function experimentLabACMMNotice(level) {
+      level = Number(level);
+      if (!Number.isFinite(level)) level = 0;
+      const requirement = 'Requires ACMM Level ' + EXPERIMENT_LAB_MIN_ACMM_LEVEL + ' or higher.';
+      if (level >= EXPERIMENT_LAB_MIN_ACMM_LEVEL) return { below: false, requirement, inline: '', toast: '' };
+      const where = 'Your hive is at Level ' + level + ' — Experiment Lab will appear once it reaches Level ' + EXPERIMENT_LAB_MIN_ACMM_LEVEL + '.';
+      return {
+        below: true,
+        requirement,
+        inline: where,
+        toast: 'Experiment Lab setting saved, but the section stays hidden until your hive reaches ACMM Level ' + EXPERIMENT_LAB_MIN_ACMM_LEVEL + ' (currently Level ' + level + ').',
+      };
+    }
+    // One helper renders the requirement/current-level line for every surface
+    // that exposes dashboard.experiment_lab: the Dashboard tab's toggle
+    // ("dashboard") and the Features tab's "Nous / Experiment Lab" card
+    // ("features"). `surface` keys the element ids so both can coexist in one
+    // dialog and the flip-time notice reaches whichever is rendered.
+    function experimentLabToggleHelpHTML(level, surface) {
+      const n = experimentLabACMMNotice(level);
+      const sfx = surface ? '-' + surface : '';
+      return '<div class="config-help" id="experiment-lab-acmm-help' + sfx + '" data-experiment-lab-acmm-help="1">' + esc(n.requirement) +
+        (n.below ? ' <span class="text-warn" id="experiment-lab-acmm-below' + sfx + '">' + esc(n.inline) + '</span>' : '') + '</div>' +
+        '<div class="config-help text-warn" id="experiment-lab-acmm-notice' + sfx + '" data-experiment-lab-acmm-notice="1" hidden></div>';
+    }
+    function experimentLabNoticeElements() {
+      return Array.prototype.slice.call(document.querySelectorAll('[data-experiment-lab-acmm-notice]'));
+    }
+    function noteExperimentLabToggle(isOn) {
+      const n = experimentLabACMMNotice(currentACMMLevelForSettings());
+      const notices = experimentLabNoticeElements();
+      if (!isOn || !n.below) {
+        notices.forEach(el => { el.hidden = true; el.textContent = ''; });
+        return;
+      }
+      const msg = 'The setting is saved when you click Save, but the Experiment Lab (nous) section and sidebar entry stay hidden until your hive reaches ACMM Level ' + EXPERIMENT_LAB_MIN_ACMM_LEVEL + ' (currently Level ' + currentACMMLevelForSettings() + ').';
+      notices.forEach(el => { el.textContent = msg; el.hidden = false; });
+      showToast(msg, 'warning');
+    }
+    function noteExperimentLabSaved(values) {
+      if (!values || values.experiment_lab !== true) return;
+      const n = experimentLabACMMNotice(currentACMMLevelForSettings());
+      if (n.below) showToast(n.toast, 'warning');
+    }
+
     function renderGovDashboard(dash) {
       const bands = dash.issue_bands || {};
       const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
@@ -34820,7 +35193,8 @@ function burnAreaChart() {
           '<div class="config-field"><label>Port ' + yamlHint('dashboard.port') + '</label><input type="number" min="1" max="65535" value="' + esc(String(dash.port || 3001)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="port" data-arg-types="s,s,N"><div class="config-help">Requires restart.</div></div>' +
           '<div class="config-field"><label>Agent poll interval (seconds) ' + yamlHint('dashboard.agent_poll_interval_s') + '</label><input type="number" min="1" value="' + esc(String(dash.agent_poll_interval_s || 0)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="agent_poll_interval_s" data-arg-types="s,s,N"></div>' +
         '</div>' +
-        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab (nous) ' + yamlHint('dashboard.experiment_lab') + ' <span class="text-muted">Adds the 🧪 Experiment Lab (nous) section and its sidebar entry on the next status refresh — no reload needed.</span></span></div>' +
+        experimentLabToggleHelpHTML(currentACMMLevelForSettings(), 'dashboard') +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
@@ -42149,7 +42523,8 @@ function burnAreaChart() {
         </div>
 
         <div class="qa-section">
-          <div class="qa-section-title">Nous / Experiment Lab ${settingHelpMark('experiment-lab', 'settings', 'Nous / Experiment Lab', `Runtime knobs for the Nous experimentation agent (<code>nous.*</code> in hive.yaml, RFC 11585). The panel itself is shown or hidden with <code>dashboard.experiment_lab</code> on the Dashboard tab; goals, bounds and schedule live in the Experiment Lab panel, not here.`)}</div>
+          <div class="qa-section-title">Nous / Experiment Lab ${settingHelpMark('experiment-lab', 'settings', 'Nous / Experiment Lab', `Runtime knobs for the Nous experimentation agent (<code>nous.*</code> in hive.yaml, RFC 11585). The panel itself is shown or hidden with <code>dashboard.experiment_lab</code> on the Dashboard tab and requires ACMM Level ${EXPERIMENT_LAB_MIN_ACMM_LEVEL} or higher; goals, bounds and schedule live in the Experiment Lab panel, not here.`)}</div>
+          ${experimentLabToggleHelpHTML(currentACMMLevelForSettings(), 'features')}
           <div class="config-field-row">
             <div class="config-field">
               <label>Dispatcher <code>nous.dispatcher</code> ${settingHelpMark('experiment-lab', 'experimenter-role-and-engine-contract', 'Nous dispatcher', `How Nous performs its LLM work. <code>inline</code> (default) runs inside the experimenter agent's own CLI session so Hive's scheduling, token budget and cost tracking apply; <code>sdk</code> has Nous call the model API directly, invisible to cost tracking. Env override: <code>HIVE_NOUS_DISPATCHER</code>.`)}</label>
@@ -43894,6 +44269,7 @@ function burnAreaChart() {
       const isOn = el.classList.toggle('on');
       if (el.hasAttribute('aria-checked')) el.setAttribute('aria-checked', isOn ? 'true' : 'false');
       markDirty(section, key, isOn);
+      if (section === 'dashboard' && key === 'experiment_lab') noteExperimentLabToggle(isOn);
     }
 
     function markCSVDirty(section, key, value) {
@@ -45360,6 +45736,12 @@ function burnAreaChart() {
               const ack = await res.json().catch(() => ({}));
               const spekMsg = spektacularApplyMessage(ack.spektacularApply);
               if (spekMsg) showToast(spekMsg.msg, spekMsg.level);
+            }
+            if (_configState.type === 'governor' && section === 'dashboard') {
+              // #12076: the write succeeded, but below ACMM L3 the Experiment
+              // Lab stays hidden — say so instead of letting a saved toggle
+              // look like a no-op.
+              noteExperimentLabSaved(values);
             }
             if (_configState.type === 'governor' && section === 'litellm') {
               // Saving the LiteLLM tab auto-runs the live connection test

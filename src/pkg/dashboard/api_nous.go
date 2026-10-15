@@ -23,6 +23,13 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 	} else {
 		delete(status, nousStatusKeyVerdict)
 	}
+	// The research question is derived from Config["goals"] at serve time so
+	// the header text follows the goals and scope the owner last saved.
+	if q := s.deps.Nous.researchQuestionLocked(); q != "" {
+		status[nousStatusKeyResearchQuestion] = q
+	} else {
+		delete(status, nousStatusKeyResearchQuestion)
+	}
 	s.deps.Nous.Mu.Unlock()
 	jsonResponse(w, status)
 }

@@ -1,7 +1,7 @@
 # Experiment Lab (Nous) operator guide
 
-The Experiment Lab — formerly the Experiment Lab, internally and in the API
-called **Nous** — is a controlled experiment framework for the governor. It records a baseline of hive behavior,
+The Experiment Lab (formerly Strategy Lab; internally and in the API
+called **Nous**) is a controlled experiment framework for the governor. It records a baseline of hive behavior,
 designs experiments against governor (and optionally repo) parameters, and
 measures each one against that baseline before anything is applied for real.
 
@@ -10,7 +10,7 @@ cadence, dispatcher, dependency fetch allowlist and the optional artifact
 repository — and every one of them is editable from **Settings → Features →
 Nous / Experiment Lab** (see [Settings](#settings)). Goals, bounds, schedule
 and the trust ladder are configured at runtime through the dashboard
-(Experiment Lab panel, ACMM level 4+) or directly through the `/api/nous/*`
+(Experiment Lab panel, ACMM level 3+) or directly through the `/api/nous/*`
 endpoints. This page documents
 that runtime configuration and the experiment lifecycle, verified against
 `pkg/dashboard/api.go`, `pkg/dashboard/deps.go`, `cmd/hive/main.go`, and the
@@ -26,11 +26,29 @@ logs a one-line deprecation at config load, and is folded into
 The `/api/nous/*` endpoints, `NousState` and the `nous-section` dashboard
 anchor keep their Nous names; only the user-facing label changed.
 
-Once enabled, the section only appears at **ACMM level 4 and
-above** (`ACMM_NOUS_MIN_LEVEL` in `pkg/dashboard/static/index.html`). Below
-that level the panel and sidebar summary are hidden entirely, though the
-`/api/nous/*` endpoints still respond. On a hive with no snapshots yet, the
-panel shows an explainer card instead of empty stats.
+Once enabled, the **Experiment Lab (nous)** sidebar entry and section appear
+on the next dashboard status refresh — no page reload — at **ACMM level 3 and
+above** (`ACMM_NOUS_MIN_LEVEL` in `pkg/dashboard/static/index.html`; it was
+L4 before #12076, which also made the Settings toggle say so). Both gates must
+pass: the flag on and the level at L3+. Below L3 the panel and sidebar summary
+are hidden, though the `/api/nous/*` endpoints still respond. The sidebar label
+follows the Inception convention ("Inception (spektacular)"): section name plus
+the lowercase codename of the planner behind it. On a hive with no snapshots
+yet, the panel shows an explainer card instead of empty stats.
+
+### Section header
+
+The section header reads **🧪 Experiment Lab** followed by the research
+question for the active scope, when one is set — the governor question for
+`governor` (and `both`, falling back to the repo question), the repo question
+for `repo`, as saved from the ⚙️ dialog's **Goal Definition** section
+(`PUT /api/nous/config/goals`). Long questions are truncated in the header
+with the full text in a tooltip, and the collapsed-section summary shows the
+same text. When no research question is set the header shows nothing beside
+the title. The header does **not** show mode or scope: the `OBSERVING ·
+GOVERNOR` mode × scope pill from the first Nous integration (#330, #338) was
+removed in #12089 because the segmented **Observe | Suggest | Evolve** and
+**Governor | Repo | Both** controls inside the card already carry that state.
 
 ## State and storage
 
@@ -278,7 +296,7 @@ endpoint, all requiring owner role and all triggering `refreshAndPersist()`:
 
 | Endpoint | Section | Fields (dashboard defaults shown) |
 |---|---|---|
-| `PUT /api/nous/config/goals` | `goals` | Governor and repo research questions — free-text hypotheses (e.g. "Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?"). |
+| `PUT /api/nous/config/goals` | `goals` | Governor and repo research questions — free-text hypotheses (e.g. "Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?"). The dashboard sends `{"governorGoal": "…", "repoGoal": "…"}`; `governor` / `repo` are accepted as bare spellings. The active scope's question is served back as `researchQuestion` in `GET /api/nous/status` and shown in the [section header](#section-header). |
 | `PUT /api/nous/config/output` | `output` | `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything a promotion creates. There is **no output mode**: Nous writes its verdict to files and the dashboard reads it; opening an issue or admitting a Spektacular run is the owner's manual Promote action on the [verdict card](#verdict-card-and-manual-promote). (Before #11699 this section carried a `mode` of `state-only` / `issue` / `issue+pr` / `spektacular-run` that Approve acted on automatically; a stored `mode` is ignored.) |
 | `PUT /api/nous/config/repos` | `repos` | Which repos from `projectRepos` are eligible targets for repo-scope experiments. |
 | `PUT /api/nous/config/fast-fail` | `fast_fail` | `queue_depth_max` (default 30), `mttr_max_minutes` (default 180), `budget_burn_rate_max_pct` (default 110) — see below. |
@@ -339,7 +357,10 @@ an unreinforced principle loses confidence over time.
   category), `type` and `status`.
 - **`GET /api/nous/status`** is the aggregate the dashboard polls to render
   everything above in one call — mode, scope, phase, per-scope phase detail,
-  snapshot counts, and any pending proposal or active experiment.
+  snapshot counts, and any pending proposal or active experiment. It also
+  carries `researchQuestion`, the active scope's research question derived
+  from the saved `goals` (absent when none is set), which the
+  [section header](#section-header) displays.
 
 If `deps.Nous` is `nil` (nous state failed to initialize), `status` returns
 `{"status": "not_configured"}`, `ledger`/`principles` return empty arrays, and
@@ -390,6 +411,51 @@ Dashboard tab.
 tab, "Experiment engine", next to Role) and validated with
 `ValidateExperimentEngine`: it is accepted only on an agent whose role (after
 the same save) is `experimenter`.
+
+## Resetting data
+
+The Experiment Lab Configuration dialog (Settings → Experiment Lab → gear
+icon) ends with a **Data** section that shows the current snapshot /
+principle / experiment counts and three owner-only buttons. Each one calls
+`POST /api/nous/reset` with a JSON body of the form
+`{"scope": "<scope>", "confirm": "RESET"}`:
+
+| Button | `scope` | What is removed | What else happens |
+|---|---|---|---|
+| Reset baseline | `baseline` | `snapshots/*` | snapshot counter and `baseline_pct` return to 0, phase to `collecting`, mode forced back to `observe` |
+| Clear knowledge | `knowledge` | contents of `governor/ledger.json` and `governor/principles.json` (rewritten as empty arrays) | the live `KnowledgeReader` cache is invalidated, so the next status read reports 0 principles / 0 experiments |
+| Reset everything | `all` | both of the above plus `gates/*` | pending gate question and decision are cleared; mode forced back to `observe` |
+
+`panel-config.json` is **never** touched: mode, scope, goals, bounds and
+schedule are settings, not data. Only the mode is rewritten (to `observe`)
+after a `baseline` or `all` reset, because the baseline the other modes
+depend on is gone.
+
+Rules enforced by the handler:
+
+- Owner role required (403 otherwise); every call is audited as
+  `nous_reset` with the scope and the removed counts, or `nous_reset_failed`
+  with the error.
+- `confirm` must be exactly `RESET` and `scope` one of the three values
+  above, otherwise 400. The dashboard asks for a styled confirmation and, for
+  "Reset everything", makes you type `RESET`.
+- If the ledger contains an `active` experiment, `baseline` and `knowledge`
+  return 409 — abort the experiment first (`POST /api/nous/abort`). `all`
+  is always allowed because it removes the ledger as well.
+- A missing `data.nous_dir` (or a missing sub-directory) is a no-op success.
+
+The response is `{"ok": true, "scope": ..., "removed_snapshots": N,
+"removed_ledger_entries": N, "removed_principles": N, "mode": "observe"}`.
+
+Deletion is atomic per directory: `pkg/nousstore` renames the directory to
+`<nous_dir>/.trash/<timestamp>/<name>` and then removes it, so a crash
+mid-way leaves either the original or a complete trash copy, never a
+half-deleted tree. The newest trash entry is kept (older ones are pruned on
+the next reset) and `.trash` is excluded from spoke backups.
+
+If the snapshot count exceeds ten times the baseline target the Data section
+shows a hint that older snapshots are not pruned automatically — see the
+retention issue #12030.
 
 ## What does not exist today
 

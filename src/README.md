@@ -301,7 +301,7 @@ knowledge:
 
 An experiment framework that lets you test configuration changes (models, cadences, thresholds) against live data before committing them. Experiments run in a sandbox with rollback on failure.
 
-Formerly called the Strategy Lab. Configure via the dashboard (Experiment Lab panel, ACMM level 4+, enabled with `dashboard.experiment_lab: true`) or the `/api/nous/*` endpoints directly — there is no `nous:` block in `hive.yaml.example`; Nous has no YAML config surface. See [docs/experiment-lab.md](docs/experiment-lab.md) for the experiment lifecycle, configuration options, and gate-decision flow. The dashboard REST API is described by [../dashboard/openapi.json](../dashboard/openapi.json).
+Configure via the dashboard (Experiment Lab panel, ACMM level 4+, enabled with `dashboard.experiment_lab: true`) or the `/api/nous/*` endpoints directly — there is no `nous:` block in `hive.yaml.example`; Nous has no YAML config surface. See [docs/experiment-lab.md](docs/experiment-lab.md) for the experiment lifecycle, configuration options, and gate-decision flow. The dashboard REST API is described by [../dashboard/openapi.json](../dashboard/openapi.json).
 
 ## Further reading
 

@@ -41,7 +41,7 @@ Agents observe and report findings as advisory beads on the dashboard and tracki
 
 ### L3 — Quality-Gated (Measured) (6 agents)
 
-Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI workflows. All other agents remain advisory. CI-maintainer joins to monitor build health. Key artifact: measurement infrastructure.
+Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI workflows. All other agents remain advisory. CI-maintainer joins to monitor build health. Key artifact: measurement infrastructure. L3 is also the first level at which the dashboard shows the **Experiment Lab (nous)** section when `dashboard.experiment_lab` is on (see [Experiment Lab](experiment-lab.md#visibility)).
 
 | Agent | Mode | Template |
 |-------|------|----------|

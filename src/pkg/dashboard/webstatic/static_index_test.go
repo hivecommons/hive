@@ -461,12 +461,61 @@ func TestStaticNoStrategyLabCopy(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		`<span class="oc-nav-text">Experiment Lab</span>`,
-		`🧪 Experiment Lab`,
+		`<span class="oc-nav-text">Experiment Lab (nous)</span>`,
+		`🧪 Experiment Lab (nous)`,
 		`Experiment Lab Configuration`,
 	} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("static dashboard missing Experiment Lab copy %q", want)
+		}
+	}
+}
+
+// TestStaticExperimentLabHeaderShowsResearchQuestionNotModePill pins #12089:
+// the Experiment Lab header no longer renders the "OBSERVING · GOVERNOR"
+// mode×scope pill left over from the first Nous integration (#330/#338). In
+// its place the header carries the research question for the active scope
+// (status.researchQuestion), escaped via textContent and truncated with the
+// full text in a tooltip, and renders nothing at all when none is set.
+func TestStaticExperimentLabHeaderShowsResearchQuestionNotModePill(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(body)
+	for _, stale := range []string{
+		`nous-mode-badge`,
+		"${modeLabels[mode] || mode} · ${scope}",
+		"observe: 'Observing'",
+		`badge.textContent = 'not configured'`,
+	} {
+		if strings.Contains(src, stale) {
+			t.Fatalf("static dashboard still renders the retired Experiment Lab mode×scope pill: %q", stale)
+		}
+	}
+	for _, want := range []string{
+		`🧪 Experiment Lab (nous) <span id="nous-research-question" class="nous-research-question" hidden></span></h2>`,
+		`#review-pipeline-count, #nous-research-question, #kb-status-badge`,
+		`function renderNousResearchQuestion(value)`,
+		`renderNousResearchQuestion(s.status === 'not_configured' ? '' : s.researchQuestion);`,
+		`el.hidden = true;`,
+		`el.textContent = q.length > NOUS_RESEARCH_QUESTION_MAX_CHARS`,
+		`el.setAttribute('title', 'Research question: ' + q);`,
+		`const nous = document.getElementById('nous-research-question');`,
+		`.nous-research-question[hidden] { display: none !important; }`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("static dashboard missing Experiment Lab research-question header wiring %q", want)
+		}
+	}
+	// The gear dialog must prefill the goals from where PUT /api/nous/config/goals stores them.
+	for _, want := range []string{
+		`const goals = cfg.goals || {};`,
+		`goals.governorGoal || goals.governor || camp.research_question`,
+		`goals.repoGoal || goals.repo || repoCamp.research_question`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("Experiment Lab config dialog does not read saved goals: %q", want)
 		}
 	}
 }
@@ -781,6 +830,76 @@ func TestStaticExperimentLabVerdictCard(t *testing.T) {
 			if strings.Contains(snippet, forbidden) {
 				t.Fatalf("%s must not use %q", fn, forbidden)
 			}
+		}
+	}
+}
+
+// The Experiment Lab Configuration dialog ends with a Data section whose
+// three resets go through POST /api/nous/reset with the in-app dialogs
+// (RFC #11585, hivecommons/hive#12029).
+func TestStaticExperimentLabResetSection(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`const NOUS_RESET_SCOPES = {`,
+		`function renderNousResetSection() {`,
+		`h += renderNousResetSection();`,
+		`<div class="nous-config-section nous-reset-section" data-nous-reset-section>`,
+		`<strong data-nous-count="snapshots">`,
+		`<strong data-nous-count="principles">`,
+		`<strong data-nous-count="experiments">`,
+		`data-action="nousReset" data-arg0="${escapeHtml(scope)}" data-nous-reset="${escapeHtml(scope)}"`,
+		`${canReset ? '' : ' disabled'}`,
+		`dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')`,
+		`baseline: { label: 'Reset baseline'`,
+		`knowledge: { label: 'Clear knowledge'`,
+		`all: { label: 'Reset everything'`,
+		`${meta.danger ? 'btn-danger' : 'btn-secondary'}`,
+		`async function nousReset(scope) {`,
+		`const typed = await hivePrompt({`,
+		`validate: (v) => v === 'RESET' ? true : 'Type RESET (all capitals) to confirm.',`,
+		`ok = await hiveConfirm({ title: meta.confirm, message: meta.message, confirmLabel: meta.ok, danger: true });`,
+		`await fetch('/api/nous/reset', {`,
+		`body: JSON.stringify({ scope, confirm: 'RESET' }),`,
+		`} else if (r.status === 409) {`,
+		`await fetchNousStatus();`,
+		`const NOUS_RESET_SNAPSHOT_BLOAT_FACTOR = 10;`,
+		`snapshots > target * NOUS_RESET_SNAPSHOT_BLOAT_FACTOR`,
+		`data-nous-reset-hint`,
+		`older snapshots are not pruned`,
+		`https://github.com/hivecommons/hive/issues/12030`,
+		`.nous-reset-section h3 { color: var(--red); }`,
+		`.nous-reset-actions .hv-btn:disabled {`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard Experiment Lab reset section missing %q", want)
+		}
+	}
+	// The section and the reset flow must not use native dialogs or inline styles.
+	for _, fn := range []string{`function renderNousResetSection() {`, `async function nousReset(scope) {`} {
+		start := strings.Index(html, fn)
+		end := strings.Index(html[start:], "\n    }\n") + start
+		snippet := html[start:end]
+		snippet = strings.ReplaceAll(snippet, "hiveConfirm(", "hiveConfirm[")
+		snippet = strings.ReplaceAll(snippet, "hivePrompt(", "hivePrompt[")
+		for _, forbidden := range []string{"style=", "alert(", "confirm(", "prompt(", "window."} {
+			if forbidden == "window." && strings.Contains(snippet, "window._hiveRole") {
+				snippet = strings.ReplaceAll(snippet, "window._hiveRole", "hiveRole")
+			}
+			if strings.Contains(snippet, forbidden) {
+				t.Fatalf("%s must not use %q", fn, forbidden)
+			}
+		}
+	}
+	// Every reset button carries a tooltip.
+	start := strings.Index(html, `function renderNousResetSection() {`)
+	end := strings.Index(html[start:], "\n    }\n") + start
+	for _, line := range strings.Split(html[start:end], "\n") {
+		if strings.Contains(line, "<button") && !strings.Contains(line, "title=") {
+			t.Fatalf("reset button without tooltip: %s", strings.TrimSpace(line))
 		}
 	}
 }

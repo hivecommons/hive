@@ -1,0 +1,1 @@
+- dashboard: the Experiment Lab configuration dialog now uses the wide fixed-size modal recipe (sticky header with Close, scrolling body, footer actions) with every section as a padded card, an equal-cell Trust Ladder, aligned checkbox rows, a real Repo Targets chip list with an empty state, and 3-column bound grids that fold to one column on phones.

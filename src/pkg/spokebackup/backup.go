@@ -235,11 +235,12 @@ type Result struct {
 	Skipped map[string]string
 }
 
-// nousSkip prunes the regenerable snapshots subtree from the Nous backup and
-// drops in-flight temp files left by an atomic write.
+// nousSkip prunes the regenerable snapshots subtree and the reset trash
+// (the previous content of a reset, kept one deep for recovery) from the
+// Nous backup and drops in-flight temp files left by an atomic write.
 func nousSkip(rel string) bool {
 	parts := strings.SplitN(filepath.ToSlash(rel), "/", 2)
-	if parts[0] == nousstore.SnapshotsSubdir {
+	if parts[0] == nousstore.SnapshotsSubdir || parts[0] == nousstore.TrashSubdir {
 		return true
 	}
 	return strings.HasSuffix(rel, nousTmpSuffix)
