@@ -1,4 +1,4 @@
-Docker Compose is the default standalone runtime for a local Hive spoke; this page preserves the root README quick start in full.
+Docker Compose is the default standalone runtime for a local Hive spoke; this page preserves the former top-level README quick start in full.
 
 ## Quick Start
 

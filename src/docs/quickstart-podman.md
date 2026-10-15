@@ -1,4 +1,4 @@
-Podman runs the same standalone Hive services through Quadlet and systemd; this page preserves the root README Podman quick start in full.
+Podman runs the same standalone Hive services through Quadlet and systemd; this page preserves the former top-level README Podman quick start in full.
 
 ## Quick Start (Podman)
 
