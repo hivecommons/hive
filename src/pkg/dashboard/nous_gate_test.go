@@ -350,12 +350,31 @@ func TestNousGateDecisionWithoutStore(t *testing.T) {
 	}
 }
 
+// lockedBuffer is a bytes.Buffer safe to write from the watcher goroutine
+// while the test goroutine reads it (#12052).
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
 // RunNousGateWatch syncs on every injected tick, logs an unreadable gate
 // once per distinct error, and stops with the context — no sleeping.
 func TestRunNousGateWatch(t *testing.T) {
 	store := &fakeGateStore{}
 	_, deps, pings := gateTestServer(t, store)
-	var logBuf bytes.Buffer
+	var logBuf lockedBuffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
 
 	ticks := make(chan time.Time)
@@ -366,9 +385,17 @@ func TestRunNousGateWatch(t *testing.T) {
 		close(done)
 	}()
 
+	// A send on the unbuffered channel returns when the watcher *receives*
+	// the tick, not when it has finished syncing and logging. settle sends
+	// one more tick, which cannot complete until the previous iteration is
+	// done, so assertions after it observe a quiescent watcher. Extra ticks
+	// are idempotent here: repeated errors are de-duplicated and a gate is
+	// pinged once per id.
 	tick := func() { ticks <- gateTestNow }
+	settle := func() { ticks <- gateTestNow }
 
 	tick()
+	settle()
 	if len(*pings) != 0 {
 		t.Fatalf("ping with nothing pending")
 	}
@@ -376,6 +403,7 @@ func TestRunNousGateWatch(t *testing.T) {
 	store.publish(designGate("design-1"))
 	tick()
 	tick()
+	settle()
 	deps.Nous.Mu.Lock()
 	id := deps.Nous.pendingGateID()
 	deps.Nous.Mu.Unlock()
@@ -389,6 +417,7 @@ func TestRunNousGateWatch(t *testing.T) {
 	tick()
 	tick()
 	tick()
+	settle()
 	if n := strings.Count(logBuf.String(), "pending gate unreadable"); n != 1 {
 		t.Fatalf("unreadable gate logged %d times, want once: %s", n, logBuf.String())
 	}
@@ -403,6 +432,7 @@ func TestRunNousGateWatch(t *testing.T) {
 	store.readErr = errors.New("pending.json: permission denied")
 	store.mu.Unlock()
 	tick()
+	settle()
 	if n := strings.Count(logBuf.String(), "pending gate unreadable"); n != 2 {
 		t.Fatalf("a different error must be logged again (%d)", n)
 	}
@@ -411,10 +441,12 @@ func TestRunNousGateWatch(t *testing.T) {
 	store.readErr = nil
 	store.mu.Unlock()
 	tick()
+	settle()
 	store.mu.Lock()
 	store.readErr = errors.New("pending.json: unexpected end of JSON input")
 	store.mu.Unlock()
 	tick()
+	settle()
 	if n := strings.Count(logBuf.String(), "pending gate unreadable"); n != 3 {
 		t.Fatalf("error after recovery must be logged again (%d)", n)
 	}
