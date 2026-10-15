@@ -2,7 +2,6 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
@@ -84,62 +83,6 @@ exit 0
 	s := &HubServer{logger: provTestLogger()}
 	if err := s.addVanityHostToIngress("h1", "vanity.hive.hivecommons.dev", cluster); err != nil {
 		t.Fatalf("nginx vanity patch: %v", err)
-	}
-}
-
-func TestAddVanityHostToIngressNginxAddsTLSWhenWildcardDoesNotCoverVanity(t *testing.T) {
-	cluster := nginxIngressCluster()
-	cluster.CertIssuer = "letsencrypt-prod"
-	cluster.WildcardTLSSecret = "hive-hub/hive-wildcard-tls"
-	placeholder := "h1." + cluster.Domain
-	vanity := "hosted-kubestellar-console-4vkt." + "hive." + "kubestellar." + "io"
-	ingressJSON := `{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/auth-url":"https://hive.hivecommons.dev/api/saas/auth-check?hive=h1"}},"spec":{"rules":[{"host":"` + placeholder + `","http":{"paths":[]}}]}}`
-	capture := filepath.Join(t.TempDir(), "patch.json")
-	t.Setenv("PATCH_CAPTURE", capture)
-	installKubectlScript(t, `#!/bin/sh
-case "$*" in
-  *"get ingress"*"-o json"*) cat <<'JSON'
-`+ingressJSON+`
-JSON
-    ;;
-  *"patch ingress"*) for last do :; done; printf '%s' "$last" > "$PATCH_CAPTURE"; exit 0 ;;
-  *) echo "{}" ;;
-esac
-exit 0
-`)
-	s := &HubServer{logger: provTestLogger()}
-	if err := s.addVanityHostToIngress("h1", vanity, cluster); err != nil {
-		t.Fatalf("nginx vanity patch: %v", err)
-	}
-	raw, err := os.ReadFile(capture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var patch struct {
-		Metadata struct {
-			Annotations map[string]string `json:"annotations"`
-		} `json:"metadata"`
-		Spec struct {
-			TLS []struct {
-				Hosts      []string `json:"hosts"`
-				SecretName string   `json:"secretName"`
-			} `json:"tls"`
-		} `json:"spec"`
-	}
-	if err := json.Unmarshal(raw, &patch); err != nil {
-		t.Fatalf("patch JSON: %v\n%s", err, raw)
-	}
-	if got := patch.Metadata.Annotations["cert-manager.io/cluster-issuer"]; got != "letsencrypt-prod" {
-		t.Fatalf("issuer annotation = %q, want letsencrypt-prod", got)
-	}
-	if len(patch.Spec.TLS) != 1 {
-		t.Fatalf("tls entries = %d, want 1", len(patch.Spec.TLS))
-	}
-	if patch.Spec.TLS[0].SecretName != "hive-tls" {
-		t.Errorf("tls secret = %q, want hive-tls", patch.Spec.TLS[0].SecretName)
-	}
-	if len(patch.Spec.TLS[0].Hosts) != 1 || patch.Spec.TLS[0].Hosts[0] != vanity {
-		t.Errorf("tls hosts = %v, want [%s]", patch.Spec.TLS[0].Hosts, vanity)
 	}
 }
 

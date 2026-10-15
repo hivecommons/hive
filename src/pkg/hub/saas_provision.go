@@ -4003,54 +4003,25 @@ spec:
 			spec["rules"] = append(rules, clone)
 		}
 	tls:
-		if !cluster.servesHostFromWildcard(vanityHost) {
-			metadata, _ := obj["metadata"].(map[string]any)
-			annotations, _ := metadata["annotations"].(map[string]any)
-			if annotations == nil {
-				annotations = map[string]any{}
-			}
-			annotations["cert-manager.io/cluster-issuer"] = cluster.CertIssuer
-			if metadata == nil {
-				metadata = map[string]any{}
-			}
-			metadata["annotations"] = annotations
-			obj["metadata"] = metadata
-
-			tlsList, _ := spec["tls"].([]any)
-			if len(tlsList) == 0 {
-				spec["tls"] = []any{map[string]any{
-					"hosts":      []any{vanityHost},
-					"secretName": "hive-tls",
-				}}
-			} else {
-				for _, t := range tlsList {
-					tm, _ := t.(map[string]any)
-					if tm == nil {
-						continue
+		if tlsList, ok := spec["tls"].([]any); ok {
+			for _, t := range tlsList {
+				tm, _ := t.(map[string]any)
+				if tm == nil {
+					continue
+				}
+				hosts, _ := tm["hosts"].([]any)
+				found := false
+				for _, h := range hosts {
+					if hs, _ := h.(string); hs == vanityHost {
+						found = true
 					}
-					if _, ok := tm["secretName"].(string); !ok {
-						tm["secretName"] = "hive-tls"
-					}
-					hosts, _ := tm["hosts"].([]any)
-					found := false
-					for _, h := range hosts {
-						if hs, _ := h.(string); hs == vanityHost {
-							found = true
-						}
-					}
-					if !found {
-						tm["hosts"] = append(hosts, vanityHost)
-					}
+				}
+				if !found {
+					tm["hosts"] = append(hosts, vanityHost)
 				}
 			}
 		}
-		patch := map[string]any{"spec": spec}
-		if metadata, _ := obj["metadata"].(map[string]any); metadata != nil {
-			if annotations, _ := metadata["annotations"].(map[string]any); len(annotations) > 0 {
-				patch["metadata"] = map[string]any{"annotations": annotations}
-			}
-		}
-		patchBody, err := json.Marshal(patch)
+		patchBody, err := json.Marshal(map[string]any{"spec": spec})
 		if err != nil {
 			continue
 		}

@@ -1,1 +1,0 @@
-- Ensure vanity hosts outside a cluster wildcard keep per-host ingress TLS when added to hosted spokes.
