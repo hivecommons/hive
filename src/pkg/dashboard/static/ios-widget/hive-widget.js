@@ -336,8 +336,15 @@ function buildWidget(base, data, family) {
 // ------------------------------------------------------------------ main
 
 async function main() {
+  // Launched from the hive dashboard's "iPhone widget" menu item as
+  // scriptable:///run/Hive?url=<hive>: adopt that hive as the default so the
+  // setup form only needs the token.
+  const q = args.queryParameters || {};
+  const handedURL = normalizeURL(q.url);
+  if (handedURL && !config.runsInWidget) Keychain.set(KEYCHAIN_URL_KEY, handedURL);
+
   let base = hiveURL();
-  if (!config.runsInWidget && (!base || !token() || args.queryParameters.setup)) {
+  if (!config.runsInWidget && (!base || !token() || q.setup)) {
     if (!(await setup())) { Script.complete(); return; }
     base = hiveURL();
   }

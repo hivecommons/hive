@@ -8,9 +8,10 @@ hive dashboard opens.
 
 iOS does not let a web page be a widget, so the widget runs inside
 [Scriptable](https://scriptable.app) (free, App Store), which hosts
-JavaScript widgets. The script lives in this repo:
-[`src/contrib/ios-widget/hive-widget.js`](../contrib/ios-widget/hive-widget.js).
-No server-side change is needed.
+JavaScript widgets. The script lives in this repo at
+[`src/pkg/dashboard/static/ios-widget/hive-widget.js`](../pkg/dashboard/static/ios-widget/hive-widget.js)
+and every spoke serves its own copy at `/ios-widget/hive-widget.js`, so the
+dashboard can hand it straight to Scriptable.
 
 ## What it shows
 
@@ -33,7 +34,22 @@ Sparkline window: the spoke keeps roughly the last 7 hours of eval history in
 memory; the widget stores one sample per 15 minutes on the phone and keeps 7
 days, so the sparklines lengthen the longer the widget is installed.
 
-## Install (about two minutes)
+## Install from the dashboard (recommended, about a minute)
+
+On your iPhone, open the hive dashboard, tap your **avatar** → **📱 iPhone
+widget**. The dialog walks through three steps:
+
+1. **Add script to Scriptable** — fetches `/ios-widget/hive-widget.js` from
+   the spoke and opens `scriptable:///add?scriptName=Hive&scriptContent=…`;
+   Scriptable shows the script and asks you to confirm **Add**. If Scriptable
+   is not installed the page stays in the foreground, and the dialog reveals
+   an App Store link instead.
+2. **Set up this hive in Scriptable** — opens
+   `scriptable:///run/Hive?url=<this hive>&setup=1`; the script stores the
+   hive URL and asks only for the GitHub token (see below).
+3. Add the Scriptable widget to the Home Screen and point it at `Hive`.
+
+## Install by hand (about two minutes)
 
 1. Install **Scriptable** from the App Store.
 2. Create a GitHub token to prove who you are. Fine-grained, **no repository
@@ -43,7 +59,8 @@ days, so the sparklines lengthen the longer the widget is installed.
    already allowed on the hive, which is why nothing has to be configured on
    the hive.
 3. Add the script to Scriptable. Either:
-   - open <https://raw.githubusercontent.com/hivecommons/hive/v5/src/contrib/ios-widget/hive-widget.js>
+   - open `https://<your hive>/ios-widget/hive-widget.js` (or
+     <https://raw.githubusercontent.com/hivecommons/hive/v5/src/pkg/dashboard/static/ios-widget/hive-widget.js>)
      on the phone, select all, copy; in Scriptable tap **+**, paste, and name
      it `Hive`; or
    - AirDrop / iCloud the file into Scriptable's folder in Files.

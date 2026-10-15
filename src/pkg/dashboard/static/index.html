@@ -2604,6 +2604,16 @@
     .feedback-header { flex:0 0 auto; position: sticky; top: 0; z-index: 2; display:flex; justify-content:space-between; align-items:flex-start; gap:var(--sp-6); padding:var(--sp-8); border-bottom:1px solid var(--border); background:var(--panel); }
     .feedback-header h2 { margin:0 0 var(--sp-2); }
     .feedback-intro { color:var(--muted); margin:0; line-height:1.45; }
+    .iphone-widget-modal { max-width: 560px; width: min(94vw, 560px); padding: var(--sp-0); display:flex; flex-direction:column; max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); overflow:hidden; }
+    .iphone-widget-body { padding: var(--sp-6) var(--sp-8) var(--sp-8); overflow:auto; line-height:1.5; }
+    .iphone-widget-steps { margin: var(--sp-2) 0 var(--sp-4); padding-left: 1.4em; }
+    .iphone-widget-steps li { margin-bottom: var(--sp-5); }
+    .iphone-widget-steps .hv-btn { margin-top: var(--sp-2); }
+    .iphone-widget-status { display:block; color: var(--muted); font-size: 0.9em; margin-top: var(--sp-2); }
+    .iphone-widget-fallback { margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--warn, #f5c542); border-radius: 6px; background: var(--panel-2, var(--panel)); }
+    .iphone-widget-fallback .hv-btn { margin: var(--sp-2) 0 0; }
+    .iphone-widget-token-link { margin-left: var(--sp-3); font-size: 0.9em; }
+    .iphone-widget-note { color: var(--muted); font-size: 0.9em; margin: 0 0 var(--sp-4); }
     .feedback-body { flex:1 1 auto; min-height:0; overflow:hidden; display:flex; flex-direction:column; padding:var(--sp-8); }
     .feedback-footer { flex:0 0 auto; position: sticky; bottom:0; z-index:2; display:flex; justify-content:flex-end; gap:var(--sp-4); padding:var(--sp-6) var(--sp-8); border-top:1px solid var(--border); background:var(--panel); }
     .feedback-tabs, .feedback-segmented { display:inline-flex; gap:var(--sp-1); padding:var(--sp-1); border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg-soft); }
@@ -5603,6 +5613,7 @@
           <div class="avatar-menu-divider"></div>
           <div id="oc-gh-menu-export-label" class="avatar-menu-label" hidden>Export</div>
           <button type="button" id="oc-gh-menu-widget" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/widget" data-arg1="hive-widget.json" data-arg-types="s,s" title="View Übersicht widget JSON">⬇ Widget</button>
+          <button type="button" id="oc-gh-menu-iphone-widget" class="avatar-menu-item" data-action="openIPhoneWidgetModal" title="Put this hive on your iPhone Home Screen">📱 iPhone widget</button>
           <button type="button" id="oc-gh-menu-download" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/config/download" data-arg1="hive.yaml" data-arg-types="s,s" hidden>View hive.yaml</button>
           <button type="button" id="oc-gh-menu-config-export" class="avatar-menu-item" data-action="hiveOpenTextEndpoint" data-arg0="/api/config/export" data-arg1="hive-config.json" data-arg-types="s,s" hidden>Export effective config (JSON)</button>
           <div class="avatar-menu-divider"></div>
@@ -6477,6 +6488,100 @@
       if (tab === 'reports') await loadFeedbackReports(true);
     }
     function closeFeedbackModal() { const el = document.getElementById('feedback-overlay'); if (el) el.remove(); }
+
+    // ---- iPhone widget (Scriptable) hand-off -------------------------------
+    // Opens Scriptable in context: first `scriptable:///add` imports the widget
+    // script served by this spoke, then `scriptable:///run/Hive?url=<this hive>`
+    // runs its setup with the hive URL pre-filled. If the custom scheme does not
+    // take the page to the background within a short grace period, Scriptable is
+    // not installed and the App Store link is revealed. No native dialogs.
+    const IPHONE_WIDGET_SCRIPT_PATH = '/ios-widget/hive-widget.js';
+    const IPHONE_WIDGET_SCRIPT_NAME = 'Hive';
+    const IPHONE_WIDGET_APP_STORE_URL = 'https://apps.apple.com/app/scriptable/id1405459188';
+    const IPHONE_WIDGET_DOCS_URL = 'https://github.com/hivecommons/hive/blob/v5/src/docs/ios-widget.md';
+    const IPHONE_WIDGET_SCHEME_GRACE_MS = 1800;
+    function iphoneWidgetIsIOS() {
+      const ua = navigator.userAgent || '';
+      return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    }
+    function iphoneWidgetHiveURL() { return location.origin; }
+    function openIPhoneWidgetModal() {
+      if (typeof closeGHUserMenu === 'function') closeGHUserMenu();
+      if (document.getElementById('iphone-widget-overlay')) return;
+      const overlay = document.createElement('div');
+      overlay.id = 'iphone-widget-overlay';
+      overlay.className = 'config-overlay';
+      hiveRememberModalOpen(overlay);
+      const onIOS = iphoneWidgetIsIOS();
+      const hiveURL = iphoneWidgetHiveURL();
+      overlay.innerHTML = `<div class="config-modal iphone-widget-modal" role="dialog" aria-modal="true" aria-labelledby="iphone-widget-title-h">
+        <header class="feedback-header">
+          <div><h2 id="iphone-widget-title-h" class="modal-h">📱 iPhone widget</h2><p class="feedback-intro">Put <strong>${escapeHtml(hiveURL.replace(/^https?:\/\//, ''))}</strong> on your Home Screen: open issues, open PRs and your-turn counts with sparklines. Runs in the free Scriptable app.</p></div>
+          <button class="config-close" data-action="closeIPhoneWidgetModal" aria-label="Close iPhone widget dialog">&times;</button>
+        </header>
+        <div class="feedback-body iphone-widget-body">
+          ${onIOS ? '' : '<p class="iphone-widget-note">You are not on an iPhone. Open this hive on your phone and pick <em>iPhone widget</em> from the avatar menu there, or follow the <a href="' + IPHONE_WIDGET_DOCS_URL + '" target="_blank" rel="noopener noreferrer">manual steps ↗</a>.</p>'}
+          <ol class="iphone-widget-steps">
+            <li><strong>Add the widget script to Scriptable.</strong><br>
+              <button type="button" class="hv-btn btn-primary btn-sm" data-action="iphoneWidgetAddScript">Add script to Scriptable</button>
+              <span class="iphone-widget-status" id="iphone-widget-add-status"></span>
+              <div class="iphone-widget-fallback" id="iphone-widget-not-installed" hidden>Scriptable did not open — it is probably not installed. <a class="hv-btn btn-secondary btn-sm" href="${IPHONE_WIDGET_APP_STORE_URL}" target="_blank" rel="noopener noreferrer">Get Scriptable (free) ↗</a> then come back and tap the button again.</div>
+            </li>
+            <li><strong>Set it up for this hive.</strong> Scriptable asks only for a GitHub token (fine-grained, no repository permissions — it just proves who you are; stored in the iOS Keychain).<br>
+              <button type="button" class="hv-btn btn-secondary btn-sm" data-action="iphoneWidgetRunSetup">Set up this hive in Scriptable</button>
+              <a class="iphone-widget-token-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create token ↗</a>
+            </li>
+            <li><strong>Add the widget.</strong> Long-press the Home Screen → <strong>+</strong> → <strong>Scriptable</strong> → medium size → Add. Then long-press it → <strong>Edit Widget</strong> → Script: <strong>${IPHONE_WIDGET_SCRIPT_NAME}</strong>.</li>
+          </ol>
+          <p class="iphone-widget-note">Several hives? Add one widget per hive and set its <em>Parameter</em> to that hive's URL. <a href="${IPHONE_WIDGET_DOCS_URL}" target="_blank" rel="noopener noreferrer">Full guide ↗</a></p>
+        </div>
+      </div>`;
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) closeIPhoneWidgetModal(); });
+      document.body.appendChild(overlay);
+    }
+    function closeIPhoneWidgetModal() { const el = document.getElementById('iphone-widget-overlay'); if (el) el.remove(); }
+    // Navigate to a custom-scheme URL and report whether the page went to the
+    // background (the only web-visible sign the app took the hand-off).
+    function iphoneWidgetOpenScheme(url) {
+      return new Promise((resolve) => {
+        let settled = false;
+        const done = (ok) => { if (settled) return; settled = true; document.removeEventListener('visibilitychange', onHide); resolve(ok); };
+        const onHide = () => { if (document.visibilityState === 'hidden') done(true); };
+        document.addEventListener('visibilitychange', onHide);
+        setTimeout(() => done(document.visibilityState === 'hidden'), IPHONE_WIDGET_SCHEME_GRACE_MS);
+        location.href = url;
+      });
+    }
+    async function iphoneWidgetAddScript() {
+      const status = document.getElementById('iphone-widget-add-status');
+      const notInstalled = document.getElementById('iphone-widget-not-installed');
+      if (notInstalled) notInstalled.hidden = true;
+      if (status) status.textContent = 'Fetching script…';
+      let script = '';
+      try {
+        const resp = await fetch(IPHONE_WIDGET_SCRIPT_PATH, { credentials: 'same-origin', cache: 'no-cache' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        script = await resp.text();
+      } catch (err) {
+        if (status) status.textContent = '';
+        showToast('Could not load the widget script from this hive: ' + (err && err.message ? err.message : err), 'error');
+        return;
+      }
+      if (status) status.textContent = 'Opening Scriptable…';
+      const url = 'scriptable:///add?scriptName=' + encodeURIComponent(IPHONE_WIDGET_SCRIPT_NAME) + '&scriptContent=' + encodeURIComponent(script);
+      const ok = await iphoneWidgetOpenScheme(url);
+      if (status) status.textContent = ok ? 'Sent to Scriptable — tap “Add” there, then come back for step 2.' : '';
+      if (!ok && notInstalled) notInstalled.hidden = false;
+    }
+    async function iphoneWidgetRunSetup() {
+      const url = 'scriptable:///run/' + encodeURIComponent(IPHONE_WIDGET_SCRIPT_NAME) + '?url=' + encodeURIComponent(iphoneWidgetHiveURL()) + '&setup=1';
+      const ok = await iphoneWidgetOpenScheme(url);
+      if (!ok) {
+        const notInstalled = document.getElementById('iphone-widget-not-installed');
+        if (notInstalled) notInstalled.hidden = false;
+        showToast('Scriptable did not open. Install it (step 1) and make sure the script is named “' + IPHONE_WIDGET_SCRIPT_NAME + '”.', 'error');
+      }
+    }
     async function feedbackAddFiles(files) {
       if (!files) return;
       for (const f of Array.from(files)) {
