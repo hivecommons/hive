@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/intent"
 )
 
 // handleGovernorSecurity serves PUT /api/config/governor/security. It is
@@ -288,7 +287,7 @@ func sentinelSectionResponse(sc config.SentinelConfig) map[string]interface{} {
 // intentDefaultsResponse lists the built-in intent patterns an empty
 // intent.* list falls back to, so the UI can show them as placeholders.
 func intentDefaultsResponse() map[string][]string {
-	d := intent.DefaultConfig()
+	d := config.DefaultIntentConfig()
 	return map[string][]string{
 		"testPathPatterns":      d.TestPathPatterns,
 		"docsPathPatterns":      d.DocsPathPatterns,
