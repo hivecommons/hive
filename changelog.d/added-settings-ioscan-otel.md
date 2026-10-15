@@ -1,0 +1,1 @@
+- Expose ioscan and OpenTelemetry settings in the dashboard Settings dialog.

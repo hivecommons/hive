@@ -352,13 +352,6 @@ intent.enforce # TODO #11854
 intent.feature_signals[] # TODO #11854
 intent.guardrail_path_patterns[] # TODO #11854
 intent.test_path_patterns[] # TODO #11854
-ioscan.canaries # TODO #11854
-ioscan.classifier.block_threshold # TODO #11854
-ioscan.classifier.enabled # TODO #11854
-ioscan.classifier.model # TODO #11854
-ioscan.classifier.warn_threshold # TODO #11854
-ioscan.enabled # TODO #11854
-ioscan.fail_mode # TODO #11854
 issues.close_on_merge # TODO #11854
 issues.close_on_merge_backfill_interval # TODO #11854
 issues.close_on_merge_interval # TODO #11854
@@ -438,12 +431,6 @@ knowledge.vaults[].name # TODO #11854
 knowledge.vaults[].path # TODO #11854
 mint.key_path # TODO #11854
 mint.max_ttl_seconds # TODO #11854
-otel.enabled # TODO #11854
-otel.endpoint # TODO #11854
-otel.headers.<key> # TODO #11854
-otel.insecure # TODO #11854
-otel.sample_ratio # TODO #11854
-otel.service_name # TODO #11854
 planning.design_approved_label # TODO #11854
 planning.design_labels[] # TODO #11854
 planning.max_concurrent_designs # TODO #11854
