@@ -146,6 +146,25 @@ var inferenceQuietCLIEnv = []string{
 	"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
 }
 
+// claudeAutoModeServerEnv / claudeAutoModeServerOff tell Claude Code not to
+// ask the inference host for auto-mode's server-side classifier review
+// (https://code.claude.com/docs/en/auto-mode-classifier-billing).
+//
+// That review is an Anthropic-API feature: the CLI adds an `anthropic-beta`
+// value and a `safeguards` request field and expects `safeguard_results` in
+// the reply. Hive's inference translator on port 18444 rewrites every
+// /v1/messages call into an OpenAI chat completion for a gateway that has no
+// such field, so the verdict can never come back. When the CLI notices, it
+// stops the session on an interactive notice — "this session isn't eligible
+// because your requests go through 127.0.0.1:18444 … Enter to continue · Esc
+// to cancel" — that no unattended pane can answer (#9945). With the variable
+// set to 0 the CLI runs its own classifier requests through the translator
+// like any other call and never shows the notice.
+const (
+	claudeAutoModeServerEnv = "CLAUDE_CODE_AUTO_MODE_SERVER"
+	claudeAutoModeServerOff = "0"
+)
+
 // agentGitIdentity returns the lane-distinct commit identity
 // "<agent> <agent>@<HIVE_GIT_BOT_EMAIL_DOMAIN>" (#9478). The address is the
 // bracket-free form DCO accepts (see hive_git_bot_identity). The domain is
@@ -303,6 +322,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		for _, v := range inferenceQuietCLIEnv {
 			vars = append(vars, agentEnvPair{v, "1", false})
 		}
+		vars = append(vars, agentEnvPair{claudeAutoModeServerEnv, claudeAutoModeServerOff, false})
 	}
 	if m.copilotAuthToken != "" {
 		vars = append(vars, agentEnvPair{copilotTokenEnvVar, m.copilotAuthToken, true})
