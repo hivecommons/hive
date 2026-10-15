@@ -8,7 +8,7 @@ an experiment and not a recommendation over Docker. Pick one — they install th
 same two services (Hive plus its authenticating gateway) and land the dashboard
 on the same port.
 
-| | [Docker Compose](#quick-start-docker-compose) | [Podman](#quick-start-podman) |
+| | [Docker Compose](#quick-start-docker-compose) | [Podman](quickstart-podman.md) |
 | --- | --- | --- |
 | Lifecycle | `docker compose up -d` | Quadlet units under systemd |
 | Runs as | the Docker daemon | rootful **or** rootless |
