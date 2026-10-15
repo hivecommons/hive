@@ -47,6 +47,7 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 			Primer: knowledge.PrimerConfig{
 				MaxFacts:      s.deps.Config.Knowledge.Primer.MaxFacts,
 				MergeStrategy: s.deps.Config.Knowledge.Primer.MergeStrategy,
+				MaxBytes:      s.deps.Config.Knowledge.Primer.MaxBytes,
 			},
 		}
 		api := knowledge.NewKnowledgeAPI(layers, kcfg, s.deps.Logger)

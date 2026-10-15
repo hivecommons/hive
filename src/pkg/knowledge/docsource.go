@@ -121,6 +121,7 @@ func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
 		if fetchErr != nil {
 			return nil, fmt.Errorf("fetching Context7 docs: %w", fetchErr)
 		}
+		logContext7Omitted(ds.logger, ds.config.Context7ID, result.Omitted)
 		content = []byte(result.Content)
 		contentType = "text/plain"
 	} else if ds.config.URL != "" {

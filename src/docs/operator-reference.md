@@ -874,6 +874,21 @@ than trying to add the moved repository back to the old installation.
 > spoke. See [token-tracking.md](token-tracking.md) for the full heartbeat and
 > `/api/saas/usage` rollup details.
 
+### Knowledge: Context7 content caps
+
+| Name | Default | Purpose |
+|---|---|---|
+| `HIVE_CONTEXT7_MAX_SNIPPETS` | `40` | Snippets kept from one Context7 llms.txt fetch (document import or `context7` connector). |
+| `HIVE_CONTEXT7_MAX_SNIPPET_BYTES` | `4096` | A single snippet larger than this is dropped whole. |
+| `HIVE_CONTEXT7_MAX_TOTAL_BYTES` | `16384` | Total content kept per fetch, marker included; values under `1024` are raised to `1024`. |
+
+Snippets are dropped whole (never clipped) by relevance to the topic, the
+stored content ends with a `… truncated: N snippets / M bytes omitted (size
+cap)` line, and the fetch logs the library. Unparseable or non-positive values
+fall back to the default. The kick primer's own byte cap is the yaml key
+`knowledge.primer.max_bytes` (default `4096`); see
+[knowledge-curator.md](knowledge-curator.md#kick-primer-size-cap-knowledgeprimermax_bytes).
+
 ### Inference endpoint fallbacks
 
 | Name | Default | Purpose |

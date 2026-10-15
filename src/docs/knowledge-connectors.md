@@ -212,6 +212,11 @@ knowledge:
   shows whether it is set or unset and never the value.
 - **Validate** runs one live Context7 search with the resolved key. Status and
   last sync come from the same connector status table as other connectors.
+- Each library's content is bounded before it is stored: whole snippets are
+  kept by relevance to `topic` up to `HIVE_CONTEXT7_MAX_TOTAL_BYTES` (default
+  16 KiB), and a `… truncated: N snippets / M bytes omitted (size cap)` line
+  ends the content when any were dropped. See
+  [Context7 content cap](knowledge-curator.md#context7-content-cap).
 
 ## Notion (`type: notion`)
 

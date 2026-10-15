@@ -190,6 +190,11 @@ type PrimerConfig struct {
 	// IncludeStates admits non-approved lifecycle states (draft, deprecated,
 	// superseded) into primed knowledge. Empty means approved facts only.
 	IncludeStates []LifecycleState `yaml:"include_states" json:"include_states,omitempty"`
+	// MaxBytes caps the rendered primer text injected into a kick. MaxFacts
+	// bounds the count; this bounds the bytes. Facts that do not fit are
+	// dropped whole, in priority order, and the render ends with a visible
+	// "omitted" marker. Zero means DefaultPrimerMaxBytes.
+	MaxBytes int `yaml:"max_bytes" json:"max_bytes,omitempty"`
 }
 
 // FactType categorizes knowledge entries.
@@ -294,61 +299,18 @@ type PrimedKnowledge struct {
 	Facts     []Fact   `json:"facts"`
 	Hints     []string `json:"hints,omitempty"`
 	QueryTime int64    `json:"query_time_ms"`
+	// MaxBytes bounds the rendered prompt text (PrimerConfig.MaxBytes). Zero
+	// means DefaultPrimerMaxBytes.
+	MaxBytes int `json:"-"`
 }
 
 // FormatForPrompt renders primed facts as markdown for injection into an agent's
 // kick prompt. This runs once during kick preparation; the agent never queries
-// the wiki directly.
+// the wiki directly. The output is bounded by pk.MaxBytes (DefaultPrimerMaxBytes
+// when zero); see Render for the truncation contract.
 func (pk *PrimedKnowledge) FormatForPrompt() string {
-	if len(pk.Facts) == 0 {
-		return ""
-	}
-
-	var b []byte
-	b = append(b, "# Relevant Knowledge\n\n"...)
-
-	typeSections := map[string][]Fact{}
-	typeOrder := []string{}
-	for _, f := range pk.Facts {
-		key := string(f.Type)
-		if _, exists := typeSections[key]; !exists {
-			typeOrder = append(typeOrder, key)
-		}
-		typeSections[key] = append(typeSections[key], f)
-	}
-
-	for _, typ := range typeOrder {
-		facts := typeSections[typ]
-		b = append(b, "## "+typ+"\n\n"...)
-		for _, f := range facts {
-			b = append(b, "- **"+f.Title+"**"...)
-			if f.ConfidenceScored && f.Confidence < 1.0 {
-				b = append(b, " (confidence: "...)
-				b = append(b, formatConfidence(f.Confidence)...)
-				b = append(b, ")"...)
-			}
-			if docURL := factDocURL(f); docURL != "" {
-				b = append(b, " (source: "...)
-				b = append(b, docURL...)
-				b = append(b, ")"...)
-			}
-			b = append(b, "\n  "...)
-			b = append(b, f.Body...)
-			b = append(b, "\n\n"...)
-		}
-	}
-
-	if len(pk.Hints) > 0 {
-		b = append(b, "## Available Documentation\n\n"...)
-		for _, hint := range pk.Hints {
-			b = append(b, "- "...)
-			b = append(b, hint...)
-			b = append(b, "\n"...)
-		}
-		b = append(b, "\n"...)
-	}
-
-	return string(b)
+	out, _ := pk.Render()
+	return out
 }
 
 func factDocURL(f Fact) string {

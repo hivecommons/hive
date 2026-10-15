@@ -345,6 +345,7 @@ knowledge:
     auto_promote_threshold: 0.9  # confidence to auto-promote project→org
   primer:
     max_facts: 25
+    max_bytes: 4096        # rendered primer cap per kick; facts dropped whole, marker rendered
     priority: ["regression", "gotcha", "test_scaffold", "pattern", "decision"]
     merge_strategy: "precedence"  # personal > project > org > community
 ```

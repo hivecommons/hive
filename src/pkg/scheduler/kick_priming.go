@@ -260,9 +260,18 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 		scope = &agentScope
 	}
 	primed := primer.PrimeScoped(context.Background(), scope, nil, keywords)
-	result := primed.FormatForPrompt()
+	result, omitted := primed.Render()
 	if result != "" {
-		s.logger.Info("knowledge primer: injecting facts into kick", "facts", len(primed.Facts), "chars", len(result))
+		s.logger.Info("knowledge primer: injecting facts into kick",
+			"facts", len(primed.Facts)-omitted.Facts, "chars", len(result))
+	}
+	if omitted.Any() {
+		// The render carries its own marker; this is the operator-side half so
+		// a cap that is too tight for the vault shows up in logs, not only in
+		// a kick transcript (#12124).
+		s.logger.Warn("knowledge primer: dropped facts over the byte cap",
+			"omitted_facts", omitted.Facts, "omitted_hints", omitted.Hints,
+			"omitted_bytes", omitted.Bytes, "cap_bytes", primed.MaxBytes)
 	}
 	return result
 }

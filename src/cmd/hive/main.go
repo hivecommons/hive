@@ -1905,11 +1905,13 @@ func (b *boot) newKnowledgePrimer() *knowledge.Primer {
 		MaxFacts:      b.cfg.Knowledge.Primer.MaxFacts,
 		Priority:      b.cfg.Knowledge.Primer.Priority,
 		MergeStrategy: b.cfg.Knowledge.Primer.MergeStrategy,
+		MaxBytes:      b.cfg.Knowledge.Primer.MaxBytes,
 	}
 	p := knowledge.NewPrimer(layers, primerCfg, b.logger)
 	b.logger.Info("knowledge primer enabled",
 		"layers", len(b.cfg.Knowledge.Layers),
 		"max_facts", primerCfg.MaxFacts,
+		"max_bytes", p.MaxBytes(),
 	)
 	return p
 }
