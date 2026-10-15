@@ -815,21 +815,23 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .admin-badge{font-size:var(--fs-xs);font-weight:600;padding:var(--badge-pad-y) var(--badge-pad-x);border-radius:var(--r-pill);background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent);margin-left:auto}
 .admin-badge:empty{display:none}
 .admin-body{padding:18px 20px 22px;display:grid;gap:var(--sp-6)}
+.admin-section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%%,26.25rem),1fr));gap:var(--sp-6);align-items:start}
+.admin-section--wide{grid-column:1/-1}
 .admin-section{border:1px solid var(--line-subtle);border-radius:var(--r-lg);background:rgba(139,148,158,.04);padding:var(--sp-6);display:grid;gap:14px}
-.admin-section-head{display:grid;gap:3px;max-width:760px}
+.admin-section-head{display:grid;gap:var(--sp-1)}
 .admin-section-head h3{font-size:var(--fs-md);color:var(--text);margin:var(--sp-0)}
 .admin-section-head p{font-size:.76rem;color:var(--text-muted);line-height:1.5;margin:var(--sp-0)}
-.admin-form-stack{display:grid;gap:10px;max-width:720px;width:100%%}
+.admin-form-stack{display:grid;gap:var(--sp-4);width:100%%}
 .admin-form-stack label,.admin-field>label{display:block;font-size:.78rem;font-weight:600;color:var(--text);margin-bottom:var(--sp-3)}
-.admin-field{margin:var(--sp-0);max-width:760px}
+.admin-field{margin:var(--sp-0)}
 .admin-control-note,.admin-toggle-sub{font-size:.74rem;color:var(--text-muted);line-height:1.45}
 .admin-control-note code,.admin-toggle-sub code{word-break:break-word}
 .admin-input,.admin-field input[type="text"],.admin-field input[type="number"],.admin-addrow input{background:var(--surface-0);border:1px solid var(--line-strong);border-radius:8px;color:var(--text);font-size:.8rem;padding:7px 9px;font-family:inherit;min-width:0}
 .admin-input:focus,.admin-field input:focus,.admin-field textarea:focus,.admin-addrow input:focus{outline:none;border-color:var(--cc-accent)}
-.admin-textarea{width:100%%;box-sizing:border-box;max-width:720px;resize:vertical;background:var(--surface-0);border:1px solid var(--line-strong);border-radius:10px;color:var(--text);font-family:inherit;font-size:var(--fs-base);line-height:1.5;padding:10px 12px;min-width:0}
+.admin-textarea{width:100%%;box-sizing:border-box;resize:vertical;background:var(--surface-0);border:1px solid var(--line-strong);border-radius:10px;color:var(--text);font-family:inherit;font-size:var(--fs-base);line-height:1.5;padding:10px 12px;min-width:0}
 .admin-textarea--announcement{min-height:96px}
 .admin-textarea--links{min-height:140px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
-.admin-action-row{display:flex;flex-wrap:wrap;gap:var(--sp-4);align-items:center;max-width:720px}
+.admin-action-row{display:flex;flex-wrap:wrap;gap:var(--sp-4);align-items:center;width:100%%}
 .admin-action-row select,.admin-action-row input{background:var(--surface-0);border:1px solid var(--line-strong);border-radius:8px;color:var(--text);padding:7px 9px;font-family:inherit;font-size:.8rem;min-height:34px}
 .admin-toggle{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:10px;padding:var(--sp-4) var(--sp-0)}
 .admin-switch{width:38px;height:20px;border-radius:var(--r-pill);background:var(--line-strong);position:relative;cursor:pointer;flex-shrink:0;transition:background .15s;margin-top:1px}
@@ -838,7 +840,7 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .admin-switch.on.danger{background:var(--cc-red)}
 .admin-switch.on::after{left:20px}
 .admin-toggle-label{font-size:.85rem;font-weight:600;color:var(--text);margin-bottom:var(--sp-1)}
-.admin-toggle-grid{display:grid;gap:var(--sp-1);max-width:760px}
+.admin-toggle-grid{display:grid;gap:var(--sp-1)}
 .admin-nested-field{margin-left:48px;max-width:420px}
 .admin-inline-input{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap}
 .admin-inline-input input[type="number"]{width:88px;text-align:right}
@@ -850,13 +852,13 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .admin-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:var(--r-pill);font-size:.72rem;background:rgba(139,148,158,.12);color:var(--text);border:1px solid var(--line-strong)}
 .admin-chip .x{cursor:pointer;opacity:.7}
 .admin-chip .x:hover{opacity:1;color:var(--cc-red)}
-.admin-addrow{display:flex;gap:var(--sp-3);max-width:520px}
+.admin-addrow{display:flex;gap:var(--sp-3);width:100%%}
 .admin-addrow input{flex:1}
 .admin-addrow button,.admin-save{min-height:var(--control-min-h)}
 .admin-save{margin-top:var(--sp-0)}
 .admin-save:disabled{opacity:.5;cursor:default}
 .admin-hr{border:none;border-top:1px solid var(--line-subtle);margin:var(--sp-1) var(--sp-0)}
-.admin-filter-grid{display:grid;gap:var(--sp-5);max-width:760px}
+.admin-filter-grid{display:grid;gap:var(--sp-5)}
 @media(max-width:720px){.admin-body{padding:14px}.admin-section{padding:14px}.admin-action-row,.admin-addrow{align-items:stretch}.admin-action-row>*,.admin-addrow input,.admin-addrow button,.admin-save{width:100%%}.admin-nested-field{margin-left:var(--sp-0)}.admin-inline-input input[type="number"]{width:100%%}}
 /* Repos-for-Contribute enable toggles + Tier rate-limit rows (Management mirror of
    the Governor Hub sections). Subtle, matching the rest of the admin controls. */
@@ -2029,7 +2031,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-manage" role="tabpanel" aria-labelledby="ptab-manage">
 <div class="ops">
 <h1>Management</h1>
-<p class="subtitle" style="font-size:.95rem">Operator admin controls for the Contributor agent (ClankeR) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--text)">Operations</strong> tab.</p>
+<p class="subtitle">Operator admin controls for the Contributor agent (ClankeR) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong>Operations</strong> tab.</p>
 
 <!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
      reports owner or read-write. These mirror the Governor Hub config section
@@ -2040,8 +2042,9 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops-card ops-admin" id="ops-admin">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Operator admin controls</h3><span class="admin-badge" id="admin-role-badge"></span></div>
 <div class="admin-body">
-<p class="ops-note" style="margin-top:var(--sp-0)">Mirrored from the Governor Hub configuration. Changes here write the same <code>Config.Hub.*</code> fields the Governor config dialog edits. Owner &amp; read-write only.</p>
+<p class="ops-note m-0">Mirrored from the Governor Hub configuration. Changes here write the same <code>Config.Hub.*</code> fields the Governor config dialog edits. Owner &amp; read-write only.</p>
 
+<div class="admin-section-grid">
 <section class="admin-section" aria-labelledby="admin-section-announcement">
 <div class="admin-section-head"><h3 id="admin-section-announcement">Announcement</h3><p>Broadcast a short contributor announcement on Operations, Onboarding, profile, and relays. Empty text clears it.</p></div>
 <div class="admin-form-stack announcement-admin">
@@ -2112,21 +2115,27 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 </section>
 
-<hr class="admin-hr">
-<h3 style="font-size:.9rem;color:var(--text);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Repos for Contribute</h3>
-<p class="ops-note" style="margin-top:var(--sp-0)">Which repos feed the contribute queue. A repo is enabled unless toggled off. Mirrors the Governor Hub repo list; persists as <code>disabled_repos</code>.</p>
+<section class="admin-section admin-section--wide" aria-labelledby="admin-section-repos">
+<div class="admin-section-head"><h3 id="admin-section-repos">Repos for Contribute</h3><p>Which repos feed the contribute queue. A repo is enabled unless toggled off. Mirrors the Governor Hub repo list; persists as <code>disabled_repos</code>.</p></div>
 <div id="admin-repos"></div>
+</section>
 
-<hr class="admin-hr">
-<h3 style="font-size:.9rem;color:var(--text);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Tier access &amp; rate limits</h3>
-<p class="ops-note" style="margin-top:var(--sp-0)">Per-tier managed-queue limits. Enable/disable a tier and set tasks per hour / per day / concurrent. 0 means unlimited. Persists as <code>tier_limits</code> + <code>disabled_tiers</code>.</p>
+<section class="admin-section admin-section--wide" aria-labelledby="admin-section-tiers">
+<div class="admin-section-head"><h3 id="admin-section-tiers">Tier access &amp; rate limits</h3><p>Per-tier managed-queue limits. Enable/disable a tier and set tasks per hour / per day / concurrent. 0 means unlimited. Persists as <code>tier_limits</code> + <code>disabled_tiers</code>.</p></div>
 <div id="admin-tiers"></div>
+</section>
 
+<section class="admin-section" aria-labelledby="admin-section-save">
+<div class="admin-section-head"><h3 id="admin-section-save">Save configuration</h3><p>Persist queued filter, repo, and tier edits after immediate fleet toggles have already applied.</p></div>
 <button type="button" class="hv-btn btn-primary admin-save" id="admin-save-btn" disabled>Save filters</button>
 <p class="admin-note" id="admin-save-hint">Suspend / skip toggles apply immediately. Filter edits apply on Save. Both persist through <code>PUT /api/config/governor/hub</code>.</p>
-<hr class="admin-hr">
-<h3 style="font-size:.9rem;color:var(--text);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Wall moderation</h3>
+</section>
+
+<section class="admin-section" aria-labelledby="admin-section-wall">
+<div class="admin-section-head"><h3 id="admin-section-wall">Wall moderation</h3><p>Review flagged Operations wall posts and contributor mutes.</p></div>
 <div id="admin-wall-flags"><div class="ops-empty">Enable the wall to review flagged posts and mutes.</div></div>
+</section>
+</div>
 </div>
 </div>
 </div>

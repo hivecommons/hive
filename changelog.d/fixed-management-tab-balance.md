@@ -1,0 +1,1 @@
+- Balanced the `/contribute` Management tab by grouping operator admin controls into a responsive section grid.
