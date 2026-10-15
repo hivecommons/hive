@@ -1485,7 +1485,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 						reason = DenyReasonUnknown
 					}
 				}
-				p.writes.record(string(mode), reason)
+				p.writes.record(mode.String(), reason)
 			}
 		}
 
