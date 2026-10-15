@@ -1,1 +1,1 @@
-- README and Hive introduction spell out ACMM as the AI Codebase Maturity Model on first use and link the paper.
+- README, Hive introduction and the ACMM Policy Matrix page spell out ACMM as the AI Codebase Maturity Model on first use, with a short definition and the paper link.
