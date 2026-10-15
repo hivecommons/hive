@@ -39,8 +39,9 @@ const (
 	DefaultLaunchLogPath = "/data/launch-attribution.jsonl"
 
 	// launchLogRingCap bounds the in-memory records served to the cost join.
-	// At the busiest shipped cadence (~52 kicks/hour) 4000 records is ~3 days,
-	// comfortably wider than the 24h repo-cost window the join uses.
+	// At the busiest shipped cadence (~52 kicks/hour) 4000 records is ~3 days;
+	// older launches age out of the ring (and so out of attribution) while the
+	// repo-cost window the join shares is 14 days — a bounded, documented gap.
 	launchLogRingCap = 4000
 
 	// launchLogCompactEvery rewrites the JSONL file from the ring after this
