@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
@@ -32,19 +33,7 @@ func writeIntentVerdicts(
 	_ = os.MkdirAll("/var/run/hive-metrics", 0o755)
 	aiAuthor := strings.TrimSpace(cfg.EffectiveAIAuthor())
 	intentCfg := intentConfigFromCfg(cfg)
-	var alignmentReviewer *intent.AlignmentReviewer
-	if strings.TrimSpace(cfg.Intent.AlignmentModel) != "" {
-		endpoint, apiKey, _ := cfg.Governor.ResolveReviewer()
-		var err error
-		alignmentReviewer, err = intent.NewAlignmentReviewer(intent.AlignmentReviewerConfig{
-			Endpoint: endpoint,
-			APIKey:   apiKey,
-			Model:    cfg.Intent.AlignmentModel,
-		})
-		if err != nil {
-			logger.Warn("intent alignment reviewer disabled", "error", err)
-		}
-	}
+	alignmentReviewer := alignmentReviewerFor(cfg, logger)
 	type verdictRecord struct {
 		Repo       string         `json:"repo"`
 		Number     int            `json:"number"`
@@ -113,6 +102,7 @@ func writeIntentVerdicts(
 			Files:       files,
 			Author:      pr.Author,
 			AgentAuthor: true,
+			HeadSHA:     pr.HeadSHA,
 		}, issueTexts, beadStores, refs)
 		alignment := intent.EvaluateAlignment(alignCtx, class.Tier, intentCfg)
 		if alignmentReviewer != nil {
@@ -147,7 +137,50 @@ func writeIntentVerdicts(
 	} else {
 		logger.Warn("failed to marshal intent verdicts", "error", err)
 	}
+	if alignmentReviewer != nil {
+		stats := alignmentReviewer.CacheStats()
+		logger.Info("intent alignment review cache", "hits", stats.Hits, "misses", stats.Misses, "size", stats.Size)
+	}
 	return verdicts
+}
+
+// alignmentReviewerState keeps one AlignmentReviewer alive across governor
+// ticks so its (head SHA, intent revision) verdict cache survives between
+// calls to writeIntentVerdicts (hivecommons/hive#12131). The instance is
+// rebuilt only when the resolved endpoint, key, or model changes.
+var alignmentReviewerState struct {
+	mu       sync.Mutex
+	endpoint string
+	apiKey   string
+	model    string
+	reviewer *intent.AlignmentReviewer
+}
+
+func alignmentReviewerFor(cfg *config.Config, logger *slog.Logger) *intent.AlignmentReviewer {
+	model := strings.TrimSpace(cfg.Intent.AlignmentModel)
+	if model == "" {
+		return nil
+	}
+	endpoint, apiKey, _ := cfg.Governor.ResolveReviewer()
+	alignmentReviewerState.mu.Lock()
+	defer alignmentReviewerState.mu.Unlock()
+	st := &alignmentReviewerState
+	if st.reviewer != nil && st.endpoint == endpoint && st.apiKey == apiKey && st.model == model {
+		return st.reviewer
+	}
+	reviewer, err := intent.NewAlignmentReviewer(intent.AlignmentReviewerConfig{
+		Endpoint: endpoint,
+		APIKey:   apiKey,
+		Model:    model,
+		Logger:   logger,
+	})
+	if err != nil {
+		logger.Warn("intent alignment reviewer disabled", "error", err)
+		st.reviewer = nil
+		return nil
+	}
+	st.endpoint, st.apiKey, st.model, st.reviewer = endpoint, apiKey, model, reviewer
+	return reviewer
 }
 
 func fetchIntentPREvidence(ctx context.Context, ghClient *github.Client, repo string, number int) (string, []intent.ChangedFile, bool, error) {

@@ -47,6 +47,8 @@ Set `intent.alignment_model` to enable a second-model alignment reviewer. Hive r
 
 Model review fails open: endpoint, transport, or parse errors are recorded in the verdict but never block merge eligibility by themselves.
 
+Model verdicts are cached in a bounded in-memory LRU keyed by the PR head SHA and an *intent revision* (a hash of the authorized intent text, PR title, and PR body). An unchanged PR is not re-sent to the model on every governor tick; a new push or an edit to the linked issue or PR text invalidates the entry. The cache only ever replaces a model call with the model's own earlier answer for identical inputs — the deterministic verdict is never used to skip the model, however clean or ambiguous it looks. Hits are logged as `intent alignment review skipped reason=cached`, and a per-tick `intent alignment review cache` line reports cumulative hits/misses/size.
+
 ## Report-only vs enforce
 
 Intent verification is report-only by default. With no `intent:` block, Hive writes `/var/run/hive-metrics/intent-verdicts.json` and logs denials, but `merge-eligible.json` is unchanged.

@@ -110,6 +110,9 @@ type PR struct {
 	Files       []ChangedFile
 	Author      string
 	AgentAuthor bool
+	// HeadSHA is the PR head commit when known; it keys the alignment
+	// verdict cache (see AlignmentContext.HeadSHA).
+	HeadSHA string
 }
 
 type Classification struct {

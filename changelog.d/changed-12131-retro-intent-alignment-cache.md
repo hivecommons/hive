@@ -1,0 +1,1 @@
+- Retro analysis and intent alignment model calls are now cached in bounded in-memory LRUs: retro keys on a hash of the deterministic finding set and skips the model only for an empty set; intent alignment keys on (head SHA, intent revision) and never short-circuits on the deterministic verdict. Cache hits/misses are logged and exposed via `CacheStats()` (#12131).
