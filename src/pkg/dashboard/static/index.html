@@ -17515,7 +17515,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const n = hfMatchingEntries(r.filter, entries).length;
         const active = _hfUI.crossRepo && store.activeKey === key;
         const tip = r.name + ': ' + n + ' matching issue' + (n === 1 ? '' : 's') + '/PR' + (n === 1 ? '' : 's') + ' across all projects — open the cross-repo view';
-        return `<a class="oc-nav-item${active ? ' active' : ''}" data-hf-key="${esc(hfNavKeyAttr(key))}" data-action="hfOpenCrossRepo" data-arg0="${esc(key)}" data-arg-types="s" title="${esc(tip)}"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">${esc(r.name)}</span><span class="badge-count oc-nav-count hf-nav-count"${n === 0 ? ' data-zero' : ''}>${n}</span></a>`;
+        return `<a class="oc-nav-item${active ? ' active' : ''}" data-hf-key="${esc(hfNavKeyAttr(key))}" data-action="hfOpenCrossRepo" data-arg0="${esc(key)}" data-arg-types="s" title="${esc(tip)}"><span class="oc-nav-emoji">📌</span><span class="oc-nav-text">${esc(r.name)}</span><span class="badge-count oc-nav-count hf-nav-count"${n === 0 ? ' data-zero' : ''}>${n}</span></a>`;
       }).join('');
       setIfChanged(host, html);
       group.hidden = keys.length === 0;
