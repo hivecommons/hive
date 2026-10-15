@@ -163,6 +163,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			RequireReviewerVerdict *bool    `json:"require_reviewer_verdict"`
 			Repos                  []string `json:"repos"`
 			ExcludeLabels          []string `json:"exclude_labels"`
+			RequireTiers           []string `json:"require_tiers"`
 		} `json:"contributor_lane"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -209,6 +210,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	}
 	var contributorLaneRepos []string
 	var contributorLaneLabels []string
+	var contributorLaneTiers []string
 	if body.ContributorLane != nil {
 		if body.ContributorLane.SoakMinutes != nil && *body.ContributorLane.SoakMinutes < 0 {
 			jsonError(w, "contributor_lane.soak_minutes must be 0 or greater", http.StatusBadRequest)
@@ -225,6 +227,15 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			contributorLaneLabels = normalizeAutoMergeRepoList(body.ContributorLane.ExcludeLabels)
+		}
+		if body.ContributorLane.RequireTiers != nil {
+			for _, tier := range body.ContributorLane.RequireTiers {
+				if !config.IsContributorLaneGrantableTier(tier) {
+					jsonError(w, "contributor_lane.require_tiers entries must be operator-granted tiers ("+strings.Join(config.ContributorLaneGrantableTiers, ", ")+")", http.StatusBadRequest)
+					return
+				}
+			}
+			contributorLaneTiers = normalizeAutoMergeRepoList(body.ContributorLane.RequireTiers)
 		}
 	}
 
@@ -294,6 +305,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.ContributorLane.ExcludeLabels != nil {
 			cfg.AutoMerge.ContributorLane.ExcludeLabels = contributorLaneLabels
+		}
+		if body.ContributorLane.RequireTiers != nil {
+			cfg.AutoMerge.ContributorLane.RequireTiers = contributorLaneTiers
 		}
 	}
 	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
@@ -375,6 +389,8 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"require_reviewer_verdict": cl.EffectiveRequireReviewerVerdict(),
 			"repos":                    contributorLaneRepos,
 			"exclude_labels":           contributorLaneLabels,
+			"require_tiers":            cl.EffectiveRequireTiers(),
+			"grantable_tiers":          config.ContributorLaneGrantableTiers,
 		},
 	}
 }

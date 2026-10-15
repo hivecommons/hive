@@ -599,12 +599,20 @@ func TestAutoMergeGet_ContributorLaneDefaults(t *testing.T) {
 			RequireReviewerVerdict bool     `json:"require_reviewer_verdict"`
 			Repos                  []string `json:"repos"`
 			ExcludeLabels          []string `json:"exclude_labels"`
+			RequireTiers           []string `json:"require_tiers"`
+			GrantableTiers         []string `json:"grantable_tiers"`
 		} `json:"contributor_lane"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	cl := body.ContributorLane
+	if strings.Join(cl.RequireTiers, ",") != "merger,trusted" {
+		t.Fatalf("contributor_lane default require_tiers = %v, want merger,trusted", cl.RequireTiers)
+	}
+	if strings.Join(cl.GrantableTiers, ",") != strings.Join(config.ContributorLaneGrantableTiers, ",") {
+		t.Fatalf("contributor_lane grantable_tiers = %v", cl.GrantableTiers)
+	}
 	if !cl.Enabled || cl.SoakMinutes != config.DefaultContributorLaneSoakMinutes || !cl.RequireReviewerVerdict || len(cl.Repos) != 0 {
 		t.Fatalf("contributor_lane defaults wrong: %+v", cl)
 	}
@@ -622,6 +630,7 @@ func TestAutoMergePut_ContributorLaneValidation(t *testing.T) {
 			"require_reviewer_verdict": false,
 			"repos":                    []string{" widget ", ""},
 			"exclude_labels":           []string{"hold"},
+			"require_tiers":            []string{" merger "},
 		},
 	}
 	if rec := doPut(s, "/api/config/auto-merge", valid); rec.Code != http.StatusOK {
@@ -633,6 +642,17 @@ func TestAutoMergePut_ContributorLaneValidation(t *testing.T) {
 	}
 	if strings.Join(cl.Repos, ",") != "widget" || strings.Join(cl.ExcludeLabels, ",") != "hold" {
 		t.Fatalf("contributor_lane lists not normalized: repos=%v labels=%v", cl.Repos, cl.ExcludeLabels)
+	}
+	if strings.Join(cl.RequireTiers, ",") != "merger" {
+		t.Fatalf("contributor_lane require_tiers not applied: %v", cl.RequireTiers)
+	}
+	for _, tier := range []string{"newcomer", "contributor", " "} {
+		if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"require_tiers": []string{"trusted", tier}}}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("require_tiers %q: expected 400, got %d", tier, rec.Code)
+		}
+	}
+	if got := strings.Join(s.deps.Config.AutoMerge.ContributorLane.RequireTiers, ","); got != "merger" {
+		t.Fatalf("invalid require_tiers write mutated config: %v", got)
 	}
 	if rec := doPut(s, "/api/config/auto-merge", map[string]any{"contributor_lane": map[string]any{"soak_minutes": -1}}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("negative soak: expected 400, got %d", rec.Code)

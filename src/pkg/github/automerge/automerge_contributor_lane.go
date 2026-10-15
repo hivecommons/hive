@@ -11,17 +11,28 @@ package automerge
 // manual `/lgtm` the maintainer never wanted to give ("if I have them trusted
 // I don't want to be bothered").
 //
+// The claim marker proves only that the relay leased the issue to a
+// connection, and relay registration is self-asserted (#12041). So the tier
+// also requires the marker to say the contributor holds an operator-granted
+// tier and proved the GitHub login, and adds author/diff fences of its own.
+//
 // This tier merges such a PR when ALL of these hold:
 //   - the PR closes an issue (closing keyword in the body, same repo) whose
-//     App-authored `hive:claim` marker says kind=contributor, who=<PR author>
-//     and hive=<this hive>. Only comments by the App bot count, so a
-//     contributor cannot stamp their own marker;
+//     App-authored `hive:claim` marker says kind=contributor, who=<PR author>,
+//     hive=<this hive>, tier=<one of require_tiers> and verified=true. Only
+//     comments by the App bot count, so a contributor cannot stamp their own
+//     marker;
+//   - GitHub's author_association for the PR author is not NONE,
+//     FIRST_TIMER or FIRST_TIME_CONTRIBUTOR;
+//   - the diff does not touch CI workflow/action definitions and does not
+//     delete or gut test files;
 //   - no excluded/hold/sentinel label, not draft, mergeable, base not under a
 //     release hold, no human-merge path touched;
 //   - CI is green on the head through the same commitGreenForPR gate the
 //     other tiers use;
-//   - the reviewer verdict for the head approves when a reviewer agent is
-//     configured (vacuously satisfied when none is);
+//   - a reviewer agent is configured, and its verdict for the head approves
+//     (unless require_reviewer_verdict is off). With no reviewer agent the
+//     tier skips rather than merging unreviewed;
 //   - the head has been unchanged and green for the configured soak;
 //   - the head SHA is re-verified immediately before the squash merge.
 
@@ -29,6 +40,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +77,53 @@ const (
 	contributorLaneReasonNoAppBotLogin     = contributorLaneReasonPrefix + "no-app-bot-login"
 	contributorLaneReasonAppAuthored       = contributorLaneReasonPrefix + "app-authored"
 	contributorLaneReasonNoAuthor          = contributorLaneReasonPrefix + "no-author"
+	contributorLaneReasonClaimTier         = contributorLaneReasonPrefix + "claim-tier-untrusted"
+	contributorLaneReasonClaimUnverified   = contributorLaneReasonPrefix + "claim-unverified"
+	contributorLaneReasonAuthorAssociation = contributorLaneReasonPrefix + "author-association"
+	contributorLaneReasonWorkflowPath      = contributorLaneReasonPrefix + "workflow-path"
+	contributorLaneReasonTestsRemoved      = contributorLaneReasonPrefix + "tests-removed"
+	contributorLaneReasonNoReviewer        = contributorLaneReasonPrefix + "no-reviewer"
+	contributorLaneReasonFilesEvidence     = contributorLaneReasonPrefix + "files-evidence"
+)
+
+// contributorLaneTrustedAssociations are the GitHub author_association
+// values the tier accepts. NONE, FIRST_TIMER, FIRST_TIME_CONTRIBUTOR,
+// MANNEQUIN and a missing value all skip.
+var contributorLaneTrustedAssociations = map[string]bool{
+	"OWNER":        true,
+	"MEMBER":       true,
+	"COLLABORATOR": true,
+	"CONTRIBUTOR":  true,
+}
+
+// contributorLaneWorkflowPaths are CI definitions a contributor PR must not
+// touch for unattended merge: changing them changes what "CI green" means.
+var contributorLaneWorkflowPaths = []string{
+	".github/workflows/**", "**/.github/workflows/**", ".github/actions/**",
+}
+
+// contributorLaneTestPaths, contributorLaneTestDeletionFloor and
+// contributorLaneTestRemovalRatio mirror Sentinel's test_removal rule: a PR
+// that deletes a test file, or removes at least the floor of test lines while
+// deleting ratio× more than it adds, skips the tier.
+var contributorLaneTestPaths = []string{
+	"**/*_test.go", "*_test.go", "**/test/**", "**/tests/**",
+	"test/**", "tests/**", "**/__tests__/**", "**/testdata/**",
+}
+
+// contributorLaneIsTestPath reports whether name is a test file: one of
+// contributorLaneTestPaths, or a `*.test.*` / `*.spec.*` file at any depth.
+func contributorLaneIsTestPath(name string) bool {
+	if intent.PathMatchesAny(name, contributorLaneTestPaths) {
+		return true
+	}
+	base := path.Base(name)
+	return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
+}
+
+const (
+	contributorLaneTestDeletionFloor = 25
+	contributorLaneTestRemovalRatio  = 3
 )
 
 // contributorSoakPruneAfter is how long a soak record outlives its last
@@ -83,12 +142,15 @@ type ContributorLanePolicy struct {
 	RequireReviewerVerdict bool
 	Repos                  map[string]bool
 	ExcludeLabels          map[string]bool
+	// RequireTiers is the set of contributor tiers (lower-case) whose
+	// verified claim makes a PR eligible. Empty admits nobody.
+	RequireTiers map[string]bool
 }
 
 // ContributorLaneVerdict is the reviewer relay's answer for one PR head.
 type ContributorLaneVerdict struct {
 	// Configured is false when no reviewer agent is enabled for the repo; the
-	// verdict gate is then satisfied vacuously.
+	// tier then skips with contributor-lane:no-reviewer.
 	Configured bool
 	// Approved is true when the aggregate verdict for the head is approve and
 	// merge-eligible.
@@ -287,6 +349,9 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 	if _, ok := c.sweepLaneForAuthor(author); ok {
 		return contributorLaneReasonAppAuthored
 	}
+	if !contributorLaneTrustedAssociations[strings.ToUpper(strings.TrimSpace(pr.GetAuthorAssociation()))] {
+		return contributorLaneReasonAuthorAssociation
+	}
 	labels := labelNames(pr.Labels)
 	// trusted=false so the sentinel label blocks outright: a contributor PR
 	// gets the label, not the trusted-author courtesy comment.
@@ -316,9 +381,11 @@ type contributorClaimMatch struct {
 }
 
 // verifyContributorClaim finds the linked issue whose App-authored
-// contributor claim names the PR author and this hive. Reasons are ranked so
-// the most specific failure wins: a marker for another hive beats a marker
-// for another author, which beats no marker at all.
+// contributor claim names the PR author and this hive, with a tier in
+// policy.RequireTiers and verified=true. Reasons are ranked so the most
+// specific failure wins: an untrusted tier beats an unverified login, which
+// beats a marker for another hive, then a marker for another author, then no
+// marker at all.
 func (c *Engine) verifyContributorClaim(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy ContributorLanePolicy) (contributorClaimMatch, error) {
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
 	if appLogin == "" {
@@ -330,7 +397,7 @@ func (c *Engine) verifyContributorClaim(ctx context.Context, owner, repo string,
 	if len(issues) == 0 {
 		return contributorClaimMatch{Reason: contributorLaneReasonNoLinkedIssue}, nil
 	}
-	sawOtherHive, sawOtherAuthor := false, false
+	sawOtherHive, sawOtherAuthor, sawUntrustedTier, sawUnverified := false, false, false, false
 	for _, issue := range issues {
 		comments, err := c.listIssueComments(ctx, owner, repo, issue)
 		if err != nil {
@@ -352,10 +419,22 @@ func (c *Engine) verifyContributorClaim(ctx context.Context, owner, repo string,
 				sawOtherHive = true
 				continue
 			}
+			if !policy.RequireTiers[strings.ToLower(strings.TrimSpace(claim.Tier))] {
+				sawUntrustedTier = true
+				continue
+			}
+			if !claim.Verified {
+				sawUnverified = true
+				continue
+			}
 			return contributorClaimMatch{Issue: issue}, nil
 		}
 	}
 	switch {
+	case sawUntrustedTier:
+		return contributorClaimMatch{Reason: contributorLaneReasonClaimTier}, nil
+	case sawUnverified:
+		return contributorClaimMatch{Reason: contributorLaneReasonClaimUnverified}, nil
 	case sawOtherHive:
 		return contributorClaimMatch{Reason: contributorLaneReasonClaimOtherHive}, nil
 	case sawOtherAuthor:
@@ -383,6 +462,32 @@ func contributorLaneLinkedIssues(body, fullRepo string) []int {
 	}
 	sort.Ints(out)
 	return out
+}
+
+// contributorLaneDiffReason inspects the changed files for the diff fences:
+// CI workflow/action definitions and test deletion. It returns "" when the
+// diff may be merged unattended.
+func contributorLaneDiffReason(files []intent.ChangedFile) string {
+	adds, dels := 0, 0
+	for _, f := range files {
+		if intent.PathMatchesAny(f.Filename, contributorLaneWorkflowPaths) {
+			return contributorLaneReasonWorkflowPath
+		}
+	}
+	for _, f := range files {
+		if !contributorLaneIsTestPath(f.Filename) {
+			continue
+		}
+		if strings.EqualFold(f.Status, "removed") {
+			return contributorLaneReasonTestsRemoved
+		}
+		adds += f.Additions
+		dels += f.Deletions
+	}
+	if dels >= contributorLaneTestDeletionFloor && dels >= contributorLaneTestRemovalRatio*max(adds, 1) {
+		return contributorLaneReasonTestsRemoved
+	}
+	return ""
 }
 
 func (c *Engine) listIssueComments(ctx context.Context, owner, repo string, number int) ([]*gh.IssueComment, error) {
@@ -446,6 +551,13 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if claim.Reason != "" {
 		return AutoMergeSweepEvent{}, claim.Reason, nil
 	}
+	files, err := ListChangedFiles(caller, c.gh, owner, repo, pr)
+	if err != nil {
+		return AutoMergeSweepEvent{}, contributorLaneReasonFilesEvidence, err
+	}
+	if reason := contributorLaneDiffReason(files); reason != "" {
+		return AutoMergeSweepEvent{}, reason, nil
+	}
 	if held, err := c.hasReporterTrustHold(ctx, owner, repo, number); err != nil {
 		return AutoMergeSweepEvent{}, "reporter-trust-check", err
 	} else if held {
@@ -490,12 +602,12 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if !green {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	verdict := ContributorLaneVerdict{}
-	if policy.RequireReviewerVerdict {
-		verdict = c.contributorLaneVerdictFor(fullRepo, number, headSHA)
-		if verdict.Configured && !verdict.Approved {
-			return AutoMergeSweepEvent{}, contributorLaneReasonNoVerdict, nil
-		}
+	verdict := c.contributorLaneVerdictFor(fullRepo, number, headSHA)
+	if !verdict.Configured {
+		return AutoMergeSweepEvent{}, contributorLaneReasonNoReviewer, nil
+	}
+	if policy.RequireReviewerVerdict && !verdict.Approved {
+		return AutoMergeSweepEvent{}, contributorLaneReasonNoVerdict, nil
 	}
 	now := c.now()
 	firstGreen := c.contributorSoak.observeGreen(contributorSoakKey(owner, repo, number, headSHA), now)
@@ -560,8 +672,11 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 // on the PR it merged.
 func contributorLaneMergeComment(author string, issue int, soak time.Duration, verdict ContributorLaneVerdict) string {
 	verdictText := "reviewer verdict approve"
-	if !verdict.Configured {
+	switch {
+	case !verdict.Configured:
 		verdictText = "no reviewer agent configured"
+	case !verdict.Approved:
+		verdictText = "reviewer verdict not required"
 	}
 	return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, claim by @%s on #%d verified.",
 		int(soak.Minutes()), verdictText, strings.TrimPrefix(author, "@"), issue)

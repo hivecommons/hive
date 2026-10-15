@@ -251,7 +251,8 @@ so hosted spokes can opt in without editing `hive.yaml`.
 `auto_merge.contributor_lane` is a fourth sweep tier, **default on**, for PRs
 that this hive's own contributor lane produced. When Hive claims an issue for
 a contributor it posts an App-authored `<!-- hive:claim who=<login>
-kind=contributor hive=<hive-id> ... -->` marker on the issue; the contributor's
+kind=contributor hive=<hive-id> tier=<trust-tier> verified=<true|false> ... -->`
+marker on the issue; the contributor's
 PR then closes that issue with `Fixes #N`. Before this tier existed such a PR
 was skipped by every lane (`untrusted-author-role` from the trusted-author tier,
 `not-app-authored` from the App tier) and waited indefinitely for a human
@@ -259,6 +260,16 @@ was skipped by every lane (`untrusted-author-role` from the trusted-author tier,
 work. The maintainer position is that work the hive trusted enough to hand out
 should land unattended once it is green, so the tier ships enabled; set
 `enabled: false` to restore the wait-for-human behaviour.
+
+The claim marker on its own proves only that the relay leased the issue to a
+connection: relay registration (`POST /api/contribute/register`) is
+self-asserted and every new profile starts as `newcomer`. So the tier merges
+only for contributors the operator vetted: the marker's `tier=` must be in
+`require_tiers` (default `trusted`, `merger`; only operator-granted tiers are
+accepted, never the auto-promoted `newcomer`/`contributor`), and `verified=true`
+(the contributor proved the GitHub login with `POST
+/api/contribute/reissue-token`). Markers written before these fields existed
+read as `newcomer`/unverified and are refused.
 
 A PR merges through this tier only when all of the following hold:
 
@@ -268,13 +279,24 @@ A PR merges through this tier only when all of the following hold:
   commenters, other kinds, other authors or other hives are rejected with
   distinct skip reasons (`contributor-lane:no-claim`,
   `contributor-lane:claim-author-mismatch`, `contributor-lane:claim-other-hive`).
+- The marker's `tier=` is in `require_tiers`
+  (`contributor-lane:claim-tier-untrusted`) and it says `verified=true`
+  (`contributor-lane:claim-unverified`).
+- GitHub's `author_association` for the PR author is `OWNER`, `MEMBER`,
+  `COLLABORATOR` or `CONTRIBUTOR`; `NONE`, `FIRST_TIMER`,
+  `FIRST_TIME_CONTRIBUTOR` or a missing value skip with
+  `contributor-lane:author-association`.
+- The diff does not touch `.github/workflows/**` or `.github/actions/**`
+  (`contributor-lane:workflow-path`) and does not delete a test file or remove
+  25+ test lines while deleting at least 3× what it adds
+  (`contributor-lane:tests-removed`).
 - Required CI is green on the current head, using the same merge-CI gate as
   the App self-merge tier.
-- When a reviewer agent is configured, `review-verdicts.json` records an
+- A reviewer agent is configured (otherwise `contributor-lane:no-reviewer`:
+  the tier never merges unreviewed), and `review-verdicts.json` records an
   approving aggregate verdict for the current head
-  (`require_reviewer_verdict`, default `true`). With no reviewer agent the
-  gate is vacuous. Missing or failing verdicts skip with
-  `contributor-lane:no-verdict`.
+  (`require_reviewer_verdict`, default `true`). Missing or failing verdicts
+  skip with `contributor-lane:no-verdict`.
 - Sentinel has no blocking finding (`contributor-lane:sentinel-blocked`), the
   reporter-trust gate has not held the PR (`contributor-lane:reporter-trust-hold`),
   and no reviewer has an outstanding `CHANGES_REQUESTED`.
@@ -303,12 +325,29 @@ auto_merge:
       - needs-human
       - blocked
       - needs-rebase
+    require_tiers:                # operator-granted tiers only (trusted, merger, advisor)
+      - trusted
+      - merger
 ```
 
 The block is editable from **Settings → Features → Auto Merge →
 Contributor-lane auto-merge** (enable switch, soak minutes, reviewer-verdict
-switch, excluded labels, repository allow-list) through the same owner-only
-`GET/PUT /api/config/auto-merge` overlay.
+switch, required tiers, excluded labels, repository allow-list) through the
+same owner-only `GET/PUT /api/config/auto-merge` overlay.
+
+**Operator workflow.** To let a known contributor's relay PRs merge
+unattended (for example `mrbobbytables`):
+
+1. The contributor proves their GitHub login once:
+   `curl -X POST -H "Authorization: Bearer <their GitHub token>"
+   <hub>/api/contribute/reissue-token`.
+2. Grant them `trusted` (or `merger`) in **Contributors**.
+3. Issues the relay leases to them from then on carry `tier=trusted
+   verified=true`, and their green, reviewed, soaked PRs merge through this
+   tier. Every other contributor's PRs keep waiting for a human `/lgtm`.
+
+A claim keeps the tier the contributor held when it was taken, so grant the
+tier before the issue is leased.
 
 ## Usage
 

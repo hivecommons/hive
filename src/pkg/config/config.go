@@ -8423,7 +8423,10 @@ type AutoMergeConfig struct {
 	// soaked. Default ON: the maintainer already trusted the hive to hand the
 	// work out, so a green hive-produced PR waiting for a manual `/lgtm` is
 	// the stall the lane exists to remove (#11756, #11840 sat green for hours
-	// as `untrusted-author-role` / `not-app-authored`).
+	// as `untrusted-author-role` / `not-app-authored`). The claim alone only
+	// proves a lease, so the tier also requires the marker's contributor to
+	// hold an operator-granted tier (require_tiers) and a GitHub login proven
+	// against GitHub (#12041); everyone else's PRs wait for a human.
 	ContributorLane ContributorLaneAutoMergeConfig `yaml:"contributor_lane,omitempty" json:"contributor_lane,omitempty"`
 	// HumanMergePaths maps owner/repo to glob patterns (same syntax as
 	// intent.guardrail_path_patterns) for paths a person must merge. Unset
@@ -8469,7 +8472,22 @@ type ContributorLaneAutoMergeConfig struct {
 	// ExcludeLabels keeps a PR out of the tier. nil means
 	// DefaultContributorLaneExcludeLabels.
 	ExcludeLabels []string `yaml:"exclude_labels,omitempty" json:"exclude_labels,omitempty"`
+	// RequireTiers lists the contributor trust tiers whose claimed PRs the
+	// tier may merge; the tier= stamped on the hive:claim marker must be one
+	// of them. nil/empty means DefaultContributorLaneRequireTiers. Only
+	// operator-granted tiers are accepted (ContributorLaneGrantableTiers):
+	// newcomer and contributor are reached by self-registration and
+	// automatic promotion, so they never confer unattended merge.
+	RequireTiers []string `yaml:"require_tiers,omitempty" json:"require_tiers,omitempty"`
 }
+
+// DefaultContributorLaneRequireTiers is the contributor-lane tier allow-list
+// when auto_merge.contributor_lane.require_tiers is unset.
+var DefaultContributorLaneRequireTiers = []string{"trusted", "merger"}
+
+// ContributorLaneGrantableTiers are the contributor trust tiers only an
+// operator can grant, and so the only values require_tiers accepts.
+var ContributorLaneGrantableTiers = []string{"trusted", "merger", "advisor"}
 
 // DefaultContributorLaneSoakMinutes is the contributor-lane soak when
 // auto_merge.contributor_lane.soak_minutes is unset: two hours of unchanged,
@@ -8515,9 +8533,56 @@ func (c ContributorLaneAutoMergeConfig) ExcludeLabelSet() map[string]bool {
 	return set
 }
 
+// RequireTierSet returns the normalized require_tiers set, falling back to
+// DefaultContributorLaneRequireTiers when none is configured.
+func (c ContributorLaneAutoMergeConfig) RequireTierSet() map[string]bool {
+	tiers := c.RequireTiers
+	set := make(map[string]bool, len(tiers))
+	for _, tier := range tiers {
+		tier = strings.ToLower(strings.TrimSpace(tier))
+		if tier != "" {
+			set[tier] = true
+		}
+	}
+	if len(set) == 0 {
+		for _, tier := range DefaultContributorLaneRequireTiers {
+			set[tier] = true
+		}
+	}
+	return set
+}
+
+// EffectiveRequireTiers returns RequireTierSet as a sorted list for display.
+func (c ContributorLaneAutoMergeConfig) EffectiveRequireTiers() []string {
+	set := c.RequireTierSet()
+	out := make([]string, 0, len(set))
+	for tier := range set {
+		out = append(out, tier)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IsContributorLaneGrantableTier reports whether tier is one an operator
+// must grant (see ContributorLaneGrantableTiers).
+func IsContributorLaneGrantableTier(tier string) bool {
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	for _, t := range ContributorLaneGrantableTiers {
+		if tier == t {
+			return true
+		}
+	}
+	return false
+}
+
 func (c ContributorLaneAutoMergeConfig) Validate() error {
 	if c.SoakMinutes < 0 {
 		return fmt.Errorf("auto_merge.contributor_lane.soak_minutes must be 0 (default) or greater, got %d", c.SoakMinutes)
+	}
+	for _, tier := range c.RequireTiers {
+		if !IsContributorLaneGrantableTier(tier) {
+			return fmt.Errorf("auto_merge.contributor_lane.require_tiers: %q is not an operator-granted tier (allowed: %s)", tier, strings.Join(ContributorLaneGrantableTiers, ", "))
+		}
 	}
 	return nil
 }

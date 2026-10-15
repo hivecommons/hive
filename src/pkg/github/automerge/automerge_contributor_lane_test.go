@@ -16,6 +16,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/intent"
 )
 
 const (
@@ -25,8 +26,16 @@ const (
 	contributorLaneTestSoak   = 2 * time.Hour
 )
 
+// contributorClaimMarker is a vetted contributor claim: an operator-granted
+// tier and a GitHub login proven via the reissue-token flow.
 func contributorClaimMarker(who, kind, hive string) string {
-	return "<!-- hive:claim who=" + who + " kind=" + kind + " id=abc hive=" + hive + " until=2030-01-01T00:00:00Z -->\nClaimed."
+	return contributorClaimMarkerTier(who, kind, hive, " tier=trusted verified=true")
+}
+
+// contributorClaimMarkerTier renders a claim marker with the given raw
+// tier=/verified= fields (empty for a marker written before they existed).
+func contributorClaimMarkerTier(who, kind, hive, fields string) string {
+	return "<!-- hive:claim who=" + who + " kind=" + kind + " id=abc hive=" + hive + fields + " until=2030-01-01T00:00:00Z -->\nClaimed."
 }
 
 type contributorLaneFixture struct {
@@ -36,6 +45,10 @@ type contributorLaneFixture struct {
 	draft           bool
 	mergeableState  string
 	headRepo        string
+	association     string // author_association; "" means CONTRIBUTOR
+	omitAssociation bool
+	files           []map[string]any
+	filesStatus     int
 	listStatus      int
 	getStatus       int
 	recheckHeadSHA  string
@@ -72,8 +85,12 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 		for _, l := range fx.labels {
 			labels = append(labels, map[string]string{"name": l})
 		}
+		association := fx.association
+		if association == "" {
+			association = "CONTRIBUTOR"
+		}
 		pull := func(sha string) map[string]any {
-			return map[string]any{
+			p := map[string]any{
 				"number":          7,
 				"state":           "open",
 				"draft":           fx.draft,
@@ -85,6 +102,10 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          labels,
 			}
+			if !fx.omitAssociation {
+				p["author_association"] = association
+			}
+			return p
 		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls":
@@ -112,6 +133,16 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			json.NewEncoder(w).Encode(fx.issueComments)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
 			json.NewEncoder(w).Encode(fx.prComments)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/files":
+			if fx.filesStatus != 0 {
+				http.Error(w, "files error", fx.filesStatus)
+				return
+			}
+			files := fx.files
+			if files == nil {
+				files = []map[string]any{{"filename": "pkg/widget/widget.go", "status": "modified", "additions": 5, "deletions": 2}}
+			}
+			json.NewEncoder(w).Encode(files)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
 			json.NewEncoder(w).Encode(fx.reviews)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
@@ -168,6 +199,7 @@ func defaultContributorLanePolicy() ContributorLanePolicy {
 		Soak:                   contributorLaneTestSoak,
 		RequireReviewerVerdict: true,
 		ExcludeLabels:          map[string]bool{"hold": true, "do-not-merge": true, "needs-human": true, "blocked": true, "needs-rebase": true},
+		RequireTiers:           map[string]bool{"trusted": true, "merger": true},
 	}
 }
 
@@ -221,6 +253,14 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 			"body": contributorClaimMarker(who, "contributor", hive),
 		}}
 	}
+	tierClaim := func(fields string) func(fx *contributorLaneFixture) {
+		return func(fx *contributorLaneFixture) {
+			fx.issueComments[0]["body"] = contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, fields)
+		}
+	}
+	file := func(name, status string, adds, dels int) map[string]any {
+		return map[string]any{"filename": name, "status": status, "additions": adds, "deletions": dels}
+	}
 	for _, tc := range []struct {
 		name       string
 		mutate     func(fx *contributorLaneFixture)
@@ -266,6 +306,66 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 			},
 			wantReason: contributorLaneReasonClaimOtherHive,
 		},
+		{name: "newcomer claim is untrusted", mutate: tierClaim(" tier=newcomer verified=true"), wantReason: contributorLaneReasonClaimTier},
+		{name: "auto-promoted contributor claim is untrusted", mutate: tierClaim(" tier=contributor verified=true"), wantReason: contributorLaneReasonClaimTier},
+		{name: "claim without tier fails closed", mutate: tierClaim(""), wantReason: contributorLaneReasonClaimTier},
+		{name: "trusted but unverified login", mutate: tierClaim(" tier=trusted verified=false"), wantReason: contributorLaneReasonClaimUnverified},
+		{name: "trusted without verified field", mutate: tierClaim(" tier=trusted"), wantReason: contributorLaneReasonClaimUnverified},
+		{name: "verified merger merges", mutate: tierClaim(" tier=merger verified=true"), wantMerges: 1},
+		{
+			name:       "tier outside require_tiers",
+			policy:     func(p *ContributorLanePolicy) { p.RequireTiers = map[string]bool{"merger": true} },
+			wantReason: contributorLaneReasonClaimTier,
+		},
+		{
+			name:       "empty require_tiers admits nobody",
+			policy:     func(p *ContributorLanePolicy) { p.RequireTiers = nil },
+			wantReason: contributorLaneReasonClaimTier,
+		},
+		{
+			name: "untrusted tier outranks other hive",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.issueComments = append(appClaim(contributorLaneTestAuthor, "hive-staging"), map[string]any{
+					"id": 2, "user": map[string]string{"login": testHiveAppBotLogin},
+					"body": contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, " tier=newcomer verified=false"),
+				})
+			},
+			wantReason: contributorLaneReasonClaimTier,
+		},
+		{name: "author association none", mutate: func(fx *contributorLaneFixture) { fx.association = "NONE" }, wantReason: contributorLaneReasonAuthorAssociation},
+		{name: "author association first-time contributor", mutate: func(fx *contributorLaneFixture) { fx.association = "FIRST_TIME_CONTRIBUTOR" }, wantReason: contributorLaneReasonAuthorAssociation},
+		{name: "author association first-timer", mutate: func(fx *contributorLaneFixture) { fx.association = "FIRST_TIMER" }, wantReason: contributorLaneReasonAuthorAssociation},
+		{name: "author association missing", mutate: func(fx *contributorLaneFixture) { fx.omitAssociation = true }, wantReason: contributorLaneReasonAuthorAssociation},
+		{name: "author association member merges", mutate: func(fx *contributorLaneFixture) { fx.association = "MEMBER" }, wantMerges: 1},
+		{
+			name: "workflow change",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.files = []map[string]any{file(".github/workflows/ci.yml", "modified", 1, 1)}
+			},
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+		{
+			name: "test file deleted",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.files = []map[string]any{file("pkg/widget/widget_test.go", "removed", 0, 3)}
+			},
+			wantReason: contributorLaneReasonTestsRemoved,
+		},
+		{
+			name: "test lines gutted",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.files = []map[string]any{file("pkg/widget/widget.go", "modified", 2, 0), file("pkg/widget/widget_test.go", "modified", 2, 40)}
+			},
+			wantReason: contributorLaneReasonTestsRemoved,
+		},
+		{
+			name: "test edits that add coverage merge",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.files = []map[string]any{file("pkg/widget/widget_test.go", "modified", 30, 26)}
+			},
+			wantMerges: 1,
+		},
+		{name: "files fetch error", mutate: func(fx *contributorLaneFixture) { fx.filesStatus = http.StatusInternalServerError }, wantReason: contributorLaneReasonFilesEvidence, wantErr: true},
 		{name: "claim comments fetch error", mutate: func(fx *contributorLaneFixture) { fx.issueCommentsSt = http.StatusInternalServerError }, wantReason: "claim-comments-fetch", wantErr: true},
 		{
 			name: "reporter-trust hold",
@@ -289,9 +389,15 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 			wantReason: contributorLaneReasonNoVerdict,
 		},
 		{
-			name:       "no reviewer configured is satisfied",
+			name:       "no reviewer configured skips",
 			verdict:    func(string, int, string) ContributorLaneVerdict { return ContributorLaneVerdict{} },
-			wantMerges: 1,
+			wantReason: contributorLaneReasonNoReviewer,
+		},
+		{
+			name:       "no reviewer skips even when verdict not required",
+			policy:     func(p *ContributorLanePolicy) { p.RequireReviewerVerdict = false },
+			verdict:    func(string, int, string) ContributorLaneVerdict { return ContributorLaneVerdict{} },
+			wantReason: contributorLaneReasonNoReviewer,
 		},
 		{
 			name:       "verdict not required ignores reviewer",
@@ -353,6 +459,59 @@ func TestTrySweepContributorLanePRMergeCommentText(t *testing.T) {
 	noReviewer := contributorLaneMergeComment("@bob", 5, 30*time.Minute, ContributorLaneVerdict{})
 	if !strings.Contains(noReviewer, "≥30m, no reviewer agent configured, claim by @bob on #5") {
 		t.Fatalf("no-reviewer comment = %q", noReviewer)
+	}
+	notRequired := contributorLaneMergeComment("bob", 5, 30*time.Minute, ContributorLaneVerdict{Configured: true})
+	if !strings.Contains(notRequired, "≥30m, reviewer verdict not required, claim by @bob on #5") {
+		t.Fatalf("verdict-not-required comment = %q", notRequired)
+	}
+}
+
+// Regression for #12041: a self-registered newcomer whose login was never
+// proven gets an App-stamped claim on a leased issue, opens a PR from their
+// own account, and has green CI, a soaked head and an approving verdict. The
+// claim proves only the lease, so the tier must refuse to merge.
+func TestContributorLaneRefusesSelfRegisteredNewcomerClaim(t *testing.T) {
+	for _, fields := range []string{" tier=newcomer verified=false", ""} {
+		fx := validContributorFixture()
+		fx.issueComments[0]["body"] = contributorClaimMarkerTier(contributorLaneTestAuthor, "contributor", contributorLaneTestHive, fields)
+		api := newContributorLaneAPI(t, &fx)
+		policy := defaultContributorLanePolicy()
+		clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+		engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+		result, err := engine.SweepContributorLaneAutoMerges(context.Background(), AutoMergeSweepOptions{})
+		api.Close()
+		if err != nil {
+			t.Fatalf("marker %q: sweep err = %v", fields, err)
+		}
+		if len(result.Merged) != 0 || fx.merges != 0 || result.Skipped != 1 {
+			t.Fatalf("marker %q: newcomer claim merged: result=%+v merges=%d", fields, result, fx.merges)
+		}
+	}
+}
+
+func TestContributorLaneDiffReason(t *testing.T) {
+	cf := func(name, status string, adds, dels int) intent.ChangedFile {
+		return intent.ChangedFile{Filename: name, Status: status, Additions: adds, Deletions: dels}
+	}
+	for _, tc := range []struct {
+		name  string
+		files []intent.ChangedFile
+		want  string
+	}{
+		{name: "no files", want: ""},
+		{name: "source only", files: []intent.ChangedFile{cf("main.go", "modified", 10, 10)}, want: ""},
+		{name: "workflow", files: []intent.ChangedFile{cf(".github/workflows/ci.yml", "added", 3, 0)}, want: contributorLaneReasonWorkflowPath},
+		{name: "nested workflow", files: []intent.ChangedFile{cf("sub/.github/workflows/ci.yml", "modified", 1, 1)}, want: contributorLaneReasonWorkflowPath},
+		{name: "composite action", files: []intent.ChangedFile{cf(".github/actions/setup/action.yml", "modified", 1, 1)}, want: contributorLaneReasonWorkflowPath},
+		{name: "deleted test", files: []intent.ChangedFile{cf("a/b_test.go", "removed", 0, 1)}, want: contributorLaneReasonTestsRemoved},
+		{name: "deleted js spec", files: []intent.ChangedFile{cf("web/app.spec.ts", "removed", 0, 1)}, want: contributorLaneReasonTestsRemoved},
+		{name: "small test trim", files: []intent.ChangedFile{cf("a/b_test.go", "modified", 0, 10)}, want: ""},
+		{name: "gutted tests", files: []intent.ChangedFile{cf("a/b_test.go", "modified", 5, 30)}, want: contributorLaneReasonTestsRemoved},
+		{name: "rewritten tests", files: []intent.ChangedFile{cf("a/b_test.go", "modified", 20, 30)}, want: ""},
+	} {
+		if got := contributorLaneDiffReason(tc.files); got != tc.want {
+			t.Fatalf("%s: got %q want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -585,6 +744,8 @@ func TestPrefilterContributorLanePR(t *testing.T) {
 			State:  gh.Ptr("open"),
 			User:   &gh.User{Login: gh.Ptr(contributorLaneTestAuthor)},
 			Head:   &gh.PullRequestBranch{SHA: gh.Ptr("sha7")},
+
+			AuthorAssociation: gh.Ptr("CONTRIBUTOR"),
 		}
 		if mutate != nil {
 			mutate(p)
@@ -603,6 +764,10 @@ func TestPrefilterContributorLanePR(t *testing.T) {
 		{name: "exempt label", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("lfx")}} }), want: "exempt-label"},
 		{name: "needs-rebase", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("needs-rebase")}} }), want: "label:needs-rebase"},
 		{name: "missing head", pr: pr(func(p *gh.PullRequest) { p.Head = nil }), want: "missing-head-sha"},
+		{name: "association none", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = gh.Ptr("NONE") }), want: contributorLaneReasonAuthorAssociation},
+		{name: "association first-time", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = gh.Ptr("FIRST_TIME_CONTRIBUTOR") }), want: contributorLaneReasonAuthorAssociation},
+		{name: "association missing", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = nil }), want: contributorLaneReasonAuthorAssociation},
+		{name: "association lower-case collaborator", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = gh.Ptr("collaborator") }), want: ""},
 	} {
 		if got := engine.prefilterContributorLanePR(tc.pr, policy); got != tc.want {
 			t.Fatalf("%s: got %q want %q", tc.name, got, tc.want)

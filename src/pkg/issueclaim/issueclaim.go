@@ -86,7 +86,20 @@ type Claim struct {
 	// Hive is the marker's hive= value — the hive that recorded the claim —
 	// when present; empty otherwise.
 	Hive string
+	// Tier is the contributor trust tier the hub stamped in tier= when it
+	// leased the issue. A kind=contributor marker without tier= parses as
+	// ContributorTierDefault so markers written before the field existed
+	// fail closed. Empty for other kinds.
+	Tier string
+	// Verified is the marker's verified= value: true only when the hub had
+	// proven the contributor owns the GitHub login (verified=true). Absent or
+	// any other value parses as false.
+	Verified bool
 }
+
+// ContributorTierDefault is the tier a kind=contributor marker without tier=
+// is read as: the lowest, self-registered tier.
+const ContributorTierDefault = "newcomer"
 
 // Live reports whether the claim still stands at now: it has an identity and
 // an expiry strictly after now. A zero expiry is never live — an unbounded
@@ -164,7 +177,15 @@ func parseKeyValueMarker(body string) (Claim, bool) {
 			return Claim{}, false
 		}
 	}
-	return Claim{Identity: identity, StartedAt: started, ExpiresAt: expires, Source: SourceMarker, Kind: vals["kind"], Hive: vals["hive"]}, true
+	claim := Claim{Identity: identity, StartedAt: started, ExpiresAt: expires, Source: SourceMarker, Kind: vals["kind"], Hive: vals["hive"]}
+	if strings.EqualFold(claim.Kind, "contributor") {
+		claim.Tier = strings.ToLower(vals["tier"])
+		if claim.Tier == "" {
+			claim.Tier = ContributorTierDefault
+		}
+		claim.Verified = vals["verified"] == "true"
+	}
+	return claim, true
 }
 
 func parseLegacyMarker(body string) (Claim, bool) {

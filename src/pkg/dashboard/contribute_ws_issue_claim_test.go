@@ -381,6 +381,43 @@ func TestIssueClaim_RankedLedgerSuppressesLegacyClaimComment(t *testing.T) {
 	}
 }
 
+// The ranked ledger claim records the contributor's trust tier and whether
+// the GitHub login was ever proven, so the contributor-lane auto-merge tier
+// can refuse self-registered, unverified holders (#12041).
+func TestIssueClaim_ContributorClaimCarriesTierAndVerified(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		verifiedAt   string
+		wantVerified bool
+	}{
+		{name: "self-registered", wantVerified: false},
+		{name: "proven via reissue-token", verifiedAt: "2026-10-01T00:00:00Z", wantVerified: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, s := covK2Hub(t)
+			l, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), claims.DefaultPolicy(), claims.Hooks{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.deps.IssueClaims = l
+			c := issueClaimConn("trusted")
+			c.profile.GitHubVerifiedAt = tc.verifiedAt
+			hub.claimIssueForContributor(c, issueClaimRepoFull, claimedNumber)
+			got, ok := l.LookupKey(claims.Key(issueClaimRepoFull, claimedNumber))
+			if !ok {
+				t.Fatal("contributor claim not recorded")
+			}
+			if got.Tier != "trusted" || got.Verified != tc.wantVerified {
+				t.Fatalf("claim tier=%q verified=%v, want trusted/%v", got.Tier, got.Verified, tc.wantVerified)
+			}
+			marker, _ := issueclaim.ParseMarker(claims.ClaimMarker(got))
+			if marker.Tier != "trusted" || marker.Verified != tc.wantVerified {
+				t.Fatalf("marker tier=%q verified=%v, want trusted/%v", marker.Tier, marker.Verified, tc.wantVerified)
+			}
+		})
+	}
+}
+
 func TestIssueClaim_LegacyClaimLabelRemovedWithLease(t *testing.T) {
 	hub, s := covK2Hub(t)
 	enableIssueClaims(s)

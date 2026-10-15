@@ -23,11 +23,17 @@ func TestContributorLanePolicyFuncReadsConfig(t *testing.T) {
 			t.Fatalf("exclude labels %v missing %q", policy.ExcludeLabels, label)
 		}
 	}
+	if !policy.RequireTiers["trusted"] || !policy.RequireTiers["merger"] || len(policy.RequireTiers) != 2 {
+		t.Fatalf("default require tiers = %v, want trusted+merger", policy.RequireTiers)
+	}
 	off := false
-	cfg.AutoMerge.ContributorLane = config.ContributorLaneAutoMergeConfig{Enabled: &off, SoakMinutes: 15, RequireReviewerVerdict: &off, Repos: []string{"Widget"}}
+	cfg.AutoMerge.ContributorLane = config.ContributorLaneAutoMergeConfig{Enabled: &off, SoakMinutes: 15, RequireReviewerVerdict: &off, Repos: []string{"Widget"}, RequireTiers: []string{"Advisor"}}
 	policy = contributorLanePolicyFunc(cfg)()
 	if policy.Enabled || policy.Soak != 15*time.Minute || policy.RequireReviewerVerdict || !policy.Repos["widget"] {
 		t.Fatalf("explicit policy = %+v", policy)
+	}
+	if !policy.RequireTiers["advisor"] || len(policy.RequireTiers) != 1 {
+		t.Fatalf("explicit require tiers = %v, want advisor", policy.RequireTiers)
 	}
 }
 

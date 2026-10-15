@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -107,5 +108,29 @@ func TestContributorLaneAutoMergeConfigDefaultsAndValidation(t *testing.T) {
 	}
 	if ex := cfg.ExcludeLabelSet(); !ex["hold"] || len(ex) != 1 {
 		t.Fatalf("ExcludeLabelSet = %v, want hold only", ex)
+	}
+}
+
+// require_tiers defaults to the operator-granted trusted/merger tiers and
+// rejects tiers a contributor reaches without an operator (#12041).
+func TestContributorLaneAutoMergeConfigRequireTiers(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if got := strings.Join(cfg.EffectiveRequireTiers(), ","); got != "merger,trusted" {
+		t.Fatalf("default require_tiers = %q, want merger,trusted", got)
+	}
+	if set := cfg.RequireTierSet(); set["newcomer"] || set["contributor"] {
+		t.Fatalf("default require_tiers must not include self-reached tiers: %v", set)
+	}
+	cfg.RequireTiers = []string{" Advisor ", "trusted"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("grantable tiers should validate: %v", err)
+	}
+	if set := cfg.RequireTierSet(); !set["advisor"] || !set["trusted"] || set["merger"] || len(set) != 2 {
+		t.Fatalf("RequireTierSet = %v, want advisor+trusted", set)
+	}
+	for _, tier := range []string{"newcomer", "contributor", "revoked", "", "anyone"} {
+		if err := (ContributorLaneAutoMergeConfig{RequireTiers: []string{"trusted", tier}}).Validate(); err == nil {
+			t.Fatalf("require_tiers %q must fail validation", tier)
+		}
 	}
 }

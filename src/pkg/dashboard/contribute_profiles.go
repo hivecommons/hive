@@ -160,9 +160,16 @@ type ContributorProfile struct {
 	// who invited this person via a trusted invite link (issue #2598). It is
 	// pure attribution: it never affects TrustTier (an invitee always joins as
 	// "newcomer"). Empty for self-registered contributors.
-	InvitedBy      string `json:"invited_by,omitempty"`
-	RegisteredAt   string `json:"registered_at"`
-	TasksCompleted int    `json:"total_tasks_completed"`
+	InvitedBy string `json:"invited_by,omitempty"`
+	// GitHubVerifiedAt is when the contributor last proved they own
+	// GitHubUsername by presenting a GitHub token for that login
+	// (POST /api/contribute/reissue-token). Registration alone is
+	// self-asserted and leaves it empty. Contributor claims carry
+	// verified=true only when this is set, and the contributor-lane
+	// auto-merge tier requires it (#12041).
+	GitHubVerifiedAt string `json:"github_verified_at,omitempty"`
+	RegisteredAt     string `json:"registered_at"`
+	TasksCompleted   int    `json:"total_tasks_completed"`
 	// TasksWithPR counts only completions that reported a pull request.
 	// Auto-promotion reads this rather than TasksCompleted, so write access is
 	// never granted for completions where nothing was shown to have shipped.
@@ -459,11 +466,14 @@ func (s *Server) contributorProfileFromAuthorization(r *http.Request) *Contribut
 
 // reissueContributorToken generates a new registration token for an existing
 // contributor, invalidating the previous one. Returns the new plaintext token.
+// Its only caller (handleContributeReissueToken) has just validated a GitHub
+// token for p.GitHubUsername, so the login is recorded as verified (#12041).
 func reissueContributorToken(p *ContributorProfile) string {
 	const tokenBytes = 32 // 256-bit token
 	newToken := randomHex(tokenBytes)
 	p.RegistrationToken = sha256Hex(newToken)
 	p.TokenPlain = ""
+	p.GitHubVerifiedAt = time.Now().UTC().Format(time.RFC3339)
 	_ = saveContributorProfile(p)
 	return newToken
 }

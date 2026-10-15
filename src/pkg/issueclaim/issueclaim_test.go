@@ -209,3 +209,28 @@ func TestResolve(t *testing.T) {
 		}
 	})
 }
+
+// tier= and verified= are read from contributor markers; a marker written
+// before they existed reads as the lowest tier and unverified (#12041).
+func TestParseMarker_ContributorTierAndVerified(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body         string
+		wantTier     string
+		wantVerified bool
+	}{
+		"stamped":           {body: "<!-- hive:claim who=a kind=contributor hive=h tier=Trusted verified=true until=2026-09-23T05:30:00Z -->", wantTier: "trusted", wantVerified: true},
+		"unverified":        {body: "<!-- hive:claim who=a kind=contributor hive=h tier=merger verified=false until=2026-09-23T05:30:00Z -->", wantTier: "merger"},
+		"legacy fields":     {body: "<!-- hive:claim who=a kind=contributor hive=h until=2026-09-23T05:30:00Z -->", wantTier: ContributorTierDefault},
+		"odd verified":      {body: "<!-- hive:claim who=a kind=contributor tier=trusted verified=yes until=2026-09-23T05:30:00Z -->", wantTier: "trusted"},
+		"agent has none":    {body: "<!-- hive:claim who=a kind=agent tier=trusted verified=true until=2026-09-23T05:30:00Z -->"},
+		"legacy positional": {body: LegacyMarker("a", started, expires)},
+	} {
+		claim, ok := ParseMarker(tc.body)
+		if !ok {
+			t.Fatalf("%s: did not parse", name)
+		}
+		if claim.Tier != tc.wantTier || claim.Verified != tc.wantVerified {
+			t.Fatalf("%s: tier=%q verified=%v, want %q/%v", name, claim.Tier, claim.Verified, tc.wantTier, tc.wantVerified)
+		}
+	}
+}

@@ -83,14 +83,16 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 			RequireReviewerVerdict: p.EffectiveRequireReviewerVerdict(),
 			Repos:                  p.RepoSet(),
 			ExcludeLabels:          p.ExcludeLabelSet(),
+			RequireTiers:           p.RequireTierSet(),
 		}
 	}
 }
 
 // contributorLaneReviewerConfigured reports whether any enabled, unpaused
 // agent is a reviewer under the dispatcher's own rule (review.ReviewCapable).
-// With no reviewer the contributor-lane verdict gate is vacuous: there is
-// nobody to produce a verdict, so requiring one would stall every PR.
+// With no reviewer the contributor-lane tier skips (contributor-lane:
+// no-reviewer, #12041): nobody can produce a verdict, so those PRs wait for a
+// human instead of merging unreviewed.
 func contributorLaneReviewerConfigured(cfg *config.Config) bool {
 	if cfg == nil {
 		return false

@@ -39698,6 +39698,8 @@ function burnAreaChart() {
       const amContributorLaneVerdict = amContributorLane.require_reviewer_verdict !== false;
       const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 120;
       const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
+      const amContributorLaneTiers = Array.isArray(amContributorLane.require_tiers) && amContributorLane.require_tiers.length ? amContributorLane.require_tiers : ['merger','trusted'];
+      const amContributorLaneGrantable = Array.isArray(amContributorLane.grantable_tiers) ? amContributorLane.grantable_tiers : ['trusted','merger','advisor'];
       const amContributorLaneRepoSet = new Set((Array.isArray(amContributorLane.repos) ? amContributorLane.repos : []).map(r => String(r).toLowerCase()));
       const amContributorLaneRepoOptions = watchedRepos.map(r => `<option value="${esc(r)}"${amContributorLaneRepoSet.has(String(r).toLowerCase()) ? ' selected' : ''}>${esc(r)}</option>`).join('');
       const amBotSourceLabel = { known: 'known bot', discovered: 'seen in open PRs', custom: 'added manually' };
@@ -39822,10 +39824,16 @@ function burnAreaChart() {
             </div>
           </div>
           <div class="config-field" id="am-contributor-lane">
-            <label>Contributor-lane auto-merge ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Contributor-lane auto-merge', `Merges PRs that this hive's own contributor lane produced: the linked issue must carry a hive:claim marker (kind=contributor) posted by this hive's App naming the PR author, CI must be green on the current head for the soak window, the reviewer verdict must approve when a reviewer agent is configured, and Sentinel must have no blocking finding. Default on so trusted hive-produced work lands without a maintainer /lgtm.`)}</label>
+            <label>Contributor-lane auto-merge ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Contributor-lane auto-merge', `Merges PRs that this hive's own contributor lane produced: the linked issue must carry a hive:claim marker (kind=contributor) posted by this hive's App naming the PR author with an operator-granted tier and a GitHub login proven via the reissue-token flow, CI must be green on the current head for the soak window, a reviewer agent must be configured and approve, the diff must not touch CI workflows or delete tests, and Sentinel must have no blocking finding. Default on: only contributors you grant a required tier in Contributors get unattended merges.`)}</label>
             <div class="config-toggle mt-3">
               <div id="am-contributor-lane-enabled" class="config-toggle-switch ${amContributorLaneOn ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneOn ? 'true' : 'false'}"></div>
               <span class="config-toggle-label">Enable contributor-lane tier ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Enable contributor-lane tier', `Default on. Turn off to make hive-produced contributor PRs wait for a human /lgtm + /approve again.`)}</span>
+            </div>
+            <p class="am-trusted-authors-note">⚠️ Grants unattended merge, under this hive's App identity, to every relay contributor whose claimed PR passes these gates. Only contributors holding a tier listed below (granted by an operator in Contributors) and with a verified GitHub login qualify.</p>
+            <div class="config-field mt-4">
+              <label for="am-contributor-lane-require-tiers">Required contributor tiers ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Required contributor tiers', `The claim's contributor must hold one of these operator-granted tiers (default trusted, merger). Newcomer and contributor are reached without an operator and are never accepted.`)}</label>
+              <input id="am-contributor-lane-require-tiers" type="text" value="${esc(amContributorLaneTiers.join(', '))}" placeholder="trusted, merger" data-change-action="gh104">
+              <p class="am-trusted-authors-note">Allowed values: ${esc(amContributorLaneGrantable.join(', '))}. Leave empty for the default (trusted, merger).</p>
             </div>
             <div class="config-field-row mt-4">
               <div class="config-field">
@@ -39833,7 +39841,7 @@ function burnAreaChart() {
                 <input id="am-contributor-lane-soak-minutes" type="number" min="0" step="1" value="${amContributorLaneSoak}" data-change-action="gh104">
               </div>
               <div class="config-field">
-                <label>Reviewer verdict ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Reviewer verdict', `When on (the default), a configured reviewer agent must have recorded an approving verdict for the current head. Hives with no reviewer agent treat this gate as satisfied.`)}</label>
+                <label>Reviewer verdict ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Reviewer verdict', `When on (the default), a configured reviewer agent must have recorded an approving verdict for the current head. Hives with no reviewer agent never merge through this tier.`)}</label>
                 <div class="config-toggle">
                   <div id="am-contributor-lane-require-reviewer-verdict" class="config-toggle-switch ${amContributorLaneVerdict ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneVerdict ? 'true' : 'false'}"></div>
                   <span class="config-toggle-label">Require approving verdict ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Require approving verdict', `When on (the default), the configured reviewer agent must have recorded an approving verdict for the current head before the contributor-lane tier merges.`)}</span>
@@ -39848,8 +39856,8 @@ function burnAreaChart() {
             <div class="config-field mt-4">
               <label for="am-contributor-lane-repos">Repositories</label>
               <select id="am-contributor-lane-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh104" class="am-trusted-authors-repos">${amContributorLaneRepoOptions}</select>
-              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, claim-author-mismatch, claim-other-hive, no-verdict, soaking, sentinel-blocked).</p>
-              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>.</p>
+              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked).</p>
+              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
             </div>
           </div>
         </div>
@@ -41821,13 +41829,15 @@ function burnAreaChart() {
       const soak = document.getElementById('am-contributor-lane-soak-minutes');
       const labels = document.getElementById('am-contributor-lane-exclude-labels');
       const repos = document.getElementById('am-contributor-lane-repos');
+      const tiers = document.getElementById('am-contributor-lane-require-tiers');
       const soakMinutes = soak ? parseInt(soak.value, 10) : 120;
       markDirty('auto-merge', 'contributor_lane', {
         enabled: !!(enabled && enabled.classList.contains('on')),
         soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 120,
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
-        repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : []
+        repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],
+        require_tiers: tiers ? tiers.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
       });
     }
 
