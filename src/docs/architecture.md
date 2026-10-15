@@ -2,7 +2,7 @@
 
 Hive is AI-agent orchestration for open-source projects. A single Go binary
 enumerates GitHub issues and PRs, classifies them, and dispatches work to AI
-coding agents (Claude, Copilot, Gemini, Goose) on adaptive cadences governed by
+coding agents (Claude, Copilot, Codex, Antigravity, Goose) on adaptive cadences governed by
 queue depth — with layered, technically-enforced guardrails between an agent and
 the outside world.
 

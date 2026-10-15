@@ -18,7 +18,7 @@ A running hive holds three things you care about:
 | Asset | How hive uses it |
 |-------|------------------|
 | **Your GitHub repositories** | Agents read issues/PRs and open branches, issues, and pull requests using a token or GitHub App you provide |
-| **Your AI subscriptions / API keys** | Agent CLIs (Claude, Copilot, Gemini, Goose) authenticate with your provider accounts; self-hosted inference backends (litellm / vllm / llm-d) use a gateway API key you enter |
+| **Your AI subscriptions / API keys** | Agent CLIs (Claude, Copilot, Codex, Antigravity, Goose) authenticate with your provider accounts; self-hosted inference backends (litellm / vllm / llm-d) use a gateway API key you enter |
 | **Your cluster (or the hosted platform)** | The hive pod runs agents, the dashboard, and persistent state on a PVC |
 
 The threats that matter: an unauthorized person reaching your dashboard, an agent (or a prompt-injected agent) exfiltrating credentials or touching repos it shouldn't, one agent reading another's credentials, and the hosted platform mixing tenants. Each layer below addresses one of these.
@@ -58,7 +58,7 @@ The strongest isolation story is around inference-backend API keys — agents li
 - **Obfuscated in the UI.** Key entry uses a password field; after entry the API never returns the value — only whether a key exists, a masked tail hint, and which store it resolved from. A log-scrubbing handler additionally redacts GitHub-token and JWT patterns from all log output (details in [security.md](security.md)).
 - **Inherited process credentials never reach a pane.** The hive process itself holds credentials in its environment — the Linear work-source key it expands from `${LINEAR_API_KEY}`, the Linear OAuth app's client secret and webhook secret, the full App installation token the entrypoint exports — and every per-agent tmux server it starts inherits them into its *global* environment, which tmux copies into every pane. At session creation the hive records a `set-environment -r` removal for each of them (a plain `-u` only deletes the session entry and lets the global value show through), then sets the one credential the agent's tier may hold. An ISSUES_ONLY+ agent therefore sees `LINEAR_ACCESS_TOKEN` (the connected app's grant) and nothing else Linear-related; below that floor it sees no Linear credential at all.
 
-**Honest scope:** this placeholder mechanism applies to inference backends. Agents using cloud CLI backends (Claude, Copilot, Gemini, Goose) authenticate with the provider credential you connected for that purpose — that credential is available to the CLI process, as it must be for the CLI to work. Cross-agent exposure of those credentials is limited by the sandboxing layer below.
+**Honest scope:** this placeholder mechanism applies to inference backends. Agents using cloud CLI backends (Claude, Copilot, Codex, Antigravity, Goose) authenticate with the provider credential you connected for that purpose — that credential is available to the CLI process, as it must be for the CLI to work. Cross-agent exposure of those credentials is limited by the sandboxing layer below.
 
 ## Layer 4 — Agent sandboxing
 
@@ -208,7 +208,7 @@ Security documentation that only lists strengths is marketing. The current, deli
 - **Rootless containers cannot enforce the egress gate.** The forced-proxy egress redirect needs `CAP_NET_ADMIN` + iptables; a rootless podman spoke only starts with `HIVE_PROXY_ADVISORY_OK=true`, i.e. with network-layer enforcement advisory-only.
 - **The policy proxy inspects GitHub API traffic.** All outbound `:443` is force-redirected through it, but non-`api.github.com` destinations are tunneled without inspection — it is a GitHub-policy enforcement point, not a content firewall for arbitrary hosts. If you need full egress control, apply Kubernetes NetworkPolicies around the hive pod.
 - **The L5 `hold` label is applied by agent policy;** the hard guarantee at L5 is the withheld merge permission (token tier + proxy rules), not the label itself.
-- **Cloud CLI credentials are shared with the CLI.** Claude/Copilot/Gemini/Goose agents necessarily run with the provider credential you connected. The placeholder-key isolation applies to inference-gateway keys.
+- **Cloud CLI credentials are shared with the CLI.** Claude/Copilot/Codex/Antigravity/Goose agents necessarily run with the provider credential you connected. The placeholder-key isolation applies to inference-gateway keys.
 - **DCO is policy-driven** inside hive; enforce it repo-side (DCO check) for a hard guarantee.
 - **Shared-container execution remains a material risk.** Per-UID isolation reduces cross-agent access but is not equivalent to per-run containers or microVMs; see the residual-risks discussion in [security-threat-model.md](security-threat-model.md).
 

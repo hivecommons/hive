@@ -83,7 +83,7 @@ writing) wherever a specific mechanism is asserted.
 ### Background
 
 Hive orchestrates fleets of AI coding-agent processes (backends: Claude,
-GitHub Copilot, Gemini, Goose, Bob, Agy) that autonomously maintain software
+GitHub Copilot, Codex, Antigravity, Goose, Bob) that autonomously maintain software
 projects hosted on GitHub and GitHub Enterprise — filing issues, opening pull
 requests, reviewing
 code, and, at the highest autonomy setting, merging. Agents run as CLI
@@ -283,7 +283,7 @@ any external contributor's PR and is never merge-eligible on its own.
   inspection (`security-model.md` "Scope and limitations, stated plainly").
 - Hive does not manage the security of the underlying cluster, container
   runtime, or the AI provider accounts operators connect (Claude/Copilot/
-  Gemini/Goose credentials are used by the CLI as-is; see
+  Codex/Antigravity/Goose credentials are used by the CLI as-is; see
   `security-model.md` Layer 3 "Honest scope").
 
 ### If you deploy this, what should you worry about?
@@ -667,7 +667,7 @@ Hive is an independent project in the [hivecommons](https://github.com/hivecommo
 org (transferred out of the KubeStellar org on 2026-09-03, where it was
 incubated as a subproject). It interoperates with, but does not depend on: GitHub/GitHub Enterprise; GitLab/Gitea adapters exist but are not wired
 for production use. It also interoperates with several AI coding-agent CLI backends (Claude Code, GitHub
-Copilot CLI, Gemini, Goose, Bob/bobshell, Agy), and self-hosted inference
+Copilot CLI, Codex, Antigravity, Goose, Bob/bobshell), and self-hosted inference
 gateways (LiteLLM, vLLM, llm-d, watsonx) reached only through an in-pod
 credential-translating proxy (`security-model.md` Layer 3). It is
 independent of any single cloud provider or AI vendor.
@@ -918,7 +918,7 @@ Hive is the flagship of the [Hive Commons](https://hivecommons.dev) project
 family and originated as a subproject of [KubeStellar](https://github.com/kubestellar)
 (CNCF Sandbox), which remains its first production adopter. It interoperates
 with, but is not a vendor dependency of: GitHub/GitHub Enterprise, with GitLab/Gitea adapters not wired for production use, and multiple AI CLI
-backend vendors (Anthropic Claude Code, GitHub Copilot CLI, Google Gemini,
+backend vendors (Anthropic Claude Code, GitHub Copilot CLI, OpenAI Codex, Google Antigravity,
 Block Goose, IBM Bob). See [landscape.md](landscape.md)
 for a maintained comparison against nearby agentic-orchestration tools.
 

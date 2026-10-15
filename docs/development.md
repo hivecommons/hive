@@ -9,7 +9,7 @@ This guide describes the local workflow for contributing to the Hive Go codebase
 - Docker or Podman if you are exercising containerized contributor relay or deployment paths.
 - `tmux` for local agent/contributor workflows that attach CLIs to terminal sessions.
 - `just` if you use the repository's helper recipes (`brew install just` on macOS, or install from the `just` project for your platform).
-- Optional agent CLIs depending on what you test locally: Claude Code, GitHub Copilot/`gh`, Gemini, Bob, Goose, Codex, Pi, or Antigravity.
+- Optional agent CLIs depending on what you test locally: Claude Code, GitHub Copilot/`gh`, Bob, Goose, Codex, Pi, or Antigravity.
 
 ## Clone and branch
 
