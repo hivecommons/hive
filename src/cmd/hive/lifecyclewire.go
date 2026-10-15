@@ -208,6 +208,13 @@ func recordStarted(rec lifecycleRecorder, org, agent, repo string, number int, s
 	if ref == "" {
 		return
 	}
+	// A number whose own pr_opened names itself is a PR: a comment or label on
+	// it is not the start of work, and would double-count the PR journey.
+	if j, ok := store.Journey(ref); ok {
+		if st := j.Stages[timeline.KindPROpened]; st != nil && st.Attrs[timeline.AttrPRRef] == ref {
+			return
+		}
+	}
 	event := timeline.Event{
 		IssueRef: ref,
 		Kind:     timeline.KindStarted,

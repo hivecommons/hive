@@ -159,8 +159,13 @@ type SLAReport struct {
 }
 
 // slaIssueJourney reports whether j is keyed by an issue number: it reached
-// an issue-side stage, or its pr_opened stage names a different PR ref.
+// an issue-side stage, or its pr_opened stage names a different PR ref. A
+// journey whose pr_opened names its own ref is a PR, whatever other stages it
+// carries (e.g. a stray started from a self-comment).
 func slaIssueJourney(j *Journey) bool {
+	if st := j.Stages[KindPROpened]; st != nil && st.Attrs[AttrPRRef] == j.Ref {
+		return false
+	}
 	for _, k := range []Kind{KindEnumerated, KindClassified, KindKicked, KindStarted} {
 		if j.Stages[k] != nil {
 			return true

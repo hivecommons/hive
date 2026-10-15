@@ -353,6 +353,17 @@ func TestRecordStarted(t *testing.T) {
 	}
 }
 
+// A comment/label on a PR's own number must not record started on the PR journey.
+func TestRecordStarted_SkipsPRJourney(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordPROpened(rec, "acme", "scanner", "acme/widgets", 41, "https://x/41")
+	recordStarted(rec, "acme", "scanner", "acme/widgets", 41, "comment")
+	j, ok := rec.store.Journey("widgets#41")
+	if !ok || j.Stages[timeline.KindStarted] != nil {
+		t.Fatalf("PR journey recorded started: %+v ok=%v", j, ok)
+	}
+}
+
 // Delivery SLA wiring: the issue journeys a PR fixes get pr_opened (with the
 // PR's ref) and later merged, so start→PR and PR→merge spans close per issue.
 func TestRecordPROpenedForIssues_ThenMergeFoldsOntoIssues(t *testing.T) {
