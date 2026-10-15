@@ -241,9 +241,11 @@ one, which is why the advisor is in scope.
 Redaction on the dashboard is **per-handler**, not response middleware:
 `redactTokensInLine`, `redactTokens` (applied to run titles), `redactPromptSecrets`,
 `redactLiteLLMKeyMaterial`, `redactSecret`. `pkg/logscrub` holds the canonical closed
-category set — `hive-canary`, `github-token`, `jwt`, `aws-access-key`, `bearer-token`,
+category set — `hive-canary`, `github-token`, `jwt`, `api-key`, `slack-webhook-url`,
+`discord-webhook-url`, `slack-token`, `slack-app-token`, `aws-access-key`, `bearer-token`,
 `private-key`, `encrypted-private-key`, `pgp-private-key` — with `TokenPattern` exported as
-the single source of truth and reused by `pkg/ioscan`.
+the single source of truth and reused by `pkg/ioscan`. The canonical list is defined in
+`src/pkg/logscrub/handler.go`'s `secretPatterns` variable.
 
 Two consequences for a client whose output is read by a language model:
 
