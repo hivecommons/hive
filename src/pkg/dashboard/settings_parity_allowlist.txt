@@ -245,12 +245,6 @@ governor.llm-d.api_key_env # TODO #11854
 governor.llm-d.api_key_file # TODO #11854
 governor.llm-d.api_key_header # TODO #11854
 governor.llm-d.endpoint # TODO #11854
-governor.logging.compress # TODO #11854
-governor.logging.dir # TODO #11854
-governor.logging.level # TODO #11854
-governor.logging.max_age_days # TODO #11854
-governor.logging.max_backups # TODO #11854
-governor.logging.max_size_mb # TODO #11854
 governor.modes.<key>.cadences.<key> # TODO #11854
 governor.modes.<key>.threshold # TODO #11854
 governor.optional_sweep_every_n_cycles # TODO #11854

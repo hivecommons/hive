@@ -31372,6 +31372,7 @@ function burnAreaChart() {
 
     const SETTINGS_SEARCH_STATIC_HITS = [
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
+      { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Stall Replan', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
@@ -38634,6 +38635,7 @@ function burnAreaChart() {
     function renderGovLogging(l) {
       const levels = ['debug', 'info', 'warn', 'error'];
       return `
+        <p class="config-help">YAML keys: <code>governor.logging.dir</code>, <code>governor.logging.max_size_mb</code>, <code>governor.logging.max_age_days</code>, <code>governor.logging.max_backups</code>, <code>governor.logging.level</code>, <code>governor.logging.compress</code>.</p>
         <div class="config-field">
           <label>Log Directory ${settingHelpMark('settings', 'logging', 'Log Directory', `Directory where rolling log files are written. Stored on the persistent /data volume so logs survive container restarts. Read-only at runtime — change in hive.yaml and restart.`)}</label>
           <input type="text" value="${esc(l.dir || '/data/logs')}" disabled style="opacity:0.6">
