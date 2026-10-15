@@ -1,0 +1,1 @@
+- dashboard settings: expose every `release_sentinel.*` key — enable switch, watched repo, repair agent, max rounds, round timeout, poll interval, ignored and release workflows, release branch, and the retag-after-merge switches — on the Governor Features tab, with YAML-key hints and env-override notes (#11854)

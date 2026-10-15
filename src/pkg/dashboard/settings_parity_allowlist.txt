@@ -530,17 +530,6 @@ project.repo_policies[].reporter_trust_hold # TODO #11854
 project.repo_policies[].self_authorization_hold # TODO #11854
 project.repos[] # TODO #11854
 publication.owner # TODO #11854
-release_sentinel.agent # TODO #11854
-release_sentinel.enabled # TODO #11854
-release_sentinel.ignore_workflows[] # TODO #11854
-release_sentinel.max_rounds # TODO #11854
-release_sentinel.poll_interval # TODO #11854
-release_sentinel.release_branch # TODO #11854
-release_sentinel.release_workflows[] # TODO #11854
-release_sentinel.repo # TODO #11854
-release_sentinel.retag_allow_intervening_commits # TODO #11854
-release_sentinel.retag_enabled # TODO #11854
-release_sentinel.round_timeout # TODO #11854
 removed_agents[] # TODO #11854
 retro.analysis_model # TODO #11854
 retro.enabled # TODO #11854

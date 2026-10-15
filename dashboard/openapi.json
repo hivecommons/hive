@@ -9311,6 +9311,165 @@
         }
       }
     },
+    "/api/config/governor/release-sentinel": {
+      "put": {
+        "tags": [
+          "Governor"
+        ],
+        "summary": "Update release sentinel settings",
+        "description": "Updates the top-level release_sentinel block (hivecommons/hive#11854). Fields are optional; absent fields are unchanged. Current values are served by GET /api/config/governor under release_sentinel. Requires owner role.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Configured release_sentinel.enabled (default false)"
+                  },
+                  "repo": {
+                    "type": "string",
+                    "description": "owner/name whose release tags are watched; empty means project.primary_repo"
+                  },
+                  "agent": {
+                    "type": "string",
+                    "description": "Lane repair rounds are dispatched to; empty means ci-maintainer"
+                  },
+                  "max_rounds": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 50,
+                    "description": "Repair rounds per release; 0 means the default (5)"
+                  },
+                  "round_timeout": {
+                    "type": "string",
+                    "description": "Go duration bounding one repair round; empty means 2h"
+                  },
+                  "poll_interval": {
+                    "type": "string",
+                    "description": "Go duration between sentinel passes; empty means 5m"
+                  },
+                  "ignore_workflows": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Workflows whose runs never block a release"
+                  },
+                  "release_workflows": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Workflows that cut a release; empty turns pre-tag detection off"
+                  },
+                  "release_branch": {
+                    "type": "string",
+                    "description": "Branch release tags are cut from; empty means the default branch"
+                  },
+                  "retag_enabled": {
+                    "type": "boolean",
+                    "description": "Move the v<version> tag to a merged repair PR (default false)"
+                  },
+                  "retag_allow_intervening_commits": {
+                    "type": "boolean",
+                    "description": "Let the tag move past commits that are not part of the fix PR (default false)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated release sentinel settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "Configured release_sentinel.enabled (default false)"
+                    },
+                    "repo": {
+                      "type": "string",
+                      "description": "owner/name whose release tags are watched; empty means project.primary_repo"
+                    },
+                    "agent": {
+                      "type": "string",
+                      "description": "Lane repair rounds are dispatched to; empty means ci-maintainer"
+                    },
+                    "max_rounds": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 50,
+                      "description": "Repair rounds per release; 0 means the default (5)"
+                    },
+                    "round_timeout": {
+                      "type": "string",
+                      "description": "Go duration bounding one repair round; empty means 2h"
+                    },
+                    "poll_interval": {
+                      "type": "string",
+                      "description": "Go duration between sentinel passes; empty means 5m"
+                    },
+                    "ignore_workflows": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Workflows whose runs never block a release"
+                    },
+                    "release_workflows": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Workflows that cut a release; empty turns pre-tag detection off"
+                    },
+                    "release_branch": {
+                      "type": "string",
+                      "description": "Branch release tags are cut from; empty means the default branch"
+                    },
+                    "retag_enabled": {
+                      "type": "boolean",
+                      "description": "Move the v<version> tag to a merged repair PR (default false)"
+                    },
+                    "retag_allow_intervening_commits": {
+                      "type": "boolean",
+                      "description": "Let the tag move past commits that are not part of the fix PR (default false)"
+                    },
+                    "effective_enabled": {
+                      "type": "boolean",
+                      "description": "Resolved enabled, HIVE_RELEASE_SENTINEL_ENABLED included"
+                    },
+                    "effective_repo": {
+                      "type": "string",
+                      "description": "Resolved repo the sentinel watches; empty when none is usable"
+                    },
+                    "effective_retag_enabled": {
+                      "type": "boolean",
+                      "description": "Resolved retag opt-in; false whenever the sentinel is off"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, repo, max_rounds, duration or branch"
+          },
+          "403": {
+            "description": "Requires owner role"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/config/governor/fleet-report": {
       "get": {
         "tags": [

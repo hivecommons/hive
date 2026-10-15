@@ -39954,7 +39954,52 @@ function burnAreaChart() {
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
         ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
-        ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}`;
+        ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}
+        ${renderGovReleaseSentinelSection((_configState.data || {}).release_sentinel || {})}`;
+    }
+
+    function markReleaseSentinelList(key, value) {
+      markDirty('release-sentinel', key, splitConfigLines(value));
+    }
+
+    // renderGovReleaseSentinelSection renders the top-level release_sentinel
+    // block (hivecommons/hive#9585, #11854): the bounded repair loop that
+    // watches the current v<version> release tag's CI and dispatches repair
+    // rounds when it fails. Values are marked dirty under the
+    // 'release-sentinel' section, which the generic Save dispatcher PUTs to
+    // /api/config/governor/release-sentinel.
+    function renderGovReleaseSentinelSection(rs) {
+      rs = rs || {};
+      const envNote = (rs.effective_enabled !== undefined && rs.effective_enabled !== !!rs.enabled)
+        ? `<div class="config-help">HIVE_RELEASE_SENTINEL_ENABLED overrides this: the sentinel is currently ${rs.effective_enabled ? 'on' : 'off'}.</div>` : '';
+      const toggle = (key, on, label, yamlKey, tip) => `<div class="config-toggle">
+            <div class="config-toggle-switch ${on ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="release-sentinel" data-key="${key}"></div>
+            <span class="config-toggle-label">${label} ${yamlHint(yamlKey)} ${settingHelpMark('settings', 'features', label, tip)}</span>
+          </div>`;
+      const list = (key, label, yamlKey, placeholder, tip) => `<div class="config-field">
+            <label>${label} ${yamlHint(yamlKey)} ${settingHelpMark('settings', 'features', label, tip)}</label>
+            <textarea rows="2" placeholder="${esc(placeholder)}" data-change-action="markReleaseSentinelList" data-arg0="${key}" data-arg-types="s,v">${esc((rs[key] || []).join('\n'))}</textarea>
+          </div>`;
+      return `
+        <div class="qa-section">
+          <div class="qa-section-title">Release Sentinel</div>
+          ${toggle('enabled', !!rs.enabled, 'Watch release CI and dispatch repair rounds', 'release_sentinel.enabled', 'Default off. When on, the governor watches the CI of the current v&lt;version&gt; release tag and, when it fails, dispatches bounded repair rounds to an agent. Off means nothing is watched, dispatched or persisted.')}
+          ${envNote}
+          <div class="config-field-row qa-hours">
+            <div class="config-field"><label>Repo ${yamlHint('release_sentinel.repo')} ${settingHelpMark('settings', 'features', 'Release sentinel repo', `owner/name whose release tags are watched. Empty means the project's primary repo.`)}</label><input type="text" value="${esc(rs.repo || '')}" placeholder="${esc(rs.effective_repo || 'owner/name')}" data-change-action="markDirty" data-arg0="release-sentinel" data-arg1="repo" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Repair agent ${yamlHint('release_sentinel.agent')} ${settingHelpMark('settings', 'features', 'Release sentinel repair agent', `Agent lane repair rounds are dispatched to. Empty means ci-maintainer.`)}</label><input type="text" value="${esc(rs.agent || '')}" placeholder="ci-maintainer" data-change-action="markDirty" data-arg0="release-sentinel" data-arg1="agent" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row qa-hours">
+            <div class="config-field"><label>Max rounds ${yamlHint('release_sentinel.max_rounds')} ${settingHelpMark('settings', 'features', 'Release sentinel max rounds', `Cap on repair rounds per release. 0 means the default (5); at most 50.`)}</label><input type="number" min="0" max="50" step="1" value="${rs.max_rounds || 0}" placeholder="5" data-change-action="markDirty" data-arg0="release-sentinel" data-arg1="max_rounds" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Round timeout ${yamlHint('release_sentinel.round_timeout')} ${settingHelpMark('settings', 'features', 'Release sentinel round timeout', `Go duration bounding one repair round, for example 90m or 2h. Empty means 2h.`)}</label><input type="text" value="${esc(rs.round_timeout || '')}" placeholder="2h" data-change-action="markDirty" data-arg0="release-sentinel" data-arg1="round_timeout" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Poll interval ${yamlHint('release_sentinel.poll_interval')} ${settingHelpMark('settings', 'features', 'Release sentinel poll interval', `Minimum Go duration between sentinel passes; rides the governor eval tick. Empty means 5m.`)}</label><input type="text" value="${esc(rs.poll_interval || '')}" placeholder="5m" data-change-action="markDirty" data-arg0="release-sentinel" data-arg1="poll_interval" data-arg-types="s,s,w"></div>
+          </div>
+          ${list('ignore_workflows', 'Ignored workflows', 'release_sentinel.ignore_workflows[]', 'One workflow name per line', 'Workflows whose runs never block a release (advisory bots and similar noise).')}
+          ${list('release_workflows', 'Release workflows', 'release_sentinel.release_workflows[]', 'Tagged Release', 'Workflows that cut a release (name or file name, for example "Tagged Release" or tagged-release.yml). A policy failure in one of them before any tag exists is escalated to a human. Empty turns pre-tag detection off.')}
+          <div class="config-field"><label>Release branch ${yamlHint('release_sentinel.release_branch')} ${settingHelpMark('settings', 'features', 'Release sentinel release branch', `Branch release tags are cut from and repair PRs merge into. Empty means the repository's default branch.`)}</label><input type="text" value="${esc(rs.release_branch || '')}" placeholder="default branch" data-change-action="markDirty" data-arg0="release-sentinel" data-arg1="release_branch" data-arg-types="s,s,w"></div>
+          ${toggle('retag_enabled', !!rs.retag_enabled, 'Retag after merge', 'release_sentinel.retag_enabled', 'Default off. Once a repair PR for the release merges into the release branch, move the v&lt;version&gt; tag to the merge commit with one leased, atomic tag push. Needs a GitHub App installation; never applies while the sentinel itself is off. HIVE_RELEASE_SENTINEL_RETAG_ENABLED overrides it.')}
+          ${toggle('retag_allow_intervening_commits', !!rs.retag_allow_intervening_commits, 'Allow intervening commits when retagging', 'release_sentinel.retag_allow_intervening_commits', 'Default off: the tag only ever moves to the old release plus the fix. On lets it move past other merges that landed on the release branch after the tag was cut.')}
+        </div>`;
     }
 
     // renderGovFleetReportSection renders the self-report settings

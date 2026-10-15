@@ -91,6 +91,7 @@ var auditSensitiveActions = map[string]bool{
 	"config_governor_notifications":         true,
 	"config_governor_project_observability": true,
 	"config_governor_question_autoclose":    true,
+	"config_governor_release_sentinel":      true,
 	"config_governor_replan":                true,
 	"config_governor_repos":                 true,
 	"config_governor_security":              true,
