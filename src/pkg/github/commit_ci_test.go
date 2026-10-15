@@ -302,3 +302,43 @@ func TestRequiredChecksMismatchNames(t *testing.T) {
 		t.Fatalf("requiredChecksMismatchNames = %v, want [build-gate]", got)
 	}
 }
+
+// Regression for #12101: a failed non-required check must block the merge gate.
+func TestEvaluateCommitCIFailOnAnyFailedCheck(t *testing.T) {
+	checks := []map[string]string{
+		{"name": "build-gate", "status": "completed", "conclusion": "success"},
+		{"name": "syntax-check", "status": "completed", "conclusion": "failure"},
+		{"name": "Playwright", "status": "completed", "conclusion": "failure"},
+	}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/widget/commits/sha/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0})
+		case "/repos/acme/widget/commits/sha/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": len(checks), "check_runs": checks})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	client := gh.NewClient(nil)
+	base, err := url.Parse(api.URL + "/")
+	if err != nil {
+		t.Fatalf("ParseURL: %v", err)
+	}
+	client.BaseURL = base
+
+	opts := CommitCIOptions{Required: map[string]bool{"build-gate": true}, RequiredKnown: true}
+	st, err := EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", opts)
+	if err != nil || !st.Green {
+		t.Fatalf("without option = (%v,%q,%v), want green", st.Green, st.Reason, err)
+	}
+	opts.FailOnAnyFailedCheck = true
+	st, err = EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", opts)
+	if err != nil {
+		t.Fatalf("EvaluateCommitCI returned error: %v", err)
+	}
+	if st.Green || st.Reason != "check-failing:syntax-check" {
+		t.Fatalf("with option = (%v,%q), want red check-failing:syntax-check", st.Green, st.Reason)
+	}
+}

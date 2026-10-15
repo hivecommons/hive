@@ -131,9 +131,13 @@ type CommitCIOptions struct {
 	// sibling DCO context succeeded, ignorable checks) are still skipped exactly
 	// as in server-enforced mode so they cannot block or count as evidence.
 	RequiredKnownEmpty bool
-	MinHeadAge         time.Duration
-	HeadPushedAt       time.Time
-	Now                func() time.Time
+	// FailOnAnyFailedCheck makes a completed failure or timed_out check run
+	// block even when it is not in the known required set (ignorable and meta
+	// checks excepted), so a red non-required check cannot be merged past (#12101).
+	FailOnAnyFailedCheck bool
+	MinHeadAge           time.Duration
+	HeadPushedAt         time.Time
+	Now                  func() time.Time
 	// RequireEvidence fails closed when no real successful CI check-run evidence
 	// exists. It is used when GitHub reports a known empty required-check set or
 	// the set is unknown, so Hive still requires positive CI evidence instead of
@@ -492,6 +496,11 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		}
 		if requiredKnown {
 			if !required[name] {
+				if opts.FailOnAnyFailedCheck && cr.GetStatus() == "completed" && !isIgnorableCICheck(name) {
+					if c := cr.GetConclusion(); c == "failure" || c == "timed_out" {
+						block("check-failing:" + name)
+					}
+				}
 				continue
 			}
 		} else if shouldIgnoreMetaContextForServerEnforcement(name, ignoreMetaContexts, dcoSatisfied) {
