@@ -2784,9 +2784,22 @@
     .settings-subsection-details { margin: var(--sp-5) 0 0; }
     .settings-subsection-summary { cursor: pointer; color: var(--muted); font-size: var(--fs-sm); font-weight: 600; }
     .settings-subsection-row { margin-top: var(--sp-5); }
+    /* Settings → Features: headed sections + in-tab table of contents. The
+       heading sticks to the top of the dialog body (the scroll container) so
+       the operator always sees which group the control under the cursor
+       belongs to. */
+    .features-toc { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-0) var(--sp-0) var(--sp-6); }
+    .features-toc-chip { display: inline-flex; align-items: center; min-height: 24px; padding: var(--sp-0) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface) 84%, transparent); color: var(--text); font-size: var(--fs-xs); font-weight: 600; text-decoration: none; white-space: nowrap; }
+    .features-toc-chip:hover, .features-toc-chip:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, transparent); }
+    .features-section { margin-top: var(--sp-8); padding-top: var(--sp-0); scroll-margin-top: var(--sp-4); }
+    .features-section:first-of-type { margin-top: var(--sp-6); }
+    .features-section-title { position: sticky; top: var(--sp-0); z-index: var(--z-sticky); margin: calc(-1 * var(--config-body-pad)) calc(-1 * var(--config-body-pad)) var(--sp-0); padding: calc(var(--config-body-pad) + var(--sp-3)) var(--config-body-pad) var(--sp-3); font-size: var(--fs-md); font-weight: 700; color: var(--text); background: color-mix(in srgb, var(--panel-strong) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, var(--border)); }
+    .features-section-desc { margin: var(--sp-3) var(--sp-0) var(--sp-0); line-height: 1.45; }
+    .features-section > .settings-subsection:nth-child(3), .features-section > .qa-section:nth-child(3), .features-section > .hv-upstream-watch:nth-child(3) { border-top: 0; margin-top: var(--sp-5); padding-top: var(--sp-0); }
 
     .config-body {
-      flex: 1 1 auto; overflow: auto; padding: var(--sp-7);
+      --config-body-pad: var(--sp-7);
+      flex: 1 1 auto; overflow: auto; padding: var(--config-body-pad);
       /* min-height:0 lets this flex child actually shrink, so it stays the
          scroll container even on short tabs (#7250) — a flex item's default
          min-height:auto would size it to its content and leave nothing to
@@ -3172,7 +3185,7 @@
       .config-modal { max-width: 100vw; max-height: 100vh; border-radius: 0; height: 100vh; }
       .config-tabs { padding: var(--sp-0) var(--sp-3); }
       .config-tab { padding: 8px 10px; font-size: 0.7rem; }
-      .config-body { padding: 14px; }
+      .config-body { --config-body-pad: 14px; padding: var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
 
@@ -31516,25 +31529,25 @@ function burnAreaChart() {
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
-      { tab: 'Features', section: 'Stall Replan', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
-      { tab: 'Features', section: 'Dashboard', label: 'Strategy Lab', key: 'dashboard.strategy_lab', text: 'strategy_lab Strategy Lab dashboard feature experimental planner' },
+      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Strategy Lab', key: 'dashboard.strategy_lab', text: 'strategy_lab Strategy Lab dashboard feature experimental planner' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
-      { tab: 'Features', section: 'Question Auto-Close', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
-      { tab: 'Features', section: 'Issue claims', label: 'Claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s' },
-      { tab: 'Features', section: 'Provider rotation', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s' },
       { tab: 'General', section: 'Trajectory Review', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
       { tab: 'Security', section: 'Input Defense', label: 'ioscan', key: 'ioscan.enabled', text: 'ioscan input output scanning canaries fail mode classifier model warn block threshold ioscan.canaries ioscan.classifier.block_threshold ioscan.classifier.enabled ioscan.classifier.model ioscan.classifier.warn_threshold ioscan.enabled ioscan.fail_mode' },
-      { tab: 'Features', section: 'Quality loops', label: 'Retro loop', key: 'retro.enabled', text: 'retro loop quality post-completion analysis model scan interval fix attempts kicks long stall recent closed window retro.enabled retro.analysis_model retro.scan_interval_s retro.max_fix_attempts retro.max_kicks retro.long_stall_days retro.recent_closed_window_s' },
-      { tab: 'Features', section: 'Issue lifecycle', label: 'Close issues on merge', key: 'issues.close_on_merge', text: 'issues close on merge reporter confirmation sweep backfill recheck interval issues.close_on_merge issues.close_on_merge_interval issues.close_on_merge_backfill_interval issues.close_on_merge_recheck issues.reporter_confirmation' },
-      { tab: 'Features', section: 'Duplicate PR sweep', label: 'Duplicate PR sweep', key: 'duplicate_sweep.enabled', text: 'duplicate pr sweep superseded comments budget duplicate_sweep.enabled duplicate_sweep.post_comments duplicate_sweep.max_comments duplicate_sweep.max_prs_per_repo' },
-      { tab: 'Features', section: 'Jev decisions', label: 'Jev decisions', key: 'jev.provider', text: 'jev typed decisions provider openrouter typesafe model endpoint api key env timeout jev.provider jev.model jev.endpoint jev.api_key_env jev.timeout' },
-      { tab: 'Features', section: 'Agent policy repo', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
-      { tab: 'Features', section: 'Re-entrant turns', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
-      { tab: 'Features', section: 'Observability', label: 'OpenTelemetry export', key: 'otel.enabled', text: 'otel opentelemetry export endpoint headers insecure sample ratio service name otel.enabled otel.endpoint otel.headers.<key> otel.insecure otel.sample_ratio otel.service_name' },
+      { tab: 'Features', section: 'Quality loops & release health', label: 'Retro loop', key: 'retro.enabled', text: 'retro loop quality post-completion analysis model scan interval fix attempts kicks long stall recent closed window retro.enabled retro.analysis_model retro.scan_interval_s retro.max_fix_attempts retro.max_kicks retro.long_stall_days retro.recent_closed_window_s' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Close issues on merge', key: 'issues.close_on_merge', text: 'issues close on merge reporter confirmation sweep backfill recheck interval issues.close_on_merge issues.close_on_merge_interval issues.close_on_merge_backfill_interval issues.close_on_merge_recheck issues.reporter_confirmation' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Duplicate PR sweep', key: 'duplicate_sweep.enabled', text: 'duplicate pr sweep superseded comments budget duplicate_sweep.enabled duplicate_sweep.post_comments duplicate_sweep.max_comments duplicate_sweep.max_prs_per_repo' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Jev decisions', key: 'jev.provider', text: 'jev typed decisions provider openrouter typesafe model endpoint api key env timeout jev.provider jev.model jev.endpoint jev.api_key_env jev.timeout' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'OpenTelemetry export', key: 'otel.enabled', text: 'otel opentelemetry export endpoint headers insecure sample ratio service name otel.enabled otel.endpoint otel.headers.<key> otel.insecure otel.sample_ratio otel.service_name' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Hub', section: 'Release', label: 'Release channel', key: '', text: 'channel stable candidate edge release update stream' },
@@ -39598,9 +39611,59 @@ function burnAreaChart() {
       if (document.getElementById('gov-backup-key-host')) loadBackupKeyStatus();
     }
 
+    // FEATURES_SECTIONS is the ordered list of headed sections on Settings →
+    // Features, most-touched first. Each renders as a `.config-section` with a
+    // stable id (`features-section-<id>`) and data-settings-section so the
+    // search "Open tab" affordance and the in-tab table of contents can scroll
+    // straight to it. The search index entries for this tab use `title` as
+    // their `section`; TestFeaturesTabSections pins the two together.
+    const FEATURES_SECTIONS = [
+      { id: 'auto-merge', title: 'Auto-merge', desc: 'Which green PRs Hive merges on its own: App-authored, trusted bots, trusted authors and the contributor lane.' },
+      { id: 'review', title: 'Review gate', desc: 'Review-swarm approval before merge, reviewer perspectives, external review bots and merge recommendations.' },
+      { id: 'autonomy', title: 'Autonomy & ACMM', desc: 'Automatic ACMM level changes and the capabilities that unlock at higher levels.' },
+      { id: 'work-intake', title: 'Work intake & issue lifecycle', desc: 'How issues are classified, claimed, closed on merge, de-duplicated, auto-closed and re-planned.' },
+      { id: 'agents', title: 'Agents & tooling', desc: 'Agent session supervision and resume, provider rotation, the policy repo, decision models and workload identity.' },
+      { id: 'quality', title: 'Quality loops & release health', desc: 'Post-completion feedback lanes, audit publication and release CI repair.' },
+      { id: 'integrations', title: 'Integrations & observability', desc: 'OpenTelemetry export plus the Linear, upstream-fork and self-report connections.' },
+      { id: 'experimental', title: 'Experimental', desc: 'Pilots and report-only rollouts. Off by default; expect these to move or change.' },
+    ];
+
+    function featuresSectionDomId(id) { return 'features-section-' + id; }
+
+    function featuresSectionHtml(id, inner) {
+      const s = FEATURES_SECTIONS.find(x => x.id === id);
+      if (!s) throw new Error('unknown Features section ' + id);
+      return `<section class="config-section features-section" id="${featuresSectionDomId(s.id)}" data-settings-section="${esc(s.id)}">
+          <h3 class="features-section-title">${esc(s.title)}</h3>
+          <p class="features-section-desc text-muted fs-base">${esc(s.desc)}</p>
+          ${inner}
+        </section>`;
+    }
+
+    function featuresSectionTocHtml() {
+      return `<nav class="features-toc" aria-label="Features sections">${FEATURES_SECTIONS.map(s =>
+        `<a href="#${featuresSectionDomId(s.id)}" class="features-toc-chip" data-action="settingsScrollToSection" data-prevent="1" data-arg0="${esc(s.id)}" data-arg-types="s">${esc(s.title)}</a>`).join('')}</nav>`;
+    }
+
+    const FEATURES_SECTION_SCROLL_PAD_PX = 8;
+
+    // settingsScrollToSection scrolls the Settings dialog body (the scroll
+    // container — not the window) to a [data-settings-section] heading.
+    function settingsScrollToSection(id) {
+      const body = document.getElementById('config-body');
+      if (!body) return false;
+      const target = body.querySelector('[data-settings-section="' + String(id).replace(/"/g, '\\"') + '"]');
+      if (!target) return false;
+      const top = target.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+      body.scrollTo({ top: Math.max(0, top - FEATURES_SECTION_SCROLL_PAD_PX), behavior: 'smooth' });
+      return true;
+    }
+
     // renderGovFeatures renders operational features that are not security posture
     // controls. ioscan moved to Security/Input Defense; OpenTelemetry and retro
-    // stay here as observability/quality-loop settings.
+    // stay here as observability/quality-loop settings. The tab is organised
+    // into FEATURES_SECTIONS; keep new controls inside the section they belong
+    // to rather than appending to the end of the template.
     function renderGovFeatures(f, am, rv) {
       f = f || {};
       am = am || {};
@@ -39697,286 +39760,15 @@ function burnAreaChart() {
       else { trajStatus = 'On — no reviewer endpoint (not running)'; trajStatusColor = 'var(--amber)'; }
       return `
         ${securityModelDatalistHtml()}
-        <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:14px">Opt-in capabilities. This tab configures Hive's own telemetry export. Use <b>Project Observability</b> to choose what telemetry and operations agents target in managed repositories.</p>
-
+        <p class="text-muted fs-sm mb-5">Opt-in capabilities, grouped by what they govern. Each section below has a stable heading; use the chips to jump to one. Hive's own telemetry export lives under <b>Integrations &amp; observability</b>; use <b>Project Observability</b> to choose what telemetry and operations agents target in managed repositories.</p>
         <div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">
           Input/Output Scanning (ioscan) moved to <b>Security → Input Defense</b> so its enablement, fail mode, canaries, and classifier settings have one canonical control surface.
         </div>
+        ${featuresSectionTocHtml()}
 
-        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Observability</div>
-          <p class="config-help">OpenTelemetry YAML keys: <code>otel.enabled</code>, <code>otel.endpoint</code>, <code>otel.headers.&lt;key&gt;</code>, <code>otel.insecure</code>, <code>otel.sample_ratio</code>, <code>otel.service_name</code>.</p>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.tracingEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="tracingEnabled"></div>
-            <span class="config-toggle-label">OpenTelemetry export enabled ${settingHelpMark('settings', 'features', 'OpenTelemetry export enabled', `Exports OTLP/HTTP spans for hub/agent activity. Zero overhead when off. When on, traces export to your OTLP collector — view them in Grafana/Jaeger.`)}</span>
-          </div>
-          <details style="margin:10px 0 0" open><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced OpenTelemetry</summary>
-            <div class="config-field"><label>Endpoint ${settingHelpMark('settings', 'features', 'Endpoint', `Collector endpoint (e.g. https://otel-collector:4318). Leave empty to fall back to the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.`)}</label><input type="text" value="${esc(f.tracingEndpoint || '')}" placeholder="https://otel-collector:4318" data-change-action="markDirty" data-arg0="features" data-arg1="tracingEndpoint" data-arg-types="s,s,w"></div>
-            <div class="config-field-row">
-              <div class="config-field"><label>Service name ${settingHelpMark('settings', 'features', 'Service name', `The service.name resource attribute stamped on every exported span. Set it to something that identifies this hive so you can tell it apart from other hives in a shared collector. Defaults to &quot;hive&quot; when empty.`)}</label><input type="text" value="${esc(f.otelServiceName || '')}" placeholder="hive" data-change-action="markDirty" data-arg0="features" data-arg1="otelServiceName" data-arg-types="s,s,w"></div>
-              <div class="config-field"><label>Sample ratio ${settingHelpMark('settings', 'features', 'Sample ratio', `Head-based sampling ratio between 0 and 1 — the fraction of traces exported. The default 0 is special-cased to mean sample everything, not nothing, so leaving it alone exports all traces.`)}</label><input type="number" min="0" max="1" step="0.01" value="${f.tracingSampleRatio || 0}" data-change-action="gh57"><span style="font-size:0.65rem;color:var(--muted)">0 means sample all.</span></div>
-            </div>
-            <div class="config-toggle"><div class="config-toggle-switch ${f.otelInsecure ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="otelInsecure"></div><span class="config-toggle-label">Allow insecure OTLP transport ${settingHelpMark('settings', 'features', 'Allow insecure OTLP transport', `Permits plain HTTP to the collector instead of TLS. Only appropriate for a collector reached over a trusted network, such as one in the same cluster; on any other path the spans travel unencrypted.`)}</span></div>
-            <div class="config-field"><label>Headers <span style="font-weight:400;color:var(--muted)">(write-only, one key=value per line)</span> ${settingHelpMark('settings', 'features', 'Headers', `Extra HTTP headers sent with every OTLP export, typically an authorization header for a hosted collector. Write-only: values are stored but never echoed back to this form, so the box reads empty even when headers are set. \${VAR} references are expanded from the hive environment.`)}</label><textarea rows="3" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:0.74rem" placeholder="authorization=\${OTEL_EXPORTER_TOKEN}" data-change-action="parseOtelHeaders" data-arg-types="v"></textarea><div class="fs-xs text-muted mt-2">${f.otelHasHeaders ? 'Headers are configured; values are never echoed back.' : 'No headers configured.'} <button class="hv-btn btn-primary btn-sm" type="button" data-action="gh58">Clear saved headers</button></div></div>
-          </details>
-        </div>
-
-        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Quality loops ${settingHelpMark('retro-lane', '', 'Quality loops', `Post-completion feedback lanes that inspect finished work and file advisory findings back into the hive. Off by default, and an absent configuration block is zero behaviour change.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.retroEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="retroEnabled"></div>
-            <span class="config-toggle-label">Retro loop enabled ${settingHelpMark('retro-lane', '', 'Retro loop enabled', `Periodically scans done/closed beads that have a closed or merged PR, reconstructs a compact trajectory from local ledgers, and files rule-based findings as advisory beads. Deterministic: no model is called, and no tokens are spent, unless an Analysis model is set below. Its pacing knobs (scan interval, max fix attempts, max kicks, long-stall days, recent-closed window) live under Advanced retro below.`)}</span>
-          </div>
-          <details style="margin:10px 0 0"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced retro</summary>
-            <p class="config-help">YAML keys: <code>retro.enabled</code>, <code>retro.analysis_model</code>, <code>retro.scan_interval_s</code>, <code>retro.max_fix_attempts</code>, <code>retro.max_kicks</code>, <code>retro.long_stall_days</code>, <code>retro.recent_closed_window_s</code>. The retro lane is built at startup, so every retro change requires a restart.</p>
-            <div class="config-field"><label>Analysis model ${yamlHint('retro.analysis_model')} ${settingHelpMark('retro-lane', '', 'Analysis model', `Optional. When set, the retro lane additionally runs a model pass over each reconstructed trajectory using this model. This is the only part of the retro loop that spends tokens — leave it empty for rule-based findings only.`)}</label>${featureModelInput('retroAnalysisModel', f.retroAnalysisModel || '', 'leave empty for deterministic only')}<div class="config-help">Requires restart.</div></div>
-            <div class="config-field-row">
-              <div class="config-field"><label>Scan interval (s) ${yamlHint('retro.scan_interval_s')} ${settingHelpMark('retro-lane', '', 'Retro scan interval', `How often the retro lane scans recently completed beads with closed or merged PR metadata (default 3600 seconds). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroScanIntervalS || ''))}" placeholder="${esc(String(retroDefaults.retroScanIntervalS || 3600))}" data-change-action="markDirty" data-arg0="features" data-arg1="retroScanIntervalS" data-arg-types="s,s,N"><div class="config-help">0 = default. Requires restart.</div></div>
-              <div class="config-field"><label>Recent-closed window (s) ${yamlHint('retro.recent_closed_window_s')} ${settingHelpMark('retro-lane', '', 'Retro recent-closed window', `Only beads completed within this many seconds are analysed (hive.yaml.example suggests 604800, one week). 0 applies no window, so every completed bead is eligible.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroRecentClosedWindowS || ''))}" placeholder="0 (no window)" data-change-action="markDirty" data-arg0="features" data-arg1="retroRecentClosedWindowS" data-arg-types="s,s,N"><div class="config-help">0 = no window. Requires restart.</div></div>
-            </div>
-            <div class="config-field-row">
-              <div class="config-field"><label>Max fix attempts ${yamlHint('retro.max_fix_attempts')} ${settingHelpMark('retro-lane', '', 'Retro max fix attempts', `A finding is filed when a PR needed at least this many failed CI/fix attempts (default 3). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroMaxFixAttempts || ''))}" placeholder="${esc(String(retroDefaults.retroMaxFixAttempts || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="retroMaxFixAttempts" data-arg-types="s,s,N"><div class="config-help">0 = default. Requires restart.</div></div>
-              <div class="config-field"><label>Max kicks ${yamlHint('retro.max_kicks')} ${settingHelpMark('retro-lane', '', 'Retro max kicks', `A finding is filed when a bead received at least this many kicks before completion (default 5). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroMaxKicks || ''))}" placeholder="${esc(String(retroDefaults.retroMaxKicks || 5))}" data-change-action="markDirty" data-arg0="features" data-arg1="retroMaxKicks" data-arg-types="s,s,N"><div class="config-help">0 = default. Requires restart.</div></div>
-              <div class="config-field"><label>Long-stall days ${yamlHint('retro.long_stall_days')} ${settingHelpMark('retro-lane', '', 'Retro long-stall days', `A finding is filed when a bead took longer than this many days from claim to close (default 7). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroLongStallDays || ''))}" placeholder="${esc(String(retroDefaults.retroLongStallDays || 7))}" data-change-action="markDirty" data-arg0="features" data-arg1="retroLongStallDays" data-arg-types="s,s,N"><div class="config-help">0 = default. Requires restart.</div></div>
-            </div>
-          </details>
-          <div class="config-toggle mt-5">
-            <div class="config-toggle-switch ${formalAvailable && f.formalEnabled ? 'on' : ''} ${formalAvailable ? '' : 'disabled'}" data-action="${formalAvailable ? 'toggleConfigSwitch' : ''}" data-section="features" data-key="formalEnabled" data-disabled="${formalAvailable ? 'false' : 'true'}" title="${formalAvailable ? '' : 'Requires ACMM L' + formalMinACMMLevel + '+'}"></div>
-            <span class="config-toggle-label">Formal verification (quality lane) ${settingHelpMark('formal-verification', '', 'Formal verification (quality lane)', `OFF by default; effective only at ACMM L5 and L6; when on, the quality agent may author Spin/Promela models under formal/&lt;subsystem&gt;/, add a path-gated reporting-only CI job, and keep one deduplicated issue per violated property; see src/docs/formal-verification.md.`)}</span>
-          </div>
-          ${formalAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Requires ACMM L${formalMinACMMLevel}+</p>`}
-        </div>
-
-        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Audit publication ${settingHelpMark('audit-campaign', 'publication', 'Audit publication', `The audit campaign's authorized issue publisher: files each validated finding as exactly one issue through the mutation journal, and routes security-sensitive findings to a private channel instead. Off by default; see src/docs/audit-campaign.md.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${publicationAvailable && f.publicationEnabled ? 'on' : ''} ${publicationAvailable ? '' : 'disabled'}" data-action="${publicationAvailable ? 'toggleConfigSwitch' : ''}" data-section="features" data-key="publicationEnabled" data-disabled="${publicationAvailable ? 'false' : 'true'}" title="${publicationAvailable ? '' : 'Requires ACMM L' + publicationMinACMMLevel + '+'}"></div>
-            <span class="config-toggle-label">Audit issue publisher ${settingHelpMark('audit-campaign', 'publication', 'Audit issue publisher', `OFF by default; effective only at ACMM L3 and above and only in the enforce convergence mode (shadow and off never write). When on, each validated audit finding is filed once as an issue carrying its finding marker, Hive-Run trailer, and run link; a rerun replays the recorded issue instead of filing again. Requires a campaign owner below; see src/docs/audit-campaign.md.`)}</span>
-          </div>
-          ${publicationAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Requires ACMM L${publicationMinACMMLevel}+</p>`}
-          <div class="config-field" style="margin-top:10px">
-            <label>Campaign owner ${settingHelpMark('audit-campaign', 'publication', 'Campaign owner', `The maintainer principal every publication runs under and the actor on the outcome ledger. Publication stays off until an owner is named; the engine identity is never used.`)}</label>
-            <input type="text" value="${esc(f.publicationOwner || '')}" placeholder="maintainer login" data-change-action="markDirty" data-arg0="features" data-arg1="publicationOwner" data-arg-types="s,s,w">
-          </div>
-          <div class="config-field" style="margin-top:10px">
-            <label>Private disclosure channel ${settingHelpMark('audit-campaign', 'publication', 'Private disclosure channel', `Where security-sensitive findings go instead of a public issue: repo:owner/name files them in that private repository, notify sends only the title and finding hash to the operator notifier. A sensitive finding with no channel is refused and audited, never filed publicly.`)}</label>
-            <input type="text" value="${esc(f.publicationPrivateChannel || '')}" placeholder="repo:owner/security-intake or notify" data-change-action="markDirty" data-arg0="features" data-arg1="publicationPrivateChannel" data-arg-types="s,s,w">
-          </div>
-        </div>
-
-        <div class="overview-settings-section">
-          <h3>Tier classifier</h3>
-          <p class="text-muted fs-base">Override the issue-title keywords that map work to Simple or Complex tiers. Empty lists keep the built-in defaults.</p>
-          <div class="config-field-row">
-            <div class="config-field"><label>Simple keywords ${yamlHint('classifier.simple_keywords[]')} ${settingHelpMark('settings', 'features', 'Simple keywords', `Title substrings that classify an issue as Tier Simple. Leave empty to keep the built-in default set.`)}</label><textarea rows="4" data-change-action="markClassifierList" data-arg0="simple_keywords" data-arg-types="s,v">${esc((cls.simple_keywords || []).join('\n'))}</textarea><div class="config-help">Effective defaults: ${esc((cls.simpleKeywords || []).join(', ') || 'none')}</div></div>
-            <div class="config-field"><label>Complex signals ${yamlHint('classifier.complex_signals[]')} ${settingHelpMark('settings', 'features', 'Complex signals', `Title substrings that classify an issue as Tier Complex. Leave empty to keep the built-in default set.`)}</label><textarea rows="4" data-change-action="markClassifierList" data-arg0="complex_signals" data-arg-types="s,v">${esc((cls.complex_signals || []).join('\n'))}</textarea><div class="config-help">Effective defaults: ${esc((cls.complexSignals || []).join(', ') || 'none')}</div></div>
-          </div>
-        </div>
-
-        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">External execution ${settingHelpMark('settings', 'features', 'External execution', `Report-only pilot of one externally hosted Flue generation workflow admitted through the contributor protocol (#8361). The engine receives a bounded context bundle and returns a stage receipt; it never receives a repository write credential, a dashboard token, or a publication tool.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.extFlueEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="extFlueEnabled"></div>
-            <span class="config-toggle-label">Flue binding (runs.external.flue) ${settingHelpMark('settings', 'features', 'Flue binding (runs.external.flue)', `OFF by default. When on with no mode it runs in shadow: Hive persists admissions and observes but performs no external start and no external mutation. Only mode report-only dispatches, and only to relays that declare the ext-exec/flue capability; a relay without it is refused that work, never handed it as local work. Endpoint and workflow version are yaml-only. Requires a build with the extwork_flue tag; see src/docs/design/external-workflow-admission.md.`)}</span>
-          </div>
-          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Mode: <b>${esc(f.extFlueMode || 'off')}</b> · adapter ${f.extFlueLinked ? 'linked into this build' : 'not linked into this build (build tag extwork_flue); the toggle stays inert'} · endpoint ${f.extFlueEndpointSet ? 'configured' : 'not configured'}.</p>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.extOmpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="extOmpEnabled"></div>
-            <span class="config-toggle-label">OMP workbench host (runs.external.omp) ${settingHelpMark('settings', 'features', 'OMP workbench host (runs.external.omp)', `OFF by default and independent of the Flue toggle. An already-running OMP workbench takes a lease over the contributor relay it already holds: it sees the assignment summary, must accept before the bounded context bundle is delivered, reports progress, and ends with a stage receipt that Hive verifies. Report-only: no repository credential, no dashboard token; OMP is unconfined (T3), so write-capable stages are refused outright. Only relays declaring ext-exec/omp are offered this work. Requires a build with the extwork_omp tag; see src/docs/design/external-workflow-admission.md.`)}</span>
-          </div>
-          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Mode: <b>${esc(f.extOmpMode || 'off')}</b> · adapter ${f.extOmpLinked ? 'linked into this build' : 'not linked into this build (build tag extwork_omp); the toggle stays inert'} · workflow version ${f.extOmpVersionSet ? 'pinned' : 'not pinned'}.</p>
-        </div>
-
-        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.mintEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="mintEnabled"></div>
-            <span class="config-toggle-label">Token Mint (Workload Identity) ${settingHelpMark('token-mint', '', 'Token Mint (Workload Identity)', `Issues short-lived scoped JWTs that downstream cloud/registry WIF providers can trust via the issuer + JWKS.`)}</span>
-          </div>
-          <div class="config-field" style="margin-top:10px">
-            <label>Issuer ${settingHelpMark('token-mint', '', 'Issuer', `The 'iss' claim and the identity WIF providers are configured to trust — typically the mint's public URL.`)}</label>
-            <input type="text" value="${esc(f.mintIssuer || '')}" placeholder="https://mint.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="mintIssuer" data-arg-types="s,s,w">
-            <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Signing key is provisioned on-disk, not here.</p>
-          </div>
-        </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${planOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="planFromLabel"></div>
-            <span class="config-toggle-label">Auto-plan from label ${settingHelpMark('settings', 'features', 'Auto-plan from label', `When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.`)}</span>
-          </div>
-          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Auto-plan issues carrying the plan/epic label — L5+ only.</p>
-        </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.claimsEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsEnabled"></div>
-            <span class="config-toggle-label">Issue claims ${settingHelpMark('settings', 'features', 'Issue claims', `OFF by default. When on, the hub recognises a claim on an issue itself (a hive:claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.`)}</span>
-          </div>
-          ${renderClaimsTTLFields(f)}
-        </div>
-
-        <div class="qa-section">
-          <div class="qa-section-title">Autonomy policy ${settingHelpMark('settings', 'features', 'Autonomy policy', `Opt-in automatic ACMM level changes driven by retro evidence (<code>autonomy.*</code> in hive.yaml). Both toggles default off; the advisor otherwise only recommends and a human applies the change.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.autonomyAutoPromote ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="autonomyAutoPromote"></div>
-            <span class="config-toggle-label">Auto-promote <code>autonomy.auto_promote</code> ${settingHelpMark('settings', 'features', 'Auto-promote', `When on, the hive raises its own ACMM level once the retro evidence clears the thresholds below. Off by default.`)}</span>
-          </div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.autonomyAutoDemote ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="autonomyAutoDemote"></div>
-            <span class="config-toggle-label">Auto-demote <code>autonomy.auto_demote</code> ${settingHelpMark('settings', 'features', 'Auto-demote', `When on, the hive lowers its own ACMM level after the retro pattern selected in "Demote on". Off by default.`)}</span>
-          </div>
-          <div class="config-field-row">
-            <div class="config-field">
-              <label>Promote after (clean signals) ${settingHelpMark('settings', 'features', 'Promote after', `Consecutive qualifying retro signals required before an automatic promotion (default 3). <code>autonomy.promote_after</code>`)}</label>
-              <input type="number" min="1" step="1" value="${esc(String(f.autonomyPromoteAfter || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyPromoteAfter" data-arg-types="s,s,N">
-            </div>
-            <div class="config-field">
-              <label>Cooldown (days) ${settingHelpMark('settings', 'features', 'Autonomy cooldown', `Minimum days between automatic level changes (default 7). <code>autonomy.cooldown_days</code>`)}</label>
-              <input type="number" min="1" step="1" value="${esc(String(f.autonomyCooldownDays || 7))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyCooldownDays" data-arg-types="s,s,N">
-            </div>
-            <div class="config-field">
-              <label>Max level ${settingHelpMark('settings', 'features', 'Autonomy max level', `Highest ACMM level automatic promotion may reach (1-6, default 6; capped by the hive ceiling). <code>autonomy.max_level</code>`)}</label>
-              <input type="number" min="1" max="6" step="1" value="${esc(String(f.autonomyMaxLevel || 6))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyMaxLevel" data-arg-types="s,s,N">
-            </div>
-            <div class="config-field">
-              <label>Demote on ${settingHelpMark('settings', 'features', 'Autonomy demote on', `Which retro pattern triggers an automatic demotion: a rolled-back run, a PR reworked after review, or either (default rollback). <code>autonomy.demote_on</code>`)}</label>
-              <select data-change-action="markDirty" data-arg0="features" data-arg1="autonomyDemoteOn" data-arg-types="s,s,v">
-                ${['rollback', 'rework', 'either'].map(v => `<option value="${v}"${(f.autonomyDemoteOn || 'rollback') === v ? ' selected' : ''}>${v}</option>`).join('')}
-              </select>
-            </div>
-          </div>
-          <div class="qa-note">Both toggles are opt-in; the ACMM advisor keeps recommending changes for a human to apply while they are off.</div>
-        </div>
-
-        <div style="margin-top:18px;padding-top:var(--sp-6);border-top:1px solid var(--border)">
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.prFollowUpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="prFollowUpEnabled"></div>
-            <span class="config-toggle-label">PR follow-up resume ${settingHelpMark('settings', 'features', 'PR follow-up resume', `OFF by default. When an agent opens a PR, the hive remembers which live session wrote it and keeps a short handoff note (why, approach, rejected alternatives, repro, files touched). Later CI failures, changes-requested reviews, review-bot threads and comments from people with write access on that PR are sent to the same session without clearing it. When that session is gone (a restart or the agent&apos;s next regular kick), the follow-up takes the normal fix-before-new path and the agent&apos;s next kick carries the handoff note. The hive&apos;s own replies and bot comments never trigger a follow-up. Pointers are deleted when the PR merges or closes. See src/docs/design/pr-follow-up-resume.md.`)}</span>
-          </div>
-          ${f.prFollowUpEffective !== f.prFollowUpEnabled ? `<p style="font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">HIVE_PR_FOLLOWUP_RESUME overrides this setting: the feature is currently <b>${f.prFollowUpEffective ? 'on' : 'off'}</b>.</p>` : ''}
-          <details class="settings-subsection-details"><summary class="settings-subsection-summary">Advanced PR follow-up</summary>
-            <p class="config-help">Go durations such as <code>12h</code> or <code>336h</code>; empty uses the default. Read on every follow-up pass, so no restart is needed. The HIVE_PR_FOLLOWUP_MAX_AGE, HIVE_PR_FOLLOWUP_RESUME_ID_MAX_AGE and HIVE_PR_FOLLOWUP_RETENTION environment variables override these values.</p>
-            <div class="config-field-row">
-              <div class="config-field"><label>Resume window ${yamlHint('turn.pr_follow_up.max_age')} ${settingHelpMark('settings', 'features', 'PR follow-up resume window', `How long after a PR opens its authoring session may still be resumed (default 24h). Older follow-ups fall back to a fresh dispatch.`)}</label><input type="text" value="${esc(f.prFollowUpMaxAge || '')}" placeholder="${esc(prFollowUpDefaults.prFollowUpMaxAge || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="prFollowUpMaxAge" data-arg-types="s,s,w"></div>
-              <div class="config-field"><label>Resume-id window ${yamlHint('turn.pr_follow_up.resume_id_max_age')} ${settingHelpMark('settings', 'features', 'PR follow-up resume-id window', `How long a captured backend-native resume id is still offered to a later session (default 72h). Past it only the handoff note is handed on.`)}</label><input type="text" value="${esc(f.prFollowUpResumeIdMaxAge || '')}" placeholder="${esc(prFollowUpDefaults.prFollowUpResumeIdMaxAge || '72h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="prFollowUpResumeIdMaxAge" data-arg-types="s,s,w"></div>
-              <div class="config-field"><label>Pointer retention ${yamlHint('turn.pr_follow_up.retention')} ${settingHelpMark('settings', 'features', 'PR follow-up retention', `How long a PR's pointer and handoff note are kept at all (default 336h, two weeks). Pointers are also deleted as soon as their PR merges or closes; this is the backstop for PRs whose end the hive never observes.`)}</label><input type="text" value="${esc(f.prFollowUpRetention || '')}" placeholder="${esc(prFollowUpDefaults.prFollowUpRetention || '336h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="prFollowUpRetention" data-arg-types="s,s,w"></div>
-            </div>
-          </details>
-        </div>
-
+        ${featuresSectionHtml('auto-merge', `
         <div class="settings-subsection">
-          <div class="settings-subsection-title">Re-entrant turns ${settingHelpMark('settings', 'features', 'Re-entrant turns', `Opt-in gates for the RFC #4002 re-entrant turn envelope. Both default off.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.reentrantTurnEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="reentrantTurnEnabled"></div>
-            <span class="config-toggle-label">Re-entrant turns enabled ${yamlHint('turn.reentrant.enabled')} ${settingHelpMark('settings', 'features', 'Re-entrant turns enabled', `The global safety catch. Off means no agent can enter the envelope runner, even if its per-agent reentrant_turn field is true. HIVE_REENTRANT_TURN_ENABLED overrides it.`)}</span>
-          </div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.reentrantTurnBackgroundFleetEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="reentrantTurnBackgroundFleetEnabled"></div>
-            <span class="config-toggle-label">Include background fleet ${yamlHint('turn.reentrant.background_fleet_enabled')} ${settingHelpMark('settings', 'features', 'Re-entrant background fleet', `Extends the opt-in to every enabled background agent once a soak is underway. Off keeps the rollout to named agents. HIVE_REENTRANT_TURN_BACKGROUND_FLEET overrides it.`)}</span>
-          </div>
-        </div>
-
-        <div class="settings-subsection">
-          <div class="settings-subsection-title">Issue lifecycle ${settingHelpMark('settings', 'features', 'Issue lifecycle', `When a PR that fixes an issue merges, Hive posts a close marker and closes the fixed issue as completed itself, because GitHub only auto-closes keyword-linked PRs that target the repository default branch.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.issuesCloseOnMerge !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="issuesCloseOnMerge"></div>
-            <span class="config-toggle-label">Close issues on merge ${yamlHint('issues.close_on_merge')} ${settingHelpMark('settings', 'features', 'Close issues on merge', `On by default. Closes an issue as completed once the PR that fixes it merges, even when that PR targets a non-default branch.`)}</span>
-          </div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.issuesReporterConfirmation ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="issuesReporterConfirmation"></div>
-            <span class="config-toggle-label">Require reporter confirmation ${yamlHint('issues.reporter_confirmation')} ${settingHelpMark('settings', 'features', 'Require reporter confirmation', `Off by default. Restores the legacy gate where human-filed bug issues wait for reporter verification before closing. To hold a single issue instead, add the hive: needs-confirmation marker to it.`)}</span>
-          </div>
-          <div class="config-field-row settings-subsection-row">
-            <div class="config-field"><label>Ledger sweep interval ${yamlHint('issues.close_on_merge_interval')} ${settingHelpMark('settings', 'features', 'Close-on-merge sweep interval', `How often the close-on-merge sweep walks the whole claim ledger (default 10m). Between sweeps only claims whose PR merged since the last sweep are checked. HIVE_CLOSE_ON_MERGE_INTERVAL overrides it.`)}</label><input type="text" value="${esc(f.issuesCloseOnMergeInterval || '')}" placeholder="${esc(issuesDefaults.issuesCloseOnMergeInterval || '10m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="issuesCloseOnMergeInterval" data-arg-types="s,s,w"></div>
-            <div class="config-field"><label>Backfill interval ${yamlHint('issues.close_on_merge_backfill_interval')} ${settingHelpMark('settings', 'features', 'Close-on-merge backfill interval', `How often merged PRs are backfilled for issues the incremental sweep missed (default 1h).`)}</label><input type="text" value="${esc(f.issuesCloseOnMergeBackfillInterval || '')}" placeholder="${esc(issuesDefaults.issuesCloseOnMergeBackfillInterval || '1h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="issuesCloseOnMergeBackfillInterval" data-arg-types="s,s,w"></div>
-            <div class="config-field"><label>Settled recheck ${yamlHint('issues.close_on_merge_recheck')} ${settingHelpMark('settings', 'features', 'Close-on-merge recheck', `How long a claim with a settled close-on-merge verdict is skipped before it is re-verified once (default 24h). HIVE_CLOSE_ON_MERGE_RECHECK overrides it.`)}</label><input type="text" value="${esc(f.issuesCloseOnMergeRecheck || '')}" placeholder="${esc(issuesDefaults.issuesCloseOnMergeRecheck || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="issuesCloseOnMergeRecheck" data-arg-types="s,s,w"></div>
-          </div>
-          <div class="config-help">Go durations; empty uses the default. Applies on the next sweep.</div>
-        </div>
-
-        <div class="settings-subsection">
-          <div class="settings-subsection-title">Duplicate PR sweep ${settingHelpMark('settings', 'features', 'Duplicate PR sweep', `Finds open PRs that change the same files and suggests which one to keep. It never closes, labels, approves or merges anything: the result is a suggestion a human acts on.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.duplicateSweepEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="duplicateSweepEnabled"></div>
-            <span class="config-toggle-label">Duplicate sweep enabled ${yamlHint('duplicate_sweep.enabled')} ${settingHelpMark('settings', 'features', 'Duplicate sweep enabled', `Turns the sweep on in report-only mode. Off by default.`)}</span>
-          </div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.duplicateSweepPostComments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="duplicateSweepPostComments"></div>
-            <span class="config-toggle-label">Post suggestion comments ${yamlHint('duplicate_sweep.post_comments')} ${settingHelpMark('settings', 'features', 'Post suggestion comments', `Additionally authorizes the suggestion comment on the PRs. Has no effect unless the sweep itself is enabled.`)}</span>
-          </div>
-          <div class="config-field-row settings-subsection-row">
-            <div class="config-field"><label>Max comments per pass ${yamlHint('duplicate_sweep.max_comments')} ${settingHelpMark('settings', 'features', 'Duplicate sweep max comments', `Caps comments written per pass. 0 uses the default (${esc(String(dupSweepDefaults.duplicateSweepMaxComments || 5))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.duplicateSweepMaxComments || ''))}" placeholder="${esc(String(dupSweepDefaults.duplicateSweepMaxComments || 5))}" data-change-action="markDirty" data-arg0="features" data-arg1="duplicateSweepMaxComments" data-arg-types="s,s,N"></div>
-            <div class="config-field"><label>Max PRs per repo ${yamlHint('duplicate_sweep.max_prs_per_repo')} ${settingHelpMark('settings', 'features', 'Duplicate sweep max PRs per repo', `How many open PRs are fingerprinted per repo per pass, the sweep's API budget. 0 uses the default (${esc(String(dupSweepDefaults.duplicateSweepMaxPRsPerRepo || 100))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.duplicateSweepMaxPRsPerRepo || ''))}" placeholder="${esc(String(dupSweepDefaults.duplicateSweepMaxPRsPerRepo || 100))}" data-change-action="markDirty" data-arg0="features" data-arg1="duplicateSweepMaxPRsPerRepo" data-arg-types="s,s,N"></div>
-          </div>
-          <div class="config-help">0 = default. Applies on the next pass. Extra bot logins stay yaml-only.</div>
-        </div>
-
-        <div class="settings-subsection">
-          <div class="settings-subsection-title">Jev decisions ${settingHelpMark('settings', 'features', 'Jev decisions', `Where the hive sends Jev typed decisions and which key it uses. Per-agent enablement is the agent's jev_mode. Agents never see the key: every call goes through the hive's local decision endpoint.`)}</div>
-          <div class="config-field-row">
-            <div class="config-field"><label>Provider ${yamlHint('jev.provider')} ${settingHelpMark('settings', 'features', 'Jev provider', `Selects the hosted endpoint: openrouter (default) or typesafe.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="jevProvider" data-arg-types="s,s,v"><option value=""${!f.jevProvider ? ' selected' : ''}>default (${esc(jevDefaults.jevProvider || 'openrouter')})</option>${jevProviders.map(p => `<option value="${esc(p)}"${f.jevProvider === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></div>
-            <div class="config-field"><label>Model ${yamlHint('jev.model')} ${settingHelpMark('settings', 'features', 'Jev model', `The Jev model id. Empty uses the provider default.`)}</label><input type="text" value="${esc(f.jevModel || '')}" placeholder="${esc(jevDefaults.jevModel || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="jevModel" data-arg-types="s,s,w"></div>
-          </div>
-          <div class="config-field"><label>Endpoint ${yamlHint('jev.endpoint')} ${settingHelpMark('settings', 'features', 'Jev endpoint', `Overrides the provider's systemone URL. Must be an http(s) URL; empty uses the provider default.`)}</label><input type="text" value="${esc(f.jevEndpoint || '')}" placeholder="${esc(jevDefaults.jevEndpoint || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="jevEndpoint" data-arg-types="s,s,w"></div>
-          <div class="config-field-row">
-            <div class="config-field"><label>API key env var ${yamlHint('jev.api_key_env')} ${settingHelpMark('settings', 'features', 'Jev API key env var', `The NAME of the environment variable holding the Jev key, never the key itself (default JEV_API_KEY). When that variable is empty the connected OpenRouter gateway key is used.`)}</label><input type="text" value="${esc(f.jevApiKeyEnv || '')}" placeholder="${esc(jevDefaults.jevApiKeyEnv || 'JEV_API_KEY')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="jevApiKeyEnv" data-arg-types="s,s,w"></div>
-            <div class="config-field"><label>Timeout ${yamlHint('jev.timeout')} ${settingHelpMark('settings', 'features', 'Jev timeout', `Bounds one decision round-trip (default 5s). Go duration; empty uses the default.`)}</label><input type="text" value="${esc(f.jevTimeout || '')}" placeholder="${esc(jevDefaults.jevTimeout || '5s')}" data-change-action="markDirty" data-arg0="features" data-arg1="jevTimeout" data-arg-types="s,s,w"><div class="config-help">Requires restart.</div></div>
-          </div>
-          <div class="config-help">Provider, model, endpoint and key variable apply to the next decision.</div>
-        </div>
-
-        <div class="settings-subsection">
-          <div class="settings-subsection-title">Agent policy repo ${settingHelpMark('settings', 'features', 'Agent policy repo', `Optional. Pulls agent CLAUDE.md policies from a git config repo and keeps a local checkout up to date. Leave the repo empty to use the built-in policies.`)}</div>
-          <div class="config-field-row">
-            <div class="config-field"><label>Repo ${yamlHint('policies.repo')} ${settingHelpMark('settings', 'features', 'Policy repo', `Git URL of the policy repo, for example https://github.com/your-org/hive-config. Empty disables the policy watcher.`)}</label><input type="text" value="${esc(f.policiesRepo || '')}" placeholder="https://github.com/your-org/hive-config" data-change-action="markDirty" data-arg0="features" data-arg1="policiesRepo" data-arg-types="s,s,w"></div>
-            <div class="config-field"><label>Branch ${yamlHint('policies.branch')} ${settingHelpMark('settings', 'features', 'Policy branch', `Branch of the policy repo to follow. Empty uses main.`)}</label><input type="text" value="${esc(f.policiesBranch || '')}" placeholder="main" data-change-action="markDirty" data-arg0="features" data-arg1="policiesBranch" data-arg-types="s,s,w"></div>
-          </div>
-          <div class="config-field-row">
-            <div class="config-field"><label>Path ${yamlHint('policies.path')} ${settingHelpMark('settings', 'features', 'Policy path', `Directory inside the policy repo that holds the agent policies, for example agents/.`)}</label><input type="text" value="${esc(f.policiesPath || '')}" placeholder="agents/" data-change-action="markDirty" data-arg0="features" data-arg1="policiesPath" data-arg-types="s,s,w"></div>
-            <div class="config-field"><label>Local dir ${yamlHint('policies.local_dir')} ${settingHelpMark('settings', 'features', 'Policy local dir', `Absolute path where the policy repo is checked out, for example /data/policies.`)}</label><input type="text" value="${esc(f.policiesLocalDir || '')}" placeholder="/data/policies" data-change-action="markDirty" data-arg0="features" data-arg1="policiesLocalDir" data-arg-types="s,s,w"></div>
-            <div class="config-field"><label>Poll interval ${yamlHint('policies.poll_interval')} ${settingHelpMark('settings', 'features', 'Policy poll interval', `How often the policy repo is pulled (default 5m). Go duration; empty uses the default.`)}</label><input type="text" value="${esc(f.policiesPollInterval || '')}" placeholder="5m0s" data-change-action="markDirty" data-arg0="features" data-arg1="policiesPollInterval" data-arg-types="s,s,w"></div>
-          </div>
-          <div class="config-help">The policy watcher starts at boot, so every policy repo change requires a restart.</div>
-        </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Long-running runs ${settingHelpMark('settings', 'features', 'Long-running runs', `The spec, plan, and implement stages on one lease. Off by default; an absent runs block is zero behaviour change.`)}</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${f.spektacularEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularEnabled"></div>
-            <span class="config-toggle-label">Spek stage runner ${settingHelpMark('spektacular', '', 'Spek stage runner', `Polls the spektacular status verb for every active stage lease and advances the lease when the artifact reaches document_status final. A lease that expires without final is retried up to runs.max_stage_retries (${esc(String(f.maxStageRetries || ''))}) and then escalated for a decision. Hive never opens a Spek file; see src/docs/spektacular.md.`)}</span>
-          </div>
-          <div class="config-field" style="margin-top:10px">
-            <label>Spektacular binary ${settingHelpMark('spektacular', '', 'Spektacular binary', `Path of the spektacular executable the runner shells out to. Empty resolves spektacular through PATH.`)}</label>
-            <input type="text" value="${esc(f.spektacularBinary || '')}" placeholder="spektacular" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w">
-            <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Poll every ${esc(String(f.spektacularPollS || ''))}s (runs.spektacular.poll_interval_s, yaml only).</p>
-          </div>
-        </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Provider rotation</div>
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${rotationOn ? 'on' : ''}" data-action="rotationToggleSwitch"></div>
-            <span class="config-toggle-label">Provider rotation ${settingHelpMark('settings', 'features', 'Provider rotation', `Rotate a lane off a provider whose measured usage crosses the threshold. Opt-in; see the backend capacity RFC.`)}</span>
-          </div>
-          ${rotationOn ? `
-            <div class="config-field-row" style="margin-top:10px">
-              <div class="config-field"><label>Threshold percent ${yamlHint('governor.rotation.threshold_pct')} ${settingHelpMark('settings', 'features', 'Threshold percent', `Usage percentage from 1 to 100 at which a subscription provider is considered exhausted. Defaults to 85.`)}</label><input type="number" min="1" max="100" step="1" value="${f.rotationThresholdPct || 85}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationThresholdPct" data-arg-types="s,s,N"></div>
-              <div class="config-field"><label>High-volume cadence seconds ${yamlHint('governor.rotation.high_volume_cadence_s')} ${settingHelpMark('settings', 'features', 'High-volume cadence seconds', `Agents with a cadence at or below this value never rotate onto subscription providers. Defaults to 1800 seconds.`)}</label><input type="number" min="1" step="1" value="${f.rotationHighVolumeCadenceS || 1800}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationHighVolumeCadenceS" data-arg-types="s,s,N"></div>
-            </div>
-            <div class="config-field" style="margin-top:10px">
-              <label>Providers ${settingHelpMark('settings', 'features', 'Providers', `Map provider names to their class, backing Hive backend IDs from /api/config/backends, and an optional monthly allowance for plans that report consumption but not entitlement.`)}</label>
-              <div id="rotation-headroom-host">${renderRotationProvidersTable(rotationProviders, {})}</div>
-              <button type="button" class="hv-btn btn-secondary btn-sm btn-small btn-primary" data-action="rotationAddProvider">Add provider</button>
-            </div>
-            <div class="config-field mt-5">
-              <label>Agent tiers ${settingHelpMark('settings', 'features', 'Agent tiers', `Assign each agent to capability tier T1, T2, or T3. Rotation stays within tier before dropping when nothing has headroom.`)}</label>
-              <table style="border-collapse:collapse;font-size:var(--fs-sm)">${rotationAgentRows || '<tr><td class="text-muted">No agents in the roster.</td></tr>'}</table>
-            </div>
-          ` : ''}
-        </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Auto-Merge ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-Merge', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</div>
+          <div class="settings-subsection-title">Auto-Merge ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-Merge', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${amSelfOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="self_authored"></div>
             <span class="config-toggle-label">Auto-merge App-authored PRs ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-merge App-authored PRs', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</span>
@@ -40061,9 +39853,11 @@ function burnAreaChart() {
             </div>
           </div>
         </div>
+        `)}
 
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Review Gate ${settingHelpMark('review-swarm', 'configuration', 'Review Gate', `The review swarm gate runs designated reviewer agents on each PR and blocks merge until they approve. Used at ACMM L4+.`)}</div>
+        ${featuresSectionHtml('review', `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Review Gate ${settingHelpMark('review-swarm', 'configuration', 'Review Gate', `The review swarm gate runs designated reviewer agents on each PR and blocks merge until they approve. Used at ACMM L4+.`)}</div>
           <div class="config-subgroup">Merge gate</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rv.require_approval ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="require_approval"></div>
@@ -40159,9 +39953,8 @@ function burnAreaChart() {
             <div id="review-outcomes-summary" style="font-size:0.72rem;color:var(--muted);margin-top:var(--sp-3)"></div>
           </div>
         </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Merge Recommendations ${settingHelpMark('settings', 'features', 'Merge Recommendations', `A digest of what is worth merging next, written into one issue per repository and rewritten in place each cycle. It is separate from the review gate above: the gate decides whether a PR may merge, while this only reports what already can. It never merges, approves, closes or labels anything.`)}</div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Merge Recommendations ${settingHelpMark('settings', 'features', 'Merge Recommendations', `A digest of what is worth merging next, written into one issue per repository and rewritten in place each cycle. It is separate from the review gate above: the gate decides whether a PR may merge, while this only reports what already can. It never merges, approves, closes or labels anything.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rvRec.enabled ? 'on' : ''}" id="rec-enabled-switch" data-action="gh82"></div>
             <span class="config-toggle-label">Open a &quot;what to merge next&quot; issue ${settingHelpMark('settings', 'features', 'Open a "what to merge next" issue', `For a queue nobody can read top to bottom. The hive reads every open PR it already tracks, works out which ones are genuinely mergeable right now, and writes the answer into ONE issue per repository titled &quot;🐝 Hive recommendations&quot;. That issue is rewritten in place on each cycle, so it stays current without ever sending a second notification. It recommends only &mdash; nothing is merged, approved, closed or labelled, and PRs a maintainer put on hold are left out entirely. Off by default: opening an issue in someone&apos;s repository is not something to do uninvited.`)}</span>
@@ -40175,41 +39968,105 @@ function burnAreaChart() {
             <input type="number" min="0" step="1" id="rec-minready-input" value="${rvRec.min_ready_to_open || ''}" placeholder="1" data-change-action="gh84">
           </div>
         </div>
+        `)}
 
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
-          <div class="config-field">
-            <label>Mode ${settingHelpMark('settings', 'features', 'Mode', `Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.`)}</label>
-            <select data-change-action="markDirty" data-arg0="convergence" data-arg1="mode" data-arg-types="s,s,v">
-              ${(Array.isArray(cv.modes) ? cv.modes : ['off','shadow','enforce']).map(m => `<option value="${esc(m)}" ${cv.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
-            </select>
-            ${cv.env_override ? `<p style="font-size:0.72rem;color:var(--yellow);margin:var(--sp-2) var(--sp-0) var(--sp-0)">HIVE_CONVERGENCE_MODE is set — the effective mode is <strong>${esc(cv.effective_mode || 'off')}</strong> regardless of this setting.</p>` : `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Effective mode: <strong>${esc(cv.effective_mode || 'off')}</strong> (generation ${cv.generation || 0}).</p>`}
+        ${featuresSectionHtml('autonomy', `
+        <div class="qa-section">
+          <div class="qa-section-title">Autonomy policy ${settingHelpMark('settings', 'features', 'Autonomy policy', `Opt-in automatic ACMM level changes driven by retro evidence (<code>autonomy.*</code> in hive.yaml). Both toggles default off; the advisor otherwise only recommends and a human applies the change.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.autonomyAutoPromote ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="autonomyAutoPromote"></div>
+            <span class="config-toggle-label">Auto-promote <code>autonomy.auto_promote</code> ${settingHelpMark('settings', 'features', 'Auto-promote', `When on, the hive raises its own ACMM level once the retro evidence clears the thresholds below. Off by default.`)}</span>
           </div>
-          <div class="config-field" style="margin-top:10px">
-            <button class="hv-btn btn-secondary btn" data-action="loadConvergenceSoak">Load soak summary</button>
-            <div id="convergence-soak-summary" style="font-size:0.72rem;color:var(--muted);margin-top:var(--sp-3)"></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.autonomyAutoDemote ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="autonomyAutoDemote"></div>
+            <span class="config-toggle-label">Auto-demote <code>autonomy.auto_demote</code> ${settingHelpMark('settings', 'features', 'Auto-demote', `When on, the hive lowers its own ACMM level after the retro pattern selected in "Demote on". Off by default.`)}</span>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Promote after (clean signals) ${settingHelpMark('settings', 'features', 'Promote after', `Consecutive qualifying retro signals required before an automatic promotion (default 3). <code>autonomy.promote_after</code>`)}</label>
+              <input type="number" min="1" step="1" value="${esc(String(f.autonomyPromoteAfter || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyPromoteAfter" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Cooldown (days) ${settingHelpMark('settings', 'features', 'Autonomy cooldown', `Minimum days between automatic level changes (default 7). <code>autonomy.cooldown_days</code>`)}</label>
+              <input type="number" min="1" step="1" value="${esc(String(f.autonomyCooldownDays || 7))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyCooldownDays" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Max level ${settingHelpMark('settings', 'features', 'Autonomy max level', `Highest ACMM level automatic promotion may reach (1-6, default 6; capped by the hive ceiling). <code>autonomy.max_level</code>`)}</label>
+              <input type="number" min="1" max="6" step="1" value="${esc(String(f.autonomyMaxLevel || 6))}" data-change-action="markDirty" data-arg0="features" data-arg1="autonomyMaxLevel" data-arg-types="s,s,N">
+            </div>
+            <div class="config-field">
+              <label>Demote on ${settingHelpMark('settings', 'features', 'Autonomy demote on', `Which retro pattern triggers an automatic demotion: a rolled-back run, a PR reworked after review, or either (default rollback). <code>autonomy.demote_on</code>`)}</label>
+              <select data-change-action="markDirty" data-arg0="features" data-arg1="autonomyDemoteOn" data-arg-types="s,s,v">
+                ${['rollback', 'rework', 'either'].map(v => `<option value="${v}"${(f.autonomyDemoteOn || 'rollback') === v ? ' selected' : ''}>${v}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="qa-note">Both toggles are opt-in; the ACMM advisor keeps recommending changes for a human to apply while they are off.</div>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${planOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="planFromLabel"></div>
+            <span class="config-toggle-label">Auto-plan from label ${settingHelpMark('settings', 'features', 'Auto-plan from label', `When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.`)}</span>
+          </div>
+          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Auto-plan issues carrying the plan/epic label — L5+ only.</p>
+        </div>
+        `)}
+
+        ${featuresSectionHtml('work-intake', `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Tier classifier</div>
+          <p class="config-help">Override the issue-title keywords that map work to Simple or Complex tiers. Empty lists keep the built-in defaults.</p>
+          <div class="config-field-row">
+            <div class="config-field"><label>Simple keywords ${yamlHint('classifier.simple_keywords[]')} ${settingHelpMark('settings', 'features', 'Simple keywords', `Title substrings that classify an issue as Tier Simple. Leave empty to keep the built-in default set.`)}</label><textarea rows="4" data-change-action="markClassifierList" data-arg0="simple_keywords" data-arg-types="s,v">${esc((cls.simple_keywords || []).join('\n'))}</textarea><div class="config-help">Effective defaults: ${esc((cls.simpleKeywords || []).join(', ') || 'none')}</div></div>
+            <div class="config-field"><label>Complex signals ${yamlHint('classifier.complex_signals[]')} ${settingHelpMark('settings', 'features', 'Complex signals', `Title substrings that classify an issue as Tier Complex. Leave empty to keep the built-in default set.`)}</label><textarea rows="4" data-change-action="markClassifierList" data-arg0="complex_signals" data-arg-types="s,v">${esc((cls.complex_signals || []).join('\n'))}</textarea><div class="config-help">Effective defaults: ${esc((cls.complexSignals || []).join(', ') || 'none')}</div></div>
           </div>
         </div>
-
-        <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Linear Agent ${settingHelpMark('linear-agent', '', 'Linear Agent', `Connect this hive to a Linear workspace as a first-class agent (RFC #4492 Part 2). Once connected the hive is assignable and @-mentionable in Linear; delegating an issue to it opens an agent session that kicks the configured session agent. Requires LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET / LINEAR_WEBHOOK_SECRET on the hive.`)}</div>
-          <div id="linear-agent-panel" style="font-size:0.72rem;color:var(--muted)">Loading…</div>
-          <div class="config-field" style="margin-top:10px">
-            <button class="hv-btn btn-secondary btn" data-action="linearAgentConnect">Connect workspace</button>
-            <button class="hv-btn btn-secondary btn" data-action="linearAgentDisconnect">Disconnect</button>
-            <button class="hv-btn btn-secondary btn" data-action="loadLinearAgentStatus">Refresh</button>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.claimsEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsEnabled"></div>
+            <span class="config-toggle-label">Issue claims ${settingHelpMark('settings', 'features', 'Issue claims', `OFF by default. When on, the hub recognises a claim on an issue itself (a hive:claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.`)}</span>
           </div>
+          ${renderClaimsTTLFields(f)}
         </div>
-
-        <div class="hv-upstream-watch">
-          <div class="hv-upstream-watch-title">Upstream Watch ${settingHelpMark('upstream-watch', 'configuration', 'Upstream Watch', `Divergence between each watched fork and the upstream it follows (#9969): the watermark and last run, how much has been surfaced, ported or dismissed, and the recent upstream refs with their fork issue. Switch the watch on, set the poll interval, and add, edit or remove the forks it follows here — changes are saved to upstream_watch in hive.yaml and take effect on the next poll.`)}</div>
-          <div id="upstream-watch-panel" class="hv-upstream-watch-panel">Loading…</div>
-          <div class="config-field mt-5">
-            <button class="hv-btn btn-secondary btn" data-action="loadUpstreamWatch">Refresh</button>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Issue lifecycle ${settingHelpMark('settings', 'features', 'Issue lifecycle', `When a PR that fixes an issue merges, Hive posts a close marker and closes the fixed issue as completed itself, because GitHub only auto-closes keyword-linked PRs that target the repository default branch.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.issuesCloseOnMerge !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="issuesCloseOnMerge"></div>
+            <span class="config-toggle-label">Close issues on merge ${yamlHint('issues.close_on_merge')} ${settingHelpMark('settings', 'features', 'Close issues on merge', `On by default. Closes an issue as completed once the PR that fixes it merges, even when that PR targets a non-default branch.`)}</span>
           </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.issuesReporterConfirmation ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="issuesReporterConfirmation"></div>
+            <span class="config-toggle-label">Require reporter confirmation ${yamlHint('issues.reporter_confirmation')} ${settingHelpMark('settings', 'features', 'Require reporter confirmation', `Off by default. Restores the legacy gate where human-filed bug issues wait for reporter verification before closing. To hold a single issue instead, add the hive: needs-confirmation marker to it.`)}</span>
+          </div>
+          <div class="config-field-row settings-subsection-row">
+            <div class="config-field"><label>Ledger sweep interval ${yamlHint('issues.close_on_merge_interval')} ${settingHelpMark('settings', 'features', 'Close-on-merge sweep interval', `How often the close-on-merge sweep walks the whole claim ledger (default 10m). Between sweeps only claims whose PR merged since the last sweep are checked. HIVE_CLOSE_ON_MERGE_INTERVAL overrides it.`)}</label><input type="text" value="${esc(f.issuesCloseOnMergeInterval || '')}" placeholder="${esc(issuesDefaults.issuesCloseOnMergeInterval || '10m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="issuesCloseOnMergeInterval" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Backfill interval ${yamlHint('issues.close_on_merge_backfill_interval')} ${settingHelpMark('settings', 'features', 'Close-on-merge backfill interval', `How often merged PRs are backfilled for issues the incremental sweep missed (default 1h).`)}</label><input type="text" value="${esc(f.issuesCloseOnMergeBackfillInterval || '')}" placeholder="${esc(issuesDefaults.issuesCloseOnMergeBackfillInterval || '1h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="issuesCloseOnMergeBackfillInterval" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Settled recheck ${yamlHint('issues.close_on_merge_recheck')} ${settingHelpMark('settings', 'features', 'Close-on-merge recheck', `How long a claim with a settled close-on-merge verdict is skipped before it is re-verified once (default 24h). HIVE_CLOSE_ON_MERGE_RECHECK overrides it.`)}</label><input type="text" value="${esc(f.issuesCloseOnMergeRecheck || '')}" placeholder="${esc(issuesDefaults.issuesCloseOnMergeRecheck || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="issuesCloseOnMergeRecheck" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-help">Go durations; empty uses the default. Applies on the next sweep.</div>
         </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Duplicate PR sweep ${settingHelpMark('settings', 'features', 'Duplicate PR sweep', `Finds open PRs that change the same files and suggests which one to keep. It never closes, labels, approves or merges anything: the result is a suggestion a human acts on.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.duplicateSweepEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="duplicateSweepEnabled"></div>
+            <span class="config-toggle-label">Duplicate sweep enabled ${yamlHint('duplicate_sweep.enabled')} ${settingHelpMark('settings', 'features', 'Duplicate sweep enabled', `Turns the sweep on in report-only mode. Off by default.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.duplicateSweepPostComments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="duplicateSweepPostComments"></div>
+            <span class="config-toggle-label">Post suggestion comments ${yamlHint('duplicate_sweep.post_comments')} ${settingHelpMark('settings', 'features', 'Post suggestion comments', `Additionally authorizes the suggestion comment on the PRs. Has no effect unless the sweep itself is enabled.`)}</span>
+          </div>
+          <div class="config-field-row settings-subsection-row">
+            <div class="config-field"><label>Max comments per pass ${yamlHint('duplicate_sweep.max_comments')} ${settingHelpMark('settings', 'features', 'Duplicate sweep max comments', `Caps comments written per pass. 0 uses the default (${esc(String(dupSweepDefaults.duplicateSweepMaxComments || 5))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.duplicateSweepMaxComments || ''))}" placeholder="${esc(String(dupSweepDefaults.duplicateSweepMaxComments || 5))}" data-change-action="markDirty" data-arg0="features" data-arg1="duplicateSweepMaxComments" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Max PRs per repo ${yamlHint('duplicate_sweep.max_prs_per_repo')} ${settingHelpMark('settings', 'features', 'Duplicate sweep max PRs per repo', `How many open PRs are fingerprinted per repo per pass, the sweep's API budget. 0 uses the default (${esc(String(dupSweepDefaults.duplicateSweepMaxPRsPerRepo || 100))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.duplicateSweepMaxPRsPerRepo || ''))}" placeholder="${esc(String(dupSweepDefaults.duplicateSweepMaxPRsPerRepo || 100))}" data-change-action="markDirty" data-arg0="features" data-arg1="duplicateSweepMaxPRsPerRepo" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-help">0 = default. Applies on the next pass. Extra bot logins stay yaml-only.</div>
+        </div>
+        ${renderGovReplanSection((_configState.data || {}).replan || {})}
+        ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
+        `)}
 
-        <div class="config-field" style="border-top:1px solid var(--border);margin-top:18px;padding-top:var(--sp-6)">
+        ${featuresSectionHtml('agents', `
+        <div class="config-field settings-subsection">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:var(--sp-5);flex-wrap:wrap">
             <div class="config-toggle m-0">
               <div class="config-toggle-switch ${trajOn ? 'on' : ''}" data-action="toggleTrajectoryReview" data-arg-types="t"></div>
@@ -40217,14 +40074,12 @@ function burnAreaChart() {
             </div>
             <span style="font-family:monospace;font-size:0.72rem;padding:2px 10px;border-radius:var(--r-pill);background:color-mix(in srgb, ${trajStatusColor} 14%, transparent);border:1px solid color-mix(in srgb, ${trajStatusColor} 45%, transparent);color:${trajStatusColor}">${esc(trajStatus)}</span>
           </div>
-
           <div style="font-size:var(--fs-sm);color:var(--muted);line-height:1.6;margin-top:10px">
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong class="text-default">Why it exists.</strong> An agent running for a long time can take a series of individually-harmless steps that add up to something its task never authorized — escaping the sandbox, evading a security scanner, splitting a credential so a scanner won't see it, escalating privileges, or chasing a goal it picked up from a repo file instead of your instruction. A per-action allow/deny check can't catch this, because no single step breaks a rule; only the <em>direction</em> of the sequence does.</p>
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong class="text-default">What it does.</strong> On a fixed cadence it reads each running agent's recent transcript, compares it against the task the agent was actually assigned (its last kick), and judges whether the agent is still working toward that task. If the sequence has drifted, it <strong>pauses the agent and alerts you</strong> (or, in alert-only mode, just alerts). Alerts appear in the dashboard banner, the audit log, and ntfy.</p>
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong class="text-default">How it works.</strong> A second, cheap model gets the assigned task plus a bounded tail of the transcript and returns a one-line JSON verdict (<code>divergent / confidence / reason</code>). It judges direction, not any single line, and defaults to "not divergent" when unsure, so ordinary work never trips it. It reads the transcript every CLI writes to, so it covers Claude, Copilot, Gemini, Goose, and inference backends alike. It <strong>fails open</strong>: if the reviewer is unreachable it returns "not divergent," so a broken reviewer never pauses a working agent.</p>
             <p class="m-0"><strong class="text-default">What it requires.</strong> One OpenAI-compatible <code>/v1/chat/completions</code> endpoint for the reviewer model — a LiteLLM gateway, a vLLM server, or an llm-d front. It uses the Governor's LiteLLM endpoint by default; set a different one below to point at a cheap local model. <strong>Until an endpoint resolves, the lane is inert even when this is on</strong> — the status chip above tells you which state you're in.</p>
           </div>
-
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px">
             <div>
               <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer model ${yamlHint('governor.trajectory.model')} ${settingHelpMark('trajectory-review', 'configuration', 'Reviewer model', `Model id sent to the reviewer endpoint. Empty = the Governor's LiteLLM default model. A cheap-but-capable model is right; a tiny model gives weaker verdicts (fails open, so it catches less rather than false-pausing).`)}</label>
@@ -40253,10 +40108,216 @@ function burnAreaChart() {
             </div>
           </div>
         </div>
-        ${renderGovReplanSection((_configState.data || {}).replan || {})}
-        ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Re-entrant turns ${settingHelpMark('settings', 'features', 'Re-entrant turns', `Opt-in gates for the RFC #4002 re-entrant turn envelope. Both default off.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.reentrantTurnEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="reentrantTurnEnabled"></div>
+            <span class="config-toggle-label">Re-entrant turns enabled ${yamlHint('turn.reentrant.enabled')} ${settingHelpMark('settings', 'features', 'Re-entrant turns enabled', `The global safety catch. Off means no agent can enter the envelope runner, even if its per-agent reentrant_turn field is true. HIVE_REENTRANT_TURN_ENABLED overrides it.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.reentrantTurnBackgroundFleetEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="reentrantTurnBackgroundFleetEnabled"></div>
+            <span class="config-toggle-label">Include background fleet ${yamlHint('turn.reentrant.background_fleet_enabled')} ${settingHelpMark('settings', 'features', 'Re-entrant background fleet', `Extends the opt-in to every enabled background agent once a soak is underway. Off keeps the rollout to named agents. HIVE_REENTRANT_TURN_BACKGROUND_FLEET overrides it.`)}</span>
+          </div>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.prFollowUpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="prFollowUpEnabled"></div>
+            <span class="config-toggle-label">PR follow-up resume ${settingHelpMark('settings', 'features', 'PR follow-up resume', `OFF by default. When an agent opens a PR, the hive remembers which live session wrote it and keeps a short handoff note (why, approach, rejected alternatives, repro, files touched). Later CI failures, changes-requested reviews, review-bot threads and comments from people with write access on that PR are sent to the same session without clearing it. When that session is gone (a restart or the agent&apos;s next regular kick), the follow-up takes the normal fix-before-new path and the agent&apos;s next kick carries the handoff note. The hive&apos;s own replies and bot comments never trigger a follow-up. Pointers are deleted when the PR merges or closes. See src/docs/design/pr-follow-up-resume.md.`)}</span>
+          </div>
+          ${f.prFollowUpEffective !== f.prFollowUpEnabled ? `<p style="font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">HIVE_PR_FOLLOWUP_RESUME overrides this setting: the feature is currently <b>${f.prFollowUpEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <details class="settings-subsection-details"><summary class="settings-subsection-summary">Advanced PR follow-up</summary>
+            <p class="config-help">Go durations such as <code>12h</code> or <code>336h</code>; empty uses the default. Read on every follow-up pass, so no restart is needed. The HIVE_PR_FOLLOWUP_MAX_AGE, HIVE_PR_FOLLOWUP_RESUME_ID_MAX_AGE and HIVE_PR_FOLLOWUP_RETENTION environment variables override these values.</p>
+            <div class="config-field-row">
+              <div class="config-field"><label>Resume window ${yamlHint('turn.pr_follow_up.max_age')} ${settingHelpMark('settings', 'features', 'PR follow-up resume window', `How long after a PR opens its authoring session may still be resumed (default 24h). Older follow-ups fall back to a fresh dispatch.`)}</label><input type="text" value="${esc(f.prFollowUpMaxAge || '')}" placeholder="${esc(prFollowUpDefaults.prFollowUpMaxAge || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="prFollowUpMaxAge" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label>Resume-id window ${yamlHint('turn.pr_follow_up.resume_id_max_age')} ${settingHelpMark('settings', 'features', 'PR follow-up resume-id window', `How long a captured backend-native resume id is still offered to a later session (default 72h). Past it only the handoff note is handed on.`)}</label><input type="text" value="${esc(f.prFollowUpResumeIdMaxAge || '')}" placeholder="${esc(prFollowUpDefaults.prFollowUpResumeIdMaxAge || '72h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="prFollowUpResumeIdMaxAge" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label>Pointer retention ${yamlHint('turn.pr_follow_up.retention')} ${settingHelpMark('settings', 'features', 'PR follow-up retention', `How long a PR's pointer and handoff note are kept at all (default 336h, two weeks). Pointers are also deleted as soon as their PR merges or closes; this is the backstop for PRs whose end the hive never observes.`)}</label><input type="text" value="${esc(f.prFollowUpRetention || '')}" placeholder="${esc(prFollowUpDefaults.prFollowUpRetention || '336h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="prFollowUpRetention" data-arg-types="s,s,w"></div>
+            </div>
+          </details>
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Provider rotation</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${rotationOn ? 'on' : ''}" data-action="rotationToggleSwitch"></div>
+            <span class="config-toggle-label">Provider rotation ${settingHelpMark('settings', 'features', 'Provider rotation', `Rotate a lane off a provider whose measured usage crosses the threshold. Opt-in; see the backend capacity RFC.`)}</span>
+          </div>
+          ${rotationOn ? `
+            <div class="config-field-row" style="margin-top:10px">
+              <div class="config-field"><label>Threshold percent ${yamlHint('governor.rotation.threshold_pct')} ${settingHelpMark('settings', 'features', 'Threshold percent', `Usage percentage from 1 to 100 at which a subscription provider is considered exhausted. Defaults to 85.`)}</label><input type="number" min="1" max="100" step="1" value="${f.rotationThresholdPct || 85}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationThresholdPct" data-arg-types="s,s,N"></div>
+              <div class="config-field"><label>High-volume cadence seconds ${yamlHint('governor.rotation.high_volume_cadence_s')} ${settingHelpMark('settings', 'features', 'High-volume cadence seconds', `Agents with a cadence at or below this value never rotate onto subscription providers. Defaults to 1800 seconds.`)}</label><input type="number" min="1" step="1" value="${f.rotationHighVolumeCadenceS || 1800}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationHighVolumeCadenceS" data-arg-types="s,s,N"></div>
+            </div>
+            <div class="config-field" style="margin-top:10px">
+              <label>Providers ${settingHelpMark('settings', 'features', 'Providers', `Map provider names to their class, backing Hive backend IDs from /api/config/backends, and an optional monthly allowance for plans that report consumption but not entitlement.`)}</label>
+              <div id="rotation-headroom-host">${renderRotationProvidersTable(rotationProviders, {})}</div>
+              <button type="button" class="hv-btn btn-secondary btn-sm btn-small btn-primary" data-action="rotationAddProvider">Add provider</button>
+            </div>
+            <div class="config-field mt-5">
+              <label>Agent tiers ${settingHelpMark('settings', 'features', 'Agent tiers', `Assign each agent to capability tier T1, T2, or T3. Rotation stays within tier before dropping when nothing has headroom.`)}</label>
+              <table style="border-collapse:collapse;font-size:var(--fs-sm)">${rotationAgentRows || '<tr><td class="text-muted">No agents in the roster.</td></tr>'}</table>
+            </div>
+          ` : ''}
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Agent policy repo ${settingHelpMark('settings', 'features', 'Agent policy repo', `Optional. Pulls agent CLAUDE.md policies from a git config repo and keeps a local checkout up to date. Leave the repo empty to use the built-in policies.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Repo ${yamlHint('policies.repo')} ${settingHelpMark('settings', 'features', 'Policy repo', `Git URL of the policy repo, for example https://github.com/your-org/hive-config. Empty disables the policy watcher.`)}</label><input type="text" value="${esc(f.policiesRepo || '')}" placeholder="https://github.com/your-org/hive-config" data-change-action="markDirty" data-arg0="features" data-arg1="policiesRepo" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Branch ${yamlHint('policies.branch')} ${settingHelpMark('settings', 'features', 'Policy branch', `Branch of the policy repo to follow. Empty uses main.`)}</label><input type="text" value="${esc(f.policiesBranch || '')}" placeholder="main" data-change-action="markDirty" data-arg0="features" data-arg1="policiesBranch" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Path ${yamlHint('policies.path')} ${settingHelpMark('settings', 'features', 'Policy path', `Directory inside the policy repo that holds the agent policies, for example agents/.`)}</label><input type="text" value="${esc(f.policiesPath || '')}" placeholder="agents/" data-change-action="markDirty" data-arg0="features" data-arg1="policiesPath" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Local dir ${yamlHint('policies.local_dir')} ${settingHelpMark('settings', 'features', 'Policy local dir', `Absolute path where the policy repo is checked out, for example /data/policies.`)}</label><input type="text" value="${esc(f.policiesLocalDir || '')}" placeholder="/data/policies" data-change-action="markDirty" data-arg0="features" data-arg1="policiesLocalDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Poll interval ${yamlHint('policies.poll_interval')} ${settingHelpMark('settings', 'features', 'Policy poll interval', `How often the policy repo is pulled (default 5m). Go duration; empty uses the default.`)}</label><input type="text" value="${esc(f.policiesPollInterval || '')}" placeholder="5m0s" data-change-action="markDirty" data-arg0="features" data-arg1="policiesPollInterval" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-help">The policy watcher starts at boot, so every policy repo change requires a restart.</div>
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Jev decisions ${settingHelpMark('settings', 'features', 'Jev decisions', `Where the hive sends Jev typed decisions and which key it uses. Per-agent enablement is the agent's jev_mode. Agents never see the key: every call goes through the hive's local decision endpoint.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Provider ${yamlHint('jev.provider')} ${settingHelpMark('settings', 'features', 'Jev provider', `Selects the hosted endpoint: openrouter (default) or typesafe.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="jevProvider" data-arg-types="s,s,v"><option value=""${!f.jevProvider ? ' selected' : ''}>default (${esc(jevDefaults.jevProvider || 'openrouter')})</option>${jevProviders.map(p => `<option value="${esc(p)}"${f.jevProvider === p ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></div>
+            <div class="config-field"><label>Model ${yamlHint('jev.model')} ${settingHelpMark('settings', 'features', 'Jev model', `The Jev model id. Empty uses the provider default.`)}</label><input type="text" value="${esc(f.jevModel || '')}" placeholder="${esc(jevDefaults.jevModel || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="jevModel" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field"><label>Endpoint ${yamlHint('jev.endpoint')} ${settingHelpMark('settings', 'features', 'Jev endpoint', `Overrides the provider's systemone URL. Must be an http(s) URL; empty uses the provider default.`)}</label><input type="text" value="${esc(f.jevEndpoint || '')}" placeholder="${esc(jevDefaults.jevEndpoint || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="jevEndpoint" data-arg-types="s,s,w"></div>
+          <div class="config-field-row">
+            <div class="config-field"><label>API key env var ${yamlHint('jev.api_key_env')} ${settingHelpMark('settings', 'features', 'Jev API key env var', `The NAME of the environment variable holding the Jev key, never the key itself (default JEV_API_KEY). When that variable is empty the connected OpenRouter gateway key is used.`)}</label><input type="text" value="${esc(f.jevApiKeyEnv || '')}" placeholder="${esc(jevDefaults.jevApiKeyEnv || 'JEV_API_KEY')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="jevApiKeyEnv" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Timeout ${yamlHint('jev.timeout')} ${settingHelpMark('settings', 'features', 'Jev timeout', `Bounds one decision round-trip (default 5s). Go duration; empty uses the default.`)}</label><input type="text" value="${esc(f.jevTimeout || '')}" placeholder="${esc(jevDefaults.jevTimeout || '5s')}" data-change-action="markDirty" data-arg0="features" data-arg1="jevTimeout" data-arg-types="s,s,w"><div class="config-help">Requires restart.</div></div>
+          </div>
+          <div class="config-help">Provider, model, endpoint and key variable apply to the next decision.</div>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.mintEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="mintEnabled"></div>
+            <span class="config-toggle-label">Token Mint (Workload Identity) ${settingHelpMark('token-mint', '', 'Token Mint (Workload Identity)', `Issues short-lived scoped JWTs that downstream cloud/registry WIF providers can trust via the issuer + JWKS.`)}</span>
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Issuer ${settingHelpMark('token-mint', '', 'Issuer', `The 'iss' claim and the identity WIF providers are configured to trust — typically the mint's public URL.`)}</label>
+            <input type="text" value="${esc(f.mintIssuer || '')}" placeholder="https://mint.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="mintIssuer" data-arg-types="s,s,w">
+            <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Signing key is provisioned on-disk, not here.</p>
+          </div>
+        </div>
+        `)}
+
+        ${featuresSectionHtml('quality', `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Quality loops ${settingHelpMark('retro-lane', '', 'Quality loops', `Post-completion feedback lanes that inspect finished work and file advisory findings back into the hive. Off by default, and an absent configuration block is zero behaviour change.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.retroEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="retroEnabled"></div>
+            <span class="config-toggle-label">Retro loop enabled ${settingHelpMark('retro-lane', '', 'Retro loop enabled', `Periodically scans done/closed beads that have a closed or merged PR, reconstructs a compact trajectory from local ledgers, and files rule-based findings as advisory beads. Deterministic: no model is called, and no tokens are spent, unless an Analysis model is set below. Its pacing knobs (scan interval, max fix attempts, max kicks, long-stall days, recent-closed window) live under Advanced retro below.`)}</span>
+          </div>
+          <details style="margin:10px 0 0"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced retro</summary>
+            <p class="config-help">YAML keys: <code>retro.enabled</code>, <code>retro.analysis_model</code>, <code>retro.scan_interval_s</code>, <code>retro.max_fix_attempts</code>, <code>retro.max_kicks</code>, <code>retro.long_stall_days</code>, <code>retro.recent_closed_window_s</code>. The retro lane is built at startup, so every retro change requires a restart.</p>
+            <div class="config-field"><label>Analysis model ${yamlHint('retro.analysis_model')} ${settingHelpMark('retro-lane', '', 'Analysis model', `Optional. When set, the retro lane additionally runs a model pass over each reconstructed trajectory using this model. This is the only part of the retro loop that spends tokens — leave it empty for rule-based findings only.`)}</label>${featureModelInput('retroAnalysisModel', f.retroAnalysisModel || '', 'leave empty for deterministic only')}<div class="config-help">Requires restart.</div></div>
+            <div class="config-field-row">
+              <div class="config-field"><label>Scan interval (s) ${yamlHint('retro.scan_interval_s')} ${settingHelpMark('retro-lane', '', 'Retro scan interval', `How often the retro lane scans recently completed beads with closed or merged PR metadata (default 3600 seconds). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroScanIntervalS || ''))}" placeholder="${esc(String(retroDefaults.retroScanIntervalS || 3600))}" data-change-action="markDirty" data-arg0="features" data-arg1="retroScanIntervalS" data-arg-types="s,s,N"><div class="config-help">0 = default. Requires restart.</div></div>
+              <div class="config-field"><label>Recent-closed window (s) ${yamlHint('retro.recent_closed_window_s')} ${settingHelpMark('retro-lane', '', 'Retro recent-closed window', `Only beads completed within this many seconds are analysed (hive.yaml.example suggests 604800, one week). 0 applies no window, so every completed bead is eligible.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroRecentClosedWindowS || ''))}" placeholder="0 (no window)" data-change-action="markDirty" data-arg0="features" data-arg1="retroRecentClosedWindowS" data-arg-types="s,s,N"><div class="config-help">0 = no window. Requires restart.</div></div>
+            </div>
+            <div class="config-field-row">
+              <div class="config-field"><label>Max fix attempts ${yamlHint('retro.max_fix_attempts')} ${settingHelpMark('retro-lane', '', 'Retro max fix attempts', `A finding is filed when a PR needed at least this many failed CI/fix attempts (default 3). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroMaxFixAttempts || ''))}" placeholder="${esc(String(retroDefaults.retroMaxFixAttempts || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="retroMaxFixAttempts" data-arg-types="s,s,N"><div class="config-help">0 = default. Requires restart.</div></div>
+              <div class="config-field"><label>Max kicks ${yamlHint('retro.max_kicks')} ${settingHelpMark('retro-lane', '', 'Retro max kicks', `A finding is filed when a bead received at least this many kicks before completion (default 5). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroMaxKicks || ''))}" placeholder="${esc(String(retroDefaults.retroMaxKicks || 5))}" data-change-action="markDirty" data-arg0="features" data-arg1="retroMaxKicks" data-arg-types="s,s,N"><div class="config-help">0 = default. Requires restart.</div></div>
+              <div class="config-field"><label>Long-stall days ${yamlHint('retro.long_stall_days')} ${settingHelpMark('retro-lane', '', 'Retro long-stall days', `A finding is filed when a bead took longer than this many days from claim to close (default 7). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(f.retroLongStallDays || ''))}" placeholder="${esc(String(retroDefaults.retroLongStallDays || 7))}" data-change-action="markDirty" data-arg0="features" data-arg1="retroLongStallDays" data-arg-types="s,s,N"><div class="config-help">0 = default. Requires restart.</div></div>
+            </div>
+          </details>
+          <div class="config-toggle mt-5">
+            <div class="config-toggle-switch ${formalAvailable && f.formalEnabled ? 'on' : ''} ${formalAvailable ? '' : 'disabled'}" data-action="${formalAvailable ? 'toggleConfigSwitch' : ''}" data-section="features" data-key="formalEnabled" data-disabled="${formalAvailable ? 'false' : 'true'}" title="${formalAvailable ? '' : 'Requires ACMM L' + formalMinACMMLevel + '+'}"></div>
+            <span class="config-toggle-label">Formal verification (quality lane) ${settingHelpMark('formal-verification', '', 'Formal verification (quality lane)', `OFF by default; effective only at ACMM L5 and L6; when on, the quality agent may author Spin/Promela models under formal/&lt;subsystem&gt;/, add a path-gated reporting-only CI job, and keep one deduplicated issue per violated property; see src/docs/formal-verification.md.`)}</span>
+          </div>
+          ${formalAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Requires ACMM L${formalMinACMMLevel}+</p>`}
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Audit publication ${settingHelpMark('audit-campaign', 'publication', 'Audit publication', `The audit campaign's authorized issue publisher: files each validated finding as exactly one issue through the mutation journal, and routes security-sensitive findings to a private channel instead. Off by default; see src/docs/audit-campaign.md.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${publicationAvailable && f.publicationEnabled ? 'on' : ''} ${publicationAvailable ? '' : 'disabled'}" data-action="${publicationAvailable ? 'toggleConfigSwitch' : ''}" data-section="features" data-key="publicationEnabled" data-disabled="${publicationAvailable ? 'false' : 'true'}" title="${publicationAvailable ? '' : 'Requires ACMM L' + publicationMinACMMLevel + '+'}"></div>
+            <span class="config-toggle-label">Audit issue publisher ${settingHelpMark('audit-campaign', 'publication', 'Audit issue publisher', `OFF by default; effective only at ACMM L3 and above and only in the enforce convergence mode (shadow and off never write). When on, each validated audit finding is filed once as an issue carrying its finding marker, Hive-Run trailer, and run link; a rerun replays the recorded issue instead of filing again. Requires a campaign owner below; see src/docs/audit-campaign.md.`)}</span>
+          </div>
+          ${publicationAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Requires ACMM L${publicationMinACMMLevel}+</p>`}
+          <div class="config-field" style="margin-top:10px">
+            <label>Campaign owner ${settingHelpMark('audit-campaign', 'publication', 'Campaign owner', `The maintainer principal every publication runs under and the actor on the outcome ledger. Publication stays off until an owner is named; the engine identity is never used.`)}</label>
+            <input type="text" value="${esc(f.publicationOwner || '')}" placeholder="maintainer login" data-change-action="markDirty" data-arg0="features" data-arg1="publicationOwner" data-arg-types="s,s,w">
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Private disclosure channel ${settingHelpMark('audit-campaign', 'publication', 'Private disclosure channel', `Where security-sensitive findings go instead of a public issue: repo:owner/name files them in that private repository, notify sends only the title and finding hash to the operator notifier. A sensitive finding with no channel is refused and audited, never filed publicly.`)}</label>
+            <input type="text" value="${esc(f.publicationPrivateChannel || '')}" placeholder="repo:owner/security-intake or notify" data-change-action="markDirty" data-arg0="features" data-arg1="publicationPrivateChannel" data-arg-types="s,s,w">
+          </div>
+        </div>
+        ${renderGovReleaseSentinelSection((_configState.data || {}).release_sentinel || {})}
+        `)}
+
+        ${featuresSectionHtml('integrations', `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Observability</div>
+          <p class="config-help">OpenTelemetry YAML keys: <code>otel.enabled</code>, <code>otel.endpoint</code>, <code>otel.headers.&lt;key&gt;</code>, <code>otel.insecure</code>, <code>otel.sample_ratio</code>, <code>otel.service_name</code>.</p>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.tracingEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="tracingEnabled"></div>
+            <span class="config-toggle-label">OpenTelemetry export enabled ${settingHelpMark('settings', 'features', 'OpenTelemetry export enabled', `Exports OTLP/HTTP spans for hub/agent activity. Zero overhead when off. When on, traces export to your OTLP collector — view them in Grafana/Jaeger.`)}</span>
+          </div>
+          <details style="margin:10px 0 0" open><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced OpenTelemetry</summary>
+            <div class="config-field"><label>Endpoint ${settingHelpMark('settings', 'features', 'Endpoint', `Collector endpoint (e.g. https://otel-collector:4318). Leave empty to fall back to the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.`)}</label><input type="text" value="${esc(f.tracingEndpoint || '')}" placeholder="https://otel-collector:4318" data-change-action="markDirty" data-arg0="features" data-arg1="tracingEndpoint" data-arg-types="s,s,w"></div>
+            <div class="config-field-row">
+              <div class="config-field"><label>Service name ${settingHelpMark('settings', 'features', 'Service name', `The service.name resource attribute stamped on every exported span. Set it to something that identifies this hive so you can tell it apart from other hives in a shared collector. Defaults to &quot;hive&quot; when empty.`)}</label><input type="text" value="${esc(f.otelServiceName || '')}" placeholder="hive" data-change-action="markDirty" data-arg0="features" data-arg1="otelServiceName" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label>Sample ratio ${settingHelpMark('settings', 'features', 'Sample ratio', `Head-based sampling ratio between 0 and 1 — the fraction of traces exported. The default 0 is special-cased to mean sample everything, not nothing, so leaving it alone exports all traces.`)}</label><input type="number" min="0" max="1" step="0.01" value="${f.tracingSampleRatio || 0}" data-change-action="gh57"><span style="font-size:0.65rem;color:var(--muted)">0 means sample all.</span></div>
+            </div>
+            <div class="config-toggle"><div class="config-toggle-switch ${f.otelInsecure ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="otelInsecure"></div><span class="config-toggle-label">Allow insecure OTLP transport ${settingHelpMark('settings', 'features', 'Allow insecure OTLP transport', `Permits plain HTTP to the collector instead of TLS. Only appropriate for a collector reached over a trusted network, such as one in the same cluster; on any other path the spans travel unencrypted.`)}</span></div>
+            <div class="config-field"><label>Headers <span style="font-weight:400;color:var(--muted)">(write-only, one key=value per line)</span> ${settingHelpMark('settings', 'features', 'Headers', `Extra HTTP headers sent with every OTLP export, typically an authorization header for a hosted collector. Write-only: values are stored but never echoed back to this form, so the box reads empty even when headers are set. \${VAR} references are expanded from the hive environment.`)}</label><textarea rows="3" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:0.74rem" placeholder="authorization=\${OTEL_EXPORTER_TOKEN}" data-change-action="parseOtelHeaders" data-arg-types="v"></textarea><div class="fs-xs text-muted mt-2">${f.otelHasHeaders ? 'Headers are configured; values are never echoed back.' : 'No headers configured.'} <button class="hv-btn btn-primary btn-sm" type="button" data-action="gh58">Clear saved headers</button></div></div>
+          </details>
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Linear Agent ${settingHelpMark('linear-agent', '', 'Linear Agent', `Connect this hive to a Linear workspace as a first-class agent (RFC #4492 Part 2). Once connected the hive is assignable and @-mentionable in Linear; delegating an issue to it opens an agent session that kicks the configured session agent. Requires LINEAR_CLIENT_ID / LINEAR_CLIENT_SECRET / LINEAR_WEBHOOK_SECRET on the hive.`)}</div>
+          <div id="linear-agent-panel" style="font-size:0.72rem;color:var(--muted)">Loading…</div>
+          <div class="config-field" style="margin-top:10px">
+            <button class="hv-btn btn-secondary btn" data-action="linearAgentConnect">Connect workspace</button>
+            <button class="hv-btn btn-secondary btn" data-action="linearAgentDisconnect">Disconnect</button>
+            <button class="hv-btn btn-secondary btn" data-action="loadLinearAgentStatus">Refresh</button>
+          </div>
+        </div>
+        <div class="hv-upstream-watch">
+          <div class="hv-upstream-watch-title">Upstream Watch ${settingHelpMark('upstream-watch', 'configuration', 'Upstream Watch', `Divergence between each watched fork and the upstream it follows (#9969): the watermark and last run, how much has been surfaced, ported or dismissed, and the recent upstream refs with their fork issue. Switch the watch on, set the poll interval, and add, edit or remove the forks it follows here — changes are saved to upstream_watch in hive.yaml and take effect on the next poll.`)}</div>
+          <div id="upstream-watch-panel" class="hv-upstream-watch-panel">Loading…</div>
+          <div class="config-field mt-5">
+            <button class="hv-btn btn-secondary btn" data-action="loadUpstreamWatch">Refresh</button>
+          </div>
+        </div>
         ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}
-        ${renderGovReleaseSentinelSection((_configState.data || {}).release_sentinel || {})}`;
+        `)}
+
+        ${featuresSectionHtml('experimental', `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">External execution ${settingHelpMark('settings', 'features', 'External execution', `Report-only pilot of one externally hosted Flue generation workflow admitted through the contributor protocol (#8361). The engine receives a bounded context bundle and returns a stage receipt; it never receives a repository write credential, a dashboard token, or a publication tool.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.extFlueEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="extFlueEnabled"></div>
+            <span class="config-toggle-label">Flue binding (runs.external.flue) ${settingHelpMark('settings', 'features', 'Flue binding (runs.external.flue)', `OFF by default. When on with no mode it runs in shadow: Hive persists admissions and observes but performs no external start and no external mutation. Only mode report-only dispatches, and only to relays that declare the ext-exec/flue capability; a relay without it is refused that work, never handed it as local work. Endpoint and workflow version are yaml-only. Requires a build with the extwork_flue tag; see src/docs/design/external-workflow-admission.md.`)}</span>
+          </div>
+          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Mode: <b>${esc(f.extFlueMode || 'off')}</b> · adapter ${f.extFlueLinked ? 'linked into this build' : 'not linked into this build (build tag extwork_flue); the toggle stays inert'} · endpoint ${f.extFlueEndpointSet ? 'configured' : 'not configured'}.</p>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.extOmpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="extOmpEnabled"></div>
+            <span class="config-toggle-label">OMP workbench host (runs.external.omp) ${settingHelpMark('settings', 'features', 'OMP workbench host (runs.external.omp)', `OFF by default and independent of the Flue toggle. An already-running OMP workbench takes a lease over the contributor relay it already holds: it sees the assignment summary, must accept before the bounded context bundle is delivered, reports progress, and ends with a stage receipt that Hive verifies. Report-only: no repository credential, no dashboard token; OMP is unconfined (T3), so write-capable stages are refused outright. Only relays declaring ext-exec/omp are offered this work. Requires a build with the extwork_omp tag; see src/docs/design/external-workflow-admission.md.`)}</span>
+          </div>
+          <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Mode: <b>${esc(f.extOmpMode || 'off')}</b> · adapter ${f.extOmpLinked ? 'linked into this build' : 'not linked into this build (build tag extwork_omp); the toggle stays inert'} · workflow version ${f.extOmpVersionSet ? 'pinned' : 'not pinned'}.</p>
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Long-running runs ${settingHelpMark('settings', 'features', 'Long-running runs', `The spec, plan, and implement stages on one lease. Off by default; an absent runs block is zero behaviour change.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.spektacularEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="spektacularEnabled"></div>
+            <span class="config-toggle-label">Spek stage runner ${settingHelpMark('spektacular', '', 'Spek stage runner', `Polls the spektacular status verb for every active stage lease and advances the lease when the artifact reaches document_status final. A lease that expires without final is retried up to runs.max_stage_retries (${esc(String(f.maxStageRetries || ''))}) and then escalated for a decision. Hive never opens a Spek file; see src/docs/spektacular.md.`)}</span>
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <label>Spektacular binary ${settingHelpMark('spektacular', '', 'Spektacular binary', `Path of the spektacular executable the runner shells out to. Empty resolves spektacular through PATH.`)}</label>
+            <input type="text" value="${esc(f.spektacularBinary || '')}" placeholder="spektacular" data-change-action="markDirty" data-arg0="features" data-arg1="spektacularBinary" data-arg-types="s,s,w">
+            <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Poll every ${esc(String(f.spektacularPollS || ''))}s (runs.spektacular.poll_interval_s, yaml only).</p>
+          </div>
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Convergence Rollout ${settingHelpMark('settings', 'features', 'Convergence Rollout', `Convergence checks whether work Hive is about to kick is actually admissible right now &mdash; blocker still open, dependency unmerged, evidence stale &mdash; so agents stop burning tokens rediscovering &quot;not ready yet&quot;. It gates candidates only; it never plans or schedules.`)}</div>
+          <div class="config-field">
+            <label>Mode ${settingHelpMark('settings', 'features', 'Mode', `Shadow (default) evaluates every internal kick decision and records what it WOULD have withheld, without enforcing anything &mdash; dispatch is identical to off, and it costs no tokens and no extra GitHub calls. Enforce withholds blocked/unknown work from internal scheduled/cached kicks. Off is the rollback control arm, and the one posture that records no evidence. Workflow: leave it in shadow, load the soak summary, and if the would-withhold cases look genuine, switch to enforce. Live &mdash; no restart needed.`)}</label>
+            <select data-change-action="markDirty" data-arg0="convergence" data-arg1="mode" data-arg-types="s,s,v">
+              ${(Array.isArray(cv.modes) ? cv.modes : ['off','shadow','enforce']).map(m => `<option value="${esc(m)}" ${cv.mode === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+            </select>
+            ${cv.env_override ? `<p style="font-size:0.72rem;color:var(--yellow);margin:var(--sp-2) var(--sp-0) var(--sp-0)">HIVE_CONVERGENCE_MODE is set — the effective mode is <strong>${esc(cv.effective_mode || 'off')}</strong> regardless of this setting.</p>` : `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Effective mode: <strong>${esc(cv.effective_mode || 'off')}</strong> (generation ${cv.generation || 0}).</p>`}
+          </div>
+          <div class="config-field" style="margin-top:10px">
+            <button class="hv-btn btn-secondary btn" data-action="loadConvergenceSoak">Load soak summary</button>
+            <div id="convergence-soak-summary" style="font-size:0.72rem;color:var(--muted);margin-top:var(--sp-3)"></div>
+          </div>
+        </div>
+        `)}`;
     }
 
     function markReleaseSentinelList(key, value) {
@@ -40342,8 +40403,8 @@ function burnAreaChart() {
       rp = rp || {};
       const replanOn = rp.enabled !== false;
       return `
-        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Stall Replan</div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Stall Replan</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${replanOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="replan" data-key="enabled"></div>
             <span class="config-toggle-label">Stall replan enabled ${yamlHint('governor.replan.enabled')} ${settingHelpMark('settings', 'features', 'Stall replan enabled', `Periodically scans approved plans whose sub-tasks have stopped progressing and re-kicks the architect to revise them, bounded by a per-plan cap. On by default; a no-op when there are no approved plans.`)}</span>
