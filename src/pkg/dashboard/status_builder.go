@@ -3140,10 +3140,12 @@ func apiBudgetMap(snapshot github.APIBudgetSnapshot) map[string]any {
 		mode = "normal"
 	}
 	out := map[string]any{
-		"mode":          mode,
-		"remaining":     snapshot.Remaining,
-		"limit":         snapshot.Limit,
-		"skipped_steps": append([]string(nil), snapshot.SkippedSteps...),
+		"mode":             mode,
+		"remaining":        snapshot.Remaining,
+		"limit":            snapshot.Limit,
+		"skipped_steps":    append([]string(nil), snapshot.SkippedSteps...),
+		"unstick_steps":    append([]string(nil), github.APIBudgetUnstickSteps...),
+		"enrichment_steps": append([]string(nil), github.APIBudgetEnrichmentSteps...),
 	}
 	if !snapshot.Reset.IsZero() {
 		out["reset"] = snapshot.Reset.Format(time.RFC3339)

@@ -1,0 +1,1 @@
+- Budget `conserve` mode no longer sheds the unstick steps (`sha_hold`, supersession sweep, `escalation`, `closing_keyword_post_check`, `reporter_trust`); only `critical` skips them, and `/api/gh-rate-limits.api_budget` lists both tiers (#12005).

@@ -6668,7 +6668,7 @@ func runEvalCycle(
 	recordEnumeratedIssues(ctx, dashSrv, actionable)
 
 	escalatedPRs := map[string]bool{}
-	if !budgetDecision.SkipOptional {
+	if !budgetDecision.SkipUnstick {
 		escalatedPRs = runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
 	}
 
@@ -6739,7 +6739,7 @@ func runEvalCycle(
 	// issues only, never PRs; the watermark and dedupe index live on the PVC.
 	runUpstreamWatch(ctx, cfg, ghClient, logger)
 
-	if !budgetDecision.SkipOptional {
+	if !budgetDecision.SkipUnstick {
 		shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 			PrimaryRepo:     cfg.Project.PrimaryRepo,
 			AIAuthor:        cfg.Project.AIAuthor,
