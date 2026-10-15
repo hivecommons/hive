@@ -218,8 +218,8 @@ rather than duplicating it.
 
 ## Trust ladder (mode)
 
-Set with `PUT /api/nous/mode {"mode": "observe|suggest|evolve"}` (owner role
-required). The dashboard's trust-ladder widget documents the three modes:
+Set with `PUT /api/nous/mode {"mode": "observe|suggest|evolve"}`. The
+dashboard's trust-ladder widget documents the three modes:
 
 | Mode | Behavior |
 |---|---|
@@ -227,10 +227,38 @@ required). The dashboard's trust-ladder widget documents the three modes:
 | `suggest` | Nous designs experiments but every proposal requires operator approval via `nous_approve`/`nous_abort` before it runs. |
 | `evolve` | Nous runs approved-pattern experiments autonomously and distills durable results into principles without per-experiment approval. |
 
+**Who can change it.** Mode and scope are owner-only: the endpoints run
+`requireOwnerRole`, i.e. the request must carry a *verified* owner identity —
+a hub-proxied login whose `dashboard.authorized_users` entry is `:owner`, a
+device-flow session with the live owner role, or the shared dashboard token
+on a self-hosted spoke. Anything else is a `403 {"error":"owner access
+required"}`. The dashboard mirrors this: the **Observe | Suggest | Evolve**
+and **Governor | Repo | Both** buttons in the Experiment Lab section and the
+Trust Ladder steps in the ⚙️ configuration dialog are the same control (one
+`nousSetMode` / `nousSetScope` handler); they are disabled with an
+"Owner access required" tooltip for read/read-write/merger viewers, and any
+server rejection (400/401/403) is surfaced as an error toast rather than
+swallowed (#12039).
+
+**What each transition requires.**
+
+| Transition | Requirement |
+|---|---|
+| `observe → suggest` | Nothing beyond owner role. Recommended only once the baseline progress bar reports sufficient coverage (`baseline_pct`); the panel shows "Ready to upgrade to Suggest" at that point. |
+| `suggest → evolve` | Owner role. Intended only after you have reviewed proposals in `suggest`. |
+| any downgrade (`evolve → suggest`, `→ observe`) | Owner role plus an in-app confirmation ("Lower the trust level?"); the dashboard sends `force: true` because a downgrade stops any active experiment. |
+| scope change | Owner role; takes effect on the next campaign iteration. `repo` scope always gates on approval regardless of mode. |
+
+Every accepted change is audited (`nous_set_mode` / `nous_set_scope` with the
+new value), mirrored into `GET /api/nous/status` immediately, and persisted to
+`panel-config.json` so it survives a restart. Before #12039 the handler
+updated the persisted/in-memory field but not the served status, so the UI
+appeared not to react until the next restart.
+
 ## Scope
 
 Set with `PUT /api/nous/scope {"scope": "governor|repo|both"}` (owner role
-required):
+required, see [Who can change it](#trust-ladder-mode)):
 
 - `governor` — experiments adjust governor parameters (cadences, model
   assignments, thresholds).

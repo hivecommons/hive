@@ -3580,7 +3580,8 @@
     .nous-config-principle-row .del-btn { background: none; border: none; color: var(--red); cursor: pointer; font-size: var(--fs-sm); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-sm); }
     .nous-config-principle-row .del-btn:hover { background: rgba(220,38,38,0.1); }
     .nous-trust-ladder { display: flex; align-items: center; gap: var(--sp-0); margin: var(--sp-5) var(--sp-0); }
-    .nous-trust-step { flex: 1; text-align: center; padding: 10px 8px; font-size: 0.72rem; border: 1px solid var(--border); position: relative; }
+    .nous-trust-step { flex: 1; text-align: center; padding: 10px 8px; font-size: 0.72rem; font-family: var(--font-ui); border: 1px solid var(--border); position: relative; cursor: pointer; }
+    .nous-trust-step:disabled, .nous-mode-btn:disabled { cursor: not-allowed; opacity: 0.6; }
     .nous-trust-step:first-child { border-radius: 8px 0 0 8px; }
     .nous-trust-step:last-child { border-radius: 0 8px 8px 0; }
     .nous-trust-step:not(:last-child) { border-right: none; }
@@ -22344,29 +22345,22 @@ function burnAreaChart() {
         html += `<div style="margin-bottom:14px">${_nousExplainerCard()}</div>`;
       }
 
-      // Mode toggle
+      // Mode toggle. Mode and scope are owner-only on the server
+      // (requireOwnerRole), so a viewer without that role gets a disabled
+      // button with the reason instead of a click that silently 403s (#12039).
+      const canSetNous = nousCanChangeMode();
       html += '<div class="nous-mode-toggle">';
-      for (const m of ['observe', 'suggest', 'evolve']) {
+      for (const m of NOUS_MODES) {
         const active = m === mode ? ` active-${m}` : '';
-        const titles = {
-          observe: 'Data collection only — governor unchanged',
-          suggest: 'Experiments require your approval',
-          evolve: 'Fully autonomous experimentation',
-        };
-        html += `<button class="nous-mode-btn${active}" title="${titles[m]}" data-action="nousSetMode" data-mode="${m}">${m.charAt(0).toUpperCase() + m.slice(1)}</button>`;
+        html += `<button type="button" class="nous-mode-btn${active}" title="${escapeHtml(canSetNous ? NOUS_MODE_TITLES[m] : NOUS_OWNER_ONLY_TITLE)}" aria-pressed="${m === mode}" data-action="nousSetMode" data-mode="${m}"${canSetNous ? '' : ' disabled'}>${m.charAt(0).toUpperCase() + m.slice(1)}</button>`;
       }
       html += '</div>';
 
       // Scope toggle
       html += '<div class="nous-mode-toggle" style="margin-bottom:14px">';
-      const scopeTitles = {
-        governor: 'Experiment with governor config (cadences, models, thresholds)',
-        repo: 'Experiment with repo code (always requires approval)',
-        both: 'Alternate between governor and repo experiments',
-      };
-      for (const sc of ['governor', 'repo', 'both']) {
+      for (const sc of NOUS_SCOPES) {
         const active = sc === scope ? ' active-suggest' : '';
-        html += `<button class="nous-mode-btn${active}" title="${scopeTitles[sc]}" data-action="nousSetScope" data-scope="${sc}" style="${sc === scope ? 'background:#7c3aed;color:white' : ''}">${sc.charAt(0).toUpperCase() + sc.slice(1)}</button>`;
+        html += `<button type="button" class="nous-mode-btn${active}" title="${escapeHtml(canSetNous ? NOUS_SCOPE_TITLES[sc] : NOUS_OWNER_ONLY_TITLE)}" aria-pressed="${sc === scope}" data-action="nousSetScope" data-scope="${sc}" style="${sc === scope ? 'background:#7c3aed;color:white' : ''}"${canSetNous ? '' : ' disabled'}>${sc.charAt(0).toUpperCase() + sc.slice(1)}</button>`;
       }
       html += '</div>';
 
@@ -22683,40 +22677,112 @@ function burnAreaChart() {
       } catch (e) { showToast('Promote failed: ' + e.message, 'error'); }
     }
 
+    // Experiment Lab mode/scope vocabulary, shared by the section's segmented
+    // buttons and the Trust Ladder in the ⚙️ config dialog so both surfaces
+    // dispatch the same nousSetMode/nousSetScope handlers (#12039).
+    const NOUS_MODES = ['observe', 'suggest', 'evolve'];
+    const NOUS_SCOPES = ['governor', 'repo', 'both'];
+    const NOUS_MODE_ORDER = { observe: 0, suggest: 1, evolve: 2 };
+    const NOUS_MODE_TITLES = {
+      observe: 'Data collection only — governor unchanged',
+      suggest: 'Experiments require your approval',
+      evolve: 'Fully autonomous experimentation',
+    };
+    const NOUS_SCOPE_TITLES = {
+      governor: 'Experiment with governor config (cadences, models, thresholds)',
+      repo: 'Experiment with repo code (always requires approval)',
+      both: 'Alternate between governor and repo experiments',
+    };
+    const NOUS_OWNER_ONLY_TITLE = 'Owner access required to change the Experiment Lab mode or scope';
+
+    // Same role check the Promote buttons and the fleet breaker use: the
+    // server enforces requireOwnerRole on PUT /api/nous/mode and /scope.
+    function nousCanChangeMode() {
+      return dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+    }
+
+    // Parse a JSON error body without throwing on an empty/non-JSON reply.
+    async function nousErrorFrom(r, fallback) {
+      let j = null;
+      try { j = await r.json(); } catch (_) {}
+      if (j && j.error) return j.error;
+      if (r.status === 403) return 'Owner access required';
+      if (r.status === 401) return 'Not signed in';
+      return fallback + ' (HTTP ' + r.status + ')';
+    }
+
+    // Both entry points (section buttons and dialog Trust Ladder) re-render
+    // from the server's status so the active state can never drift from it.
+    function nousAfterModeChange(status) {
+      if (_nousCache && _nousCache.status && status) {
+        if (status.mode) _nousCache.status.mode = status.mode;
+        if (status.scope) _nousCache.status.scope = status.scope;
+        renderNous();
+      }
+      fetchNousStatus();
+      if (status && status.mode) nousRefreshTrustLadder(status.mode);
+    }
+
+    // Update the config dialog's Trust Ladder in place so an open dialog
+    // reflects the new level without re-rendering (and losing) unsaved edits.
+    function nousRefreshTrustLadder(mode) {
+      document.querySelectorAll('#nous-config-overlay .nous-trust-step').forEach(btn => {
+        const isCurrent = btn.dataset.mode === mode;
+        btn.classList.toggle('current', isCurrent);
+        btn.setAttribute('aria-pressed', String(isCurrent));
+        btn.style.background = isCurrent ? (btn.dataset.color || '') : 'var(--bg)';
+        btn.style.color = isCurrent ? 'var(--bg)' : 'var(--muted)';
+        const desc = btn.querySelector('.step-desc');
+        if (desc) desc.style.color = isCurrent ? 'var(--bg)' : '';
+      });
+    }
+
     async function nousSetMode(mode) {
       if (!experimentLabEnabled()) return;
+      if (NOUS_MODES.indexOf(mode) < 0) { showToast('Unknown mode: ' + mode, 'error'); return; }
+      if (!nousCanChangeMode()) { showToast(NOUS_OWNER_ONLY_TITLE, 'error'); return; }
       const current = (_nousCache && _nousCache.status && _nousCache.status.mode) || 'observe';
-      const modeOrder = { observe: 0, suggest: 1, evolve: 2 };
+      if (mode === current) return;
       let force = false;
-      if (modeOrder[mode] < modeOrder[current]) {
-        if (!(await hiveConfirm(`Switch from ${current} to ${mode}? This will stop any active experiment.`))) return;
+      if (NOUS_MODE_ORDER[mode] < NOUS_MODE_ORDER[current]) {
+        if (!(await hiveConfirm({ title: 'Lower the trust level?', message: `Switch from ${current} to ${mode}? This will stop any active experiment.`, confirmLabel: 'Switch to ' + mode, danger: true }))) return;
         force = true;
       }
       try {
-        await fetch('/api/nous/mode', {
+        const r = await fetch('/api/nous/mode', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
           body: JSON.stringify({ mode, force }),
         });
-        fetchNousStatus();
+        if (!r.ok) { showToast('Failed to change mode: ' + (await nousErrorFrom(r, 'request rejected')), 'error'); return; }
+        const j = await r.json().catch(() => ({}));
+        showToast('Experiment Lab mode set to ' + (j.mode || mode), 'success');
+        nousAfterModeChange({ mode: j.mode || mode });
       } catch (e) { showToast('Failed to change mode: ' + e.message, 'error'); }
     }
 
     async function nousSetScope(scope) {
       if (!experimentLabEnabled()) return;
+      if (NOUS_SCOPES.indexOf(scope) < 0) { showToast('Unknown scope: ' + scope, 'error'); return; }
+      if (!nousCanChangeMode()) { showToast(NOUS_OWNER_ONLY_TITLE, 'error'); return; }
+      const current = (_nousCache && _nousCache.status && _nousCache.status.scope) || 'governor';
+      if (scope === current) return;
       try {
-        await fetch('/api/nous/scope', {
+        const r = await fetch('/api/nous/scope', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
           body: JSON.stringify({ scope }),
         });
-        fetchNousStatus();
-        showToast(`Scope set to: ${scope}`, 'success');
+        if (!r.ok) { showToast('Failed to change scope: ' + (await nousErrorFrom(r, 'request rejected')), 'error'); return; }
+        const j = await r.json().catch(() => ({}));
+        showToast('Experiment Lab scope set to ' + (j.scope || scope), 'success');
+        nousAfterModeChange({ scope: j.scope || scope });
       } catch (e) { showToast('Failed to change scope: ' + e.message, 'error'); }
     }
 
     async function nousApprove() {
       if (!experimentLabEnabled()) return;
       try {
-        const r = await fetch('/api/nous/approve', { method: 'POST' });
+        const r = await fetch('/api/nous/approve', { method: 'POST', headers: _inceptionAuthHeaders() });
+        if (!r.ok) { showToast('Approve failed: ' + (await nousErrorFrom(r, 'request rejected')), 'error'); return; }
         const j = await r.json();
         if (j.ok) { showToast('Experiment approved and started', 'success'); fetchNousStatus(); }
         else showToast(j.error || 'Approve failed', 'error');
@@ -22727,7 +22793,8 @@ function burnAreaChart() {
       if (!experimentLabEnabled()) return;
       if (!(await hiveConfirm('Reject this experiment proposal?'))) return;
       try {
-        await fetch('/api/nous/abort', { method: 'POST' });
+        const r = await fetch('/api/nous/abort', { method: 'POST', headers: _inceptionAuthHeaders() });
+        if (!r.ok) { showToast('Reject failed: ' + (await nousErrorFrom(r, 'request rejected')), 'error'); return; }
         showToast('Proposal rejected', 'success');
         fetchNousStatus();
       } catch (e) { showToast('Reject failed: ' + e.message, 'error'); }
@@ -22737,7 +22804,8 @@ function burnAreaChart() {
       if (!experimentLabEnabled()) return;
       if (!(await hiveConfirm('Abort the active experiment? This will revert governor to default behavior.'))) return;
       try {
-        const r = await fetch('/api/nous/abort', { method: 'POST' });
+        const r = await fetch('/api/nous/abort', { method: 'POST', headers: _inceptionAuthHeaders() });
+        if (!r.ok) { showToast('Abort failed: ' + (await nousErrorFrom(r, 'request rejected')), 'error'); return; }
         const j = await r.json();
         if (j.ok) { showToast('Experiment aborted: ' + j.aborted, 'success'); fetchNousStatus(); }
         else showToast(j.error || 'Abort failed', 'error');
@@ -22792,7 +22860,9 @@ function burnAreaChart() {
       const principles = cfg.principles || [];
       const projectRepos = cfg.projectRepos || [];
       const repoTargets = cfg.repoTargets || [];
-      const mode = camp.mode || 'observe';
+      // The served status is authoritative for the trust level; the campaign
+      // file's mode is only a fallback when status has not loaded yet.
+      const mode = (_nousCache && _nousCache.status && _nousCache.status.mode) || camp.mode || 'observe';
 
       const confThresh = configEnvVal(cfg, 'NOUS_CONFIDENCE_THRESHOLD', '0.8');
       const decayRate = configEnvVal(cfg, 'NOUS_DECAY_RATE_PER_WEEK', '0.05');
@@ -22804,23 +22874,26 @@ function burnAreaChart() {
       // Trust Ladder
       h += '<div class="nous-config-section">';
       h += '<h3>Trust Ladder</h3>';
-      h += '<div class="nous-trust-ladder">';
+      h += '<div class="nous-trust-ladder" role="group" aria-label="Trust level">';
       const trustSteps = [
         { id: 'observe', label: 'Observe', desc: 'Data collection only', color: 'var(--blue)' },
         { id: 'suggest', label: 'Suggest', desc: 'Experiments need approval', color: 'var(--yellow)' },
         { id: 'evolve', label: 'Evolve', desc: 'Fully autonomous', color: 'var(--green)' },
       ];
+      // Each step is a real button wired to the same nousSetMode handler as
+      // the section's segmented control; before #12039 these were inert divs.
+      const canSetTrust = nousCanChangeMode();
       for (const step of trustSteps) {
         const isCurrent = step.id === mode;
         const bg = isCurrent ? step.color : 'var(--bg)';
         const fg = isCurrent ? 'var(--bg)' : 'var(--muted)';
-        h += `<div class="nous-trust-step${isCurrent ? ' current' : ''}" style="background:${bg};color:${fg}">`;
+        h += `<button type="button" class="nous-trust-step${isCurrent ? ' current' : ''}" style="background:${bg};color:${fg}" data-action="nousSetMode" data-mode="${step.id}" data-color="${step.color}" aria-pressed="${isCurrent}" title="${escapeHtml(canSetTrust ? NOUS_MODE_TITLES[step.id] : NOUS_OWNER_ONLY_TITLE)}"${canSetTrust ? '' : ' disabled'}>`;
         h += `<span class="step-label">${escapeHtml(step.label)}</span>`;
         h += `<span class="step-desc" style="color:${isCurrent ? 'var(--bg)' : ''}">${escapeHtml(step.desc)}</span>`;
-        h += '</div>';
+        h += '</button>';
       }
       h += '</div>';
-      h += '<div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-3)">The issue/PR output trail builds evidence for operators to advance the trust level.</div>';
+      h += '<div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-3)">Click a step to change the trust level (owner-only, audited). The issue/PR output trail builds evidence for operators to advance it.</div>';
       h += '</div>';
 
       // Goal Definition

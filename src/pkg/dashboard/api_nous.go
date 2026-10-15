@@ -100,7 +100,7 @@ func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.deps.Nous != nil {
-		s.deps.Nous.Mode = body.Mode
+		s.deps.Nous.SetMode(body.Mode)
 		s.persistNousPanel()
 	}
 
@@ -128,7 +128,7 @@ func (s *Server) handleNousScope(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.deps.Nous != nil {
-		s.deps.Nous.Scope = body.Scope
+		s.deps.Nous.SetScope(body.Scope)
 		s.persistNousPanel()
 	}
 

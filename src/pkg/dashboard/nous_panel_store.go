@@ -43,9 +43,39 @@ func (ns *NousState) ApplyPanelConfig(snap NousPanelSnapshot) {
 		ns.Config = copyPanelConfigMap(snap.Config)
 	}
 	if ns.Status != nil {
-		ns.Status["mode"] = ns.Mode
-		ns.Status["scope"] = ns.Scope
+		ns.mirrorModeScopeLocked()
 	}
+}
+
+// SetMode records an operator-chosen mode and mirrors it into Status, which
+// is what GET /api/nous/status serves. Before #12039 the handler only wrote
+// ns.Mode, so the PUT returned 200 and was audited while the status pill
+// (and the segmented buttons rendered from it) stayed on the old value until
+// the next restart re-applied the persisted panel. Callers must NOT hold Mu.
+func (ns *NousState) SetMode(mode string) {
+	ns.Mu.Lock()
+	defer ns.Mu.Unlock()
+	ns.Mode = mode
+	ns.mirrorModeScopeLocked()
+}
+
+// SetScope is SetMode for the scope selector.
+func (ns *NousState) SetScope(scope string) {
+	ns.Mu.Lock()
+	defer ns.Mu.Unlock()
+	ns.Scope = scope
+	ns.mirrorModeScopeLocked()
+}
+
+// mirrorModeScopeLocked copies Mode/Scope into the served Status map. Mu must
+// be held. A nil Status (bare NousState in tests) is created so the mirror is
+// never silently dropped.
+func (ns *NousState) mirrorModeScopeLocked() {
+	if ns.Status == nil {
+		ns.Status = make(map[string]interface{})
+	}
+	ns.Status["mode"] = ns.Mode
+	ns.Status["scope"] = ns.Scope
 }
 
 // copyPanelConfigMap shallow-copies the section map so a persisted snapshot
