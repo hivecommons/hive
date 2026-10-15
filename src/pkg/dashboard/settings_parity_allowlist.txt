@@ -394,6 +394,7 @@ knowledge.vaults[].name # TODO #11854
 knowledge.vaults[].path # TODO #11854
 planning.design_labels[] # TODO #11854
 planning.plan_labels[] # TODO #11854
+project.agents_md_max_bytes # TODO #11854
 project.checkouts_dir # TODO #11854
 project.forge # TODO #11854
 project.issue_filter.hard_suppress_labels.needs_decision[] # TODO #11854
