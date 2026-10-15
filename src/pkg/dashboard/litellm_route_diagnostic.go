@@ -126,7 +126,9 @@ func (s *Server) appendInferenceRouteDiagnostic(gw config.GatewayConfig, probe m
 // UNSAVED gateway form (discover). The form's endpoint and key are not yet
 // what agents use, so no divergence warning is raised; the line simply shows
 // the route in force right now, identical to what the saved-gateway Test
-// prints for the same configuration.
+// prints for the same configuration. When the form's endpoint differs from
+// that route it says so explicitly, so "Connection OK" against typed values
+// is never mistaken for "agents already use this" (hivecommons/hive#9945).
 func (s *Server) appendInferenceRouteForForm(gw config.GatewayConfig, probe map[string]interface{}) {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return
@@ -135,7 +137,29 @@ func (s *Server) appendInferenceRouteForForm(gw config.GatewayConfig, probe map[
 	if line == "" {
 		return
 	}
+	if routeEP := inferenceRouteEndpoint(s.deps.Config, gw.Name); routeEP != "" &&
+		strings.TrimSpace(gw.Endpoint) != "" && !sameGatewayEndpoint(gw.Endpoint, routeEP) {
+		line += " ⚠ The endpoint tested above is not saved yet — agents keep using this route until you Save."
+	}
 	text, _ := probe["diagnostic"].(string)
 	probe["diagnostic"] = text + "\n" + line
 	probe["route"] = line
+}
+
+// inferenceRouteEndpoint is the endpoint agents on backend send inference to
+// right now, per the same resolution inferenceRouteDiagnostic describes; ""
+// when no route resolves.
+func inferenceRouteEndpoint(cfg *config.Config, backend string) string {
+	if cfg == nil {
+		return ""
+	}
+	backend = strings.TrimSpace(backend)
+	if backend == "" || strings.EqualFold(backend, config.GatewayKindLiteLLM) {
+		ep, _, _ := resolveLiteLLMRouteForDiagnostic(cfg, config.GatewayKindLiteLLM)
+		return ep
+	}
+	if gw := cfg.Governor.ResolveGateway(backend); gw != nil {
+		return strings.TrimSpace(gw.Endpoint)
+	}
+	return ""
 }

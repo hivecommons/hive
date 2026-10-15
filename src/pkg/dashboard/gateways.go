@@ -588,7 +588,14 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 	if len(models) == 0 && kind == config.GatewayKindWatsonx {
 		models = s.watsonxGraniteFallback()
 	}
-	jsonResponse(w, map[string]interface{}{"ok": true, "models": models})
+	// Say exactly what was tested — endpoint, default model, key SHA — and the
+	// route agents use right now, the same text the saved-card Test prints.
+	// A bare "OK — N models" left the operator unable to confirm the probe
+	// exercised the values they had typed (hivecommons/hive#9945).
+	probe := map[string]interface{}{"ok": true, "model_count": len(models)}
+	probe["diagnostic"] = gatewayProbeDiagnosticText(probeGW, probe, key)
+	s.appendInferenceRouteForForm(probeGW, probe)
+	jsonResponse(w, map[string]interface{}{"ok": true, "models": models, "diagnostic": probe["diagnostic"], "probe": probe})
 }
 
 // handleGovernorGatewaysTest runs a live /v1/models probe against a named

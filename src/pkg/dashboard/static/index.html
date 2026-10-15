@@ -34910,25 +34910,31 @@ function burnAreaChart() {
       if (btn) btn.disabled = true;
       if (el) { el.style.display = 'block'; el.style.color = 'var(--muted)'; el.textContent = 'Testing…'; }
       try {
-        await probeGatewayFormModels();
-        if (el && el.style.display !== 'block') {
+        const probe = await probeGatewayFormModels();
+        if (el && (el.style.display !== 'block' || el.textContent === 'Testing…')) {
           el.style.display = 'block';
           el.style.color = '';
-          el.innerHTML = gatewayProbeHTML({ ok: true, model_count: _gatewayFormModels.length });
+          // Prefer the server's diagnostic (#9945): it names the endpoint,
+          // default model and key SHA that were actually tested plus the
+          // route agents use, so success is never just "OK — N models".
+          el.innerHTML = gatewayProbeHTML(probe && probe.ok ? probe : { ok: true, model_count: _gatewayFormModels.length });
         }
       } finally {
         if (btn) btn.disabled = false;
       }
     }
 
+    // Resolves to the server's probe object ({ok, model_count, diagnostic,
+    // route}) when discovery succeeded, else null.
     async function probeGatewayFormModels() {
+      let probe = null;
       const nameEl = document.getElementById('gw-name');
       const epEl = document.getElementById('gw-endpoint');
       const keyEl = document.getElementById('gw-apikey');
       const kindEl = document.getElementById('gw-kind');
       const projEl = document.getElementById('gw-project-id');
       const endpoint = epEl ? epEl.value.trim() : '';
-      if (!endpoint) return;
+      if (!endpoint) return probe;
       // Preserve whatever the user has currently chosen before re-rendering.
       const current = gatewayCurrentDefaultModel();
       try {
@@ -34962,6 +34968,7 @@ function burnAreaChart() {
           showGatewayFormProbeError('Connected, but the gateway returned no models. Check the key\'s entitlements' + (kindEl && kindEl.value === 'watsonx' ? ' and the project id.' : '.'));
         } else {
           clearGatewayFormProbeError();
+          if (data.probe && data.probe.ok) probe = data.probe;
         }
       } catch (e) {
         _gatewayFormModels = [];
@@ -34969,6 +34976,7 @@ function burnAreaChart() {
       }
       const host = document.getElementById('gw-default-model-field');
       if (host) host.innerHTML = gatewayDefaultModelFieldHtml(current);
+      return probe;
     }
 
     // saveGateway PUTs the form. A typed key is sent as api_key and stored

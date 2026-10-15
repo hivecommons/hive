@@ -18,9 +18,16 @@ import (
 // InferenceRoute defines where to send an agent's API traffic when using
 // a self-hosted inference backend instead of the cloud API.
 type InferenceRoute struct {
-	Backend       string // "vllm", "llm-d", or "litellm"
-	Endpoint      string // e.g. "http://vllm-svc.hive.svc.cluster.local:8000"
-	Model         string // e.g. "Qwen/Qwen2.5-1.5B-Instruct"
+	Backend  string // "vllm", "llm-d", or "litellm"
+	Endpoint string // e.g. "http://vllm-svc.hive.svc.cluster.local:8000"
+	Model    string // e.g. "Qwen/Qwen2.5-1.5B-Instruct"
+	// DefaultModel is the backend's own default model (the gateway's
+	// default_model, or governor.litellm.default_model) — the model agents on
+	// this backend use when they name none. Kept beside Model so the per-request
+	// entitlement rewrite can fall back to it when Model is one the gateway's
+	// team is NOT entitled to (hivecommons/hive#9945). Empty when the backend
+	// has no default.
+	DefaultModel  string
 	MaxContextLen int    // from vLLM /v1/models max_model_len; 0 = unknown
 	Preamble      string // prepended to the system prompt for inference backends; empty = use DefaultInferencePreamble
 	APIKey        string // optional bearer token for the upstream (litellm requires auth); never logged

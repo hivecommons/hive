@@ -4170,6 +4170,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						Backend:      backend,
 						Endpoint:     endpoint,
 						Model:        model,
+						DefaultModel: gw.DefaultModel,
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
@@ -4194,6 +4195,11 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						return
 					}
 					model = resolvedModel
+					// The backend's own default (resolved from the same source as
+					// the endpoint) rides along so the proxy can fall back to it
+					// when the per-agent model is one the gateway's team is not
+					// entitled to (hivecommons/hive#9945).
+					_, defaultModel, _ := resolveLiteLLMInferenceRoute(b.cfg, backend, "")
 					// Key source must MATCH the entitlement/probe path (gateways.go,
 					// cost.go, openrouter.go), which resolve the key from the gateway
 					// via ResolveGateway(backend).ResolveAPIKey(). When an EXPLICIT
@@ -4219,11 +4225,12 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						}
 					}
 					deps.setInferenceRoute(b.githubProxy, agentName, &proxy.InferenceRoute{
-						Backend:  backend,
-						Endpoint: endpoint,
-						Model:    model,
-						APIKey:   apiKey,
-						CABundle: caBundle,
+						Backend:      backend,
+						Endpoint:     endpoint,
+						Model:        model,
+						DefaultModel: defaultModel,
+						APIKey:       apiKey,
+						CABundle:     caBundle,
 					})
 					return
 				}
@@ -4256,6 +4263,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						Backend:      backend,
 						Endpoint:     endpoint,
 						Model:        model,
+						DefaultModel: gw.DefaultModel,
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
