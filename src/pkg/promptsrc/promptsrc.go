@@ -24,16 +24,80 @@ package promptsrc
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// maxPromptBytes caps how large a fetched prompt body may be. A kick prompt is a
-// markdown template (kilobytes); this bounds memory/log blast radius if a source
-// path points at something huge, while staying well above any real template.
-const maxPromptBytes = 512 * 1024 // 512 KiB
+// DefaultMaxPromptBytes caps how large a fetched prompt body may be
+// (hivecommons/hive#12130). A kick prompt is a markdown template; the largest
+// shipped policy (src/policies/scanner-automerge.md) is ~28 KiB, so 64 KiB
+// leaves better than 2x headroom for a real template while refusing a
+// mis-pointed prompt_source before it costs a ~100K-token kick. This is a token
+// budget, not just a memory bound — the old 512 KiB cap was the latter.
+//
+// A body over the cap is REJECTED whole, never truncated: a half-policy is a
+// policy with its closing rules cut off, and that is worse than no remote
+// policy at all. The resolver falls back to its last-known-good cached copy,
+// then to the caller's inline template, and logs the rejection with the
+// source and the observed size. TestShippedTemplatesFitUnderCap pins the
+// headroom against every shipped template.
+const DefaultMaxPromptBytes = 64 * 1024 // 64 KiB
+
+// MaxPromptBytesEnv names the environment variable that overrides
+// DefaultMaxPromptBytes. It accepts a positive byte count (e.g. "131072") or a
+// value with a KiB/MiB suffix ("128KiB", "1MiB"). Unset, blank, or
+// unparseable values leave the default in force.
+const MaxPromptBytesEnv = "HIVE_PROMPT_SOURCE_MAX_BYTES"
+
+// MaxPromptBytes returns the effective cap: MaxPromptBytesEnv when set to a
+// positive size, else DefaultMaxPromptBytes.
+func MaxPromptBytes() int {
+	if n, ok := parseSizeBytes(os.Getenv(MaxPromptBytesEnv)); ok {
+		return n
+	}
+	return DefaultMaxPromptBytes
+}
+
+// parseSizeBytes parses "65536", "64KiB", "64KB", "1MiB" or "1MB" into a byte
+// count. Anything else, or a non-positive result, reports ok=false.
+func parseSizeBytes(v string) (int, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, false
+	}
+	mult := 1
+	upper := strings.ToUpper(v)
+	switch {
+	case strings.HasSuffix(upper, "MIB"), strings.HasSuffix(upper, "MB"):
+		mult = 1024 * 1024
+		v = v[:len(v)-len(upper[strings.LastIndex(upper, "M"):])]
+	case strings.HasSuffix(upper, "KIB"), strings.HasSuffix(upper, "KB"):
+		mult = 1024
+		v = v[:len(v)-len(upper[strings.LastIndex(upper, "K"):])]
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 || n > (1<<31-1)/mult {
+		return 0, false
+	}
+	return n * mult, true
+}
+
+// ErrPromptTooLarge is returned (wrapped) by FetchOnce when the fetched body
+// exceeds the cap, so the dashboard can tell the operator the file was refused
+// whole rather than silently baking a cut-off policy.
+var ErrPromptTooLarge = errors.New("prompt source exceeds size cap")
+
+// oversizeError describes a rejected body with the source, the size seen and
+// the cap in force — the three things an operator needs to fix it.
+func oversizeError(src Source, size, limit int) error {
+	return fmt.Errorf("%w: %s:%s is %d bytes, cap is %d bytes (%s to raise); rejected whole, not truncated",
+		ErrPromptTooLarge, src.Slug(), src.Path, size, limit, MaxPromptBytesEnv)
+}
 
 // defaultFetchTimeout bounds a single live fetch so a slow/hung GitHub API call
 // cannot stall a kick. On timeout the resolver falls back to the cache/inline.
@@ -90,6 +154,8 @@ type Resolver struct {
 	allow   AllowFunc
 	logger  Logger
 	timeout time.Duration
+	// maxBytes is the cap a fetched body must fit under to be used at all.
+	maxBytes int
 
 	mu    sync.RWMutex
 	cache map[string]string // source key -> last-known-good body
@@ -104,13 +170,25 @@ func NewResolver(fetcher Fetcher, allow AllowFunc, logger Logger) *Resolver {
 		allow = func(string) bool { return false }
 	}
 	return &Resolver{
-		fetcher: fetcher,
-		allow:   allow,
-		logger:  logger,
-		timeout: defaultFetchTimeout,
-		cache:   map[string]string{},
+		fetcher:  fetcher,
+		allow:    allow,
+		logger:   logger,
+		timeout:  defaultFetchTimeout,
+		maxBytes: MaxPromptBytes(),
+		cache:    map[string]string{},
 	}
 }
+
+// SetMaxBytes overrides the size cap for this resolver. Non-positive values
+// are ignored so a misconfiguration cannot disable the bound.
+func (r *Resolver) SetMaxBytes(n int) {
+	if n > 0 {
+		r.maxBytes = n
+	}
+}
+
+// MaxBytes reports the cap this resolver enforces.
+func (r *Resolver) MaxBytes() int { return r.maxBytes }
 
 // Result carries a resolved prompt body plus provenance for logging/UI. Ok is
 // false when nothing could be resolved (not set, denied, no fetcher, and no
@@ -118,7 +196,7 @@ func NewResolver(fetcher Fetcher, allow AllowFunc, logger Logger) *Resolver {
 type Result struct {
 	Body   string
 	Ok     bool
-	Source string // provenance: "github:owner/repo@ref", "github-cache:...", or "denied"/"unset"/"no-client"
+	Source string // provenance: "github:owner/repo@ref", "github-cache:...", or "denied"/"unset"/"no-client"/"error"/"oversize"
 }
 
 // Resolve attempts a live fetch of the source, falling back to the last-known-good
@@ -162,11 +240,18 @@ func (r *Resolver) Resolve(ctx context.Context, src Source) Result {
 		}
 		return Result{Source: "error"}
 	}
-	if len(body) > maxPromptBytes {
-		body = body[:maxPromptBytes]
+	if len(body) > r.maxBytes {
+		// Reject whole. Truncating here handed the agent a policy with its
+		// tail — typically the closing rules — cut off, and nothing told the
+		// operator. The cached copy is the last body that DID fit.
 		if r.logger != nil {
-			r.logger.Warn("prompt from GitHub exceeded size cap, truncated", "repo", slug, "path", src.Path, "cap_bytes", maxPromptBytes)
+			r.logger.Warn("prompt from GitHub exceeds size cap; REJECTED whole (not truncated), falling back",
+				"repo", slug, "path", src.Path, "ref", src.Ref, "size_bytes", len(body), "cap_bytes", r.maxBytes, "override_env", MaxPromptBytesEnv)
 		}
+		if cached, ok := r.cached(src); ok {
+			return Result{Body: cached, Ok: true, Source: "github-cache:" + slug}
+		}
+		return Result{Source: "oversize"}
 	}
 	r.store(src, body)
 	return Result{Body: body, Ok: true, Source: r.provenance(src)}
@@ -217,8 +302,8 @@ func FetchOnce(ctx context.Context, fetcher Fetcher, allow AllowFunc, src Source
 	if err != nil {
 		return "", err
 	}
-	if len(body) > maxPromptBytes {
-		body = body[:maxPromptBytes]
+	if limit := MaxPromptBytes(); len(body) > limit {
+		return "", oversizeError(src, len(body), limit)
 	}
 	return body, nil
 }

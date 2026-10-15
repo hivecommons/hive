@@ -147,20 +147,6 @@ func TestResolve_NilFetcher(t *testing.T) {
 	}
 }
 
-// TestResolve_TruncatesOversizeBody: a body over the cap is truncated, not rejected.
-func TestResolve_TruncatesOversizeBody(t *testing.T) {
-	huge := strings.Repeat("a", maxPromptBytes+100)
-	f := &stubFetcher{body: huge}
-	r := NewResolver(f, allowAll, nil)
-	res := r.Resolve(context.Background(), fullSource())
-	if !res.Ok {
-		t.Fatalf("oversize body should still resolve, got %+v", res)
-	}
-	if len(res.Body) != maxPromptBytes {
-		t.Errorf("body len = %d, want %d (truncated to cap)", len(res.Body), maxPromptBytes)
-	}
-}
-
 // TestResolve_NilContext: a nil context must not panic (kick callers pass Background,
 // but defense-in-depth).
 func TestResolve_NilContext(t *testing.T) {
@@ -246,20 +232,6 @@ func TestFetchOnce_NilContext(t *testing.T) {
 	body, err := FetchOnce(nil, f, allowAll, fullSource())
 	if err != nil || body != "baked" {
 		t.Errorf("nil ctx should be tolerated, got body=%q err=%v", body, err)
-	}
-}
-
-// TestFetchOnce_TruncatesOversizeBody: FetchOnce enforces the same size cap
-// as Resolve, truncating rather than erroring.
-func TestFetchOnce_TruncatesOversizeBody(t *testing.T) {
-	huge := strings.Repeat("b", maxPromptBytes+50)
-	f := &stubFetcher{body: huge}
-	body, err := FetchOnce(context.Background(), f, allowAll, fullSource())
-	if err != nil {
-		t.Fatalf("oversize body should not error, got %v", err)
-	}
-	if len(body) != maxPromptBytes {
-		t.Errorf("body len = %d, want %d (truncated to cap)", len(body), maxPromptBytes)
 	}
 }
 

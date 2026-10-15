@@ -171,6 +171,7 @@ new value at the same time.
 | `HIVE_PR_FOLLOWUP_DIR` | No | `/data/turn/pr-followups` | Directory the per-PR follow-up pointers (`pkg/turn` envelopes) are persisted under. On the persistent volume so pointers and queued follow-ups survive restarts. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | none | OTLP trace exporter endpoint. Tracing stays disabled while unset. |
 | `HIVE_WIKI_GIT_URL` | No | none | Optional wiki vault URL cloned into `/data/vaults/hive-wiki` on first boot. |
+| `HIVE_PROMPT_SOURCE_MAX_BYTES` | No | `65536` (`promptsrc.DefaultMaxPromptBytes`, 64 KiB) | Size cap on a GitHub `prompt_source` kick template ([#12130](https://github.com/hivecommons/hive/issues/12130)). A body over the cap is **rejected whole, never truncated**: the kick falls back to the last successfully fetched copy, then the inline template chain, and logs `prompt from GitHub exceeds size cap; REJECTED whole` with repo, path, size and cap. Accepts a byte count or `KiB`/`MiB` suffix (`128KiB`); unparseable values keep the default. The largest shipped template is ~28 KiB, so the default leaves >2× headroom — raise it only for a real template that outgrows that. |
 
 ## Inference, CLI backends, and agents
 
