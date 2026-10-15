@@ -780,10 +780,12 @@ func TestSweepNonTaskListRefsCommentsAndLabelsNeedsHuman(t *testing.T) {
 	fixtures := []taskListSweepFixture{
 		{Number: 830, Body: "Prose finding with no boxes." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
 		{Number: 831, Body: "Another prose finding." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
+		{Number: 832, Body: "Fix-lane finding." + hiveTrailer, AuthorLogin: "hive-app[bot]"},
 	}
 	merged := []taskListMergedPR{
 		{Number: 930, Title: "land staged work", Body: "## Fix\n\nRefs #830 — docs follow-up remains for a later agent phase"},
 		{Number: 931, Title: "land reachable work", Body: "## Fix\n\nRefs #831 (needs-human: denied file requires maintainer edit)\n\n## What this deliberately leaves undone\n\n- Change `.github/settings.yml`; this needs a human with repo settings access."},
+		{Number: 932, Title: "tests only", Body: "Refs #832\n\n## What remains\n\nA production change in `src/learner.ts`; #832 stays open for the fix lane."},
 	}
 	server, obs := taskListSweepServer(t, org, repo, fixtures, merged)
 	defer server.Close()
@@ -808,6 +810,9 @@ func TestSweepNonTaskListRefsCommentsAndLabelsNeedsHuman(t *testing.T) {
 	}
 	if labels := obs.labelsAdded[831]; len(labels) != 1 || labels[0] != issueNeedsHumanLabel {
 		t.Fatalf("labelsAdded[831] = %v; want [%s]", labels, issueNeedsHumanLabel)
+	}
+	if labels := obs.labelsAdded[832]; len(labels) != 1 || labels[0] != issueHandoffLabel {
+		t.Fatalf("labelsAdded[832] = %v; want soft [%s], never needs-human", labels, issueHandoffLabel)
 	}
 	if body := obs.commentsPosted[831][0]; !strings.Contains(body, "`.github/settings.yml`") || !strings.Contains(body, "needs human") {
 		t.Errorf("needs-human comment did not carry the PR remainder section: %q", body)
@@ -899,7 +904,7 @@ func TestRefsRemainderMetadataNeedsHumanSignals(t *testing.T) {
 
 	meta = refsRemainderMetadata("Refs #14 — protected file remains\n\n## What this deliberately leaves undone\n\nThese edits must be applied by hand as one atomic diff for a human because the file is denied.", "o/r")
 	got = meta[claimKey("o/r", 14)]
-	if !got.Reference || !got.NeedsHuman {
+	if !got.Reference || got.NeedsHuman || !got.Handoff {
 		t.Fatalf("precise prose fallback meta = %+v", got)
 	}
 
@@ -925,7 +930,7 @@ func TestRefsRemainderMetadataNeedsHumanSignals(t *testing.T) {
 
 	meta = refsRemainderMetadata("Refs #17 — protected file remains\n\n## What remains\n\n- #17 update protected settings:\n  this needs a human with admin access.", "o/r")
 	got = meta[claimKey("o/r", 17)]
-	if !got.Reference || !got.NeedsHuman || !strings.Contains(got.Remainder, "admin access") {
+	if !got.Reference || got.NeedsHuman || !got.Handoff || !strings.Contains(got.Remainder, "admin access") {
 		t.Fatalf("scoped multi-line bullet meta = %+v; want continuation-line needs-human signal", got)
 	}
 
@@ -939,7 +944,7 @@ func TestRefsRemainderMetadataNeedsHumanSignals(t *testing.T) {
 	} {
 		meta = refsRemainderMetadata("Refs #16 — remainder described below\n\n"+tc.text, "o/r")
 		got := meta[claimKey("o/r", 16)]
-		if got.NeedsHuman != tc.wantNeedsHuman {
+		if got.NeedsHuman || got.Handoff != tc.wantNeedsHuman {
 			t.Fatalf("human prose meta for %q = %+v; want needs-human %v", tc.text, got, tc.wantNeedsHuman)
 		}
 	}
