@@ -28,10 +28,18 @@ func stampReviewQueue(cfg *config.Config, actionable *github.ActionableResult, l
 		}
 		artifact = review.Artifact{}
 	}
+	dispatch, err := review.LoadDispatchState("")
+	if err != nil {
+		if !os.IsNotExist(err) && logger != nil {
+			logger.Warn("review dispatch state unavailable for review queue ranking; dispatch age omitted", "error", err)
+		}
+		dispatch = review.DispatchState{}
+	}
 	return github.StampReviewQueue(actionable, github.ReviewQueueOptions{
 		Org:          cfg.Project.Org,
 		AIAuthor:     cfg.EffectiveAIAuthor(),
 		Verdicts:     artifact,
+		Dispatch:     dispatch,
 		ChangedPaths: github.CachedPRChangedPaths,
 		Now:          time.Now(),
 	})

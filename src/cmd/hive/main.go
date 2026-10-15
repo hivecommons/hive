@@ -9573,12 +9573,20 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,
 		ReviseRepos:           cfg.Review.ReviseRepos,
 		ReviseVerdictsBefore:  parseReviseCutoff(cfg.Review.ReviseVerdictsBefore, logger),
+		PendingTTL:            cfg.Review.PendingReviewTTL(),
+		MaxRedispatch:         cfg.Review.EffectiveMaxRedispatch(),
 		ProjectOrg:            cfg.Project.Org,
 		AIAuthor:              cfg.EffectiveAIAuthor(),
 		Agents:                agents,
 		ReviewBotLogins:       reviewBotLogins,
 		ReviewBotMinPriority:  reviewBots.MinPriority,
 	})
+	for _, e := range plan.Expired {
+		logger.Warn("review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count)
+	}
+	for _, h := range plan.Exhausted {
+		logger.Warn("review dispatch exhausted; holding PR for a human", "repo", h.Repo, "pr", h.Number, "head", h.HeadSHA, "reason", h.Reason)
+	}
 	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))
 	}

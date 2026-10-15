@@ -152,6 +152,9 @@ func TestPlanDispatchRevisitsFrozenPRWithReviseKick(t *testing.T) {
 		Agents: []AgentCapability{
 			{Name: "reviewer", Enabled: true, UsesKick: true},
 		},
+		// Pinned so the in-flight revisit below is judged fresh against the
+		// pending TTL, not against wall-clock time.
+		Now: now,
 	}
 
 	// Baseline: without the revise settings the PR stays frozen.

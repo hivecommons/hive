@@ -726,6 +726,10 @@ governor:
 #                               # perspective; shared review boilerplate is sent once instead of once
 #                               # per perspective. Verdicts stay per-perspective. Default false.
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
+#   pending_ttl: 45m    # re-dispatch a review whose kick posted no verdict after this long
+#                       # (Go duration; default 45m; negative disables expiry)
+#   max_redispatch: 3   # expiries per PR head before the planner stops re-kicking and
+#                       # records a requires_human hold (review-dispatch-exhausted)
 #   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues
 #   max_out_of_scope_backlog_issues: 3   # cap per PR; 0 uses the default
 #   severity:                 # blocking line (#11088); Settings -> Features -> Review Gate

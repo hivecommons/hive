@@ -8239,6 +8239,20 @@ type ReviewConfig struct {
 	// Only repos in ReviseRepos are eligible, so this cannot re-post anywhere
 	// the hive has not been granted the quieter in-place path.
 	ReviseVerdictsBefore string `yaml:"revise_verdicts_before,omitempty" json:"revise_verdicts_before,omitempty"`
+	// PendingTTL is how long a dispatched review may go without a verdict
+	// before its dispatch record expires and the perspectives are asked
+	// again (Go duration string, default DefaultPendingReviewTTL). A reviewer
+	// kick turn that dies — model timeout, proxy read timeout, pod restart —
+	// posts no verdict, and before this the pending record made every
+	// perspective look covered until someone pushed a new commit
+	// (hivecommons/hive#12045). "0" or unset means the default; a negative
+	// value disables expiry.
+	PendingTTL string `yaml:"pending_ttl,omitempty" json:"pending_ttl,omitempty"`
+	// MaxRedispatch caps how many times one PR head's pending reviews may
+	// expire before the planner stops re-kicking and records a requires_human
+	// hold (reason prefix review-dispatch-exhausted). 0 means
+	// DefaultMaxRedispatch.
+	MaxRedispatch int `yaml:"max_redispatch,omitempty" json:"max_redispatch,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the
