@@ -2786,8 +2786,9 @@
     .level-automerge-toggle { flex: 0 0 auto; }
     /* .hive-dialog-btn(.primary/.cancel) — primary/ghost buttons (system recipe) */
     .config-modal {
-      width: 1200px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap));
-      height: min(84vh, 760px); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; overflow: hidden;
+      --config-modal-max-h: 1200px;
+      width: 1320px; max-width: calc(100vw - var(--modal-gap) - var(--modal-gap));
+      height: min(calc(100vh - var(--modal-gap) - var(--modal-gap)), var(--config-modal-max-h)); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; overflow: hidden;
       font-family: var(--font-ui); font-size: var(--fs-base);
       contain: layout;
       --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -2880,13 +2881,30 @@
     .features-toc-chip:hover, .features-toc-chip:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, transparent); }
     .features-section { margin-top: var(--sp-8); padding-top: var(--sp-0); scroll-margin-top: var(--sp-4); }
     .features-section:first-of-type { margin-top: var(--sp-6); }
-    .features-section-title { position: sticky; top: var(--sp-0); z-index: var(--z-sticky); margin: calc(-1 * var(--config-body-pad)) calc(-1 * var(--config-body-pad)) var(--sp-0); padding: calc(var(--config-body-pad) + var(--sp-3)) var(--config-body-pad) var(--sp-3); font-size: var(--fs-md); font-weight: 700; color: var(--text); background: color-mix(in srgb, var(--panel-strong) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, var(--border)); }
+    /* The heading sticks flush at top:0 of the scroll container (see the
+       .config-body::before note). Only its horizontal margins reach into the
+       body padding so the opaque band spans the full width. */
+    .features-section-title { position: sticky; top: var(--sp-0); z-index: var(--z-sticky); margin: var(--sp-0) calc(-1 * var(--config-body-pad)); padding: var(--sp-3) var(--config-body-pad); font-size: var(--fs-md); font-weight: 700; color: var(--text); background: var(--panel-strong); border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, var(--border)); }
     .features-section-desc { margin: var(--sp-3) var(--sp-0) var(--sp-0); line-height: 1.45; }
     .features-section > .settings-subsection:nth-child(3), .features-section > .qa-section:nth-child(3), .features-section > .hv-upstream-watch:nth-child(3) { border-top: 0; margin-top: var(--sp-5); padding-top: var(--sp-0); }
 
+    /* Body row: section rail (left) + scrolling tab content (right). The rail
+       is built from the tab's `.config-section > h3` headings by
+       configRailSync(), so it never has to be maintained by hand; it collapses
+       on narrow dialogs and hides when a tab has fewer than two sections. */
+    .config-main { flex: 1 1 auto; min-height: 0; display: flex; align-items: stretch; container-type: inline-size; --config-rail-w: 208px; }
+    .config-rail { flex: 0 0 var(--config-rail-w); min-height: 0; overflow: auto; padding: var(--sp-5) var(--sp-4) var(--sp-5) var(--sp-5); border-right: 1px solid var(--border); background: color-mix(in srgb, var(--panel) 92%, transparent); scrollbar-width: thin; scrollbar-color: var(--border) transparent; overscroll-behavior: contain; }
+    .config-rail[hidden] { display: none; }
+    .config-rail-title { margin: var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-3); font-size: var(--fs-xs); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .config-rail-list { list-style: none; margin: var(--sp-0); padding: var(--sp-0); display: grid; gap: var(--sp-1); }
+    .config-rail-link { display: block; width: 100%; text-align: left; padding: var(--sp-2) var(--sp-3); border: 0; border-left: 2px solid transparent; border-radius: var(--sp-0) var(--r-sm) var(--r-sm) var(--sp-0); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-sm); line-height: 1.35; cursor: pointer; }
+    .config-rail-link:hover, .config-rail-link:focus-visible { color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); outline: none; }
+    .config-rail-link:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 38%, transparent); }
+    .config-rail-link[aria-current="true"] { color: var(--accent); border-left-color: var(--accent); font-weight: 600; background: color-mix(in srgb, var(--accent) 11%, transparent); }
+    @container (max-width: 899px) { .config-rail { display: none; } }
     .config-body {
       --config-body-pad: var(--sp-7);
-      flex: 1 1 auto; overflow: auto; padding: var(--config-body-pad);
+      flex: 1 1 auto; min-width: 0; overflow: auto; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad);
       /* min-height:0 lets this flex child actually shrink, so it stays the
          scroll container even on short tabs (#7250) — a flex item's default
          min-height:auto would size it to its content and leave nothing to
@@ -2898,6 +2916,11 @@
       overscroll-behavior: contain;
       overscroll-behavior-y: contain;
     }
+    /* The body's top inset is a scrolling spacer, not padding (#12169): Chromium
+       measures a sticky child's `top` from the scroll container's CONTENT
+       edge, so padding-top there became a band the Features section heading
+       stuck below, with rows scrolling through it under the search row. */
+    .config-body::before { content: ''; display: block; height: var(--config-body-pad); }
     /* Same containment for every scrollable surface INSIDE a modal — the
        prompt-template textarea and its preview pane are the ones operators
        actually hit, since a long kick template scrolls for a while and then
@@ -3272,7 +3295,7 @@
       .config-modal { max-width: 100vw; max-height: 100vh; border-radius: 0; height: 100vh; }
       .config-tabs { padding: var(--sp-0) var(--sp-3); }
       .config-tab { padding: 8px 10px; font-size: 0.7rem; }
-      .config-body { --config-body-pad: 14px; padding: var(--config-body-pad); }
+      .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
 
@@ -4253,7 +4276,10 @@
         display: inline-flex;
         align-items: center;
       }
-      .config-body,
+      .config-body {
+        --config-body-pad: var(--sp-5);
+        padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad);
+      }
       .feedback-body,
       .nous-config-body {
         padding: var(--sp-5);
@@ -5521,7 +5547,10 @@
       </div>
       <div id="settings-search-count" class="settings-search-count" aria-live="polite">Search settings</div>
     </div>
-    <div class="config-body" id="config-body"></div>
+    <div class="config-main">
+      <nav class="config-rail" id="config-rail" aria-label="Sections in this tab" hidden></nav>
+      <div class="config-body" id="config-body"></div>
+    </div>
     <div class="config-footer">
       <button class="hv-btn btn-secondary btn config-cancel" data-action="closeConfigDialog">Cancel</button>
       <button class="hv-btn btn-primary btn config-save" data-action="saveConfig">Save & close</button>
@@ -33226,6 +33255,7 @@ function burnAreaChart() {
       const title = type === 'governor' ? 'Settings' : isCreate ? 'Create Agent' : `${agentName || 'Agent'} Configuration`;
       document.querySelector('.config-title').textContent = title;
       setupSettingsSearchControls(type);
+      configRailBind();
       const tabs = type === 'governor' ? GOVERNOR_CONFIG_TABS : (isCreate ? AGENT_CREATE_TABS : AGENT_CONFIG_TABS);
       const tabsEl = document.getElementById('config-tabs');
       tabsEl.innerHTML = tabs.map((t, i) =>
@@ -41247,10 +41277,114 @@ function burnAreaChart() {
       const body = document.getElementById('config-body');
       if (!body) return false;
       const target = body.querySelector('[data-settings-section="' + String(id).replace(/"/g, '\\"') + '"]');
-      if (!target) return false;
+      return configScrollBodyTo(body, target);
+    }
+
+    // configScrollBodyTo scrolls the dialog body (not the page) so `target`
+    // sits just under the body's top edge.
+    function configScrollBodyTo(body, target) {
+      if (!body || !target) return false;
       const top = target.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
       body.scrollTo({ top: Math.max(0, top - FEATURES_SECTION_SCROLL_PAD_PX), behavior: 'smooth' });
       return true;
+    }
+
+    // Section rail (#12169): the column left of the dialog body lists the active
+    // tab's `.config-section > h3` headings (the same ones the sticky
+    // section bar shows) and tracks which one is in view. It is derived from
+    // the rendered DOM — a MutationObserver re-syncs it after every tab
+    // render, async panel fill-in and search-results swap — so hidden
+    // headings (search results, owner-only panels) drop out automatically.
+    const CONFIG_RAIL_HEADING_SELECTOR = '.config-section > h3';
+    const CONFIG_RAIL_MIN_SECTIONS = 2;
+    // A section counts as "current" once its top is within this many px of
+    // the body's top edge — just under the sticky heading band.
+    const CONFIG_RAIL_ACTIVE_OFFSET_PX = 48;
+    let _configRail = { bound: false, seq: 0, syncRaf: 0, scrollRaf: 0 };
+
+    function configRailHeadingText(h) {
+      let txt = settingsSearchText(h);
+      h.querySelectorAll('.settings-yaml-hint, .config-info').forEach(extra => { txt = txt.replace(settingsSearchText(extra), ''); });
+      return txt.replace(/\s+/g, ' ').trim();
+    }
+
+    function configRailHeadings() {
+      const body = document.getElementById('config-body');
+      if (!body) return [];
+      return Array.from(body.querySelectorAll(CONFIG_RAIL_HEADING_SELECTOR))
+        .filter(h => h.getClientRects().length > 0 && configRailHeadingText(h));
+    }
+
+    function configRailSync() {
+      const rail = document.getElementById('config-rail');
+      if (!rail) return;
+      const heads = configRailHeadings();
+      if (heads.length < CONFIG_RAIL_MIN_SECTIONS) {
+        rail.hidden = true;
+        rail.innerHTML = '';
+        rail.dataset.sig = '';
+        return;
+      }
+      const items = heads.map(h => {
+        const section = h.parentElement;
+        if (!section.id) section.id = 'config-rail-section-' + (++_configRail.seq);
+        return { id: section.id, title: configRailHeadingText(h) };
+      });
+      const sig = items.map(x => x.id + '\n' + x.title).join('\u0000');
+      if (rail.dataset.sig !== sig) {
+        rail.dataset.sig = sig;
+        rail.innerHTML = '<div class="config-rail-title">On this tab</div><ul class="config-rail-list">' +
+          items.map(x => '<li><button type="button" class="config-rail-link" data-action="configRailGo" data-arg0="' + esc(x.id) + '">' + esc(x.title) + '</button></li>').join('') +
+          '</ul>';
+      }
+      rail.hidden = false;
+      configRailHighlight();
+    }
+
+    function configRailHighlight() {
+      const rail = document.getElementById('config-rail');
+      const body = document.getElementById('config-body');
+      if (!rail || rail.hidden || !body) return;
+      const links = Array.from(rail.querySelectorAll('.config-rail-link'));
+      if (!links.length) return;
+      const bodyTop = body.getBoundingClientRect().top;
+      let current = null;
+      links.forEach(link => {
+        const section = document.getElementById(link.dataset.arg0);
+        if (section && section.getBoundingClientRect().top - bodyTop <= CONFIG_RAIL_ACTIVE_OFFSET_PX) current = link;
+      });
+      // Scrolled to the end: the last section may be too short to ever reach
+      // the top edge, so it is the current one.
+      if (body.scrollTop + body.clientHeight >= body.scrollHeight - 1) current = links[links.length - 1];
+      if (!current) current = links[0];
+      links.forEach(link => {
+        if (link === current) link.setAttribute('aria-current', 'true');
+        else link.removeAttribute('aria-current');
+      });
+    }
+
+    function configRailGo(id) {
+      const body = document.getElementById('config-body');
+      const target = document.getElementById(id);
+      if (!body || !target || !body.contains(target)) return false;
+      return configScrollBodyTo(body, target);
+    }
+
+    function configRailBind() {
+      if (_configRail.bound) return;
+      const body = document.getElementById('config-body');
+      if (!body || typeof MutationObserver === 'undefined') return;
+      _configRail.bound = true;
+      const scheduleSync = () => {
+        if (_configRail.syncRaf) return;
+        _configRail.syncRaf = requestAnimationFrame(() => { _configRail.syncRaf = 0; configRailSync(); });
+      };
+      new MutationObserver(scheduleSync).observe(body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'open'] });
+      body.addEventListener('scroll', () => {
+        if (_configRail.scrollRaf) return;
+        _configRail.scrollRaf = requestAnimationFrame(() => { _configRail.scrollRaf = 0; configRailHighlight(); });
+      }, { passive: true });
+      scheduleSync();
     }
 
     // renderGovFeatures renders operational features that are not security posture
