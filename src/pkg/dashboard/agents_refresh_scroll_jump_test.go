@@ -32,7 +32,7 @@ func TestAgentsGridPatchesInPlace(t *testing.T) {
 			t.Errorf("renderAgents is missing %q — agents refresh regressed to a layout-shifting rebuild", snippet)
 		}
 	}
-	for _, banned := range []string{"el.innerHTML = html", "scrollIntoView"} {
+	for _, banned := range []string{"el.innerHTML = html", "scrollIntoView("} {
 		if strings.Contains(body, banned) {
 			t.Errorf("renderAgents contains %q — a refresh must never rebuild the grid or move the window", banned)
 		}

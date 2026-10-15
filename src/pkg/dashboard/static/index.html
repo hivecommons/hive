@@ -12768,10 +12768,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const prev = document.getElementById(focusedId);
           if (prev) { try { prev.focus({ preventScroll: true }); } catch (e) { prev.focus(); } }
         }
-        // Element-local scrollTop only — never scrollIntoView, which would
-        // move the window. Keep following the tail only when the reader was
-        // already at the bottom (or the pane is new); otherwise hold their
-        // place in the log.
+        // Element-local scrollTop only, so the window never moves. Keep
+        // following the tail only when the reader was already at the bottom
+        // (or the pane is new); otherwise hold their place in the log.
         el.querySelectorAll('.doing').forEach(d => {
           const card = d.closest('.agent-card');
           const key = card ? card.getAttribute('data-agent') : '';
