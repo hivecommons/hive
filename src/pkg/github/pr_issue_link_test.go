@@ -283,9 +283,15 @@ func TestSyncIssuePRClaimLabels_LinksStrongOpenClaims(t *testing.T) {
 			t.Fatalf("issue #%d labels = %v, want covered-by-PR on every claimed issue", issue.Number, issue.Labels)
 		}
 	}
-	// A second sweep is answered from the memo: no new lookups or mutations.
+	// Three lookups: one per linked pair, plus the reference claim's
+	// retraction check (hivecommons/hive#12144), which finds no link and
+	// is memoised like the rest. A second sweep is answered from the memo:
+	// no new lookups or mutations.
+	if f.lookups.Load() != 3 {
+		t.Fatalf("lookups = %d, want 3 (two ensure lookups, one retraction check)", f.lookups.Load())
+	}
 	SyncIssuePRClaimLabels(context.Background(), c, result, ledger, testLogger())
-	if f.lookups.Load() != 2 || f.mutations.Load() != 2 {
-		t.Fatalf("after second sweep lookups=%d mutations=%d, want 2/2 (memoised)", f.lookups.Load(), f.mutations.Load())
+	if f.lookups.Load() != 3 || f.mutations.Load() != 2 {
+		t.Fatalf("after second sweep lookups=%d mutations=%d, want 3/2 (memoised)", f.lookups.Load(), f.mutations.Load())
 	}
 }
