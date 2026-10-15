@@ -328,7 +328,7 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .tier-table th{color:var(--text-muted);font-weight:600}
 .feed-header{padding:var(--sp-7) var(--sp-7) var(--sp-5);border-bottom:1px solid var(--line-strong);display:flex;align-items:center;gap:var(--sp-4)}
 .feed-header h3{font-size:.95rem;color:var(--text)}
-.feed-dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
+.feed-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
 @keyframes pulse{0%%,100%%{opacity:1}50%%{opacity:.4}}
 .feed-count{font-size:var(--fs-sm);color:var(--text-muted);margin-left:auto}
 .feed-scroll{flex:1;overflow-y:auto;padding:var(--sp-0)}
@@ -361,10 +361,15 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
    to the viewport and hands the overflow back to the ellipsis/wrapping the cards
    already declare. */
 .ops-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:var(--sp-7);margin-top:var(--sp-8)}
-@media(max-width:900px){.ops-grid{grid-template-columns:minmax(0,1fr);gap:var(--sp-7)}}
+.ops-shell.ops-rail-collapsed .ops-grid{grid-template-columns:minmax(340px,.42fr) minmax(0,1fr)}
+@media(max-width:900px){.ops-grid,.ops-shell.ops-rail-collapsed .ops-grid{grid-template-columns:minmax(0,1fr);gap:var(--sp-7)}}
 .ops-card{background:var(--surface-1);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-0);overflow:hidden;box-shadow:var(--shadow-card)}
 .ops-card-head{padding:var(--sp-6) var(--sp-7);border-bottom:1px solid var(--line-strong);display:flex;align-items:center;gap:10px}
 .ops-card-head h3{font-size:.95rem;color:var(--text);margin:var(--sp-0)}
+.ops-card[data-ops-card="clankers"]>.ops-card-head{flex-wrap:wrap}
+.ops-card[data-ops-card="clankers"]>.ops-card-head h3{flex:1 1 11rem;min-width:0}
+.ops-card[data-ops-card="clankers"]>.ops-card-head .ops-card-count{flex:0 0 auto;margin-left:0}
+.ops-card[data-ops-card="clankers"]>.ops-card-head .spark{flex:0 1 auto;margin-left:var(--sp-2)}
 .ops-card-count{font-size:var(--fs-sm);color:var(--text-muted);margin-left:auto}
 .ops-layout-reset{display:none;margin-left:auto;align-self:center}
 .ops-grip{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:1.55rem;height:1.55rem;border:1px solid transparent;border-radius:var(--r-sm);background:transparent;color:var(--text-muted);font:inherit;line-height:1;cursor:grab;touch-action:none;user-select:none}
@@ -2405,8 +2410,6 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <div class="opp-list" id="opp-list"><div class="ops-empty">Looking for fresh work&hellip;</div></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A light, calm read of fresh, actionable issues beyond what&rsquo;s already lined up &mdash; surfaced by recency, not a heavy recommender. Owner/read-write operators can add one to the queue; it becomes offer-priority only and still obeys every admission filter.</p>
 </div>
-</div>
-</div>
 <!-- ── Triage ladder (#2612 part b) — a Warp-style lifecycle view over the hive's
      contribute issues, grouped Triaging → Ready → Implementing → Reviewing →
      Closed. Each level is DERIVED LIVE from the raw candidate pool + ready queue
@@ -2414,7 +2417,6 @@ It clears automatically when the period elapses. An operator can shorten or disa
      (a future enhancement, out of scope). A SECTION within Operations — NOT a new
      page/tab. Fetched from /api/contribute/triage after load so a slow GitHub
      PR-link lookup never delays the page. Full-width card below the ops grid. -->
-<div class="ops-wide ops-region" data-ops-region="wide" id="ops-wide-region">
 <div class="ops-card cc-triage-card mt-7" id="cc-triage-card" data-ops-card="triage">
 <div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Issue triage card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Issue triage</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
 <!-- Compact ladder summary: one chip per level with its live count. -->
@@ -2424,6 +2426,8 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A live lifecycle view of this hive&rsquo;s contribute issues &mdash; raw candidates withheld by admission remain in Triaging, while ready work, the fleet&rsquo;s in-flight work, and fixing PRs advance issues through the ladder. Read-only and recomputed on each load; there is no stored per-issue state.</p>
 </div>
 </div>
+</div>
+<div class="ops-wide ops-region" data-ops-region="wide" id="ops-wide-region"></div>
 </div>
 <!-- Dedicated full-height LIVE ACTIVITY RAIL. Holds ONLY the live activity feed
      (moved here out of the former right column). Named "Live Activity" to match
@@ -6574,7 +6578,8 @@ function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
 var OPS_LAYOUT_KEY='hive.ops.layout';
 var OPS_LAYOUT_VERSION=1;
 var OPS_LAYOUT_REGIONS=['left','main','wide'];
-var OPS_LAYOUT_TEMPLATE={left:['clankers','pipeline'],main:['mine','wall','models','work','runs','decisions','queue','opp'],wide:['triage']};
+var OPS_LAYOUT_TEMPLATE={left:['clankers','pipeline'],main:['mine','wall','models','work','runs','decisions','queue','opp','triage'],wide:[]};
+var OPS_LAYOUT_ALLOWED_REGION={triage:'main'};
 var OPS_LAYOUT_GRIP_SELECTOR='[data-ops-grip]';
 var OPS_LAYOUT_CARD_SELECTOR='[data-ops-card]';
 var opsLayoutInit=false;
@@ -6586,22 +6591,23 @@ function opsLayoutAnnounce(msg){var live=document.getElementById('ops-layout-liv
 function opsLayoutCardName(card){var h=card&&card.querySelector('.ops-card-head h3,.ops-card-title');return h?h.textContent.trim():(card?card.getAttribute('data-ops-card'):'card');}
 function opsLayoutTemplateRegion(id){for(var i=0;i<OPS_LAYOUT_REGIONS.length;i++){var r=OPS_LAYOUT_REGIONS[i],arr=OPS_LAYOUT_TEMPLATE[r];if(arr.indexOf(id)>=0)return r;}return 'main';}
 function opsLayoutAllIds(){return OPS_LAYOUT_TEMPLATE.left.concat(OPS_LAYOUT_TEMPLATE.main,OPS_LAYOUT_TEMPLATE.wide);}
+function opsLayoutRegionAllowed(id,region){return !OPS_LAYOUT_ALLOWED_REGION[id]||OPS_LAYOUT_ALLOWED_REGION[id]===region;}
 function opsLayoutRead(){try{var raw=localStorage.getItem(OPS_LAYOUT_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
 function opsLayoutCurrent(){var out={v:OPS_LAYOUT_VERSION,left:[],main:[],wide:[]};OPS_LAYOUT_REGIONS.forEach(function(r){var el=opsRegionEl(r);if(!el)return;Array.prototype.forEach.call(el.querySelectorAll(':scope > '+OPS_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-ops-card');if(id)out[r].push(id);});});return out;}
 function opsLayoutWrite(){try{localStorage.setItem(OPS_LAYOUT_KEY,JSON.stringify(opsLayoutCurrent()));}catch(e){}}
-function opsLayoutNormalize(saved){var valid=opsLayoutAllIds(),seen={},out={v:OPS_LAYOUT_VERSION,left:[],main:[],wide:[]};OPS_LAYOUT_REGIONS.forEach(function(r){var arr=saved&&Array.isArray(saved[r])?saved[r]:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out[r].push(id);});});OPS_LAYOUT_REGIONS.forEach(function(r){OPS_LAYOUT_TEMPLATE[r].forEach(function(id){if(!seen[id]){seen[id]=true;out[r].push(id);}});});return out;}
+function opsLayoutNormalize(saved){var valid=opsLayoutAllIds(),seen={},out={v:OPS_LAYOUT_VERSION,left:[],main:[],wide:[]};OPS_LAYOUT_REGIONS.forEach(function(r){var arr=saved&&Array.isArray(saved[r])?saved[r]:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id]||!opsLayoutRegionAllowed(id,r))return;seen[id]=true;out[r].push(id);});});OPS_LAYOUT_REGIONS.forEach(function(r){OPS_LAYOUT_TEMPLATE[r].forEach(function(id){if(!seen[id]){seen[id]=true;out[r].push(id);}});});return out;}
 function opsApplyLayout(layout){OPS_LAYOUT_REGIONS.forEach(function(r){var region=opsRegionEl(r);if(!region)return;(layout[r]||[]).forEach(function(id){var card=opsCardEl(id);if(card)region.appendChild(card);});});}
 function opsResetLayout(){try{localStorage.removeItem(OPS_LAYOUT_KEY);}catch(e){}opsApplyLayout(opsLayoutNormalize(null));opsLayoutAnnounce('Operations card layout reset to the default order.');}
 function opsResetCard(card){if(!card)return;var id=card.getAttribute('data-ops-card'),region=opsRegionEl(opsLayoutTemplateRegion(id));if(!region)return;var after=null,template=OPS_LAYOUT_TEMPLATE[opsLayoutTemplateRegion(id)];for(var i=0;i<template.length;i++){if(template[i]===id)break;var prev=opsCardEl(template[i]);if(prev&&prev.parentElement===region)after=prev;}if(after)after.insertAdjacentElement('afterend',card);else region.insertBefore(card,region.firstElementChild);opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(card)+' returned to its default slot.');}
 function opsLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+OPS_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var vertical=window.matchMedia&&matchMedia('(max-width:900px)').matches;var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=vertical?y<(rect.top+rect.height/2):y<(rect.top+rect.height/2);var anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
-function opsNearestRegion(x,y){var regions=OPS_LAYOUT_REGIONS.map(opsRegionEl).filter(Boolean),best=null,bestDist=Infinity;regions.forEach(function(r){var rect=r.getBoundingClientRect();var cx=Math.max(rect.left,Math.min(x,rect.right)),cy=Math.max(rect.top,Math.min(y,rect.bottom));var dx=x-cx,dy=y-cy,dist=dx*dx+dy*dy;if(dist<bestDist){bestDist=dist;best=r;}});return best||opsRegionEl('main');}
+function opsNearestRegion(x,y,card){var id=card&&card.getAttribute('data-ops-card'),regions=OPS_LAYOUT_REGIONS.map(opsRegionEl).filter(function(r){return r&&opsLayoutRegionAllowed(id,r.getAttribute('data-ops-region'));}),best=null,bestDist=Infinity;regions.forEach(function(r){var rect=r.getBoundingClientRect();var cx=Math.max(rect.left,Math.min(x,rect.right)),cy=Math.max(rect.top,Math.min(y,rect.bottom));var dx=x-cx,dy=y-cy,dist=dx*dx+dy*dy;if(dist<bestDist){bestDist=dist;best=r;}});return best||opsRegionEl('main');}
 function opsMoveIndicator(slot){var indicator=opsDragState&&opsDragState.indicator;if(!indicator||!slot||!slot.region)return;if(slot.before)slot.region.insertBefore(indicator,slot.before);else slot.region.appendChild(indicator);}
 function opsClearIndicator(){if(opsDragState&&opsDragState.indicator&&opsDragState.indicator.parentElement)opsDragState.indicator.parentElement.removeChild(opsDragState.indicator);}
 function opsStartDrag(ev,grip){if(ev.button!==undefined&&ev.button!==0)return;var card=grip.closest(OPS_LAYOUT_CARD_SELECTOR);if(!card)return;ev.preventDefault();var rect=card.getBoundingClientRect();var ghost=card.cloneNode(true);ghost.classList.add('ops-card-ghost');ghost.style.width=rect.width+'px';ghost.style.left='0';ghost.style.top='0';ghost.style.setProperty('--ops-ghost-x',rect.left+'px');ghost.style.setProperty('--ops-ghost-y',rect.top+'px');var indicator=document.createElement('div');indicator.className='ops-drop-indicator';card.classList.add('ops-drag-source');document.body.appendChild(ghost);opsDragState={card:card,grip:grip,ghost:ghost,indicator:indicator,dx:ev.clientX-rect.left,dy:ev.clientY-rect.top,slot:null};try{grip.setPointerCapture(ev.pointerId);}catch(e){}grip.setAttribute('aria-pressed','true');opsLayoutAnnounce('Moving '+opsLayoutCardName(card)+'.');opsDragMove(ev);}
-function opsDragMove(ev){if(!opsDragState)return;var x=ev.clientX-opsDragState.dx,y=ev.clientY-opsDragState.dy;opsDragState.ghost.style.setProperty('--ops-ghost-x',x+'px');opsDragState.ghost.style.setProperty('--ops-ghost-y',y+'px');var region=opsNearestRegion(ev.clientX,ev.clientY),slot=opsLayoutSlot(region,ev.clientX,ev.clientY,opsDragState.card);opsDragState.slot=slot;opsMoveIndicator(slot);}
+function opsDragMove(ev){if(!opsDragState)return;var x=ev.clientX-opsDragState.dx,y=ev.clientY-opsDragState.dy;opsDragState.ghost.style.setProperty('--ops-ghost-x',x+'px');opsDragState.ghost.style.setProperty('--ops-ghost-y',y+'px');var region=opsNearestRegion(ev.clientX,ev.clientY,opsDragState.card),slot=opsLayoutSlot(region,ev.clientX,ev.clientY,opsDragState.card);opsDragState.slot=slot;opsMoveIndicator(slot);}
 function opsEndDrag(save){if(!opsDragState)return;var st=opsDragState;opsClearIndicator();if(st.ghost&&st.ghost.parentElement)st.ghost.parentElement.removeChild(st.ghost);st.card.classList.remove('ops-drag-source');st.grip.setAttribute('aria-pressed','false');if(save&&st.slot&&st.slot.region){if(st.slot.before)st.slot.region.insertBefore(st.card,st.slot.before);else st.slot.region.appendChild(st.card);opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(st.card)+' moved.');}else{opsLayoutAnnounce('Move cancelled.');}opsDragState=null;}
 function opsRestoreSnapshot(){if(!opsKeyboardSnapshot)return;opsApplyLayout(opsKeyboardSnapshot);opsLayoutWrite();opsKeyboardSnapshot=opsLayoutCurrent();opsLayoutAnnounce('Keyboard reorder cancelled.');}
-function opsMoveCardByKeyboard(card,key){var current=card.parentElement,regionName=current&&current.getAttribute('data-ops-region'),regions=OPS_LAYOUT_REGIONS,idx=regions.indexOf(regionName);if(key==='ArrowUp'){var prev=card.previousElementSibling;if(prev)current.insertBefore(card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;if(next)current.insertBefore(next,card);}else if(key==='ArrowLeft'||key==='ArrowRight'){var dir=key==='ArrowLeft'?-1:1;var target=opsRegionEl(regions[Math.max(0,Math.min(regions.length-1,idx+dir))]);if(target&&target!==current)target.appendChild(card);}opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(card)+' moved to '+(card.parentElement.getAttribute('data-ops-region')||'main')+'.');}
+function opsMoveCardByKeyboard(card,key){var current=card.parentElement,regionName=current&&current.getAttribute('data-ops-region'),regions=OPS_LAYOUT_REGIONS,idx=regions.indexOf(regionName);if(key==='ArrowUp'){var prev=card.previousElementSibling;if(prev)current.insertBefore(card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;if(next)current.insertBefore(next,card);}else if(key==='ArrowLeft'||key==='ArrowRight'){var dir=key==='ArrowLeft'?-1:1;var target=opsRegionEl(regions[Math.max(0,Math.min(regions.length-1,idx+dir))]);if(target&&target!==current&&opsLayoutRegionAllowed(card.getAttribute('data-ops-card'),target.getAttribute('data-ops-region')))target.appendChild(card);}opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(card)+' moved to '+(card.parentElement.getAttribute('data-ops-region')||'main')+'.');}
 function initOpsCardLayout(){if(opsLayoutInit)return;var tab=document.getElementById('tab-ops');if(!tab)return;opsLayoutInit=true;opsApplyLayout(opsLayoutNormalize(opsLayoutRead()));var reset=document.getElementById('ops-layout-reset');if(reset)reset.addEventListener('click',opsResetLayout);tab.querySelectorAll(OPS_LAYOUT_GRIP_SELECTOR).forEach(function(grip){grip.addEventListener('pointerdown',function(ev){opsStartDrag(ev,grip);});grip.addEventListener('pointermove',function(ev){if(opsDragState){ev.preventDefault();opsDragMove(ev);}});grip.addEventListener('pointerup',function(ev){if(opsDragState){ev.preventDefault();opsEndDrag(true);}});grip.addEventListener('pointercancel',function(){opsEndDrag(false);});grip.addEventListener('dblclick',function(ev){ev.preventDefault();opsResetCard(grip.closest(OPS_LAYOUT_CARD_SELECTOR));});grip.addEventListener('focus',function(){opsKeyboardSnapshot=opsLayoutCurrent();});grip.addEventListener('blur',function(){opsKeyboardSnapshot=null;grip.setAttribute('aria-pressed','false');});grip.addEventListener('keydown',function(ev){var key=ev.key,card=grip.closest(OPS_LAYOUT_CARD_SELECTOR);if(!card)return;if(key===' '||key==='Enter'){ev.preventDefault();var active=grip.getAttribute('aria-pressed')==='true';if(active){opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','false');opsLayoutAnnounce('Dropped '+opsLayoutCardName(card)+'.');}else{opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','true');opsLayoutAnnounce('Picked up '+opsLayoutCardName(card)+'. Use arrow keys to move, Escape to cancel.');}return;}if(key==='Escape'){ev.preventDefault();opsRestoreSnapshot();grip.setAttribute('aria-pressed','false');return;}if(key==='ArrowUp'||key==='ArrowDown'||key==='ArrowLeft'||key==='ArrowRight'){ev.preventDefault();if(!opsKeyboardSnapshot)opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','true');opsMoveCardByKeyboard(card,key);}});});}
 
 // ── Dev-log RAIL collapse: open by default, persisted in localStorage ──────────
@@ -6707,6 +6713,8 @@ function ccHydrateOpsFromCache(){
 }
 function ccRailApply(rail,btn,collapsed){
   rail.classList.toggle('collapsed',collapsed);
+  var shell=document.getElementById('ops-shell');
+  if(shell)shell.classList.toggle('ops-rail-collapsed',collapsed);
   if(btn){
     btn.setAttribute('aria-expanded',collapsed?'false':'true');
     btn.setAttribute('title',collapsed?'Show log':'Collapse log');
