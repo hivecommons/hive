@@ -71,6 +71,10 @@ type Options struct {
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
 	TrustedBotAuthors func() map[string]bool
+	// BotTakeoverEnabled returns the live auto_merge.bot_takeover.enabled
+	// switch: re-author a trusted github-actions[bot] PR whose
+	// `pull_request` checks can never run (#12003). nil means off.
+	BotTakeoverEnabled func() bool
 	// TrustedAuthorPolicy returns the live, operator opt-in policy for the
 	// human-authored tier. nil or disabled means the tier is off.
 	TrustedAuthorPolicy func() TrustedAuthorPolicy
@@ -123,6 +127,7 @@ type Engine struct {
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
+	botTakeoverEnabledFn              func() bool
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
 	trustedAuthorizer                 TrustedAuthorizer
 	contributorLanePolicy             func() ContributorLanePolicy
@@ -165,6 +170,7 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
 		trustedAuthorPolicy:               opts.TrustedAuthorPolicy,
 		trustedAuthorizer:                 opts.TrustedAuthorizer,
 		contributorLanePolicy:             opts.ContributorLanePolicy,

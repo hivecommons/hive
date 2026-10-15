@@ -109,3 +109,16 @@ func TestContributorLaneAutoMergeConfigDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("ExcludeLabelSet = %v, want hold only", ex)
 	}
 }
+
+func TestBotTakeoverAutoMergeConfigDefaultsOnAndHonorsExplicitOff(t *testing.T) {
+	var a AutoMergeConfig
+	if !a.BotTakeover.IsEnabled() {
+		t.Fatal("auto_merge.bot_takeover.enabled must default on")
+	}
+	if err := yaml.Unmarshal([]byte("bot_takeover:\n  enabled: false\n"), &a); err != nil {
+		t.Fatal(err)
+	}
+	if a.BotTakeover.IsEnabled() {
+		t.Fatal("explicit auto_merge.bot_takeover.enabled: false must disable the takeover")
+	}
+}

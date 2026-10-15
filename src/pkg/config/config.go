@@ -8410,6 +8410,13 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// BotTakeover lets the sweep re-author a trusted `github-actions[bot]` PR
+	// whose required `pull_request` checks can never run because the bot
+	// opened it with a workflow GITHUB_TOKEN (#12003). The App pushes the
+	// same change as one signed-off commit to `hive/takeover-<n>`, opens a PR
+	// that supersedes the bot PR, and closes the bot PR. It applies only when
+	// github-actions[bot] is in TrustedBotAuthors.
+	BotTakeover BotTakeoverAutoMergeConfig `yaml:"bot_takeover,omitempty" json:"bot_takeover,omitempty"`
 	// TrustedAuthors enables a separate, default-off sweep for human-authored
 	// PRs whose AUTHOR already holds merge authority. Unlike the App
 	// self-authored lane, this never bypasses to create new authority: the
@@ -8438,6 +8445,17 @@ type AutoMergeRepoConfig struct {
 	// An explicit empty list means the repo declares no required checks; an
 	// omitted field falls back to the global default.
 	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
+}
+
+// BotTakeoverAutoMergeConfig is auto_merge.bot_takeover.*.
+type BotTakeoverAutoMergeConfig struct {
+	// Enabled turns the takeover on. nil/unset means ON; an explicit
+	// `enabled: false` disables it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+func (b BotTakeoverAutoMergeConfig) IsEnabled() bool {
+	return b.Enabled == nil || *b.Enabled
 }
 
 type TrustedAuthorAutoMergeConfig struct {

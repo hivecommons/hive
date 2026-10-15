@@ -19,6 +19,10 @@ package automerge
 //     pushes never trigger that workflow, so the context is absent forever
 //     (#11923). Dependabot's own re-push restores normal triggers, so the
 //     sweep asks for one `@dependabot rebase` per head instead of polling.
+//  4. The PR itself was opened by `github-actions[bot]` with GITHUB_TOKEN, so
+//     no `pull_request` workflow ever runs for it. The bot cannot be asked to
+//     re-push, so the sweep re-authors the PR as the App once per head
+//     (automerge_bot_takeover.go, #12003).
 //
 // The App's own PRs and configured trusted bots are the only lanes this file
 // acts for (trySweepSelfAuthoredPR); human-authored lanes are untouched so a
@@ -95,12 +99,15 @@ func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, o
 	}
 	held := heldSameRepoWorkflowRuns(runs.WorkflowRuns, owner+"/"+repo)
 	if len(held) == 0 {
-		if c.rebaseNudged(owner, repo, number, headSHA) {
+		if c.rebaseNudged(owner, repo, number, headSHA) || c.botTakeoverAttempted(owner, repo, number, headSHA) {
 			return requiredCheckNeverRanPrefix + missing
 		}
 		if headOlderThan(c.now, headPushedAt, heldRunNeverStartedGrace) && c.isAutofixPushedDependabotHead(ctx, displayRepo, owner, repo, pr, number, headSHA) {
 			c.nudgeDependabotRebase(ctx, displayRepo, owner, repo, number, headSHA, missing)
 			return requiredCheckNeverRanPrefix + missing
+		}
+		if c.botTakeoverEligible(pr, len(runs.WorkflowRuns), headPushedAt) {
+			return c.takeOverBotPR(ctx, displayRepo, owner, repo, pr, number, headSHA, missing)
 		}
 		if len(runs.WorkflowRuns) == 0 && headOlderThan(c.now, headPushedAt, heldRunNeverStartedGrace) {
 			return requiredCheckNeverStartedPrefix + missing

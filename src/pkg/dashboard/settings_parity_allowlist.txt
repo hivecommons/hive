@@ -145,6 +145,7 @@ agents.<key>.variables.<key>.url # TODO #11854
 agents.<key>.variables.<key>.value # TODO #11854
 agents.github_api_hourly_cap # TODO #11854
 auto_merge.allow_unprotected_base[] # TODO #11854
+auto_merge.bot_takeover.enabled # TODO #11854
 auto_merge.human_merge_paths.<key> # TODO #11854
 auto_merge.max_merges # TODO #11854
 auto_merge.min_head_age # TODO #11854
