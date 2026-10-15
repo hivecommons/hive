@@ -455,9 +455,11 @@ review.fixer_agent # TODO #11854
 review.human_decision_label # TODO #11854
 review.max_out_of_scope_backlog_issues # TODO #11854
 review.max_parallel_reviews # TODO #11854
+review.max_redispatch # TODO #11854
 review.max_perspectives_per_pr # TODO #11854
 review.max_reviews_per_head # TODO #11854
 review.out_of_scope_backlog_disabled # TODO #11854
+review.pending_ttl # TODO #11854
 review.perspective_prompts.<key> # TODO #11854
 review.perspectives[] # TODO #11854
 review.post_comments # TODO #11854
