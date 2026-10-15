@@ -3822,6 +3822,8 @@
     .dash-card-action, .dash-card-actions > button, .dash-card-actions > a, .dash-card-actions > .hv-btn, .dash-card-actions > .config-gear { display: inline-flex !important; align-items: center; justify-content: center; min-height: 24px !important; height: 24px !important; padding: 0 var(--sp-3) !important; border-radius: var(--r-pill) !important; border: 1px solid var(--line-subtle) !important; background: color-mix(in srgb, var(--surface-2) 70%, transparent) !important; color: var(--text) !important; font-size: var(--fs-2xs) !important; font-weight: 700 !important; letter-spacing: 0.04em !important; text-decoration: none !important; line-height: 1 !important; white-space: nowrap; }
     .dash-card-action:hover, .dash-card-actions > button:hover, .dash-card-actions > a:hover { background: var(--surface-2) !important; border-color: var(--border) !important; }
     .dash-card-badge, .dash-card-badges > * { display: inline-flex !important; align-items: center; min-height: 22px !important; padding: 0 var(--sp-3) !important; border-radius: var(--r-pill) !important; font-size: var(--fs-2xs) !important; font-weight: 700 !important; letter-spacing: 0.04em !important; line-height: 1 !important; text-transform: uppercase; white-space: nowrap; }
+    .nous-research-question, .dash-card-badges > .nous-research-question { display: inline-block !important; max-width: min(48ch, 40vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: var(--sp-4); padding: 0 !important; font-size: var(--fs-sm) !important; font-weight: 500 !important; letter-spacing: 0 !important; text-transform: none; color: var(--muted); }
+    .nous-research-question[hidden] { display: none !important; }
     .dash-card-summary { display: none; font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); margin-left: var(--sp-4); text-align: right; white-space: nowrap; }
     .dash-card-actions:empty + .dash-card-summary, .dash-card-badges:empty + .dash-card-actions + .dash-card-summary { margin-left: auto; }
     .dash-card.collapsed .dash-card-summary { display: inline-flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
@@ -6007,7 +6009,7 @@
   </div>
 
   <div id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab (nous) <span id="nous-mode-badge" style="font-size:var(--fs-sm);padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab (nous) <span id="nous-research-question" class="nous-research-question" hidden></span></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
@@ -7036,7 +7038,7 @@
       const badges = newHeader.querySelector('.dash-card-badges');
       const actions = newHeader.querySelector('.dash-card-actions');
       const moveSource = oldHeader.parentElement === section ? oldHeader : oldHeader.parentElement;
-      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #nous-mode-badge, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
+      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #nous-research-question, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
       Array.from(moveSource.querySelectorAll('button[data-stop="1"], a[data-stop="1"], a[data-action]')).forEach(el => {
         if (el.matches('[data-dashboard-grip]')) return;
         el.setAttribute('data-stop', '1');
@@ -8091,8 +8093,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('audit-section', `${auditToday} events today`);
       if (typeof updateReviewSectionSummary === 'function') updateReviewSectionSummary();
       else { const rq = document.getElementById('review-queue-count'); setSectionSummary('review-queue-section', textOrDash(rq && rq.textContent)); }
-      const nous = document.getElementById('nous-mode-badge');
-      setSectionSummary('nous-section', textOrDash(nous && nous.textContent));
+      const nous = document.getElementById('nous-research-question');
+      setSectionSummary('nous-section', textOrDash(nous && !nous.hidden && nous.textContent));
       setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(window._kbCache || _kbCache || {})));
       const contrib = document.getElementById('contributors-status-badge');
       setSectionSummary('contributors-section', textOrDash(contrib && contrib.textContent));
@@ -22282,10 +22284,30 @@ function burnAreaChart() {
         'To get started, leave it in Observe while it builds a baseline (it needs a few days of snapshots), then switch to Suggest to review its first proposals.');
     }
 
+    // Longest research question shown inline in the header; the full text
+    // is always in the tooltip.
+    const NOUS_RESEARCH_QUESTION_MAX_CHARS = 90;
+    function nousResearchQuestionText(value) {
+      return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+    }
+    function renderNousResearchQuestion(value) {
+      const el = document.getElementById('nous-research-question');
+      if (!el) return;
+      const q = nousResearchQuestionText(value);
+      if (!q) {
+        el.hidden = true;
+        el.textContent = '';
+        el.removeAttribute('title');
+        return;
+      }
+      el.hidden = false;
+      el.textContent = q.length > NOUS_RESEARCH_QUESTION_MAX_CHARS ? q.slice(0, NOUS_RESEARCH_QUESTION_MAX_CHARS - 1).trimEnd() + '…' : q;
+      el.setAttribute('title', 'Research question: ' + q);
+    }
+
     function renderNous() {
       if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
-      const badge = document.getElementById('nous-mode-badge');
       if (!panel || !_nousCache) return;
       const s = _nousCache.status || {};
       const ledger = _nousCache.ledger || [];
@@ -22295,20 +22317,17 @@ function burnAreaChart() {
       const phases = s.phases || {};
 
       const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
-      const modeLabels = { observe: 'Observing', suggest: 'Suggesting', evolve: 'Evolving' };
+
+      // Header: the research question for the active scope, or nothing. The
+      // old "OBSERVING · GOVERNOR" mode×scope pill (#330/#338) is gone (#12089);
+      // mode and scope live in the segmented controls below.
+      renderNousResearchQuestion(s.status === 'not_configured' ? '' : s.researchQuestion);
 
       // Not configured server-side: explain what the lab is instead of a
       // control surface whose actions would all fail.
       if (s.status === 'not_configured') {
-        if (badge) { badge.textContent = 'not configured'; badge.style.background = 'var(--muted)'; badge.style.color = 'var(--bg)'; }
         panel.innerHTML = _nousExplainerCard();
         return;
-      }
-
-      if (badge) {
-        badge.textContent = `${modeLabels[mode] || mode} · ${scope}`;
-        badge.style.background = modeColors[mode] || 'var(--muted)';
-        badge.style.color = 'white';
       }
 
       // Update sidebar config — only show at ACMM L4+
@@ -22851,6 +22870,11 @@ function burnAreaChart() {
 
       const camp = cfg.campaign || {};
       const repoCamp = cfg.repoCampaign || {};
+      // Goals are stored under config.goals by PUT /api/nous/config/goals;
+      // campaign.research_question is the older read spelling (#12089).
+      const goals = cfg.goals || {};
+      const govQuestion = goals.governorGoal || goals.governor || camp.research_question || '';
+      const repoQuestion = goals.repoGoal || goals.repo || repoCamp.research_question || '';
       const govCamp = cfg.govCampaign || {};
       const output = cfg.output || {};
       const ff = camp.fast_fail || {};
@@ -22900,9 +22924,9 @@ function burnAreaChart() {
       h += '<div class="nous-config-section">';
       h += '<h3>🎯 Goal Definition</h3>';
       h += '<label title="The hypothesis Nous will test through governor-scope experiments. Example: Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?">Governor Research Question</label>';
-      h += `<textarea id="nc-gov-goal" rows="2" title="Describe what you want Nous to optimize in the governor configuration (cadences, models, thresholds)">${escapeHtml(camp.research_question || '')}</textarea>`;
+      h += `<textarea id="nc-gov-goal" rows="2" title="Describe what you want Nous to optimize in the governor configuration (cadences, models, thresholds)">${escapeHtml(govQuestion)}</textarea>`;
       h += '<label style="margin-top:10px" title="The hypothesis Nous will test through repo-scope experiments (code changes). These always require approval regardless of trust level.">Repo Research Question</label>';
-      h += `<textarea id="nc-repo-goal" rows="2" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(repoCamp.research_question || '')}</textarea>`;
+      h += `<textarea id="nc-repo-goal" rows="2" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(repoQuestion)}</textarea>`;
       h += '</div>';
 
       // Output: promotion is manual (#11699). Verdicts are written to files

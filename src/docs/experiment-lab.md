@@ -36,6 +36,20 @@ follows the Inception convention ("Inception (spektacular)"): section name plus
 the lowercase codename of the planner behind it. On a hive with no snapshots
 yet, the panel shows an explainer card instead of empty stats.
 
+### Section header
+
+The section header reads **🧪 Experiment Lab** followed by the research
+question for the active scope, when one is set — the governor question for
+`governor` (and `both`, falling back to the repo question), the repo question
+for `repo`, as saved from the ⚙️ dialog's **Goal Definition** section
+(`PUT /api/nous/config/goals`). Long questions are truncated in the header
+with the full text in a tooltip, and the collapsed-section summary shows the
+same text. When no research question is set the header shows nothing beside
+the title. The header does **not** show mode or scope: the `OBSERVING ·
+GOVERNOR` mode × scope pill from the first Nous integration (#330, #338) was
+removed in #12089 because the segmented **Observe | Suggest | Evolve** and
+**Governor | Repo | Both** controls inside the card already carry that state.
+
 ## State and storage
 
 All Nous state lives under one durable root on the PVC — `/data/nous` by
@@ -282,7 +296,7 @@ endpoint, all requiring owner role and all triggering `refreshAndPersist()`:
 
 | Endpoint | Section | Fields (dashboard defaults shown) |
 |---|---|---|
-| `PUT /api/nous/config/goals` | `goals` | Governor and repo research questions — free-text hypotheses (e.g. "Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?"). |
+| `PUT /api/nous/config/goals` | `goals` | Governor and repo research questions — free-text hypotheses (e.g. "Can we reduce MTTR by 20% by adjusting agent cadences during busy mode?"). The dashboard sends `{"governorGoal": "…", "repoGoal": "…"}`; `governor` / `repo` are accepted as bare spellings. The active scope's question is served back as `researchQuestion` in `GET /api/nous/status` and shown in the [section header](#section-header). |
 | `PUT /api/nous/config/output` | `output` | `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything a promotion creates. There is **no output mode**: Nous writes its verdict to files and the dashboard reads it; opening an issue or admitting a Spektacular run is the owner's manual Promote action on the [verdict card](#verdict-card-and-manual-promote). (Before #11699 this section carried a `mode` of `state-only` / `issue` / `issue+pr` / `spektacular-run` that Approve acted on automatically; a stored `mode` is ignored.) |
 | `PUT /api/nous/config/repos` | `repos` | Which repos from `projectRepos` are eligible targets for repo-scope experiments. |
 | `PUT /api/nous/config/fast-fail` | `fast_fail` | `queue_depth_max` (default 30), `mttr_max_minutes` (default 180), `budget_burn_rate_max_pct` (default 110) — see below. |
@@ -343,7 +357,10 @@ an unreinforced principle loses confidence over time.
   category), `type` and `status`.
 - **`GET /api/nous/status`** is the aggregate the dashboard polls to render
   everything above in one call — mode, scope, phase, per-scope phase detail,
-  snapshot counts, and any pending proposal or active experiment.
+  snapshot counts, and any pending proposal or active experiment. It also
+  carries `researchQuestion`, the active scope's research question derived
+  from the saved `goals` (absent when none is set), which the
+  [section header](#section-header) displays.
 
 If `deps.Nous` is `nil` (nous state failed to initialize), `status` returns
 `{"status": "not_configured"}`, `ledger`/`principles` return empty arrays, and

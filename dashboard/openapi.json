@@ -3731,7 +3731,7 @@
           "Experiment Lab"
         ],
         "summary": "Experiment Lab status",
-        "description": "Returns the current Nous experiment engine state including mode, active experiment, pending proposals, snapshot progress, and recommendations.",
+        "description": "Returns the current Nous experiment engine state including mode, scope, the active scope's research question, active experiment, pending proposals, snapshot progress, and recommendations.",
         "responses": {
           "200": {
             "description": "Nous status",
@@ -3754,6 +3754,10 @@
                         "governor",
                         "repo"
                       ]
+                    },
+                    "researchQuestion": {
+                      "type": "string",
+                      "description": "Research question for the active scope, from the goals saved via PUT /api/nous/config/goals (governorGoal for governor and both, repoGoal for repo). Absent when none is set. The Experiment Lab header shows it in place of the former mode×scope pill (#12089)."
                     },
                     "campaign": {
                       "type": "object"

@@ -471,6 +471,55 @@ func TestStaticNoStrategyLabCopy(t *testing.T) {
 	}
 }
 
+// TestStaticExperimentLabHeaderShowsResearchQuestionNotModePill pins #12089:
+// the Experiment Lab header no longer renders the "OBSERVING · GOVERNOR"
+// mode×scope pill left over from the first Nous integration (#330/#338). In
+// its place the header carries the research question for the active scope
+// (status.researchQuestion), escaped via textContent and truncated with the
+// full text in a tooltip, and renders nothing at all when none is set.
+func TestStaticExperimentLabHeaderShowsResearchQuestionNotModePill(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(body)
+	for _, stale := range []string{
+		`nous-mode-badge`,
+		"${modeLabels[mode] || mode} · ${scope}",
+		"observe: 'Observing'",
+		`badge.textContent = 'not configured'`,
+	} {
+		if strings.Contains(src, stale) {
+			t.Fatalf("static dashboard still renders the retired Experiment Lab mode×scope pill: %q", stale)
+		}
+	}
+	for _, want := range []string{
+		`🧪 Experiment Lab (nous) <span id="nous-research-question" class="nous-research-question" hidden></span></h2>`,
+		`#review-pipeline-count, #nous-research-question, #kb-status-badge`,
+		`function renderNousResearchQuestion(value)`,
+		`renderNousResearchQuestion(s.status === 'not_configured' ? '' : s.researchQuestion);`,
+		`el.hidden = true;`,
+		`el.textContent = q.length > NOUS_RESEARCH_QUESTION_MAX_CHARS`,
+		`el.setAttribute('title', 'Research question: ' + q);`,
+		`const nous = document.getElementById('nous-research-question');`,
+		`.nous-research-question[hidden] { display: none !important; }`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("static dashboard missing Experiment Lab research-question header wiring %q", want)
+		}
+	}
+	// The gear dialog must prefill the goals from where PUT /api/nous/config/goals stores them.
+	for _, want := range []string{
+		`const goals = cfg.goals || {};`,
+		`goals.governorGoal || goals.governor || camp.research_question`,
+		`goals.repoGoal || goals.repo || repoCamp.research_question`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("Experiment Lab config dialog does not read saved goals: %q", want)
+		}
+	}
+}
+
 // TestStaticExperimentLabTypeStatusChips pins the live ledger/principles
 // rendering (RFC #11585 part 4, #11697): every principle and recent round
 // shows the shared schema's type and status as status-badge chips keyed by

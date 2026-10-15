@@ -27,7 +27,7 @@ func TestStaticExperimentLabSidebarEntry(t *testing.T) {
 		// Section card it navigates to, same flag gate.
 		`<div id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden`,
 		// Header and card titles in lockstep with the sidebar label.
-		`<span class="section-chevron">▼</span> 🧪 Experiment Lab (nous) <span id="nous-mode-badge"`,
+		`<span class="section-chevron">▼</span> 🧪 Experiment Lab (nous) <span id="nous-research-question"`,
 		`'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—' },`,
 		`'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },`,
 		// Reactive reveal: the feature pass runs on every status payload.
