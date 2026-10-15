@@ -5584,6 +5584,8 @@
           <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-save" data-action="saveDashboardLayoutPreset">Save layout</button>
           <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-saved" data-action="toggleDashboardLayoutPresets" aria-expanded="false">Saved layouts ▸</button>
           <div class="avatar-menu-layout-list" id="oc-gh-menu-layout-list" hidden></div>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-expand-all" data-action="expandAllDashboardSections">Expand all sections</button>
+          <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-collapse-all" data-action="collapseAllDashboardSections">Collapse all sections</button>
           <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-reset" data-action="resetDashboardLayout">Reset layout to default</button>
           <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-export" data-action="exportDashboardLayoutJSON">Export layout (JSON)</button>
           <button class="avatar-menu-item" type="button" id="oc-gh-menu-layout-import" data-action="importDashboardLayoutJSON">Import layout…</button>
@@ -6620,6 +6622,26 @@
     }
     // ── Collapsible sections (issue #1533) ──
     const SECTION_LS_PREFIX = 'hive-section-collapsed-';
+    // Beginner-friendly defaults (#12014): a browser with NO prior dashboard
+    // state starts with these non-critical cards collapsed so a new operator
+    // first sees the cards that say whether the hive is alive and merging
+    // (Overview, Governor, Projects, Review, Approvals, Agents, Agent activity).
+    // The per-card value under SECTION_LS_PREFIX is '1' (collapsed) or '0'
+    // (explicitly expanded); a missing key falls back to this default. The
+    // marker key records whether the browser predates the defaults ('legacy',
+    // keeps the historical all-expanded default forever) or is new ('v1').
+    const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
+      'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section',
+      'contributors-section', 'inception-section', 'acmm-eval-section', 'debug-section', 'audit-section',
+      'logs-section', 'nous-section', 'faq-section'
+    ]);
+    const DASHBOARD_COLLAPSE_DEFAULTS_KEY = 'hive.dashboard.collapseDefaults';
+    const DASHBOARD_COLLAPSE_DEFAULTS_VERSION = 'v1';
+    const DASHBOARD_COLLAPSE_DEFAULTS_LEGACY = 'legacy';
+    // Any persisted dashboard key proves a prior visit; the auth token alone
+    // does not (it can be pasted before the dashboard ever rendered).
+    const DASHBOARD_PRIOR_STATE_KEY_PREFIX = 'hive';
+    const DASHBOARD_PRIOR_STATE_IGNORED_KEYS = Object.freeze(['hive-token']);
     const AGENT_COMPACT_LS_PREFIX = 'hive-agent-compact-';
     const SECTION_TRANSITION_MS = 200;
     const SECTION_EXPANDED_MAX_HEIGHT = 'none';
@@ -7915,21 +7937,56 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('faq-section', '');
     }
 
-    /** Check whether a dashboard section is collapsed in localStorage */
+    /** Has this browser ever persisted dashboard state? Decides legacy vs new-hive collapse defaults. */
+    function dashboardHasPriorState() {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i) || '';
+          if (k.indexOf(DASHBOARD_PRIOR_STATE_KEY_PREFIX) === 0 && DASHBOARD_PRIOR_STATE_IGNORED_KEYS.indexOf(k) < 0) return true;
+        }
+      } catch (e) { /* storage unavailable: treat as a fresh browser */ }
+      return false;
+    }
+    /** One-time: record whether this browser predates the collapse defaults (#12014). Runs before any other dashboard key is written. */
+    function dashboardSeedCollapseDefaults() {
+      try {
+        if (localStorage.getItem(DASHBOARD_COLLAPSE_DEFAULTS_KEY)) return;
+        localStorage.setItem(DASHBOARD_COLLAPSE_DEFAULTS_KEY, dashboardHasPriorState() ? DASHBOARD_COLLAPSE_DEFAULTS_LEGACY : DASHBOARD_COLLAPSE_DEFAULTS_VERSION);
+      } catch (e) { /* storage unavailable */ }
+    }
+    /** True when the new-hive defaults apply to this browser (not a legacy browser). */
+    function dashboardCollapseDefaultsActive() {
+      try { return localStorage.getItem(DASHBOARD_COLLAPSE_DEFAULTS_KEY) !== DASHBOARD_COLLAPSE_DEFAULTS_LEGACY; } catch (e) { return true; }
+    }
+    /** Default collapsed state for a section when the operator has not chosen one. */
+    function dashboardDefaultCollapsed(sectionId) {
+      sectionId = dashboardAliasSectionId(sectionId);
+      return dashboardCollapseDefaultsActive() && DASHBOARD_DEFAULT_COLLAPSED_SECTIONS.indexOf(sectionId) >= 0;
+    }
+    /** Check whether a dashboard section is collapsed: explicit localStorage choice first, then the default. */
     function isSectionCollapsed(sectionId) {
       sectionId = dashboardAliasSectionId(sectionId);
       if (sectionId === 'cost-panel' && localStorage.getItem('hive-cost-collapsed') === '1') return true;
       if (sectionId === 'advisory-digest-section' && localStorage.getItem('hive-collapse-advisory-digest-main') === 'true') return true;
-      return localStorage.getItem(SECTION_LS_PREFIX + sectionId) === '1';
+      const raw = localStorage.getItem(SECTION_LS_PREFIX + sectionId);
+      if (raw === '1') return true;
+      if (raw === '0') return false;
+      return dashboardDefaultCollapsed(sectionId);
+    }
+    /** Write the per-section key: '1' collapsed, '0' explicitly expanded where the default is collapsed, removed otherwise. */
+    function writeSectionCollapsedKey(sectionId, collapsed) {
+      if (collapsed) {
+        localStorage.setItem(SECTION_LS_PREFIX + sectionId, '1');
+      } else if (dashboardDefaultCollapsed(sectionId)) {
+        localStorage.setItem(SECTION_LS_PREFIX + sectionId, '0');
+      } else {
+        localStorage.removeItem(SECTION_LS_PREFIX + sectionId);
+      }
     }
     /** Persist section collapsed state */
     function setSectionCollapsed(sectionId, collapsed) {
       sectionId = dashboardAliasSectionId(sectionId);
-      if (collapsed) {
-        localStorage.setItem(SECTION_LS_PREFIX + sectionId, '1');
-      } else {
-        localStorage.removeItem(SECTION_LS_PREFIX + sectionId);
-      }
+      writeSectionCollapsedKey(sectionId, collapsed);
       if (sectionId === 'cost-panel') {
         if (collapsed) localStorage.setItem('hive-cost-collapsed', '1');
         else localStorage.removeItem('hive-cost-collapsed');
@@ -8125,6 +8182,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_REVIEW_MIGRATION_KEY='hive.dashboard.reviewSectionMigrated';
     function dashboardAliasSectionId(id){return id==='review-pipeline-section'?'review-queue-section':id;}
     function dashboardMigrateReviewSectionStorage(){try{if(localStorage.getItem(DASHBOARD_REVIEW_MIGRATION_KEY)==='1')return;['hive-section-collapsed-review-queue-section','hive-section-collapsed-review-pipeline-section'].forEach(function(k){localStorage.removeItem(k);});var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY);if(raw){var arr=JSON.parse(raw);if(Array.isArray(arr)){arr=arr.map(dashboardAliasSectionId).filter(function(id,i,a){return id!=='review-queue-section'&&dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(arr.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(arr));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}}var layoutRaw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);if(layoutRaw){var layout=JSON.parse(layoutRaw);if(layout&&Array.isArray(layout.main)){layout.main=layout.main.map(dashboardAliasSectionId).filter(function(id,i,a){return a.indexOf(id)===i;});localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(layout));}}localStorage.setItem(DASHBOARD_REVIEW_MIGRATION_KEY,'1');}catch(e){}}
+    dashboardSeedCollapseDefaults();
     dashboardMigrateReviewSectionStorage();
     var dashboardDragState=null;
     var dashboardKeyboardSnapshot=null;
@@ -8156,7 +8214,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardLayoutSnapshot(){var collapsed={},hidden={},extras={};dashboardLayoutAllIds().forEach(function(id){if(isSectionCollapsed(id))collapsed[id]=true;});dashboardHiddenSectionsRead().forEach(function(id){hidden[id]=true;});dashboardLayoutExtraKeys().forEach(function(k){try{var v=localStorage.getItem(k);if(v!==null)extras[k]=v;}catch(e){}});return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(dashboardLayoutCurrent()),collapsed:collapsed,hidden:hidden,extras:extras};}
     function dashboardNormalizeSnapshot(value){var src=value&&typeof value==='object'?value:{};var layout=src.layout?src.layout:src;var collapsed={},hidden={},extras={};if(src.collapsed&&typeof src.collapsed==='object'&&!Array.isArray(src.collapsed)){dashboardLayoutAllIds().forEach(function(id){if(src.collapsed[id])collapsed[id]=true;});}if(src.hidden&&typeof src.hidden==='object'&&!Array.isArray(src.hidden)){dashboardLayoutAllIds().forEach(function(id){if(src.hidden[id]&&dashboardCanHideSection(id))hidden[id]=true;});}if(src.extras&&typeof src.extras==='object'&&!Array.isArray(src.extras)){Object.keys(src.extras).forEach(function(k){if(k.indexOf('hive-repos-pill-filter:')===0||/^hive[-.]repo/.test(k)||k.indexOf('hive-agent-card-layout:')===0||k.indexOf(AGENT_COMPACT_LS_PREFIX)===0||k===ALL_AGENTS_COMPACT_KEY)extras[k]=String(src.extras[k]);});}return {v:DASHBOARD_LAYOUT_SNAPSHOT_VERSION,layout:dashboardLayoutNormalize(layout),collapsed:collapsed,hidden:hidden,extras:extras};}
     function dashboardSnapshotEquals(a,b){a=dashboardNormalizeSnapshot(a);b=dashboardNormalizeSnapshot(b);if(!dashboardLayoutEquals(a.layout,b.layout))return false;var ac=Object.keys(a.collapsed).sort(),bc=Object.keys(b.collapsed).sort();if(JSON.stringify(ac)!==JSON.stringify(bc))return false;var ah=Object.keys(a.hidden).sort(),bh=Object.keys(b.hidden).sort();if(JSON.stringify(ah)!==JSON.stringify(bh))return false;var ae=Object.keys(a.extras).sort(),be=Object.keys(b.extras).sort();if(JSON.stringify(ae)!==JSON.stringify(be))return false;for(var i=0;i<ae.length;i++){if(a.extras[ae[i]]!==b.extras[ae[i]])return false;}return true;}
-    function dashboardLayoutDefaultSnapshot(){return dashboardNormalizeSnapshot({layout:null,collapsed:{},hidden:{},extras:{}});}
+    function dashboardLayoutDefaultCollapsed(){var collapsed={};dashboardLayoutAllIds().forEach(function(id){if(dashboardDefaultCollapsed(id))collapsed[id]=true;});return collapsed;}
+    function dashboardLayoutDefaultSnapshot(){return dashboardNormalizeSnapshot({layout:null,collapsed:dashboardLayoutDefaultCollapsed(),hidden:{},extras:{}});}
     function dashboardReadLayoutPresets(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_PRESETS_KEY);var arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(p){return p&&p.id&&p.state;}).slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT):[];}catch(e){return [];}}
     function dashboardWriteLayoutPresets(presets){try{localStorage.setItem(DASHBOARD_LAYOUT_PRESETS_KEY,JSON.stringify((presets||[]).slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT)));}catch(e){}dashboardRenderLayoutPresets();}
     function dashboardReadAppliedLayout(){try{var raw=localStorage.getItem(DASHBOARD_LAYOUT_APPLIED_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
@@ -8164,7 +8223,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardUpdateLayoutMenuState(){var status=document.getElementById('oc-gh-menu-layout-status'),wrap=document.getElementById('oc-gh-avatar-wrap');var current=dashboardLayoutSnapshot(),applied=dashboardReadAppliedLayout(),base=applied&&applied.state?applied:{kind:'default',name:'',state:dashboardLayoutDefaultSnapshot()};var same=dashboardSnapshotEquals(current,base.state);var label='Layout: ';if(base.kind==='default')label+=same?'default':'custom (unsaved)';else label+=(base.name||'custom')+(same?'':' (modified)');if(status)status.textContent=label;if(wrap)wrap.classList.toggle('layout-unsaved',!same);dashboardRenderLayoutPresets();}
     function dashboardUpdateResetButton(){dashboardUpdateLayoutMenuState();}
     function dashboardLayoutWrite(){try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(dashboardLayoutCurrent()));}catch(e){}dashboardUpdateResetButton();dashboardSortSidebar();}
-    function dashboardApplySnapshotState(state){state=dashboardNormalizeSnapshot(state);try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(state.layout));dashboardLayoutAllIds().forEach(function(id){if(state.collapsed[id])localStorage.setItem(SECTION_LS_PREFIX+id,'1');else localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardHiddenSectionsWrite(Object.keys(state.hidden||{}));var keep=state.extras||{};dashboardLayoutExtraKeys().forEach(function(k){if(!Object.prototype.hasOwnProperty.call(keep,k))localStorage.removeItem(k);});Object.keys(keep).forEach(function(k){localStorage.setItem(k,keep[k]);});}catch(e){}dashboardApplyLayout(state.layout);dashboardLayoutAllIds().forEach(applySectionCollapse);dashboardApplyHiddenSections();if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardUpdateLayoutMenuState();}
+    function dashboardApplySnapshotState(state){state=dashboardNormalizeSnapshot(state);try{localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(state.layout));dashboardLayoutAllIds().forEach(function(id){writeSectionCollapsedKey(id,!!state.collapsed[id]);});dashboardHiddenSectionsWrite(Object.keys(state.hidden||{}));var keep=state.extras||{};dashboardLayoutExtraKeys().forEach(function(k){if(!Object.prototype.hasOwnProperty.call(keep,k))localStorage.removeItem(k);});Object.keys(keep).forEach(function(k){localStorage.setItem(k,keep[k]);});}catch(e){}dashboardApplyLayout(state.layout);dashboardLayoutAllIds().forEach(applySectionCollapse);dashboardApplyHiddenSections();if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardUpdateLayoutMenuState();}
     function dashboardRenderLayoutPresets(){var list=document.getElementById('oc-gh-menu-layout-list');if(!list)return;var presets=dashboardReadLayoutPresets();if(!presets.length){list.innerHTML='<div class="avatar-menu-layout-empty">No saved layouts yet.</div>';return;}list.innerHTML=presets.map(function(p){return '<div class="avatar-menu-layout-snapshot"><span class="avatar-menu-layout-name" title="'+esc(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'">'+esc(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'</span><button type="button" class="avatar-menu-layout-action" data-action="applyDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Apply</button><button type="button" class="avatar-menu-layout-action" data-action="renameDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Rename</button><button type="button" class="avatar-menu-layout-action" data-action="deleteDashboardLayoutPreset" data-arg0="'+esc(p.id)+'">Delete</button></div>';}).join('');}
     function toggleDashboardLayoutPresets(){var list=document.getElementById('oc-gh-menu-layout-list'),btn=document.getElementById('oc-gh-menu-layout-saved');if(!list)return;list.hidden=!list.hidden;if(btn){btn.setAttribute('aria-expanded',String(!list.hidden));btn.textContent=list.hidden?'Saved layouts ▸':'Saved layouts ▾';}dashboardRenderLayoutPresets();}
     async function saveDashboardLayoutPreset(){var name=(await hivePrompt({title:'Save dashboard layout',message:'Name this layout snapshot.',defaultValue:DASHBOARD_LAYOUT_DEFAULT_NAME,confirmLabel:'Save'}));name=String(name||'').trim();if(!name)return;var presets=dashboardReadLayoutPresets(),now=new Date().toISOString(),state=dashboardLayoutSnapshot(),existing=presets.find(function(p){return (p.name||'').toLowerCase()===name.toLowerCase();});if(existing){existing.state=state;existing.updatedAt=now;}else{presets.unshift({id:'layout-'+Date.now().toString(36),name:name,createdAt:now,updatedAt:now,state:state});}presets=presets.slice(0,DASHBOARD_LAYOUT_PRESET_LIMIT);dashboardWriteLayoutPresets(presets);var saved=presets.find(function(p){return (p.name||'').toLowerCase()===name.toLowerCase();})||presets[0];dashboardMarkAppliedLayout('preset',saved.name,saved.id,saved.state);showToast('Layout saved as '+saved.name,'success');}
@@ -8172,6 +8231,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     async function renameDashboardLayoutPreset(id){var presets=dashboardReadLayoutPresets(),p=presets.find(function(x){return x.id===id;});if(!p)return;var name=(await hivePrompt({title:'Rename layout',message:'New layout name.',defaultValue:p.name||DASHBOARD_LAYOUT_DEFAULT_NAME,confirmLabel:'Rename'}));name=String(name||'').trim();if(!name)return;p.name=name;p.updatedAt=new Date().toISOString();dashboardWriteLayoutPresets(presets);var applied=dashboardReadAppliedLayout();if(applied&&applied.id===id)dashboardMarkAppliedLayout('preset',p.name,p.id,p.state);}
     async function deleteDashboardLayoutPreset(id){var presets=dashboardReadLayoutPresets(),p=presets.find(function(x){return x.id===id;});if(!p)return;if(!await hiveConfirm({title:'Delete saved layout?',message:'Delete "'+(p.name||DASHBOARD_LAYOUT_DEFAULT_NAME)+'"? The current working layout will not change.',confirmLabel:'Delete',danger:true}))return;dashboardWriteLayoutPresets(presets.filter(function(x){return x.id!==id;}));var applied=dashboardReadAppliedLayout();if(applied&&applied.id===id)dashboardMarkAppliedLayout('custom','', '', dashboardLayoutSnapshot());}
     function dashboardDownloadJSON(filename,obj){hiveExportViewer({title:filename,filename:filename,text:JSON.stringify(obj,null,2)+'\n',mime:'application/json'});}
+    function setAllDashboardSectionsCollapsed(collapsed){dashboardLayoutAllIds().forEach(function(id){if(dashboardSectionHidden(id))return;toggleSection(id,{collapsed:collapsed,animate:false});});dashboardUpdateLayoutMenuState();dashboardLayoutAnnounce(collapsed?'All dashboard sections collapsed.':'All dashboard sections expanded.');}
+    function expandAllDashboardSections(){setAllDashboardSectionsCollapsed(false);}
+    function collapseAllDashboardSections(){setAllDashboardSectionsCollapsed(true);}
     function exportDashboardLayoutJSON(){dashboardDownloadJSON('hive-dashboard-layout.json',dashboardLayoutSnapshot());showToast('Layout JSON ready to copy','success');}
     function importDashboardLayoutJSON(){var input=document.createElement('input');input.type='file';input.accept='application/json,.json';input.addEventListener('change',function(){var file=input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){try{var parsed=JSON.parse(String(reader.result||''));var state=dashboardNormalizeSnapshot(parsed);dashboardApplySnapshotState(state);dashboardMarkAppliedLayout('custom','', '', state);showToast('Layout imported','success');}catch(e){showToast('Layout import failed: invalid JSON','error');}};reader.readAsText(file);});input.click();}
     async function resetDashboardLayout(){var before=dashboardLayoutSnapshot();if(!await hiveConfirm({title:'Reset layout to default?',message:'This clears your working dashboard section order, collapsed sections, hidden sections, and saved layout display tweaks on this device. You can undo for a few seconds after reset.',confirmLabel:'Reset layout',danger:true}))return;try{localStorage.removeItem(DASHBOARD_LAYOUT_KEY);localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);dashboardLayoutAllIds().forEach(function(id){localStorage.removeItem(SECTION_LS_PREFIX+id);});dashboardLayoutExtraKeys().forEach(function(k){localStorage.removeItem(k);});}catch(e){}dashboardApplyLayout(dashboardLayoutNormalize(null));dashboardLayoutAllIds().forEach(applySectionCollapse);dashboardApplyHiddenSections();if(typeof repaintReposForWidth==='function')repaintReposForWidth();if(typeof renderAgents==='function')renderAgents(((window._lastStatus||{}).agents)||window._lastAgents||[]);if(typeof ocUpdateSidebarAgents==='function')ocUpdateSidebarAgents();dashboardMarkAppliedLayout('default','', '', dashboardLayoutDefaultSnapshot());dashboardLayoutAnnounce('Dashboard layout reset to the default.');showToast('Dashboard layout reset to default','info',{actionLabel:'Undo',autoDismissMs:10000,onAction:function(){dashboardApplySnapshotState(before);dashboardMarkAppliedLayout('custom','', '', before);dashboardLayoutAnnounce('Dashboard layout reset undone.');}});}
