@@ -62,13 +62,86 @@ func TestContributeMeAnonymousRejected(t *testing.T) {
 	}
 }
 
-// TestContributeMeNoProfileForbidden proves a signed-in visitor who never
-// registered on this hive gets 403, not a zeroed record that reads like they
-// contributed nothing.
-func TestContributeMeNoProfileForbidden(t *testing.T) {
+// TestContributeMeNoProfileIsAnEmptyState proves a signed-in visitor who never
+// registered on this hive gets a 200 that SAYS there is no record —
+// has_profile:false and no counters — rather than a zeroed record that reads
+// like they contributed nothing, and rather than the 403 this used to be
+// (#12111). The 403 was semantically wrong (the hive's own owner is routinely
+// in this state) and operationally fatal on a hosted spoke, where the Ingress
+// inherited a controller-wide custom-http-errors list that includes 403 and
+// replaced the JSON with an HTML error page the card could not read.
+func TestContributeMeNoProfileIsAnEmptyState(t *testing.T) {
 	s := meStatsServer(t)
-	if rec := getAs(s, "/api/contribute/me", "ghost"); rec.Code != http.StatusForbidden {
-		t.Fatalf("GET /api/contribute/me with no profile = %d, want 403", rec.Code)
+	rec := getAs(s, "/api/contribute/me", "ghost")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/contribute/me with no profile = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if got["github_username"] != "ghost" {
+		t.Errorf("github_username = %v, want the caller's own identity so the card can address them", got["github_username"])
+	}
+	if hp, ok := got["has_profile"].(bool); !ok || hp {
+		t.Errorf("has_profile = %v, want false", got["has_profile"])
+	}
+	for _, counter := range []string{"total_tasks_completed", "total_tasks_completed_with_pr", "total_tasks_failed", "tasks_completed_24h", "trust_tier"} {
+		if _, present := got[counter]; present {
+			t.Errorf("empty state carries %q; a reader must not mistake no record for a record of zero", counter)
+		}
+	}
+}
+
+// TestContributeMeHubOwnerWithoutProfile is the shape of #12111 exactly: the
+// hub-proxied spoke's OWNER, identified by the hub's injected headers, who
+// has never pointed a contributor agent at their own hive. They must get the
+// same readable empty state as any other signed-in visitor — a 2xx, so no
+// Ingress error interception can stand between them and it.
+func TestContributeMeHubOwnerWithoutProfile(t *testing.T) {
+	s := ownerTokenServer(t, "clubanderson", true)
+	seedStatsProfile(t, "mrbobbytables", 10, 4, 0)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/me", nil)
+	req.Header.Set("X-Hive-User", "clubanderson")
+	req.Header.Set("X-Hive-Role", "owner")
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("owner without profile GET /api/contribute/me = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "json") {
+		t.Fatalf("Content-Type = %q, want JSON", ct)
+	}
+	var got struct {
+		Username   string `json:"github_username"`
+		HasProfile *bool  `json:"has_profile"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Username != "clubanderson" || got.HasProfile == nil || *got.HasProfile {
+		t.Fatalf("owner got %s, want github_username=clubanderson has_profile=false", rec.Body.String())
+	}
+}
+
+// TestContributeMeProfileSaysSo pins has_profile:true on the populated record,
+// so a client can key the two shapes apart on one field in both directions.
+func TestContributeMeProfileSaysSo(t *testing.T) {
+	s := meStatsServer(t)
+	seedStatsProfile(t, "present", 1, 1, 0)
+	rec := getAs(s, "/api/contribute/me", "present")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/contribute/me = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		HasProfile *bool `json:"has_profile"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.HasProfile == nil || !*got.HasProfile {
+		t.Fatalf("populated record has_profile = %v, want true", got.HasProfile)
 	}
 }
 

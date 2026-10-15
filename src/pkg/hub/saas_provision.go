@@ -3811,6 +3811,16 @@ metadata:
     # cross-origin login redirect — and a public path never needs one.
     nginx.ingress.kubernetes.io/auth-url: "{{.HubPublicURL}}/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"
+    # Pinned explicitly, like hive and hive-api-xhr: an Ingress without this
+    # annotation inherits the controller's GLOBAL custom-http-errors list,
+    # which on the hosted cluster includes 403 and 404. Every /api/contribute
+    # answer is JSON a client reads, and the spoke uses 403 as an answer
+    # (interests, invites), so inheriting that list let nginx swap a JSON 403
+    # for the error backend's HTML — which the "Your contribution" card then
+    # parsed as JSON and reported as a bug (#12111). Only the two statuses
+    # that mean "the hive is not there to answer" are intercepted here.
+    nginx.ingress.kubernetes.io/custom-http-errors: "502,503"
+    nginx.ingress.kubernetes.io/default-backend: hive-error-pages
 spec:
   ingressClassName: {{.IngressClass}}
   rules:

@@ -7189,28 +7189,42 @@ function ccLoadMine(force){
   if(!force&&ccMineLast&&(now-ccMineLast)<ccMineMinGap)return;
   ccMineLast=now;
   fetch('/api/contribute/me').then(function(r){
-    // 401 (anonymous) and 403 (no profile on this hive) are the NORMAL answers
-    // for a visitor, not failures — but they are still ANSWERS, and the card now
-    // renders them instead of staying hidden (#6937). Hiding it meant a
-    // signed-out viewer saw a page that looked complete, with nothing to suggest
-    // that signing in would reveal anything. The Profile tab already drew this
-    // distinction with .me-signin; Operations draws the same one, same class.
+    // 401 (anonymous) is the NORMAL answer for a visitor, not a failure — but
+    // it is still an ANSWER, and the card now renders it instead of staying
+    // hidden (#6937). Hiding it meant a signed-out viewer saw a page that
+    // looked complete, with nothing to suggest that signing in would reveal
+    // anything. The Profile tab already drew this distinction with .me-signin;
+    // Operations draws the same one, same class.
     if(r.status===401){ccRenderMineSignIn();return ccMineHandled;}
+    // 403 is what a spoke older than #12111 answers for "signed in, no profile
+    // on this hive". Newer spokes say the same thing as a 200 with
+    // has_profile:false (handled below), because on a hosted spoke the Ingress
+    // intercepted this 403 and replaced it with an HTML error page — which is
+    // exactly the fault the catch below then reported as a bug.
     if(r.status===403){ccRenderMineNoProfile(ccMeUsername);return ccMineHandled;}
     // Anything else non-2xx is a fault, not a statement about who is looking.
     if(!r.ok){console.error('contribution stats load failed: HTTP '+r.status);ccRenderMineError();return ccMineHandled;}
+    // A 2xx that is not JSON is the Ingress error backend speaking in the
+    // spoke's place (#12111): say which, so the console names the layer at
+    // fault instead of a bare SyntaxError from the parser.
+    var ct=(r.headers&&r.headers.get&&r.headers.get('content-type'))||'';
+    if(ct&&ct.indexOf('json')<0){console.error('contribution stats load failed: HTTP '+r.status+' with content-type '+ct+' — an intermediary answered instead of the hive');ccRenderMineError();return ccMineHandled;}
     return r.json();
   }).then(function(d){
     if(d===ccMineHandled)return;
     // A 200 we cannot read is a BUG, not an absent profile — saying so is the
     // same call renderMeError makes on the Profile tab.
     if(!d||!d.github_username){console.error('contribution stats payload unusable',d);ccRenderMineError();return;}
-    ccMineData=d;
     // Adopt the profile's STORED username when we have no viewer identity yet.
     // The metrics rings are keyed on that exact string, so this is also what lets
     // the personal sparklines find their series on a tab where the leaderboard
     // (the other setter of ccMeUsername) never ran.
     if(!ccMeUsername)ccMeUsername=d.github_username;
+    // Signed in, identified, but no contributor record on this hive yet — the
+    // hive's own owner is routinely here (#12111). An empty state, not tiles
+    // of zeros, and never the error message.
+    if(d.has_profile===false){ccMineData=null;ccRenderMineNoProfile(d.github_username);return;}
+    ccMineData=d;
     ccRenderMine();
     // Paint the sparkline immediately if metrics already landed; otherwise the
     // next ccMetricsPoll picks it up.
@@ -7238,14 +7252,15 @@ function ccRenderMineSignIn(){
   ccRenderMineMessage(ccSignInCTA('Sign in with GitHub')+' to see your own contribution stats '
     +'&mdash; issues worked, PRs produced, and your trust tier on this hive.');
 }
-// Signed in, but no contributor profile on this hive yet (403). The username is
+// Signed in, but no contributor profile on this hive yet (a 200 with
+// has_profile:false, or a 403 from a spoke older than #12111). The username is
 // whatever identity the page already resolved; it is routinely empty on the
 // Operations tab, where nothing else fetches the viewer, so the sentence has to
 // read correctly without it.
 function ccRenderMineNoProfile(username){
   var who=username?('<b>'+esc(username)+'</b>, you'):'You';
-  ccRenderMineMessage(who+' don’t have a contributor profile on this hive yet. '
-    +'Ship a task to start your card.');
+  ccRenderMineMessage(who+' have no contributor tasks on this hive yet &mdash; '
+    +'connect a contributor agent to get started, and your issues worked, PRs produced and trust tier will show here.');
 }
 // A transport, status or parse fault is shown AS a fault. Anonymous, profile-less
 // and broken used to render identically — as absence — so a bug here looked
