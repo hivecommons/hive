@@ -530,7 +530,9 @@ func TestAutoUpgradeToggleWorksUnderPull(t *testing.T) {
 	}}
 
 	mkUser(t, "alice")
-	req := setPathValue(reqWithUser("PUT", "/au", `{"auto_upgrade":true}`, "alice"), "id", "toggle-1")
+	// The toggle stores the request's mode verbatim, and an empty mode now
+	// means daily (#11822), so ask for instant explicitly to arm this cycle.
+	req := setPathValue(reqWithUser("PUT", "/au", `{"auto_upgrade":true,"auto_upgrade_mode":"instant"}`, "alice"), "id", "toggle-1")
 	rec := httptest.NewRecorder()
 	s.handleToggleAutoUpgrade(rec, req)
 
