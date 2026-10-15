@@ -456,10 +456,10 @@ func TestDiagConfigValueKey(t *testing.T) {
 		"agents.scanner.model":      true,
 		"agents..model":             false,
 		"agents.scanner.env.X":      false,
-		"github.token":              false,
+		"github.private_key":        false,
 		"dashboard.auth_token":      false,
-		"governor.logging.level":    true,
-		"governor.logging.level.x":  false,
+		"hub.url":                   true,
+		"hub.url.x":                 false,
 		"notifications.slack.hooks": false,
 	} {
 		if got := diagConfigValueKey(key); got != want {
