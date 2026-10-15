@@ -607,12 +607,6 @@ tool_approval.rules[].expr # TODO #11854
 tool_approval.rules[].min_acmm_level # TODO #11854
 tool_approval.rules[].name # TODO #11854
 tool_approval.rules[].priority # TODO #11854
-tracing.enabled # TODO #11854
-tracing.endpoint # TODO #11854
-tracing.headers.<key> # TODO #11854
-tracing.insecure # TODO #11854
-tracing.sample_ratio # TODO #11854
-tracing.service_name # TODO #11854
 triggers[].agent # TODO #11854
 triggers[].expr # TODO #11854
 triggers[].name # TODO #11854
