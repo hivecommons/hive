@@ -67,6 +67,10 @@ type LoggingConfig struct {
 	// KickLogSource selects what per-kick agent logs are built from:
 	// scrollback, transcript or auto. Empty or unknown means scrollback.
 	KickLogSource string `yaml:"kick_log_source,omitempty" json:"kick_log_source,omitempty"`
+	// ReadScanMaxMB lowers how many megabytes of log (decompressed) one admin
+	// log read may scan (hivecommons/hive#11942). Zero or a value above the
+	// built-in bound keeps the built-in bound; it can only be lowered.
+	ReadScanMaxMB int `yaml:"read_scan_max_mb,omitempty" json:"read_scan_max_mb,omitempty"`
 }
 
 // LiteLLM key/endpoint resolution defaults. hive.yaml stores only the env

@@ -168,6 +168,12 @@ func (g GovernorConfig) ResolveLiteLLMInferenceKey(backend string) string {
 // (production never reassigns it). Use SetSecretFileRootsForTest.
 var secretFileRoots = []string{"/secrets", WritableSecretsDir}
 
+// SecretFileRoots returns the directories hive reads secret files from, so a
+// reader can redact their contents (the admin log read, #11942).
+func SecretFileRoots() []string {
+	return append([]string(nil), secretFileRoots...)
+}
+
 // SetSecretFileRootsForTest overrides the allowed secret-file roots and returns
 // a function restoring the previous value. Intended for tests, which must write
 // key files into a t.TempDir() rather than the real /secrets.

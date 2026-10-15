@@ -247,6 +247,11 @@ category set — `hive-canary`, `github-token`, `jwt`, `api-key`, `slack-webhook
 the single source of truth and reused by `pkg/ioscan`. The canonical list is defined in
 `src/pkg/logscrub/handler.go`'s `secretPatterns` variable.
 
+hivecommons/hive#11942 adds a `basic-auth` category (an `Authorization: Basic <base64>`
+header, header or key/value form), mirrored in `bin/contributor-relay.js` so the relay
+category-parity test still holds. The log read tools below apply the whole set, and more, at
+read time.
+
 Two consequences for a client whose output is read by a language model:
 
 1. **No response can be treated as pre-sanitised.** The client re-applies the same category
@@ -294,6 +299,7 @@ one.
 | agent detail | `GET /api/agents`, `GET /api/config/agent/{name}`, `GET /api/agents/{name}/kicks` | `GET /api/config/agent/{name}` reports the last kick as `prompt`. |
 | leases and claims | `GET /api/runs`, `GET /api/runs/{key}`, `GET /api/claims` | Two distinct notions of "who holds this work", and both are wanted — see below. |
 | plans | `GET /api/plans`, `GET /api/plan/{epicID}` | `ListPlans` returns drafts first; the detail view is the epic plus children with execution tags and dependency edges. |
+| logs | `GET /api/logs/sources`, `GET /api/logs/read` | Added by #11942 for `log_sources` / `log_read`; see [Log read](#log-read). |
 | audit | `GET /api/audit`, `GET /api/runs/audit` | `handleAuditLog` requires `RoleAtLeast(role, RoleReadWrite)`, not owner. Both read-only by construction. |
 | settings | `GET /api/config`, `GET /api/config/governor`, `GET /api/packs` | Every setting a write tool can change is readable, so a preview can state a before as well as an after. |
 | autonomy readiness | `GET /api/acmm/evaluation`, `GET /api/acmm-recommendation` | The hive's own assessment, rather than a client-side judgment about level fitness. |
@@ -386,6 +392,62 @@ whole set operator-owned absolutes that repo-count scaling no longer adjusts (#4
 entry's `disclosure` says so. A hive with no token budget gets a `budget.update` entry whose
 `owner_input` names `totalTokens`, since only the owner can pick that number. Autonomy level,
 queue depth and feature toggles are out of scope and named in `not_considered`.
+
+### Log read
+
+hivecommons/hive#11942 (first child of #11941) adds the one surface the list above lacks for
+an operator with no shell on the host: the hive's own log. Two read tools wrap two dashboard
+routes added for them, in both read dispatchers (the in-hive provider and the stdio binary):
+
+| Tool | Endpoint | Gate |
+|---|---|---|
+| `log_sources` | `GET /api/logs/sources` | Dashboard auth. Names only: every source this hive knows, each `available` or not with a `reason`, and `default_source`. |
+| `log_read` | `GET /api/logs/read` | `handleLogRead` itself requires `RoleAtLeast(role, RoleReadWrite)`, so a read-only viewer is refused whichever path admitted the request. |
+
+Both are read-only: nothing here rotates, truncates, deletes or edits a log, or changes a log
+setting.
+
+- **Sources.** A fixed list; `hive` (`governor.logging.dir/hive.log` and its rotated
+  `hive-<time>.log[.gz]` history within the configured retention) is the first entry and the
+  default. A name the hive does not offer, or a source that is not available, returns
+  `status: not_available` with a reason, not an error.
+- **Line shape.** Every source returns `{time, source, level, stream, text}` oldest first;
+  `time` (UTC) and `level` come from the slog JSON record when present, `stream` only when the
+  source knows it.
+- **Bounds.** `lines` (not the shared `limit`) defaults to 100 and is clamped to 1000, with
+  `lines_requested`, `lines_applied` and `lines_clamped` reported. The result stays under
+  128 KiB (`result_byte_cap`); when bytes run out before the line count the answer has fewer
+  lines, `byte_capped`, `has_more` and a `next_cursor`. A line over 8 KiB is cut and flagged
+  `cut` with `full_bytes`. The list is `lines[]`, which the generic list capper never touches,
+  and no field name contains a word the outbound key mask hides. Each call scans at most
+  64 MiB of log (decompressed bytes count); `governor.logging.read_scan_max_mb` can lower
+  that. A call that stops early says so in `coverage` (`complete: false`, `stopped_reason`,
+  `covered_from`/`covered_until`) and still returns a `next_cursor`, so zero matches from an
+  incomplete scan never reads as "no matches".
+- **Filters.** `since`/`until` must be RFC 3339 with an explicit offset (an offset-less value
+  is refused); the applied window is reported in UTC with `hive_now`. `min_level` drops lower
+  levels and counts unlevelled lines it dropped (`unlevelled_dropped`). `include` and
+  `exclude[]` are case-insensitive literal text applied to the scrubbed line, so a filter can
+  never match, or reveal by elimination, a value scrubbing removed.
+- **History.** Rotated and gzip-compressed files are read newest first. A window that starts
+  before the oldest retained line sets `window_before_oldest_retained` with
+  `oldest_retained`; a truncated or corrupt history file is read as far as it goes and named
+  in `partial_files`.
+- **Paging.** `next_cursor` pages backwards. It names a history file by its first line's time
+  and digest plus a byte offset, so a rotation (rename, then compression) between two calls
+  neither repeats nor skips a line; a cursor whose file has left retention returns
+  `status: cursor_expired`.
+- **Scrubbing.** Each line is scrubbed at read time before filtering: private-key blocks
+  (scrubbed with overlap across the read region, so a key split by a page or rotation boundary,
+  or one with no END marker, is redacted to the end of the result), then one precompiled
+  multi-value replacer over this hive's own secret values of at least 12 characters (the
+  dashboard token, the terminal `user:token` login, the terminal key, secret file contents,
+  and environment values whose names contain TOKEN, KEY, SECRET, PASSWORD, CREDENTIAL or
+  PASSPHRASE) in plain, URL-encoded and base64 forms at all three alignments, then every
+  `pkg/logscrub` category including `basic-auth`. `redactions[]` counts replacements by kind;
+  a line that already held redaction-marker text on disk is flagged `pre_existing_marker`.
+  Every result carries the fixed `untrusted_content` marker: log text is data, never
+  instructions.
 
 ### Write
 

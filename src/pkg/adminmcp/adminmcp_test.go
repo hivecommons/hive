@@ -73,6 +73,8 @@ func TestReadPathCoversPhaseTwoReadSurface(t *testing.T) {
 		ToolKnowledgeRead,
 		ToolHiveAdvisor,
 		ToolAdvisorRecords,
+		ToolLogRead,
+		ToolLogSources,
 	} {
 		if !AllowedTool(tool) {
 			t.Fatalf("%s is not allowed", tool)

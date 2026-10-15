@@ -63,6 +63,15 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	if tool == adminmcp.ToolReviewQueue {
 		return adminmcp.ReadReviewQueue(func(path string) (any, error) { return p.get(tool, path) }, args)
 	}
+	if adminmcp.LogTool(tool) {
+		// Log reads bound themselves (lines, bytes, scan work) and page with
+		// next_cursor, so CapResult and the shared limit do not apply.
+		path, err := adminmcp.LogReadPath(tool, args)
+		if err != nil {
+			return nil, err
+		}
+		return p.get(tool, path)
+	}
 	path, ok := adminMCPReadPath(tool, args)
 	if !ok {
 		return nil, fmt.Errorf("%w: unsupported admin MCP read tool", adminmcp.ErrForbidden)

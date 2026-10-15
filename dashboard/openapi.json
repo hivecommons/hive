@@ -86,6 +86,338 @@
     }
   ],
   "paths": {
+    "/api/logs/read": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Read the hive's own log",
+        "description": "Returns the newest matching lines of a log source, oldest first, in one line shape (time, source, level, stream when known, text). The default and only source today is `hive`: governor.logging.dir/hive.log plus its rotated, compressed history within retention. Lines are scrubbed at read time (pkg/logscrub categories including basic-auth, private keys, and this hive's own secret values in plain, URL-encoded and base64 forms) before the include/exclude filters see them; redactions are counted by kind. Bounded: default 100 lines, at most 1000 (clamped and reported), 128 KiB total (byte_capped), 8 KiB per line (cut), and a per-call scan bound (governor.logging.read_scan_max_mb, default 64 MiB) reported in coverage. Page older with next_cursor. An unknown or unavailable source returns status not_available; a cursor that can no longer be honoured returns status cursor_expired. The handler itself requires read-write or owner access. Read-only: it never rotates, truncates or deletes a log. Wrapped by the admin MCP log_read tool.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "description": "Log source name from GET /api/logs/sources; default hive.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "lines",
+            "in": "query",
+            "required": false,
+            "description": "Newest matching lines to return (default 100, at most 1000; larger values are clamped and lines_clamped is set).",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "description": "RFC 3339 start of the window with an explicit offset; a value without an offset is refused with 400.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "description": "RFC 3339 end of the window with an explicit offset.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "min_level",
+            "in": "query",
+            "required": false,
+            "description": "Drop lines below this level; unlevelled lines are dropped and counted in unlevelled_dropped.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "debug",
+                "info",
+                "warn",
+                "error"
+              ]
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive literal text a scrubbed line must contain.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exclude",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive literal text; a scrubbed line containing any repeated value is dropped.",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "explode": true
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "next_cursor from the previous answer, to read the next older page.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log read result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string",
+                      "description": "Fixed marker: the line text is untrusted content."
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "not_available",
+                        "cursor_expired"
+                      ]
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "hive_now": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "window": {
+                      "type": "object",
+                      "properties": {
+                        "since": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "until": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "lines_requested": {
+                      "type": "integer"
+                    },
+                    "lines_applied": {
+                      "type": "integer"
+                    },
+                    "lines_clamped": {
+                      "type": "boolean"
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "time": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "level": {
+                            "type": "string"
+                          },
+                          "stream": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "cut": {
+                            "type": "boolean"
+                          },
+                          "full_bytes": {
+                            "type": "integer"
+                          },
+                          "pre_existing_marker": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "line_count": {
+                      "type": "integer"
+                    },
+                    "byte_capped": {
+                      "type": "boolean"
+                    },
+                    "result_byte_cap": {
+                      "type": "integer"
+                    },
+                    "cut_lines": {
+                      "type": "integer"
+                    },
+                    "has_more": {
+                      "type": "boolean"
+                    },
+                    "next_cursor": {
+                      "type": "string"
+                    },
+                    "unlevelled_dropped": {
+                      "type": "integer"
+                    },
+                    "untimed_dropped": {
+                      "type": "integer"
+                    },
+                    "redactions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string"
+                          },
+                          "count": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "pre_existing_marker_lines": {
+                      "type": "integer"
+                    },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {
+                        "complete": {
+                          "type": "boolean"
+                        },
+                        "stopped_reason": {
+                          "type": "string"
+                        },
+                        "scanned_bytes": {
+                          "type": "integer"
+                        },
+                        "work_bound_bytes": {
+                          "type": "integer"
+                        },
+                        "files_scanned": {
+                          "type": "integer"
+                        },
+                        "covered_from": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "covered_until": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "window_before_oldest_retained": {
+                      "type": "boolean"
+                    },
+                    "oldest_retained": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "partial_files": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed lines, since/until (missing offset), or min_level"
+          },
+          "403": {
+            "description": "Caller lacks the read-write role"
+          }
+        }
+      }
+    },
+    "/api/logs/sources": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List log sources",
+        "description": "Lists every log source name this hive knows, each marked available or not with a reason, and the default source (hive). Names only; no log text. Wrapped by the admin MCP log_sources tool.",
+        "responses": {
+          "200": {
+            "description": "Log sources",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "untrusted_content": {
+                      "type": "string"
+                    },
+                    "default_source": {
+                      "type": "string"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "default": {
+                            "type": "boolean"
+                          },
+                          "available": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/audit": {
       "get": {
         "tags": [

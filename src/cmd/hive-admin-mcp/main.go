@@ -244,6 +244,19 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		}
 		return adminmcp.ReadReviewQueue(func(path string) (any, error) { return getPath(ctx, client, path) }, args)
 	}
+	if adminmcp.LogTool(tool) {
+		// Log reads bound themselves (lines, bytes, scan work) and page with
+		// next_cursor, so CapResult and the shared limit do not apply.
+		path, err := adminmcp.LogReadPath(tool, args)
+		if err != nil {
+			return nil, err
+		}
+		client, _, err := p.roster.activeClient()
+		if err != nil {
+			return nil, err
+		}
+		return getPath(ctx, client, path)
+	}
 	path, ok := readPath(tool, args)
 	if !ok {
 		return nil, fmt.Errorf("unsupported admin MCP read tool %q", tool)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -624,5 +625,64 @@ func TestVersionReadReportsStdioBuild(t *testing.T) {
 		if build["short"] != tc.short || m["skew"] != tc.skew || m["short"] != "abc1234" {
 			t.Fatalf("short=%s: result = %#v", tc.short, m)
 		}
+	}
+}
+
+// TestReadLogToolsBypassListCap: log_read forwards its own arguments to
+// /api/logs/read and returns lines[] as the hive answered, never cut to the
+// shared limit (#11942); a since without an offset is refused before any call.
+func TestReadLogToolsBypassListCap(t *testing.T) {
+	var mu sync.Mutex
+	var requests []string
+	seen := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), requests...)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.URL.Path+"?"+r.URL.RawQuery)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/logs/sources" {
+			_, _ = w.Write([]byte(`{"type":"log_sources","default_source":"hive","sources":[{"name":"hive","available":true}]}`))
+			return
+		}
+		lines := make([]map[string]any, 300)
+		for i := range lines {
+			lines[i] = map[string]any{"source": "hive", "text": "line"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"type": "log_read", "status": "ok", "lines": lines, "line_count": len(lines)})
+	}))
+	defer server.Close()
+	r := &roster{hives: []hiveConfig{{Name: "active", Address: server.URL, Token: "token"}}, active: 0, timeout: time.Second}
+	provider := readProvider{roster: r}
+
+	data, err := provider.Read(context.Background(), adminmcp.ToolLogRead, map[string]any{"lines": float64(300), "since": "2026-03-01T07:00:00-05:00", "exclude": []any{"noise", "heartbeat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ := data.(map[string]any)
+	if lines, _ := m["lines"].([]any); len(lines) != 300 || m["lines_truncated"] != nil || m["_admin_mcp"] != nil {
+		t.Fatalf("log_read result was capped: %d lines, %#v", len(lines), m["_admin_mcp"])
+	}
+	if got := seen(); len(got) != 1 || !strings.HasPrefix(got[0], "/api/logs/read?") || !strings.Contains(got[0], "lines=300") ||
+		!strings.Contains(got[0], "exclude=noise&exclude=heartbeat") || !strings.Contains(got[0], "since=2026-03-01T07%3A00%3A00-05%3A00") {
+		t.Fatalf("requests = %q", got)
+	}
+
+	if _, err := provider.Read(context.Background(), adminmcp.ToolLogRead, map[string]any{"since": "2026-03-01T07:00:00"}); err == nil || !strings.Contains(err.Error(), "offset") {
+		t.Fatalf("offset-less since: err = %v", err)
+	}
+	if got := seen(); len(got) != 1 {
+		t.Fatalf("a refused argument must not reach the hive: %q", got)
+	}
+
+	sources, err := provider.Read(context.Background(), adminmcp.ToolLogSources, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sm, _ := sources.(map[string]any); sm["default_source"] != "hive" || seen()[len(seen())-1] != "/api/logs/sources?" {
+		t.Fatalf("sources = %#v, requests = %q", sources, seen())
 	}
 }

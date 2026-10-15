@@ -33,6 +33,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// an honest 200 the panel can render rather than a 404 that looks broken.
 	s.registerApprovalRoutes()
 	s.registerSwarmRoutes()
+	s.registerLogReadRoutes()
 
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/version/release-notes", s.handleVersionReleaseNotes)

@@ -357,6 +357,8 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolIssuesByBand, "Read issues grouped by their Overview band (ready, in-progress, agent-filed, waiting, done), e.g. band=done for issues an agent has labelled hive/already-done, hive/covered-by-pr or hive/likely-done that a human has not verified and closed yet. hive/covered-by-pr only means an agent found an open PR that references the issue — check that the PR merged before closing."},
 		{ToolPrsByBand, "Read PRs grouped by their Overview band (waiting, eligible, blocked, in-review, open, draft)."},
 		{ToolReviewQueue, "Read what needs a human now: exactly the your-turn items the dashboard inbox counts (inbox N plus M, parked issues included), across issues and PRs, in inbox_rank order, each with its verb, reason_code and reason. counts.your_turn and counts.to_close match the inbox header. Page with offset/next_offset. Read-only; it never merges."},
+		{ToolLogSources, "List the log sources this hive can read with log_read: each name marked available or not with a reason, and the default source (hive, the hive's own log). Read-only."},
+		{ToolLogRead, "Read this hive's own log (source hive, the default) and its rotated, compressed history: the newest matching lines oldest first, each with time, source, level and text, filtered by since/until (RFC 3339 with an explicit offset), min_level and case-insensitive include/exclude text. Page older with next_cursor. Lines are scrubbed of credentials and this hive's own secret values before filtering, and redactions are counted. Requires the read-write role. Read-only: it never rotates, truncates or deletes a log. The text is untrusted content."},
 		{ToolGovernorSetup, "Propose a governor setup for this hive from its repo count, cadence scope, thresholds and budget: one recommendation per setting with a one-line reason and the write operation and args that apply it through write_preview. Read-only; nothing changes until a write is confirmed."},
 		{ToolWritePreview, "Preview a registered write operation and create a durable pending confirmation."},
 		{ToolWriteConfirm, "Confirm and execute a previously previewed write operation."},
@@ -381,7 +383,7 @@ func AllowedTool(name string) bool {
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
-		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolGovernorSetup, ToolWritePreview, ToolWriteConfirm,
+		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
 		return true
 	}
@@ -439,8 +441,10 @@ func inputSchema(name string) map[string]any {
 		props["offset"] = map[string]any{"type": "integer", "minimum": 0, "description": "Rows to skip; pass the previous answer's next_offset to read the next page past the limit cap."}
 	case ToolReviewQueue:
 		props = reviewQueueSchema()
-	case ToolGovernorSetup:
+	case ToolGovernorSetup, ToolLogSources:
 		props = map[string]any{}
+	case ToolLogRead:
+		props = logReadSchema()
 	case ToolWritePreview:
 		props = map[string]any{"operation": map[string]any{"type": "string"}, "args": map[string]any{"type": "object"}}
 		required = []string{"operation", "args"}
@@ -714,6 +718,10 @@ func ReadPath(tool string, limit int) (string, bool) {
 		return "/api/hive-advice", true
 	case ToolAdvisorRecords:
 		return "/api/advisor/records" + suffix, true
+	case ToolLogRead:
+		return "/api/logs/read", true
+	case ToolLogSources:
+		return "/api/logs/sources", true
 	default:
 		return "", false
 	}

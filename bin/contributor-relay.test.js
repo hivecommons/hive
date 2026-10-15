@@ -6147,6 +6147,7 @@ test('#5478 redactTokens matches the Go scrubber credential categories', () => {
     ['PEM key', '-----BEGIN RSA PRIVATE KEY-----\nkey-data\n-----END RSA PRIVATE KEY-----'],
     ['encrypted PEM key', '-----BEGIN ENCRYPTED PRIVATE KEY-----\nkey-data\n-----END ENCRYPTED PRIVATE KEY-----'],
     ['PGP key', '-----BEGIN PGP PRIVATE KEY BLOCK-----\nkey-data\n-----END PGP PRIVATE KEY BLOCK-----'],
+    ['Basic auth header', 'Authorization: Basic aGl2ZTpzM2NyM3QtdmFsdWU='],
   ];
   try {
     for (const [name, secret] of cases) {
