@@ -611,7 +611,7 @@ func (s *Store) Ready(actor string) []*Bead {
 
 	result := candidates[:0:0] // fresh slice, don't alias List's return
 	for _, b := range candidates {
-		if s.planGated(b) {
+		if s.planGated(b) || s.dependencyBlocked(b) {
 			continue
 		}
 		result = append(result, b)
@@ -636,6 +636,24 @@ func (s *Store) planGated(b *Bead) bool {
 		return true // fail-closed: parent epic missing
 	}
 	return metaString(parent, metaPlanStatus) != planStatusApproved
+}
+
+// dependencyBlocked reports whether bead b must be withheld from Ready() because
+// a depends_on target is not yet done/closed. An unknown dependency id is
+// treated as blocking (fail-closed), matching planGated.
+//
+// Caller must hold s.mu (at least RLock).
+func (s *Store) dependencyBlocked(b *Bead) bool {
+	for _, depID := range b.DependsOn {
+		dep, ok := s.beads[depID]
+		if !ok {
+			return true
+		}
+		if dep.Status != StatusClosed && dep.Status != StatusDone {
+			return true
+		}
+	}
+	return false
 }
 
 // metaString reads a string metadata value from a bead without locking. It

@@ -1,0 +1,1 @@
+- Fix `beads.Store.Ready()` ignoring `depends_on`: beads with a non-closed (or unknown) dependency are no longer offered as ready. Fixes #12070.
