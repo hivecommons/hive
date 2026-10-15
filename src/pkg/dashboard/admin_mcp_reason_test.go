@@ -2,13 +2,13 @@ package dashboard
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"testing"
 )
 
 func TestDashboardAdminMCPReadErrorKeepsHiveReason(t *testing.T) {
-	s := NewServerWithAuth(0, "secret", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// NewServerWithAuth leaves /api/logs/read to RegisterAPI; wire the log
+	// routes the same way api_logs_test.go does so the read reaches the handler.
+	s := logTestServer(t, t.TempDir())
 	p := dashboardAdminMCPProvider{server: s, user: "owner", role: "owner"}
 	_, err := p.Read(context.Background(), "log_read", map[string]any{
 		"since": "2026-01-02T00:00:00Z",
