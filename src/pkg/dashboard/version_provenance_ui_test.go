@@ -18,7 +18,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 	var source strings.Builder
 	for _, name := range []string{
 		"escapeHtml", "versionDeliveryLabel", "versionTrackingLabel", "versionTrackingTooltip", "upgradeTargetLabel", "versionCompareURL", "versionStatusText", "versionLastUpgradeText",
-		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
+		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionHubUpgradeAttemptKey", "versionAdoptHubUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
 		"versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary",
 		"versionUpgradeProgressStatus", "versionUpgradeKey", "versionBeeGlyphHTML", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionSetHTMLPreservingUpgradeBee", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
 		"versionNavbarUpgradeHTML", "ensureVersionMenuPortal", "renderVersionMenu", "renderVersionChip", "renderNavbarUpgradeIndicator", "renderVersionSurfaces", "fetchGitVersion",
@@ -121,6 +121,7 @@ const document = { getElementById: id => elements[id] || null, createElement: nu
 const window = {};
 let payload, calls = 0, _upgradeInProgress = false, _upgradeTargetHash = null;
 const VERSION_UPGRADE_STORAGE_KEY = 'hive.version.upgradeProgress';
+const VERSION_UPGRADE_HUB_SEEN_KEY = 'hive.version.upgradeHubAttempt';
 const VERSION_UPGRADE_DONE_MS = 30000;
 const VERSION_UPGRADE_LONG_MS = 15 * 60 * 1000;
 const VERSION_UPGRADE_POLL_MS = 5000;
@@ -200,6 +201,32 @@ async function render(overrides = {}) {
   out = await render({ upgradeMarker: { failed: true, target: 'b2c3d4e', attempts: 3, maxAttempts: 3 }, autoUpdate: { state: 'failed' }, tracking: 'floating' });
   assert.ok(out.menu.includes('upgrade failed'));
   assert.ok(out.legacy.includes('auto-update failed'));
+  assert.equal(out.navbarHidden, true, 'a failed hub upgrade must not start the bee animation');
+  assert.equal(localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY), null);
+  // #12055: a hub-initiated upgrade (live marker, no local click) drives the
+  // same bee/navbar surfaces as a local Upgrade click.
+  const hubMarker = { target: '1898332abcdef', current: 'a1b2c3d', attempts: 1, maxAttempts: 5, failed: false, requestedAt: new Date(versionNowMs() - 53000).toISOString() };
+  const hubUpgrade = { upgradeMarker: hubMarker, autoUpdate: { state: 'retrying', managedBy: 'hub' }, tracking: 'pinned', target: { source: 'hub', resolved: true, sha: '1898332abcdef', short: '1898332' }, upgradePolicy: { target_sha: '1898332abcdef' }, deployment: { runtime: 'kubernetes', upgradeSupported: true } };
+  out = await render(hubUpgrade);
+  assert.equal(out.navbarHidden, false, 'hub-initiated upgrade must show the navbar bee');
+  assert.ok(out.navbar.includes('oc-version-navbar-upgrade'));
+  assert.ok(out.navbar.includes('Upgrading'));
+  assert.ok(out.navbar.includes('1898332'));
+  assert.ok(out.menu.includes('oc-version-upgrade-progress'));
+  assert.ok(out.menu.includes('Upgrading…'));
+  assert.ok(out.menu.includes('upgrade retrying'));
+  assert.ok(!out.menu.includes('data-action="gh27"'), 'no upgrade button while a hub upgrade is in flight');
+  assert.equal(JSON.parse(localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY)).source, 'hub');
+  // Still in flight on the next poll.
+  out = await render(hubUpgrade);
+  assert.equal(out.navbarHidden, false);
+  // Marker gone without landing: the bee is dismissed and not re-shown for that attempt.
+  out = await render({ tracking: 'pinned', target: hubUpgrade.target, upgradePolicy: hubUpgrade.upgradePolicy });
+  assert.equal(out.navbarHidden, true, 'abandoned hub upgrade must dismiss the bee');
+  assert.equal(localStorage.getItem(VERSION_UPGRADE_STORAGE_KEY), null);
+  out = await render(hubUpgrade);
+  assert.equal(out.navbarHidden, true, 'the same hub attempt must not be re-shown after dismissal');
+  localStorage.removeItem(VERSION_UPGRADE_HUB_SEEN_KEY);
   out = await render({ behind: true, autoUpgrade: true, latestHash: 'b2c3d4e', latestShort: 'b2c3d4e', tracking: 'floating', deployment: { runtime: 'kubernetes', upgradeSupported: true } });
   assert.ok(out.legacy.includes('Queued for auto-upgrade'));
   // #6904: the passive badge no longer hides the owner's manual escape hatch.

@@ -31848,6 +31848,9 @@ function burnAreaChart() {
     // Git version indicator
     const GIT_VERSION_POLL_MS = 300000;
     const VERSION_UPGRADE_STORAGE_KEY = 'hive.version.upgradeProgress';
+    // Last hub-initiated upgrade attempt adopted into the progress record
+    // (#12055), so an attempt that was dismissed/expired is not re-shown.
+    const VERSION_UPGRADE_HUB_SEEN_KEY = 'hive.version.upgradeHubAttempt';
     const VERSION_UPGRADE_DONE_MS = 30000;
     const VERSION_UPGRADE_LONG_MS = 15 * 60 * 1000;
     const VERSION_UPGRADE_POLL_MS = 5000;
@@ -31894,6 +31897,7 @@ function burnAreaChart() {
         startedAt: Number(st.startedAt || versionNowMs()),
         completedAt: st.completedAt ? Number(st.completedAt) : 0
       };
+      if (st.source) next.source = String(st.source);
       try { localStorage.setItem(VERSION_UPGRADE_STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
       return next;
     }
@@ -31915,7 +31919,7 @@ function burnAreaChart() {
       if (!st) return null;
       now = now || versionNowMs();
       if (!st.completedAt) {
-        st = versionWriteUpgradeProgress({ target: st.target, targetShort: st.targetShort || st.target, startedFrom: st.startedFrom || '', startedAt: st.startedAt, completedAt: now });
+        st = versionWriteUpgradeProgress({ target: st.target, targetShort: st.targetShort || st.target, startedFrom: st.startedFrom || '', startedAt: st.startedAt, completedAt: now, source: st.source });
       }
       _upgradeInProgress = false;
       _upgradeTargetHash = null;
@@ -31932,7 +31936,8 @@ function burnAreaChart() {
         versionClearUpgradeProgress();
         return null;
       }
-      const knownTarget = target.sha || policy.target_sha || policy.armed_target || target.short || v && v.stableV4Hash || v && v.latestHash || v && v.targetHash || '';
+      const markerTarget = v && v.upgradeMarker && v.upgradeMarker.target || '';
+      const knownTarget = target.sha || policy.target_sha || policy.armed_target || target.short || v && v.stableV4Hash || v && v.latestHash || v && v.targetHash || markerTarget || '';
       if (versionSameCommit(running, st.target)) {
         if (knownTarget && !versionSameCommit(knownTarget, st.target)) {
           versionClearUpgradeProgress();
@@ -31948,11 +31953,49 @@ function burnAreaChart() {
         versionClearUpgradeProgress();
         return null;
       }
+      // A hub-initiated attempt lives only as long as the spoke's upgrade
+      // marker: if the marker is gone and the target has not landed, the
+      // attempt was abandoned (unpublished target, stale marker cleared).
+      if (st.source === 'hub' && !st.completedAt && v && !(v.upgradeMarker && v.upgradeMarker.target)) {
+        versionClearUpgradeProgress();
+        return null;
+      }
       if (!knownTarget) {
         versionClearUpgradeProgress();
         return null;
       }
       if (!st.completedAt) {
+        _upgradeInProgress = true;
+        _upgradeTargetHash = st.target;
+      }
+      return st;
+    }
+
+    function versionHubUpgradeAttemptKey(um) {
+      if (!um || !um.target) return '';
+      return [String(um.target), String(um.requestedAt || ''), String(um.attempts || '')].map(function(part) { return part.trim(); }).join('|');
+    }
+
+    // Adopt a hub-initiated upgrade (#12055): the spoke's on-PVC upgrade marker
+    // reaches the dashboard as v.upgradeMarker, but the progress record that
+    // drives the bee animation was only ever written by the local Upgrade
+    // button. Mirror a live marker into that record so hub-driven upgrades get
+    // the same surfaces, once per attempt.
+    function versionAdoptHubUpgradeProgress(v, now) {
+      const um = v && v.upgradeMarker;
+      if (!um || um.failed || !um.target) return null;
+      now = now || versionNowMs();
+      const running = v.hash || v.short || '';
+      if (running && versionSameCommit(running, um.target)) return null;
+      const key = versionHubUpgradeAttemptKey(um);
+      let seen = '';
+      try { seen = localStorage.getItem(VERSION_UPGRADE_HUB_SEEN_KEY) || ''; } catch (_) {}
+      if (seen && seen === key) return null;
+      try { localStorage.setItem(VERSION_UPGRADE_HUB_SEEN_KEY, key); } catch (_) {}
+      const requestedAt = Date.parse(um.requestedAt || '');
+      const startedAt = isFinite(requestedAt) && requestedAt > 0 && now - requestedAt < VERSION_UPGRADE_LONG_MS ? requestedAt : now;
+      const st = versionWriteUpgradeProgress({ target: um.target, targetShort: versionShortSHA(um.target), startedFrom: um.current || running, startedAt: startedAt, source: 'hub' });
+      if (st) {
         _upgradeInProgress = true;
         _upgradeTargetHash = st.target;
       }
@@ -32460,6 +32503,7 @@ function burnAreaChart() {
           _upgradeTargetHash = null;
         }
         let upgradeProgress = typeof versionReconcileUpgradeProgress === 'function' ? versionReconcileUpgradeProgress(v) : null;
+        if (!upgradeProgress) upgradeProgress = versionAdoptHubUpgradeProgress(v);
         const upgradeCurrentHash = String(v.hash || '').toLowerCase();
         const upgradeTargetHash = String(_upgradeTargetHash || '').toLowerCase();
         const policyTargetHash = v.upgradePolicy && (v.upgradePolicy.target_sha || v.upgradePolicy.armed_target) || '';
