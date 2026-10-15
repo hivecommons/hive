@@ -2280,13 +2280,14 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
 	autoMergeOpts := automerge.Options{
-		Logger:                 b.logger,
-		MergerAuthorizer:       trustedMergerFunc(b.cfg),
-		TrustedAuthorizer:      trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(b.cfg),
-		ContributorLanePolicy:  contributorLanePolicyFunc(b.cfg),
-		ContributorLaneVerdict: contributorLaneVerdictFunc(b.cfg, b.logger),
-		SentinelLabel:          func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		Logger:                  b.logger,
+		MergerAuthorizer:        trustedMergerFunc(b.cfg),
+		TrustedAuthorizer:       trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(b.cfg),
+		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
+		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
+		ContributorRegistryTier: contributorRegistryTierFunc(),
+		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -8550,12 +8551,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		*lastRun = now
 	}
 	opts := automerge.Options{
-		Logger:                 logger,
-		MergerAuthorizer:       trustedMergerFunc(cfg),
-		TrustedAuthorizer:      trustedAuthorFunc(cfg),
-		TrustedAuthorPolicy:    trustedAuthorPolicyFunc(cfg),
-		ContributorLanePolicy:  contributorLanePolicyFunc(cfg),
-		ContributorLaneVerdict: contributorLaneVerdictFunc(cfg, logger),
+		Logger:                  logger,
+		MergerAuthorizer:        trustedMergerFunc(cfg),
+		TrustedAuthorizer:       trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
+		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
+		ContributorRegistryTier: contributorRegistryTierFunc(),
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }

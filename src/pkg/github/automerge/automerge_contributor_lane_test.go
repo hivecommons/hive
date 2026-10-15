@@ -456,13 +456,217 @@ func TestTrySweepContributorLanePRMergeCommentText(t *testing.T) {
 	if fx.comments != 1 || fx.lastComment != want {
 		t.Fatalf("comment = %q (n=%d), want %q", fx.lastComment, fx.comments, want)
 	}
-	noReviewer := contributorLaneMergeComment("@bob", 5, 30*time.Minute, ContributorLaneVerdict{})
+	noReviewer := contributorLaneMergeComment("@bob", contributorClaimMatch{Issue: 5}, 30*time.Minute, ContributorLaneVerdict{})
 	if !strings.Contains(noReviewer, "≥30m, no reviewer agent configured, claim by @bob on #5") {
 		t.Fatalf("no-reviewer comment = %q", noReviewer)
 	}
-	notRequired := contributorLaneMergeComment("bob", 5, 30*time.Minute, ContributorLaneVerdict{Configured: true})
+	notRequired := contributorLaneMergeComment("bob", contributorClaimMatch{Issue: 5}, 30*time.Minute, ContributorLaneVerdict{Configured: true})
 	if !strings.Contains(notRequired, "≥30m, reviewer verdict not required, claim by @bob on #5") {
 		t.Fatalf("verdict-not-required comment = %q", notRequired)
+	}
+	registry := contributorLaneMergeComment("@bob", contributorClaimMatch{RegistryTier: "trusted"}, 30*time.Minute, ContributorLaneVerdict{Configured: true, Approved: true})
+	if !strings.Contains(registry, "≥30m, reviewer verdict approve, @bob holds the trusted tier in this hive's contributor registry.") {
+		t.Fatalf("registry comment = %q", registry)
+	}
+}
+
+// registryTiers returns a ContributorRegistryTierFunc over a fixed
+// login→tier map (case-insensitive on login), standing in for the
+// contributor registry on the hive's PVC.
+func registryTiers(tiers map[string]string) ContributorRegistryTierFunc {
+	return func(login string) (string, bool) {
+		for k, v := range tiers {
+			if strings.EqualFold(k, login) {
+				return v, true
+			}
+		}
+		return "", false
+	}
+}
+
+// Regression for the contributor-lane registry admission path: an operator
+// marked mrbobbytables `trusted` in the contributor registry, yet #12045
+// (`Part of #12002`, a reference not a closing keyword) skipped with
+// no-linked-issue and #11756 (claimed outside the relay) with no-claim. A
+// RequireTiers tier in the registry must admit the PR without a marker,
+// while a non-trusted or absent registry entry leaves the marker path and
+// its skip reasons untouched.
+func TestTrySweepContributorLanePRRegistryAdmission(t *testing.T) {
+	noMarker := func(fx *contributorLaneFixture) {
+		fx.body = "Part of #42\n\nSome change."
+		fx.issueComments = nil
+	}
+	for _, tc := range []struct {
+		name       string
+		registry   ContributorRegistryTierFunc
+		mutate     func(fx *contributorLaneFixture)
+		policy     func(p *ContributorLanePolicy)
+		wantReason string
+		wantMerges int
+		wantAdmit  string // "registry" or "claim" when a merge is expected
+	}{
+		{
+			name:       "registry trusted admits without linked issue",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
+			mutate:     noMarker,
+			wantMerges: 1,
+			wantAdmit:  "registry",
+		},
+		{
+			name:       "registry merger admits without claim marker",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "merger"}),
+			mutate:     func(fx *contributorLaneFixture) { fx.issueComments = nil },
+			wantMerges: 1,
+			wantAdmit:  "registry",
+		},
+		{
+			name:       "registry login match is case-insensitive",
+			registry:   registryTiers(map[string]string{"MrBobbyTables": "Trusted"}),
+			mutate:     noMarker,
+			wantMerges: 1,
+			wantAdmit:  "registry",
+		},
+		{
+			name:     "registry trusted still passes the diff fences",
+			registry: registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
+			mutate: func(fx *contributorLaneFixture) {
+				noMarker(fx)
+				fx.files = []map[string]any{{"filename": ".github/workflows/ci.yml", "status": "modified", "additions": 1, "deletions": 1}}
+			},
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+		{
+			name:       "registry trusted still requires author association",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
+			mutate:     func(fx *contributorLaneFixture) { noMarker(fx); fx.association = "NONE" },
+			wantReason: contributorLaneReasonAuthorAssociation,
+		},
+		{
+			name:       "registry newcomer falls through to no-linked-issue",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "newcomer"}),
+			mutate:     noMarker,
+			wantReason: contributorLaneReasonNoLinkedIssue,
+		},
+		{
+			name:       "registry contributor falls through to no-claim",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "contributor"}),
+			mutate:     func(fx *contributorLaneFixture) { fx.issueComments = nil },
+			wantReason: contributorLaneReasonNoClaim,
+		},
+		{
+			name:       "registry revoked falls through to marker path",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "revoked"}),
+			mutate:     noMarker,
+			wantReason: contributorLaneReasonNoLinkedIssue,
+		},
+		{
+			name:       "registry tier outside require_tiers falls through",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
+			mutate:     noMarker,
+			policy:     func(p *ContributorLanePolicy) { p.RequireTiers = map[string]bool{"merger": true} },
+			wantReason: contributorLaneReasonNoLinkedIssue,
+		},
+		{
+			name:       "no registry entry keeps marker path",
+			registry:   registryTiers(map[string]string{"someoneelse": "trusted"}),
+			mutate:     noMarker,
+			wantReason: contributorLaneReasonNoLinkedIssue,
+		},
+		{
+			name:       "no registry entry with valid claim merges via marker",
+			registry:   registryTiers(nil),
+			wantMerges: 1,
+			wantAdmit:  "claim",
+		},
+		{
+			name:       "nil registry lookup keeps marker path",
+			mutate:     noMarker,
+			wantReason: contributorLaneReasonNoLinkedIssue,
+		},
+		{
+			name:       "registry path disabled by policy",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
+			mutate:     noMarker,
+			policy:     func(p *ContributorLanePolicy) { p.RegistryTiersSufficient = false },
+			wantReason: contributorLaneReasonNoLinkedIssue,
+		},
+		{
+			name:       "registry trusted with a valid claim still merges",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
+			wantMerges: 1,
+			wantAdmit:  "registry",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := validContributorFixture()
+			if tc.mutate != nil {
+				tc.mutate(&fx)
+			}
+			api := newContributorLaneAPI(t, &fx)
+			defer api.Close()
+			policy := defaultContributorLanePolicy()
+			policy.RegistryTiersSufficient = true
+			if tc.policy != nil {
+				tc.policy(&policy)
+			}
+			clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+			engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorRegistryTier: tc.registry, ContributorSoak: soakedTracker(clock)})
+			event, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+			}
+			if fx.merges != tc.wantMerges {
+				t.Fatalf("merges = %d, want %d", fx.merges, tc.wantMerges)
+			}
+			if tc.wantMerges == 0 {
+				return
+			}
+			if event.Tier != contributorLaneTier || event.Author != contributorLaneTestAuthor || event.MergeSHA != "merge7" {
+				t.Fatalf("event = %+v, want contributor-lane merge of PR 7", event)
+			}
+			switch tc.wantAdmit {
+			case "registry":
+				if !strings.Contains(fx.lastComment, "holds the") || !strings.Contains(fx.lastComment, "contributor registry") {
+					t.Fatalf("comment = %q, want registry admission", fx.lastComment)
+				}
+			case "claim":
+				if !strings.Contains(fx.lastComment, "claim by @"+contributorLaneTestAuthor+" on #42 verified") {
+					t.Fatalf("comment = %q, want claim admission", fx.lastComment)
+				}
+			}
+		})
+	}
+}
+
+func TestContributorLaneAdmitPathAndRegistryTierHelpers(t *testing.T) {
+	if got := contributorLaneAdmitPath(contributorClaimMatch{RegistryTier: "trusted"}); got != contributorLaneReasonRegistryTrusted {
+		t.Fatalf("admit path = %q, want %q", got, contributorLaneReasonRegistryTrusted)
+	}
+	if got := contributorLaneAdmitPath(contributorClaimMatch{Issue: 42}); got != "claim" {
+		t.Fatalf("admit path = %q, want claim", got)
+	}
+	if contributorLaneReasonRegistryTrusted != "contributor-lane:registry-trusted" {
+		t.Fatalf("admit reason = %q", contributorLaneReasonRegistryTrusted)
+	}
+	policy := defaultContributorLanePolicy()
+	policy.RegistryTiersSufficient = true
+	var nilEngine *Engine
+	if got := nilEngine.admittedRegistryTier("bob", policy); got != "" {
+		t.Fatalf("nil engine tier = %q, want empty", got)
+	}
+	engine := &Engine{contributorRegistryTier: registryTiers(map[string]string{"bob": "  TRUSTED "})}
+	if got := engine.admittedRegistryTier("@bob", policy); got != "trusted" {
+		t.Fatalf("tier = %q, want trusted (trimmed, lower-cased, @ stripped)", got)
+	}
+	if got := engine.admittedRegistryTier("", policy); got != "" {
+		t.Fatalf("empty login tier = %q, want empty", got)
+	}
+	engine = &Engine{contributorRegistryTier: registryTiers(map[string]string{"bob": ""})}
+	if got := engine.admittedRegistryTier("bob", policy); got != "" {
+		t.Fatalf("blank registry tier = %q, want empty", got)
 	}
 }
 

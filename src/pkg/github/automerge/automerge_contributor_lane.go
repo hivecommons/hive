@@ -17,11 +17,18 @@ package automerge
 // tier and proved the GitHub login, and adds author/diff fences of its own.
 //
 // This tier merges such a PR when ALL of these hold:
-//   - the PR closes an issue (closing keyword in the body, same repo) whose
-//     App-authored `hive:claim` marker says kind=contributor, who=<PR author>,
+//   - the PR author is admitted by one of two paths: EITHER the author's
+//     profile in this hive's contributor registry carries an operator-set
+//     trust tier in require_tiers (registry_tiers_sufficient, default on;
+//     admit reason contributor-lane:registry-trusted), OR the PR closes an
+//     issue (closing keyword in the body, same repo) whose App-authored
+//     `hive:claim` marker says kind=contributor, who=<PR author>,
 //     hive=<this hive>, tier=<one of require_tiers> and verified=true. Only
 //     comments by the App bot count, so a contributor cannot stamp their own
-//     marker;
+//     marker. The registry path exists because the marker path alone left
+//     an operator-trusted contributor's PR waiting whenever the body merely
+//     referenced the issue (`Part of #N`) or the issue was claimed outside
+//     the relay (#12045, #11756);
 //   - GitHub's author_association for the PR author is not NONE,
 //     FIRST_TIMER or FIRST_TIME_CONTRIBUTOR;
 //   - the diff does not touch CI workflow/action definitions and does not
@@ -86,6 +93,12 @@ const (
 	contributorLaneReasonFilesEvidence     = contributorLaneReasonPrefix + "files-evidence"
 )
 
+// contributorLaneReasonRegistryTrusted is the admit reason logged when the
+// PR author's operator-set registry tier satisfied the tier requirement
+// without a claim marker. It is not a skip reason: it names the path that
+// admitted the PR so operators can tell it from a marker-admitted merge.
+const contributorLaneReasonRegistryTrusted = contributorLaneReasonPrefix + "registry-trusted"
+
 // contributorLaneTrustedAssociations are the GitHub author_association
 // values the tier accepts. NONE, FIRST_TIMER, FIRST_TIME_CONTRIBUTOR,
 // MANNEQUIN and a missing value all skip.
@@ -145,7 +158,16 @@ type ContributorLanePolicy struct {
 	// RequireTiers is the set of contributor tiers (lower-case) whose
 	// verified claim makes a PR eligible. Empty admits nobody.
 	RequireTiers map[string]bool
+	// RegistryTiersSufficient admits a PR whose author holds a RequireTiers
+	// tier in the contributor registry without a linked issue or claim
+	// marker (auto_merge.contributor_lane.registry_tiers_sufficient).
+	RegistryTiersSufficient bool
 }
+
+// ContributorRegistryTierFunc looks up the operator-set trust tier of a
+// GitHub login in this hive's contributor registry. ok is false when the
+// login has no profile; tier is returned as stored (any case).
+type ContributorRegistryTierFunc func(login string) (tier string, ok bool)
 
 // ContributorLaneVerdict is the reviewer relay's answer for one PR head.
 type ContributorLaneVerdict struct {
@@ -373,11 +395,54 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 	return ""
 }
 
-// contributorClaimMatch is the outcome of verifying the hive:claim marker on
-// the PR's linked issues.
+// contributorClaimMatch is the outcome of admitting the PR author: the
+// linked issue whose hive:claim marker matched, or the registry tier that
+// made a marker unnecessary. Reason is set when neither path admitted.
 type contributorClaimMatch struct {
-	Issue  int
-	Reason string
+	Issue        int
+	RegistryTier string
+	Reason       string
+}
+
+// admittedByRegistry reports whether the registry path admitted the author.
+func (m contributorClaimMatch) admittedByRegistry() bool {
+	return m.RegistryTier != ""
+}
+
+// admittedRegistryTier returns the PR author's registry tier when the
+// policy lets it stand in for a claim marker and it is one of RequireTiers.
+// A missing lookup, a missing profile or a tier outside RequireTiers all
+// return "" so the caller falls through to the marker path unchanged.
+func (c *Engine) admittedRegistryTier(author string, policy ContributorLanePolicy) string {
+	if c == nil || c.contributorRegistryTier == nil || !policy.RegistryTiersSufficient {
+		return ""
+	}
+	author = strings.TrimSpace(strings.TrimPrefix(author, "@"))
+	if author == "" {
+		return ""
+	}
+	tier, ok := c.contributorRegistryTier(author)
+	if !ok {
+		return ""
+	}
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	if tier == "" || !policy.RequireTiers[tier] {
+		return ""
+	}
+	return tier
+}
+
+// admitContributor resolves the author through the registry path first and
+// the claim-marker path second. The registry path is the operator's own
+// statement of trust for the login, so a hit needs no linked issue; a miss
+// (no profile, or a tier outside RequireTiers) leaves the marker path and
+// its skip reasons exactly as before.
+func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy ContributorLanePolicy) (contributorClaimMatch, error) {
+	author := hgithub.SafeGetLogin(pr.GetUser())
+	if tier := c.admittedRegistryTier(author, policy); tier != "" {
+		return contributorClaimMatch{RegistryTier: tier}, nil
+	}
+	return c.verifyContributorClaim(ctx, owner, repo, pr, policy)
 }
 
 // verifyContributorClaim finds the linked issue whose App-authored
@@ -544,12 +609,15 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	headSHA := pr.GetHead().GetSHA()
-	claim, err := c.verifyContributorClaim(ctx, owner, repo, pr, policy)
+	claim, err := c.admitContributor(ctx, owner, repo, pr, policy)
 	if err != nil {
 		return AutoMergeSweepEvent{}, claim.Reason, err
 	}
 	if claim.Reason != "" {
 		return AutoMergeSweepEvent{}, claim.Reason, nil
+	}
+	if claim.admittedByRegistry() {
+		c.info("contributor-lane admitted", "repo", displayRepo, "pr", number, "author", author, "reason", contributorLaneReasonRegistryTrusted, "registry_tier", claim.RegistryTier)
 	}
 	files, err := ListChangedFiles(caller, c.gh, owner, repo, pr)
 	if err != nil {
@@ -653,7 +721,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return AutoMergeSweepEvent{}, "merge-not-applied", nil
 	}
 	c.transport.RecordPRMergedAudit(fullRepo, number, method, mergeResult.GetSHA(), hgithub.PRAuditPathSweep)
-	if err := c.commentContributorLaneMerge(ctx, owner, repo, number, author, claim.Issue, policy.Soak, verdict); err != nil {
+	if err := c.commentContributorLaneMerge(ctx, owner, repo, number, author, claim, policy.Soak, verdict); err != nil {
 		c.warn("contributor-lane automerge audit comment failed", "repo", displayRepo, "pr", number, "error", err)
 	}
 	event := AutoMergeSweepEvent{
@@ -664,13 +732,23 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		MergeSHA: mergeResult.GetSHA(),
 		Tier:     contributorLaneTier,
 	}
-	c.info("automerge merged", "tier", contributorLaneTier, "repo", displayRepo, "pr", number, "author", author, "issue", claim.Issue, "soak", policy.Soak, "merge_sha", event.MergeSHA)
+	c.info("automerge merged", "tier", contributorLaneTier, "repo", displayRepo, "pr", number, "author", author, "issue", claim.Issue, "admitted_by", contributorLaneAdmitPath(claim), "soak", policy.Soak, "merge_sha", event.MergeSHA)
 	return event, "", nil
 }
 
+// contributorLaneAdmitPath names the path that admitted the author for the
+// merge log: the registry admit reason, or "claim" for the marker path.
+func contributorLaneAdmitPath(claim contributorClaimMatch) string {
+	if claim.admittedByRegistry() {
+		return contributorLaneReasonRegistryTrusted
+	}
+	return "claim"
+}
+
 // contributorLaneMergeComment is the one-line audit comment the tier leaves
-// on the PR it merged.
-func contributorLaneMergeComment(author string, issue int, soak time.Duration, verdict ContributorLaneVerdict) string {
+// on the PR it merged. It names the admission path so a reader can tell a
+// registry-tier merge from a claim-marker merge.
+func contributorLaneMergeComment(author string, claim contributorClaimMatch, soak time.Duration, verdict ContributorLaneVerdict) string {
 	verdictText := "reviewer verdict approve"
 	switch {
 	case !verdict.Configured:
@@ -678,12 +756,17 @@ func contributorLaneMergeComment(author string, issue int, soak time.Duration, v
 	case !verdict.Approved:
 		verdictText = "reviewer verdict not required"
 	}
+	login := strings.TrimPrefix(author, "@")
+	if claim.admittedByRegistry() {
+		return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, @%s holds the %s tier in this hive's contributor registry.",
+			int(soak.Minutes()), verdictText, login, claim.RegistryTier)
+	}
 	return fmt.Sprintf("Merged by hive contributor-lane auto-merge: CI green for ≥%dm, %s, claim by @%s on #%d verified.",
-		int(soak.Minutes()), verdictText, strings.TrimPrefix(author, "@"), issue)
+		int(soak.Minutes()), verdictText, login, claim.Issue)
 }
 
-func (c *Engine) commentContributorLaneMerge(ctx context.Context, owner, repo string, number int, author string, issue int, soak time.Duration, verdict ContributorLaneVerdict) error {
-	body := contributorLaneMergeComment(author, issue, soak, verdict)
+func (c *Engine) commentContributorLaneMerge(ctx context.Context, owner, repo string, number int, author string, claim contributorClaimMatch, soak time.Duration, verdict ContributorLaneVerdict) error {
+	body := contributorLaneMergeComment(author, claim, soak, verdict)
 	_, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
 	return err
 }

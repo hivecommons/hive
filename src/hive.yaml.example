@@ -50,6 +50,18 @@ project:
 #     - legacy-entry-no-longer-needed
 #   no_ci_ok:
 #     - your-org/docs-only-repo
+#   # Contributor-lane tier (src/docs/hive-merge.md#contributor-lane-auto-merge):
+#   # merges a green, soaked, reviewer-approved PR from a contributor the
+#   # operator trusts. The author is admitted either by holding a require_tiers
+#   # tier on their contributor-registry profile (registry_tiers_sufficient,
+#   # default true) or by closing an issue that carries this hive's verified
+#   # hive:claim marker for them.
+#   contributor_lane:
+#     enabled: true
+#     soak_minutes: 120
+#     require_reviewer_verdict: true
+#     require_tiers: [trusted, merger]
+#     registry_tiers_sufficient: true
 
 # Optional suspicious-activity alerts. Default: enabled, `sentinel-alert` is a
 # hard block for untrusted authors, and trusted authors (Hive App, owner-tier

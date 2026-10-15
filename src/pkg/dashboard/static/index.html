@@ -40080,6 +40080,7 @@ function burnAreaChart() {
       const amContributorLane = am.contributor_lane || {};
       const amContributorLaneOn = amContributorLane.enabled !== false; // nil/undefined = enabled
       const amContributorLaneVerdict = amContributorLane.require_reviewer_verdict !== false;
+      const amContributorLaneRegistry = amContributorLane.registry_tiers_sufficient !== false;
       const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 120;
       const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
       const amContributorLaneTiers = Array.isArray(amContributorLane.require_tiers) && amContributorLane.require_tiers.length ? amContributorLane.require_tiers : ['merger','trusted'];
@@ -40235,6 +40236,13 @@ function burnAreaChart() {
                   <span class="config-toggle-label">Require approving verdict ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Require approving verdict', `When on (the default), the configured reviewer agent must have recorded an approving verdict for the current head before the contributor-lane tier merges.`)}</span>
                 </div>
               </div>
+              <div class="config-field">
+                <label>Registry tier admits ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Registry tier admits', `When on (the default), a PR whose author holds a required tier on their contributor-registry profile is admitted without a linked issue or hive:claim marker (logged as contributor-lane:registry-trusted). Off requires the claim marker for everyone.`)}</label>
+                <div class="config-toggle">
+                  <div id="am-contributor-lane-registry-tiers-sufficient" class="config-toggle-switch ${amContributorLaneRegistry ? 'on' : ''}" data-action="gh103" role="switch" aria-checked="${amContributorLaneRegistry ? 'true' : 'false'}"></div>
+                  <span class="config-toggle-label">Admit by registry tier ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Admit by registry tier', `When on (the default), the operator-set trust tier on the author's contributor profile satisfies the tier requirement on its own; every other gate (CI, reviewer verdict, soak, diff fences) still applies.`)}</span>
+                </div>
+              </div>
             </div>
             <div class="config-field mt-4">
               <label for="am-contributor-lane-exclude-labels">Excluded labels</label>
@@ -40244,8 +40252,8 @@ function burnAreaChart() {
             <div class="config-field mt-4">
               <label for="am-contributor-lane-repos">Repositories</label>
               <select id="am-contributor-lane-repos" multiple size="${Math.min(Math.max(watchedRepos.length || 3, 3), 8)}" data-change-action="gh104" class="am-trusted-authors-repos">${amContributorLaneRepoOptions}</select>
-              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked).</p>
-              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
+              <p class="am-trusted-authors-note">Leave every repo unselected to allow all watched repositories. Skips are logged as <code>contributor-lane:*</code> reasons (no-claim, no-linked-issue, claim-author-mismatch, claim-other-hive, claim-tier-untrusted, claim-unverified, author-association, workflow-path, tests-removed, no-reviewer, no-verdict, soaking, sentinel-blocked); a registry-admitted PR logs <code>contributor-lane:registry-trusted</code>.</p>
+              <p class="config-help">YAML keys: <code>auto_merge.contributor_lane.enabled</code>, <code>auto_merge.contributor_lane.soak_minutes</code>, <code>auto_merge.contributor_lane.require_reviewer_verdict</code>, <code>auto_merge.contributor_lane.registry_tiers_sufficient</code>, <code>auto_merge.contributor_lane.repos[]</code>, <code>auto_merge.contributor_lane.exclude_labels[]</code>, <code>auto_merge.contributor_lane.require_tiers[]</code>.</p>
             </div>
           </div>
         </div>
@@ -41573,6 +41581,7 @@ function burnAreaChart() {
       'auto_merge.trusted_authors.require_github_permission': { tab: 'Features', stage: v => complianceStageTrustedAuthors('require_github_permission', v) },
       'auto_merge.contributor_lane.enabled': { tab: 'Features', stage: v => complianceStageContributorLane('enabled', v) },
       'auto_merge.contributor_lane.require_reviewer_verdict': { tab: 'Features', stage: v => complianceStageContributorLane('require_reviewer_verdict', v) },
+      'auto_merge.contributor_lane.registry_tiers_sufficient': { tab: 'Features', stage: v => complianceStageContributorLane('registry_tiers_sufficient', v) },
       'auto_merge.required_checks': { tab: 'Features' },
       'sentinel.enabled': { tab: 'Security', stage: v => markSentinelDirty('enabled', v) },
       'sentinel.disabled_behaviors': { tab: 'Security' },
@@ -42312,6 +42321,7 @@ function burnAreaChart() {
     function markDirtyContributorLane() {
       const enabled = document.getElementById('am-contributor-lane-enabled');
       const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');
+      const registry = document.getElementById('am-contributor-lane-registry-tiers-sufficient');
       const soak = document.getElementById('am-contributor-lane-soak-minutes');
       const labels = document.getElementById('am-contributor-lane-exclude-labels');
       const repos = document.getElementById('am-contributor-lane-repos');
@@ -42321,6 +42331,7 @@ function burnAreaChart() {
         enabled: !!(enabled && enabled.classList.contains('on')),
         soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 120,
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
+        registry_tiers_sufficient: !!(registry && registry.classList.contains('on')),
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],
         repos: repos ? Array.from(repos.selectedOptions).map(o => o.value).filter(Boolean) : [],
         require_tiers: tiers ? tiers.value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : []
