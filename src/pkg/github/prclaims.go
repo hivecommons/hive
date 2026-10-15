@@ -390,6 +390,16 @@ func claimKey(repo string, issue int) string {
 	return fmt.Sprintf("%s#%d", repo, issue)
 }
 
+// referencesIssue reports whether refs names repo#issue.
+func referencesIssue(refs []ClaimedRef, repo string, issue int) bool {
+	for _, ref := range refs {
+		if ref.Issue == issue && strings.EqualFold(ref.Repo, repo) {
+			return true
+		}
+	}
+	return false
+}
+
 // closingKeywords is GitHub's full set of issue-closing keywords. Matching is
 // case-insensitive. Source: GitHub docs, "Linking a pull request to an issue".
 var closingKeywords = []string{
@@ -756,8 +766,17 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	// branch as issue-423 / fix-issue-423 / 423-some-slug, so the
 	// head ref recovers the link. Only consulted when the body and
 	// title yielded nothing, so an explicit `Fixes #N` always wins.
+	//
+	// The branch-name claim is itself overruled by an explicit non-closing
+	// reference to the same issue (hivecommons/hive#12144): a PR on
+	// `feat/12005-push` whose body says `Refs #12005 (partial)` is the
+	// author declining to close the issue, and the heuristic must not turn
+	// that into a strong claim — which is what let SyncIssuePRClaimLabels
+	// give #12025 a GitHub closing link onto #12005 and arm auto-close on
+	// merge. The issue falls through to the reference tier below instead.
+	referencedRefs := ParseReferencedIssues(text, repo)
 	if len(refs) == 0 {
-		if n, ok := issueFromBranchName(headRef(pr)); ok {
+		if n, ok := issueFromBranchName(headRef(pr)); ok && !referencesIssue(referencedRefs, repo, n) {
 			refs = []ClaimedRef{{Repo: repo, Issue: n}}
 			refsAreClosing = false
 		}
@@ -786,7 +805,7 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 		strong[claimKey(ref.Repo, ref.Issue)] = true
 	}
 	var referenced []ClaimedRef
-	for _, ref := range ParseReferencedIssues(text, repo) {
+	for _, ref := range referencedRefs {
 		if !strong[claimKey(ref.Repo, ref.Issue)] {
 			referenced = append(referenced, ref)
 		}
@@ -1682,7 +1701,7 @@ func linkedPRFromClaim(c IssueClaim) IssueLinkedPR {
 	if c.MergedPR {
 		state = "merged"
 	}
-	return IssueLinkedPR{Number: c.PRNumber, Repo: c.PRRepo, State: state, Merged: c.MergedPR, URL: c.PRURL, Closing: c.Closing}
+	return IssueLinkedPR{Number: c.PRNumber, Repo: c.PRRepo, State: state, Merged: c.MergedPR, URL: c.PRURL, Closing: c.Closing, Reference: c.Reference}
 }
 
 func issueHasLabel(labels []string, label string) bool {
@@ -1944,8 +1963,21 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			// client memoises each linked pair and never memoises a
 			// failure, so this costs one GraphQL query per new claim and
 			// retries a failed pair on the next tick.
+			//
+			// A Reference claim also has any closing link the hive itself
+			// made for the pair retracted (hivecommons/hive#12144): the
+			// body may have said `Closes #N` when the link was made, or an
+			// earlier sweep graded the claim as strong, and either way the
+			// link now arms exactly the auto-close the author declined.
+			// Links made by anyone else are left alone and logged.
 			if claim.Reference {
-				if logger != nil {
+				if res, err := client.RetractHiveClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
+					logger.Warn("retracting hive closing link on reference-only PR failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+				} else if res.Retracted && logger != nil {
+					logger.Info("retracted hive closing link: PR only references the issue, so merging it must not close the issue", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
+				} else if res.Skipped == "not-hive-linked" && logger != nil {
+					logger.Warn("reference-only PR carries a closing link the hive did not make; leaving it in place", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
+				} else if logger != nil {
 					logger.Debug("not linking issue to reference-only PR; a closing link would auto-close the issue on merge", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber)
 				}
 			} else if res, err := client.EnsureClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {

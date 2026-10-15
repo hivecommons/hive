@@ -543,6 +543,10 @@ type IssueLinkedPR struct {
 	Merged  bool   `json:"merged"`
 	URL     string `json:"url,omitempty"`
 	Closing bool   `json:"closing,omitempty"`
+	// Reference marks a PR that references the issue without closing it
+	// (`Refs #N`, `Part of #N`): the dashboard glyph reads "covered by PR
+	// #N (partial)" rather than "closes via PR #N" (hivecommons/hive#12144).
+	Reference bool `json:"reference,omitempty"`
 }
 
 type Issue struct {
@@ -3539,21 +3543,30 @@ type RepoWorkIssue struct {
 	URL       string    `json:"url,omitempty"`
 	Bucket    string    `json:"bucket"`
 	Reason    string    `json:"reason,omitempty"`
+	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
+	// duplicate-PR guard suppressed into the claimed_by_pr bucket
+	// (hivecommons/hive#12144), so the repo card can render the same
+	// covering-PR glyph it shows on actionable issues. Both are the
+	// github.Issue fields of the same name, copied as-is.
+	LinkedPRs    []IssueLinkedPR    `json:"linked_prs,omitempty"`
+	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 	return RepoWorkIssue{
-		Repo:      issue.Repo,
-		Number:    issue.Number,
-		Title:     issue.Title,
-		Author:    issue.Author,
-		Labels:    append([]string(nil), issue.Labels...),
-		Assignees: append([]string(nil), issue.Assignees...),
-		CreatedAt: issue.CreatedAt,
-		UpdatedAt: issue.UpdatedAt,
-		URL:       issue.URL,
-		Bucket:    bucket,
-		Reason:    reason,
+		Repo:         issue.Repo,
+		Number:       issue.Number,
+		Title:        issue.Title,
+		Author:       issue.Author,
+		Labels:       append([]string(nil), issue.Labels...),
+		Assignees:    append([]string(nil), issue.Assignees...),
+		CreatedAt:    issue.CreatedAt,
+		UpdatedAt:    issue.UpdatedAt,
+		URL:          issue.URL,
+		Bucket:       bucket,
+		Reason:       reason,
+		LinkedPRs:    append([]IssueLinkedPR(nil), issue.LinkedPRs...),
+		ClaimContext: issue.ClaimContext,
 	}
 }
 

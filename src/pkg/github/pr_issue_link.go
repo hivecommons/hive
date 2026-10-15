@@ -52,6 +52,19 @@ func (c *closingLinkCache) mark(key string) {
 	c.seen[key] = struct{}{}
 }
 
+func (c *closingLinkCache) forget(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.seen, key)
+}
+
+// retractKey namespaces the memo of pairs whose hive-made closing link has
+// been checked for retraction, so it cannot collide with the ensure memo for
+// the same pair.
+func (c *closingLinkCache) retractKey(owner, repo string, issue, pr int) string {
+	return "retract:" + c.key(owner, repo, issue, pr)
+}
+
 // EnsureClosingIssueLink makes GitHub's Development sidebar — and therefore
 // the linked-PR glyph in the issue list — show repo#prNumber on
 // repo#issueNumber whenever GitHub has not already derived that link
@@ -184,4 +197,166 @@ func (c *Client) linkClosingIssuesForPR(ctx context.Context, owner, repo string,
 				slog.String("repo", repo), slog.Int("number", prNumber), slog.Int("issue", issue), slog.String("base", res.Base))
 		}
 	}
+}
+
+// ClosingLinkRetraction reports what RetractHiveClosingIssueLink did for one
+// issue↔PR pair.
+type ClosingLinkRetraction struct {
+	// Retracted is true when this call removed a closing link the hive had
+	// added.
+	Retracted bool
+	// Skipped names why nothing was removed: "not-linked" (GitHub lists no
+	// closing link for the pair), "not-hive-linked" (the link exists but
+	// the connecting actor is not this hive's App account, or the client
+	// has no App login to compare against), or "cached".
+	Skipped string
+	// LinkedBy is the login that connected the pair, when GitHub recorded
+	// one.
+	LinkedBy string
+}
+
+// RetractHiveClosingIssueLink removes a GitHub closing link repo#prNumber →
+// repo#issueNumber that this hive added itself and that its current claim no
+// longer justifies (hivecommons/hive#12144). The PR-claim sweep calls it for
+// every Reference claim ("Refs #N", "Part of #N"): such a PR deliberately
+// does not close the issue, so a closing link — which makes GitHub close the
+// issue when the PR merges — is wrong, whether it was added while the body
+// still said `Closes #N` or by a sweep that graded the claim as strong (the
+// #12025→#12005 case: a branch-name claim outranked the body's `Refs`).
+//
+// Only links the hive made are removed. GitHub records a ConnectedEvent on
+// the PR for every manual link, and the sidebar's manual link and
+// addCloseIssueReferences are the same action, so the most recent connect
+// for the issue tells who linked it: when that actor is this hive's App
+// account (Client.SetAppBotLogin, compared without the `[bot]` suffix
+// GraphQL omits) the pair is unlinked with removeCloseIssueReferences;
+// otherwise — a person linked it, or the hive authenticates with a PAT and
+// cannot tell its own links from a person's — it is left alone and reported
+// as "not-hive-linked" so the caller can log it. A link GitHub derived from
+// a closing keyword never reaches this path: the body would have graded the
+// claim as Closing, not Reference.
+//
+// Like EnsureClosingIssueLink the call is best-effort and memoised per pair,
+// and failures are not memoised so the next sweep retries. A retraction also
+// forgets the ensure memo for the pair, so a body edited back to `Closes #N`
+// is linked again on the following sweep.
+func (c *Client) RetractHiveClosingIssueLink(ctx context.Context, repo string, prNumber, issueNumber int) (ClosingLinkRetraction, error) {
+	if c == nil || c.client == nil {
+		return ClosingLinkRetraction{}, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	if owner == "" || name == "" || prNumber <= 0 || issueNumber <= 0 {
+		return ClosingLinkRetraction{}, fmt.Errorf("RetractHiveClosingIssueLink: repo, pr and issue are required")
+	}
+	key := c.closingLinks.retractKey(owner, name, issueNumber, prNumber)
+	if c.closingLinks.has(key) {
+		return ClosingLinkRetraction{Skipped: "cached"}, nil
+	}
+
+	var out struct {
+		Repository struct {
+			PullRequest struct {
+				ID                      string `json:"id"`
+				ClosingIssuesReferences struct {
+					Nodes []struct {
+						Number     int `json:"number"`
+						Repository struct {
+							NameWithOwner string `json:"nameWithOwner"`
+						} `json:"repository"`
+					} `json:"nodes"`
+				} `json:"closingIssuesReferences"`
+				TimelineItems struct {
+					Nodes []struct {
+						Actor struct {
+							Login string `json:"login"`
+						} `json:"actor"`
+						Subject struct {
+							Number int `json:"number"`
+						} `json:"subject"`
+					} `json:"nodes"`
+				} `json:"timelineItems"`
+			} `json:"pullRequest"`
+			Issue struct {
+				ID string `json:"id"`
+			} `json:"issue"`
+		} `json:"repository"`
+	}
+	query := `query($owner:String!, $name:String!, $pr:Int!, $issue:Int!) {
+  repository(owner:$owner, name:$name) {
+    pullRequest(number:$pr) {
+      id
+      closingIssuesReferences(first:50) {
+        nodes { number repository { nameWithOwner } }
+      }
+      timelineItems(last:100, itemTypes:[CONNECTED_EVENT]) {
+        nodes { ... on ConnectedEvent { actor { login } subject { ... on Issue { number } } } }
+      }
+    }
+    issue(number:$issue) { id }
+  }
+}`
+	vars := map[string]any{"owner": owner, "name": name, "pr": prNumber, "issue": issueNumber}
+	if err := c.graphQL(WithRESTCaller(ctx, "hive:retract_closing_link"), query, vars, &out); err != nil {
+		return ClosingLinkRetraction{}, fmt.Errorf("RetractHiveClosingIssueLink %s/%s#%d->#%d lookup: %w", owner, name, issueNumber, prNumber, err)
+	}
+	pr := out.Repository.PullRequest
+	res := ClosingLinkRetraction{}
+	wantRepo := owner + "/" + name
+	linked := false
+	for _, node := range pr.ClosingIssuesReferences.Nodes {
+		if node.Number == issueNumber && strings.EqualFold(node.Repository.NameWithOwner, wantRepo) {
+			linked = true
+			break
+		}
+	}
+	if !linked {
+		res.Skipped = "not-linked"
+		c.closingLinks.mark(key)
+		return res, nil
+	}
+	// timelineItems(last:N) is oldest→newest, so the last matching node is
+	// the connect that produced the current link.
+	for _, node := range pr.TimelineItems.Nodes {
+		if node.Subject.Number == issueNumber {
+			res.LinkedBy = node.Actor.Login
+		}
+	}
+	if res.LinkedBy == "" || !c.isOwnBotLogin(res.LinkedBy) {
+		res.Skipped = "not-hive-linked"
+		c.closingLinks.mark(key)
+		return res, nil
+	}
+	if pr.ID == "" || out.Repository.Issue.ID == "" {
+		return res, fmt.Errorf("RetractHiveClosingIssueLink %s/%s#%d->#%d: lookup returned no node ids", owner, name, issueNumber, prNumber)
+	}
+
+	mutation := `mutation($issue:ID!, $prs:[ID!]!) {
+  removeCloseIssueReferences(input:{issueId:$issue, pullRequestIds:$prs}) {
+    issue { number }
+  }
+}`
+	mvars := map[string]any{"issue": out.Repository.Issue.ID, "prs": []string{pr.ID}}
+	if err := c.graphQL(WithRESTCaller(ctx, "hive:retract_closing_link"), mutation, mvars, nil); err != nil {
+		return res, fmt.Errorf("RetractHiveClosingIssueLink %s/%s#%d->#%d removeCloseIssueReferences: %w", owner, name, issueNumber, prNumber, err)
+	}
+	res.Retracted = true
+	c.closingLinks.mark(key)
+	c.closingLinks.forget(c.closingLinks.key(owner, name, issueNumber, prNumber))
+	return res, nil
+}
+
+// isOwnBotLogin reports whether login is this hive's App bot account.
+// GraphQL actor logins omit the `[bot]` suffix REST appends, so both
+// spellings compare equal.
+func (c *Client) isOwnBotLogin(login string) bool {
+	login = strings.TrimSuffix(strings.TrimSpace(login), "[bot]")
+	if login == "" {
+		return false
+	}
+	for _, own := range c.hiveBotLogins() {
+		if strings.EqualFold(strings.TrimSuffix(own, "[bot]"), login) {
+			return true
+		}
+	}
+	return false
 }

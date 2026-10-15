@@ -398,7 +398,9 @@ queueing.
 
 ## Linked PR issue signals
 
-Repository issue pills can show a `🔗 #N` badge when Hive has verified a pull request related to that issue. Open PRs apply `🐝 covered by PR`; merged PRs on still-open issues apply `hive/likely-done` and render as `🔗 #N merged`. These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage. The status payload exposes the same evidence as `linked_prs: [{number, state, merged, url, closing}]` on each `github.Issue`.
+Repository issue pills show a `🔗` badge when Hive has verified a pull request related to that issue. Open PRs apply `🐝 covered by PR`; merged PRs on still-open issues apply `hive/likely-done`. The badge's tooltip grades the claim: "closes via PR #N" (the PR carries a closing keyword, or Hive linked it from the branch name), "covered by PR #N (partial)" (the PR says `Refs #N` / `Part of #N` and merging it will not close the issue), or "merged via PR #N". These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage.
+
+The badge is derived from Hive's own PR-claim evidence — the same source that applies the label — not from GitHub's closing-link data, so it is present for every covered issue whether the claim is closing or partial, and whether the issue is actionable or suppressed into the card's "covered by PR" group ([#12144](https://github.com/hivecommons/hive/issues/12144)). One badge renders per issue; when several PRs cover it the closing PR is primary, the count is appended (`🔗×2`), and the tooltip lists the rest. The status payload exposes the evidence as `linked_prs: [{number, state, merged, url, closing, reference}]` plus `claim_context` on each actionable `github.Issue` and on each `claimed_by_pr` entry in `nonActionableIssues`.
 
 ## Review pipeline board
 
