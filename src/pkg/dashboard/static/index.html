@@ -34343,7 +34343,7 @@ function burnAreaChart() {
 
     function renderLegacyLiteLLMDivergence(diverged) {
       if (!diverged) return '';
-      return `<div class="fs-sm mt-2" style="color:var(--red)" data-legacy-litellm-diverged>
+      return `<div class="fs-sm mt-2 text-danger" data-legacy-litellm-diverged>
             ⚠ This legacy endpoint (<code>${esc(diverged.legacy)}</code>) is not the <code>litellm</code> gateway listed above
             (<code>${esc(diverged.gateway)}</code>). Hives on builds before #11794 send the gateway's key to this legacy URL, so
             inference fails with a 401 even though the gateway's Test passes. Set the Endpoint URL below to
