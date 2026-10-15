@@ -21,7 +21,7 @@ The machine-readable schema is [`pkg/evidence/schema/v1.json`](../pkg/evidence/s
 | `schema_version` | Always `v1` for this schema. |
 | `id` | `owner/repo#number@headSHA`. |
 | `repo`, `number` | The repository (`owner/name`) and PR number. |
-| `author` | `login` and `kind` (`human`, `agent` or `bot`). |
+| `author` | `login` and `kind` (`human`, `agent` or `bot`). An `agent` author also carries `agent`, `backend` and `model`: the launch metadata the hive recorded when that agent opened the PR (the same values as the PR's attribution trailer); a field the hive did not know is omitted ([#12065](https://github.com/hivecommons/hive/issues/12065)). |
 | `base_sha`, `head_sha` | The commits the PR compares. The bundle is about `head_sha`. |
 | `previous_bundle_id` | The bundle for the previous head of this PR, if any. |
 | `policy` | Snapshot of the policy in force (below). |
@@ -31,6 +31,8 @@ The machine-readable schema is [`pkg/evidence/schema/v1.json`](../pkg/evidence/s
 | `sentinel` | Why the sentinel sweep flagged the PR, if it did: `rule`, `summary`, `paths`. |
 | `human_actions` | Approvals, label changes, hold lifts: `actor`, `kind`, `detail`, `at`. |
 | `merge` | Present once merged: `actor`, `method`, `at`, `sha`. Absent before merge. |
+| `revert_of`, `followup_of` | Bundle ids of earlier merged PRs this PR reverts or follows up with a fix (see [Change-failure links](#change-failure-links)). |
+| `reverted_by`, `followed_up_by` | Bundle ids of later PRs that reverted or followed up this one. |
 | `created_at`, `updated_at` | When the bundle was first written and last completed. |
 | `signed` | `true` only when a valid signing key produced `signature`. |
 | `hash` | Hex SHA-256 of the canonical encoding (see below). |
@@ -67,10 +69,20 @@ The review relay writes them whenever it records a validated verdict (with or wi
 - Every write recomputes `hash`, and signs when `evidence.signing_key_file` is set. Files are written then renamed, so a reader never sees a partial bundle. An existing bundle that cannot be parsed is left untouched rather than replaced.
 - When the sentinel sweep flags a PR, its findings (`rule`, `summary`, sorted `paths`) are added to `sentinel` in the bundle for the flagged head. If the relay has not written that head yet, the sweep starts the bundle from the PR it already listed. A finding already recorded is not added again.
 - When the PR merges, before the merge event is sealed in, Hive captures `ci` from GitHub: the latest check run per check name for the bundle's head, with its conclusion (or its status, such as `in_progress`, if it had not finished) and URL. It also captures `human_actions` from the PR's reviews and issue events: `approval` (an approving review of this head, or any approval since the bundle was created; `detail` is the review URL), `label_added`, `label_removed`, and `hold_lift` (a hold label removed); `detail` is the label name. Label changes count only from the bundle's `created_at`. Bot and App accounts, including Hive's own, are left out; their writes are in the hive audit log. Each capture is best-effort: if GitHub cannot be read, a warning is logged, that field stays empty, and the merge is still recorded. A replayed merge changes nothing.
+- When the merged PR's title or body references an earlier PR of the same repo, the two bundles are linked; see [Change-failure links](#change-failure-links).
 - A finding reported against the PR as a whole, with no file, is recorded with `path` `(pr)`. A verdict's `confidence` is that perspective's own 0 to 5 review confidence score divided by 5.
 - `evidence.enabled: false` stops new writes. Failures are logged and never fail or retry the review itself.
 
 Nothing prunes bundles automatically; they stay until an operator removes them. Reads follow the same retention contract as `/api/runs/audit`: a bundle Hive can prove existed (its PR directory is still there, or a newer bundle's `previous_bundle_id` names it) is reported with an explicit `expired` marker, never as silent absence.
+
+### Change-failure links
+
+A proxy for the change failure rate, not a verdict on any change ([#12067](https://github.com/hivecommons/hive/issues/12067)). When a PR merges, Hive scans its title and body for a keyword followed by `#N` or `owner/repo#N` (optionally `PR #N` / `pull request #N`) in the same repository:
+
+- **Revert:** `revert`, `reverts`, `reverting`, `revert of` (GitHub's Revert button writes `Reverts owner/repo#N`).
+- **Follow-up fix:** `fix`, `fixes`, `fixed`, `follow-up to|of|for` (also `followup`, `follow up`), `regression from|in|of`.
+
+A PR named both ways counts as a revert. A referenced number is linked only when its newest merged bundle records a merge in the 14 days before this one, so issue numbers and PRs Hive never reviewed link nothing. The merging bundle gets `revert_of` / `followup_of` (bundle ids) before it is sealed; then each linked bundle gets `reverted_by` / `followed_up_by` naming it and is re-sealed (and re-signed), so its `hash` differs from the one in its own merge comment. Commit messages are not scanned. A replayed merge adds nothing, and failures are logged and never affect the merge.
 
 ## Downloading
 

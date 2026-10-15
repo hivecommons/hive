@@ -151,7 +151,16 @@ func TestBundleMatchesSchema(t *testing.T) {
 		CreatedAt:     t0,
 		UpdatedAt:     t0,
 	}
-	for name, b := range map[string]*Bundle{"signed": signed, "unsigned": unsigned, "minimal": minimal} {
+	linked := sample()
+	linked.Author = Author{Login: "hive[bot]", Kind: AuthorAgent, Agent: "coder", Backend: "copilot", Model: "gpt-5.6-luna"}
+	linked.RevertOf = []string{BundleID("hivecommons/hive", 40, "a")}
+	linked.FollowupOf = []string{BundleID("hivecommons/hive", 41, "b")}
+	linked.RevertedBy = []string{BundleID("hivecommons/hive", 43, "c")}
+	linked.FollowedUpBy = []string{BundleID("hivecommons/hive", 44, "d")}
+	if err := Seal(linked, nil); err != nil {
+		t.Fatal(err)
+	}
+	for name, b := range map[string]*Bundle{"signed": signed, "unsigned": unsigned, "minimal": minimal, "linked": linked} {
 		t.Run(name, func(t *testing.T) {
 			if errs := validateSchema(root, root, toGeneric(t, b), "$"); len(errs) > 0 {
 				t.Fatalf("bundle does not validate against schema/v1.json:\n%s", strings.Join(errs, "\n"))
@@ -180,6 +189,9 @@ func TestSchemaRejectsInvalidBundles(t *testing.T) {
 		{"checks not array", func(m map[string]any) { m["ci"].(map[string]any)["checks"] = "none" }},
 		{"empty string", func(m map[string]any) { m["id"] = "" }},
 		{"policy not object", func(m map[string]any) { m["policy"] = 3 }},
+		{"author model type", func(m map[string]any) { m["author"].(map[string]any)["model"] = 5 }},
+		{"revert_of not array", func(m map[string]any) { m["revert_of"] = "o/r#1@h" }},
+		{"reverted_by empty id", func(m map[string]any) { m["reverted_by"] = []any{""} }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

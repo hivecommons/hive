@@ -96,6 +96,17 @@ func TestValidate(t *testing.T) {
 		{"sentinel", func(b *Bundle) { b.Sentinel[0].Rule = "" }, "sentinel[0]"},
 		{"action", func(b *Bundle) { b.HumanActions[0].Actor = "" }, "human_actions[0]"},
 		{"merge", func(b *Bundle) { b.Merge.SHA = "" }, "merge:"},
+		{"valid author model and links", func(b *Bundle) {
+			b.Author.Agent, b.Author.Backend, b.Author.Model = "coder", "copilot", "gpt-5.6-luna"
+			b.RevertOf = []string{BundleID("hivecommons/hive", 40, "a")}
+			b.FollowupOf = []string{BundleID("hivecommons/hive", 41, "b")}
+			b.RevertedBy = []string{BundleID("hivecommons/hive", 43, "c")}
+			b.FollowedUpBy = []string{BundleID("hivecommons/hive", 44, "d")}
+		}, ""},
+		{"revert_of empty", func(b *Bundle) { b.RevertOf = []string{""} }, "revert_of[0]"},
+		{"followup_of empty", func(b *Bundle) { b.FollowupOf = []string{"x", ""} }, "followup_of[1]"},
+		{"reverted_by empty", func(b *Bundle) { b.RevertedBy = []string{""} }, "reverted_by[0]"},
+		{"followed_up_by empty", func(b *Bundle) { b.FollowedUpBy = []string{""} }, "followed_up_by[0]"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -37,6 +37,11 @@ const (
 )
 
 // Bundle is the review evidence record for a single PR head SHA.
+//
+// RevertOf and FollowupOf are the bundle ids of earlier merged PRs this PR
+// reverts or fixes up; RevertedBy and FollowedUpBy are the reverse links
+// written on those earlier bundles. They are a change-failure-rate proxy, not
+// a verdict on the change (hivecommons/hive#12067).
 type Bundle struct {
 	SchemaVersion    string            `json:"schema_version"`
 	ID               string            `json:"id"`
@@ -53,6 +58,10 @@ type Bundle struct {
 	Sentinel         []SentinelFinding `json:"sentinel,omitempty"`
 	HumanActions     []Action          `json:"human_actions,omitempty"`
 	Merge            *MergeEvent       `json:"merge,omitempty"`
+	RevertOf         []string          `json:"revert_of,omitempty"`
+	FollowupOf       []string          `json:"followup_of,omitempty"`
+	RevertedBy       []string          `json:"reverted_by,omitempty"`
+	FollowedUpBy     []string          `json:"followed_up_by,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 	Signed           bool              `json:"signed"`
@@ -60,10 +69,15 @@ type Bundle struct {
 	Signature        string            `json:"signature,omitempty"`
 }
 
-// Author identifies the PR author. Kind is one of human, agent or bot.
+// Author identifies the PR author. Kind is one of human, agent or bot. For
+// an agent-authored PR, Agent, Backend and Model are the launch metadata the
+// hive recorded when the agent opened it; empty when unknown.
 type Author struct {
-	Login string `json:"login"`
-	Kind  string `json:"kind"`
+	Login   string `json:"login"`
+	Kind    string `json:"kind"`
+	Agent   string `json:"agent,omitempty"`
+	Backend string `json:"backend,omitempty"`
+	Model   string `json:"model,omitempty"`
 }
 
 // Policy snapshots the review policy in force when the bundle was written.
@@ -223,6 +237,19 @@ func (b *Bundle) Validate() error {
 	}
 	if m := b.Merge; m != nil && (m.Actor == "" || m.Method == "" || m.SHA == "") {
 		bad("merge: actor, method and sha are required")
+	}
+	for _, l := range []struct {
+		name string
+		ids  []string
+	}{
+		{"revert_of", b.RevertOf}, {"followup_of", b.FollowupOf},
+		{"reverted_by", b.RevertedBy}, {"followed_up_by", b.FollowedUpBy},
+	} {
+		for i, id := range l.ids {
+			if id == "" {
+				bad("%s[%d]: bundle id is required", l.name, i)
+			}
+		}
 	}
 	return errors.Join(errs...)
 }

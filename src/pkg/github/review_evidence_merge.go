@@ -46,7 +46,7 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 	owner, name := c.splitRepo(strings.TrimSpace(repo))
 	full := owner + "/" + name
 
-	var head, actor string
+	var head, actor, text string
 	if c.client != nil {
 		pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:review_evidence_merge"), owner, name, number)
 		if err != nil {
@@ -55,6 +55,7 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 		} else {
 			head = pr.GetHead().GetSHA()
 			actor = pr.GetMergedBy().GetLogin()
+			text = pr.GetTitle() + "\n" + pr.GetBody()
 		}
 	}
 	if actor == "" {
@@ -69,8 +70,10 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 	merge := evidence.MergeEvent{Actor: actor, Method: method, At: time.Now().UTC(), SHA: sha}
 	collect := func(b *evidence.Bundle) {
 		c.captureReviewEvidenceMergeContext(ctx, owner, name, b, merge.At)
+		linkReviewEvidenceChanges(b, text, merge.At)
 	}
 	b := c.completeReviewEvidenceMerge(full, number, head, merge, settings, collect)
+	c.recordReviewEvidenceBacklinks(b, settings)
 	if b == nil || c.client == nil {
 		return
 	}

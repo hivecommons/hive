@@ -16,7 +16,10 @@
       "additionalProperties": false,
       "properties": {
         "login": {"type": "string", "minLength": 1},
-        "kind": {"enum": ["human", "agent", "bot"]}
+        "kind": {"enum": ["human", "agent", "bot"]},
+        "agent": {"type": "string"},
+        "backend": {"type": "string"},
+        "model": {"type": "string"}
       }
     },
     "base_sha": {"type": "string", "minLength": 1},
@@ -59,6 +62,10 @@
         "sha": {"type": "string", "minLength": 1}
       }
     },
+    "revert_of": {"$ref": "#/$defs/bundle_ids"},
+    "followup_of": {"$ref": "#/$defs/bundle_ids"},
+    "reverted_by": {"$ref": "#/$defs/bundle_ids"},
+    "followed_up_by": {"$ref": "#/$defs/bundle_ids"},
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"},
     "signed": {"type": "boolean"},
@@ -66,6 +73,7 @@
     "signature": {"type": "string"}
   },
   "$defs": {
+    "bundle_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "verdict": {
       "type": "object",
       "required": ["perspective", "model", "backend", "verdict", "confidence", "recorded_at"],
