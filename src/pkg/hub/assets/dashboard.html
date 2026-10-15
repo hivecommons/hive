@@ -282,6 +282,12 @@
        :hover rule is declared AFTER this so hover always wins over the stripe. */
     .hive-table tr.hive-row-alt td { background: rgba(128,128,128,0.045); }
     .hive-table tr:hover td { background: rgba(244,199,95,0.04); }
+    .users-actions-cell { white-space: nowrap; }
+    .users-actions { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); flex-wrap: nowrap; }
+    .users-action-btn { inline-size: var(--nav-chip-h); block-size: var(--nav-chip-h); min-inline-size: var(--nav-chip-h); min-height: var(--nav-chip-h); padding: var(--sp-0) !important; display: inline-flex; align-items: center; justify-content: center; line-height: var(--lh-tight); }
+    .users-action-btn svg { inline-size: var(--fs-lg); block-size: var(--fs-lg); flex: none; }
+    .users-action-view, .users-action-block { background: var(--amber); border-color: var(--amber); color: var(--surface-0); }
+    .users-action-unblock { background: var(--status-ok); border-color: var(--status-ok); color: var(--surface-0); }
     /* Admin contact/CRM editor row. The .hive-table td rule above centres every
        cell, which is right for the dense status columns but wrong for a form:
        it centred the labels and the text inside the inputs. Fixed here on the
@@ -10940,6 +10946,20 @@
       }
     }
 
+    function adminUserActionIcon(name) {
+      var common = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
+      switch (name) {
+        case 'view':
+          return '<svg ' + common + '><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+        case 'block':
+          return '<svg ' + common + '><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>';
+        case 'delete':
+          return '<svg ' + common + '><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+        default:
+          return '';
+      }
+    }
+
     function providerBadge(u) {
       var p = String((u && u.provider) || 'github').toLowerCase();
       var meta = {
@@ -11059,12 +11079,12 @@
     // renderContactPanelRow is the expandable editor row that follows each user
     // row. It is always emitted (hidden unless expanded) so toggling is a
     // display flip rather than a re-render, which keeps focus and caret intact.
-    function renderContactPanelRow(u) {
+    function renderContactPanelRow(u, rowClass) {
       var open = !!(_contactExpandedUsers && _contactExpandedUsers[u.github_username]);
       var fld = 'padding:5px 7px;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);font-size:0.78rem;box-sizing:border-box;width:100%';
       var lbl = 'display:block;font-size:0.66rem;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em';
       var user = escAttr(u.github_username);
-      return '<tr id="' + contactPanelId(u.github_username) + '" style="display:' + (open ? '' : 'none') + '">' +
+      return '<tr id="' + contactPanelId(u.github_username) + '"' + (rowClass || '') + ' style="display:' + (open ? '' : 'none') + '">' +
         /* position:relative anchors the absolutely-positioned × below. */
         '<td class="contact-panel-cell" colspan="' + USERS_TABLE_COLSPAN + '" style="background:var(--surface);position:relative">' +
         '<div style="padding:10px 14px 12px 40px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">' +
@@ -11661,7 +11681,7 @@
       if (contactEditInProgress()) { scheduleDeferredUsersRender(); return; }
       _lastUsersJSON = sig;
       if (!users.length) { document.getElementById('users-container').innerHTML = '<div class="loading">No users found</div>'; return; }
-      var rows = users.map(function(u) {
+      var rows = users.map(function(u, i) {
         /* Engagement tier, hub-computed (see statusTierBadge / userStatusTier).
            The old cell rendered "active" for EVERY non-blocked user - an idle
            open tab, a never-logged-in user, and a daily driver all looked the
@@ -11682,10 +11702,19 @@
         var hiveCount = hiveIds.length;
         var expandId = 'expand-' + esc(u.github_username);
         var isExpanded = _adminExpandedUsers && _adminExpandedUsers[u.github_username];
+        var rowClass = (i % 2 === 1) ? ' class="hive-row-alt"' : '';
+        var blockLabel = u.blocked ? 'Unblock' : 'Block';
+        var blockClass = u.blocked ? 'users-action-unblock' : 'users-action-block';
+        var userActions = isAdmin ? '' :
+          '<div class="users-actions">' +
+            '<button class="hv-btn btn-primary btn-sm users-action-btn users-action-view" onclick="startImpersonation(\'' + esc(u.github_username) + '\')" title="View as" aria-label="View as">' + adminUserActionIcon('view') + '</button>' +
+            '<button class="hv-btn btn-danger btn-sm users-action-btn ' + blockClass + '" onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" title="' + blockLabel + '" aria-label="' + blockLabel + '">' + adminUserActionIcon('block') + '</button>' +
+            '<button class="hv-btn btn-danger btn-sm users-action-btn" onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')" title="Delete" aria-label="Delete">' + adminUserActionIcon('delete') + '</button>' +
+          '</div>';
 
         var hiveRows = '';
         if (hiveCount > 0) {
-          hiveRows = '<tr id="' + expandId + '" style="display:' + (isExpanded ? '' : 'none') + '"><td colspan="' + USERS_TABLE_COLSPAN + '"><div style="padding:8px 12px 8px 40px;font-size:var(--fs-sm)">';
+          hiveRows = '<tr id="' + expandId + '"' + rowClass + ' style="display:' + (isExpanded ? '' : 'none') + '"><td colspan="' + USERS_TABLE_COLSPAN + '"><div style="padding:8px 12px 8px 40px;font-size:var(--fs-sm)">';
           hiveRows += '<table style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--muted);font-size:0.7rem"><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Hive</th><th>Role</th><th>Type</th><th>Link</th></tr></thead><tbody>';
           hiveIds.forEach(function(hid) {
             var role = hivesObj[hid];
@@ -11721,7 +11750,7 @@
             (hasPendingReq ? ' <span style="color:var(--hub-dashboard-accent);font-size:0.65rem">&#9679; request</span>' : '') +
             renderUserStatsCard(u, hasPendingReq) +
           '</span>';
-        return '<tr>' +
+        return '<tr' + rowClass + '>' +
           '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--hub-dashboard-accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
           '<td class="fs-sm text-muted">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td class="fs-sm text-muted">' + esc(fmtUserTS(u.last_login)) + '</td>' +
@@ -11731,8 +11760,8 @@
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:var(--sp-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + affiliationCell(u) + '</td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span class="text-muted">0</span>') + '</td>' +
-          '<td>' + (isAdmin ? '' : '<button class="hv-btn btn-primary btn-sm" onclick="startImpersonation(\'' + esc(u.github_username) + '\')" title="See the hub exactly as this user does — read-only">View as</button> <button class="hv-btn btn-danger btn-sm" onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:var(--r-sm);cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button class="hv-btn btn-danger btn-sm" onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')">Delete</button>') + '</td>' +
-          '</tr>' + renderContactPanelRow(u) + hiveRows;
+          '<td class="users-actions-cell">' + userActions + '</td>' +
+          '</tr>' + renderContactPanelRow(u, rowClass) + hiveRows;
       }).join('');
       document.getElementById('users-container').innerHTML =
         // Shared autocomplete vocabulary for the Company combobox, rebuilt each
