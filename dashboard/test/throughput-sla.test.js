@@ -97,7 +97,7 @@ test('prtSLATile renders the p50, n, target and a coloured sparkline', () => {
     windows: { '7d': { start_to_pr: { p50_h: 6.5, p95_h: 12, n: 3 } } },
     history: [{ start_to_pr_p50: 2 }, { start_to_pr_p50: 6.5 }],
   };
-  const html = vm.runInContext('prtSLATile(PRT_SLA_SPANS[0], report, { start_to_pr_h: 4 })', ctx);
+  const html = vm.runInContext('prtSLATile(PRT_SLA_SPANS.find(s => s.key === 'start_to_pr'), report, { start_to_pr_h: 4 })', ctx);
   assert.match(html, /data-sla-state="breach"/);
   assert.match(html, /data-sla-span="start_to_pr"/);
   assert.match(html, /class="mval"[^>]*>6\.5h</);
@@ -107,7 +107,7 @@ test('prtSLATile renders the p50, n, target and a coloured sparkline', () => {
   assert.match(html, /data-color="var\(--prt-sla-color\)"/, 'sparkline inherits the tile state colour');
   assert.match(html, /class="config-tooltip" role="tooltip"/, 'uses the shared tooltip helper markup');
 
-  const empty = vm.runInContext('prtSLATile(PRT_SLA_SPANS[1], { windows: {}, history: [] }, { pr_to_merge_h: 24 })', ctx);
+  const empty = vm.runInContext('prtSLATile(PRT_SLA_SPANS.find(s => s.key === 'pr_to_merge'), { windows: {}, history: [] }, { pr_to_merge_h: 24 })', ctx);
   assert.match(empty, /data-sla-state="none"/);
   assert.match(empty, /class="mval"[^>]*>—</);
   assert.doesNotMatch(empty, /<svg/, 'no sparkline without history');
