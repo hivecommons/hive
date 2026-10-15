@@ -1619,14 +1619,14 @@
     .lc-journey .lc-ref { color: var(--text); font-weight: 600; font-family: var(--font-mono); font-size: 0.72rem;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lc-title { color: var(--muted); font-size: var(--fs-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
-    .lc-track { min-height: 1.4rem; border-radius: var(--r-pill); background: linear-gradient(90deg, color-mix(in srgb, var(--muted) 10%, transparent), color-mix(in srgb, var(--muted) 5%, transparent)); overflow: hidden; }
-    .lc-track-svg { display: block; width: 100%; height: 1.4rem; }
+    .lc-track { position: relative; min-height: 1.4rem; border-radius: var(--r-pill); background: linear-gradient(90deg, color-mix(in srgb, var(--muted) 10%, transparent), color-mix(in srgb, var(--muted) 5%, transparent)); overflow: visible; }
+    .lc-track-svg { display: block; width: 100%; height: 1.4rem; overflow: hidden; border-radius: var(--r-pill); }
     .lc-grid-line { stroke: color-mix(in srgb, var(--muted) 18%, transparent); stroke-width: 0.6; }
     .lc-bar { opacity: 0.95; }
     .lc-bar.inflight { fill: var(--yellow); }
     .lc-bar.merged { fill: var(--green); }
     .lc-bar.blocked { fill: var(--red); }
-    .lc-marker { fill: var(--text); stroke: var(--bg); stroke-width: 2; }
+    .lc-marker { position: absolute; top: 50%; left: var(--lc-marker-left, 0%); width: 11px; height: 11px; aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: var(--r-pill); box-sizing: border-box; background: var(--text); border: 2px solid var(--bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--muted) 18%, transparent); flex: 0 0 auto; min-width: 11px; min-height: 11px; pointer-events: auto; }
     .lc-meta { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); color: var(--muted); font-size: 0.72rem; }
     .lc-agent, .lc-time { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lc-show-rows { margin-top: var(--sp-3); display: flex; justify-content: center; }
@@ -19682,6 +19682,7 @@ function burnAreaChart() {
     const lcExpandedJourneys = new Set();
     const LC_COLLAPSED_ROW_LIMIT = 40;
     const LC_BAR_MIN_WIDTH_PCT = 1.5;
+    const LC_MARKER_MERGE_PCT = 1.1;
     let lcLastDTO = null;
     let lcScrollTop = 0;
     let lcShowAllRows = false;
@@ -19833,12 +19834,39 @@ function burnAreaChart() {
         `${lcAbsTime(start)} → ${lcAbsTime(end)}`
       ].filter(Boolean).join(' · ');
       const grid = [25, 50, 75].map((x) => `<line class="lc-grid-line" x1="${x}" x2="${x}" y1="0" y2="24"></line>`).join('');
-      const markers = Object.keys((j && j.stages) || {}).map((k) => {
+      const markerPoints = [{ x: left, label: `Start · ${lcAbsTime(start)}` }];
+      if (Math.abs(right - left) >= LC_MARKER_MERGE_PCT) markerPoints.push({ x: right, label: `End · ${lcAbsTime(end)}` });
+      Object.keys((j && j.stages) || {}).forEach((k) => {
         const at = lcStageLastAt(j.stages[k]);
-        if (!at) return '';
-        return `<circle class="lc-marker" cx="${lcPct(at, bounds).toFixed(2)}" cy="12" r="3"><title>${escapeHtml(lcStageLabel(k) + ' · ' + lcAbsTime(at))}</title></circle>`;
+        if (!at) return;
+        markerPoints.push({ x: lcPct(at, bounds), label: lcStageLabel(k) + ' · ' + lcAbsTime(at) });
+      });
+      const mergedMarkers = [];
+      markerPoints
+        .filter((m) => Number.isFinite(m.x))
+        .sort((a, b) => a.x - b.x)
+        .forEach((m) => {
+          const prev = mergedMarkers[mergedMarkers.length - 1];
+          if (prev && Math.abs(m.x - prev.x) < LC_MARKER_MERGE_PCT) {
+            prev.x = (prev.x + m.x) / 2;
+            if (m.label && !prev.labels.includes(m.label)) prev.labels.push(m.label);
+          } else {
+            mergedMarkers.push({ x: m.x, labels: m.label ? [m.label] : [] });
+          }
+        });
+      const markers = mergedMarkers.map((m) => {
+        const markerTitle = m.labels.join(' · ');
+        return `<span class="lc-marker" data-lc-marker-left="${m.x.toFixed(2)}" title="${escapeHtml(markerTitle)}" aria-hidden="true"></span>`;
       }).join('');
-      return `<div class="lc-track" title="${escapeHtml(title)}"><svg class="lc-track-svg" viewBox="0 0 100 24" preserveAspectRatio="none">${grid}<rect class="lc-bar ${cls}" x="${left.toFixed(2)}" y="6" width="${width.toFixed(2)}" height="12" rx="3" ry="3"><title>${escapeHtml(title)}</title></rect>${markers}</svg></div>`;
+      return `<div class="lc-track" title="${escapeHtml(title)}"><svg class="lc-track-svg" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">${grid}<rect class="lc-bar ${cls}" x="${left.toFixed(2)}" y="6" width="${width.toFixed(2)}" height="12" rx="3" ry="3"><title>${escapeHtml(title)}</title></rect></svg>${markers}</div>`;
+    }
+
+    function lcApplyMarkerPositions(root) {
+      if (!root || typeof root.querySelectorAll !== 'function') return;
+      root.querySelectorAll('.lc-marker[data-lc-marker-left]').forEach((marker) => {
+        const x = Number(marker.getAttribute('data-lc-marker-left'));
+        if (Number.isFinite(x)) marker.style.setProperty('--lc-marker-left', x.toFixed(2) + '%');
+      });
     }
 
     function lcScheduleLayout() {
@@ -20033,6 +20061,7 @@ function burnAreaChart() {
       }
 
       card.innerHTML = fleetHtml + windowHtml + listHtml;
+      lcApplyMarkerPositions(card);
       lcRestoreScroll();
       applySectionCollapse('lifecycle-section');
       lcEnsureResizeObserver();
