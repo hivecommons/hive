@@ -264,10 +264,6 @@ governor.question_autoclose.enabled # TODO #11854
 governor.question_autoclose.hours # TODO #11854
 governor.question_autoclose.human_label # TODO #11854
 governor.question_autoclose.labels[] # TODO #11854
-governor.replan.enabled # TODO #11854
-governor.replan.interval_s # TODO #11854
-governor.replan.max_replans # TODO #11854
-governor.replan.stall_threshold_s # TODO #11854
 governor.rotation.agents.<key> # TODO #11854
 governor.rotation.headroom_source # TODO #11854
 governor.rotation.high_volume_cadence_s # TODO #11854

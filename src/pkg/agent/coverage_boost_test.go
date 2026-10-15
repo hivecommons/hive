@@ -1830,3 +1830,30 @@ func TestFixSharedConfigPerms_AlreadyCorrect(t *testing.T) {
 	// Should be a no-op
 	m.fixSharedConfigPerms(agent)
 }
+
+func TestAuditFieldsAndFormatWrappers(t *testing.T) {
+	fields := Fields("agent", "scanner", "count", 2)
+	if fields["agent"] != "scanner" || fields["count"] != 2 {
+		t.Fatalf("Fields = %#v, want supplied key/value pairs", fields)
+	}
+	if got := FormatAuditDetail(fields); !strings.Contains(got, "agent=scanner") || !strings.Contains(got, "count=2") {
+		t.Fatalf("FormatAuditDetail = %q, want both fields", got)
+	}
+}
+
+func TestValidateKickUnknownAgent(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	if err := m.ValidateKick("missing"); err == nil || !strings.Contains(err.Error(), "agent missing not found") {
+		t.Fatalf("ValidateKick missing = %v, want not found error", err)
+	}
+}
+
+func TestFormatTimeForLog(t *testing.T) {
+	if got := formatTimeForLog(time.Time{}); got != "" {
+		t.Fatalf("zero time formatted as %q, want empty", got)
+	}
+	when := time.Date(2026, 10, 15, 3, 30, 0, 0, time.FixedZone("offset", -4*60*60))
+	if got := formatTimeForLog(when); got != "2026-10-15T07:30:00Z" {
+		t.Fatalf("formatTimeForLog = %q", got)
+	}
+}
