@@ -1,0 +1,1 @@
+- Expose OpenTelemetry export settings in the dashboard Settings dialog.

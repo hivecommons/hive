@@ -448,12 +448,6 @@ knowledge.vaults[].name # TODO #11854
 knowledge.vaults[].path # TODO #11854
 mint.key_path # TODO #11854
 mint.max_ttl_seconds # TODO #11854
-otel.enabled # TODO #11854
-otel.endpoint # TODO #11854
-otel.headers.<key> # TODO #11854
-otel.insecure # TODO #11854
-otel.sample_ratio # TODO #11854
-otel.service_name # TODO #11854
 planning.design_approved_label # TODO #11854
 planning.design_labels[] # TODO #11854
 planning.max_concurrent_designs # TODO #11854
