@@ -33296,6 +33296,7 @@ function burnAreaChart() {
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
       { tab: 'Features', section: 'Dashboard', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
+      { tab: 'Logging', section: 'Logging', label: 'Read scan bound (MB)', key: 'governor.logging.read_scan_max_mb', text: 'log read scan bound megabytes admin mcp log_read cursor' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
@@ -40731,6 +40732,20 @@ function burnAreaChart() {
         </div>`;
     }
 
+    // Log read scan bound (#11942): governor.logging.read_scan_max_mb lowers
+    // how much log one /api/logs/read or admin MCP log_read call may scan.
+    // 0 keeps the built-in bound; the field cannot raise it.
+    function renderGovLogRead(l) {
+      const ceiling = Number(l.readScanMaxMBDefault) || 64;
+      return `
+        <hr class="config-section-rule">
+        <div class="config-subgroup">Log read</div>
+        <div class="config-field">
+          <label>Read scan bound (MB) ${settingHelpMark('settings', 'logging', 'Read scan bound (MB)', `How many megabytes of log (counting decompressed bytes of compressed history) one hive-log read — the dashboard log viewer or the admin MCP <code>log_read</code> tool — may scan before it stops and hands back a cursor to resume from. The built-in bound is ${ceiling} MB; this setting can only lower it, never raise it. Leave 0 to keep the built-in bound. Applies to the next read without a restart.`)}</label>
+          <input type="number" min="0" max="${ceiling}" value="${l.readScanMaxMB || 0}" placeholder="0 = built-in (${ceiling} MB)" data-change-action="gh103">
+        </div>`;
+    }
+
     function renderGovLogging(l) {
       const levels = ['debug', 'info', 'warn', 'error'];
       return `
@@ -40754,6 +40769,7 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${l.compress !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="logging" data-key="compress"></div>
           <span class="config-toggle-label">Compress Rotated Files ${settingHelpMark('settings', 'logging', 'Compress Rotated Files', `Gzip-compress rotated log files to save disk space. Typically reduces log file size by ~90%. Enabled by default.`)}</span>
         </div>
+        ${renderGovLogRead(l)}
         ${renderGovKickLogSource(l)}`;
     }
 
@@ -48010,6 +48026,7 @@ function burnAreaChart() {
       },
       gh101: function (event, A) { markDirtyTrustedAuthors(); },
       gh102: function (event, A) { markDirtyTrustedAuthors(); },
+      gh103: function (event, A) { markDirty('logging','readScanMaxMB',Math.max(0, Number(this.value) || 0)); },
       gh95: function (event, A) {
         const input = document.getElementById('rv-new-perspective');
         const name = (input.value || '').trim().toLowerCase();

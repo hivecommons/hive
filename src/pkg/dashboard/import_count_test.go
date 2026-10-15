@@ -31,8 +31,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// (hivecommons/hive#10892), plus pkg/releasenotes for the release-notes endpoint,
 	// plus pkg/compliance for the control registry and /api/compliance routes,
 	// plus pkg/escalation for the read-only escalation ledger the your-turn
-	// ownership rules consult (hivecommons/hive#11565).
-	const maxDashboardInternalImports = 54
+	// ownership rules consult (hivecommons/hive#11565), plus pkg/logread for
+	// the /api/logs read path that shares the admin MCP log-read engine
+	// (hivecommons/hive#11942).
+	const maxDashboardInternalImports = 55
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

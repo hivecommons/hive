@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
+	"github.com/hivecommons/hive/pkg/logread"
 )
 
 func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request) {
@@ -1119,6 +1120,9 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 // is what the next kick log will actually use, with HIVE_KICK_LOG_SOURCE
 // applied, and kickLogSourceEnvLocked says when that env var is the reason the
 // two differ so the dialog can lock the select and say why (#11762, #9579).
+// readScanMaxMB is the saved governor.logging.read_scan_max_mb (0 when unset,
+// meaning the built-in bound) and readScanMaxMBDefault that bound in MiB, so
+// the dialog can show the ceiling the setting can only lower (#11942).
 func loggingSectionResponse(cfg *config.Config) map[string]interface{} {
 	l := cfg.Governor.Logging
 	return map[string]interface{}{
@@ -1132,6 +1136,8 @@ func loggingSectionResponse(cfg *config.Config) map[string]interface{} {
 		"kickLogSourceEffective": l.ResolveKickLogSource(),
 		"kickLogSourceEnvLocked": l.KickLogSourceOrigin() == config.KickLogSourceOriginEnv,
 		"kickLogSources":         config.KickLogSources(),
+		"readScanMaxMB":          l.ReadScanMaxMB,
+		"readScanMaxMBDefault":   int(logread.DefaultWorkBoundBytes >> 20),
 	}
 }
 
@@ -1149,6 +1155,9 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 		// KickLogSource is a pointer so an absent key leaves the setting
 		// untouched; "" resets it to the default (scrollback).
 		KickLogSource *string `json:"kickLogSource"`
+		// ReadScanMaxMB is a pointer so an absent key leaves the setting
+		// untouched; 0 resets it to the built-in bound.
+		ReadScanMaxMB *int `json:"readScanMaxMB"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -1160,6 +1169,10 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.KickLogSource != nil && strings.TrimSpace(*body.KickLogSource) != "" && !config.ValidKickLogSource(*body.KickLogSource) {
 		jsonError(w, fmt.Sprintf("kickLogSource must be one of %s", strings.Join(config.KickLogSources(), ", ")), http.StatusBadRequest)
+		return
+	}
+	if body.ReadScanMaxMB != nil && *body.ReadScanMaxMB < 0 {
+		jsonError(w, "readScanMaxMB must be 0 (built-in bound) or a positive number of MiB", http.StatusBadRequest)
 		return
 	}
 
@@ -1192,6 +1205,11 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 			v = config.NormalizeKickLogSource(v)
 		}
 		s.deps.Config.Governor.Logging.KickLogSource = v
+	}
+	if body.ReadScanMaxMB != nil {
+		// Read by logReadOptions on every /api/logs/read and admin MCP
+		// log_read call; nothing to push here.
+		s.deps.Config.Governor.Logging.ReadScanMaxMB = *body.ReadScanMaxMB
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after logging update", "error", err)
