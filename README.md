@@ -12,7 +12,7 @@ Hive is a co-maintainer for your GitHub project that never sleeps. Point it at a
 
 ## What Hive is
 
-Hive watches the work that piles up in a repository — issues, pull requests, failing CI, CVEs, and dependabot alerts — and sends AI coding agents (Claude, Copilot, Gemini, Goose…) to deal with it: triage, fixes, reviews, releases. You decide how much it is allowed to do. Humans keep every decision that matters; agents do the chores.
+Hive watches the work that piles up in a repository — issues, pull requests, failing CI, CVEs, and dependabot alerts — and sends AI coding agents (Claude, Copilot, Codex, Antigravity, Goose…) to deal with it: triage, fixes, reviews, releases. You decide how much it is allowed to do. Humans keep every decision that matters; agents do the chores.
 
 ## "I already use an agent. How is this different?"
 
@@ -38,7 +38,7 @@ A spoke works alone. A hub is how you see and manage a fleet of them.
 
 ## Does Hive fit my project?
 
-**Do I need a paid agent subscription?** No. Hive drives the agent CLIs you already have (Claude, Copilot, Gemini, Goose) *or* any OpenAI-compatible model through its Model Gateway (OpenRouter key, no CLI login). Contributors can bring their own.
+**Do I need a paid agent subscription?** No. Hive drives the agent CLIs you already have (Claude, Copilot, Codex, Antigravity, Goose) *or* any OpenAI-compatible model through its Model Gateway (OpenRouter key, no CLI login). Contributors can bring their own.
 
 **Who tells it what to work on?** Your backlog does. The Governor reads your issues/PRs/CI, filters them deterministically (labels, areas, complexity), and only hands agents work you have allowed. You choose the areas and the trust level. Nothing is invented.
 

@@ -1,6 +1,6 @@
 # Hive introduction
 
-Hive is a co-maintainer for your GitHub project that never sleeps. Point it at a repo and it watches the things that pile up — issues, pull requests, failing CI, CVEs, dependabot alerts — then sends AI coding agents (Claude, Copilot, Gemini, Goose…) to deal with them: triage, fixes, reviews, releases.
+Hive is a co-maintainer for your GitHub project that never sleeps. Point it at a repo and it watches the things that pile up — issues, pull requests, failing CI, CVEs, dependabot alerts — then sends AI coding agents (Claude, Copilot, Codex, Antigravity, Goose…) to deal with them: triage, fixes, reviews, releases.
 
 You decide how much it is allowed to do. Humans keep every decision that matters; agents do the chores.
 
