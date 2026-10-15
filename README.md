@@ -31,6 +31,17 @@ Around that, Hive picks work from your real queue, sets limits in code with six 
 
 A spoke works alone. A hub is how you see and manage a fleet of them.
 
+## Contributor relay: a swarm working on your behalf
+
+Your own agents are only the start. The **contributor relay** (ClankeR) lets anyone who wants to help your project **donate their compute and model tokens** without you handing out anything:
+
+- **They bring their own agent.** A contributor runs one command on their laptop, cluster, or Compose box; it connects outbound to your hive, takes one curated task at a time, and runs *their* CLI with *their* model and *their* subscription.
+- **Their secrets never reach you.** API keys and CLI logins stay on the contributor's machine. The hive never sees them.
+- **Your forge settings never change.** Nobody is added as a collaborator. For each task the hive mints a short-lived, task-scoped GitHub token so the PR can be opened, then it expires. Revoke a contributor and their access is gone.
+- **Your prompts, your limits.** Contributors work the queue you curated, under the same trust level, filters and gates as your resident agents.
+
+The result is an **elastic swarm**: a three-person project can have a dozen contributors' agents grinding its backlog overnight, each accountable to a named human, while the maintainers hold every merge decision. See [src/docs/contributor-relay.md](src/docs/contributor-relay.md).
+
 ## Hive the project vs the hosted service
 
 - **Hive the project**: Apache-2.0 code in this repo. Run it yourself.
@@ -89,7 +100,7 @@ See [`hivectl tui` in the command reference](src/docs/hivectl.md#tui--live-termi
 
 ## Contribute to a Hive
 
-Community members can contribute compute to any hive through **ClankeR**, the contributor relay: it hands tasks from a hive's backlog to the CLI agent running on your own machine, under the hive's prompts and limits.
+Community members can contribute compute to any hive through **ClankeR**, the contributor relay (see [above](#contributor-relay-a-swarm-working-on-your-behalf)): it hands tasks from a hive's backlog to the CLI agent running on your own machine, under the hive's prompts and limits, with no repo permissions and no shared secrets.
 
 Start with [src/docs/contributor-relay.md](src/docs/contributor-relay.md) or the [Hive Hub contribute page](https://hive.hivecommons.dev).
 
