@@ -136,7 +136,7 @@ func writeLinkPreview(w http.ResponseWriter) {
 	previewHTML := `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <title>Hive — AI agents that maintain your repo</title>
-<meta name="description" content="Hive is a co-maintainer system for your GitHub projects: governed AI coding agents triage issues, fix CI, patch CVEs and open pull requests. You decide how much it is allowed to do.">
+<meta name="description" content="Hive is a co-maintainer system for your GitHub projects: AI agents (Claude, Copilot, Codex, Antigravity, Goose) do the chores. You decide how much they may do.">
 <meta property="og:site_name" content="Hive">
 <meta property="og:title" content="Hive — AI agents that maintain your repo">
 <meta property="og:description" content="A co-maintainer that never sleeps. Hive sends AI coding agents to the work that piles up in your repo, under six trust levels (ACMM L1 advise-only → L6 merge on green CI). Humans keep every decision that matters.">
