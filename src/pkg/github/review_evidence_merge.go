@@ -203,6 +203,8 @@ func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status st
 	}
 	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
 	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing CI snapshot unsigned",
+			slog.String("path", path), slog.String("error", err.Error()))
 		key = nil
 	}
 	if err := evidence.Seal(b, key); err != nil {
@@ -216,12 +218,16 @@ func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status st
 	}
 }
 
+// sameEvidenceChecks reports whether two check lists carry the same verdicts.
+// URLs are ignored: the GraphQL batch path fills details_url and the REST
+// fallback html_url, so comparing them would reseal the bundle with a new hash
+// every time the batch cache flips, with nothing about CI having changed.
 func sameEvidenceChecks(a, b []evidence.Check) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if a[i].Name != b[i].Name || a[i].Conclusion != b[i].Conclusion {
 			return false
 		}
 	}
