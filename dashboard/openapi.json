@@ -11875,6 +11875,25 @@
                         "layer"
                       ]
                     }
+                  },
+                  "context7_auto_import": {
+                    "type": "array",
+                    "description": "Optional. Replaces the legacy knowledge.context7.auto_import list; omit to leave it unchanged.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Context7 library ID such as /vercel/next.js."
+                        },
+                        "query": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id"
+                      ]
+                    }
                   }
                 },
                 "required": [

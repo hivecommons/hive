@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
@@ -41,7 +44,20 @@ type knowledgeConnectorJSON struct {
 	Layer    string                     `json:"layer"`
 	Scope    map[string]string          `json:"scope,omitempty"`
 	Auth     knowledgeConnectorAuthJSON `json:"auth"`
+	// CredentialSet is response-only and reports whether the referenced
+	// credential resolves (set/unset); the value is never returned.
+	CredentialSet *bool `json:"credential_set,omitempty"`
 }
+
+// context7AutoImportJSON is one legacy knowledge.context7.auto_import entry.
+type context7AutoImportJSON struct {
+	ID    string `json:"id"`
+	Query string `json:"query,omitempty"`
+}
+
+// context7ValidateSearch is the live Context7 search used by Validate; a var
+// so tests can stub it.
+var context7ValidateSearch = knowledge.SearchContext7
 
 type knowledgeConnectorStatusRow struct {
 	Name      string `json:"name"`
@@ -56,15 +72,31 @@ type knowledgeConnectorStatusRow struct {
 	LastError string `json:"last_error,omitempty"`
 }
 
+// context7APIKey resolves the Context7 key for c: the referenced auth source,
+// else the CONTEXT7_API_KEY environment variable.
+func context7APIKey(c config.KnowledgeConnector) (string, error) {
+	if c.Auth.Env != "" || c.Auth.File != "" {
+		return connector.Auth{Env: c.Auth.Env, File: c.Auth.File}.Secret()
+	}
+	return strings.TrimSpace(os.Getenv(connector.Context7APIKeyEnv)), nil
+}
+
 func knowledgeConnectorToJSON(c config.KnowledgeConnector) knowledgeConnectorJSON {
+	var credSet *bool
+	if c.Type == connector.TypeContext7 {
+		key, err := context7APIKey(c)
+		set := err == nil && key != ""
+		credSet = &set
+	}
 	return knowledgeConnectorJSON{
-		Name:     c.Name,
-		Type:     c.Type,
-		Enabled:  c.IsEnabled(),
-		Interval: c.Interval,
-		Layer:    c.Layer,
-		Scope:    c.Scope,
-		Auth:     knowledgeConnectorAuthJSON{Env: c.Auth.Env, File: c.Auth.File},
+		CredentialSet: credSet,
+		Name:          c.Name,
+		Type:          c.Type,
+		Enabled:       c.IsEnabled(),
+		Interval:      c.Interval,
+		Layer:         c.Layer,
+		Scope:         c.Scope,
+		Auth:          knowledgeConnectorAuthJSON{Env: c.Auth.Env, File: c.Auth.File},
 	}
 }
 
@@ -135,10 +167,15 @@ func knowledgeConnectorsResponse(cfg *config.Config) map[string]interface{} {
 	for _, c := range cfg.Knowledge.Connectors {
 		rows = append(rows, knowledgeConnectorToJSON(c))
 	}
+	imports := make([]context7AutoImportJSON, 0, len(cfg.Knowledge.Context7.AutoImport))
+	for _, it := range cfg.Knowledge.Context7.AutoImport {
+		imports = append(imports, context7AutoImportJSON{ID: it.ID, Query: it.Query})
+	}
 	return map[string]interface{}{
-		"connectors": rows,
-		"types":      connector.DefaultRegistry().Types(),
-		"layers":     []string{"personal", "project", "org", "community"},
+		"connectors":           rows,
+		"types":                connector.DefaultRegistry().Types(),
+		"layers":               []string{"personal", "project", "org", "community"},
+		"context7_auto_import": imports,
 	}
 }
 
@@ -166,6 +203,8 @@ func (s *Server) handleKnowledgeConnectorsPut(w http.ResponseWriter, r *http.Req
 	}
 	var body struct {
 		Connectors []json.RawMessage `json:"connectors"`
+		// Context7AutoImport, when present, replaces knowledge.context7.auto_import.
+		Context7AutoImport *[]context7AutoImportJSON `json:"context7_auto_import"`
 	}
 	if err := decodeBody(r, &body); err != nil || body.Connectors == nil {
 		jsonError(w, "invalid body: expected {\"connectors\": [...]}", http.StatusBadRequest)
@@ -198,9 +237,30 @@ func (s *Server) handleKnowledgeConnectorsPut(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	var imports []config.KnowledgeContext7Import
+	if body.Context7AutoImport != nil {
+		seen := map[string]bool{}
+		for i, it := range *body.Context7AutoImport {
+			id := strings.TrimSpace(it.ID)
+			if !strings.HasPrefix(id, "/") || strings.ContainsAny(id, " \t?#") {
+				jsonError(w, "context7_auto_import["+strconv.Itoa(i)+"].id must look like /org/project", http.StatusBadRequest)
+				return
+			}
+			if seen[id] {
+				jsonError(w, "context7_auto_import["+strconv.Itoa(i)+"].id "+id+" is listed twice", http.StatusBadRequest)
+				return
+			}
+			seen[id] = true
+			imports = append(imports, config.KnowledgeContext7Import{ID: id, Query: strings.TrimSpace(it.Query)})
+		}
+	}
+
 	knowledgeConnectorsMu.Lock()
 	defer knowledgeConnectorsMu.Unlock()
 	s.deps.Config.Knowledge.Connectors = next
+	if body.Context7AutoImport != nil {
+		s.deps.Config.Knowledge.Context7.AutoImport = imports
+	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after knowledge connectors update", "error", err)
 	}
@@ -292,11 +352,37 @@ func (s *Server) handleKnowledgeConnectorsValidate(w http.ResponseWriter, r *htt
 		jsonError(w, "invalid body: "+err.Error()+" (auth accepts only env or file)", http.StatusBadRequest)
 		return
 	}
-	if err := validateKnowledgeConnectorEntry(c.toConfig()); err != nil {
+	entry := c.toConfig()
+	if err := validateKnowledgeConnectorEntry(entry); err != nil {
 		jsonResponse(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}
+	if entry.Type == connector.TypeContext7 {
+		if err := validateContext7Live(r.Context(), entry); err != nil {
+			jsonResponse(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+	}
 	jsonResponse(w, map[string]interface{}{"ok": true})
+}
+
+// validateContext7Live proves the key reference works by running one Context7
+// library search for the first configured library. The key is never echoed.
+func validateContext7Live(ctx context.Context, c config.KnowledgeConnector) error {
+	key, err := context7APIKey(c)
+	if err != nil {
+		return err
+	}
+	name := "react"
+	if ids := strings.Split(c.Scope["library_ids"], ","); len(ids) > 0 {
+		if base := path.Base(strings.TrimSpace(ids[0])); base != "." && base != "/" {
+			name = base
+		}
+	}
+	if _, err := context7ValidateSearch(ctx, name, key); err != nil {
+		return err
+	}
+	return nil
 }
 
 // handleKnowledgeConnectorsSync starts an immediate sync of one connector

@@ -1,0 +1,1 @@
+- **Knowledge:** Context7 is now a connector card in Knowledge → Integrations with an API-key reference (set/unset, never the value), enabled toggle, default library IDs, a live Validate against the Context7 search API, and status; `knowledge.context7.auto_import` is editable from the same card (#11948).

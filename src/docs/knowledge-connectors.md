@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | notion | git | document | github-wiki | google-drive | sharepoint
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -183,6 +183,35 @@ You must set at least one of `spaces` or `root_page_ids`.
   are tombstoned on the next full listing.
 - **Paging:** results are paged through `_links.next`. Next links are only
   followed relative to `base_url`, never to another host.
+
+## Context7 (`type: context7`)
+
+The Context7 connector syncs documentation for a default set of Context7
+libraries, one fact per library. Configure it from **Knowledge → 🔌
+Integrations → Context7**; "Import from Context7" in Knowledge → Import keeps
+working and links to that card.
+
+```yaml
+knowledge:
+  connectors:
+    - name: ctx7
+      type: context7
+      layer: community
+      scope:
+        library_ids: "/vercel/next.js, /golang/go"   # required
+        topic: routing                                # optional
+      auth:
+        env: CONTEXT7_API_KEY   # a reference; with no auth block CONTEXT7_API_KEY is used if set
+  context7:
+    auto_import:               # legacy startup import, edited from the same card
+      - id: /vercel/next.js
+        query: routing
+```
+
+- The API key is only ever a reference (`auth.env` or `auth.file`); the card
+  shows whether it is set or unset and never the value.
+- **Validate** runs one live Context7 search with the resolved key. Status and
+  last sync come from the same connector status table as other connectors.
 
 ## Notion (`type: notion`)
 

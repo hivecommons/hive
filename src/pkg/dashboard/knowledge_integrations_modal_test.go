@@ -122,3 +122,23 @@ func TestKnowledgeIntegrationsModalUsesVendorIcons(t *testing.T) {
 		t.Error("integrations sidebar still renders the generic plug emoji per connector")
 	}
 }
+
+func TestKnowledgeIntegrationsModalContext7Card(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'context7': [['library_ids'`,
+		`data-kb-ctx7-key-state=`,
+		`data-setting-key="knowledge.context7.auto_import[].id"`,
+		`data-action="kbOpenContext7Integration"`,
+		`function kbOpenContext7Integration()`,
+		`label: 'Context7 connector'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Context7 card snippet %q", want)
+		}
+	}
+}
