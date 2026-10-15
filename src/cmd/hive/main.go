@@ -5553,6 +5553,21 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 
 			}),
+			spoke.ClusterIDCallback(func(clusterID string) {
+				// The hub knows which cluster this hive runs on and sends it while
+				// we report none — spokes provisioned before hub.cluster_id was
+				// rendered (#11432) on pull_only clusters the hub cannot re-render.
+				// Adopting it gates cluster_health on from the next beat; persist
+				// so it survives restarts.
+				if !adoptHubDeliveredClusterID(&b.cfg.Hub, clusterID) {
+					return
+				}
+				b.logger.Info("adopted cluster_id from hub heartbeat; cluster_health will be reported from the next beat",
+					"cluster_id", b.cfg.Hub.ClusterID)
+				if err := b.cfg.Save(); err != nil {
+					b.logger.Error("failed to save hub-delivered cluster_id", "error", err)
+				}
+			}),
 			spoke.FreshStatusCollector(func() *spoke.HeartbeatPayload {
 				if !b.cfg.Hub.Enabled {
 					return nil

@@ -180,7 +180,7 @@ func TestBuildClusterHealthPushReportedCurrentSpokeExplainsMissingHealth(t *test
 		t.Fatalf("clusters = %+v, want one push-reported cluster", resp.Clusters)
 	}
 	got := resp.Clusters[0]
-	want := "push-reported · heartbeat carries no node health — spoke is not sending cluster_health; set hub.cluster_id or HIVE_CLUSTER_ID, then check node-metrics RBAC and metrics-server (last seen just now)"
+	want := "push-reported · heartbeat carries no node health — spoke is not sending cluster_health; the hub delivers cluster_id over the heartbeat, so upgrade spokes to a build that adopts it (or set hub.cluster_id / HIVE_CLUSTER_ID). Node RBAC needs a cluster-admin on this cluster — apply " + pushReportedNodeHealthDoc + " (last seen just now)"
 	if got.Note != want {
 		t.Fatalf("note = %q, want %q", got.Note, want)
 	}
@@ -242,5 +242,50 @@ func TestConvertHeartbeatToPerClusterHealthShowsNodeHealthError(t *testing.T) {
 	}
 	if got.Summary.TotalNodes != 1 || got.Summary.TotalCPUCores != 4 || got.Summary.HiveCount != 36 {
 		t.Fatalf("summary = %+v, want heartbeat capacity preserved", got.Summary)
+	}
+}
+
+func TestConvertHeartbeatToPerClusterHealthNodeRBACMissing(t *testing.T) {
+	want := "push-reported · node RBAC missing — spoke ServiceAccount cannot list /api/v1/nodes (HTTP 403); a cluster-admin on this cluster must apply " + pushReportedNodeHealthDoc
+	for name, report := range map[string]*HeartbeatClusterHealthReport{
+		"spoke verdict": {
+			NodeHealthError: "nodes API failed: k8s API /api/v1/nodes: HTTP 403: forbidden",
+			NodeRBAC:        nodeRBACForbidden,
+		},
+		"older spoke, error text only": {
+			NodeHealthError: "nodes API failed: k8s API /api/v1/nodes: HTTP 403: forbidden",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			entry := &HeartbeatHealthEntry{Report: report, ReceivedAt: time.Now()}
+			got := convertHeartbeatToPerClusterHealth("vllm-d", "vLLM-d", entry, 36)
+			if got.Note != want {
+				t.Fatalf("note = %q, want %q", got.Note, want)
+			}
+			if got.NodeRBAC != nodeRBACForbidden {
+				t.Fatalf("node_rbac = %q, want %q", got.NodeRBAC, nodeRBACForbidden)
+			}
+			if got.Status != perClusterHealthStatusMissingHealth {
+				t.Fatalf("status = %q, want %q", got.Status, perClusterHealthStatusMissingHealth)
+			}
+			if got.Error != report.NodeHealthError {
+				t.Fatalf("error = %q, want the raw spoke reason preserved", got.Error)
+			}
+		})
+	}
+}
+
+func TestConvertHeartbeatToPerClusterHealthMetricsForbiddenIsNotNodeRBAC(t *testing.T) {
+	report := sampleHeartbeatReport()
+	report.NodeHealthError = "metrics API failed: k8s API /apis/metrics.k8s.io/v1beta1/nodes: HTTP 403: forbidden"
+	report.NodeRBAC = "ok"
+	entry := &HeartbeatHealthEntry{Report: report, ReceivedAt: time.Now()}
+
+	got := convertHeartbeatToPerClusterHealth("vllm-d", "vLLM-d", entry, 36)
+	if want := "push-reported · node health partial — " + report.NodeHealthError; got.Note != want {
+		t.Fatalf("note = %q, want %q", got.Note, want)
+	}
+	if got.NodeRBAC != "ok" {
+		t.Fatalf("node_rbac = %q, want the spoke's ok passed through", got.NodeRBAC)
 	}
 }

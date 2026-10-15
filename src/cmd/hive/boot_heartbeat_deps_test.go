@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -172,9 +174,10 @@ func TestBootHeartbeatWith_PublishesIdentityBeforeTheLoopAndWiresEveryCallback(t
 	heartbeatCallback[spoke.AuthorizedUsersCallback](t, f)
 	heartbeatCallback[spoke.ProjectConfigCallback](t, f)
 	heartbeatCallback[spoke.GatewayConfigCallback](t, f)
+	heartbeatCallback[spoke.ClusterIDCallback](t, f)
 	heartbeatCallback[spoke.FreshStatusCollector](t, f)
-	if len(f.callbacks) != 12 {
-		t.Fatalf("registered %d callbacks, want 12 (one of each)", len(f.callbacks))
+	if len(f.callbacks) != 13 {
+		t.Fatalf("registered %d callbacks, want 13 (one of each)", len(f.callbacks))
 	}
 
 	// The collector honours a runtime hub.enabled=false without being torn
@@ -239,6 +242,50 @@ func TestBootHeartbeatWith_CallbacksReconcileRunningConfig(t *testing.T) {
 	gw(&spoke.HeartbeatGatewayConfig{Name: "openrouter"})
 	if strings.Contains(f.log.String(), "failed to apply hub-delivered gateway") {
 		t.Fatal("keyless gateway delivery treated as an apply")
+	}
+}
+
+func TestBootHeartbeatWith_ClusterIDCallbackAdoptsAndPersistsWhenEmpty(t *testing.T) {
+	f := newBootHeartbeatFake()
+	cfg := bootHeartbeatConfig()
+	cfg.RemovedAgents = []string{"retired"}
+	cfg.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	b := newBootHeartbeatBoot(t, f, cfg)
+	b.bootHeartbeatWith(f.deps)
+
+	adopt := heartbeatCallback[spoke.ClusterIDCallback](t, f)
+	adopt("vllm-d")
+	if cfg.Hub.ClusterID != "vllm-d" {
+		t.Fatalf("cluster id = %q, want the hub-delivered vllm-d", cfg.Hub.ClusterID)
+	}
+	if !strings.Contains(f.log.String(), "adopted cluster_id from hub heartbeat") {
+		t.Fatalf("adoption not logged:\n%s", f.log.String())
+	}
+	saved, err := os.ReadFile(cfg.SourcePath)
+	if err != nil {
+		t.Fatalf("adopted cluster id not persisted: %v", err)
+	}
+	if !strings.Contains(string(saved), "cluster_id: vllm-d") {
+		t.Fatalf("hive.yaml lacks the adopted cluster id:\n%s", saved)
+	}
+	if !shouldCollectHeartbeatClusterHealth(cfg.Hub.ClusterID) {
+		t.Fatal("adopted cluster id must turn on cluster_health for the next beat")
+	}
+}
+
+func TestBootHeartbeatWith_ClusterIDCallbackKeepsConfiguredID(t *testing.T) {
+	f := newBootHeartbeatFake()
+	cfg := bootHeartbeatConfig()
+	cfg.Hub.ClusterID = "hive-oke"
+	b := newBootHeartbeatBoot(t, f, cfg)
+	b.bootHeartbeatWith(f.deps)
+
+	heartbeatCallback[spoke.ClusterIDCallback](t, f)("vllm-d")
+	if cfg.Hub.ClusterID != "hive-oke" {
+		t.Fatalf("configured cluster id overridden to %q", cfg.Hub.ClusterID)
+	}
+	if strings.Contains(f.log.String(), "adopted cluster_id from hub heartbeat") {
+		t.Fatal("a configured cluster id was reported as adopted")
 	}
 }
 
