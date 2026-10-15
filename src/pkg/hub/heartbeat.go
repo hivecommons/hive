@@ -318,6 +318,7 @@ type HeartbeatPayload struct {
 	StatsStale                   bool                            `json:"stats_stale,omitempty"`
 	FreshAgentStats              bool                            `json:"fresh_agent_stats,omitempty"`
 	Compliance                   *HeartbeatCompliance            `json:"compliance,omitempty"`
+	Evidence                     *HeartbeatEvidence              `json:"evidence,omitempty"`
 }
 
 const (
