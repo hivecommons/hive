@@ -2687,6 +2687,12 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// here, after lifecycle persistence is enabled, so every producer records
 	// into a persisted store (#9614).
 	b.applyGitHubClientDashboardHooks(b.ghClient)
+	// #12007: fold the last week of merged PRs onto their Fixes issues so a
+	// freshly upgraded spoke does not report already-merged work as stale
+	// in-progress, and start→PR / open→merge have samples on day one.
+	if b.ghClient != nil && b.dashSrv != nil {
+		go backfillRecentMergedPRs(b.ctx, b.ghClient, b.dashSrv, b.cfg.Project.Org, time.Now(), b.logger)
+	}
 
 	// Seed token sparkline history now that the dashboard server exists
 	if len(b.pendingTokenSeed) > 0 {

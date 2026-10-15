@@ -959,6 +959,9 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 					ObservedAt:  mergedAt,
 					Actor:       mergedBy,
 					Attribution: prTerminalMergeAttribution(mergedBy, identity, c.appBotLogin),
+					CreatedAt:   pr.GetCreatedAt().Time,
+					URL:         pr.GetHTMLURL(),
+					Issues:      mergedPRClosingIssues(pr, repo, owner+"/"+repoName),
 				})
 				prClaims := claimsFromPR(pr, repo, identity, now)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
