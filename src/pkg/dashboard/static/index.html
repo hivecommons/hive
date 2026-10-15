@@ -2772,6 +2772,13 @@
     .settings-search-group-title button { flex: 0 0 auto; }
     .settings-search-hit { padding: var(--sp-4); border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
     .settings-search-hit:first-child { border-top: 0; }
+    .settings-search-hit { cursor: pointer; }
+    .settings-search-hit:hover, .settings-search-hit:focus-visible { background: color-mix(in srgb, var(--accent) 8%, transparent); outline: none; }
+    .settings-search-hit:focus-visible { box-shadow: inset 2px 0 0 var(--accent); }
+    /* Search → row landing: a short flash on the row the hit resolved to. */
+    .cfg-row-flash { animation: cfg-row-flash 1.6s ease-out; border-radius: var(--r); outline: 2px solid color-mix(in srgb, var(--amber) 70%, transparent); outline-offset: 2px; }
+    @keyframes cfg-row-flash { from { background: color-mix(in srgb, var(--amber) 35%, transparent); } to { background: transparent; } }
+    @media (prefers-reduced-motion: reduce) { .cfg-row-flash { animation: none; background: color-mix(in srgb, var(--amber) 18%, transparent); } }
     .settings-search-hit-label { font-weight: 700; color: var(--text); margin-bottom: var(--sp-1); }
     .settings-search-hit-meta { color: var(--muted); font-size: var(--fs-xs); line-height: 1.45; }
     .settings-search-key { display: inline-block; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); border-radius: var(--r-sm); padding: var(--sp-0) var(--sp-2); }
@@ -31525,8 +31532,13 @@ function burnAreaChart() {
     ];
     const MAX_AGENT_REPLICAS = 5;
 
+    // Hand-written index hints for groups of controls. `tab` is a hint only —
+    // the result list and "Open tab" land on wherever `key` actually renders
+    // (settingsSearchResolveTab) — and every `key` must resolve to a rendered
+    // row carrying data-setting-key (webstatic TestSettingsSearchIndexResolvesToControls).
+    // `lazy: true` marks controls that a tab fills in after its own fetch.
     const SETTINGS_SEARCH_STATIC_HITS = [
-      { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
+      { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory fully autonomous' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
@@ -31537,7 +31549,7 @@ function burnAreaChart() {
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s' },
-      { tab: 'General', section: 'Trajectory Review', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
+      { tab: 'Features', section: 'Trajectory Review', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
       { tab: 'Security', section: 'Input Defense', label: 'ioscan', key: 'ioscan.enabled', text: 'ioscan input output scanning canaries fail mode classifier model warn block threshold ioscan.canaries ioscan.classifier.block_threshold ioscan.classifier.enabled ioscan.classifier.model ioscan.classifier.warn_threshold ioscan.enabled ioscan.fail_mode' },
@@ -31548,12 +31560,10 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Integrations & observability', label: 'OpenTelemetry export', key: 'otel.enabled', text: 'otel opentelemetry export endpoint headers insecure sample ratio service name otel.enabled otel.endpoint otel.headers.<key> otel.insecure otel.sample_ratio otel.service_name' },
-      { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
+      { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.modes', text: 'restart thresholds quiet busy surge pressure backoff governor.modes.quiet.threshold governor.modes.busy.threshold governor.modes.surge.threshold' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
-      { tab: 'Hub', section: 'Release', label: 'Release channel', key: '', text: 'channel stable candidate edge release update stream' },
-      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
-      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
-      { tab: 'Knowledge', section: 'Knowledge channels', label: 'Knowledge channel', key: '', text: 'channel channels import knowledge vault project org community personal' },
+      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
+      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
 
@@ -31583,6 +31593,7 @@ function burnAreaChart() {
         c.input.addEventListener('input', () => applySettingsSearch(c.input.value));
         c.input.addEventListener('keydown', (e) => {
           if (e.key === 'Escape') { e.preventDefault(); clearSettingsSearch(); }
+          else if (e.key === 'Enter') { e.preventDefault(); settingsSearchOpenFirst(); }
         });
         if (c.clear) c.clear.addEventListener('click', clearSettingsSearch);
         const overlay = document.getElementById('config-overlay');
@@ -31648,36 +31659,147 @@ function burnAreaChart() {
 
     function settingsSearchLabel(field) {
       const label = field.querySelector('label, .config-toggle-label, .var-heading, th, td:first-child, summary');
-      if (label) return settingsSearchText(label).replace(/\?\s*$/, '').trim();
+      if (label) {
+        let txt = settingsSearchText(label);
+        label.querySelectorAll('.settings-yaml-hint, .config-info').forEach(extra => { txt = txt.replace(settingsSearchText(extra), ''); });
+        return txt.replace(/\s+/g, ' ').replace(/\?\s*$/, '').trim();
+      }
       const txt = settingsSearchText(field);
       return txt.length > 100 ? txt.slice(0, 100) + '…' : txt;
     }
 
+    // Every settings row carries a stable anchor, data-setting-key="<yaml.key>",
+    // so a search hit maps to exactly one rendered control. Rows that do not
+    // declare one get it from the YAML key yamlHint() prints in their label,
+    // else from the control they wrap (data-section/data-key or
+    // data-arg0/data-arg1). The annotation runs on every rendered tab and on the detached
+    // render the index is built from, so both see the same keys.
+    const SETTINGS_ROW_SELECTOR = '.config-field, .config-toggle, .config-list-item, .var-section, details, tr';
+    function settingsRowKey(row) {
+      if (!row || !row.getAttribute) return '';
+      const own = row.getAttribute('data-setting-key');
+      if (own) return own;
+      // The printed YAML key is authoritative; a control's data-section/data-key
+      // pair is a config-dialog section name that may omit the top-level
+      // prefix (replan.enabled vs governor.replan.enabled).
+      const hint = row.querySelector('.settings-yaml-hint code');
+      if (hint) return settingsSearchText(hint);
+      return settingsSearchKeyFromField(row);
+    }
+
+    function settingsAnnotateRows(root) {
+      if (!root || !root.querySelectorAll) return;
+      root.querySelectorAll(SETTINGS_ROW_SELECTOR).forEach(row => {
+        if (row.hasAttribute('data-setting-key')) return;
+        const key = settingsRowKey(row);
+        if (key) row.setAttribute('data-setting-key', key);
+      });
+    }
+
+    // Which of `keys` a search hit for `key` should land on: the exact key;
+    // else, for an entry naming a group (governor.watchdog), keys under it;
+    // else keys sharing its parent group, so a field that is only rendered
+    // conditionally (governor.rotation.threshold_pct) lands on the group's
+    // toggle rather than nowhere.
+    function settingsMatchKeys(keys, key) {
+      if (!key) return [];
+      if (keys.indexOf(key) >= 0) return [key];
+      const under = prefix => keys.filter(k => k.indexOf(prefix + '.') === 0 || k.indexOf(prefix + '[') === 0);
+      const group = under(key);
+      if (group.length) return group;
+      const parent = key.replace(/\[\]$/, '').replace(/\.[^.]+$/, '');
+      // Only fall back to a real group (governor.rotation), never to a whole
+      // top-level section (governor), which would match half the dialog.
+      return parent !== key && parent.indexOf('.') > 0 ? under(parent) : [];
+    }
+
+    // Rows whose anchor settingsMatchKeys picks for `key`. Outer rows (a
+    // <details> or <tr> wrapping the field) are dropped in favour of the
+    // innermost match so the flash lands on the control, not its container.
+    function settingsRowsForKey(root, key) {
+      if (!root || !key) return [];
+      const rows = Array.from(root.querySelectorAll(SETTINGS_ROW_SELECTOR)).filter(r => r.getAttribute('data-setting-key'));
+      const want = settingsMatchKeys(rows.map(r => r.getAttribute('data-setting-key')), key);
+      const picked = rows.filter(r => want.indexOf(r.getAttribute('data-setting-key')) >= 0);
+      return picked.filter(r => !picked.some(other => other !== r && r.contains(other)));
+    }
+
+    function settingsFindRow(root, key, label) {
+      const byKey = settingsRowsForKey(root, key);
+      if (byKey.length) return byKey[0];
+      const want = (label || '').trim().toLowerCase();
+      if (!want || !root) return null;
+      const rows = Array.from(root.querySelectorAll(SETTINGS_ROW_SELECTOR));
+      return rows.find(r => settingsSearchLabel(r).toLowerCase() === want) || null;
+    }
+
+    // The tabs each key is rendered in, computed from the live renderers so a
+    // hand-written index entry whose `tab` has drifted cannot send the
+    // operator to a tab without that control.
+    function settingsSearchTabsForKey(key) {
+      settingsSearchBuildIndex();
+      return settingsSearchTabsForKeyIn(_settingsSearch.keyTabs || {}, key);
+    }
+
+    function settingsSearchTabsForKeyIn(keyTabs, key) {
+      const out = [];
+      settingsMatchKeys(Object.keys(keyTabs), key).forEach(k => {
+        keyTabs[k].forEach(t => { if (out.indexOf(t) < 0) out.push(t); });
+      });
+      return out;
+    }
+
+    function settingsSearchResolveTab(tab, key) {
+      const tabs = settingsSearchTabsForKey(key);
+      if (!tabs.length) return tab;
+      return tabs.indexOf(tab) >= 0 ? tab : tabs[0];
+    }
+
     function settingsSearchBuildIndex() {
       if (_settingsSearch.index) return _settingsSearch.index;
-      const out = SETTINGS_SEARCH_STATIC_HITS.slice();
+      const out = [];
+      const keyTabs = {};
       const previousTab = _configState.tab;
       GOVERNOR_CONFIG_TABS.forEach(tab => {
         let html = '';
         try { html = renderGovernorTab(tab) || ''; } catch (e) { html = ''; }
         const wrap = document.createElement('div');
         wrap.innerHTML = html;
-        const fields = wrap.querySelectorAll('.config-field, .config-toggle, .config-list-item, .var-section, details, tr');
+        settingsAnnotateRows(wrap);
+        const fields = wrap.querySelectorAll(SETTINGS_ROW_SELECTOR);
         fields.forEach(field => {
+          const key = settingsRowKey(field);
+          if (key) {
+            if (!keyTabs[key]) keyTabs[key] = [];
+            if (keyTabs[key].indexOf(tab) < 0) keyTabs[key].push(tab);
+          }
           const label = settingsSearchLabel(field);
           const text = settingsSearchText(field);
           if (!label || !text) return;
-          const key = settingsSearchKeyFromField(field);
           const section = settingsSearchSectionName(field, tab);
           out.push({ tab, section, label, key, text });
         });
       });
       _configState.tab = previousTab;
+      _settingsSearch.keyTabs = keyTabs;
+      // Static entries are hints that describe a group of controls; their tab
+      // is re-derived from where the key actually rendered.
+      const statics = SETTINGS_SEARCH_STATIC_HITS.map(item => {
+        const tabs = settingsSearchTabsForKeyIn(keyTabs, item.key);
+        const tab = !tabs.length || tabs.indexOf(item.tab) >= 0 ? item.tab : tabs[0];
+        return Object.assign({}, item, { tab });
+      });
+      // One entry per tab+key: a static hint and the rendered row it points
+      // at (or a wrapper and the field inside it) merge, keeping both texts
+      // searchable, so the result list shows each control once.
       const seen = {};
-      _settingsSearch.index = out.filter(item => {
-        const id = [item.tab, item.section, item.label, item.key].join('\n').toLowerCase();
-        if (seen[id]) return false;
-        seen[id] = true;
+      _settingsSearch.index = statics.concat(out).filter(item => {
+        const id = (item.key ? [item.tab, item.key] : [item.tab, item.section, item.label]).join('\n').toLowerCase();
+        if (seen[id]) {
+          if (seen[id].text.indexOf(item.text) < 0) seen[id].text += ' ' + item.text;
+          return false;
+        }
+        seen[id] = item;
         return true;
       });
       return _settingsSearch.index;
@@ -31724,11 +31846,12 @@ function burnAreaChart() {
       }
       const byTab = {};
       matches.forEach(item => { if (!byTab[item.tab]) byTab[item.tab] = []; byTab[item.tab].push(item); });
+      _settingsSearch.matches = Object.keys(byTab).reduce((acc, tab) => acc.concat(byTab[tab]), []);
       body.innerHTML = '<div class="settings-search-results">' + Object.keys(byTab).map(tab => {
         const hits = byTab[tab];
         return '<section class="settings-search-group" data-settings-search-tab="' + esc(tab) + '">' +
           '<div class="settings-search-group-title"><span>' + settingsSearchHighlight(tab, q) + ' <span class="text-muted">(' + hits.length + ')</span></span><button type="button" class="hv-btn btn-secondary btn-sm" data-action="settingsSearchOpenTab" data-arg0="' + esc(tab) + '">Open tab</button></div>' +
-          hits.map(item => '<div class="settings-search-hit">' +
+          hits.map(item => '<div class="settings-search-hit" role="button" tabindex="0" data-action="settingsSearchOpenHit" data-keydown-action="settingsSearchOpenHit" data-keys="Enter, " data-prevent="1" data-arg0="' + esc(tab) + '" data-arg1="' + esc(item.key || '') + '" data-arg2="' + esc(item.label || '') + '">' +
             '<div class="settings-search-hit-label">' + settingsSearchHighlight(item.label, q) + '</div>' +
             '<div class="settings-search-hit-meta">' + settingsSearchSnippet(item, q) + '</div>' +
             (item.key ? '<code class="settings-search-key">' + settingsSearchHighlight(item.key, q) + '</code>' : '') +
@@ -31746,12 +31869,70 @@ function burnAreaChart() {
       renderSettingsSearchResults(q);
     }
 
+    // "Open tab" on a result group lands on that group's first hit, so the
+    // operator is taken to the control rather than the top of a long tab.
     function settingsSearchOpenTab(tab) {
+      const first = (_settingsSearch.matches || []).find(item => item.tab === tab) || null;
+      settingsSearchOpenHit(tab, first ? first.key : '', first ? first.label : '');
+    }
+
+    function settingsSearchOpenFirst() {
+      const first = (_settingsSearch.matches || [])[0];
+      if (first) settingsSearchOpenHit(first.tab, first.key, first.label);
+    }
+
+    function settingsSearchOpenHit(tab, key, label) {
       const c = settingsSearchControls();
+      const target = settingsSearchResolveTab(tab, key);
       if (c.input) c.input.value = '';
+      if (c.clear) c.clear.hidden = true;
+      if (c.count) c.count.textContent = 'Search settings';
       _settingsSearch.active = false;
       _settingsSearch.query = '';
-      switchConfigTab(tab);
+      switchConfigTab(target);
+      // The tab body renders synchronously but layout has not run yet, so wait
+      // a frame before scrolling; panels that fill in after their own fetch
+      // (Health, Knowledge connectors) get a few short retries.
+      let attempts = SETTINGS_REVEAL_ATTEMPTS;
+      const reveal = () => {
+        const body = document.getElementById('config-body');
+        if (!body || _configState.tab !== target || _settingsSearch.active) return;
+        settingsAnnotateRows(body);
+        if (settingsRevealRow(settingsFindRow(body, key, label))) return;
+        if (--attempts > 0) setTimeout(reveal, SETTINGS_REVEAL_RETRY_MS);
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal); else reveal();
+    }
+
+    const SETTINGS_REVEAL_ATTEMPTS = 12;
+    const SETTINGS_REVEAL_RETRY_MS = 125;
+
+    const SETTINGS_ROW_FLASH_MS = 1600;
+    // Expands any disclosure hiding the row, scrolls it to the middle of the
+    // dialog body (the scroll container — the overlay is fixed, so the page
+    // behind does not move), flashes it, and moves focus to its control.
+    function settingsRevealRow(row) {
+      if (!row) return false;
+      for (let cur = row.parentElement; cur; cur = cur.parentElement) {
+        if (cur.tagName === 'DETAILS' && !cur.open) cur.open = true;
+        if (cur.classList && cur.classList.contains('collapsed')) cur.classList.remove('collapsed');
+      }
+      const reduceMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const body = document.getElementById('config-body');
+      if (typeof row.scrollIntoView === 'function') {
+        row.scrollIntoView({ block: 'center', inline: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' });
+      } else if (body) {
+        body.scrollTop = Math.max(0, row.offsetTop - body.clientHeight / 2);
+      }
+      row.classList.remove('cfg-row-flash');
+      void row.offsetWidth; // restart the animation when the same row is hit twice
+      row.classList.add('cfg-row-flash');
+      if (row._cfgFlashTimer) clearTimeout(row._cfgFlashTimer);
+      row._cfgFlashTimer = setTimeout(() => { row.classList.remove('cfg-row-flash'); row._cfgFlashTimer = null; }, SETTINGS_ROW_FLASH_MS);
+      let ctrl = row.querySelector('input:not([type="hidden"]), select, textarea') || row.querySelector('button, [role="switch"][tabindex], .config-toggle-switch[tabindex]');
+      if (!ctrl) { row.setAttribute('tabindex', '-1'); ctrl = row; }
+      if (typeof ctrl.focus === 'function') { try { ctrl.focus({ preventScroll: true }); } catch (e) { ctrl.focus(); } }
+      return true;
     }
 
     function openConfigDialog(type, agentName, initialTabOverride) {
@@ -32376,6 +32557,7 @@ function burnAreaChart() {
         if (tabId === AGENT_PROMPTS_TAB) initAgentPromptHistory();
       } else {
         body.innerHTML = renderGovernorTab(tabId);
+        settingsAnnotateRows(body);
         if (tabId === 'Hub') { fetchQueueCount(); fetchAutoUpdateStatus(); }
         // The escalation breaker lives at the top level of hive.yaml, so the
         // Health tab loads it from its own endpoint.
@@ -36807,7 +36989,7 @@ function burnAreaChart() {
           </div>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">${hiveIdEditable ? 'Format: hive-adjective-noun (e.g. hive-bold-hawk). Lowercase letters, digits and hyphens only. Changes take effect immediately.' : esc(hiveIdLockReason)}</span>
         </div>
-        <div class="config-field">
+        <div class="config-field" data-setting-key="acmm_level">
           <label>Maturity Level ${settingHelpMark('agent-configuration', 'acmm-levels-agent-rosters-as-packs', 'Maturity Level', `ACMM (AI Codebase Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).`)}</label>
           <div style="display:flex;gap:10px;align-items:center">
             <span style="display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:var(--fs-sm);font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber)">${currentACMMLevel > 0 ? acmmLevelLabel(currentACMMLevel) : 'Not set'}</span>
@@ -37127,7 +37309,7 @@ function burnAreaChart() {
           <label>Delivery SLA targets (hours) ${settingHelpMark('operator-reference', 'delivery-sla', 'Delivery SLA targets', `Per-span budgets the Throughput section's Delivery SLA tiles and sparklines are coloured against: green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. 0 restores the default (${defaults.start_to_pr_h} / ${defaults.pr_to_merge_h} / ${defaults.open_to_merge_h} h).`)}</label>
           <div class="config-field-row">${fields.map(([key, label, tip]) => {
             const v = dirty[key] !== undefined ? dirty[key] : (eff[key] !== undefined ? eff[key] : defaults[key]);
-            return `<div class="config-field"><label for="cfg-sla-${esc(key)}" title="${esc(tip)}">${esc(label)}</label><input type="number" min="0" max="8760" step="0.5" id="cfg-sla-${esc(key)}" value="${esc(String(v))}" data-input-action="markDirty" data-arg0="sla" data-arg1="${esc(key)}" data-arg-types="s,s,N" data-setting-path="sla.targets.${esc(key)}" aria-label="${esc(label)} target in hours"></div>`;
+            return `<div class="config-field" data-setting-key="sla.targets.${esc(key)}"><label for="cfg-sla-${esc(key)}" title="${esc(tip)}">${esc(label)}</label><input type="number" min="0" max="8760" step="0.5" id="cfg-sla-${esc(key)}" value="${esc(String(v))}" data-input-action="markDirty" data-arg0="sla" data-arg1="${esc(key)}" data-arg-types="s,s,N" data-setting-path="sla.targets.${esc(key)}" aria-label="${esc(label)} target in hours"></div>`;
           }).join('')}</div>
         </div>`;
     }
@@ -37231,9 +37413,9 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-field-row" style="margin-top:var(--sp-8)">
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from idle to quiet mode. Below this count, agents run at their idle cadence.">Quiet</label><input type="number" min="1" max="${maxValue}" id="thresh-in-quiet" value="${q}" data-input-action="setThreshFromInput" data-arg0="quiet" data-arg-types="s,v">${hints.quiet ? `<span class="muted-xs" id="thresh-hint-quiet">${hints.quiet}</span>` : ''}</div>
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from quiet to busy mode. Agents increase their kick frequency to handle the growing workload.">Busy</label><input type="number" min="1" max="${maxValue}" id="thresh-in-busy" value="${b}" data-input-action="setThreshFromInput" data-arg0="busy" data-arg-types="s,v">${hints.busy ? `<span class="muted-xs" id="thresh-hint-busy">${hints.busy}</span>` : ''}</div>
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from busy to surge mode. Maximum agent activity — monitor your token budget closely at this level.">Surge</label><input type="number" min="1" max="${maxValue}" id="thresh-in-surge" value="${s}" data-input-action="setThreshFromInput" data-arg0="surge" data-arg-types="s,v">${hints.surge ? `<span class="muted-xs" id="thresh-hint-surge">${hints.surge}</span>` : ''}</div>
+          <div class="config-field" data-setting-key="governor.modes.quiet.threshold"><label title="Number of actionable issues at which the governor transitions from idle to quiet mode. Below this count, agents run at their idle cadence.">Quiet</label><input type="number" min="1" max="${maxValue}" id="thresh-in-quiet" value="${q}" data-input-action="setThreshFromInput" data-arg0="quiet" data-arg-types="s,v">${hints.quiet ? `<span class="muted-xs" id="thresh-hint-quiet">${hints.quiet}</span>` : ''}</div>
+          <div class="config-field" data-setting-key="governor.modes.busy.threshold"><label title="Number of actionable issues at which the governor transitions from quiet to busy mode. Agents increase their kick frequency to handle the growing workload.">Busy</label><input type="number" min="1" max="${maxValue}" id="thresh-in-busy" value="${b}" data-input-action="setThreshFromInput" data-arg0="busy" data-arg-types="s,v">${hints.busy ? `<span class="muted-xs" id="thresh-hint-busy">${hints.busy}</span>` : ''}</div>
+          <div class="config-field" data-setting-key="governor.modes.surge.threshold"><label title="Number of actionable issues at which the governor transitions from busy to surge mode. Maximum agent activity — monitor your token budget closely at this level.">Surge</label><input type="number" min="1" max="${maxValue}" id="thresh-in-surge" value="${s}" data-input-action="setThreshFromInput" data-arg0="surge" data-arg-types="s,v">${hints.surge ? `<span class="muted-xs" id="thresh-hint-surge">${hints.surge}</span>` : ''}</div>
 
         </div>`;
     }
@@ -38382,12 +38564,12 @@ function burnAreaChart() {
         ${pausedBanner}${healBanner}${observeBanner}
         ${renderWatchdogActivityShell()}
         <div class="config-field-row">
-          <div class="config-field">
+          <div class="config-field" data-setting-key="governor.watchdog.mode">
             <label>Mode ${settingHelpMark('agent-watchdog', 'configuration', 'Mode', `How much authority the watchdog has over your agents. Start in Observe, read the Audit Log, then move to Heal.`)}</label>
             <select data-change-action="markDirty" data-arg0="health" data-arg1="watchdogMode" data-arg-types="s,s,s">${opts}</select>
             <div id="watchdog-promotion-hint" style="font-size:0.7rem;margin-top:var(--sp-2);min-height:1em"></div>
           </div>
-          <div class="config-field">
+          <div class="config-field" data-setting-key="governor.watchdog.probe_interval_s">
             <label>Probe interval (sec) ${settingHelpMark('agent-watchdog', 'configuration', 'Probe interval (sec)', `Minimum seconds between watchdog sweeps. Each sweep captures one terminal per agent, so this is the main throttle on its cost.`)}</label>
             <input type="number" min="30" max="86400" value="${esc(String(w.probeIntervalS || 300))}" data-change-action="markDirty" data-arg0="health" data-arg1="watchdogProbeIntervalS" data-arg-types="s,s,N">
           </div>
@@ -38805,17 +38987,17 @@ function burnAreaChart() {
       const levels = ['debug', 'info', 'warn', 'error'];
       return `
         <p class="config-help">YAML keys: <code>governor.logging.dir</code>, <code>governor.logging.max_size_mb</code>, <code>governor.logging.max_age_days</code>, <code>governor.logging.max_backups</code>, <code>governor.logging.level</code>, <code>governor.logging.compress</code>.</p>
-        <div class="config-field">
+        <div class="config-field" data-setting-key="governor.logging.dir">
           <label>Log Directory ${settingHelpMark('settings', 'logging', 'Log Directory', `Directory where rolling log files are written. Stored on the persistent /data volume so logs survive container restarts. Read-only at runtime — change in hive.yaml and restart.`)}</label>
           <input type="text" value="${esc(l.dir || '/data/logs')}" disabled style="opacity:0.6">
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Max File Size (MB) ${settingHelpMark('settings', 'logging', 'Max File Size (MB)', `Maximum size of a single log file before rotation. When reached, the current file is rotated and a new one starts. Default 50 MB.`)}</label><input type="number" value="${l.maxSizeMB || 50}" data-change-action="gh50"></div>
-          <div class="config-field"><label>Retention (days) ${settingHelpMark('settings', 'logging', 'Retention (days)', `How many days to keep rotated log files. Files older than this are automatically deleted by lumberjack. Default 7 days.`)}</label><input type="number" value="${l.maxAgeDays || 7}" data-change-action="gh51"></div>
+          <div class="config-field" data-setting-key="governor.logging.max_size_mb"><label>Max File Size (MB) ${settingHelpMark('settings', 'logging', 'Max File Size (MB)', `Maximum size of a single log file before rotation. When reached, the current file is rotated and a new one starts. Default 50 MB.`)}</label><input type="number" value="${l.maxSizeMB || 50}" data-change-action="gh50"></div>
+          <div class="config-field" data-setting-key="governor.logging.max_age_days"><label>Retention (days) ${settingHelpMark('settings', 'logging', 'Retention (days)', `How many days to keep rotated log files. Files older than this are automatically deleted by lumberjack. Default 7 days.`)}</label><input type="number" value="${l.maxAgeDays || 7}" data-change-action="gh51"></div>
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Max Backups ${settingHelpMark('settings', 'logging', 'Max Backups', `Maximum number of rotated log files to keep. Works alongside retention days — whichever limit is hit first triggers cleanup. Default 10 files.`)}</label><input type="number" value="${l.maxBackups || 10}" data-change-action="gh52"></div>
-          <div class="config-field"><label>Log Level ${settingHelpMark('settings', 'logging', 'Log Level', `Minimum severity level for log output. DEBUG includes all messages. INFO is the default operational level. WARN and ERROR reduce noise. Takes effect on next container restart.`)}</label>
+          <div class="config-field" data-setting-key="governor.logging.max_backups"><label>Max Backups ${settingHelpMark('settings', 'logging', 'Max Backups', `Maximum number of rotated log files to keep. Works alongside retention days — whichever limit is hit first triggers cleanup. Default 10 files.`)}</label><input type="number" value="${l.maxBackups || 10}" data-change-action="gh52"></div>
+          <div class="config-field" data-setting-key="governor.logging.level"><label>Log Level ${settingHelpMark('settings', 'logging', 'Log Level', `Minimum severity level for log output. DEBUG includes all messages. INFO is the default operational level. WARN and ERROR reduce noise. Takes effect on next container restart.`)}</label>
             <select data-change-action="markDirty" data-arg0="logging" data-arg1="level" data-arg-types="s,s,v">
               ${levels.map(lv => '<option value="' + lv + '" ' + ((l.level||'info')===lv?'selected':'') + '>' + lv.toUpperCase() + '</option>').join('')}
             </select>
@@ -39189,15 +39371,15 @@ function burnAreaChart() {
       const agentList = '<datalist id="security-agent-options">' + agentNames.map(n => '<option value="' + esc(n) + '"></option>').join('') + '</datalist>';
       const classifierAdvanced = Object.prototype.hasOwnProperty.call(sec, 'ioscanClassifier')
         ? `<div class="config-field-row">
-            <div class="config-field"><label>Classifier model</label>${securityModelInput('ioscanClassifierModel', (sec.ioscanClassifier || {}).model || '', 'e.g. gpt-4o-mini')}</div>
-            <div class="config-field"><label>Warn threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).warnThreshold ?? ''}" data-change-action="gh53"></div>
-            <div class="config-field"><label>Block threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).blockThreshold ?? ''}" data-change-action="gh54"></div>
+            <div class="config-field" data-setting-key="ioscan.classifier.model"><label>Classifier model</label>${securityModelInput('ioscanClassifierModel', (sec.ioscanClassifier || {}).model || '', 'e.g. gpt-4o-mini')}</div>
+            <div class="config-field" data-setting-key="ioscan.classifier.warn_threshold"><label>Warn threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).warnThreshold ?? ''}" data-change-action="gh53"></div>
+            <div class="config-field" data-setting-key="ioscan.classifier.block_threshold"><label>Block threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).blockThreshold ?? ''}" data-change-action="gh54"></div>
           </div>`
         : '<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-4) var(--sp-0) var(--sp-0)">ioscan classifier fields are not present in this v4 backend yet; this disclosure will render them automatically when the API reports support.</p>';
 
       const inputDefense = `
         <p class="config-help">YAML keys: <code>ioscan.enabled</code>, <code>ioscan.fail_mode</code>, <code>ioscan.canaries</code>, <code>ioscan.classifier.enabled</code>, <code>ioscan.classifier.model</code>, <code>ioscan.classifier.warn_threshold</code>, <code>ioscan.classifier.block_threshold</code>.</p>
-        <div class="config-toggle">
+        <div class="config-toggle" data-setting-key="ioscan.enabled">
           <div class="config-toggle-switch ${sec.ioscanEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanEnabled"></div>
           <span class="config-toggle-label">Input/Output scanning (ioscan) ${settingHelpMark('ioscan', '', 'Input/Output scanning (ioscan)', `Scan untrusted issue/PR text for prompt-injection and dangerous directives before agent kicks.`)}</span>
         </div>
@@ -40136,7 +40318,7 @@ function burnAreaChart() {
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Provider rotation</div>
-          <div class="config-toggle">
+          <div class="config-toggle" data-setting-key="governor.rotation.enabled">
             <div class="config-toggle-switch ${rotationOn ? 'on' : ''}" data-action="rotationToggleSwitch"></div>
             <span class="config-toggle-label">Provider rotation ${settingHelpMark('settings', 'features', 'Provider rotation', `Rotate a lane off a provider whose measured usage crosses the threshold. Opt-in; see the backend capacity RFC.`)}</span>
           </div>
@@ -40198,7 +40380,7 @@ function burnAreaChart() {
         ${featuresSectionHtml('quality', `
         <div class="settings-subsection">
           <div class="settings-subsection-title">Quality loops ${settingHelpMark('retro-lane', '', 'Quality loops', `Post-completion feedback lanes that inspect finished work and file advisory findings back into the hive. Off by default, and an absent configuration block is zero behaviour change.`)}</div>
-          <div class="config-toggle">
+          <div class="config-toggle" data-setting-key="retro.enabled">
             <div class="config-toggle-switch ${f.retroEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="retroEnabled"></div>
             <span class="config-toggle-label">Retro loop enabled ${settingHelpMark('retro-lane', '', 'Retro loop enabled', `Periodically scans done/closed beads that have a closed or merged PR, reconstructs a compact trajectory from local ledgers, and files rule-based findings as advisory beads. Deterministic: no model is called, and no tokens are spent, unless an Analysis model is set below. Its pacing knobs (scan interval, max fix attempts, max kicks, long-stall days, recent-closed window) live under Advanced retro below.`)}</span>
           </div>
@@ -40244,18 +40426,18 @@ function burnAreaChart() {
         <div class="settings-subsection">
           <div class="settings-subsection-title">Observability</div>
           <p class="config-help">OpenTelemetry YAML keys: <code>otel.enabled</code>, <code>otel.endpoint</code>, <code>otel.headers.&lt;key&gt;</code>, <code>otel.insecure</code>, <code>otel.sample_ratio</code>, <code>otel.service_name</code>.</p>
-          <div class="config-toggle">
+          <div class="config-toggle" data-setting-key="otel.enabled">
             <div class="config-toggle-switch ${f.tracingEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="tracingEnabled"></div>
             <span class="config-toggle-label">OpenTelemetry export enabled ${settingHelpMark('settings', 'features', 'OpenTelemetry export enabled', `Exports OTLP/HTTP spans for hub/agent activity. Zero overhead when off. When on, traces export to your OTLP collector — view them in Grafana/Jaeger.`)}</span>
           </div>
           <details style="margin:10px 0 0" open><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced OpenTelemetry</summary>
-            <div class="config-field"><label>Endpoint ${settingHelpMark('settings', 'features', 'Endpoint', `Collector endpoint (e.g. https://otel-collector:4318). Leave empty to fall back to the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.`)}</label><input type="text" value="${esc(f.tracingEndpoint || '')}" placeholder="https://otel-collector:4318" data-change-action="markDirty" data-arg0="features" data-arg1="tracingEndpoint" data-arg-types="s,s,w"></div>
+            <div class="config-field" data-setting-key="otel.endpoint"><label>Endpoint ${settingHelpMark('settings', 'features', 'Endpoint', `Collector endpoint (e.g. https://otel-collector:4318). Leave empty to fall back to the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.`)}</label><input type="text" value="${esc(f.tracingEndpoint || '')}" placeholder="https://otel-collector:4318" data-change-action="markDirty" data-arg0="features" data-arg1="tracingEndpoint" data-arg-types="s,s,w"></div>
             <div class="config-field-row">
-              <div class="config-field"><label>Service name ${settingHelpMark('settings', 'features', 'Service name', `The service.name resource attribute stamped on every exported span. Set it to something that identifies this hive so you can tell it apart from other hives in a shared collector. Defaults to &quot;hive&quot; when empty.`)}</label><input type="text" value="${esc(f.otelServiceName || '')}" placeholder="hive" data-change-action="markDirty" data-arg0="features" data-arg1="otelServiceName" data-arg-types="s,s,w"></div>
-              <div class="config-field"><label>Sample ratio ${settingHelpMark('settings', 'features', 'Sample ratio', `Head-based sampling ratio between 0 and 1 — the fraction of traces exported. The default 0 is special-cased to mean sample everything, not nothing, so leaving it alone exports all traces.`)}</label><input type="number" min="0" max="1" step="0.01" value="${f.tracingSampleRatio || 0}" data-change-action="gh57"><span style="font-size:0.65rem;color:var(--muted)">0 means sample all.</span></div>
+              <div class="config-field" data-setting-key="otel.service_name"><label>Service name ${settingHelpMark('settings', 'features', 'Service name', `The service.name resource attribute stamped on every exported span. Set it to something that identifies this hive so you can tell it apart from other hives in a shared collector. Defaults to &quot;hive&quot; when empty.`)}</label><input type="text" value="${esc(f.otelServiceName || '')}" placeholder="hive" data-change-action="markDirty" data-arg0="features" data-arg1="otelServiceName" data-arg-types="s,s,w"></div>
+              <div class="config-field" data-setting-key="otel.sample_ratio"><label>Sample ratio ${settingHelpMark('settings', 'features', 'Sample ratio', `Head-based sampling ratio between 0 and 1 — the fraction of traces exported. The default 0 is special-cased to mean sample everything, not nothing, so leaving it alone exports all traces.`)}</label><input type="number" min="0" max="1" step="0.01" value="${f.tracingSampleRatio || 0}" data-change-action="gh57"><span style="font-size:0.65rem;color:var(--muted)">0 means sample all.</span></div>
             </div>
-            <div class="config-toggle"><div class="config-toggle-switch ${f.otelInsecure ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="otelInsecure"></div><span class="config-toggle-label">Allow insecure OTLP transport ${settingHelpMark('settings', 'features', 'Allow insecure OTLP transport', `Permits plain HTTP to the collector instead of TLS. Only appropriate for a collector reached over a trusted network, such as one in the same cluster; on any other path the spans travel unencrypted.`)}</span></div>
-            <div class="config-field"><label>Headers <span style="font-weight:400;color:var(--muted)">(write-only, one key=value per line)</span> ${settingHelpMark('settings', 'features', 'Headers', `Extra HTTP headers sent with every OTLP export, typically an authorization header for a hosted collector. Write-only: values are stored but never echoed back to this form, so the box reads empty even when headers are set. \${VAR} references are expanded from the hive environment.`)}</label><textarea rows="3" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:0.74rem" placeholder="authorization=\${OTEL_EXPORTER_TOKEN}" data-change-action="parseOtelHeaders" data-arg-types="v"></textarea><div class="fs-xs text-muted mt-2">${f.otelHasHeaders ? 'Headers are configured; values are never echoed back.' : 'No headers configured.'} <button class="hv-btn btn-primary btn-sm" type="button" data-action="gh58">Clear saved headers</button></div></div>
+            <div class="config-toggle" data-setting-key="otel.insecure"><div class="config-toggle-switch ${f.otelInsecure ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="otelInsecure"></div><span class="config-toggle-label">Allow insecure OTLP transport ${settingHelpMark('settings', 'features', 'Allow insecure OTLP transport', `Permits plain HTTP to the collector instead of TLS. Only appropriate for a collector reached over a trusted network, such as one in the same cluster; on any other path the spans travel unencrypted.`)}</span></div>
+            <div class="config-field" data-setting-key="otel.headers.<key>"><label>Headers <span style="font-weight:400;color:var(--muted)">(write-only, one key=value per line)</span> ${settingHelpMark('settings', 'features', 'Headers', `Extra HTTP headers sent with every OTLP export, typically an authorization header for a hosted collector. Write-only: values are stored but never echoed back to this form, so the box reads empty even when headers are set. \${VAR} references are expanded from the hive environment.`)}</label><textarea rows="3" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:0.74rem" placeholder="authorization=\${OTEL_EXPORTER_TOKEN}" data-change-action="parseOtelHeaders" data-arg-types="v"></textarea><div class="fs-xs text-muted mt-2">${f.otelHasHeaders ? 'Headers are configured; values are never echoed back.' : 'No headers configured.'} <button class="hv-btn btn-primary btn-sm" type="button" data-action="gh58">Clear saved headers</button></div></div>
           </details>
         </div>
         <div class="settings-subsection">
