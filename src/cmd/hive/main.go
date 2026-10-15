@@ -5671,6 +5671,7 @@ func (b *boot) bootLanes() {
 					OnDivergence: b.cfg.Governor.Trajectory.OnDivergence,
 					ExemptAgents: b.cfg.Governor.Trajectory.ExemptAgents,
 				}, b.logger)
+			dashboard.SetTrajectoryCountersProvider(trajectoryMetricsCounters(b.trajLane))
 			b.logger.Info("trajectory-review lane enabled",
 				"model", reviewModel,
 				"interval_s", b.cfg.Governor.Trajectory.IntervalS,

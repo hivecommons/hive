@@ -35,12 +35,31 @@ func (m *Manager) TrajectoryAgents() []trajectory.AgentView {
 			}
 			transcript += ln
 		}
+		a.paneMu.RLock()
+		lastOutput := a.LastPaneChange
+		a.paneMu.RUnlock()
 		views = append(views, trajectory.AgentView{
-			Name:       name,
-			Running:    true,
-			Intent:     a.LastKickMessage,
-			Transcript: transcript,
+			Name:         name,
+			Running:      true,
+			Intent:       a.LastKickMessage,
+			Transcript:   transcript,
+			Idle:         trajectoryIdle(a),
+			LastOutputAt: lastOutput,
 		})
 	}
 	return views
+}
+
+// trajectoryIdle reports whether the manager's own state proves the agent has
+// no turn in progress: its most recent kicked turn has been observed to end
+// (KickOutcome settled against LastKick), or it is parked at the prompt
+// waiting on CI. An agent that has never been kicked has no turn either.
+// This is agent/governor state only — the pane transcript is deliberately
+// not consulted, so a stalled-but-running turn never reads as idle
+// (hivecommons/hive#12132). Caller holds m.mu.
+func trajectoryIdle(a *AgentProcess) bool {
+	if a.LastKick == nil {
+		return true
+	}
+	return a.KickOutcome.Settled(a.LastKick) || a.AwaitingCI
 }

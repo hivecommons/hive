@@ -40118,6 +40118,11 @@ function burnAreaChart() {
       const trajModel = traj.effectiveModel || '';
       const trajInterval = traj.intervalS || 0;
       const trajDiv = traj.onDivergence || 'pause';
+      const trajStats = traj.stats || null;
+      const trajSkipReasons = trajStats && trajStats.skippedByReason ? Object.entries(trajStats.skippedByReason).map(([r, n]) => `${esc(r)}: ${n}`).join(', ') : '';
+      const trajStatsHtml = trajStats
+        ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:6px">Reviews run: <b>${trajStats.reviewed || 0}</b> · skipped: <b>${trajStats.skipped || 0}</b>${trajSkipReasons ? ` (${trajSkipReasons})` : ''} · lane passes: ${trajStats.runs || 0}. Skips only happen when the agent is proven idle and the review is not overdue — never on an unchanged transcript.</div>`
+        : '';
       const rotationOn = f.rotationEnabled === true;
       const rotationProviders = (f.rotationProviders && typeof f.rotationProviders === 'object') ? f.rotationProviders : {};
       const rotationAgents = (f.rotationAgents && typeof f.rotationAgents === 'object') ? f.rotationAgents : {};
@@ -40489,6 +40494,7 @@ function burnAreaChart() {
             </div>
             <span style="font-family:monospace;font-size:0.72rem;padding:2px 10px;border-radius:var(--r-pill);background:color-mix(in srgb, ${trajStatusColor} 14%, transparent);border:1px solid color-mix(in srgb, ${trajStatusColor} 45%, transparent);color:${trajStatusColor}">${esc(trajStatus)}</span>
           </div>
+          ${trajStatsHtml}
           <div style="font-size:var(--fs-sm);color:var(--muted);line-height:1.6;margin-top:10px">
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong class="text-default">Why it exists.</strong> An agent running for a long time can take a series of individually-harmless steps that add up to something its task never authorized — escaping the sandbox, evading a security scanner, splitting a credential so a scanner won't see it, escalating privileges, or chasing a goal it picked up from a repo file instead of your instruction. A per-action allow/deny check can't catch this, because no single step breaks a rule; only the <em>direction</em> of the sequence does.</p>
             <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong class="text-default">What it does.</strong> On a fixed cadence it reads each running agent's recent transcript, compares it against the task the agent was actually assigned (its last kick), and judges whether the agent is still working toward that task. If the sequence has drifted, it <strong>pauses the agent and alerts you</strong> (or, in alert-only mode, just alerts). Alerts appear in the dashboard banner, the audit log, and ntfy.</p>
