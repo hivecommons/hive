@@ -57,6 +57,14 @@ type GoodFirstIssueConfig struct {
 	CommentTemplate string `yaml:"comment_template,omitempty" json:"comment_template,omitempty"`
 }
 
+// Scorer defaults re-exported so the dashboard can show them without
+// importing pkg/gfi (pkg/dashboard import ratchets).
+const (
+	DefaultGoodFirstIssueMaxPerRepo  = gfi.DefaultMaxPerRepo
+	DefaultGoodFirstIssueMaxPerSweep = gfi.DefaultMaxPerSweep
+	DefaultGoodFirstIssueMinAge      = gfi.DefaultMinAge
+)
+
 // IntervalOrDefault resolves the sweep cadence.
 func (g GoodFirstIssueConfig) IntervalOrDefault() time.Duration {
 	if g.Interval > 0 {

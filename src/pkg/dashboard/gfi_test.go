@@ -82,7 +82,7 @@ func TestGoodFirstIssueStatsInFeaturesView(t *testing.T) {
 	if _, ok := s.featuresSectionWithLinked(cfg)["goodFirstIssueStats"]; ok {
 		t.Fatal("stats present without a provider")
 	}
-	s.SetGoodFirstIssueStats(func() gfi.Stats { return gfi.Stats{Selected: 2, Converted: 1} })
+	s.SetGoodFirstIssueStats(func() any { return gfi.Stats{Selected: 2, Converted: 1} })
 	got, ok := s.featuresSectionWithLinked(cfg)["goodFirstIssueStats"].(gfi.Stats)
 	if !ok || got.Selected != 2 || got.Converted != 1 {
 		t.Fatalf("stats %v %v", got, ok)
@@ -90,5 +90,14 @@ func TestGoodFirstIssueStatsInFeaturesView(t *testing.T) {
 	s.SetGoodFirstIssueStats(nil)
 	if _, ok := s.featuresSectionWithLinked(cfg)["goodFirstIssueStats"]; ok {
 		t.Fatal("stats present after removal")
+	}
+}
+
+func TestGoodFirstIssueLabelMirrorsGFI(t *testing.T) {
+	if goodFirstIssueLabel != gfi.Label {
+		t.Fatalf("goodFirstIssueLabel = %q, gfi.Label = %q", goodFirstIssueLabel, gfi.Label)
+	}
+	if config.DefaultGoodFirstIssueMaxPerRepo != gfi.DefaultMaxPerRepo || config.DefaultGoodFirstIssueMaxPerSweep != gfi.DefaultMaxPerSweep || config.DefaultGoodFirstIssueMinAge != gfi.DefaultMinAge {
+		t.Fatal("config good-first-issue defaults drifted from pkg/gfi")
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/gfi"
@@ -191,16 +192,11 @@ func TestGFISweepReleaseAndConvertWiring(t *testing.T) {
 	release("worker", "widgets", 99, github.AgentStartSignalClaim)
 	// On the labelled issue: labels off, comment superseded.
 	release("worker", "widgets", 7, github.AgentStartSignalClaim)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	testutil.Eventually(t, 5*time.Second, func() bool {
 		fake.mu.Lock()
-		done := len(fake.removed) == 2 && strings.Contains(fake.comments[0]["body"].(string), gfi.SupersededMarker)
-		fake.mu.Unlock()
-		if done {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		defer fake.mu.Unlock()
+		return len(fake.removed) == 2 && len(fake.comments) > 0 && strings.Contains(fake.comments[0]["body"].(string), gfi.SupersededMarker)
+	}, "release did not remove labels and supersede the comment")
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if strings.Join(fake.removed, ",") != "good%20first%20issue,help%20wanted" && strings.Join(fake.removed, ",") != gfi.Label+","+gfi.HelpWantedLabel {

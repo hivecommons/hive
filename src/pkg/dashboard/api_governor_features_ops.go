@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -350,9 +349,9 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 		"goodFirstIssueMinAge":      settingsDurationString(cfg.GoodFirstIssue.MinAge),
 		"goodFirstIssueDefaults": map[string]string{
 			"goodFirstIssueInterval":    config.DefaultGoodFirstIssueInterval.String(),
-			"goodFirstIssueMaxPerRepo":  strconv.Itoa(gfi.DefaultMaxPerRepo),
-			"goodFirstIssueMaxPerSweep": strconv.Itoa(gfi.DefaultMaxPerSweep),
-			"goodFirstIssueMinAge":      gfi.DefaultMinAge.String(),
+			"goodFirstIssueMaxPerRepo":  strconv.Itoa(config.DefaultGoodFirstIssueMaxPerRepo),
+			"goodFirstIssueMaxPerSweep": strconv.Itoa(config.DefaultGoodFirstIssueMaxPerSweep),
+			"goodFirstIssueMinAge":      config.DefaultGoodFirstIssueMinAge.String(),
 		},
 	}
 }
