@@ -105,7 +105,7 @@ func TestAutoUpgradeResumesAfterClaimDelivered(t *testing.T) {
 
 	const id = "hosted-delivered-95"
 	saveSaaSHive(&SaaSHive{
-		ID: id, Owner: "acme", AutoUpgrade: true, ClusterID: "remote",
+		ID: id, Owner: "acme", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant, ClusterID: "remote",
 		Status: statusAssigned, ClaimDelivered: true, // claim landed
 		AssignedAt: time.Now().UTC().Format(time.RFC3339),
 	})
@@ -131,7 +131,7 @@ func TestAutoUpgradeAvailablePlaceholderUpgrades(t *testing.T) {
 
 	const id = "hosted-available-95"
 	saveSaaSHive(&SaaSHive{
-		ID: id, Owner: hubAdminUsername, AutoUpgrade: true, ClusterID: "remote",
+		ID: id, Owner: hubAdminUsername, AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant, ClusterID: "remote",
 		Status: statusAvailable, ClaimDelivered: false,
 	})
 
@@ -155,7 +155,7 @@ func TestAutoUpgradeLiveClaimedHiveUpgrades(t *testing.T) {
 
 	const id = "hosted-live-95"
 	saveSaaSHive(&SaaSHive{
-		ID: id, Owner: "acme", AutoUpgrade: true, ClusterID: "remote",
+		ID: id, Owner: "acme", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant, ClusterID: "remote",
 		Status: statusAssigned, ClaimDelivered: true,
 	})
 

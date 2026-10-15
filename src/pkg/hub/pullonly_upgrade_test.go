@@ -65,7 +65,7 @@ func TestPullOnlyHiveThatHeartbeatsStillUpgrades(t *testing.T) {
 	s := pullOnlyTestServer(t)
 	s.forgetUncollectibleUpgrade("pull-live")
 	saveSaaSHive(&SaaSHive{
-		ID: "pull-live", Owner: "alice", AutoUpgrade: true,
+		ID: "pull-live", Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant,
 		Status: "running", ClusterID: "vllm-d",
 	})
 	// On a pull-only cluster, but ALIVE and collecting instructions.
@@ -158,7 +158,7 @@ func TestBrieflyQuietHiveStillUpgrades(t *testing.T) {
 	s := pullOnlyTestServer(t)
 	s.forgetUncollectibleUpgrade("quiet-1")
 	saveSaaSHive(&SaaSHive{
-		ID: "quiet-1", Owner: "alice", AutoUpgrade: true,
+		ID: "quiet-1", Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant,
 		Status: "running", ClusterID: "vllm-d",
 	})
 	// 20 minutes quiet: past maxHeartbeatAge (5m, the Online pill), well inside
@@ -285,7 +285,7 @@ func TestUncollectibleUpgradeIsSurfacedNotSilent(t *testing.T) {
 	s := pullOnlyTestServer(t)
 	s.forgetUncollectibleUpgrade("ph-4")
 	saveSaaSHive(&SaaSHive{
-		ID: "ph-4", Owner: "alice", AutoUpgrade: true,
+		ID: "ph-4", Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant,
 		Status: "running", ClusterID: "vllm-d",
 	})
 	s.registry.Hives = []RegistryEntry{{ID: "ph-4", GitBranch: "v4", GitHash: "old1234"}}
@@ -318,7 +318,7 @@ func TestUncollectibleRefusalIsDeduplicated(t *testing.T) {
 	s := pullOnlyTestServer(t)
 	s.forgetUncollectibleUpgrade("ph-5")
 	saveSaaSHive(&SaaSHive{
-		ID: "ph-5", Owner: "alice", AutoUpgrade: true,
+		ID: "ph-5", Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant,
 		Status: "running", ClusterID: "vllm-d",
 	})
 	s.registry.Hives = []RegistryEntry{{ID: "ph-5", GitBranch: "v4", GitHash: "old1234"}}
@@ -399,7 +399,7 @@ func TestLiveHiveNeverTargetedWithForeignBranchSHA(t *testing.T) {
 	latestSHAMu.Unlock()
 
 	saveSaaSHive(&SaaSHive{
-		ID: "live-nobranch", Owner: "alice", AutoUpgrade: true,
+		ID: "live-nobranch", Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant,
 		Status: "running", ClusterID: "vllm-d",
 	})
 	// GitBranch empty, but heartbeating — so it WILL collect whatever we arm.
@@ -444,7 +444,7 @@ func TestUpgradePathNeverShellsOutToCluster(t *testing.T) {
 		Domain: "r.example.com",
 	}
 	saveSaaSHive(&SaaSHive{
-		ID: "nopush", Owner: "alice", AutoUpgrade: true,
+		ID: "nopush", Owner: "alice", AutoUpgrade: true, AutoUpgradeMode: AutoUpgradeModeInstant,
 		Status: "running", ClusterID: "remote",
 	})
 	s.registry.Hives = []RegistryEntry{{
