@@ -17825,9 +17825,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // label notes the scope so users know why non-entitled models are gone.
         const labelSuffix = data.fallback ? ' (common alias, unverified)'
           : (data.entitled ? ' (your key)' : '');
-        const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
+        const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix, suffix: labelSuffix }));
         INFERENCE_MODELS[backend] = models;
-        _inferenceModelCache[backend] = { models, ts: now, fallback: !!data.fallback, entitled: !!data.entitled };
+        _inferenceModelCache[backend] = {
+          models, ts: now, fallback: !!data.fallback, entitled: !!data.entitled,
+          // default_model: what an agent on this backend uses when it names
+          // none; entitledModels: the FULL set the gateway's team may use, so
+          // a stored model outside it can be flagged (#9945).
+          defaultModel: data.default_model || '',
+          entitledModels: Array.isArray(data.entitled_models) ? data.entitled_models : null,
+        };
         // A real (non-fallback) discovery may have changed the entitlement-
         // filtered model set — reconcile agents/defaults whose selected model
         // is no longer available. No-op when the list is a static fallback or
@@ -17960,7 +17967,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             detail: `⚠ model discovery ${b.degraded ? 'degraded' : 'failed'} — ${b.degraded ? 'this list is live but is not the catalog the CLI uses' : 'showing the static fallback list'}. ${b.discovery.error}`,
           }) : null));
           if (b.reasoning_efforts) MODEL_REASONING_EFFORTS[b.id] = b.reasoning_efforts;
-          const models = (b.models || []).map(m => ({ value: m, label: (b.id === 'omp' ? m : m.split('/').pop()) + labelSuffix }));
+          const models = (b.models || []).map(m => ({ value: m, label: (b.id === 'omp' ? m : m.split('/').pop()) + labelSuffix, suffix: labelSuffix }));
           if (!models.length) return; // keep prior (possibly fallback) list rather than blanking the dropdown
           BACKEND_MODELS[b.id] = models;
           // A degraded list is not authority either: absence from it proves
@@ -35764,6 +35771,10 @@ function burnAreaChart() {
       const _liveAgent = (window._lastAgents || []).find(a => a.name === agentName);
       const _agentBackend = (_liveAgent && _liveAgent.cli) || g.cliPinValue || '';
       const _modelOpts = modelsForBackend(_agentBackend) || [];
+      // Rendered synchronously from the cache; once live discovery for an
+      // inference backend answers, the Model select is rebuilt in place so
+      // its default label and "not allowed by gateway" flag are current.
+      setTimeout(() => ensureModelOptionsForBackend(_agentBackend), 0);
       const _bobSessionLabel = g.bobSessionLabel || '';
       const _bobSessionPrefix = g.bobSessionPrefix || '';
       const _bobEffectiveLabel = _bobSessionLabel
@@ -35915,11 +35926,9 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-field">
-          <label>Model ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Model', `Override the LLM model for this agent. Select "(from launch command)" to let the CLI choose its default. The governor may downgrade models automatically when budget is tight, unless Model Lock is enabled in Governor Health settings.`)}</label>
-          <select id="cfg-model" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">
-            <option value="">(from launch command)</option>
-            ${_modelOpts.map(m => `<option value="${m.value}" ${_modelsEqual(g.model, m.value) ? 'selected' : ''}>${m.label}</option>`).join('')}
-            ${(g.model && !_modelOpts.some(m => _modelsEqual(g.model, m.value))) ? `<option value="${esc(g.model)}" selected>${esc(g.model)} (current)</option>` : ''}
+          <label>Model ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Model', `Per-agent model override. Precedence: this model if set → otherwise the backend default (a gateway's default_model from Settings → Model Gateways, or the CLI's own default). Pick "(backend default — …)" to clear the per-agent model. A model marked "not allowed by gateway" fails every call with a 403. The governor may downgrade models automatically when budget is tight, unless Model Lock is enabled in Governor Health settings.`)}</label>
+          <select id="cfg-model" title="${esc(MODEL_PRECEDENCE_TITLE)}" data-change-action="markDirty" data-arg0="general" data-arg1="model" data-arg-types="s,s,v">
+            ${modelSelectOptionsHtml(_agentBackend, g.model || '', _modelOpts)}
           </select>
         </div>
         <div class="config-field">
@@ -42770,11 +42779,78 @@ function burnAreaChart() {
       const current = sel.value;
       const opts = modelsForBackend(backend) || [];
       const match = opts.find(m => _modelsEqual(current, m.value));
-      let html = '<option value="">(from launch command)</option>';
-      html += opts.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join('');
-      if (current && !match) html += `<option value="${esc(current)}">${esc(current)} (current)</option>`;
-      sel.innerHTML = html;
+      sel.innerHTML = modelSelectOptionsHtml(backend, current, opts);
+      sel.title = MODEL_PRECEDENCE_TITLE;
       sel.value = match ? match.value : current;
+    }
+
+    // MODEL_PRECEDENCE_TITLE is the Model select's tooltip: which model an
+    // agent really sends, in precedence order (#9945 — an operator could not
+    // tell that "(from launch command)" meant "no per-agent model").
+    const MODEL_PRECEDENCE_TITLE = 'Which model this agent sends: 1) the per-agent model chosen here, if any; 2) otherwise the backend default — a gateway\'s default_model (Settings → Model Gateways) or, for a CLI backend, the model the CLI itself picks. A model the gateway\'s team is not allowed fails every call with a 403, so prefer the backend default unless you need a specific allowed model.';
+
+    // fullModelLabel shows the complete gateway model id (e.g.
+    // rits/zai-org/glm-5-3, not just glm-5-3) with any discovery suffix, so
+    // the option is recognisable as the id the gateway card shows (#9945).
+    // Lists built without a suffix (static CLI catalogs) keep their label.
+    function fullModelLabel(m) {
+      return m.suffix !== undefined ? m.value + m.suffix : m.label;
+    }
+
+    // inferenceBackendDefaultModel is the model an agent on backend uses when
+    // it names none, as reported by /api/inference/models ("" when unknown).
+    function inferenceBackendDefaultModel(backend) {
+      const c = _inferenceModelCache[canonicalInferenceBackendName(backend)] || _inferenceModelCache[backend];
+      return (c && c.defaultModel) || '';
+    }
+
+    // modelDisallowedByGateway is true when the gateway's last entitlement
+    // signal (key-info probe or a "team not allowed" 403) is known and does
+    // not include model — the agent will 403 on every call with it.
+    function modelDisallowedByGateway(backend, model) {
+      if (!model) return false;
+      const c = _inferenceModelCache[canonicalInferenceBackendName(backend)] || _inferenceModelCache[backend];
+      if (!c || !c.entitled) return false;
+      const entitled = c.entitledModels || (c.models || []).map(m => m.value);
+      return !entitled.some(e => _modelIdMatches(e, model));
+    }
+
+    // modelDefaultOptionLabel names the "no per-agent model" choice by what
+    // it resolves to, replacing the opaque "(from launch command)".
+    function modelDefaultOptionLabel(backend) {
+      const def = inferenceBackendDefaultModel(backend);
+      if (def) return `(backend default — ${def})`;
+      if (isInferenceBackendName(backend)) return '(backend default — the gateway\'s default_model, Settings → Model Gateways)';
+      return `(backend default — chosen by the ${backend || 'CLI'} CLI)`;
+    }
+
+    // modelSelectOptionsHtml builds the agent config dialog's Model options:
+    // the backend-default choice first, every offered model with its FULL id,
+    // and — when the current model is not offered — a "(current)" option that
+    // says when the gateway does not allow it, so an operator looking at
+    // "aws/claude-sonnet-4-6 (current — not allowed by gateway)" knows why
+    // the agent is failing and what to pick instead (#9945).
+    function modelSelectOptionsHtml(backend, current, opts) {
+      const models = opts || modelsForBackend(backend) || [];
+      let html = `<option value="">${esc(modelDefaultOptionLabel(backend))}</option>`;
+      html += models.map(m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}</option>`).join('');
+      if (current && !models.some(m => _modelsEqual(current, m.value))) {
+        const note = modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
+        html += `<option value="${esc(current)}" selected>${esc(current)}${note}</option>`;
+      }
+      return html;
+    }
+
+    // ensureModelOptionsForBackend refreshes the dialog's Model select once
+    // live discovery for an inference backend has answered, so the default
+    // label and the "not allowed" flag reflect the gateway rather than a cold
+    // cache on first open.
+    function ensureModelOptionsForBackend(backend) {
+      if (!isInferenceBackendName(backend) || typeof fetchInferenceModels !== 'function') return;
+      fetchInferenceModels(canonicalInferenceBackendName(backend)).then(() => {
+        const sel = document.getElementById('cfg-model');
+        if (sel) refreshModelOptions(backend);
+      }).catch(() => {});
     }
 
     function updateLaunchCmd(cli) {
