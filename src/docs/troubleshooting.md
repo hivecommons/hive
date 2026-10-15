@@ -37,7 +37,7 @@ The process also writes `hive.log` under the configured logs directory (default 
 
 ### No shell on the host?
 
-Operators without direct host shell access can read Hive's logs, auth proxy output, early startup output, request logs, agent terminal and kick logs, and restart/crash/memory evidence through the admin MCP. Start with `log_sources` and `log_read` in [`admin-mcp.md`](admin-mcp.md). See also [`admin-mcp.md` § What still needs a host shell](admin-mcp.md#what-still-needs-a-host-shell).
+Operators without direct host shell access can read Hive's logs, auth proxy output, early startup output, request logs, agent terminal and kick logs, and restart/crash/memory evidence through the admin MCP (available on v6). Start with `log_sources` and `log_read` in [`admin-mcp.md`](https://github.com/hivecommons/hive/blob/v6/src/docs/admin-mcp.md). See also [`admin-mcp.md` § What still needs a host shell](https://github.com/hivecommons/hive/blob/v6/src/docs/admin-mcp.md#what-still-needs-a-host-shell).
 
 ## Config fails to load or save
 
