@@ -2970,6 +2970,13 @@ type SystemResources struct {
 	MemPct      float64 `json:"memPct"`
 	CpuPct      float64 `json:"cpuPct"`
 	CpuCores    int     `json:"cpuCores"`
+	// MemLimit, MemLimitBytes and OOMKillCount are the container's own
+	// memory limit and out-of-memory kill count (hivecommons/hive#11945);
+	// see readMemoryEvidence. They are added beside the fields above, which
+	// the web UI reads and which keep their meaning.
+	MemLimit      string `json:"memLimit,omitempty"`
+	MemLimitBytes int64  `json:"memLimitBytes,omitempty"`
+	OOMKillCount  *int64 `json:"oomKillCount,omitempty"`
 }
 
 const (
@@ -3086,6 +3093,9 @@ func collectSystemResources() *SystemResources {
 	}
 
 	res.CpuCores = runtime.NumCPU()
+
+	ev := ReadMemoryEvidence()
+	res.MemLimit, res.MemLimitBytes, res.OOMKillCount = ev.Limit, ev.LimitBytes, ev.OOMKills
 
 	return res
 }

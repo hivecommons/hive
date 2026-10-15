@@ -97,7 +97,7 @@ func TestLogReadRequiresReadWrite(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("sources: %d %s", rec.Code, rec.Body.String())
 	}
-	if list.Default != logread.SourceHive || len(list.Sources) != 5 || !list.Sources[0].Available {
+	if list.Default != logread.SourceHive || len(list.Sources) != 7 || !list.Sources[0].Available {
 		t.Fatalf("sources = %+v", list)
 	}
 }

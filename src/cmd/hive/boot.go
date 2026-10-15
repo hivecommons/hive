@@ -37,6 +37,7 @@ import (
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/snapshot"
+	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/toolapprove"
 	"github.com/hivecommons/hive/pkg/trajectory"
@@ -85,7 +86,11 @@ type boot struct {
 	requestRelays *requestRelaySupervisor
 
 	// bootConfig
-	startTime                     time.Time
+	startTime time.Time
+	// startID ties hive log lines to this start; startRecord is the start
+	// record (#11945), nil when none could be written.
+	startID                       string
+	startRecord                   *startrec.Recorder
 	configPath                    string
 	logger                        *slog.Logger
 	cfg                           *config.Config

@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/hub"
 	"github.com/hivecommons/hive/pkg/proclock"
+	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
 
@@ -36,6 +37,10 @@ type bootConfigDeps struct {
 	// (#11944). nil writes to stdout alone.
 	earlyOutput func(stdout io.Writer, getenv func(string) string) io.Writer
 	getenv      func(key string) string
+	// beginStart records this start and how the previous run ended
+	// (#11945); it runs only after the singleton lock is held. nil records
+	// nothing.
+	beginStart func(id string, getenv func(string) string) (*startrec.Recorder, error)
 	// exit terminates the process. In production it never returns; a fake
 	// must stop the phase some other way (panic with a sentinel), because the
 	// code after each exit call assumes it did not come back.
@@ -81,6 +86,7 @@ func defaultBootConfigDeps() bootConfigDeps {
 		stderr:      os.Stderr,
 		earlyOutput: teeEarlyOutput,
 		getenv:      os.Getenv,
+		beginStart:  recordStart,
 		exit:        os.Exit,
 		parseFlags: func(defaultConfigPath string) string {
 			configPath := flag.String("config", defaultConfigPath, "path to hive.yaml config file")

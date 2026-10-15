@@ -23,6 +23,11 @@ const (
 	SourceHiveOutput = "hive-output"
 	SourceLiteLLM    = "litellm"
 	SourceRequests   = "requests"
+	// SourceStarts and SourceCrash are written by pkg/startrec
+	// (hivecommons/hive#11945): starts.log holds one line per hive start, and
+	// each start's crash trace is crash-<start time>.log.
+	SourceStarts = "starts"
+	SourceCrash  = "crash"
 
 	StreamStdout = "stdout"
 	StreamStderr = "stderr"
@@ -191,7 +196,13 @@ func (l *OutputLog) rotate() error {
 }
 
 func (l *OutputLog) backupPath(stamp time.Time) string {
-	return filepath.Join(l.dir, l.stem+"-"+stamp.UTC().Format(backupTimeFormat)+".log")
+	return filepath.Join(l.dir, HistoryFileName(l.stem, stamp))
+}
+
+// HistoryFileName names a dated history file of a source,
+// <stem>-<time>.log, in the layout reads list newest first.
+func HistoryFileName(stem string, stamp time.Time) string {
+	return stem + "-" + stamp.UTC().Format(backupTimeFormat) + ".log"
 }
 
 // prune removes history beyond the file count and age bounds, and empties a

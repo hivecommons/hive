@@ -640,6 +640,54 @@ and nothing else. Neither applies `CapResult`. A refusal becomes the typed `ErrF
 
 These tools add no scrubber category, so `bin/contributor-relay.js` is unchanged.
 
+### Start records, crash traces and out-of-memory evidence
+
+hivecommons/hive#11945 (child of #11941) records whether the hive crashed, was killed or ran
+out of memory. An operator can then tell this without host access, through `log_read` and
+`fleet_status`. Everything lives in `HIVE_OUTPUT_LOG_DIR` beside the #11944 sources. Files are
+`0600` in a `0700` directory. There is no new mount, port, socket, host component or gateway
+change. The start-up script's process launch, PIDs, signals and exit codes are unchanged.
+
+- **Start records (`pkg/startrec`).** `cmd/hive` calls `startrec.Begin` right after it takes
+  the singleton lock (`boot.beginStartRecord`). A duplicate process refused by the lock has
+  therefore written nothing. `Begin` reads the previous run's `start-current.json`. That run
+  is `clean` or `self-upgrade-failed` if it closed its record, `not-closed` if it did not, and
+  `unknown` if there is no record. `Begin` then appends one slog-shaped line to `starts.log`
+  (kept to the newest 200) and writes the new run's `start-current.json`. A heartbeat refreshes
+  `last_seen_alive` and the memory reading every 30 seconds. The record is closed `clean` from
+  the cleanup stack, pushed just after the lock. Because the stack runs last in, first out, the
+  close runs after `runLoop` has persisted state and the later cleanups have run. The
+  self-upgrade failure path closes it `self-upgrade-failed` before its `os.Exit`. Other
+  `os.Exit` paths leave it open and read as `not-closed`. Writes are atomic (temporary file
+  and rename). The clock, directory and memory reader are injected, so tests use a fake clock.
+  A helper process killed with SIGKILL proves `not-closed`.
+- **Start identifier.** `startrec.NewID` makes 8 hex characters. The single helper
+  `withStartID` adds it as `start` to both hive logger constructors, the early JSON logger
+  and the file logger. Every `hive` line of one run can therefore be selected with `include`.
+- **Crash traces.** `Begin` creates `crash-<UTC start time>.log`, writes a JSON header line
+  that names the start, and passes it to `debug.SetCrashOutput`. The Go runtime then also
+  writes an unrecovered panic or fatal error there, one file per start. When the next start
+  begins, files that hold only their header are removed. The last 10 traces are kept, and
+  each is cut to 1 MiB. The previous start's line reports `crash_trace`. A SIGKILL or
+  out-of-memory kill runs no code, so it leaves no trace. The tests crash a re-executed test
+  helper; production has no crash-on-demand path.
+- **Out-of-memory evidence.** `dashboard.readMemoryEvidence` reads the container's own memory
+  controller under a test seam root (`/sys/fs/cgroup`). On cgroup v2 it reads `memory.max`,
+  `memory.current` and the `oom_kill` count in `memory.events`. On cgroup v1 it reads
+  `memory/memory.limit_in_bytes`, `usage_in_bytes` and the `oom_kill` line of `oom_control`.
+  `collectSystemResources` adds `memLimit` (`N MiB`, `unlimited` or `unknown`),
+  `memLimitBytes` and `oomKillCount` to `systemResources`. The existing fields, which the web
+  UI reads, are unchanged. The heartbeat stores the same reading in the start record. The
+  count is lost when the container restarts with a new cgroup, so the next start reports the
+  last reading as `previous.memory`.
+- **Reads.** `starts` and `crash` are `logread` output-dir sources. They are read, bounded
+  (128 KiB per call, below the 256 KiB `CapResult` cap) and scrubbed like the other sources.
+  Their text is untrusted result data. They and the new status fields carry no credential
+  material, and their field names avoid credential words.
+
+These sources add no scrubber category, so `bin/contributor-relay.js` is unchanged. No
+dashboard route is added.
+
 ## Deliberately absent, and why
 
 Recording the reason matters as much as recording the exclusion. A bare "out of scope" reads,

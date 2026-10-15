@@ -78,6 +78,7 @@ import (
 	"github.com/hivecommons/hive/pkg/slack"
 	"github.com/hivecommons/hive/pkg/snapshot"
 	"github.com/hivecommons/hive/pkg/spokealerts"
+	"github.com/hivecommons/hive/pkg/startrec"
 	"github.com/hivecommons/hive/pkg/taskmcp"
 	"github.com/hivecommons/hive/pkg/telegram"
 	"github.com/hivecommons/hive/pkg/timeline"
@@ -915,7 +916,10 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	if deps.earlyOutput != nil {
 		early = deps.earlyOutput(deps.stdout, deps.getenv)
 	}
-	b.logger = slog.New(logscrub.NewHandler(slog.NewJSONHandler(early, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	// Every hive log line carries this start's identifier (#11945), so it
+	// can be tied to its line in the starts log source.
+	b.startID = startrec.NewID()
+	b.logger = withStartID(slog.New(logscrub.NewHandler(slog.NewJSONHandler(early, &slog.HandlerOptions{Level: slog.LevelInfo}))), b.startID)
 	slog.SetDefault(b.logger)
 
 	// Process singleton: refuse to become a second hive process in this
@@ -940,6 +944,12 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 		// file closes its descriptor, which would silently drop the flock).
 		b.cleanup.push(releaseLock)
 	}
+
+	// Start record (#11945): only the process that holds the singleton lock
+	// records a start, so a refused duplicate changes nothing. Its close is
+	// pushed now so it runs after every later cleanup, the state persistence
+	// in runLoop included.
+	b.beginStartRecord(deps)
 
 	// Auto-update visibility (#7092): before anything reads the upgrade marker,
 	// reconcile it against the commit we actually booted on. A marker whose
@@ -1025,7 +1035,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	}
 
 	// Reconfigure logger with rolling file output
-	b.logger = deps.fileLogger(b.cfg)
+	b.logger = withStartID(deps.fileLogger(b.cfg), b.startID)
 	slog.SetDefault(b.logger)
 
 	// Load or generate a unique Hive ID for this instance
@@ -5396,6 +5406,12 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						)
 						recordUpgradeError(upgradeMarkerPath, err, b.logger)
 						spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort, err.Error(), b.logger)
+						// os.Exit skips the cleanup stack: record this end
+						// now so the next start reads self-upgrade-failed
+						// (#11945).
+						if err := b.startRecord.Close(startrec.VerdictSelfUpgradeFailed); err != nil {
+							b.logger.Warn("start record not closed before the self-upgrade failure exit", "error", err)
+						}
 						// Exit NON-ZERO. Exiting 0 on a failed upgrade told Kubernetes
 						// the process had completed successfully, so the restart looked
 						// routine and nothing — not the pod's exit code, not an event,

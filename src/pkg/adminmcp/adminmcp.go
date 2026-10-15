@@ -338,7 +338,7 @@ func ToolsWithWritesEnabled(writesEnabled bool) []map[string]any {
 func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 	defs := []struct{ name, desc string }{
 		{ToolHiveStatus, "Read this hive's dashboard status summary."},
-		{ToolFleetStatus, "Read this hive's fleet status, including repo and agent health rollups."},
+		{ToolFleetStatus, "Read this hive's fleet status, including repo and agent health rollups. systemResources also carries the container's memory limit (memLimit, \"unlimited\" when none is set) and its out-of-memory kill count (oomKillCount); a restart resets that count, and the starts log source keeps the reading taken before the previous run ended."},
 		{ToolVersionRead, "Read the build this hive is running (currentCommit, branch, channel, commitsBehind, behind) through the existing /api/version endpoint."},
 		{ToolAgentsList, "Read the capped list of agents known to this hive."},
 		{ToolRunsList, "Read the capped list of runs known to this hive."},

@@ -138,7 +138,7 @@ capped at 256 KiB.
 | Tool | Returns |
 |------|---------|
 | `hive_status` | Hive status summary |
-| `fleet_status` | Fleet state |
+| `fleet_status` | Fleet state; `systemResources` also carries the container's memory limit (`memLimit`, `unlimited` when none is set, with `memLimitBytes`) and out-of-memory kill count (`oomKillCount`), see [Start records, crash traces and out-of-memory evidence](#start-records-crash-traces-and-out-of-memory-evidence) |
 | `version_read` | Running build from `/api/version`: `currentCommit`, `branch`, `channel`, `commitsBehind`, `behind`; over stdio also `stdio_build` (`version`, `sha`, `short`, `branch`) and `skew` (true when the stdio and hub short SHAs are both known and differ) |
 | `agents_list` | Agents |
 | `runs_list` | Runs |
@@ -158,7 +158,7 @@ capped at 256 KiB.
 | `prs_by_band` | Pull requests grouped by band; optional `repo`, `band`, `stale`, `held`, `offset` |
 | `review_queue` | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset` |
 | `governor_setup_proposal` | Proposed governor setup, each setting with a reason and the write operation and args that apply it |
-| `log_sources` | Log sources this hive can read, each available or not with a reason; `hive` is the default, plus `proxy`, `hive-output`, `litellm` and `requests` (see [design/admin-mcp.md](design/admin-mcp.md#output-and-request-log-sources)) |
+| `log_sources` | Log sources this hive can read, each available or not with a reason; `hive` is the default, plus `proxy`, `hive-output`, `litellm` and `requests` (see [design/admin-mcp.md](design/admin-mcp.md#output-and-request-log-sources)), and `starts` and `crash` (see [below](#start-records-crash-traces-and-out-of-memory-evidence)) |
 | `log_read` | The hive's own log (or another `log_sources` source), newest matching lines oldest first, scrubbed; optional `source`, `lines` (default 100, max 1000), `since`/`until` (RFC 3339 with offset), `min_level`, `include`, `exclude`, `cursor`. Needs the read-write role. Not capped by `limit`; see [design/admin-mcp.md](design/admin-mcp.md#log-read) |
 
 Meta tools:
@@ -220,6 +220,70 @@ the typed forbidden error `ErrOwnerUnverified`.
   `KUBERNETES_SERVICE_HOST`, `KUBERNETES_SERVICE_PORT`
 
 See [design/admin-mcp.md](design/admin-mcp.md#diagnostic-reads).
+
+### Start records, crash traces and out-of-memory evidence
+
+These tell an operator with no host shell whether the hive crashed, was killed
+or ran out of memory (#11945). A hive whose process is down cannot be read
+through the MCP at all; read the evidence after it is back.
+
+- **`starts` log source.** Read it with `log_read` and `source: starts`. Each
+  hive start writes one line: its short identifier (`start`, 8 hex characters),
+  its start time and how the previous run ended in `previous.verdict`:
+  - `clean`: it finished shutting down.
+  - `not-closed`: it stopped without finishing shutdown, for any reason.
+    Examples are SIGKILL, the out-of-memory killer, a crash or a fatal start-up
+    error.
+  - `self-upgrade-failed`: it exited after a failed self-upgrade.
+  - `unknown`: there is no record of a previous run.
+
+  The line also gives `previous.last_seen_alive`, which is refreshed about every
+  30 seconds. It gives `previous.memory`, the last memory and out-of-memory
+  reading taken before that run ended, so the count survives a container
+  restart that resets it. `previous.crash_trace` is set when that run left a
+  crash trace. Lines for `not-closed` and `self-upgrade-failed` are `WARN`, so
+  `min_level: warn` lists only the bad ends. A second hive process refused at
+  start-up records nothing. The newest 200 starts are kept.
+- **Start identifier in the hive log.** Every line of the `hive` source carries
+  `"start":"<identifier>"`. Use `include` with the identifier to read one run.
+- **`crash` log source.** When the hive process dies of an unrecovered panic or
+  a fatal Go runtime error, the runtime's trace is kept, one file per start. Each
+  file opens with a line naming its start. Anything after that line is the trace.
+  The last 10 traces are kept, each cut to at most 1 MiB. **A process killed by
+  SIGKILL or the out-of-memory killer leaves no trace**: it runs no code on the
+  way out. Its start then reads `not-closed` with no `crash_trace`.
+- **`fleet_status`.** `systemResources` gains `oomKillCount`, the
+  out-of-memory kills counted by the container's memory controller (cgroup
+  `memory.events`, or `memory.oom_control` on cgroup v1). It also gains
+  `memLimit`, either a size such as `2048 MiB` or `unlimited`, or `unknown`
+  when no memory controller is readable. The existing fields, which the web UI
+  reads, are unchanged. A count that is missing means the controller does not
+  report one.
+
+The files live in `HIVE_OUTPUT_LOG_DIR` (default `/data/.hive/logs`). They are
+`0600` in a `0700` directory owned by the hive's runtime user, so agent users
+cannot read them. Nothing new is mounted, published or installed on the host.
+The gateway and the container start-up script are unchanged.
+
+### What still needs a host shell
+
+Some evidence exists only outside the hive container. The admin MCP cannot
+read it. The table gives the closest in-container substitute.
+
+| Host-only evidence | In-container substitute |
+|---|---|
+| Unit restart counts (`systemctl show hive -p NRestarts`, Quadlet) | `starts`: one line per start, with how the run before it ended |
+| Container inspect (`podman inspect` / `docker inspect`: exit code, `OOMKilled`, restart count) | `starts` (`not-closed`, `self-upgrade-failed`, `previous.memory`) and `fleet_status` `systemResources.oomKillCount` / `memLimit` |
+| Kubernetes describe and events (`kubectl describe pod`, `kubectl get events`: last termination reason, probe failures, scheduling) | `starts` for how each run ended, and `health_deep_read` for what the probes see. Scheduling and probe events have none |
+| Node-level out-of-memory kills and evictions (kernel log, kubelet evictions) | `oomKillCount` counts kills inside the hive container only. A kill or eviction that ends the hive shows as `not-closed` in `starts`, with the last reading before it. Kills elsewhere on the node have none |
+| SELinux denials (`ausearch -m avc`, the host audit log) | None. The refused operation's error may appear in the `hive` source |
+| The gateway's own logs | None. `requests` shows what reached the dashboard; requests the gateway refused are not in it |
+| The container start-up script's output | None for the script itself. `hive-output` keeps what the hive prints before its log is set up, and `proxy` keeps the auth proxy's output |
+| The web terminal server's output | None. `agent_log_read` reads what the agent terminals show |
+
+**The role gate does not limit dashboard-token holders.** Whoever holds the
+dashboard token is the owner, and every read and write role check passes for
+an owner. Treat the token as owner access to all of the evidence above.
 
 ## Writes
 

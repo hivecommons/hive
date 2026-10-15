@@ -25,6 +25,8 @@ const (
 	hiveOutputSourceDescription = "What the hive process prints before its own log is set up (for example a configuration that fails to load), kept with each line's time and stream. It still goes to the container's output as well."
 	litellmSourceDescription    = "The local litellm proxy's standard output and standard error, kept with each line's time and stream. It is not added to the container's output."
 	requestsSourceDescription   = "The dashboard's request log: time, method, path with query values removed, status, duration in milliseconds and authentication outcome (public, ok, failed or none). Terminal traffic the auth proxy handles itself and requests the gateway refuses never reach the dashboard and are not in it."
+	startsSourceDescription     = "One line per hive start, newest last: the start's short identifier (hive log lines carry it as \"start\"), its start time, and how the previous run ended (clean, not-closed, self-upgrade-failed or unknown) with when it was last seen alive and its last memory and out-of-memory reading."
+	crashSourceDescription      = "The Go runtime's trace of an unrecovered panic or fatal runtime error, one file per start, the last 10 kept, each at most 1 MiB. Each file opens with a line naming its start; anything after that line is the trace of how that process died. A process killed by SIGKILL or the out-of-memory killer leaves no trace."
 )
 
 var sourceSpecs = []sourceSpec{
@@ -64,6 +66,20 @@ var sourceSpecs = []sourceSpec{
 		name: SourceRequests, stem: SourceRequests,
 		info: func(opts Options) SourceInfo {
 			return outputSourceInfo(SourceRequests, requestsSourceDescription, opts)
+		},
+		dir: outputDirOf,
+	},
+	{
+		name: SourceStarts, stem: SourceStarts,
+		info: func(opts Options) SourceInfo {
+			return outputSourceInfo(SourceStarts, startsSourceDescription, opts)
+		},
+		dir: outputDirOf,
+	},
+	{
+		name: SourceCrash, stem: SourceCrash,
+		info: func(opts Options) SourceInfo {
+			return outputSourceInfo(SourceCrash, crashSourceDescription, opts)
 		},
 		dir: outputDirOf,
 	},
