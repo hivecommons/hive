@@ -296,7 +296,7 @@ type Client struct {
 	defaultBranchMu sync.RWMutex
 	defaultBranches map[string]string
 	// closingLinks memoises issue↔PR pairs already pushed to GitHub's
-	// Development sidebar for non-default-branch PRs (hivecommons/hive#11888).
+	// Development sidebar for PRs GitHub did not link itself (hivecommons/hive#11888).
 	// Zero value is ready to use.
 	closingLinks closingLinkCache
 	// coveredByPRLabel memoises repos whose covered-by-PR label is already

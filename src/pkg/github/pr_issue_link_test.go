@@ -20,9 +20,12 @@ type closingLinkFixture struct {
 	prState       string
 	issueState    string
 	linked        []int
-	lookups       atomic.Int32
-	mutations     atomic.Int32
-	lastMutation  map[string]any
+	// mutationErr, when set, makes addCloseIssueReferences answer with a
+	// GraphQL error carrying this message.
+	mutationErr  string
+	lookups      atomic.Int32
+	mutations    atomic.Int32
+	lastMutation map[string]any
 }
 
 func (f *closingLinkFixture) handler(t *testing.T) http.HandlerFunc {
@@ -40,6 +43,10 @@ func (f *closingLinkFixture) handler(t *testing.T) http.HandlerFunc {
 		if strings.Contains(req.Query, "addCloseIssueReferences") {
 			f.mutations.Add(1)
 			f.lastMutation = req.Variables
+			if f.mutationErr != "" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{"type": "FORBIDDEN", "message": f.mutationErr}}})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 				"addCloseIssueReferences": map[string]any{"issue": map[string]any{"number": 7}},
 			}})
@@ -93,9 +100,18 @@ func TestEnsureClosingIssueLink(t *testing.T) {
 			wantAlready: true,
 		},
 		{
-			name:        "default-branch PR is left to GitHub",
-			fixture:     &closingLinkFixture{defaultBranch: "v5", base: "v5", prState: "OPEN", issueState: "OPEN"},
-			wantSkipped: "default-branch",
+			// hivecommons/hive#12005: a v5 PR whose claim came from the
+			// branch name has no keyword for GitHub to derive, so hive
+			// links it exactly as it does a release-line PR.
+			name:          "default-branch PR GitHub did not link sends the mutation",
+			fixture:       &closingLinkFixture{defaultBranch: "v5", base: "v5", prState: "OPEN", issueState: "OPEN"},
+			wantLinked:    true,
+			wantMutations: 1,
+		},
+		{
+			name:        "default-branch PR GitHub already linked is a no-op",
+			fixture:     &closingLinkFixture{defaultBranch: "v5", base: "v5", prState: "OPEN", issueState: "OPEN", linked: []int{7}},
+			wantAlready: true,
 		},
 		{
 			name:        "closed PR is not linked",
@@ -165,6 +181,30 @@ func TestEnsureClosingIssueLinkLookupErrorIsNotCached(t *testing.T) {
 	}
 }
 
+// TestEnsureClosingIssueLinkMutationErrorIsNotCached covers the retry
+// contract the PR-claim sweep relies on: when the lookup succeeds but
+// addCloseIssueReferences fails, the pair is not memoised, so the next
+// sweep looks it up and tries the mutation again.
+func TestEnsureClosingIssueLinkMutationErrorIsNotCached(t *testing.T) {
+	f := &closingLinkFixture{defaultBranch: "v5", base: "v5", prState: "OPEN", issueState: "OPEN"}
+	f.mutationErr = "Resource not accessible by integration"
+	c := newClosingLinkClient(t, f)
+	for i := 0; i < 2; i++ {
+		_, err := c.EnsureClosingIssueLink(context.Background(), "hivecommons/hive", 1, 7)
+		if err == nil || !strings.Contains(err.Error(), "addCloseIssueReferences") || !strings.Contains(err.Error(), f.mutationErr) {
+			t.Fatalf("call %d: err = %v, want addCloseIssueReferences error carrying the GraphQL message", i, err)
+		}
+	}
+	if f.lookups.Load() != 2 || f.mutations.Load() != 2 {
+		t.Fatalf("lookups=%d mutations=%d, want 2/2 (failures must not be memoised)", f.lookups.Load(), f.mutations.Load())
+	}
+	f.mutationErr = ""
+	res, err := c.EnsureClosingIssueLink(context.Background(), "hivecommons/hive", 1, 7)
+	if err != nil || !res.Linked {
+		t.Fatalf("after recovery: res=%+v err=%v, want linked", res, err)
+	}
+}
+
 // TestCreatePR_LinksClosingIssuesOnNonDefaultBase covers the relay hook: a PR
 // opened against v6 with `Fixes #7` gets addCloseIssueReferences sent.
 func TestCreatePR_LinksClosingIssuesOnNonDefaultBase(t *testing.T) {
@@ -200,9 +240,12 @@ func TestCreatePR_LinksClosingIssuesOnNonDefaultBase(t *testing.T) {
 }
 
 // TestSyncIssuePRClaimLabels_LinksStrongOpenClaims covers the enumeration
-// hook for PRs opened outside the relay.
+// hook for PRs opened outside the relay: every claim that earns the
+// covered-by-PR label is linked — closing-keyword and branch-name claims
+// alike, on the default branch too (hivecommons/hive#12005) — except a
+// Reference claim, whose author deliberately did not ask to close the issue.
 func TestSyncIssuePRClaimLabels_LinksStrongOpenClaims(t *testing.T) {
-	f := &closingLinkFixture{defaultBranch: "v5", base: "v6", prState: "OPEN", issueState: "OPEN"}
+	f := &closingLinkFixture{defaultBranch: "v5", base: "v5", prState: "OPEN", issueState: "OPEN"}
 	graphql := f.handler(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -222,14 +265,27 @@ func TestSyncIssuePRClaimLabels_LinksStrongOpenClaims(t *testing.T) {
 	ledger.Reconcile([]IssueClaim{
 		{Repo: "hivecommons/hive", Issue: 7, PRNumber: 1, PRRepo: "hivecommons/hive", PRState: "open", Closing: true, ObservedAt: now, FirstObservedAt: now},
 		{Repo: "hivecommons/hive", Issue: 8, PRNumber: 2, PRRepo: "hivecommons/hive", PRState: "open", Reference: true, ObservedAt: now, FirstObservedAt: now},
+		// Branch-name claim: neither Closing nor Reference.
+		{Repo: "hivecommons/hive", Issue: 9, PRNumber: 3, PRRepo: "hivecommons/hive", PRState: "open", ObservedAt: now, FirstObservedAt: now},
 	}, true)
 	result := &ActionableResult{}
 	result.Issues.Items = []Issue{
 		{Repo: "hivecommons/hive", Number: 7},
 		{Repo: "hivecommons/hive", Number: 8},
+		{Repo: "hivecommons/hive", Number: 9},
 	}
 	SyncIssuePRClaimLabels(context.Background(), c, result, ledger, testLogger())
-	if f.mutations.Load() != 1 {
-		t.Fatalf("mutations = %d, want 1 (only the strong claim is linked)", f.mutations.Load())
+	if f.mutations.Load() != 2 {
+		t.Fatalf("mutations = %d, want 2 (closing and branch-name claims linked; reference claim not)", f.mutations.Load())
+	}
+	for _, issue := range result.Issues.Items {
+		if !HasCoveredByPRLabel(issue.Labels) {
+			t.Fatalf("issue #%d labels = %v, want covered-by-PR on every claimed issue", issue.Number, issue.Labels)
+		}
+	}
+	// A second sweep is answered from the memo: no new lookups or mutations.
+	SyncIssuePRClaimLabels(context.Background(), c, result, ledger, testLogger())
+	if f.lookups.Load() != 2 || f.mutations.Load() != 2 {
+		t.Fatalf("after second sweep lookups=%d mutations=%d, want 2/2 (memoised)", f.lookups.Load(), f.mutations.Load())
 	}
 }

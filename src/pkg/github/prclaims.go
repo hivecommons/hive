@@ -1931,14 +1931,27 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			continue
 		}
 		coveredWanted := ok && claim.PRNumber > 0 && !claim.MergedPR
-		if coveredWanted && claim.Closing && (claim.PRRepo == "" || strings.EqualFold(claim.PRRepo, issue.Repo)) {
-			// PRs opened outside the hive-open-pr relay still get their
-			// Development-sidebar link (hivecommons/hive#11888); memoised per
-			// pair, so this costs one GraphQL query per new claim, not per tick.
-			if res, err := client.EnsureClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
-				logger.Warn("linking issue to non-default-branch PR failed", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+		if coveredWanted && (claim.PRRepo == "" || strings.EqualFold(claim.PRRepo, issue.Repo)) {
+			// Every claim that earns the covered-by-PR label also gets its
+			// Development-sidebar link (hivecommons/hive#11888), whether the
+			// PR was opened by the hive-open-pr relay or outside it, and
+			// whether its claim came from a closing keyword or the branch
+			// name. The one exception is a Reference claim ("Refs #N",
+			// "Part of #N"): a closing link makes GitHub close the issue
+			// when the PR merges, which is exactly what the author declined
+			// and what close-on-merge's partially_addressed path exists to
+			// prevent, so the label alone is the right signal there. The
+			// client memoises each linked pair and never memoises a
+			// failure, so this costs one GraphQL query per new claim and
+			// retries a failed pair on the next tick.
+			if claim.Reference {
+				if logger != nil {
+					logger.Debug("not linking issue to reference-only PR; a closing link would auto-close the issue on merge", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber)
+				}
+			} else if res, err := client.EnsureClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
+				logger.Warn("linking issue to covering PR failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
 			} else if res.Linked && logger != nil {
-				logger.Info("linked issue to non-default-branch PR so the issue list shows it", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base)
+				logger.Info("linked issue to covering PR so the issue list shows it", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base, "closing_claim", claim.Closing)
 			}
 		}
 		verifiedOpen := issueHasLabel(originalLabels, VerifiedOpenLabel)

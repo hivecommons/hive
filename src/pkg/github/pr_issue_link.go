@@ -16,9 +16,9 @@ type ClosingLinkResult struct {
 	// AlreadyLinked is true when GitHub already listed the issue in the PR's
 	// closingIssuesReferences, so nothing was sent.
 	AlreadyLinked bool
-	// Skipped names why no link was attempted ("default-branch",
-	// "pr-not-open", "issue-not-open", "cached"); empty when a mutation ran
-	// or the pair was already linked.
+	// Skipped names why no link was attempted ("pr-not-open",
+	// "issue-not-open", "cached"); empty when a mutation ran or the pair was
+	// already linked.
 	Skipped string
 	// Base is the PR's base branch as observed by the lookup.
 	Base string
@@ -54,21 +54,27 @@ func (c *closingLinkCache) mark(key string) {
 
 // EnsureClosingIssueLink makes GitHub's Development sidebar — and therefore
 // the linked-PR glyph in the issue list — show repo#prNumber on
-// repo#issueNumber when the PR targets a NON-default branch
+// repo#issueNumber whenever GitHub has not already derived that link
 // (hivecommons/hive#11888).
 //
-// GitHub only derives closingIssuesReferences from `Fixes #N` keywords for
-// PRs that target the repository's default branch, so every release-line PR
-// (`v6` fixes while `v5` is the default) is invisible in the issue list. The
-// `addCloseIssueReferences` GraphQL mutation is the API behind the sidebar's
-// manual "link a pull request" action and works for any base branch; it is
-// idempotent on GitHub's side, and this client additionally memoises each
-// pair so repeated syncs cost nothing.
+// GitHub only derives closingIssuesReferences from `Fixes #N` keywords, and
+// only for PRs that target the repository's default branch, so two kinds of
+// PR hive labels `🐝 covered by PR` are invisible in the issue list: every
+// release-line PR (`v6` fixes while `v5` is the default) and any PR whose
+// claim hive recovered from evidence other than a closing keyword (the
+// issue number in the branch name). The `addCloseIssueReferences` GraphQL
+// mutation is the API behind the sidebar's manual "link a pull request"
+// action and works for any base branch; it is idempotent on GitHub's side,
+// and this client additionally memoises each pair so repeated syncs cost
+// nothing. The base branch is reported but no longer gates the call: the
+// lookup's closingIssuesReferences is the source of truth, so a
+// default-branch PR GitHub already linked is a no-op and one it did not
+// link is linked here.
 //
-// The call is intentionally narrow: it never links when the PR already
-// targets the default branch (GitHub does that itself), when either side is
-// not open, or when the lookup fails. Callers treat it as best-effort — a
-// failure here must never fail a PR open or an enumeration tick.
+// The call never links when either side is not open or when the lookup
+// fails. Callers treat it as best-effort — a failure here must never fail a
+// PR open or an enumeration tick — and failures are not memoised, so the
+// next PR-claim sweep retries the pair.
 func (c *Client) EnsureClosingIssueLink(ctx context.Context, repo string, prNumber, issueNumber int) (ClosingLinkResult, error) {
 	if c == nil || c.client == nil {
 		return ClosingLinkResult{}, ErrNoGitHubClient
@@ -84,9 +90,6 @@ func (c *Client) EnsureClosingIssueLink(ctx context.Context, repo string, prNumb
 
 	var out struct {
 		Repository struct {
-			DefaultBranchRef struct {
-				Name string `json:"name"`
-			} `json:"defaultBranchRef"`
 			PullRequest struct {
 				ID                      string `json:"id"`
 				State                   string `json:"state"`
@@ -108,7 +111,6 @@ func (c *Client) EnsureClosingIssueLink(ctx context.Context, repo string, prNumb
 	}
 	query := `query($owner:String!, $name:String!, $pr:Int!, $issue:Int!) {
   repository(owner:$owner, name:$name) {
-    defaultBranchRef { name }
     pullRequest(number:$pr) {
       id
       state
@@ -133,14 +135,6 @@ func (c *Client) EnsureClosingIssueLink(ctx context.Context, repo string, prNumb
 			c.closingLinks.mark(key)
 			return res, nil
 		}
-	}
-	if strings.EqualFold(res.Base, strings.TrimSpace(out.Repository.DefaultBranchRef.Name)) {
-		// GitHub derives default-branch references itself; a missing one
-		// there means the body has no closing keyword, not that the
-		// derivation failed, so do not second-guess it.
-		res.Skipped = "default-branch"
-		c.closingLinks.mark(key)
-		return res, nil
 	}
 	if !strings.EqualFold(pr.State, "OPEN") {
 		res.Skipped = "pr-not-open"
@@ -181,12 +175,12 @@ func (c *Client) linkClosingIssuesForPR(ctx context.Context, owner, repo string,
 	for issue := range closingIssueRefs(body, owner, repo) {
 		res, err := c.EnsureClosingIssueLink(ctx, owner+"/"+repo, prNumber, issue)
 		if err != nil {
-			c.logger.Warn("CreatePR: linking issue to non-default-branch PR failed",
+			c.logger.Warn("CreatePR: linking issue to PR failed; the PR-claim sweep will retry",
 				slog.String("repo", repo), slog.Int("number", prNumber), slog.Int("issue", issue), slog.String("error", err.Error()))
 			continue
 		}
 		if res.Linked {
-			c.logger.Info("CreatePR: linked issue to non-default-branch PR so the issue list shows it",
+			c.logger.Info("CreatePR: linked issue to PR so the issue list shows it",
 				slog.String("repo", repo), slog.Int("number", prNumber), slog.Int("issue", issue), slog.String("base", res.Base))
 		}
 	}
