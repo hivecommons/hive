@@ -1,1 +1,0 @@
-- The Copilot model picker now offers Claude Opus 5.5 and Sonnet 5.5 in its fallback list using the ids the Copilot CLI accepts, so the selected model is the one that runs.

@@ -207,6 +207,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"replan":                replanSectionResponse(cfg),
 		"question_autoclose":    questionAutocloseSectionResponse(cfg),
 		"fleet_report":          s.fleetReportSectionResponse(cfg),
+		"release_sentinel":      releaseSentinelSectionResponse(cfg),
 		"work_source":           workSourceSectionResponse(cfg),
 		"security":              securitySectionResponse(cfg),
 		"attribution": map[string]interface{}{

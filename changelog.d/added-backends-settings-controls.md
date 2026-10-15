@@ -1,1 +1,0 @@
-- Expose the top-level `backends.allow` and `backends.deny` placement policy in the dashboard Settings dialog.

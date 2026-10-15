@@ -1,1 +1,0 @@
-- Doubled the dashboard Overview chart transition duration presets so chart rotation feels less abrupt.

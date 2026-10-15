@@ -1,1 +1,0 @@
-- Added restart-safe history sparklines to the Overview KPI tiles.

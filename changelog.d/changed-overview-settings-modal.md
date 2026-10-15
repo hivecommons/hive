@@ -1,1 +1,0 @@
-- Changed the dashboard Overview settings panel to open as a modal using the shared Settings dialog shell.

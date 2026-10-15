@@ -1,1 +1,0 @@
-- Ensure contributor-lane ClankeR PRs and hosted bot PRs keep GitHub closing keywords for human-filed bug fixes; Hive now leaves reporter-confirmation issues open in its close gate instead of suppressing `Closes`/`Fixes` in PR bodies.

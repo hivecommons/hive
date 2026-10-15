@@ -1,1 +1,0 @@
-- Fixed dashboard section headers so they match their sidebar labels, including Projects. (#10563)

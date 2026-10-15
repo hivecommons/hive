@@ -62,7 +62,7 @@
 #
 # WHY THE HELD RUNS ARE RELEASED AFTER THE PUSH (#11552)
 #
-# The push above is made with GITHUB_TOKEN, so the new head's `pull_request`
+# When the push above is made with GITHUB_TOKEN, the new head's `pull_request`
 # `synchronize` runs carry `github-actions[bot]` as their actor. Under the
 # repository's "require approval for first-time contributors" policy GitHub
 # creates every one of those runs and immediately holds it
@@ -79,6 +79,18 @@
 # which is by construction a same-repository Dependabot branch. If Dependabot
 # force-pushes a rebase the autofix commit is dropped and this workflow simply
 # runs again.
+#
+# WHY THE PUSH PREFERS TOPUP_PUSH_TOKEN (#11923)
+#
+# A GITHUB_TOKEN push does not trigger `pull_request_target` workflows at all,
+# so the required `verify PR contents` context (pr-verifier.yml, the only
+# required context that runs on pull_request_target alone) never appears on
+# the autofix head and the PR waits forever. Pushing with TOPUP_PUSH_TOKEN —
+# the same optional PAT the top-up workflows use (#7930) — fires
+# `pull_request` and `pull_request_target` normally. When the secret is unset
+# the push falls back to GITHUB_TOKEN and this job records the verifier
+# context itself as `skipped`: pr-verifier skips Dependabot heads by policy,
+# and the autofix commit only regenerates NOTICE from the validated artifact.
 
 name: NOTICE Autofix
 
@@ -88,10 +100,13 @@ on:
     types: [completed]
 
 # contents:write to push the regenerated NOTICE; actions:write to approve the
-# `pull_request` runs GitHub holds on the head that push creates (#11552).
+# `pull_request` runs GitHub holds on the head that push creates (#11552);
+# checks:write to record the skipped verifier context on a GITHUB_TOKEN push
+# (#11923).
 permissions:
   contents: write
   actions: write
+  checks: write
 
 concurrency:
   group: notice-autofix-${{ github.event.workflow_run.head_branch }}
@@ -117,6 +132,10 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_branch }}
           fetch-depth: 0
+          # The push below uses these credentials. See "WHY THE PUSH PREFERS
+          # TOPUP_PUSH_TOKEN" above; same optional-PAT convention as
+          # changelog-fragment-guard.yml / v5-topup.yml.
+          token: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
 
       - name: Download the regenerated NOTICE
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -151,6 +170,31 @@ jobs:
           git push origin "HEAD:${HEAD_BRANCH}"
           echo "pushed=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # See "WHY THE PUSH PREFERS TOPUP_PUSH_TOKEN" above. A GITHUB_TOKEN push
+      # never triggers pr-verifier.yml (pull_request_target), so report its
+      # required context here exactly as the verifier would for Dependabot.
+      - name: Record skipped pull_request_target-only required contexts
+        if: steps.push.outputs.pushed != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD: ${{ steps.push.outputs.pushed }}
+          HAS_PUSH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          if [ "$HAS_PUSH_TOKEN" = "true" ]; then
+            echo "Pushed with TOPUP_PUSH_TOKEN — pr-verifier runs on its own."
+            exit 0
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name="verify PR contents" \
+            -f head_sha="$HEAD" \
+            -f status=completed \
+            -f conclusion=skipped \
+            -f "output[title]=Skipped: autofix-pushed Dependabot head" \
+            -f "output[summary]=This head was pushed by NOTICE Autofix (GITHUB_TOKEN) onto a Dependabot branch, which never triggers pull_request_target workflows. PR Verifier is skipped for dependabot[bot] by policy, so the context is recorded as skipped (#11923)." \
+            >/dev/null
+          echo "recorded skipped 'verify PR contents' on ${HEAD}"
+
       # See "WHY THE HELD RUNS ARE RELEASED AFTER THE PUSH" above. Approve the
       # held runs on the head just pushed and re-run 0-job startup failures;
       # real failures keep their jobs and are left alone (#7930 pattern).
@@ -183,3 +227,4 @@ jobs:
             done <<< "$pending"
           done
           echo "released ${released} run(s) for ${HEAD}"
+

@@ -1,1 +1,0 @@
-- docs: integration guide now credits Crustify/Wavefront alongside Flue as a reference integration and additive work source.

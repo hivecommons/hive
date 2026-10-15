@@ -1,1 +1,0 @@
-- Clarify dashboard section hide controls as two-way hide/unhide toggles with explicit accessible labels.

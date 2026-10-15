@@ -1,1 +1,0 @@
-- ACMM is consistently expanded as the AI Codebase Maturity Model (matching arXiv:2604.09388) across README, docs, dashboard, hub pages, and examples.

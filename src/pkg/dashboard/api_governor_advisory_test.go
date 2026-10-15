@@ -7,11 +7,22 @@ import (
 )
 
 type advisoryAPIResponse struct {
-	MaxFindings     int  `json:"max_findings"`
-	ShowAll         bool `json:"show_all"`
-	StalenessDays   int  `json:"staleness_days"`
-	PRAutoClose     bool `json:"pr_autoclose"`
-	UpdateIntervalS int  `json:"update_interval_s"`
+	MaxFindings       int                         `json:"max_findings"`
+	ShowAll           bool                        `json:"show_all"`
+	StalenessDays     int                         `json:"staleness_days"`
+	PRAutoClose       bool                        `json:"pr_autoclose"`
+	UpdateIntervalS   int                         `json:"update_interval_s"`
+	PostRetryBackoffS int                         `json:"post_retry_backoff_s"`
+	QueueHealth       advisoryQueueHealthResponse `json:"queue_health"`
+}
+
+type advisoryQueueHealthResponse struct {
+	BlockedPRPct       int `json:"blocked_pr_pct"`
+	NeedsHumanPRPct    int `json:"needs_human_pr_pct"`
+	NeedsHumanIssuePct int `json:"needs_human_issue_pct"`
+	StaleBlockedPRs    int `json:"stale_blocked_prs"`
+	LaneSharePct       int `json:"lane_share_pct"`
+	CheckSharePct      int `json:"check_share_pct"`
 }
 
 func getAdvisorySettings(t *testing.T, s *Server) advisoryAPIResponse {
@@ -46,13 +57,22 @@ func TestGovAdvisory_GetPutRoundTrip(t *testing.T) {
 
 	if rec := doPut(s, "/api/config/governor/advisory", map[string]any{
 		"max_findings": 25, "show_all": true, "staleness_days": 3, "pr_autoclose": false,
+		"post_retry_backoff_s": 900,
+		"queue_health": map[string]any{
+			"blocked_pr_pct": 51, "needs_human_pr_pct": 26, "needs_human_issue_pct": 31,
+			"stale_blocked_prs": 11, "lane_share_pct": 52, "check_share_pct": 53,
+		},
 	}); rec.Code != http.StatusOK {
 		t.Fatalf("put advisory settings: %d — %s", rec.Code, rec.Body.String())
 	}
 
 	got := getAdvisorySettings(t, s)
-	if got.MaxFindings != 25 || !got.ShowAll || got.StalenessDays != 3 || got.PRAutoClose {
-		t.Fatalf("settings = %+v, want {25 true 3 false}", got)
+	if got.MaxFindings != 25 || !got.ShowAll || got.StalenessDays != 3 || got.PRAutoClose || got.PostRetryBackoffS != 900 {
+		t.Fatalf("settings = %+v, want advisory round-trip fields", got)
+	}
+	if got.QueueHealth.BlockedPRPct != 51 || got.QueueHealth.NeedsHumanPRPct != 26 || got.QueueHealth.NeedsHumanIssuePct != 31 ||
+		got.QueueHealth.StaleBlockedPRs != 11 || got.QueueHealth.LaneSharePct != 52 || got.QueueHealth.CheckSharePct != 53 {
+		t.Fatalf("queue_health = %+v, want configured thresholds", got.QueueHealth)
 	}
 	if s.deps.Config.Governor.Advisory.PRAutoCloseEnabled() {
 		t.Error("pr_autoclose: false must be stored as an explicit false pointer")
@@ -88,6 +108,7 @@ func TestGovAdvisory_Validation(t *testing.T) {
 		{"negative update interval", map[string]any{"update_interval_s": -60}},
 		{"update interval below minimum", map[string]any{"update_interval_s": 5}},
 		{"update interval above maximum", map[string]any{"update_interval_s": 86400}},
+		{"negative queue health", map[string]any{"queue_health": map[string]any{"blocked_pr_pct": -1}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if rec := doPut(s, "/api/config/governor/advisory", tc.body); rec.Code != http.StatusBadRequest {

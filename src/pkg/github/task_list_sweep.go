@@ -617,11 +617,12 @@ func hasIssueNeedsHumanLabel(labels []string) bool {
 	return false
 }
 
-func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo string, number int, labels []string, mergedRefs []mergedPRRef) error {
+func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo string, number int, labels []string, mergedRefs []mergedPRRef, untouched []string) error {
+	partial := labelPresent(labels, PartiallyAddressedLabel)
 	refs := make([]mergedPRRef, 0, len(mergedRefs))
 	needsHuman := false
 	for _, ref := range mergedRefs {
-		if !ref.Reference {
+		if !ref.Reference && !partial {
 			continue
 		}
 		refs = append(refs, ref)
@@ -630,7 +631,7 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 	if len(refs) == 0 {
 		return nil
 	}
-	if err := c.ensureRefsRemainderComment(ctx, owner, repo, number, renderRefsRemainderComment(refs)); err != nil {
+	if err := c.ensureRefsRemainderComment(ctx, owner, repo, number, renderRefsRemainderComment(refs, partial, untouched)); err != nil {
 		return err
 	}
 	if needsHuman && !hasIssueNeedsHumanLabel(labels) {
@@ -755,11 +756,16 @@ func sweepCommentPRBlocks(body string) map[int]string {
 	return blocks
 }
 
-func renderRefsRemainderComment(merged []mergedPRRef) string {
+func renderRefsRemainderComment(merged []mergedPRRef, partial bool, untouched []string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, taskListSweepMarker)
-	fmt.Fprintln(&b, "A merged PR referenced this issue without closing it. Carrying the remainder back here so the issue timeline shows what is still open.")
+	if partial {
+		fmt.Fprintf(&b, "A merged PR addressed only part of this issue (`%s`); it stays open and actionable. Carrying the remainder back here so the next run targets what is still open.\n", PartiallyAddressedLabel)
+	} else {
+		fmt.Fprintln(&b, "A merged PR referenced this issue without closing it. Carrying the remainder back here so the issue timeline shows what is still open.")
+	}
 	fmt.Fprintln(&b)
+	writeUntouchedPaths(&b, untouched)
 	for _, ref := range sortedMergedRefs(merged) {
 		title := strings.TrimSpace(ref.Title)
 		fmt.Fprintf(&b, "- #%d", ref.Number)
@@ -783,6 +789,41 @@ func renderRefsRemainderComment(merged []mergedPRRef) string {
 	}
 	fmt.Fprintln(&b, "_This comment is edited in place by the task-list sweep on every cycle; it is not duplicated._")
 	return b.String()
+}
+
+// writeUntouchedPaths lists the issue's cited paths no merged PR changed
+// (#11931). It is written before the per-PR blocks so the aged-out block
+// merge in mergeRefsRemainderCommentBodies never absorbs it.
+func writeUntouchedPaths(b *strings.Builder, untouched []string) {
+	if len(untouched) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "Not yet touched: %s\n\n", quotedPaths(untouched))
+}
+
+// partiallyAddressedUntouchedPaths returns the paths cited in a
+// hive/partially-addressed issue's body that none of its merged referencing
+// PRs changed. It returns nil for any other issue, or when a PR's file list
+// cannot be read, so the sweep never prints a wrong list.
+func (c *Client) partiallyAddressedUntouchedPaths(ctx context.Context, owner, repo string, issue *gh.Issue, merged []mergedPRRef) []string {
+	if len(merged) == 0 || !labelPresent(issueLabelNames(issue.Labels), PartiallyAddressedLabel) {
+		return nil
+	}
+	cited := issueCitedPaths(issue.GetBody())
+	if len(cited) == 0 {
+		return nil
+	}
+	var changed []string
+	for _, ref := range merged {
+		files, err := ListPRChangedFiles(ctx, c.client, owner, repo, &gh.PullRequest{Number: gh.Ptr(ref.Number)})
+		if err != nil {
+			return nil
+		}
+		for _, f := range files {
+			changed = append(changed, f.Filename)
+		}
+	}
+	return untouchedCitedPaths(cited, changed)
 }
 
 func sortedMergedRefs(merged []mergedPRRef) []mergedPRRef {
@@ -818,8 +859,9 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 	number := issue.GetNumber()
 
 	mergedRefs := mergedByIssue[number]
+	untouched := c.partiallyAddressedUntouchedPaths(ctx, owner, repo, issue, mergedRefs)
 	if checked+unchecked == 0 {
-		if err := c.tryAnnotateNonTaskListRefs(ctx, owner, repo, number, issueLabelNames(issue.Labels), mergedRefs); err != nil {
+		if err := c.tryAnnotateNonTaskListRefs(ctx, owner, repo, number, issueLabelNames(issue.Labels), mergedRefs, untouched); err != nil {
 			return TaskListSweepEvent{}, taskListReasonCommentFailed, fmt.Errorf("Refs remainder comment on %s#%d: %w", displayRepo, number, err)
 		}
 		return TaskListSweepEvent{}, taskListReasonNoBoxes, nil
@@ -836,7 +878,7 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 		// then leave the issue open. This path exists so a maintainer looking
 		// at the timeline sees a live "N of M done, PRs so far" without a
 		// duplicate comment on every 15-minute cycle.
-		progress := renderProgressComment(listTaskListItems(body), mergedRefs)
+		progress := renderProgressComment(listTaskListItems(body), mergedRefs, untouched)
 		if err := c.ensureSweepComment(ctx, owner, repo, number, progress); err != nil {
 			return TaskListSweepEvent{}, taskListReasonCommentFailed, fmt.Errorf("progress comment on %s#%d: %w", displayRepo, number, err)
 		}
@@ -879,7 +921,7 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 // task, ✅ / 🔲 to make the outstanding items scannable at a glance, then a
 // PRs-so-far list — so the equality check inside ensureSweepComment can short
 // out and skip the API edit call on ticks where nothing has changed.
-func renderProgressComment(items []taskListItem, merged []mergedPRRef) string {
+func renderProgressComment(items []taskListItem, merged []mergedPRRef, untouched []string) string {
 	var b strings.Builder
 	fmt.Fprintln(&b, taskListSweepMarker)
 	checked := 0
@@ -901,6 +943,7 @@ func renderProgressComment(items []taskListItem, merged []mergedPRRef) string {
 		fmt.Fprintf(&b, "- 🔲 %s\n", text)
 	}
 	fmt.Fprintln(&b)
+	writeUntouchedPaths(&b, untouched)
 	fmt.Fprintln(&b, "Merged PRs referencing this issue so far:")
 	writeMergedList(&b, merged)
 	fmt.Fprintln(&b)

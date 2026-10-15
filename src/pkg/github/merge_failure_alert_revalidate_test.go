@@ -120,3 +120,54 @@ func TestRevalidateMergeFailureAlerts_APIErrorKeepsAlert(t *testing.T) {
 		t.Fatalf("alert cleared on API error: %v", sink.clears)
 	}
 }
+
+const appPermissionErr = "merging PR o/r#7 (squash): PUT https://api.github.test/repos/o/r/pulls/7/merge: 403 Resource not accessible by integration []"
+
+func appPermissionRevalidateServer(checkRunsStatus *atomic.Int32) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pulls/"):
+			_, _ = io.WriteString(w, `{"number":7,"state":"open","head":{"sha":"abc"},"base":{"ref":"main"}}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/commits/abc/check-runs"):
+			if code := int(checkRunsStatus.Load()); code != http.StatusOK {
+				w.WriteHeader(code)
+				return
+			}
+			_, _ = io.WriteString(w, `{"total_count":0,"check_runs":[]}`)
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+}
+
+// An app-permission alert retires on positive evidence while the PR is still
+// open: a check-runs read on its head succeeds (#11924).
+func TestRevalidateMergeFailureAlerts_AppPermissionClearsOnSuccessfulRead(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusForbidden)
+	srv := appPermissionRevalidateServer(&status)
+	defer srv.Close()
+
+	c := testMergeClient(t, srv.URL)
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
+	c.raiseMergeFailureAlert("o/r", 7, appPermissionErr)
+	if len(sink.adds) != 1 {
+		t.Fatalf("expected 1 alert, got %d", len(sink.adds))
+	}
+
+	now := time.Date(2026, 10, 14, 23, 0, 0, 0, time.UTC)
+	nowFn := func() time.Time { return now }
+	c.revalidateMergeFailureAlerts(context.Background(), nowFn)
+	if len(sink.clears) != 0 {
+		t.Fatalf("alert cleared while check-runs read still refused: %v", sink.clears)
+	}
+
+	status.Store(http.StatusOK)
+	now = now.Add(mergeAlertRevalidateInterval)
+	c.revalidateMergeFailureAlerts(context.Background(), nowFn)
+	if len(sink.clears) != 1 || sink.clears[0] != sink.adds[0].id {
+		t.Fatalf("expected app-permission alert cleared, got %v", sink.clears)
+	}
+}

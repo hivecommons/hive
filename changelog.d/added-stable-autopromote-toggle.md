@@ -1,1 +1,0 @@
-- Add stable-channel auto-promotion with hub play/pause control.

@@ -1,1 +1,0 @@
-- Add a per-agent GitHub API hourly cap, reserve-floor proxy guard, and dashboard budget panel for shared App installation quota.

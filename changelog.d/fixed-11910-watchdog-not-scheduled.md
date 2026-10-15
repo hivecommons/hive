@@ -1,1 +1,0 @@
-- watchdog: agents the governor deliberately does not kick (cadence paused in the current mode, or a reviewer lane with nothing to adjudicate) are reported `Producing=True / IdleNotScheduled` instead of raising an "alive but not producing" alert.

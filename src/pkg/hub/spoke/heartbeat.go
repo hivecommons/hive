@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	spokesig "github.com/hivecommons/hive/pkg/spoke"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -1569,8 +1570,12 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode, "body", string(respBody))
+		if resp.StatusCode >= http.StatusInternalServerError {
+			fleetreport.Observe(fleetreport.ClassUnexpectedHub5xx, "heartbeat", fmt.Sprintf("hub heartbeat returned HTTP %d", resp.StatusCode), string(respBody))
+		}
 		return nil
 	}
+	fleetreport.Clear(fleetreport.ClassUnexpectedHub5xx, "heartbeat")
 
 	// The hub accepted the beat (status < 300) — this is what /api/livez
 	// treats as "the heartbeat goroutine is alive and doing its job", so

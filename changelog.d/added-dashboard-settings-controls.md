@@ -1,1 +1,0 @@
-- Expose dashboard hive.yaml keys in the Settings dialog, including runtime, access, issue-band, snapshot, and theme override controls.

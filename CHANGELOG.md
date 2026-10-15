@@ -11,6 +11,245 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-15 (v5.175.0)
+
+### Added
+
+- Expose retro lane settings (scan interval, fix-attempt, kick and long-stall thresholds, recent-closed window) in the dashboard Settings dialog.
+
+### Changed
+
+- images: bump claude 2.1.296 -> 2.1.300 (#11987)
+
+## 2026-10-15 (v5.174.0)
+
+### Added
+
+- Expose ioscan and OpenTelemetry settings in the dashboard Settings dialog.
+
+## 2026-10-15 (v5.173.1)
+
+### Fixed
+
+- The dashboard Channel card can no longer report a successful upgrade to a commit other than the one the hive is running; such a record is now shown as superseded, with the running commit first (#11194).
+
+## 2026-10-15 (v5.173.0)
+
+### Added
+
+- dashboard settings: expose every `release_sentinel.*` key — enable switch, watched repo, repair agent, max rounds, round timeout, poll interval, ignored and release workflows, release branch, and the retag-after-merge switches — on the Governor Features tab, with YAML-key hints and env-override notes (#11854)
+- Expose governor project observability target settings in the dashboard Settings dialog.
+- Expose governor claims, rotation and trajectory settings in the dashboard Settings dialog.
+- Expose governor logging settings in the dashboard Settings dialog.
+- Expose governor watchdog settings in the dashboard Settings dialog.
+
+### Fixed
+
+- Hub auto-upgrade tests now opt into the instant schedule explicitly where they assert immediate upgrades, preserving the empty-mode daily default.
+
+## 2026-10-15 (v5.172.0)
+
+### Added
+
+- Expose governor question auto-close settings in the dashboard Settings dialog.
+
+### Changed
+
+- Hosted hives with `auto_upgrade: true` but no `auto_upgrade_mode` now upgrade on the `daily` schedule instead of restarting immediately on every `:stable` retag ([#11822](https://github.com/hivecommons/hive/issues/11822), part of [#11812](https://github.com/hivecommons/hive/issues/11812)). An empty mode previously resolved to `instant`, so legacy records were restarted at any hour; explicit `instant` is unchanged, and the dashboard now shows `daily` for an empty mode so hub card, spoke card and scheduler agree.
+
+## 2026-10-15 (v5.171.0)
+
+### Added
+
+- **Knowledge:** Context7 is now a connector card in Knowledge → Integrations with an API-key reference (set/unset, never the value), enabled toggle, default library IDs, a live Validate against the Context7 search API, and status; `knowledge.context7.auto_import` is editable from the same card (#11948).
+- Expose governor stall replan settings in the dashboard Settings dialog.
+
+## 2026-10-15 (v5.170.0)
+
+### Added
+
+- Expose governor advisory digest and queue-health settings in the dashboard Settings dialog.
+
+## 2026-10-15 (v5.169.0)
+
+### Added
+
+- Standalone contributors now publish their own subscription quota readings: the contributor image entrypoint and `just contribute-hive <cli> local` start `hive-quota-publisher` beside the relay, so the quota guard protects headroom and resumes automatically without a custom reader or a local Hive server (opt out with `HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0`).
+- Added the owner-gated `review.contributor_prs.base_sync` setting so Hive can use GitHub update-branch to unstick hive-authored fork lane PRs that are behind the base branch, with dirty/stale heads routed back to the lane for repair.
+- The Codex prober now reads `rateLimitResetCredits.availableCount` from `account/rateLimits/read` (read-only) and publishes it as `reset_credits_available` in `<poolKey>.reading.json`; a null, missing, or malformed value is omitted so unknown stays distinct from 0.
+- Add opt-in Spektacular continuous-convergence rechecks that mint linked revisions and import only plan deltas.
+- added GitHub GraphQL per-repository PR scan batching to populate PR detail and CI rollup caches while reducing REST fan-out.
+- added a Features-tab editor for `upstream_watch`: switch it on or off, set the poll interval, and add, edit or remove watched forks without editing hive.yaml (`PUT /api/config/upstream-watch`); removing a repo now also drops its upstream-watch entry.
+- added a spoke-wide `backends:` allow/deny list to hive.yaml (e.g. `backends: {deny: [copilot]}`): ACMM pack apply no longer places agents on a disallowed backend (falling back to the first allowed backend or the hive default) and `PUT /api/config/agent/{name}/models` rejects such a placement with 400 (#11310).
+- Hives now file issues on `hivecommons/hive` when they hit unusual runtime errors (restart storms, repeated kick failures, recovered panics, degraded model discovery, inference auth failures, advisory post failures) — or add themselves to an open issue that already describes the problem instead of filing a duplicate — via the existing fleet self-report path, which is now on by default for hub-managed hives (`governor.fleet_report.enabled`, `repo`, `max_per_day`), rate-limited, relayed through the hub when the spoke cannot write upstream, and surfaced in the dashboard's Fleet Report panel and Settings ([#11868](https://github.com/hivecommons/hive/issues/11868)).
+- Self-report now observes `upgrade_stalled` (standalone upgrade helper timeout), `data_disk_pressure` (disk-full pauses, previously filed as `restart_storm`), `github_app_token_mint_failed` (per-agent token delivery) and `unexpected_http_5xx_from_hub` (3 consecutive heartbeat 5xx), strips `sk-` API keys from runtime-error diagnostics, and tests every runtime class's trigger/non-trigger threshold, fingerprint normalisation and token-free diagnostics ([#11881](https://github.com/hivecommons/hive/issues/11881)).
+- Added an upstream-watch reconciliation pass that checks every previously filed ref's fork issue and records it as `ported` once completed or `dismissed` once closed as not planned or labelled `upstream/dismissed`.
+- Added an upstream-watch divergence view to the dashboard and a read-only `GET /api/upstream-watch`, plus the upstream patch URL in the kick context of an `upstream/port` issue.
+- Added restart-safe history sparklines to the Overview KPI tiles.
+- Restore agent cards to a responsive three-up dashboard grid with persisted drag reordering and resizable card layouts.
+- Add per-agent continuous mode that re-kicks after a completed session with cooldown/backoff, status, API, and dashboard controls.
+- Add a per-agent GitHub API hourly cap, reserve-floor proxy guard, and dashboard budget panel for shared App installation quota.
+- Added per-agent tiles to the collapsed Agents dashboard row, ordered by active work and upcoming governor kicks.
+- Added live per-agent countdowns and an up-next marker to collapsed dashboard Agents tiles. (#10560)
+- Add a GitHub API budget governor that sheds optional eval sweeps and stretches eval cadence when core quota runs low.
+- Added Audit Log collapsed row metrics for entry rate, latest entry, today count and sensitive-action risk chip (#10609)
+- Settings → Features gains an "Autonomy policy" section exposing autonomy.auto_promote/auto_demote/promote_after/demote_on/max_level/cooldown_days (#11855).
+- Dashboard auto-update status now reports when the hive was last updated: `/api/version`'s `autoUpdate` object carries a new `lastUpdatedAt` time (from the last landed upgrade) and weaves it into the up-to-date and behind detail lines, so operators can see the timing of autoupdates (#10038).
+- Expose the top-level `backends.allow` and `backends.deny` placement policy in the dashboard Settings dialog.
+- Added the shared Agent power rocker to the governor cadence table so owners can enable or disable agents without opening settings.
+- Expose the top-level `classifier.simple_keywords` and `classifier.complex_signals` keyword lists in dashboard Settings.
+- System Diagnostics collapsed headers now keep a compact GitHub API quota/reset and token-usage headline alongside the existing health dot and sparkline.
+- Change Throughput collapsed headers now keep the active timeframe pill visible and clickable so headline metrics retain their time context.
+- Clarify dashboard Settings coverage for top-level `contribute.help_links` labels and URLs.
+- Tint contributor cards from avatar-derived accent colours with deterministic fallbacks.
+- Add a contributor story issue form for hivecommons.dev submissions.
+- Add collapsed dashboard summaries for every section card, including Project Inception and below-the-fold diagnostic sections.
+- Add dashboard sidebar controls to hide individual sections while keeping muted show controls in the left menu.
+- Expose dashboard hive.yaml keys in the Settings dialog, including runtime, access, issue-band, snapshot, and theme override controls.
+- Add Join our Discord links across the website, hub portal, spoke dashboard Help/FAQ/onboarding, contributor surfaces, docs, and issue templates.
+- Add a FOSSA license scan workflow and README badge.
+- Add an operator GitHub API quota report script for hosted fleets, including charged REST top consumers and smoke-check exits for low quota or rate limits.
+- New `hub.heartbeat_omit` setting withholds sensitive identifier classes (`repos`, `users`, `task_titles`, `dashboard_urls`) from the hub heartbeat and task-status push while upgrade/config delivery keeps working; the dashboard Hub tab shows what is withheld and `docs/telemetry.md` documents each tradeoff (#10260, #10261).
+- Add a third-party integration guide for work source providers, ClankeR/Flue-style external execution, and Spektacular Project Inception.
+- Add dashboard layout save presets, import/export, reset undo, and move layout controls into the avatar user menu.
+- Add expandable lifecycle timeline rows with stage details, links, and timing context.
+- Added the dashboard navbar upgrade bee indicator and tightened the upgrade pill animation clipping. (#10603)
+- Make the dashboard Overview card a first-class workspace summary with centered chart layout, repo/org filtering, KPI strip, configurable labels, and CSV/JSON exports.
+- Add PR throughput sparklines, repository filtering, velocity metrics, breakdowns, and CSV export.
+- Add collapsed Projects header repo pills with per-repository work, pause, auto-merge, and hold indicators, and keep utility actions in the expanded Projects toolbar so collapsed pills have room.
+- Added an owner-only dashboard toggle for the public read-only Knowledge MCP endpoint, with shared controls in Knowledge and Settings.
+- Add repository-card pill filtering and needs-human visibility improvements to the dashboard.
+- Add dashboard repository tile drag handles for per-browser ordering.
+- Added a Review Pipeline kanban board to the dashboard: one column per review stage from `GET /api/review/pipeline`, with reviewer chips, P0–P3 counts, the fix-loop counter, next-action links, and repo/author/stage filters.
+- The review pipeline now warns when a PR is one fix cycle from its cap (or a review-bot thread is at its attempt cap) and offers a one-click "send to human" that applies `needs-human` with a single explanatory comment (`POST /api/review/pipeline/{owner}/{repo}/{number}/send-to-human`).
+- Add a Settings parity audit tool and CI ratchet so new hive.yaml settings must be surfaced in the Settings dialog or explicitly allowlisted.
+- Add sidebar drag handles that keep dashboard sections and agent cards in the same saved order.
+- Added sidebar section navigation peeking so collapsed dashboard sections open for the jump and restore on the next different jump unless manually kept open.
+- Add a staggered draw-on animation for dashboard sparklines when cards expand or their data changes.
+- Add opt-in outward discovery sources for Spektacular recheck revisions, surfacing bounded external evidence in drift metadata and the Campaigns dashboard.
+- Add stable-channel auto-promotion with hub play/pause control.
+- Document Hive data collection and telemetry paths for CNCF onboarding.
+- Add Change Throughput actor attribution for hive, human, and other automation across PRs and issues.
+- Change Throughput stat tiles now include history sparklines for velocity, time-to-merge, merge ratio, backlog, and trend metrics.
+- Add a default-off vibe-kanban extwork adapter that dispatches Hive assignments to local board workspaces with durable Hive-key correlation.
+- Add compact visual summary strips to collapsed dashboard section headers.
+- Add dashboard settings for the Wavefront (Crustify) migration-graph work source.
+
+### Changed
+
+- Make the dashboard Add agent workflow easier to find with sidebar/header CTAs, first-agent empty state, and create-dialog quick starts.
+- Improve collapsed Advisory and ACMM Eval headers with actionable advice and readable status pills.
+- Change repository auto-merge controls to Level 6-gated switches that turn on when a hive enters L6.
+- Cadence table agent names now open the agent card; cadence cells still open cadence settings.
+- Move lightweight PR housekeeping checks to the existing self-hosted runner lane to reduce GitHub-hosted queue starvation (#10650).
+- Added ADR-0022 allowing opt-in, locally consented redemption of already-earned Codex resets (revises the #6833/#6964 no-consume rule); the spend/billing guard test now allow-lists a single controller file while `purchaseCredits` stays banned.
+- Keep each dashboard section's own headline KPI/chart row visible at full width when collapsed.
+- Gate continuous-mode re-kicks on the token-budget threshold and expose continuous kick/token counters in status.
+- Surfaced every agent's continuous-mode setting in the cadence table with a dedicated toggle column and clarified the setting is generic.
+- Changed the default dashboard section order to match the sidebar navigation.
+- Make dashboard sections share the Cost-style collapsible card header with persisted collapsed summaries.
+- dashboard: replaced the collapsed System Diagnostics dot and fake sparkline with data-driven per-source quota chips (#PR).
+- Combined the spoke dashboard fleet breaker status pill and toggle into one accessible status chip button.
+- Hide the Strategy Lab dashboard surface by default behind `dashboard.strategy_lab` while it is reworked.
+- Hub GitHub API polling now prefers a GitHub App installation identity and uses the shared ETag/rate-limit transport instead of spending an operator PAT by default.
+- Moved hub admin NPS feedback into its own collapsible section above Users. (#10558)
+- docs: integration guide now credits Crustify/Wavefront alongside Flue as a reference integration and additive work source.
+- Unify dashboard top navbar chips on one shared height, radius, spacing, and accessible interaction system.
+- Made the dashboard top navbar sticky, centered the run-state agent cards, moved feedback into the right controls, and added compact UP NEXT motion.
+- Documented that the OpenHands CLI backend stays T3 experimental because upstream treats the CLI/headless path as legacy and no longer actively maintained (OpenHands/OpenHands#18046).
+- Slow down and emphasize Overview KPI and chart transitions while avoiding repeat animations for unchanged data.
+- Overview KPI tiles now read "Total open issues", "Total open PRs" and "Actionable now (issues and PRs)" so the totals are not mistaken for the Governor's actionable-queue counts.
+- Changed the dashboard Overview settings panel to open as a modal using the shared Settings dialog shell.
+- Move the dashboard PR author identity from the governor strip into the avatar user menu.
+- Cache per-PR GitHub detail fetches while list freshness markers still match to reduce charged `GET /pulls/{number}` quota burn.
+- Changed hub cluster-health wording to call heartbeat-only clusters push-reported and explain missing node health from old spokes (#10601)
+- dashboard: removed the System Diagnostics pulse icon from the top navbar; Diagnostics stays reachable from the sidebar.
+- Changed the Review Queue collapsed row to show priority-split history with shared sparkline range controls (#10610)
+- The Hive security self-assessment now matches the shipped `ioscan` defaults from #7095: canaries default on, and `ioscan.fail_mode` defaults to `closed` at ACMM L5/L6 while staying `open` at L1–L4.
+- Move the Throughput hive-vs-human trend into the KPI tile row with a compact share sparkline and mode selector.
+- Promote the dashboard Change Throughput card to a top-level section with persisted layout and sidebar navigation.
+- Move the dashboard ACMM level into the topbar and consolidate version/upgrade details into a sidebar chip menu.
+- Refresh the Übersicht widget payload and move its download link into the account export menu.
+- Neutralize user-facing work-source terminology so GitHub-specific wording is reserved for GitHub-specific setup and implementation details.
+
+### Fixed
+
+- Define stable as chasing candidate 24 hours behind it, without requiring a quiet candidate period.
+- hub: stable-promotion status is cached and uses authenticated GitHub reads; GHCR tag-generation lookups are cached and per-evaluation build verification is bounded.
+- Fix release-channel, upgrade-history, and next-update status after floating-tag self-upgrades.
+- Stop the dashboard release-status strip from warning that the hub is unreachable on hives with no hub configured, and show the built-from branch (with HIVE_SELF_IMAGE guidance on Podman) instead of "Channel unknown" when the image reference cannot be read.
+- Label and surface issues waiting on reporter confirmation after fixes land.
+- Dashboard repo cards now mark needs-human issues as orange `needs human` instead of grey FILTERED, count them in the `need human review` header, and the pill legend lists the grey FILTERED and ADVISORY chips.
+- Defer dashboard backend/model discovery until after first paint and add boot timing instrumentation for slow-load triage (#11388)
+- watchdog: agents the governor deliberately does not kick (cadence paused in the current mode, or a reviewer lane with nothing to adjudicate) are reported `Producing=True / IdleNotScheduled` instead of raising an "alive but not producing" alert.
+- the pane poller no longer re-emits an entire terminal frame as new output when one line changes in place (e.g. a turn timer); this stops repeated `agent output signal` log spam and prevents the blocked-action thrash breaker from over-counting a single on-screen line (#11911).
+- `changelog-fragment-guard` now rejects fragments added under `src/changelog.d/` — which `compile-changelog.sh` never reads, so their entries silently vanished from `CHANGELOG.md` — with an error giving the exact `git mv` to the repository-root `changelog.d/`. The autofix no longer pushes a title-only duplicate when a misplaced fragment exists, and fork PRs get a comment with the move command instead of a bare red check ([#11919](https://github.com/hivecommons/hive/issues/11919)).
+- Dependabot PRs that receive a NOTICE autofix commit now merge without a human: the autofix push uses `TOPUP_PUSH_TOKEN` when configured (or records the skipped `verify PR contents` check itself), and the auto-merge sweep asks Dependabot to rebase once per head when a required check can never run on an autofix-pushed head (#11923).
+- The "GitHub App lacks repository write permission" merge-blocked alert is no longer raised by transient 403/5xx errors while reading CI status, now clears itself after any successful App merge or once CI reads succeed again, and quotes the triggering error; the upgrade banner now reports unreleased changes instead of "0 releases" for untagged builds (#11924).
+- `hive/likely-done` is no longer applied when a merged PR covered only part of an issue ([#11931](https://github.com/hivecommons/hive/issues/11931)). Close-on-merge now requires a closing keyword for the issue, no remainder/out-of-scope paragraph in the PR body, and — when the issue cites file paths — at least one cited path among the PR's changed files; otherwise it labels the issue `hive/partially-addressed`, posts no `/fixed` prompt, keeps it actionable, and the task-list sweep comment lists the cited paths still untouched.
+- ACMM is consistently expanded as the AI Codebase Maturity Model (matching arXiv:2604.09388) across README, docs, dashboard, hub pages, and examples.
+- Fixed the collapsed ACMM Eval summary so it reports the hive's current ACMM level instead of the lowest level with gaps.
+- Fixed the dashboard so Overview and Governor actionable counts shared one server-side definition (#10561)
+- Distinguish Change Throughput actor attribution colors and overlapping trend lines.
+- Keep issue claim comments canonical while mirroring live claims to the `claimed` label consistently.
+- Ensure contributor-lane ClankeR PRs and hosted bot PRs keep GitHub closing keywords for human-filed bug fixes; Hive now leaves reporter-confirmation issues open in its close gate instead of suppressing `Closes`/`Fixes` in PR bodies.
+- Config saves now install the Kubernetes dashboard overlay before rewriting the watched primary config and arm the watcher to skip self-triggered reloads, preventing stale overlay agent fields from resurrecting after ApplyPack reconciles a hosted spoke.
+- Let per-mode cadence edits convert legacy all-modes continuous into explicit settings so Interval and Off selections stick.
+- Fixed the dashboard Continuous toggles so they reuse the shared Agent power switch instead of rendering as a clipped track and knob.
+- Fix the contributor story issue form schema so GitHub can load the template.
+- The Copilot model picker now offers Claude Opus 5.5 and Sonnet 5.5 in its fallback list using the ids the Copilot CLI accepts, so the selected model is the one that runs.
+- Surface dashboard GitHub auth and rate-limit alerts in the pinned top notices area instead of below all dashboard sections.
+- Polished dashboard card chrome, advisory sub-sections, lifecycle empty states, repository headers, audit log sizing, diagnostics platform facts, Inception Spektacular branding, Knowledge fact summaries, collapsible Governor PRs-by-model details, and pinned notices.
+- Clarify dashboard section hide controls as two-way hide/unhide toggles with explicit accessible labels.
+- Fixed dashboard "Max merges per sweep" placeholder to show the correct default value (3) instead of 5.
+- Capped dashboard histories, deduplicated recurring pollers, and cancelled stale sparkline/KPI animations to prevent long-lived tab memory growth (#10557)
+- Pin dashboard release and planning notices above every dashboard section outside saved layout ordering.
+- Move dashboard notices into the pinned top slot and clear stale upgrade-in-progress state once a spoke has moved on.
+- Fixed the dashboard Overview KPI tiles so chart-backed counts render again and enlarged Overview chart/legend statistics text.
+- Dashboard background status refreshes keep the reader in place: scroll is restored relative to the topmost visible section instead of a raw pixel offset, the Project Inception (Spektacular) panel keeps its scroll position and campaign filters and is not rebuilt while a field is focused or holds unsaved answers, and a version-triggered reload waits until focus leaves the form field being edited ([#11032](https://github.com/hivecommons/hive/issues/11032)).
+- Reworked the dashboard feedback modal layout and added full diagnostics disclosure before feedback is submitted.
+- Author dashboard feedback issues as the submitter when possible, then the GitHub App, and never an operator PAT.
+- dashboard: the Model Gateways add/edit form now has a Test button that probes the endpoint with the entered values before saving, and its Cancel button no longer renders clipped over Save (#9914).
+- Fixed the Governor cadence table so disabled agents remain visible and continuous-mode agents show that cadence intervals are not used.
+- Restore cached actionable data into the scheduler at boot so Governor PRs-by-model and reviewer accuracy evidence survive restarts.
+- Keep the Governor dashboard card on shared neutral chrome and restore Overview band chart spacing and line weights.
+- Headless Codex usage-limit exits (`ERROR: You’ve hit your usage limit.`) now enter the relay quota hold instead of failing the task and immediately requesting more work (#10040).
+- Fix the hub `/contribute` URL so it serves a contributor relay landing page instead of falling through to the 404 page.
+- Fixed the hub admin NPS feedback header so it matched sibling section sizing and summary weight. (#10600)
+- Fixed the Hub Admin Version cell so release-channel spokes show an explicit pending-image state instead of a green check when newer branch commits exist but the channel image has not been published yet.
+- Keep Knowledge Base stat tiles on one compact row and constrain the Total Facts sparkline.
+- Governor kicks no longer record agent claims (or post 🔒 claim comments) for issues the kick itself lists as dependency-blocked "do NOT start"; only ready, unheld issues enter `IssueRefs`.
+- Fix the dashboard lifecycle timeline so rows render visible timeline bars, labels, axis ticks, and relayout correctly after expansion or refresh.
+- Fixed dashboard sidebar navigation so collapsed-section jumps wait for expand/collapse layout settling before scrolling.
+- Fixed the dashboard top navbar visibility and Overview KPI layout after v5.136.0.
+- Show stable-channel next-update status on spoke and hub dashboards, including an explicit none-queued state when stable is current.
+- Gave the dashboard Overview issue and PR band charts a shared, distinct per-band color palette.
+- Clarify the Overview median-age KPI label and tooltip so it names the actionable open issue/PR population and age basis.
+- Overview KPI cards: the "open Settings → …" control inside the held/blocked/outside term tooltip is no longer a nested `<button>`, which the HTML parser used to force-close the KPI card around, spilling the tooltip text inline and pushing the remaining equation terms below the card grid.
+- Fixed dashboard Overview totals so open issues and PRs render one reconciling actionable/held/blocked/outside partition with visible outside buckets.
+- Doubled the dashboard Overview chart transition duration presets so chart rotation feels less abrupt.
+- Cache spoke owner GitHub token identity validation so dashboard auth checks and hub heartbeats no longer hit `GET /user` on every request or heartbeat.
+- Tolerate an unsearchable `author:app/<login>` qualifier (422) in the dashboard's PR/issue counts so a user-login `ai_author` still yields cost-per-PR/issue divisors.
+- Clarified project cards by separating issue buckets from pull request buckets. (#10565)
+- Fixed the Projects Clear filter controls so Overview KPI filters clear from both the toolbar button and filter chip without being restored from URL query parameters.
+- `/metrics` label values are now escaped with the Prometheus text-format rules instead of Go `%q`, so an unusual model or agent name no longer makes the scraper reject the whole payload.
+- Fixed pull-only cluster health so spokes with configured cluster IDs reported node stats through heartbeats and awaiting-heartbeat clusters rendered as informational instead of errors (#10559)
+- Fixed the dashboard GitHub API diagnostics card so reset-passed rate-limit snapshots stop rendering as exhausted and the row/pill colour on remaining quota.
+- Left-align dashboard repository card names next to their reorder grab handle so they use the available header width before the auto-merge control.
+- Keep repository card names left-aligned next to the drag handle across built-in dashboard themes.
+- A reporter-trust PR hold now applies `needs-human` alongside `hold`, and its notice names the untrusted reporter and states the PR was authored by the hive, so maintainers can see the PR is waiting on them.
+- Record advisory reviewer verdicts for dashboard accuracy calibration when review dispatch state is absent.
+- Fixed the scanner pushing content commits onto PR branches the hive did not author; it now comments with the suggestion instead, leaving only the `review.contributor_prs.base_sync` update-branch unstick.
+- Fixed dashboard section headers so they match their sidebar labels, including Projects. (#10563)
+- Fix the dashboard sidebar version panel so it fits narrow sidebars, exposes hub cadence/tracking/status, and shows clear upgrade availability and in-progress feedback.
+- Keep the dashboard sidebar version Upgrade button visible in every state, clear stale upgrade progress, and prevent empty/clipped version panel rows.
+- Restart the self-authored automerge sweep when runtime ACMM level changes cross the self-merge gate, keep level-applied holds until a human removes them or an operator explicitly sets release_level_holds=true, and show owners an informational L6 auto-merge notice.
+- Fixed the dashboard Overview open issue and PR cards to show forge totals with filtered/tracked gap explanations (#10629)
+- Smooth the dashboard upgrade bee animation by preserving its DOM across status refreshes and keeping motion composite-only.
+- Documented `GET /api/feedback/status` in the dashboard OpenAPI spec and made the stable next-promotion test hermetic, restoring a green v5 baseline (#10593, #10587).
+- Portal the dashboard version popover out of the sidebar so upgrade details and progress controls cannot be clipped by the sidebar edge.
+- Polish the weekly owner advice card counts and band definitions so dashboard text uses muted meta rows and styled band pills.
+
 ## 2026-10-14 (v5.168.0)
 
 ### Added

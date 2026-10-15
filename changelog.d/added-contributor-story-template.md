@@ -1,1 +1,0 @@
-- Add a contributor story issue form for hivecommons.dev submissions.

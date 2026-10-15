@@ -1,1 +1,0 @@
-- Combined the spoke dashboard fleet breaker status pill and toggle into one accessible status chip button.

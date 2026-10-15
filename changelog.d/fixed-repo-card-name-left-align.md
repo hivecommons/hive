@@ -1,1 +1,0 @@
-- Left-align dashboard repository card names next to their reorder grab handle so they use the available header width before the auto-merge control.

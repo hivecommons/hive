@@ -1,1 +1,0 @@
-- Fix the hub `/contribute` URL so it serves a contributor relay landing page instead of falling through to the 404 page.

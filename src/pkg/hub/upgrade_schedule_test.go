@@ -46,10 +46,17 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 		wantFire    string
 	}{
 		{
-			name:        "legacy record with empty mode behaves as instant",
+			name:        "legacy record with empty mode is gated like daily outside the window",
 			mode:        "",
 			now:         mustET(t, 2026, time.July, 15, 3, 0),
+			wantAllowed: false,
+		},
+		{
+			name:        "legacy record with empty mode fires inside the daily window",
+			mode:        "",
+			now:         mustET(t, 2026, time.July, 15, autoUpgradeDailyHour, 0),
 			wantAllowed: true,
+			wantFire:    "2026-07-15",
 		},
 		{
 			name:        "explicit instant is never gated, even at 3am",
@@ -316,7 +323,8 @@ func TestAutoUpgradeModeValidation(t *testing.T) {
 		wantValid bool
 		wantNorm  string
 	}{
-		{mode: "", wantValid: true, wantNorm: AutoUpgradeModeInstant},
+		{mode: "", wantValid: true, wantNorm: AutoUpgradeModeDaily},
+		{mode: "  ", wantValid: false, wantNorm: AutoUpgradeModeDaily},
 		{mode: AutoUpgradeModeInstant, wantValid: true, wantNorm: AutoUpgradeModeInstant},
 		{mode: AutoUpgradeModeDaily, wantValid: true, wantNorm: AutoUpgradeModeDaily},
 		{mode: AutoUpgradeModeWeekly, wantValid: true, wantNorm: AutoUpgradeModeWeekly},
@@ -551,5 +559,18 @@ func TestMyHiveEntryExposesEffectiveSchedule(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"autoUpgradeSchedule":"candidate-bypass"`) {
 		t.Errorf("payload %s missing autoUpgradeSchedule", b)
+	}
+}
+
+// TestShouldAutoUpgradeNowEmptyModeIsDaily pins #11822: a legacy record with no
+// auto_upgrade_mode is gated like daily and gets a FireDate, not instant.
+func TestShouldAutoUpgradeNowEmptyModeIsDaily(t *testing.T) {
+	now := mustET(t, 2026, time.July, 15, 9, 0)
+	if got := shouldAutoUpgradeNow("", "", now); got.Allowed || got.FireDate != "" {
+		t.Errorf("empty mode before the window: %+v, want not allowed", got)
+	}
+	now = mustET(t, 2026, time.July, 15, 13, 5)
+	if got := shouldAutoUpgradeNow("", "", now); !got.Allowed || got.FireDate != "2026-07-15" {
+		t.Errorf("empty mode in the window: %+v, want allowed with FireDate 2026-07-15", got)
 	}
 }

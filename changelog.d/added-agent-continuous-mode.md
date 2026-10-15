@@ -1,1 +1,0 @@
-- Add per-agent continuous mode that re-kicks after a completed session with cooldown/backoff, status, API, and dashboard controls.

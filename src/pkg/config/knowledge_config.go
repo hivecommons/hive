@@ -14,6 +14,17 @@ type DocSourceConfigYAML struct {
 	Layer    string `yaml:"layer"`
 }
 
+// KnowledgeContext7Import is one library imported from Context7 at startup.
+type KnowledgeContext7Import struct {
+	ID    string `yaml:"id"`
+	Query string `yaml:"query,omitempty"`
+}
+
+// KnowledgeContext7 holds the legacy Context7 auto-import list.
+type KnowledgeContext7 struct {
+	AutoImport []KnowledgeContext7Import `yaml:"auto_import,omitempty"`
+}
+
 type KnowledgeConfig struct {
 	Enabled         bool                  `yaml:"enabled"`
 	Engine          string                `yaml:"engine"`
@@ -22,6 +33,7 @@ type KnowledgeConfig struct {
 	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
 	Documents       []DocSourceConfigYAML `yaml:"documents"`
 	Connectors      []KnowledgeConnector  `yaml:"connectors,omitempty"`
+	Context7        KnowledgeContext7     `yaml:"context7,omitempty"`
 	Publish         KnowledgePublish      `yaml:"publish,omitempty"`
 	Public          PublicKnowledgeConfig `yaml:"public,omitempty"`
 	Curator         KnowledgeCurator      `yaml:"curator"`

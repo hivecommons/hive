@@ -1,1 +1,0 @@
-- Governor kicks no longer record agent claims (or post 🔒 claim comments) for issues the kick itself lists as dependency-blocked "do NOT start"; only ready, unheld issues enter `IssueRefs`.

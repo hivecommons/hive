@@ -17,9 +17,9 @@ import (
 // inside working hours so a bad roll is caught while someone is around.
 const (
 	// AutoUpgradeModeInstant upgrades as soon as the hive is seen behind latest.
-	// This is the historical behaviour and the meaning of an EMPTY mode, so the
-	// ~42 existing PVC records that carry only `auto_upgrade: true` keep
-	// behaving exactly as they do today.
+	// It is only ever an explicit choice: an EMPTY mode resolves to daily, so
+	// legacy records that carry only `auto_upgrade: true` are not restarted at
+	// arbitrary hours (#11822).
 	AutoUpgradeModeInstant = "instant"
 
 	// AutoUpgradeModeDaily upgrades at most once per calendar day, during the
@@ -89,18 +89,24 @@ var validAutoUpgradeModes = map[string]bool{
 }
 
 // isValidAutoUpgradeMode reports whether mode is acceptable on the API. The
-// empty string is allowed and means "instant" (see normalizeAutoUpgradeMode) so
-// that older clients which send only auto_upgrade keep working unchanged.
+// empty string is allowed and means "daily" (see normalizeAutoUpgradeMode) so
+// that older clients which send only auto_upgrade keep working.
 func isValidAutoUpgradeMode(mode string) bool {
 	return mode == "" || validAutoUpgradeModes[mode]
 }
 
 // normalizeAutoUpgradeMode maps a stored/legacy value onto a concrete mode.
-// Empty (a legacy record, or a client that never sent the field) is instant.
+// Empty or whitespace-only (a legacy record, or a client that never sent the
+// field) is daily (#11822). Unrecognised non-empty values stay instant: the API
+// rejects them, so one can only come from a corrupted record, and failing
+// toward upgrading sooner matches the timezone-unavailable fallback.
 func normalizeAutoUpgradeMode(mode string) string {
 	switch mode {
 	case AutoUpgradeModeDaily, AutoUpgradeModeWeekly:
 		return mode
+	}
+	if strings.TrimSpace(mode) == "" {
+		return AutoUpgradeModeDaily
 	}
 	return AutoUpgradeModeInstant
 }
