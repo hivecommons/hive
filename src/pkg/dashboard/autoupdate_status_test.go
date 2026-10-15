@@ -313,3 +313,61 @@ func TestBuildAutoUpdateStatusNextUpdateAt(t *testing.T) {
 		t.Fatalf("nextUpdateAt serialized while unknown: %s", raw)
 	}
 }
+
+// #11196: when the hub held a scheduled upgrade while the window was open, the
+// status must say so — and why — instead of only showing the previous upgrade.
+func TestBuildAutoUpdateStatusScheduledHold(t *testing.T) {
+	const reason = "the cluster's upgrade wave is full; the hive boards a later wave"
+	const at = "2026-10-14T17:00:00Z"
+	held := func(behind int, p spoke.HeartbeatUpgradePolicy) AutoUpdateStatus {
+		p.ScheduledHoldReason = reason
+		p.ScheduledHoldAt = at
+		return buildAutoUpdateStatus(autoUpdateInputs{Policy: &p, CommitsBehind: &behind, TargetChannel: "stable"})
+	}
+
+	got := held(3, spoke.HeartbeatUpgradePolicy{HubManaged: true, Schedule: "daily", Channel: "stable", TargetResolved: true})
+	if got.State != autoUpdateStateBehind {
+		t.Fatalf("state = %q, want behind", got.State)
+	}
+	if got.HeldReason != reason || got.HeldAt != at {
+		t.Errorf("held = %q/%q, want %q/%q", got.HeldReason, got.HeldAt, reason, at)
+	}
+	if !strings.Contains(got.Detail, "held the upgrade at "+at) || !strings.Contains(got.Detail, "upgrade wave is full") {
+		t.Errorf("detail %q does not explain the held window", got.Detail)
+	}
+
+	if got := held(0, spoke.HeartbeatUpgradePolicy{HubManaged: true, Schedule: "daily", Channel: "stable", TargetResolved: true}); got.HeldReason != "" || strings.Contains(got.Detail, "held") {
+		t.Errorf("up-to-date hive still reports a hold: %q / %q", got.HeldReason, got.Detail)
+	}
+	if got := held(3, spoke.HeartbeatUpgradePolicy{HubManaged: true, Schedule: "daily", Paused: true}); got.HeldReason != "" {
+		t.Errorf("paused hive reports hold %q, want none (the pause is the reason)", got.HeldReason)
+	}
+	if got := held(3, spoke.HeartbeatUpgradePolicy{}); got.HeldReason != "" {
+		t.Errorf("disabled hive reports hold %q, want none", got.HeldReason)
+	}
+
+	var raw map[string]any
+	b, _ := json.Marshal(held(3, spoke.HeartbeatUpgradePolicy{HubManaged: true, Schedule: "daily", Channel: "stable", TargetResolved: true}))
+	if err := json.Unmarshal(b, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["heldReason"] != reason || raw["heldAt"] != at {
+		t.Errorf("JSON heldReason/heldAt = %v/%v, want %q/%q", raw["heldReason"], raw["heldAt"], reason, at)
+	}
+}
+
+func TestIndexHTMLRendersScheduledHold(t *testing.T) {
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(raw)
+	for _, want := range []string{
+		"if (au.heldReason) rows += '<div class=\"text-warn\">Scheduled update held'",
+		"if (au.heldReason) html += row('Held',",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html does not render the scheduled hold: missing %q", want)
+		}
+	}
+}

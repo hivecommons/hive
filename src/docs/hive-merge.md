@@ -200,6 +200,31 @@ underlying endpoint is `GET/PUT /api/config/auto-merge` (owner-only), whose
 response carries `bot_authors: [{login, source: known|discovered|custom,
 trusted}]`.
 
+### github-actions[bot] PR takeover
+
+A PR that `github-actions[bot]` opens with a workflow `GITHUB_TOKEN` never
+triggers `pull_request` workflows (GitHub's anti-recursion rule), so a required
+check those workflows produce stays `required-check-missing` forever. When
+`github-actions[bot]` is in `auto_merge.trusted_bot_authors`, the sweep takes
+such a PR over instead of polling it: once the head is older than both
+`auto_merge.min_head_age` and 30 minutes with no `pull_request` run at all, the
+App pushes the same change (the bot head's tree on the merge base) as one
+DCO-signed-off commit to `hive/takeover-<n>`, opens a PR with the original
+title and body plus `Supersedes #<n>`, comments `Superseded by #N` on the bot
+PR and closes it. The App PR triggers workflows normally and merges through the
+self-authored lane. Fork heads are never taken over, and each bot head SHA gets
+one attempt whatever the outcome. No GitHub App secrets are needed in the
+workflow that opened the bot PR.
+
+```yaml
+auto_merge:
+  trusted_bot_authors:
+    - dependabot[bot]
+    - github-actions[bot]
+  bot_takeover:
+    enabled: true   # default; set false to leave such PRs held
+```
+
 ### Trusted-author auto-merge
 
 `auto_merge.trusted_authors` is a third, default-off sweep tier for

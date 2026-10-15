@@ -15,7 +15,7 @@ func TestPRThroughputCardPinned(t *testing.T) {
 	for _, snippet := range []string{
 		`id="pr-throughput-section"`,
 		`id="pr-throughput-card"`,
-		`📊 Throughput`,
+		`📈 Throughput`,
 		`pull/merge requests across tracked forges`,
 		`data-arg0="pr-throughput-section"`,
 		"function renderPRThroughput",
@@ -25,7 +25,7 @@ func TestPRThroughputCardPinned(t *testing.T) {
 		`data-action="setPRThroughputHours"`,
 		"window.setPRThroughputHours = setPRThroughputHours",
 		"window.setPRThroughputRole = setPRThroughputRole",
-		"'pr-throughput-section': { title: '📊 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' }",
+		"'pr-throughput-section': { title: '📈 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' }",
 		`<div class="lbl">Opened</div>`,
 		`<div class="lbl">Merged</div>`,
 		`<div class="lbl">Closed without merging</div>`,
@@ -65,7 +65,7 @@ func TestPRThroughputSectionIsTopLevel(t *testing.T) {
 	html := indexHTML(t)
 	for _, snippet := range []string{
 		`<div id="pr-throughput-section" data-dashboard-section="pr-throughput-section" hidden>`,
-		`data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Throughput</span>`,
+		`data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span>`,
 		`DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section'`,
 		`h === 'throughput' || h.startsWith('section-')`,
 		`if (h === 'throughput') return 'pr-throughput-section';`,

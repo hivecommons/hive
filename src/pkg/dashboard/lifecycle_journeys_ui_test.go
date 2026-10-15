@@ -71,6 +71,11 @@ func TestLifecycleTimelineRendersNonZeroBars(t *testing.T) {
 			"Math.max(LC_BAR_MIN_WIDTH_PCT, right - left)",
 			`<rect class="lc-bar ${cls}"`,
 			`width="${width.toFixed(2)}"`,
+			`<span class="lc-marker"`,
+			`data-lc-marker-left="${m.x.toFixed(2)}"`,
+			"lcApplyMarkerPositions(card)",
+			"LC_MARKER_MERGE_PCT",
+			"data-lc-marker-left",
 			"lcTimelineBounds(visibleJourneys)",
 		} {
 			if !strings.Contains(html, snippet) {
@@ -128,6 +133,9 @@ func TestLifecycleTimelineRendersNonZeroBars(t *testing.T) {
 	if (bars.some(w => !(w > 0))) throw new Error('zero-width bar: ' + bars.join(','));
 	if (!rendered.includes('PR #101') || !rendered.includes('Fix timeline')) throw new Error('missing PR label/title: ' + rendered);
 	if (!rendered.includes('lc-axis')) throw new Error('missing time axis: ' + rendered);
+	const markerCount = (rendered.match(/class="lc-marker"/g) || []).length;
+	if (markerCount < 3) throw new Error('expected fixed-size markers for rendered rows, got ' + markerCount + ': ' + rendered);
+	if (rendered.includes('<circle class="lc-marker"')) throw new Error('markers must not be SVG circles in scaled timeline: ' + rendered);
 	`
 	cmd := exec.Command("node", "--input-type=commonjs", "-e", script)
 	out, err := cmd.CombinedOutput()
@@ -167,5 +175,26 @@ func TestLifecycleTimelineAxisAndRowsKeepNaturalSize(t *testing.T) {
 	}
 	if !strings.Contains(html, ".lc-journey { font-size: 0.78rem;") || !strings.Contains(html, "overflow: hidden; flex-shrink: 0; }") {
 		t.Fatalf(".lc-journey must set flex-shrink: 0 so rows do not collapse to stripes")
+	}
+}
+
+func TestLifecycleTimelineMarkersStayFixedSize(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		".lc-track { position: relative;",
+		".lc-track-svg { display: block; width: 100%; height: 1.4rem; overflow: hidden; border-radius: var(--r-pill);",
+		".lc-marker { position: absolute;",
+		"width: 11px; height: 11px; aspect-ratio: 1;",
+		"border-radius: var(--r-pill);",
+		"flex: 0 0 auto; min-width: 11px; min-height: 11px;",
+		"preserveAspectRatio=\"none\" aria-hidden=\"true\"",
+		"LC_MARKER_MERGE_PCT",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("lifecycle fixed marker guard missing %q", snippet)
+		}
+	}
+	if strings.Contains(html, `<circle class="lc-marker"`) {
+		t.Fatalf("lifecycle markers must be fixed-size HTML overlays, not SVG circles scaled by preserveAspectRatio=none")
 	}
 }

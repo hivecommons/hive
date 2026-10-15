@@ -1619,14 +1619,14 @@
     .lc-journey .lc-ref { color: var(--text); font-weight: 600; font-family: var(--font-mono); font-size: 0.72rem;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lc-title { color: var(--muted); font-size: var(--fs-2xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
-    .lc-track { min-height: 1.4rem; border-radius: var(--r-pill); background: linear-gradient(90deg, color-mix(in srgb, var(--muted) 10%, transparent), color-mix(in srgb, var(--muted) 5%, transparent)); overflow: hidden; }
-    .lc-track-svg { display: block; width: 100%; height: 1.4rem; }
+    .lc-track { position: relative; min-height: 1.4rem; border-radius: var(--r-pill); background: linear-gradient(90deg, color-mix(in srgb, var(--muted) 10%, transparent), color-mix(in srgb, var(--muted) 5%, transparent)); overflow: visible; }
+    .lc-track-svg { display: block; width: 100%; height: 1.4rem; overflow: hidden; border-radius: var(--r-pill); }
     .lc-grid-line { stroke: color-mix(in srgb, var(--muted) 18%, transparent); stroke-width: 0.6; }
     .lc-bar { opacity: 0.95; }
     .lc-bar.inflight { fill: var(--yellow); }
     .lc-bar.merged { fill: var(--green); }
     .lc-bar.blocked { fill: var(--red); }
-    .lc-marker { fill: var(--text); stroke: var(--bg); stroke-width: 2; }
+    .lc-marker { position: absolute; top: 50%; left: var(--lc-marker-left, 0%); width: 11px; height: 11px; aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: var(--r-pill); box-sizing: border-box; background: var(--text); border: 2px solid var(--bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--muted) 18%, transparent); flex: 0 0 auto; min-width: 11px; min-height: 11px; pointer-events: auto; }
     .lc-meta { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2); color: var(--muted); font-size: 0.72rem; }
     .lc-agent, .lc-time { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .lc-show-rows { margin-top: var(--sp-3); display: flex; justify-content: center; }
@@ -2772,6 +2772,13 @@
     .settings-search-group-title button { flex: 0 0 auto; }
     .settings-search-hit { padding: var(--sp-4); border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
     .settings-search-hit:first-child { border-top: 0; }
+    .settings-search-hit { cursor: pointer; }
+    .settings-search-hit:hover, .settings-search-hit:focus-visible { background: color-mix(in srgb, var(--accent) 8%, transparent); outline: none; }
+    .settings-search-hit:focus-visible { box-shadow: inset 2px 0 0 var(--accent); }
+    /* Search → row landing: a short flash on the row the hit resolved to. */
+    .cfg-row-flash { animation: cfg-row-flash 1.6s ease-out; border-radius: var(--r); outline: 2px solid color-mix(in srgb, var(--amber) 70%, transparent); outline-offset: 2px; }
+    @keyframes cfg-row-flash { from { background: color-mix(in srgb, var(--amber) 35%, transparent); } to { background: transparent; } }
+    @media (prefers-reduced-motion: reduce) { .cfg-row-flash { animation: none; background: color-mix(in srgb, var(--amber) 18%, transparent); } }
     .settings-search-hit-label { font-weight: 700; color: var(--text); margin-bottom: var(--sp-1); }
     .settings-search-hit-meta { color: var(--muted); font-size: var(--fs-xs); line-height: 1.45; }
     .settings-search-key { display: inline-block; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); border-radius: var(--r-sm); padding: var(--sp-0) var(--sp-2); }
@@ -5445,8 +5452,8 @@
     <div class="oc-nav-group" id="dashboard-section-nav-group">
       <div class="oc-nav-label">Dashboard</div>
       <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
-      <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
-      <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Throughput</span></a>
+      <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span></a>
+      <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span></a>
     </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
@@ -5471,7 +5478,7 @@
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Intelligence</div>
-      <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
+      <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📣</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
@@ -5483,10 +5490,10 @@
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
       <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review</span></a>
       <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
-      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Agent activity</span></a>
-      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
+      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📡</span><span class="oc-nav-text">Agent activity</span></a>
+      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="lifecycle-section" data-action="ocNavigate" data-arg0="lifecycle-section"><span class="oc-nav-emoji">🔀</span><span class="oc-nav-text">Lifecycle Timeline</span></a>
-      <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Diagnostics</span></a>
+      <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🩺</span><span class="oc-nav-text">Diagnostics</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Help</div>
@@ -5657,14 +5664,14 @@
   <div class="governor" id="governor"></div>
 
   <div id="pr-throughput-section" data-dashboard-section="pr-throughput-section" hidden>
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Throughput section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📊 Throughput <span class="dash-card-subtitle">pull/merge requests across tracked forges</span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Throughput section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📈 Throughput <span class="dash-card-subtitle">pull/merge requests across tracked forges</span></h2>
     <div class="section-body">
       <div id="pr-throughput-card" class="prt-card advisory-subsection-card"></div>
     </div>
   </div>
 
   <div id="advisory-section" data-dashboard-section="advisory-section" style="margin-top: var(--sp-6); margin-bottom: var(--sp-8); display: none;">
-    <h2 class="section-label section-group-header section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Advisory section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📋 Advisory</h2>
+    <h2 class="section-label section-group-header section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Advisory section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📣 Advisory</h2>
     <div class="section-body section-group-body">
     <div class="advisory-subsection" id="advisory-digest-section">
       <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="advisory-digest-section">
@@ -5788,7 +5795,7 @@
   </div>
 
   <div class="mt-6 mb-8" id="audit-section" data-dashboard-section="audit-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="audit-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Audit Log section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📋 Audit Log</h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="audit-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Audit Log section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📜 Audit Log</h2>
     <div class="section-body">
       <div class="audit-controls-row" style="margin-bottom:5px;padding:3px;display:flex;align-items:center;gap:var(--sp-4)">
         <div style="flex:1;position:relative">
@@ -5879,7 +5886,7 @@
   </div>
 
   <div class="mt-6 mb-8" id="debug-section" data-dashboard-section="debug-section">
-    <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="debug-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Diagnostics section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🔍 Diagnostics</h2>
+    <h2 class="section-label section-header-toggle mb-5" data-action="toggleSection" data-arg0="debug-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Diagnostics section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🩺 Diagnostics</h2>
     <div class="section-body">
       <div id="debug-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: var(--sp-5);"></div>
     </div>
@@ -5915,7 +5922,7 @@
   </div>
 
   <div class="mt-6 mb-8" id="agent-activity-section" data-dashboard-section="agent-activity-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="agent-activity-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agent activity section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📍 Agent activity</h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="agent-activity-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Agent activity section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📡 Agent activity</h2>
     <div class="section-body">
       <div id="agent-activity-panel"></div>
     </div>
@@ -6716,20 +6723,20 @@
 
     const DASHBOARD_SECTION_CARD_CONFIG = Object.freeze({
       'overview-section': { title: '🍩 Overview', summary: 'overview', actionIds: ['overview-chart-settings'], settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"') },
-      'governor': { title: '📊 Governor', summary: 'idle', settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns', ' data-arg0="governor"') },
-      'advisory-section': { title: '📋 Advisory', summary: '0 advisories' },
+      'governor': { title: '🚦 Governor', summary: 'idle', settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns', ' data-arg0="governor"') },
+      'advisory-section': { title: '📣 Advisory', summary: '0 advisories' },
       'advisory-digest-section': { title: '📋 Advisory Digest', summary: '0 findings' },
       'hive-advice-section': { title: '🧭 Hive Advice', summary: '0 recommendations', badgeHtml: '<span class="dash-card-badge">weekly</span>' },
       'fleet-report-section': { title: '📡 Fleet Report Preview', summary: '0 reports', badgeHtml: '<span class="dash-card-badge">dry-run</span>' },
       'acmm-reco-section': { title: '⬆️ Ready to level up?', summary: 'L— · stay', badgeHtml: '<span class="dash-card-badge">advisory</span>' },
       'lifecycle-section': { title: '🔀 Lifecycle Timeline', summary: '0 in flight · 0 merged' },
-      'pr-throughput-section': { title: '📊 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' },
+      'pr-throughput-section': { title: '📈 Throughput', summary: '0 merged · 0 opened (24h)', subtitleHtml: 'pull/merge requests across tracked forges' },
       'token-panel': { title: '🪙 Tokens', summary: '0 sessions' },
       'cost-panel': { title: '💵 Cost', summary: '$0' },
       'repos-section': { title: '📦 Projects', summary: '0 repos', settingsHtml: sectionSettingsGear('Projects', 'gh1', 'Manage monitored projects') },
       'acmm-eval-section': { title: '🎯 ACMM Eval', summary: 'L—' },
       'approvals-section': { title: '✋ Approvals', summary: '0 pending' },
-      'audit-section': { title: '📋 Audit Log', summary: '0 events today' },
+      'audit-section': { title: '📜 Audit Log', summary: '0 events today' },
       'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
       'review-pipeline-subsection': { title: 'Pipeline', summary: '—' },
       'review-queue-subsection': { title: 'Queue', summary: '—' },
@@ -6737,10 +6744,10 @@
       'inception-section': { title: '💡 Inception', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
-      'debug-section': { title: '🔍 Diagnostics', summary: 'health' },
+      'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
-      'agent-activity-section': { title: '📍 Agent activity', summary: '0 working / 0 total' },
+      'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -13645,7 +13652,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ${renderGovernorPRModelsTile()}
         ${renderReviewerAccuracyTile()}
         ${renderCadenceMatrix(cadenceMatrix, currentMode, modes)}`;
-      el.innerHTML = sectionCardShell({ id: 'governor', title: '📊 Governor', gripLabel: 'Governor', panelClass: 'governor-card', settingsHtml: DASHBOARD_SECTION_CARD_CONFIG.governor.settingsHtml, summaryHtml: `${esc(currentMode)} · ${govPressure} pressure`, summaryTitle: 'Governor mode and queue pressure' }, governorBody.replace(/<div class="gov-title"[\s\S]*?<\/div>\n?/, ''));
+      el.innerHTML = sectionCardShell({ id: 'governor', title: '🚦 Governor', gripLabel: 'Governor', panelClass: 'governor-card', settingsHtml: DASHBOARD_SECTION_CARD_CONFIG.governor.settingsHtml, summaryHtml: `${esc(currentMode)} · ${govPressure} pressure`, summaryTitle: 'Governor mode and queue pressure' }, governorBody.replace(/<div class="gov-title"[\s\S]*?<\/div>\n?/, ''));
       applySectionCollapse('governor');
       applySectionCollapse('governor-pr-models-section');
     }
@@ -19682,6 +19689,7 @@ function burnAreaChart() {
     const lcExpandedJourneys = new Set();
     const LC_COLLAPSED_ROW_LIMIT = 40;
     const LC_BAR_MIN_WIDTH_PCT = 1.5;
+    const LC_MARKER_MERGE_PCT = 1.1;
     let lcLastDTO = null;
     let lcScrollTop = 0;
     let lcShowAllRows = false;
@@ -19833,12 +19841,39 @@ function burnAreaChart() {
         `${lcAbsTime(start)} → ${lcAbsTime(end)}`
       ].filter(Boolean).join(' · ');
       const grid = [25, 50, 75].map((x) => `<line class="lc-grid-line" x1="${x}" x2="${x}" y1="0" y2="24"></line>`).join('');
-      const markers = Object.keys((j && j.stages) || {}).map((k) => {
+      const markerPoints = [{ x: left, label: `Start · ${lcAbsTime(start)}` }];
+      if (Math.abs(right - left) >= LC_MARKER_MERGE_PCT) markerPoints.push({ x: right, label: `End · ${lcAbsTime(end)}` });
+      Object.keys((j && j.stages) || {}).forEach((k) => {
         const at = lcStageLastAt(j.stages[k]);
-        if (!at) return '';
-        return `<circle class="lc-marker" cx="${lcPct(at, bounds).toFixed(2)}" cy="12" r="3"><title>${escapeHtml(lcStageLabel(k) + ' · ' + lcAbsTime(at))}</title></circle>`;
+        if (!at) return;
+        markerPoints.push({ x: lcPct(at, bounds), label: lcStageLabel(k) + ' · ' + lcAbsTime(at) });
+      });
+      const mergedMarkers = [];
+      markerPoints
+        .filter((m) => Number.isFinite(m.x))
+        .sort((a, b) => a.x - b.x)
+        .forEach((m) => {
+          const prev = mergedMarkers[mergedMarkers.length - 1];
+          if (prev && Math.abs(m.x - prev.x) < LC_MARKER_MERGE_PCT) {
+            prev.x = (prev.x + m.x) / 2;
+            if (m.label && !prev.labels.includes(m.label)) prev.labels.push(m.label);
+          } else {
+            mergedMarkers.push({ x: m.x, labels: m.label ? [m.label] : [] });
+          }
+        });
+      const markers = mergedMarkers.map((m) => {
+        const markerTitle = m.labels.join(' · ');
+        return `<span class="lc-marker" data-lc-marker-left="${m.x.toFixed(2)}" title="${escapeHtml(markerTitle)}" aria-hidden="true"></span>`;
       }).join('');
-      return `<div class="lc-track" title="${escapeHtml(title)}"><svg class="lc-track-svg" viewBox="0 0 100 24" preserveAspectRatio="none">${grid}<rect class="lc-bar ${cls}" x="${left.toFixed(2)}" y="6" width="${width.toFixed(2)}" height="12" rx="3" ry="3"><title>${escapeHtml(title)}</title></rect>${markers}</svg></div>`;
+      return `<div class="lc-track" title="${escapeHtml(title)}"><svg class="lc-track-svg" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">${grid}<rect class="lc-bar ${cls}" x="${left.toFixed(2)}" y="6" width="${width.toFixed(2)}" height="12" rx="3" ry="3"><title>${escapeHtml(title)}</title></rect></svg>${markers}</div>`;
+    }
+
+    function lcApplyMarkerPositions(root) {
+      if (!root || typeof root.querySelectorAll !== 'function') return;
+      root.querySelectorAll('.lc-marker[data-lc-marker-left]').forEach((marker) => {
+        const x = Number(marker.getAttribute('data-lc-marker-left'));
+        if (Number.isFinite(x)) marker.style.setProperty('--lc-marker-left', x.toFixed(2) + '%');
+      });
     }
 
     function lcScheduleLayout() {
@@ -20033,6 +20068,7 @@ function burnAreaChart() {
       }
 
       card.innerHTML = fleetHtml + windowHtml + listHtml;
+      lcApplyMarkerPositions(card);
       lcRestoreScroll();
       applySectionCollapse('lifecycle-section');
       lcEnsureResizeObserver();
@@ -20378,9 +20414,11 @@ function burnAreaChart() {
     // the lifecycle timeline — no extra fetch. Spans are hours; p50 is coloured
     // against the sla.targets budgets (Settings → Thresholds).
     const PRT_SLA_SPANS = [
-      { key: 'start_to_pr', hist: 'start_to_pr_p50', target: 'start_to_pr_h', label: 'Start → PR', color: 'var(--accent)', tip: 'Hours from the hive/in-progress start mark (an agent claimed, commented or opened a PR on the issue) to the PR that fixes it being opened.' },
-      { key: 'pr_to_merge', hist: 'pr_to_merge_p50', target: 'pr_to_merge_h', label: 'PR → merge', color: 'var(--green)', tip: 'Hours from the fixing PR opening to its merge (hive-driven or observed).' },
-      { key: 'open_to_merge', hist: 'open_to_merge_p50', target: 'open_to_merge_h', label: 'Open → merge', color: 'var(--orange)', tip: 'Hours from the issue being opened on GitHub to the fixing PR merging — the end-to-end delivery time.' },
+      { key: 'open_to_triage', target: '', label: 'Open → triage', color: 'var(--muted)', wait: 'collecting — needs issue created_at (recorded at the next enumeration)', tip: 'Hours from the issue being opened on GitHub to the hive classifying it.' },
+      { key: 'triage_to_start', target: '', label: 'Triage → start', color: 'var(--muted)', wait: 'collecting — first numbers after an agent starts a classified issue', tip: 'Hours from the hive classifying the issue to an agent starting work on it.' },
+      { key: 'start_to_pr', hist: 'start_to_pr_p50', target: 'start_to_pr_h', label: 'Start → PR', color: 'var(--accent)', wait: 'collecting — first numbers after the next linked PR (hive-open-pr --issues) opens', tip: 'Hours from the hive/in-progress start mark (an agent claimed, commented or opened a PR on the issue) to the PR that fixes it being opened.' },
+      { key: 'pr_to_merge', hist: 'pr_to_merge_p50', target: 'pr_to_merge_h', label: 'PR → merge', color: 'var(--green)', wait: 'collecting — first numbers after the next linked PR merges', tip: 'Hours from the fixing PR opening to its merge (hive-driven or observed).' },
+      { key: 'open_to_merge', hist: 'open_to_merge_p50', target: 'open_to_merge_h', label: 'Open → merge', color: 'var(--orange)', wait: 'collecting — needs issue created_at (next enumeration) and a linked PR merge', tip: 'Hours from the issue being opened on GitHub to the fixing PR merging — the end-to-end delivery time.' },
     ];
     const PRT_SLA_WARN_RATIO = 1.5;
     let _prtSLAExpanded = false;
@@ -20473,12 +20511,14 @@ function burnAreaChart() {
       const p50 = Number(stat.p50_h), p95 = Number(stat.p95_h), n = Number(stat.n) || 0;
       const target = Number(targets && targets[span.target]);
       const state = prtSLAState(p50, n, target);
-      const tip = `${span.tip} Target ${fmtSLAHours(target)}; green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. p50 ${fmtSLAHours(n ? p50 : NaN)} · p95 ${fmtSLAHours(n ? p95 : NaN)} · n=${n} over ${winKey}.`;
+      const hasTarget = Number.isFinite(target) && target > 0;
+      const targetTip = hasTarget ? ` Target ${fmtSLAHours(target)}; green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond.` : ' No target set for this span.';
+      const tip = `${span.tip}${targetTip} p50 ${fmtSLAHours(n ? p50 : NaN)} · p95 ${fmtSLAHours(n ? p95 : NaN)} · n=${n} over ${winKey}.`;
       const value = n ? fmtSLAHours(p50) : '—';
       // No native title= on the tile: the ⓘ's .config-tooltip already carries
       // this exact text, and a title on an ancestor would surface a second,
       // browser-drawn copy while hovering the ⓘ.
-      return `<div class="prt-metric" data-sla-state="${state}" data-sla-span="${esc(span.key)}"><div class="mval" data-prt-sla-p50="${Number.isFinite(p50) ? p50 : ''}">${esc(value)}</div><div class="mlbl">${esc(span.label)} p50${prtSLAInfoHTML(`prt-sla-tip-${span.key}`, span.label, tip)}</div><div class="prt-caption">n=${n} · p95 ${esc(n ? fmtSLAHours(p95) : '—')} · <span class="prt-sla-target">target ${esc(fmtSLAHours(target))}</span></div>${prtSLASpark(span, report, state)}</div>`;
+      return `<div class="prt-metric" data-sla-state="${state}" data-sla-span="${esc(span.key)}"><div class="mval" data-prt-sla-p50="${Number.isFinite(p50) ? p50 : ''}">${esc(value)}</div><div class="mlbl">${esc(span.label)} p50${prtSLAInfoHTML(`prt-sla-tip-${span.key}`, span.label, tip)}</div><div class="prt-caption">${n ? `n=${n} · p95 ${esc(fmtSLAHours(p95))}` : esc(span.wait || 'n=0')}${hasTarget ? ` · <span class="prt-sla-target">target ${esc(fmtSLAHours(target))}</span>` : ''}</div>${prtSLASpark(span, report, state)}</div>`;
     }
 
     function prtSLARepoRows(repos, targets) {
@@ -20492,11 +20532,11 @@ function burnAreaChart() {
           return `<td data-sla-state="${state}" title="n=${n}">${n ? `${esc(fmtSLAHours(Number(st.p50_h)))} / ${esc(fmtSLAHours(Number(st.p95_h)))}` : '—'}</td>`;
         };
         const stale = (rep.stale_in_progress || []).length;
-        const spark = prtSLASpark(PRT_SLA_SPANS[2], rep, 'none', 72) || '<span class="overview-kpi-subline">—</span>';
-        return `<tr><td>${esc(overviewRepoName(r))}${stale ? ` <span class="prt-sla-stale" data-sla-state="breach" title="${stale} stale in-progress">⚠ ${stale}</span>` : ''}</td>${cell(PRT_SLA_SPANS[0])}${cell(PRT_SLA_SPANS[1])}<td>${Number(rep.merged_7d) || 0}</td><td>${spark}</td></tr>`;
+        const spark = prtSLASpark(PRT_SLA_SPANS.find(x => x.key === 'open_to_merge'), rep, 'none', 72) || '<span class="overview-kpi-subline">—</span>';
+        return `<tr><td>${esc(overviewRepoName(r))}${stale ? ` <span class="prt-sla-stale" data-sla-state="breach" title="${stale} stale in-progress">⚠ ${stale}</span>` : ''}</td>${PRT_SLA_SPANS.filter(x => x.key !== 'open_to_merge').map(cell).join('')}<td>${Number(rep.merged_7d) || 0}</td><td>${spark}</td></tr>`;
       });
       if (!rows.length) return '<div class="overview-empty">No per-repo SLA data yet — spans appear as issues move start → PR → merge.</div>';
-      return `<table class="prt-sla-table" aria-label="Delivery SLA per repo"><thead><tr><th>Repo</th><th title="p50 / p95 over ${esc(prtSLAWindow())}">Start → PR</th><th title="p50 / p95 over ${esc(prtSLAWindow())}">PR → merge</th><th>Merged 7d</th><th>Open → merge 30d</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+      return `<table class="prt-sla-table" aria-label="Delivery SLA per repo"><thead><tr><th>Repo</th>${PRT_SLA_SPANS.filter(x => x.key !== 'open_to_merge').map(x => `<th title="p50 / p95 over ${esc(prtSLAWindow())}">${esc(x.label)}</th>`).join('')}<th>Merged 7d</th><th>Open → merge 30d</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
     }
 
     function prtSLAStaleList(report) {
@@ -28743,7 +28783,7 @@ function burnAreaChart() {
         overlay.className = 'gh-auth-overlay cred-dialog-overlay';
         overlay.innerHTML = `<div class="gh-auth-modal" style="max-width:480px;text-align:left">
           <h3 style="color:var(--amber);text-align:center">Configure LiteLLM</h3>
-          <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Settings → LiteLLM).</p>
+          <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Settings → Model Gateways → Legacy LiteLLM endpoint).</p>
           <div class="config-field">
             <label>Endpoint URL</label>
             <input type="text" id="litellm-setup-endpoint" placeholder="https://litellm.example.com" style="width:100%;box-sizing:border-box">
@@ -30478,6 +30518,7 @@ function burnAreaChart() {
           html += row('Next update', value('unknown', 'The hub has not reported when the next update is expected'), 'unknown');
         }
       }
+      if (au.heldReason) html += row('Held', value(au.heldReason, 'The scheduled update window opened but the hub held the upgrade' + (au.heldAt ? ' at ' + au.heldAt : '') + ': ' + au.heldReason), au.heldReason);
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
@@ -31525,8 +31566,13 @@ function burnAreaChart() {
     ];
     const MAX_AGENT_REPLICAS = 5;
 
+    // Hand-written index hints for groups of controls. `tab` is a hint only —
+    // the result list and "Open tab" land on wherever `key` actually renders
+    // (settingsSearchResolveTab) — and every `key` must resolve to a rendered
+    // row carrying data-setting-key (webstatic TestSettingsSearchIndexResolvesToControls).
+    // `lazy: true` marks controls that a tab fills in after its own fetch.
     const SETTINGS_SEARCH_STATIC_HITS = [
-      { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
+      { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory fully autonomous' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
@@ -31537,7 +31583,7 @@ function burnAreaChart() {
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s' },
-      { tab: 'General', section: 'Trajectory Review', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
       { tab: 'Security', section: 'Input Defense', label: 'ioscan', key: 'ioscan.enabled', text: 'ioscan input output scanning canaries fail mode classifier model warn block threshold ioscan.canaries ioscan.classifier.block_threshold ioscan.classifier.enabled ioscan.classifier.model ioscan.classifier.warn_threshold ioscan.enabled ioscan.fail_mode' },
@@ -31547,13 +31593,22 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Jev decisions', key: 'jev.provider', text: 'jev typed decisions provider openrouter typesafe model endpoint api key env timeout jev.provider jev.model jev.endpoint jev.api_key_env jev.timeout' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'Standalone deployment upgrades', key: 'deployment.podman_mode', text: 'deployment podman quadlet rootless rootful docker compose upgrade helper request dir deployment.podman_mode deployment.upgrade_helper deployment.upgrade_request_dir' },
+      { tab: 'Features', section: 'Review gate', label: 'Review evidence bundles', key: 'evidence.enabled', text: 'review evidence bundles audit signing key ed25519 evidence.enabled evidence.signing_key_file' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab and Gitea forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Token mint key and TTL', key: 'mint.max_ttl_seconds', text: 'token mint signing key path max ttl lifetime jwt mint.key_path mint.max_ttl_seconds' },
+      { tab: 'Features', section: 'Autonomy & ACMM', label: 'Design-first planning', key: 'planning.design_approved_label', text: 'planning design approved label architect revisions concurrent designs plan from label planning.design_approved_label planning.max_concurrent_designs planning.max_design_revisions planning.plan_from_label' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Superseded PR grace period', key: 'supersession_sweep.grace_period', text: 'supersession superseded grace period close contributor pr supersession_sweep.grace_period' },
+      { tab: 'Features', section: 'Quality loops & release health', label: 'Compliance posture windows', key: 'compliance.posture_checks.window_days', text: 'compliance posture look-back window history retention compliance.posture_checks.window_days compliance.posture_checks.history_days' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Swarm banner wording', key: 'swarm.event_name', text: 'swarm event name call to arms leaderboard title banner swarm.event_name swarm.call_to_arms swarm.leaderboard_title' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Tool approval inbox path', key: 'tool_approval.inbox_path', text: 'tool approval inbox pending approvals path tool_approval.inbox_path' },
+      { tab: 'Features', section: 'Auto-merge', label: 'Auto-merge sweep limits', key: 'auto_merge.min_head_age', text: 'auto merge max merges per sweep minimum head age required author role auto_merge.max_merges auto_merge.min_head_age auto_merge.trusted_authors.require_role' },
       { tab: 'Features', section: 'Integrations & observability', label: 'OpenTelemetry export', key: 'otel.enabled', text: 'otel opentelemetry export endpoint headers insecure sample ratio service name otel.enabled otel.endpoint otel.headers.<key> otel.insecure otel.sample_ratio otel.service_name' },
-      { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.thresholds', text: 'restart thresholds quiet busy surge pressure backoff' },
+      { tab: 'Thresholds', section: 'Thresholds', label: 'Restart thresholds', key: 'governor.modes', text: 'restart thresholds quiet busy surge pressure backoff governor.modes.quiet.threshold governor.modes.busy.threshold governor.modes.surge.threshold' },
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
-      { tab: 'Hub', section: 'Release', label: 'Release channel', key: '', text: 'channel stable candidate edge release update stream' },
-      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
-      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
-      { tab: 'Knowledge', section: 'Knowledge channels', label: 'Knowledge channel', key: '', text: 'channel channels import knowledge vault project org community personal' },
+      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
+      { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
 
@@ -31583,6 +31638,7 @@ function burnAreaChart() {
         c.input.addEventListener('input', () => applySettingsSearch(c.input.value));
         c.input.addEventListener('keydown', (e) => {
           if (e.key === 'Escape') { e.preventDefault(); clearSettingsSearch(); }
+          else if (e.key === 'Enter') { e.preventDefault(); settingsSearchOpenFirst(); }
         });
         if (c.clear) c.clear.addEventListener('click', clearSettingsSearch);
         const overlay = document.getElementById('config-overlay');
@@ -31648,36 +31704,147 @@ function burnAreaChart() {
 
     function settingsSearchLabel(field) {
       const label = field.querySelector('label, .config-toggle-label, .var-heading, th, td:first-child, summary');
-      if (label) return settingsSearchText(label).replace(/\?\s*$/, '').trim();
+      if (label) {
+        let txt = settingsSearchText(label);
+        label.querySelectorAll('.settings-yaml-hint, .config-info').forEach(extra => { txt = txt.replace(settingsSearchText(extra), ''); });
+        return txt.replace(/\s+/g, ' ').replace(/\?\s*$/, '').trim();
+      }
       const txt = settingsSearchText(field);
       return txt.length > 100 ? txt.slice(0, 100) + '…' : txt;
     }
 
+    // Every settings row carries a stable anchor, data-setting-key="<yaml.key>",
+    // so a search hit maps to exactly one rendered control. Rows that do not
+    // declare one get it from the YAML key yamlHint() prints in their label,
+    // else from the control they wrap (data-section/data-key or
+    // data-arg0/data-arg1). The annotation runs on every rendered tab and on the detached
+    // render the index is built from, so both see the same keys.
+    const SETTINGS_ROW_SELECTOR = '.config-field, .config-toggle, .config-list-item, .var-section, details, tr';
+    function settingsRowKey(row) {
+      if (!row || !row.getAttribute) return '';
+      const own = row.getAttribute('data-setting-key');
+      if (own) return own;
+      // The printed YAML key is authoritative; a control's data-section/data-key
+      // pair is a config-dialog section name that may omit the top-level
+      // prefix (replan.enabled vs governor.replan.enabled).
+      const hint = row.querySelector('.settings-yaml-hint code');
+      if (hint) return settingsSearchText(hint);
+      return settingsSearchKeyFromField(row);
+    }
+
+    function settingsAnnotateRows(root) {
+      if (!root || !root.querySelectorAll) return;
+      root.querySelectorAll(SETTINGS_ROW_SELECTOR).forEach(row => {
+        if (row.hasAttribute('data-setting-key')) return;
+        const key = settingsRowKey(row);
+        if (key) row.setAttribute('data-setting-key', key);
+      });
+    }
+
+    // Which of `keys` a search hit for `key` should land on: the exact key;
+    // else, for an entry naming a group (governor.watchdog), keys under it;
+    // else keys sharing its parent group, so a field that is only rendered
+    // conditionally (governor.rotation.threshold_pct) lands on the group's
+    // toggle rather than nowhere.
+    function settingsMatchKeys(keys, key) {
+      if (!key) return [];
+      if (keys.indexOf(key) >= 0) return [key];
+      const under = prefix => keys.filter(k => k.indexOf(prefix + '.') === 0 || k.indexOf(prefix + '[') === 0);
+      const group = under(key);
+      if (group.length) return group;
+      const parent = key.replace(/\[\]$/, '').replace(/\.[^.]+$/, '');
+      // Only fall back to a real group (governor.rotation), never to a whole
+      // top-level section (governor), which would match half the dialog.
+      return parent !== key && parent.indexOf('.') > 0 ? under(parent) : [];
+    }
+
+    // Rows whose anchor settingsMatchKeys picks for `key`. Outer rows (a
+    // <details> or <tr> wrapping the field) are dropped in favour of the
+    // innermost match so the flash lands on the control, not its container.
+    function settingsRowsForKey(root, key) {
+      if (!root || !key) return [];
+      const rows = Array.from(root.querySelectorAll(SETTINGS_ROW_SELECTOR)).filter(r => r.getAttribute('data-setting-key'));
+      const want = settingsMatchKeys(rows.map(r => r.getAttribute('data-setting-key')), key);
+      const picked = rows.filter(r => want.indexOf(r.getAttribute('data-setting-key')) >= 0);
+      return picked.filter(r => !picked.some(other => other !== r && r.contains(other)));
+    }
+
+    function settingsFindRow(root, key, label) {
+      const byKey = settingsRowsForKey(root, key);
+      if (byKey.length) return byKey[0];
+      const want = (label || '').trim().toLowerCase();
+      if (!want || !root) return null;
+      const rows = Array.from(root.querySelectorAll(SETTINGS_ROW_SELECTOR));
+      return rows.find(r => settingsSearchLabel(r).toLowerCase() === want) || null;
+    }
+
+    // The tabs each key is rendered in, computed from the live renderers so a
+    // hand-written index entry whose `tab` has drifted cannot send the
+    // operator to a tab without that control.
+    function settingsSearchTabsForKey(key) {
+      settingsSearchBuildIndex();
+      return settingsSearchTabsForKeyIn(_settingsSearch.keyTabs || {}, key);
+    }
+
+    function settingsSearchTabsForKeyIn(keyTabs, key) {
+      const out = [];
+      settingsMatchKeys(Object.keys(keyTabs), key).forEach(k => {
+        keyTabs[k].forEach(t => { if (out.indexOf(t) < 0) out.push(t); });
+      });
+      return out;
+    }
+
+    function settingsSearchResolveTab(tab, key) {
+      const tabs = settingsSearchTabsForKey(key);
+      if (!tabs.length) return tab;
+      return tabs.indexOf(tab) >= 0 ? tab : tabs[0];
+    }
+
     function settingsSearchBuildIndex() {
       if (_settingsSearch.index) return _settingsSearch.index;
-      const out = SETTINGS_SEARCH_STATIC_HITS.slice();
+      const out = [];
+      const keyTabs = {};
       const previousTab = _configState.tab;
       GOVERNOR_CONFIG_TABS.forEach(tab => {
         let html = '';
         try { html = renderGovernorTab(tab) || ''; } catch (e) { html = ''; }
         const wrap = document.createElement('div');
         wrap.innerHTML = html;
-        const fields = wrap.querySelectorAll('.config-field, .config-toggle, .config-list-item, .var-section, details, tr');
+        settingsAnnotateRows(wrap);
+        const fields = wrap.querySelectorAll(SETTINGS_ROW_SELECTOR);
         fields.forEach(field => {
+          const key = settingsRowKey(field);
+          if (key) {
+            if (!keyTabs[key]) keyTabs[key] = [];
+            if (keyTabs[key].indexOf(tab) < 0) keyTabs[key].push(tab);
+          }
           const label = settingsSearchLabel(field);
           const text = settingsSearchText(field);
           if (!label || !text) return;
-          const key = settingsSearchKeyFromField(field);
           const section = settingsSearchSectionName(field, tab);
           out.push({ tab, section, label, key, text });
         });
       });
       _configState.tab = previousTab;
+      _settingsSearch.keyTabs = keyTabs;
+      // Static entries are hints that describe a group of controls; their tab
+      // is re-derived from where the key actually rendered.
+      const statics = SETTINGS_SEARCH_STATIC_HITS.map(item => {
+        const tabs = settingsSearchTabsForKeyIn(keyTabs, item.key);
+        const tab = !tabs.length || tabs.indexOf(item.tab) >= 0 ? item.tab : tabs[0];
+        return Object.assign({}, item, { tab });
+      });
+      // One entry per tab+key: a static hint and the rendered row it points
+      // at (or a wrapper and the field inside it) merge, keeping both texts
+      // searchable, so the result list shows each control once.
       const seen = {};
-      _settingsSearch.index = out.filter(item => {
-        const id = [item.tab, item.section, item.label, item.key].join('\n').toLowerCase();
-        if (seen[id]) return false;
-        seen[id] = true;
+      _settingsSearch.index = statics.concat(out).filter(item => {
+        const id = (item.key ? [item.tab, item.key] : [item.tab, item.section, item.label]).join('\n').toLowerCase();
+        if (seen[id]) {
+          if (seen[id].text.indexOf(item.text) < 0) seen[id].text += ' ' + item.text;
+          return false;
+        }
+        seen[id] = item;
         return true;
       });
       return _settingsSearch.index;
@@ -31724,11 +31891,12 @@ function burnAreaChart() {
       }
       const byTab = {};
       matches.forEach(item => { if (!byTab[item.tab]) byTab[item.tab] = []; byTab[item.tab].push(item); });
+      _settingsSearch.matches = Object.keys(byTab).reduce((acc, tab) => acc.concat(byTab[tab]), []);
       body.innerHTML = '<div class="settings-search-results">' + Object.keys(byTab).map(tab => {
         const hits = byTab[tab];
         return '<section class="settings-search-group" data-settings-search-tab="' + esc(tab) + '">' +
           '<div class="settings-search-group-title"><span>' + settingsSearchHighlight(tab, q) + ' <span class="text-muted">(' + hits.length + ')</span></span><button type="button" class="hv-btn btn-secondary btn-sm" data-action="settingsSearchOpenTab" data-arg0="' + esc(tab) + '">Open tab</button></div>' +
-          hits.map(item => '<div class="settings-search-hit">' +
+          hits.map(item => '<div class="settings-search-hit" role="button" tabindex="0" data-action="settingsSearchOpenHit" data-keydown-action="settingsSearchOpenHit" data-keys="Enter, " data-prevent="1" data-arg0="' + esc(tab) + '" data-arg1="' + esc(item.key || '') + '" data-arg2="' + esc(item.label || '') + '">' +
             '<div class="settings-search-hit-label">' + settingsSearchHighlight(item.label, q) + '</div>' +
             '<div class="settings-search-hit-meta">' + settingsSearchSnippet(item, q) + '</div>' +
             (item.key ? '<code class="settings-search-key">' + settingsSearchHighlight(item.key, q) + '</code>' : '') +
@@ -31746,12 +31914,88 @@ function burnAreaChart() {
       renderSettingsSearchResults(q);
     }
 
+    // "Open tab" on a result group lands on that group's first hit, so the
+    // operator is taken to the control rather than the top of a long tab.
     function settingsSearchOpenTab(tab) {
+      const first = (_settingsSearch.matches || []).find(item => item.tab === tab) || null;
+      settingsSearchOpenHit(tab, first ? first.key : '', first ? first.label : '');
+    }
+
+    function settingsSearchOpenFirst() {
+      const first = (_settingsSearch.matches || [])[0];
+      if (first) settingsSearchOpenHit(first.tab, first.key, first.label);
+    }
+
+    function settingsSearchOpenHit(tab, key, label) {
       const c = settingsSearchControls();
+      const target = settingsSearchResolveTab(tab, key);
       if (c.input) c.input.value = '';
+      if (c.clear) c.clear.hidden = true;
+      if (c.count) c.count.textContent = 'Search settings';
       _settingsSearch.active = false;
       _settingsSearch.query = '';
-      switchConfigTab(tab);
+      switchConfigTab(target);
+      // The tab body renders synchronously but layout has not run yet, so wait
+      // a frame before scrolling; panels that fill in after their own fetch
+      // (Health, Knowledge connectors) get a few short retries.
+      let attempts = SETTINGS_REVEAL_ATTEMPTS;
+      const reveal = () => {
+        const body = document.getElementById('config-body');
+        if (!body || _configState.tab !== target || _settingsSearch.active) return;
+        settingsAnnotateRows(body);
+        if (settingsRevealRow(settingsFindRow(body, key, label))) return;
+        if (--attempts > 0) setTimeout(reveal, SETTINGS_REVEAL_RETRY_MS);
+      };
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reveal); else reveal();
+    }
+
+    const SETTINGS_REVEAL_ATTEMPTS = 12;
+    const SETTINGS_REVEAL_RETRY_MS = 125;
+
+    const SETTINGS_ROW_FLASH_MS = 1600;
+    // Expands any disclosure hiding the row, scrolls it to the middle of the
+    // dialog body (the scroll container — the overlay is fixed, so the page
+    // behind does not move), flashes it, and moves focus to its control.
+    const SETTINGS_REVEAL_SETTLE_MS = 400;
+
+    // Instant (not smooth) scroll: the dialog body can be ~10k px tall and a
+    // smooth scroll over that distance lands short when content above the
+    // row changes height mid-way. The flash animation is the motion cue.
+    function settingsScrollRowIntoView(row) {
+      const body = document.getElementById('config-body');
+      if (typeof row.scrollIntoView === 'function') {
+        row.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+      } else if (body) {
+        body.scrollTop = Math.max(0, row.offsetTop - body.clientHeight / 2);
+      }
+    }
+
+    function settingsRowInView(row) {
+      const body = document.getElementById('config-body');
+      if (!body || typeof row.getBoundingClientRect !== 'function') return true;
+      const r = row.getBoundingClientRect(), b = body.getBoundingClientRect();
+      return r.top >= b.top && r.bottom <= b.bottom;
+    }
+
+    function settingsRevealRow(row) {
+      if (!row) return false;
+      for (let cur = row.parentElement; cur; cur = cur.parentElement) {
+        if (cur.tagName === 'DETAILS' && !cur.open) cur.open = true;
+        if (cur.classList && cur.classList.contains('collapsed')) cur.classList.remove('collapsed');
+      }
+      settingsScrollRowIntoView(row);
+      // Tabs like Features keep filling in from their own fetches for a
+      // moment after rendering, which shifts the row; re-centre once settled.
+      setTimeout(() => { if (row.isConnected !== false && !settingsRowInView(row)) settingsScrollRowIntoView(row); }, SETTINGS_REVEAL_SETTLE_MS);
+      row.classList.remove('cfg-row-flash');
+      void row.offsetWidth; // restart the animation when the same row is hit twice
+      row.classList.add('cfg-row-flash');
+      if (row._cfgFlashTimer) clearTimeout(row._cfgFlashTimer);
+      row._cfgFlashTimer = setTimeout(() => { row.classList.remove('cfg-row-flash'); row._cfgFlashTimer = null; }, SETTINGS_ROW_FLASH_MS);
+      let ctrl = row.querySelector('input:not([type="hidden"]), select, textarea') || row.querySelector('button, [role="switch"][tabindex], .config-toggle-switch[tabindex]');
+      if (!ctrl) { row.setAttribute('tabindex', '-1'); ctrl = row; }
+      if (typeof ctrl.focus === 'function') { try { ctrl.focus({ preventScroll: true }); } catch (e) { ctrl.focus(); } }
+      return true;
     }
 
     function openConfigDialog(type, agentName, initialTabOverride) {
@@ -32376,6 +32620,7 @@ function burnAreaChart() {
         if (tabId === AGENT_PROMPTS_TAB) initAgentPromptHistory();
       } else {
         body.innerHTML = renderGovernorTab(tabId);
+        settingsAnnotateRows(body);
         if (tabId === 'Hub') { fetchQueueCount(); fetchAutoUpdateStatus(); }
         // The escalation breaker lives at the top level of hive.yaml, so the
         // Health tab loads it from its own endpoint.
@@ -34008,7 +34253,30 @@ function burnAreaChart() {
         <div id="openrouter-fund-host"></div>
         <div id="gateways-form-host"></div>
         <div id="gateways-list-host"><div style="color:var(--muted);font-size:0.8rem">Loading gateways…</div></div>
-        <div id="inference-auth-host"><div style="color:var(--muted);font-size:0.8rem">Loading inference auth…</div></div>`;
+        <div id="inference-auth-host"><div style="color:var(--muted);font-size:0.8rem">Loading inference auth…</div></div>
+        ${renderGovLegacyLiteLLM()}`;
+    }
+
+    // renderGovLegacyLiteLLM exposes the legacy governor.litellm block — the
+    // "legacy endpoint" route diagnostics name — on the Model Gateways tab.
+    // Its standalone LiteLLM tab was retired, which left that endpoint, key
+    // and default model editable only in hive.yaml while Test results still
+    // told operators to reconcile it.
+    function renderGovLegacyLiteLLM() {
+      const litellm = (_configState.data && _configState.data.litellm) || {};
+      return `
+        <details id="legacy-litellm-section" class="card-inset mt-4">
+          <summary class="fw-semibold">Legacy LiteLLM endpoint (governor.litellm)${litellm.endpoint ? ' — ' + esc(litellm.endpoint) : ' — not set'}</summary>
+          <p class="text-muted fs-sm mt-2">
+            The pre-gateways LiteLLM settings for the built-in <code>litellm</code> backend. When a gateway named
+            <code>litellm</code> exists in the list above, agents use that gateway and this block only backs older
+            code paths; saving that gateway with a new endpoint repoints this block too. Otherwise this is the
+            endpoint, key and default model agents on the <code>litellm</code> backend use. The
+            <code>HIVE_LITELLM_ENDPOINT</code> environment variable overrides the endpoint here. Clear the endpoint
+            if it names a gateway you no longer use. Changes apply when you press Save.
+          </p>
+          ${renderGovLiteLLM(litellm)}
+        </details>`;
     }
 
     // ---- vLLM / llm-d discovery auth (#4217) --------------------------------
@@ -35151,6 +35419,7 @@ function burnAreaChart() {
           var next = au.nextUpdateAt || (au.nextUpdateStatus === 'none' ? 'none queued (stable is current)' : (au.nextUpdateStatus === 'paused' ? 'paused' : 'unknown'));
           rows += '<div>Next update: ' + escapeHtml(next) + '</div>';
         }
+        if (au.heldReason) rows += '<div class="text-warn">Scheduled update held' + (au.heldAt ? ' at ' + escapeHtml(au.heldAt) : '') + ': ' + escapeHtml(au.heldReason) + '</div>';
         if (au.lastAttemptAt) rows += '<div>Last attempt: ' + escapeHtml(au.lastAttemptAt) + '</div>';
         if (au.lastError) rows += '<div class="text-danger">Last error: ' + escapeHtml(au.lastError) + '</div>';
         el.style.color = 'var(--muted)';
@@ -36807,7 +37076,7 @@ function burnAreaChart() {
           </div>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">${hiveIdEditable ? 'Format: hive-adjective-noun (e.g. hive-bold-hawk). Lowercase letters, digits and hyphens only. Changes take effect immediately.' : esc(hiveIdLockReason)}</span>
         </div>
-        <div class="config-field">
+        <div class="config-field" data-setting-key="acmm_level">
           <label>Maturity Level ${settingHelpMark('agent-configuration', 'acmm-levels-agent-rosters-as-packs', 'Maturity Level', `ACMM (AI Codebase Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).`)}</label>
           <div style="display:flex;gap:10px;align-items:center">
             <span style="display:inline-block;padding:3px 12px;border-radius:var(--r-pill);font-size:var(--fs-sm);font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber)">${currentACMMLevel > 0 ? acmmLevelLabel(currentACMMLevel) : 'Not set'}</span>
@@ -37127,7 +37396,7 @@ function burnAreaChart() {
           <label>Delivery SLA targets (hours) ${settingHelpMark('operator-reference', 'delivery-sla', 'Delivery SLA targets', `Per-span budgets the Throughput section's Delivery SLA tiles and sparklines are coloured against: green within target, amber up to ${PRT_SLA_WARN_RATIO}× target, red beyond. 0 restores the default (${defaults.start_to_pr_h} / ${defaults.pr_to_merge_h} / ${defaults.open_to_merge_h} h).`)}</label>
           <div class="config-field-row">${fields.map(([key, label, tip]) => {
             const v = dirty[key] !== undefined ? dirty[key] : (eff[key] !== undefined ? eff[key] : defaults[key]);
-            return `<div class="config-field"><label for="cfg-sla-${esc(key)}" title="${esc(tip)}">${esc(label)}</label><input type="number" min="0" max="8760" step="0.5" id="cfg-sla-${esc(key)}" value="${esc(String(v))}" data-input-action="markDirty" data-arg0="sla" data-arg1="${esc(key)}" data-arg-types="s,s,N" data-setting-path="sla.targets.${esc(key)}" aria-label="${esc(label)} target in hours"></div>`;
+            return `<div class="config-field" data-setting-key="sla.targets.${esc(key)}"><label for="cfg-sla-${esc(key)}" title="${esc(tip)}">${esc(label)}</label><input type="number" min="0" max="8760" step="0.5" id="cfg-sla-${esc(key)}" value="${esc(String(v))}" data-input-action="markDirty" data-arg0="sla" data-arg1="${esc(key)}" data-arg-types="s,s,N" data-setting-path="sla.targets.${esc(key)}" aria-label="${esc(label)} target in hours"></div>`;
           }).join('')}</div>
         </div>`;
     }
@@ -37231,9 +37500,9 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-field-row" style="margin-top:var(--sp-8)">
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from idle to quiet mode. Below this count, agents run at their idle cadence.">Quiet</label><input type="number" min="1" max="${maxValue}" id="thresh-in-quiet" value="${q}" data-input-action="setThreshFromInput" data-arg0="quiet" data-arg-types="s,v">${hints.quiet ? `<span class="muted-xs" id="thresh-hint-quiet">${hints.quiet}</span>` : ''}</div>
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from quiet to busy mode. Agents increase their kick frequency to handle the growing workload.">Busy</label><input type="number" min="1" max="${maxValue}" id="thresh-in-busy" value="${b}" data-input-action="setThreshFromInput" data-arg0="busy" data-arg-types="s,v">${hints.busy ? `<span class="muted-xs" id="thresh-hint-busy">${hints.busy}</span>` : ''}</div>
-          <div class="config-field"><label title="Number of actionable issues at which the governor transitions from busy to surge mode. Maximum agent activity — monitor your token budget closely at this level.">Surge</label><input type="number" min="1" max="${maxValue}" id="thresh-in-surge" value="${s}" data-input-action="setThreshFromInput" data-arg0="surge" data-arg-types="s,v">${hints.surge ? `<span class="muted-xs" id="thresh-hint-surge">${hints.surge}</span>` : ''}</div>
+          <div class="config-field" data-setting-key="governor.modes.quiet.threshold"><label title="Number of actionable issues at which the governor transitions from idle to quiet mode. Below this count, agents run at their idle cadence.">Quiet</label><input type="number" min="1" max="${maxValue}" id="thresh-in-quiet" value="${q}" data-input-action="setThreshFromInput" data-arg0="quiet" data-arg-types="s,v">${hints.quiet ? `<span class="muted-xs" id="thresh-hint-quiet">${hints.quiet}</span>` : ''}</div>
+          <div class="config-field" data-setting-key="governor.modes.busy.threshold"><label title="Number of actionable issues at which the governor transitions from quiet to busy mode. Agents increase their kick frequency to handle the growing workload.">Busy</label><input type="number" min="1" max="${maxValue}" id="thresh-in-busy" value="${b}" data-input-action="setThreshFromInput" data-arg0="busy" data-arg-types="s,v">${hints.busy ? `<span class="muted-xs" id="thresh-hint-busy">${hints.busy}</span>` : ''}</div>
+          <div class="config-field" data-setting-key="governor.modes.surge.threshold"><label title="Number of actionable issues at which the governor transitions from busy to surge mode. Maximum agent activity — monitor your token budget closely at this level.">Surge</label><input type="number" min="1" max="${maxValue}" id="thresh-in-surge" value="${s}" data-input-action="setThreshFromInput" data-arg0="surge" data-arg-types="s,v">${hints.surge ? `<span class="muted-xs" id="thresh-hint-surge">${hints.surge}</span>` : ''}</div>
 
         </div>`;
     }
@@ -38382,12 +38651,12 @@ function burnAreaChart() {
         ${pausedBanner}${healBanner}${observeBanner}
         ${renderWatchdogActivityShell()}
         <div class="config-field-row">
-          <div class="config-field">
+          <div class="config-field" data-setting-key="governor.watchdog.mode">
             <label>Mode ${settingHelpMark('agent-watchdog', 'configuration', 'Mode', `How much authority the watchdog has over your agents. Start in Observe, read the Audit Log, then move to Heal.`)}</label>
             <select data-change-action="markDirty" data-arg0="health" data-arg1="watchdogMode" data-arg-types="s,s,s">${opts}</select>
             <div id="watchdog-promotion-hint" style="font-size:0.7rem;margin-top:var(--sp-2);min-height:1em"></div>
           </div>
-          <div class="config-field">
+          <div class="config-field" data-setting-key="governor.watchdog.probe_interval_s">
             <label>Probe interval (sec) ${settingHelpMark('agent-watchdog', 'configuration', 'Probe interval (sec)', `Minimum seconds between watchdog sweeps. Each sweep captures one terminal per agent, so this is the main throttle on its cost.`)}</label>
             <input type="number" min="30" max="86400" value="${esc(String(w.probeIntervalS || 300))}" data-change-action="markDirty" data-arg0="health" data-arg1="watchdogProbeIntervalS" data-arg-types="s,s,N">
           </div>
@@ -38636,7 +38905,7 @@ function burnAreaChart() {
           <span class="config-toggle-label">Escalation breaker enabled ${settingHelpMark('settings', 'health', 'Escalation breaker enabled', `${tip}`)}</span>
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Red-attempt threshold ${settingHelpMark('settings', 'health', 'Red-attempt threshold', `${tip}`)}</label><input type="number" min="0" placeholder="3" value="${e.threshold || ''}" data-change-action="markDirty" data-arg0="escalation" data-arg1="threshold" data-arg-types="s,s,N"></div>
+          <div class="config-field"><label>Red-attempt threshold ${yamlHint('escalation.threshold')} ${settingHelpMark('settings', 'health', 'Red-attempt threshold', `${tip}`)}</label><input type="number" min="0" placeholder="3" value="${e.threshold || ''}" data-change-action="markDirty" data-arg0="escalation" data-arg1="threshold" data-arg-types="s,s,N"></div>
         </div>`;
     }
 
@@ -38805,17 +39074,17 @@ function burnAreaChart() {
       const levels = ['debug', 'info', 'warn', 'error'];
       return `
         <p class="config-help">YAML keys: <code>governor.logging.dir</code>, <code>governor.logging.max_size_mb</code>, <code>governor.logging.max_age_days</code>, <code>governor.logging.max_backups</code>, <code>governor.logging.level</code>, <code>governor.logging.compress</code>.</p>
-        <div class="config-field">
+        <div class="config-field" data-setting-key="governor.logging.dir">
           <label>Log Directory ${settingHelpMark('settings', 'logging', 'Log Directory', `Directory where rolling log files are written. Stored on the persistent /data volume so logs survive container restarts. Read-only at runtime — change in hive.yaml and restart.`)}</label>
           <input type="text" value="${esc(l.dir || '/data/logs')}" disabled style="opacity:0.6">
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Max File Size (MB) ${settingHelpMark('settings', 'logging', 'Max File Size (MB)', `Maximum size of a single log file before rotation. When reached, the current file is rotated and a new one starts. Default 50 MB.`)}</label><input type="number" value="${l.maxSizeMB || 50}" data-change-action="gh50"></div>
-          <div class="config-field"><label>Retention (days) ${settingHelpMark('settings', 'logging', 'Retention (days)', `How many days to keep rotated log files. Files older than this are automatically deleted by lumberjack. Default 7 days.`)}</label><input type="number" value="${l.maxAgeDays || 7}" data-change-action="gh51"></div>
+          <div class="config-field" data-setting-key="governor.logging.max_size_mb"><label>Max File Size (MB) ${settingHelpMark('settings', 'logging', 'Max File Size (MB)', `Maximum size of a single log file before rotation. When reached, the current file is rotated and a new one starts. Default 50 MB.`)}</label><input type="number" value="${l.maxSizeMB || 50}" data-change-action="gh50"></div>
+          <div class="config-field" data-setting-key="governor.logging.max_age_days"><label>Retention (days) ${settingHelpMark('settings', 'logging', 'Retention (days)', `How many days to keep rotated log files. Files older than this are automatically deleted by lumberjack. Default 7 days.`)}</label><input type="number" value="${l.maxAgeDays || 7}" data-change-action="gh51"></div>
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Max Backups ${settingHelpMark('settings', 'logging', 'Max Backups', `Maximum number of rotated log files to keep. Works alongside retention days — whichever limit is hit first triggers cleanup. Default 10 files.`)}</label><input type="number" value="${l.maxBackups || 10}" data-change-action="gh52"></div>
-          <div class="config-field"><label>Log Level ${settingHelpMark('settings', 'logging', 'Log Level', `Minimum severity level for log output. DEBUG includes all messages. INFO is the default operational level. WARN and ERROR reduce noise. Takes effect on next container restart.`)}</label>
+          <div class="config-field" data-setting-key="governor.logging.max_backups"><label>Max Backups ${settingHelpMark('settings', 'logging', 'Max Backups', `Maximum number of rotated log files to keep. Works alongside retention days — whichever limit is hit first triggers cleanup. Default 10 files.`)}</label><input type="number" value="${l.maxBackups || 10}" data-change-action="gh52"></div>
+          <div class="config-field" data-setting-key="governor.logging.level"><label>Log Level ${settingHelpMark('settings', 'logging', 'Log Level', `Minimum severity level for log output. DEBUG includes all messages. INFO is the default operational level. WARN and ERROR reduce noise. Takes effect on next container restart.`)}</label>
             <select data-change-action="markDirty" data-arg0="logging" data-arg1="level" data-arg-types="s,s,v">
               ${levels.map(lv => '<option value="' + lv + '" ' + ((l.level||'info')===lv?'selected':'') + '>' + lv.toUpperCase() + '</option>').join('')}
             </select>
@@ -39189,15 +39458,15 @@ function burnAreaChart() {
       const agentList = '<datalist id="security-agent-options">' + agentNames.map(n => '<option value="' + esc(n) + '"></option>').join('') + '</datalist>';
       const classifierAdvanced = Object.prototype.hasOwnProperty.call(sec, 'ioscanClassifier')
         ? `<div class="config-field-row">
-            <div class="config-field"><label>Classifier model</label>${securityModelInput('ioscanClassifierModel', (sec.ioscanClassifier || {}).model || '', 'e.g. gpt-4o-mini')}</div>
-            <div class="config-field"><label>Warn threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).warnThreshold ?? ''}" data-change-action="gh53"></div>
-            <div class="config-field"><label>Block threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).blockThreshold ?? ''}" data-change-action="gh54"></div>
+            <div class="config-field" data-setting-key="ioscan.classifier.model"><label>Classifier model</label>${securityModelInput('ioscanClassifierModel', (sec.ioscanClassifier || {}).model || '', 'e.g. gpt-4o-mini')}</div>
+            <div class="config-field" data-setting-key="ioscan.classifier.warn_threshold"><label>Warn threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).warnThreshold ?? ''}" data-change-action="gh53"></div>
+            <div class="config-field" data-setting-key="ioscan.classifier.block_threshold"><label>Block threshold</label><input type="number" min="0" max="1" step="0.01" value="${(sec.ioscanClassifier || {}).blockThreshold ?? ''}" data-change-action="gh54"></div>
           </div>`
         : '<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-4) var(--sp-0) var(--sp-0)">ioscan classifier fields are not present in this v4 backend yet; this disclosure will render them automatically when the API reports support.</p>';
 
       const inputDefense = `
         <p class="config-help">YAML keys: <code>ioscan.enabled</code>, <code>ioscan.fail_mode</code>, <code>ioscan.canaries</code>, <code>ioscan.classifier.enabled</code>, <code>ioscan.classifier.model</code>, <code>ioscan.classifier.warn_threshold</code>, <code>ioscan.classifier.block_threshold</code>.</p>
-        <div class="config-toggle">
+        <div class="config-toggle" data-setting-key="ioscan.enabled">
           <div class="config-toggle-switch ${sec.ioscanEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="ioscanEnabled"></div>
           <span class="config-toggle-label">Input/Output scanning (ioscan) ${settingHelpMark('ioscan', '', 'Input/Output scanning (ioscan)', `Scan untrusted issue/PR text for prompt-injection and dangerous directives before agent kicks.`)}</span>
         </div>
@@ -39217,10 +39486,10 @@ function burnAreaChart() {
       const mergeGates = `
         <div class="config-toggle">
           <div class="config-toggle-switch ${sec.intentEnforce ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="security" data-key="intentEnforce"></div>
-          <span class="config-toggle-label">Enforce intent authorization on merges</span>
+          <span class="config-toggle-label">Enforce intent authorization on merges ${yamlHint('intent.enforce')} ${settingHelpMark('settings', 'security-and-access', 'Enforce intent authorization', `Off (report-only) by default. When on, a PR whose intent verdict or alignment check denies it is held from merging instead of only being logged.`)}</span>
         </div>
         <details style="margin:10px 0 18px"><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced intent</summary>
-          <div class="config-field"><label>Alignment model</label>${securityModelInput('intentAlignmentModel', sec.intentAlignmentModel || '', 'leave empty for default')}</div>
+          <div class="config-field"><label>Alignment model ${yamlHint('intent.alignment_model')} ${settingHelpMark('settings', 'security-and-access', 'Intent alignment model', `Model that checks whether a PR&apos;s change matches the intent of the issue it fixes, using the configured reviewer endpoint. Empty leaves the alignment check off.`)}</label>${securityModelInput('intentAlignmentModel', sec.intentAlignmentModel || '', 'leave empty for default')}</div>
         </details>
 
         <div class="config-toggle">
@@ -39287,11 +39556,11 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${sn.trustedAuthorsBlock ? 'on' : ''} ${sn.enabled ? '' : 'disabled'}" data-action="toggleSentinelTrustedAuthorsBlock"></div>
-          <span class="config-toggle-label">Block trusted authors ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
+          <span class="config-toggle-label">Block trusted authors ${yamlHint('sentinel.trusted_authors_block')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Block trusted authors', `Default off: Hive App PRs, owner-authored PRs and allow-listed bot PRs still get a Sentinel notice and audit record, but Hive does not add the alert label or block merge. Turn on to add the label for trusted authors too.`)}</span>
         </div>
         <div class="config-field-row">
           <div class="config-field"><label>Alert label</label><input type="text" value="${esc(sn.label || 'sentinel-alert')}" placeholder="sentinel-alert" data-change-action="gh81" ${sn.enabled ? '' : 'disabled'}></div>
-          <div class="config-field"><label>Max alerts per sweep ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
+          <div class="config-field"><label>Max alerts per sweep ${yamlHint('sentinel.max_actions')} ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Max alerts per sweep', `Caps label+comment actions per pass so a flood of PRs cannot spam a repo.`)}</label><input type="number" min="1" max="500" value="${Number(sn.maxActions) || 20}" data-change-action="gh82" ${sn.enabled ? '' : 'disabled'}></div>
         </div>
         <div class="config-field">
           <label>Sensitive files ${settingHelpMark('operator-reference', 'suspicious-activity-alerts-sentinel', 'Sensitive files', `One glob per line (** matches directories). Any PR touching a match is flagged with sensitive_path. Clear the box and save to restore the shipped defaults.`)}${sn.sensitivePathsDefault ? ' <span class="muted-xs">(shipped defaults)</span>' : ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="resetSentinelPaths">Reset to defaults</button>'}</label>
@@ -39678,6 +39947,7 @@ function burnAreaChart() {
       const jevProviders = Array.isArray(f.jevProviders) ? f.jevProviders : ['openrouter', 'typesafe'];
       const dupSweepDefaults = f.duplicateSweepDefaults || {};
       const prFollowUpDefaults = f.prFollowUpDefaults || {};
+      const platformDefaults = f.platformDefaults || {};
       const publicationAvailable = f.publicationAvailable === true;
       const publicationMinACMMLevel = f.publicationMinACMMLevel || 3;
       const cls = (_configState.data || {}).classifier || {};
@@ -39776,8 +40046,12 @@ function burnAreaChart() {
             <span class="config-toggle-label">Auto-merge App-authored PRs ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Auto-merge App-authored PRs', `Controls the self-authored sweep: Hive merges its own green PRs directly since Prow cannot self-approve.`)}</span>
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Max merges per sweep ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Max merges per sweep', `Caps how many PRs one sweep pass may merge. 0 or empty uses the default.`)}</label>
+            <label>Max merges per sweep ${yamlHint('auto_merge.max_merges')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Max merges per sweep', `Caps how many PRs one sweep pass may merge. 0 or empty uses the default.`)}</label>
             <input type="number" min="0" step="1" value="${am.max_merges || ''}" placeholder="3" data-change-action="gh71">
+          </div>
+          <div class="config-field mt-4">
+            <label>Minimum head age ${yamlHint('auto_merge.min_head_age')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Minimum head age', `How old a PR head must be before the sweep trusts an unknown required-check set. Closes the window after a push where slow GitHub Actions checks have not registered yet. Positive Go duration such as 3m.`)}</label>
+            <input type="text" value="${esc(am.min_head_age || '')}" placeholder="3m0s" data-change-action="markDirty" data-arg0="auto-merge" data-arg1="min_head_age" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Required CI checks ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Required CI checks', `Comma-separated default status-check/check-run names the sweep must see green before merging, e.g. build-gate. For heterogeneous hives use auto_merge.repos.<repo>.required_checks per repository; keys may be bare repo names or owner/repo.`)}</label>
@@ -39800,7 +40074,7 @@ function burnAreaChart() {
             </div>
             <div class="config-field-row mt-4">
               <div class="config-field">
-                <label for="am-trusted-authors-require-role">Required author role</label>
+                <label for="am-trusted-authors-require-role">Required author role ${yamlHint('auto_merge.trusted_authors.require_role')}</label>
                 <select id="am-trusted-authors-require-role" data-change-action="gh101">${amTrustedAuthorRoleOptions}</select>
                 <p class="am-trusted-authors-note">Who holds these roles is defined by Authorized users on the Security tab; hosted hives manage read, read-write, merger, and owner roles on the hub's Manage Access screen — <a class="text-accent" href="#" data-action="openTrustedAuthorSecurityAccess" data-prevent="1">Open Security tab</a>.</p>
               </div>
@@ -39976,6 +40250,15 @@ function burnAreaChart() {
             <input type="number" min="0" step="1" id="rec-minready-input" value="${rvRec.min_ready_to_open || ''}" placeholder="1" data-change-action="gh84">
           </div>
         </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Review evidence ${settingHelpMark('settings', 'features', 'Review evidence', `Evidence bundles record what each hive review saw and decided, so a merge can be audited later.`)}</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.evidenceEnabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="evidenceEnabled"></div>
+            <span class="config-toggle-label">Write evidence bundles ${yamlHint('evidence.enabled')} ${settingHelpMark('settings', 'features', 'Write evidence bundles', `On by default. Off stops writing review evidence bundles. Applies to the next review.`)}</span>
+          </div>
+          <div class="config-field settings-subsection-row"><label>Signing key file ${yamlHint('evidence.signing_key_file')} ${settingHelpMark('settings', 'features', 'Evidence signing key file', `Path to an Ed25519 private key used to sign bundles. Empty means bundles are written unsigned. Only the path is shown; the key is never read by this dialog.`)}</label><input type="text" value="${esc(f.evidenceSigningKeyFile || '')}" placeholder="not set (bundles unsigned)" readonly aria-readonly="true"><div class="config-help">Read-only here: signing keys are provisioned on disk and set in hive.yaml.</div></div>
+        </div>
         `)}
 
         ${featuresSectionHtml('autonomy', `
@@ -40014,9 +40297,19 @@ function burnAreaChart() {
         <div class="settings-subsection">
           <div class="config-toggle">
             <div class="config-toggle-switch ${planOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="planFromLabel"></div>
-            <span class="config-toggle-label">Auto-plan from label ${settingHelpMark('settings', 'features', 'Auto-plan from label', `When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.`)}</span>
+            <span class="config-toggle-label">Auto-plan from label ${yamlHint('planning.plan_from_label')} ${settingHelpMark('settings', 'features', 'Auto-plan from label', `When on, an actionable issue carrying the plan/epic label auto-mints an epic and requests decomposition — no per-kick review. Opt-in for safety.`)}</span>
           </div>
           <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Auto-plan issues carrying the plan/epic label — L5+ only.</p>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Design-first planning ${settingHelpMark('settings', 'features', 'Design-first planning', `Issues with a design label get a design from the architect first; a human approves it with the approved label before it is broken down.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Design-approved label ${yamlHint('planning.design_approved_label')} ${settingHelpMark('settings', 'features', 'Design-approved label', `The label a human applies to approve a posted design. Applying a label needs triage on the repo. Empty uses ${esc(platformDefaults.planningDesignApprovedLabel || 'design-approved')}.`)}</label><input type="text" value="${esc(f.planningDesignApprovedLabel || '')}" placeholder="${esc(platformDefaults.planningDesignApprovedLabel || 'design-approved')}" data-change-action="markDirty" data-arg0="features" data-arg1="planningDesignApprovedLabel" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Max concurrent designs ${yamlHint('planning.max_concurrent_designs')} ${settingHelpMark('settings', 'features', 'Max concurrent designs', `How many designs may be posted and awaiting approval at once, so labeling a backlog does not starve the architect. 0 uses the default (${esc(String(platformDefaults.planningMaxConcurrentDesigns || 3))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.planningMaxConcurrentDesigns || ''))}" placeholder="${esc(String(platformDefaults.planningMaxConcurrentDesigns || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="planningMaxConcurrentDesigns" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Max design revisions ${yamlHint('planning.max_design_revisions')} ${settingHelpMark('settings', 'features', 'Max design revisions', `How many times the architect is asked to revise one design; past it the epic waits on a human. 0 uses the default (${esc(String(platformDefaults.planningMaxDesignRevisions || 3))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.planningMaxDesignRevisions || ''))}" placeholder="${esc(String(platformDefaults.planningMaxDesignRevisions || 3))}" data-change-action="markDirty" data-arg0="features" data-arg1="planningMaxDesignRevisions" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-help">Applies on the next planning pass. Plan and design label lists stay yaml-only.</div>
         </div>
         `)}
 
@@ -40071,6 +40364,14 @@ function burnAreaChart() {
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
         ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Superseded PR grace ${settingHelpMark('settings', 'features', 'Superseded PR grace', `Timing of the superseded-PR sweep.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Supersession grace period ${yamlHint('supersession_sweep.grace_period')} ${settingHelpMark('settings', 'features', 'Supersession grace period', `How long a superseded human-authored PR stays open after the supersession notice before it may be closed. Go duration; empty uses the default (${esc(platformDefaults.supersessionGracePeriod || '24h0m0s')}).`)}</label><input type="text" value="${esc(f.supersessionGracePeriod || '')}" placeholder="${esc(platformDefaults.supersessionGracePeriod || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="supersessionGracePeriod" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-help">Applies on the next sweep.</div>
+        </div>
         `)}
 
         ${featuresSectionHtml('agents', `
@@ -40144,7 +40445,7 @@ function burnAreaChart() {
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Provider rotation</div>
-          <div class="config-toggle">
+          <div class="config-toggle" data-setting-key="governor.rotation.enabled">
             <div class="config-toggle-switch ${rotationOn ? 'on' : ''}" data-action="rotationToggleSwitch"></div>
             <span class="config-toggle-label">Provider rotation ${settingHelpMark('settings', 'features', 'Provider rotation', `Rotate a lane off a provider whose measured usage crosses the threshold. Opt-in; see the backend capacity RFC.`)}</span>
           </div>
@@ -40201,12 +40502,51 @@ function burnAreaChart() {
             <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-2) var(--sp-0) var(--sp-0)">Signing key is provisioned on-disk, not here.</p>
           </div>
         </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Data directories ${settingHelpMark('settings', 'features', 'Data directories', `Where the hive keeps its persistent state. All paths sit on the persistent volume (/data by default).`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Metrics dir ${yamlHint('data.metrics_dir')} ${settingHelpMark('settings', 'features', 'Metrics dir', `Directory for metrics snapshots (default /data/metrics). Absolute path.`)}</label><input type="text" value="${esc(f.dataMetricsDir || '')}" placeholder="/data/metrics" data-change-action="markDirty" data-arg0="features" data-arg1="dataMetricsDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Logs dir ${yamlHint('data.logs_dir')} ${settingHelpMark('settings', 'features', 'Logs dir', `Directory for hive and agent logs (default /data/logs). Absolute path.`)}</label><input type="text" value="${esc(f.dataLogsDir || '')}" placeholder="/data/logs" data-change-action="markDirty" data-arg0="features" data-arg1="dataLogsDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Agent configs dir ${yamlHint('data.agents_dir')} ${settingHelpMark('settings', 'features', 'Agent configs dir', `Directory holding per-agent config overlays (default /data/agent-configs). Absolute path.`)}</label><input type="text" value="${esc(f.dataAgentsDir || '')}" placeholder="/data/agent-configs" data-change-action="markDirty" data-arg0="features" data-arg1="dataAgentsDir" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Claude sessions dir ${yamlHint('data.claude_sessions_dir')} ${settingHelpMark('settings', 'features', 'Claude sessions dir', `Where Claude Code keeps its session transcripts (default /data/home/.claude/projects). Absolute path.`)}</label><input type="text" value="${esc(f.dataClaudeSessionsDir || '')}" placeholder="/data/home/.claude/projects" data-change-action="markDirty" data-arg0="features" data-arg1="dataClaudeSessionsDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Copilot sessions dir ${yamlHint('data.copilot_sessions_dir')} ${settingHelpMark('settings', 'features', 'Copilot sessions dir', `Where Copilot CLI keeps its session state (default /data/home/.copilot/session-state). The session janitor prunes this directory. Absolute path.`)}</label><input type="text" value="${esc(f.dataCopilotSessionsDir || '')}" placeholder="/data/home/.copilot/session-state" data-change-action="markDirty" data-arg0="features" data-arg1="dataCopilotSessionsDir" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Bob sessions dir ${yamlHint('data.bob_sessions_dir')} ${settingHelpMark('settings', 'features', 'Bob sessions dir', `Where the Bob CLI keeps its session state (default /data/home/.bob). Absolute path.`)}</label><input type="text" value="${esc(f.dataBobSessionsDir || '')}" placeholder="/data/home/.bob" data-change-action="markDirty" data-arg0="features" data-arg1="dataBobSessionsDir" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field"><label>Session retention (days) ${yamlHint('data.session_retention_days')} ${settingHelpMark('settings', 'features', 'Session retention', `How many days of CLI session-state directories to keep before the janitor deletes them. Empty uses the default (${esc(String(platformDefaults.dataSessionRetentionDays || 7))}); 0 turns pruning off, which lets the volume grow without bound.`)}</label><input type="number" min="0" step="1" value="${esc(f.dataSessionRetentionDays || '')}" placeholder="${esc(String(platformDefaults.dataSessionRetentionDays || 7))}" data-change-action="markDirty" data-arg0="features" data-arg1="dataSessionRetentionDays" data-arg-types="s,s,w"></div>
+          <div class="config-help">Requires restart: these directories are read at boot. Existing files are not moved.</div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Token mint limits ${settingHelpMark('token-mint', '', 'Token mint limits', `Key location and lifetime cap for the Token Mint above.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Signing key path ${yamlHint('mint.key_path')} ${settingHelpMark('token-mint', '', 'Mint signing key path', `PEM path of the mint signing key; generated with 0600 permissions if absent. It must be on persistent storage and never readable outside the hive process. Only the path is shown.`)}</label><input type="text" value="${esc(f.mintKeyPath || '')}" placeholder="not set" readonly aria-readonly="true"><div class="config-help">Read-only here: the key is provisioned on disk and set in hive.yaml.</div></div>
+            <div class="config-field"><label>Max token TTL (seconds) ${yamlHint('mint.max_ttl_seconds')} ${settingHelpMark('token-mint', '', 'Mint max TTL', `Upper bound on a minted token's lifetime. 0 uses the default (${esc(String(platformDefaults.mintMaxTtlSeconds || 900))}s); the hard cap is ${esc(String(platformDefaults.mintHardCapTtlSeconds || 3600))}s.`)}</label><input type="number" min="0" max="${esc(String(platformDefaults.mintHardCapTtlSeconds || 3600))}" step="1" value="${esc(String(f.mintMaxTtlSeconds || ''))}" placeholder="${esc(String(platformDefaults.mintMaxTtlSeconds || 900))}" data-change-action="markDirty" data-arg0="features" data-arg1="mintMaxTtlSeconds" data-arg-types="s,s,N"><div class="config-help">Requires restart.</div></div>
+          </div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Tool approval inbox ${settingHelpMark('settings', 'features', 'Tool approval inbox', `Where pending operator tool approvals are stored.`)}</div>
+          <div class="config-field"><label>Inbox path ${yamlHint('tool_approval.inbox_path')} ${settingHelpMark('settings', 'features', 'Tool approval inbox path', `File that holds pending operator approvals. Empty uses /data/approvals/inbox.json on the persistent volume. Absolute path.`)}</label><input type="text" value="${esc(f.toolApprovalInboxPath || '')}" placeholder="/data/approvals/inbox.json" data-change-action="markDirty" data-arg0="features" data-arg1="toolApprovalInboxPath" data-arg-types="s,s,w"><div class="config-help">Requires restart.</div></div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Swarm banner ${settingHelpMark('settings', 'features', 'Swarm banner', `Default wording for swarm events. Per-repo themes override it from the swarm view.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Event name ${yamlHint('swarm.event_name')} ${settingHelpMark('settings', 'features', 'Swarm event name', `Name shown for a swarm event. Empty uses the default. HIVE_SWARM_EVENT_NAME overrides it.`)}</label><input type="text" maxlength="200" value="${esc(f.swarmEventName || '')}" placeholder="${esc(platformDefaults.swarmEventName || 'Swarm')}" data-change-action="markDirty" data-arg0="features" data-arg1="swarmEventName" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Call to arms ${yamlHint('swarm.call_to_arms')} ${settingHelpMark('settings', 'features', 'Swarm call to arms', `Rallying line shown when a swarm starts. Empty uses the default. HIVE_SWARM_CALL_TO_ARMS overrides it.`)}</label><input type="text" maxlength="200" value="${esc(f.swarmCallToArms || '')}" placeholder="${esc(platformDefaults.swarmCallToArms || 'All hands on deck!')}" data-change-action="markDirty" data-arg0="features" data-arg1="swarmCallToArms" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Leaderboard title ${yamlHint('swarm.leaderboard_title')} ${settingHelpMark('settings', 'features', 'Swarm leaderboard title', `Heading of the swarm leaderboard. Empty uses the default.`)}</label><input type="text" maxlength="200" value="${esc(f.swarmLeaderboardTitle || '')}" placeholder="${esc(platformDefaults.swarmLeaderboardTitle || 'Swarm leaderboard')}" data-change-action="markDirty" data-arg0="features" data-arg1="swarmLeaderboardTitle" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-help">Requires restart: the swarm view reads its default theme once.</div>
+        </div>
         `)}
 
         ${featuresSectionHtml('quality', `
         <div class="settings-subsection">
           <div class="settings-subsection-title">Quality loops ${settingHelpMark('retro-lane', '', 'Quality loops', `Post-completion feedback lanes that inspect finished work and file advisory findings back into the hive. Off by default, and an absent configuration block is zero behaviour change.`)}</div>
-          <div class="config-toggle">
+          <div class="config-toggle" data-setting-key="retro.enabled">
             <div class="config-toggle-switch ${f.retroEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="retroEnabled"></div>
             <span class="config-toggle-label">Retro loop enabled ${settingHelpMark('retro-lane', '', 'Retro loop enabled', `Periodically scans done/closed beads that have a closed or merged PR, reconstructs a compact trajectory from local ledgers, and files rule-based findings as advisory beads. Deterministic: no model is called, and no tokens are spent, unless an Analysis model is set below. Its pacing knobs (scan interval, max fix attempts, max kicks, long-stall days, recent-closed window) live under Advanced retro below.`)}</span>
           </div>
@@ -40237,7 +40577,7 @@ function burnAreaChart() {
           </div>
           ${publicationAvailable ? '' : `<p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-3) var(--sp-0) var(--sp-0)">Requires ACMM L${publicationMinACMMLevel}+</p>`}
           <div class="config-field" style="margin-top:10px">
-            <label>Campaign owner ${settingHelpMark('audit-campaign', 'publication', 'Campaign owner', `The maintainer principal every publication runs under and the actor on the outcome ledger. Publication stays off until an owner is named; the engine identity is never used.`)}</label>
+            <label>Campaign owner ${yamlHint('publication.owner')} ${settingHelpMark('audit-campaign', 'publication', 'Campaign owner', `The maintainer principal every publication runs under and the actor on the outcome ledger. Publication stays off until an owner is named; the engine identity is never used.`)}</label>
             <input type="text" value="${esc(f.publicationOwner || '')}" placeholder="maintainer login" data-change-action="markDirty" data-arg0="features" data-arg1="publicationOwner" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
@@ -40246,24 +40586,33 @@ function burnAreaChart() {
           </div>
         </div>
         ${renderGovReleaseSentinelSection((_configState.data || {}).release_sentinel || {})}
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Compliance posture windows ${settingHelpMark('settings', 'features', 'Compliance posture windows', `Look-back and retention of the compliance posture checks.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Posture look-back (days) ${yamlHint('compliance.posture_checks.window_days')} ${settingHelpMark('settings', 'features', 'Posture look-back', `How far back the posture checks that inspect merged PRs look, 1 to 90 days. 0 uses the default (${esc(String(platformDefaults.compliancePostureWindowDays || 30))}).`)}</label><input type="number" min="0" max="90" step="1" value="${esc(String(f.compliancePostureWindowDays || ''))}" placeholder="${esc(String(platformDefaults.compliancePostureWindowDays || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="compliancePostureWindowDays" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Posture history (days) ${yamlHint('compliance.posture_checks.history_days')} ${settingHelpMark('settings', 'features', 'Posture history', `How long posture-check results are kept, 30 to 1095 days. 0 uses the default (${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}).`)}</label><input type="number" min="0" max="1095" step="1" value="${esc(String(f.compliancePostureHistoryDays || ''))}" placeholder="${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}" data-change-action="markDirty" data-arg0="features" data-arg1="compliancePostureHistoryDays" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-help">Applies on the next posture pass.</div>
+        </div>
         `)}
 
         ${featuresSectionHtml('integrations', `
         <div class="settings-subsection">
           <div class="settings-subsection-title">Observability</div>
           <p class="config-help">OpenTelemetry YAML keys: <code>otel.enabled</code>, <code>otel.endpoint</code>, <code>otel.headers.&lt;key&gt;</code>, <code>otel.insecure</code>, <code>otel.sample_ratio</code>, <code>otel.service_name</code>.</p>
-          <div class="config-toggle">
+          <div class="config-toggle" data-setting-key="otel.enabled">
             <div class="config-toggle-switch ${f.tracingEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="tracingEnabled"></div>
             <span class="config-toggle-label">OpenTelemetry export enabled ${settingHelpMark('settings', 'features', 'OpenTelemetry export enabled', `Exports OTLP/HTTP spans for hub/agent activity. Zero overhead when off. When on, traces export to your OTLP collector — view them in Grafana/Jaeger.`)}</span>
           </div>
           <details style="margin:10px 0 0" open><summary style="cursor:pointer;color:var(--muted);font-size:0.78rem;font-weight:600">Advanced OpenTelemetry</summary>
-            <div class="config-field"><label>Endpoint ${settingHelpMark('settings', 'features', 'Endpoint', `Collector endpoint (e.g. https://otel-collector:4318). Leave empty to fall back to the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.`)}</label><input type="text" value="${esc(f.tracingEndpoint || '')}" placeholder="https://otel-collector:4318" data-change-action="markDirty" data-arg0="features" data-arg1="tracingEndpoint" data-arg-types="s,s,w"></div>
+            <div class="config-field" data-setting-key="otel.endpoint"><label>Endpoint ${settingHelpMark('settings', 'features', 'Endpoint', `Collector endpoint (e.g. https://otel-collector:4318). Leave empty to fall back to the standard OTEL_EXPORTER_OTLP_ENDPOINT env var.`)}</label><input type="text" value="${esc(f.tracingEndpoint || '')}" placeholder="https://otel-collector:4318" data-change-action="markDirty" data-arg0="features" data-arg1="tracingEndpoint" data-arg-types="s,s,w"></div>
             <div class="config-field-row">
-              <div class="config-field"><label>Service name ${settingHelpMark('settings', 'features', 'Service name', `The service.name resource attribute stamped on every exported span. Set it to something that identifies this hive so you can tell it apart from other hives in a shared collector. Defaults to &quot;hive&quot; when empty.`)}</label><input type="text" value="${esc(f.otelServiceName || '')}" placeholder="hive" data-change-action="markDirty" data-arg0="features" data-arg1="otelServiceName" data-arg-types="s,s,w"></div>
-              <div class="config-field"><label>Sample ratio ${settingHelpMark('settings', 'features', 'Sample ratio', `Head-based sampling ratio between 0 and 1 — the fraction of traces exported. The default 0 is special-cased to mean sample everything, not nothing, so leaving it alone exports all traces.`)}</label><input type="number" min="0" max="1" step="0.01" value="${f.tracingSampleRatio || 0}" data-change-action="gh57"><span style="font-size:0.65rem;color:var(--muted)">0 means sample all.</span></div>
+              <div class="config-field" data-setting-key="otel.service_name"><label>Service name ${settingHelpMark('settings', 'features', 'Service name', `The service.name resource attribute stamped on every exported span. Set it to something that identifies this hive so you can tell it apart from other hives in a shared collector. Defaults to &quot;hive&quot; when empty.`)}</label><input type="text" value="${esc(f.otelServiceName || '')}" placeholder="hive" data-change-action="markDirty" data-arg0="features" data-arg1="otelServiceName" data-arg-types="s,s,w"></div>
+              <div class="config-field" data-setting-key="otel.sample_ratio"><label>Sample ratio ${settingHelpMark('settings', 'features', 'Sample ratio', `Head-based sampling ratio between 0 and 1 — the fraction of traces exported. The default 0 is special-cased to mean sample everything, not nothing, so leaving it alone exports all traces.`)}</label><input type="number" min="0" max="1" step="0.01" value="${f.tracingSampleRatio || 0}" data-change-action="gh57"><span style="font-size:0.65rem;color:var(--muted)">0 means sample all.</span></div>
             </div>
-            <div class="config-toggle"><div class="config-toggle-switch ${f.otelInsecure ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="otelInsecure"></div><span class="config-toggle-label">Allow insecure OTLP transport ${settingHelpMark('settings', 'features', 'Allow insecure OTLP transport', `Permits plain HTTP to the collector instead of TLS. Only appropriate for a collector reached over a trusted network, such as one in the same cluster; on any other path the spans travel unencrypted.`)}</span></div>
-            <div class="config-field"><label>Headers <span style="font-weight:400;color:var(--muted)">(write-only, one key=value per line)</span> ${settingHelpMark('settings', 'features', 'Headers', `Extra HTTP headers sent with every OTLP export, typically an authorization header for a hosted collector. Write-only: values are stored but never echoed back to this form, so the box reads empty even when headers are set. \${VAR} references are expanded from the hive environment.`)}</label><textarea rows="3" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:0.74rem" placeholder="authorization=\${OTEL_EXPORTER_TOKEN}" data-change-action="parseOtelHeaders" data-arg-types="v"></textarea><div class="fs-xs text-muted mt-2">${f.otelHasHeaders ? 'Headers are configured; values are never echoed back.' : 'No headers configured.'} <button class="hv-btn btn-primary btn-sm" type="button" data-action="gh58">Clear saved headers</button></div></div>
+            <div class="config-toggle" data-setting-key="otel.insecure"><div class="config-toggle-switch ${f.otelInsecure ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="otelInsecure"></div><span class="config-toggle-label">Allow insecure OTLP transport ${settingHelpMark('settings', 'features', 'Allow insecure OTLP transport', `Permits plain HTTP to the collector instead of TLS. Only appropriate for a collector reached over a trusted network, such as one in the same cluster; on any other path the spans travel unencrypted.`)}</span></div>
+            <div class="config-field" data-setting-key="otel.headers.<key>"><label>Headers <span style="font-weight:400;color:var(--muted)">(write-only, one key=value per line)</span> ${settingHelpMark('settings', 'features', 'Headers', `Extra HTTP headers sent with every OTLP export, typically an authorization header for a hosted collector. Write-only: values are stored but never echoed back to this form, so the box reads empty even when headers are set. \${VAR} references are expanded from the hive environment.`)}</label><textarea rows="3" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:0.74rem" placeholder="authorization=\${OTEL_EXPORTER_TOKEN}" data-change-action="parseOtelHeaders" data-arg-types="v"></textarea><div class="fs-xs text-muted mt-2">${f.otelHasHeaders ? 'Headers are configured; values are never echoed back.' : 'No headers configured.'} <button class="hv-btn btn-primary btn-sm" type="button" data-action="gh58">Clear saved headers</button></div></div>
           </details>
         </div>
         <div class="settings-subsection">
@@ -40283,6 +40632,29 @@ function burnAreaChart() {
           </div>
         </div>
         ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">GitLab and Gitea forges ${settingHelpMark('settings', 'features', 'GitLab and Gitea forges', `Used only when the project forge is set to gitlab or gitea. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>GitLab URL ${yamlHint('gitlab.gitlab_url')} ${settingHelpMark('settings', 'features', 'GitLab URL', `GitLab instance root, e.g. https://gitlab.example.com. Empty uses ${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}.`)}</label><input type="text" value="${esc(f.gitlabUrl || '')}" placeholder="${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>GitLab token env var ${yamlHint('gitlab.token_env')} ${settingHelpMark('settings', 'features', 'GitLab token env var', `The NAME of the environment variable holding the GitLab token, never the token itself.`)}</label><input type="text" value="${esc(f.gitlabTokenEnv || '')}" placeholder="${esc(platformDefaults.gitlabTokenEnv || 'GITLAB_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabTokenEnv" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Gitea URL ${yamlHint('gitea.gitea_url')} ${settingHelpMark('settings', 'features', 'Gitea URL', `Gitea or Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Gitea forge.`)}</label><input type="text" value="${esc(f.giteaUrl || '')}" placeholder="https://gitea.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Gitea token env var ${yamlHint('gitea.token_env')} ${settingHelpMark('settings', 'features', 'Gitea token env var', `The NAME of the environment variable holding the Gitea token, never the token itself.`)}</label><input type="text" value="${esc(f.giteaTokenEnv || '')}" placeholder="${esc(platformDefaults.giteaTokenEnv || 'GITEA_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-help">Requires restart: the forge client is built at boot.</div>
+        </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Standalone deployment ${settingHelpMark('settings', 'features', 'Standalone deployment', `How the dashboard upgrade button reaches a Podman/Quadlet or Docker Compose host. Kubernetes hives upgrade through the hub and ignore these.`)}</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Podman mode ${yamlHint('deployment.podman_mode')} ${settingHelpMark('settings', 'features', 'Podman mode', `rootless or rootful, matching how the Quadlet units were installed. Unset means the dashboard cannot tell and shows the host upgrade command instead. HIVE_DEPLOYMENT_PODMAN_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="deploymentPodmanMode" data-arg-types="s,s,v"><option value=""${!f.deploymentPodmanMode ? ' selected' : ''}>not set</option>${['rootless', 'rootful'].map(m => `<option value="${m}"${f.deploymentPodmanMode === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
+            <div class="config-field"><label>Upgrade request dir ${yamlHint('deployment.upgrade_request_dir')} ${settingHelpMark('settings', 'features', 'Upgrade request dir', `Directory shared with the host where the dashboard drops an upgrade request for hive-upgrade.service to pick up. Must match the host side. HIVE_DEPLOYMENT_UPGRADE_REQUEST_DIR overrides it.`)}</label><input type="text" value="${esc(f.deploymentUpgradeRequestDir || '')}" placeholder="not set" data-change-action="markDirty" data-arg0="features" data-arg1="deploymentUpgradeRequestDir" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field"><label>Upgrade helper ${yamlHint('deployment.upgrade_helper')} ${settingHelpMark('settings', 'features', 'Upgrade helper', `Executable the dashboard runs for Docker Compose upgrades (default /usr/local/libexec/hive-dashboard-upgrade-helper). HIVE_DASHBOARD_UPGRADE_HELPER overrides it.`)}</label><input type="text" value="${esc(f.deploymentUpgradeHelper || '')}" placeholder="/usr/local/libexec/hive-dashboard-upgrade-helper" readonly aria-readonly="true"><div class="config-help">Read-only here: it names a program the dashboard executes, so it is changed in hive.yaml only.</div></div>
+          <div class="config-help">Read on each upgrade check, so no restart is needed.</div>
+        </div>
         `)}
 
         ${featuresSectionHtml('experimental', `
@@ -45026,7 +45398,7 @@ function burnAreaChart() {
           if (agents.length === 0) return false;
           return agents.every(a => _welcomeConfiguredValue(_welcomeAgentBackend(a)));
         },
-        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Settings → LiteLLM). Mix and match per agent.',
+        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Settings → Model Gateways). Mix and match per agent.',
         autoNote: 'Checks itself once every configured agent has a resolved method/backend.',
         actions: [{ label: 'Show me', action: 'welcomeShowAgentCard' }]
       },

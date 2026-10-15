@@ -39,8 +39,8 @@ func TestGovernorSettingsSearchIndexesKnownSettings(t *testing.T) {
 		"Restart thresholds",
 		"Maturity Level",
 		"ACMM",
-		"Release channel",
-		"Knowledge channel",
+		"acmm_level",
+		"governor.modes",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("settings search known setting/index seed missing %q", want)

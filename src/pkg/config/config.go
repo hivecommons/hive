@@ -408,6 +408,20 @@ type HookRule struct {
 	RateLimitPerMinute int `yaml:"rate_limit_per_minute,omitempty" json:"rate_limit_per_minute,omitempty"`
 }
 
+// MintDefaultMaxTTLSeconds and MintHardCapTTLSeconds mirror pkg/mint's
+// DefaultMaxTTL and HardCapTTL in seconds so consumers that may not import
+// pkg/mint (the dashboard import ratchet keeps pkg/dashboard off it) can
+// validate and describe MintConfig.MaxTTLSeconds. pkg/mint's parity test pins
+// them to the real constants.
+const (
+	MintDefaultMaxTTLSeconds = 15 * 60
+	MintHardCapTTLSeconds    = 60 * 60
+)
+
+// DefaultSessionRetentionDays mirrors pkg/sessionprune.DefaultRetentionDays
+// for the same reason; pkg/sessionprune's parity test pins it.
+const DefaultSessionRetentionDays = 7
+
 // MintConfig configures the OIDC token mint service (pkg/mint). It is additive
 // and DISABLED by default: an absent `mint:` block, or Enabled=false, leaves
 // existing behavior byte-identical. When enabled, the mint issues short-lived
@@ -8410,6 +8424,13 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// BotTakeover lets the sweep re-author a trusted `github-actions[bot]` PR
+	// whose required `pull_request` checks can never run because the bot
+	// opened it with a workflow GITHUB_TOKEN (#12003). The App pushes the
+	// same change as one signed-off commit to `hive/takeover-<n>`, opens a PR
+	// that supersedes the bot PR, and closes the bot PR. It applies only when
+	// github-actions[bot] is in TrustedBotAuthors.
+	BotTakeover BotTakeoverAutoMergeConfig `yaml:"bot_takeover,omitempty" json:"bot_takeover,omitempty"`
 	// TrustedAuthors enables a separate, default-off sweep for human-authored
 	// PRs whose AUTHOR already holds merge authority. Unlike the App
 	// self-authored lane, this never bypasses to create new authority: the
@@ -8441,6 +8462,17 @@ type AutoMergeRepoConfig struct {
 	// An explicit empty list means the repo declares no required checks; an
 	// omitted field falls back to the global default.
 	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
+}
+
+// BotTakeoverAutoMergeConfig is auto_merge.bot_takeover.*.
+type BotTakeoverAutoMergeConfig struct {
+	// Enabled turns the takeover on. nil/unset means ON; an explicit
+	// `enabled: false` disables it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+func (b BotTakeoverAutoMergeConfig) IsEnabled() bool {
+	return b.Enabled == nil || *b.Enabled
 }
 
 type TrustedAuthorAutoMergeConfig struct {

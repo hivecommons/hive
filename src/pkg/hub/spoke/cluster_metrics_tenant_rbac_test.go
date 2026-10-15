@@ -39,4 +39,40 @@ func TestClusterHealthWithSafeTenantRBAC(t *testing.T) {
 	if !strings.Contains(report.NodeHealthError, "pods API failed") || !strings.Contains(report.NodeHealthError, "403") {
 		t.Fatalf("missing partial-health reason: %q", report.NodeHealthError)
 	}
+	if report.NodeRBAC != nodeRBACOK {
+		t.Fatalf("node rbac = %q, want %q once /api/v1/nodes listed", report.NodeRBAC, nodeRBACOK)
+	}
+}
+
+func TestClusterHealthReportsForbiddenNodeRBAC(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"kind":"Status","reason":"Forbidden"}`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	report := collectClusterHealthUncached(slog.Default())
+	if report == nil || len(report.Nodes) != 0 {
+		t.Fatalf("expected an empty partial report, got %+v", report)
+	}
+	if report.NodeRBAC != nodeRBACForbidden {
+		t.Fatalf("node rbac = %q, want %q on HTTP 403 for /api/v1/nodes", report.NodeRBAC, nodeRBACForbidden)
+	}
+	if !strings.Contains(report.NodeHealthError, "/api/v1/nodes") || !strings.Contains(report.NodeHealthError, "HTTP 403") {
+		t.Fatalf("node health error = %q, want the nodes 403", report.NodeHealthError)
+	}
+}
+
+func TestClusterHealthNodesServerErrorLeavesNodeRBACUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	report := collectClusterHealthUncached(slog.Default())
+	if report == nil || report.NodeRBAC != "" {
+		t.Fatalf("a non-403 nodes failure says nothing about RBAC, got %+v", report)
+	}
 }

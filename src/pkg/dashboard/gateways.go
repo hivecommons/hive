@@ -305,6 +305,15 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// The built-in "litellm" backend's gateway and the legacy governor.litellm
+	// block describe ONE route. When an operator repoints that gateway from
+	// the Model Gateways tab, carry the legacy block with it: a legacy endpoint
+	// left on the OLD gateway is what older builds (and the legacy-only paths
+	// that still read it) sent the NEW key to, so the Test passed while every
+	// agent call died with 401 "Invalid proxy server token" (#9945).
+	legacyFollowsGateway := kind == config.GatewayKindLiteLLM && strings.EqualFold(name, config.GatewayKindLiteLLM) &&
+		strings.TrimSpace(cfg.Governor.LiteLLM.Endpoint) != ""
+
 	// Store a submitted key VALUE outside hive.yaml and point api_key_file at it.
 	if submittedKey != "" {
 		path, err := s.storeGatewayAPIKey(name, submittedKey)
@@ -320,13 +329,35 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		// legacy store too — otherwise a key rotated here leaves the legacy
 		// file holding the old (possibly revoked) key, and anything resolving
 		// through it fails against the gateway from then on.
-		if kind == config.GatewayKindLiteLLM && s.legacyLiteLLMSectionMatches(gw) {
+		if kind == config.GatewayKindLiteLLM && (legacyFollowsGateway || s.legacyLiteLLMSectionMatches(gw)) {
 			if legacyPath, syncErr := s.storeLiteLLMAPIKey(submittedKey); syncErr != nil {
 				s.logger.Warn("legacy litellm key store not synced after gateway key save",
 					"gateway", name, "error", syncErr)
 			} else {
 				cfg.Governor.LiteLLM.APIKeyFile = legacyPath
 			}
+		}
+	}
+
+	if legacyFollowsGateway && !sameGatewayEndpoint(cfg.Governor.LiteLLM.Endpoint, gw.Endpoint) {
+		s.logger.Info("legacy governor.litellm.endpoint repointed to match gateway",
+			"gateway", name, "old_endpoint", strings.TrimSpace(cfg.Governor.LiteLLM.Endpoint), "new_endpoint", gw.Endpoint)
+		// A key submitted in this request was synced above. Otherwise the
+		// gateway's stored key must follow too, or the legacy block would
+		// pair the new endpoint with the old gateway's key.
+		if submittedKey == "" {
+			if key := gw.ResolveAPIKey(); key != "" {
+				if legacyPath, syncErr := s.storeLiteLLMAPIKey(key); syncErr != nil {
+					s.logger.Warn("legacy litellm key store not synced after gateway endpoint change",
+						"gateway", name, "error", syncErr)
+				} else {
+					cfg.Governor.LiteLLM.APIKeyFile = legacyPath
+				}
+			}
+		}
+		cfg.Governor.LiteLLM.Endpoint = gw.Endpoint
+		if gw.DefaultModel != "" {
+			cfg.Governor.LiteLLM.DefaultModel = gw.DefaultModel
 		}
 	}
 

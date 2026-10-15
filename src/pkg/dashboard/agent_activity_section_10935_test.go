@@ -119,7 +119,7 @@ func TestAgentActivitySectionWiring(t *testing.T) {
 		`data-action="toggleSection" data-arg0="agent-activity-section"`,
 		`aria-label="Move Agent activity section"`,
 		`data-section="agent-activity-section" data-action="ocNavigate"`,
-		`'agent-activity-section': { title: '📍 Agent activity', summary: '0 working / 0 total' },`,
+		`'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },`,
 		`'agent-activity-section': { heading: 'Agent activity', help: `,
 		`'agents-section', 'agent-activity-section', 'faq-section'`,
 		`'agents-section','agent-activity-section','faq-section'`,
