@@ -47,7 +47,7 @@ func TestBattleLogDropsUnknownActions(t *testing.T) {
 	events := buildBattleLogEvents([]ActivityEntry{
 		{Timestamp: "2026-09-21T12:00:00Z", Username: "alice", Action: "failed", Task: "x"},
 		{Timestamp: "2026-09-21T12:01:00Z", Username: "", Action: "joined"},
-	}, 0)
+	}, 0, publicReposFromEnv())
 	if len(events) != 1 {
 		t.Fatalf("events = %+v, want only the joined event", events)
 	}
@@ -198,7 +198,7 @@ func TestValidPublicGourceProject(t *testing.T) {
 		"acme/wid gets":          false,
 	}
 	for project, want := range cases {
-		if got := validPublicGourceProject(project); got != want {
+		if got := validPublicGourceProject(project, publicReposFromEnv()); got != want {
 			t.Fatalf("validPublicGourceProject(%q) = %v, want %v", project, got, want)
 		}
 	}

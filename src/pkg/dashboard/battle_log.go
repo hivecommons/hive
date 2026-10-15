@@ -113,11 +113,11 @@ func (s *Server) registerBattleLogRoutes() {
 
 func (s *Server) handleBattleLog(w http.ResponseWriter, r *http.Request) {
 	limit := boundedQueryInt(r, "limit", defaultBattleLogLimit, maxBattleLogLimit)
-	events := buildBattleLogEvents(s.recentContributionActivity(), limit)
+	events := buildBattleLogEvents(s.recentContributionActivity(), limit, s.publicRepos())
 	jsonResponse(w, map[string]any{"events": events, "retained": len(events)})
 }
 
-func buildBattleLogEvents(activity []ActivityEntry, limit int) []battleLogEvent {
+func buildBattleLogEvents(activity []ActivityEntry, limit int, pub publicRepoSet) []battleLogEvent {
 	if limit <= 0 || limit > maxBattleLogLimit {
 		limit = defaultBattleLogLimit
 	}
@@ -128,7 +128,7 @@ func buildBattleLogEvents(activity []ActivityEntry, limit int) []battleLogEvent 
 	// twice (#12109). Keep only the newest join per actor.
 	joined := map[string]bool{}
 	for i := len(activity) - 1; i >= 0 && len(out) < limit; i-- {
-		ev, ok := battleLogFromActivity(activity[i])
+		ev, ok := battleLogFromActivity(activity[i], pub)
 		if !ok {
 			continue
 		}
@@ -143,7 +143,7 @@ func buildBattleLogEvents(activity []ActivityEntry, limit int) []battleLogEvent 
 	return out
 }
 
-func battleLogFromActivity(e ActivityEntry) (battleLogEvent, bool) {
+func battleLogFromActivity(e ActivityEntry, pub publicRepoSet) (battleLogEvent, bool) {
 	actor := scrubBattleLogText(e.Username)
 	if actor == "" {
 		actor = battleLogContributorSubject
@@ -160,7 +160,7 @@ func battleLogFromActivity(e ActivityEntry) (battleLogEvent, bool) {
 		Kind:      kind,
 		Icon:      icon,
 		Target:    battleLogTarget(e, kind),
-		Repo:      publicRepoFromTask(e.Task),
+		Repo:      publicRepoFromTask(e.Task, pub),
 	}
 	if kind == "joined_hive" {
 		return ev, true
@@ -285,23 +285,24 @@ func scrubRepoRefs(s string) string {
 }
 
 func (s *Server) handleHiveOfWeek(w http.ResponseWriter, r *http.Request) {
-	project, count := busiestProject(s.recentContributionActivity(), time.Now().UTC())
+	project, count := busiestProject(s.recentContributionActivity(), time.Now().UTC(), s.publicRepos())
 	weekStart := weekStartUTC(time.Now().UTC())
 	resp := hiveOfWeekPayload(project, weekStart, count, r)
 	jsonResponse(w, resp)
 }
 
 func (s *Server) handleGourceLog(w http.ResponseWriter, r *http.Request) {
+	pub := s.publicRepos()
 	project := strings.TrimSpace(r.URL.Query().Get("project"))
 	if project == "" {
-		project, _ = busiestProject(s.recentContributionActivity(), time.Now().UTC())
+		project, _ = busiestProject(s.recentContributionActivity(), time.Now().UTC(), pub)
 	}
-	if !validPublicGourceProject(project) {
+	if !validPublicGourceProject(project, pub) {
 		http.Error(w, "invalid or non-public project", http.StatusBadRequest)
 		return
 	}
 	weekStart := parseWeekQuery(r.URL.Query().Get("week"), time.Now().UTC())
-	lines := gourceLogForProject(s.recentContributionActivity(), project, weekStart)
+	lines := gourceLogForProject(s.recentContributionActivity(), project, weekStart, pub)
 	w.Header().Set("Content-Type", hiveGourceLogContentType)
 	_, _ = w.Write([]byte(strings.Join(lines, "\n")))
 	if len(lines) > 0 {
@@ -313,16 +314,17 @@ func (s *Server) handleHiveOfWeekArchive(w http.ResponseWriter, r *http.Request)
 	if !requireOwnerRole(w, r) {
 		return
 	}
+	pub := s.publicRepos()
 	project := strings.TrimSpace(r.URL.Query().Get("project"))
 	if project == "" {
-		project, _ = busiestProject(s.recentContributionActivity(), time.Now().UTC())
+		project, _ = busiestProject(s.recentContributionActivity(), time.Now().UTC(), pub)
 	}
-	if !validPublicGourceProject(project) {
+	if !validPublicGourceProject(project, pub) {
 		http.Error(w, "invalid or non-public project", http.StatusBadRequest)
 		return
 	}
 	weekStart := parseWeekQuery(r.URL.Query().Get("week"), time.Now().UTC())
-	lines := gourceLogForProject(s.recentContributionActivity(), project, weekStart)
+	lines := gourceLogForProject(s.recentContributionActivity(), project, weekStart, pub)
 	if err := s.archiveHiveOfWeekLog(project, weekStart, strings.Join(lines, "\n")); err != nil {
 		jsonError(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -355,7 +357,7 @@ func hiveOfWeekPayload(project string, weekStart time.Time, count int, r *http.R
 	return hiveOfWeekResponse{Project: project, Week: week, ActivityCount: count, GourceLogURL: logURL, VideoURL: videoURL, PosterURL: posterURL, LeaderboardURL: leaderboardURL, EmbedHTML: embedHTML, ReadmeMarkdown: readme}
 }
 
-func busiestProject(activity []ActivityEntry, now time.Time) (string, int) {
+func busiestProject(activity []ActivityEntry, now time.Time, pub publicRepoSet) (string, int) {
 	start := weekStartUTC(now)
 	counts := map[string]int{}
 	for _, e := range activity {
@@ -363,7 +365,7 @@ func busiestProject(activity []ActivityEntry, now time.Time) (string, int) {
 		if err != nil || t.Before(start) || !t.Before(start.AddDate(0, 0, 7)) {
 			continue
 		}
-		project := publicRepoFromTask(e.Task)
+		project := publicRepoFromTask(e.Task, pub)
 		if project == "" {
 			continue
 		}
@@ -386,7 +388,7 @@ func busiestProject(activity []ActivityEntry, now time.Time) (string, int) {
 	return best, counts[best]
 }
 
-func gourceLogForProject(activity []ActivityEntry, project string, weekStart time.Time) []string {
+func gourceLogForProject(activity []ActivityEntry, project string, weekStart time.Time, pub publicRepoSet) []string {
 	project = strings.TrimSpace(project)
 	var lines []string
 	for _, e := range activity {
@@ -394,7 +396,7 @@ func gourceLogForProject(activity []ActivityEntry, project string, weekStart tim
 		if err != nil || t.Before(weekStart) || !t.Before(weekStart.AddDate(0, 0, 7)) {
 			continue
 		}
-		repo := publicRepoFromTask(e.Task)
+		repo := publicRepoFromTask(e.Task, pub)
 		if repo == "" {
 			continue
 		}
@@ -467,32 +469,72 @@ func formatHiveWeek(t time.Time) string {
 	return fmt.Sprintf("%04d-W%02d", y, w)
 }
 
-func publicRepoFromTask(task string) string {
+func publicRepoFromTask(task string, pub publicRepoSet) string {
 	m := repoRefRE.FindString(task)
-	if !validGourceProject(m) || !publicRepoAllowed(m) {
+	if !validGourceProject(m) || !pub.allows(m) {
 		return ""
 	}
 	return m
 }
 
-func validPublicGourceProject(project string) bool {
+func validPublicGourceProject(project string, pub publicRepoSet) bool {
 	if project == hiveGourceDefaultProject {
 		return true
 	}
-	return validGourceProject(project) && publicRepoAllowed(project)
+	return validGourceProject(project) && pub.allows(project)
 }
 
-func publicRepoAllowed(repo string) bool {
+// publicRepoSet is the lower-cased set of owner/repo names whose identity may
+// appear in Battle Log, gource and Hive of the Week output.
+type publicRepoSet map[string]bool
+
+func (p publicRepoSet) allows(repo string) bool {
 	repo = strings.ToLower(strings.TrimSpace(repo))
-	if repo == "" {
-		return false
+	return repo != "" && p[repo]
+}
+
+func (p publicRepoSet) add(repo string) {
+	repo = strings.ToLower(strings.TrimSpace(repo))
+	if repo != "" && repoRefRE.MatchString(repo) {
+		p[repo] = true
 	}
+}
+
+// publicReposFromEnv is the explicit HIVE_PUBLIC_REPOS allowlist.
+func publicReposFromEnv() publicRepoSet {
+	pub := publicRepoSet{}
 	for _, part := range strings.Split(os.Getenv("HIVE_PUBLIC_REPOS"), ",") {
-		if strings.ToLower(strings.TrimSpace(part)) == repo {
-			return true
-		}
+		pub.add(part)
 	}
-	return false
+	return pub
+}
+
+// publicRepos resolves the public repo set: the HIVE_PUBLIC_REPOS allowlist
+// unioned with this hive's own project repos when the hub registry lists the
+// hive as public (#12109 follow-up). hub.is_public is the same flag that
+// drives the hub's public hive list / "Contribute Now" button — the hub pushes
+// its registry verdict onto the spoke over the heartbeat (VisibilityCallback),
+// so a public hive's repos are public without a second, drifting allowlist.
+func (s *Server) publicRepos() publicRepoSet {
+	pub := publicReposFromEnv()
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return pub
+	}
+	return registryPublicRepos(pub, s.deps.Config.Hub.IsPublic, s.deps.Config.Project.PrimaryRepo, s.deps.Config.Project.Repos)
+}
+
+func registryPublicRepos(pub publicRepoSet, hiveIsPublic bool, primaryRepo string, repos []string) publicRepoSet {
+	if pub == nil {
+		pub = publicRepoSet{}
+	}
+	if !hiveIsPublic {
+		return pub
+	}
+	pub.add(primaryRepo)
+	for _, repo := range repos {
+		pub.add(repo)
+	}
+	return pub
 }
 
 func validGourceProject(project string) bool {

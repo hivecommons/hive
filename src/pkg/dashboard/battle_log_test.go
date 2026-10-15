@@ -15,7 +15,7 @@ func TestBattleLogScrubsPublicEvents(t *testing.T) {
 		Username:  "alice@example.com",
 		Action:    "completed",
 		Task:      "github hivecommons/private#8844 token=secret",
-	}}, 10)
+	}}, 10, publicReposFromEnv())
 	if len(events) != 1 {
 		t.Fatalf("events len = %d, want 1", len(events))
 	}
@@ -42,7 +42,7 @@ func TestGourceLogWeekAndMapping(t *testing.T) {
 		{Timestamp: week.AddDate(0, 0, -1).Format(time.RFC3339), Username: "old", Action: "completed", Task: "github hivecommons/hive#1: old"},
 		{Timestamp: week.Add(time.Hour).Format(time.RFC3339), Username: "other", Action: "completed", Task: "github hivecommons/other#2: other"},
 	}
-	lines := gourceLogForProject(activity, "hivecommons/hive", week)
+	lines := gourceLogForProject(activity, "hivecommons/hive", week, publicReposFromEnv())
 	if len(lines) != 1 {
 		t.Fatalf("lines = %#v, want one current-week project line", lines)
 	}
@@ -63,7 +63,7 @@ func TestBusiestProjectTieBreaksAndWeekWindow(t *testing.T) {
 		{Timestamp: week.Add(2 * time.Hour).Format(time.RFC3339), Task: "github a/repo#2"},
 		{Timestamp: week.AddDate(0, 0, -1).Format(time.RFC3339), Task: "github z/repo#3"},
 	}
-	project, count := busiestProject(activity, now)
+	project, count := busiestProject(activity, now, publicReposFromEnv())
 	if project != "a/repo" || count != 1 {
 		t.Fatalf("project,count = %q,%d; want tie-broken a/repo,1", project, count)
 	}
@@ -78,10 +78,10 @@ func TestGourceLogSkipsNonAllowlistedActivity(t *testing.T) {
 		Action:    "completed",
 		Task:      "github private/repo#9: fix production secret abc123",
 	}}
-	if lines := gourceLogForProject(activity, hiveGourceDefaultProject, week); len(lines) != 0 {
+	if lines := gourceLogForProject(activity, hiveGourceDefaultProject, week, publicReposFromEnv()); len(lines) != 0 {
 		t.Fatalf("non-allowlisted activity leaked into hive gource log: %#v", lines)
 	}
-	project, count := busiestProject(activity, week.Add(time.Hour))
+	project, count := busiestProject(activity, week.Add(time.Hour), publicReposFromEnv())
 	if project != hiveGourceDefaultProject || count != 0 {
 		t.Fatalf("busiest project = %q,%d; want hive fallback with zero public activity", project, count)
 	}
@@ -129,7 +129,7 @@ func TestBattleLogStructuredTaskVerbsAndRefs(t *testing.T) {
 		{Timestamp: "2026-10-15T12:01:00Z", Username: "bee", Action: "completed", Task: "pr hivecommons/hive#12070: fix"},
 		{Timestamp: "2026-10-15T12:02:00Z", Username: "bee", Action: "picked up", Task: "issue hivecommons/hive#12071: next"},
 		{Timestamp: "2026-10-15T12:03:00Z", Username: "bee", Action: "completed", Task: "issue acme/private#7: secret work"},
-	}, 10)
+	}, 10, publicReposFromEnv())
 	if len(events) != 4 {
 		t.Fatalf("events = %d, want 4", len(events))
 	}
@@ -157,7 +157,7 @@ func TestBattleLogDedupesRepeatedJoins(t *testing.T) {
 		{Timestamp: "2026-10-15T12:05:00Z", Username: "bee", Action: "left"},
 		{Timestamp: "2026-10-15T12:15:00Z", Username: "bee", Action: "joined"},
 		{Timestamp: "2026-10-15T12:16:00Z", Username: "wasp", Action: "joined"},
-	}, 10)
+	}, 10, publicReposFromEnv())
 	if len(events) != 2 {
 		t.Fatalf("events = %+v, want one join per actor", events)
 	}
@@ -192,5 +192,74 @@ func TestHiveOfWeekPayloadUsesConfiguredRender(t *testing.T) {
 	}
 	if !strings.Contains(resp.EmbedHTML, "<video") || !strings.Contains(resp.ReadmeMarkdown, "[![Hive of the Week: hivecommons/hive]") {
 		t.Fatalf("embed = %q readme = %q", resp.EmbedHTML, resp.ReadmeMarkdown)
+	}
+}
+
+func TestRegistryPublicReposDerivedFromPublicHive(t *testing.T) {
+	t.Setenv("HIVE_PUBLIC_REPOS", "")
+	// A public hive's own project repos are public; the primary repo counts
+	// even when it is not repeated in repos.
+	pub := registryPublicRepos(publicReposFromEnv(), true, "HiveCommons/Hive", []string{"hivecommons/docs", "not-a-repo", ""})
+	for repo, want := range map[string]bool{
+		"hivecommons/hive": true,
+		"hivecommons/docs": true,
+		"acme/private":     false,
+		"not-a-repo":       false,
+	} {
+		if got := pub.allows(repo); got != want {
+			t.Fatalf("public hive allows(%q) = %v, want %v", repo, got, want)
+		}
+	}
+	// A hive the registry does not list as public contributes nothing.
+	if pub := registryPublicRepos(publicReposFromEnv(), false, "hivecommons/hive", []string{"hivecommons/hive"}); pub.allows("hivecommons/hive") {
+		t.Fatalf("private hive must not publish its repos")
+	}
+	// HIVE_PUBLIC_REPOS remains an explicit union with the registry-derived set.
+	t.Setenv("HIVE_PUBLIC_REPOS", "acme/widgets")
+	pub = registryPublicRepos(publicReposFromEnv(), true, "hivecommons/hive", nil)
+	if !pub.allows("acme/widgets") || !pub.allows("hivecommons/hive") {
+		t.Fatalf("env allowlist and registry repos must union: %v", pub)
+	}
+}
+
+func TestBattleLogAndHiveOfWeekUseRegistryPublicRepos(t *testing.T) {
+	t.Setenv("HIVE_PUBLIC_REPOS", "")
+	s, deps := apiServer(t)
+	deps.Config.Hub.IsPublic = true
+	deps.Config.Project.Repos = []string{"hivecommons/hive"}
+	stamp := weekStartUTC(time.Now().UTC()).Add(26 * time.Hour).Format(time.RFC3339)
+	seedBattleLogActivity(t, s,
+		ActivityEntry{Timestamp: stamp, Username: "bee", Action: "completed", Task: "pr hivecommons/hive#12110: leaderboard TLC"},
+		ActivityEntry{Timestamp: stamp, Username: "bee", Action: "completed", Task: "issue acme/private#3: hush"},
+	)
+
+	rec := doGet(s, "/api/leaderboard/battle-log?limit=5")
+	var body struct {
+		Events []battleLogEvent `json:"events"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Events) != 2 {
+		t.Fatalf("battle log = %d %s (%v)", rec.Code, rec.Body.String(), err)
+	}
+	if body.Events[1].Ref != "hive#12110" || body.Events[1].URL != "https://github.com/hivecommons/hive/pull/12110" {
+		t.Fatalf("public hive repo must link: %+v", body.Events[1])
+	}
+	if body.Events[0].Ref != "#3" || body.Events[0].URL != "" {
+		t.Fatalf("other repo must stay anonymous: %+v", body.Events[0])
+	}
+
+	rec = doGet(s, "/api/leaderboard/hive-of-week")
+	var hotw hiveOfWeekResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &hotw); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if hotw.Project != "hivecommons/hive" || hotw.ActivityCount != 1 {
+		t.Fatalf("hive of week = %+v, want registry-derived public project", hotw)
+	}
+
+	// Flip the registry verdict off and the same hive is anonymous again.
+	deps.Config.Hub.IsPublic = false
+	rec = doGet(s, "/api/leaderboard/hive-of-week")
+	if err := json.Unmarshal(rec.Body.Bytes(), &hotw); err != nil || hotw.Project != hiveGourceDefaultProject || hotw.ActivityCount != 0 {
+		t.Fatalf("private hive of week = %+v (%v)", hotw, err)
 	}
 }
