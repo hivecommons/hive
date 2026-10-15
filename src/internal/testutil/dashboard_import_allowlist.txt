@@ -36,6 +36,10 @@ github.com/hivecommons/hive/pkg/hubbackup
 github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
 github.com/hivecommons/hive/pkg/knowledge
+# logread: the dashboard /api/logs read path shares the admin MCP's log-read
+# engine (cursor, scrub, secrets) so both surfaces return identical scrubbed
+# output (hivecommons/hive#11942).
+github.com/hivecommons/hive/pkg/logread
 github.com/hivecommons/hive/pkg/logscrub
 github.com/hivecommons/hive/pkg/mention
 # mergelane: serialized lane state view reads the merge-lane store (hivecommons/hive#10892).
