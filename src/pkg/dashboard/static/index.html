@@ -31376,6 +31376,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Stall Replan', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Features', section: 'Dashboard', label: 'Strategy Lab', key: 'dashboard.strategy_lab', text: 'strategy_lab Strategy Lab dashboard feature experimental planner' },
+      { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
       { tab: 'Features', section: 'Question Auto-Close', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
@@ -40166,14 +40167,14 @@ function burnAreaChart() {
         commercial: ['datadog','new-relic','dynatrace','honeycomb','splunk','grafana-cloud','google-analytics']
       };
       const refs = p.references || {};
-      const family = (key, label) => {
+      const family = (key, label, yamlKey) => {
         const selected = new Set(Array.isArray(p[key]) ? p[key] : []);
-        return `<div class="config-field"><label>${label}</label><select multiple size="${Math.min(7, (supported[key] || []).length)}" data-change-action="gh77" data-family="${key}">${(supported[key] || []).map(v => `<option value="${esc(v)}" ${selected.has(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>`;
+        return `<div class="config-field"><label>${label} ${yamlHint(yamlKey)}</label><select multiple size="${Math.min(7, (supported[key] || []).length)}" data-change-action="gh77" data-family="${key}">${(supported[key] || []).map(v => `<option value="${esc(v)}" ${selected.has(v) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></div>`;
       };
       const selectedPlatforms = [...new Set([...(p.open_source || []), ...(p.kube_native || []), ...(p.commercial || [])])].sort();
       const refRows = selectedPlatforms.map(platform => {
         const ref = refs[platform] || {};
-        return `<div style="border:1px solid var(--border);border-radius:7px;padding:9px;margin-top:var(--sp-4)"><div style="font-size:var(--fs-sm);font-weight:600;margin-bottom:var(--sp-3)">${esc(platform)}</div><div class="config-field-row"><div class="config-field"><label>Endpoint environment variable</label><input type="text" value="${esc(ref.endpoint_env || '')}" placeholder="OTEL_EXPORTER_OTLP_ENDPOINT" data-change-action="gh78" data-platform="${esc(platform)}" data-ref-key="endpoint_env"></div><div class="config-field"><label>Credential secret reference</label><input type="text" value="${esc(ref.credential_secret || '')}" placeholder="observability-credentials/api-key" data-change-action="gh78" data-platform="${esc(platform)}" data-ref-key="credential_secret"></div></div></div>`;
+        return `<div style="border:1px solid var(--border);border-radius:7px;padding:9px;margin-top:var(--sp-4)"><div style="font-size:var(--fs-sm);font-weight:600;margin-bottom:var(--sp-3)">${esc(platform)}</div><div class="config-field-row"><div class="config-field"><label>Endpoint environment variable ${yamlHint('governor.project_observability.references.<key>.endpoint_env')}</label><input type="text" value="${esc(ref.endpoint_env || '')}" placeholder="OTEL_EXPORTER_OTLP_ENDPOINT" data-change-action="gh78" data-platform="${esc(platform)}" data-ref-key="endpoint_env"></div><div class="config-field"><label>Credential secret reference ${yamlHint('governor.project_observability.references.<key>.credential_secret')}</label><input type="text" value="${esc(ref.credential_secret || '')}" placeholder="observability-credentials/api-key" data-change-action="gh78" data-platform="${esc(platform)}" data-ref-key="credential_secret"></div></div></div>`;
       }).join('');
       return `
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:14px">Targets for the managed project's telemetry and operations agents. Hive's own OTLP export remains in <b>Features</b>.</p>
@@ -40181,7 +40182,7 @@ function burnAreaChart() {
         <div style="font-size:0.72rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:14px">Select which observability backends the telemetry and operations agents should target in managed repositories. Whether those agents run at all is not set here: enablement lives on the agent card and per-mode schedules live in Agents → Cadences. Their current state is shown below, read-only.</div>
         ${operabilityAgentStatusRow('telemetry', p.telemetry_status)}
         ${operabilityAgentStatusRow('operations', p.operations_status)}
-        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-4)">Target platforms</div><div class="config-field-row">${family('open_source','Open source')}${family('kube_native','Kube-native')}</div>${family('commercial','Commercial')}</div>
+        <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-4)">Target platforms</div><div class="config-field-row">${family('open_source','Open source','governor.project_observability.open_source[]')}${family('kube_native','Kube-native','governor.project_observability.kube_native[]')}</div>${family('commercial','Commercial','governor.project_observability.commercial[]')}</div>
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Safe references</div><p style="font-size:0.72rem;color:var(--muted)">Names only. Literal URLs, tokens, and API keys are rejected server-side.</p>${refRows || '<p style="font-size:0.72rem;color:var(--muted)">Select a platform to configure its references.</p>'}</div>`;
     }
 

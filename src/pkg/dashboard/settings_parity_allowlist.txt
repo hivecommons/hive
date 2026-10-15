@@ -254,11 +254,6 @@ governor.logging.max_size_mb # TODO #11854
 governor.modes.<key>.cadences.<key> # TODO #11854
 governor.modes.<key>.threshold # TODO #11854
 governor.optional_sweep_every_n_cycles # TODO #11854
-governor.project_observability.commercial[] # TODO #11854
-governor.project_observability.kube_native[] # TODO #11854
-governor.project_observability.open_source[] # TODO #11854
-governor.project_observability.references.<key>.credential_secret # TODO #11854
-governor.project_observability.references.<key>.endpoint_env # TODO #11854
 governor.provider_budget.probe_interval_s # TODO #11854
 governor.rotation.agents.<key> # TODO #11854
 governor.rotation.headroom_source # TODO #11854
