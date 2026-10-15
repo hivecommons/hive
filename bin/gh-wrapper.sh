@@ -60,16 +60,27 @@ _contributor_mode() {
   [[ -f "$CONTRIBUTOR_MODE_MARKER" ]]
 }
 
+# _deny <code> <message> — the ONE denial format every gate below uses (#12127).
+#
+# Every blocked call used to print a 2–8 line explanation, and every one of
+# those lines landed in the agent's context window. A denial now costs one
+# line: what was blocked, why, and what to do instead, followed by a
+# machine-readable `reason=<code>` so a policy, a test or a log scraper can
+# key on the gate without parsing prose. The codes are stable identifiers
+# (snake_case, no spaces); the prose may be reworded, the code may not.
+#
+# Set HIVE_GH_DENY_VERBOSE=1 to append a second line pointing at the docs —
+# never printed by default, because the one line already says what to do.
+_deny() {
+  local code="$1" msg="$2"
+  echo "⛔ BLOCKED: ${msg} reason=${code}" >&2
+  [ -n "${HIVE_GH_DENY_VERBOSE:-}" ] && echo "   See src/docs/github-write-surface.md and src/docs/troubleshooting.md (reason=${code})." >&2
+  exit 1
+}
+
 # Guard: if the real gh binary is not installed, tell the agent to use MCP instead.
 if [[ ! -x "$REAL_GH" ]]; then
-  echo "⚠️  gh CLI is not available in this environment." >&2
-  echo "   Use the GitHub MCP server instead:" >&2
-  echo "   • create_pull_request, merge_pull_request, get_pull_request" >&2
-  echo "   • create_issue, get_issue, list_issues" >&2
-  echo "   • create_or_update_file, get_file_contents" >&2
-  echo "   • search_code, search_repositories" >&2
-  echo "   Do NOT attempt to install, symlink, or download the gh binary." >&2
-  exit 1
+  _deny gh_unavailable "gh CLI is not available in this environment; use the GitHub MCP server (get_pull_request, get_issue, get_file_contents, search_code) and do NOT install, symlink or download a gh binary."
 fi
 
 # Inject GitHub App token for agent gh calls (15k/hr vs PAT's 5k/hr).
@@ -147,10 +158,7 @@ if ! _contributor_mode; then
     # network failure. Fail loud and instant instead.
     export GH_PROMPT_DISABLED=1
   else
-    echo "⛔ BLOCKED: per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset}); on per-UID deployments restart/repair token delivery, and on native/shared-UID GitHub Enterprise deployments set GH_HOST to your host such as github.ibm.com before launch. See src/docs/troubleshooting.md#hive_agent_token_cache-unset-no-read-credential-available." >&2
-    echo "   Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3)." >&2
-    echo "   The hive delivers a scoped token per agent; report this to the operator so token delivery is repaired." >&2
-    exit 1
+    _deny token_cache_unavailable "per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset}); not falling back to the shared App token (audit H3) — report to the operator: on per-UID deployments repair token delivery, on native/shared-UID GitHub Enterprise set GH_HOST (e.g. github.ibm.com) before launch; see src/docs/troubleshooting.md#hive_agent_token_cache-unset-no-read-credential-available."
   fi
   # Write-then-rename so the ingester never sees a half-written event. The
   # subshell pins umask 027: the spool is setgid to the hive's group, so
@@ -184,8 +192,7 @@ if [[ -n "$AGENT_ID" ]]; then
       # shellcheck disable=SC2254
       case "$FULL_CMD" in
         $pattern)
-          echo "⛔ BLOCKED: ${reason:-command not allowed for ${AGENT_ID}}" >&2
-          exit 1
+          _deny agent_restriction "${reason:-command not allowed for ${AGENT_ID}} (per-agent restriction on '${pattern}')."
           ;;
       esac
     done < <(python3 -c "
@@ -307,10 +314,7 @@ done
 # contributor typing `gh auth login` gets this specific message rather than a
 # generic "not on the allowlist".
 if _contributor_mode && [ "$subcmd" = "auth" ]; then
-  echo "⛔ BLOCKED: gh auth is disabled for contributor agents." >&2
-  echo "   This gate matches the 'auth' SUBCOMMAND only — arguments that merely mention" >&2
-  echo "   authentication (a PR body, an issue title) are not blocked (#6659)." >&2
-  exit 1
+  _deny contributor_auth "gh auth is disabled for contributor agents (matches the 'auth' SUBCOMMAND only, #6659); your personal token is already configured — do not re-authenticate."
 fi
 
 # ── GENERAL COMMAND-SURFACE ALLOWLIST (#3840 F6/F7 residual; added in #3854) ─
@@ -404,13 +408,7 @@ _gh_surface_allowed() {
 # `gh` with no arguments prints help — harmless, and denying it produces a
 # confusing error for an agent that is just probing.
 if [ -n "$subcmd" ] && ! _gh_surface_allowed "$subcmd" "$action"; then
-  echo "⛔ BLOCKED: 'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands." >&2
-  echo "The wrapper denies by default: only commands agents are known to need are permitted," >&2
-  echo "so a subcommand nobody reviewed cannot reach GitHub with the App token attached (#3840)." >&2
-  echo "Permitted: issue/pr (list view create edit comment close reopen ...), search, run list|view|watch," >&2
-  echo "           release list|view, label list|create, repo view|list|fork|clone, api, help, version." >&2
-  echo "If this command is genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh." >&2
-  exit 1
+  _deny surface_allowlist "'gh ${subcmd}${action:+ $action}' is not on the hive's allowlist of permitted gh commands (deny-by-default, #3840); permitted: issue/pr, search, run list|view|watch, release list|view, label list|create, repo view|list|fork|clone, api — if genuinely needed, ask the operator to add it to _gh_surface_allowed in bin/gh-wrapper.sh."
 fi
 
 # ── Write-surface enforcement in the sandbox (hivecommons/hive#9587, #9772) ──
@@ -497,11 +495,7 @@ _write_surface_enforced() {
 _write_surface_refuse_direct() {
   local what="$1" instead="$2"
   _write_surface_enforced || return 0
-  echo "⛔ BLOCKED: ${HIVE_AGENT:-${HIVE_AGENT_ID:-this agent}} is under write_surface.enforce — direct GitHub writes from the agent sandbox are refused (${what})." >&2
-  echo "The audited hive relays are this lane's only write path. Every READ still works." >&2
-  echo "Use instead: ${instead}" >&2
-  echo "Do NOT retry, and do NOT route around this with another CLI, a raw curl or the GitHub MCP — the GitHub proxy refuses the same write and records it. See src/docs/github-write-surface.md." >&2
-  exit 1
+  _deny write_surface_enforce "${HIVE_AGENT:-${HIVE_AGENT_ID:-this agent}} is under write_surface.enforce — direct GitHub write '${what}' refused (reads still work); use instead: ${instead}. Do NOT retry or route around via another CLI, curl or the GitHub MCP — the proxy refuses and records the same write."
 }
 
 # The relays, for a refusal that is not tied to one operation.
@@ -634,10 +628,7 @@ if [ "$_gh_author_scoped" = true ]; then
       # staff agents; contributor mode keeps the server-side resolution.
       if ! _contributor_mode; then
         if ! _resolve_self_login >/dev/null; then
-          echo "⛔ BLOCKED: gh $subcmd $action --author @me cannot work with an App installation token (it has no /user identity, #4044)," >&2
-          echo "and no trusted identity is available to substitute: ${BOT_LOGIN_FILE} is missing/empty and 'gh api user' did not resolve." >&2
-          echo "The hive writes that file when it mints agent tokens — report this to the operator so identity delivery is repaired." >&2
-          exit 1
+          _deny author_identity_unresolved "gh $subcmd $action --author @me cannot work with an App installation token (no /user identity, #4044) and no trusted identity is available to substitute (${BOT_LOGIN_FILE} missing/empty, 'gh api user' did not resolve); report to the operator so identity delivery is repaired."
         fi
         _atme_rewritten=()
         _atme_expect=false
@@ -661,17 +652,11 @@ if [ "$_gh_author_scoped" = true ]; then
         set -- "${args[@]}"
       fi
     elif ! _resolve_self_login >/dev/null; then
-      echo "⛔ BLOCKED: gh $subcmd $action --author requires authenticated GitHub identity." >&2
-      echo "Could not resolve the current token identity: no trusted identity file at ${BOT_LOGIN_FILE} (written by the hive when it mints agent tokens)" >&2
-      echo "and 'gh api user --jq .login' did not resolve (expected for App installation tokens, which have no /user identity)." >&2
-      exit 1
+      _deny author_identity_unresolved "gh $subcmd $action --author requires authenticated GitHub identity and none could be resolved (no trusted identity file at ${BOT_LOGIN_FILE}, 'gh api user' did not resolve); report to the operator so identity delivery is repaired."
     elif _author_matches_login "$author_value" "$HIVE_AUTH_LOGIN_CACHED"; then
       : # Match: authenticated login, case-insensitive, with optional [bot] suffix.
     else
-      echo "⛔ BLOCKED: gh $subcmd $action --author must match the authenticated GitHub identity." >&2
-      echo "--author '$author_value' does not match token identity '$HIVE_AUTH_LOGIN_CACHED'." >&2
-      echo "Use --author @me or your authenticated login to list your own items." >&2
-      exit 1
+      _deny author_mismatch "gh $subcmd $action --author must match the authenticated GitHub identity ('$author_value' is not token identity '$HIVE_AUTH_LOGIN_CACHED'); use --author @me or your authenticated login to list your own items."
     fi
   elif _contributor_mode; then
     : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356).
@@ -692,10 +677,7 @@ if [ "$_gh_author_scoped" = true ]; then
     # and point at whichever work-queue snapshot actually exists here.
     _actionable_hint="/var/run/hive-metrics/actionable.json"
     [ -f /data/last-actionable.json ] && _actionable_hint="/data/last-actionable.json"
-    echo "⛔ BLOCKED: gh $subcmd list is disabled for agents — but ONLY listing/enumeration is blocked." >&2
-    echo "Write commands like 'gh issue create' and PR creation via 'hive-open-pr' are still ALLOWED — do not skip them because of this message." >&2
-    echo "For the pre-filtered issue/PR queue, read ${_actionable_hint} (use a shell command like 'cat', not a workspace file-read tool)." >&2
-    exit 1
+    _deny enumeration_disabled "gh $subcmd list is disabled for agents — ONLY listing/enumeration is blocked, writes like 'gh issue create' and 'hive-open-pr' are still ALLOWED; for the pre-filtered queue run 'cat ${_actionable_hint}' (a shell command, not a workspace file-read tool)."
   fi
 fi
 
@@ -846,8 +828,7 @@ if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && ! _contributor_mode; then
   fi
   # If the wrapper somehow isn't installed, fail loud rather than silently
   # opening the PR as the wrong identity (hard switch: no gh-pr-create fallback).
-  echo "⛔ hive-open-pr not found — cannot open a PR as the App bot. Do NOT fall back to gh pr create (would author as the login user). Report this to the operator." >&2
-  exit 1
+  _deny relay_missing "hive-open-pr not found — cannot open a PR as the App bot; do NOT fall back to gh pr create (would author as the login user), report this to the operator."
 fi
 
 # Helper: capture advisory finding to JSONL for governor digest
@@ -890,32 +871,26 @@ if [ -n "$AGENT_MODE" ]; then
   case "$AGENT_MODE" in
     NO_GITHUB)
       if [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; then
-        echo "🔇 BLOCKED: ${AGENT_NAME_GW} is in NO_GITHUB mode. No GitHub interaction allowed." >&2
-        exit 1
+        _deny mode_no_github "${AGENT_NAME_GW} is in NO_GITHUB mode — no GitHub interaction allowed; finish with local work."
       fi
       ;;
     ADVISORY)
       if [ "$subcmd" = "issue" ] && [ "$action" = "create" ]; then
         _capture_advisory_finding
-        echo "📝 BLOCKED: ${AGENT_NAME_GW} is in ADVISORY mode. Finding saved to digest." >&2
-        [ -n "$ADVISORY_ISSUE" ] && echo "Will appear in advisory issue #${ADVISORY_ISSUE} at next governor cycle." >&2
-        exit 1
+        _deny mode_advisory "${AGENT_NAME_GW} is in ADVISORY mode — finding saved to the digest${ADVISORY_ISSUE:+ (advisory issue #${ADVISORY_ISSUE}, next governor cycle)}; do not retry the create."
       fi
       if [ "$subcmd" = "pr" ] && { [ "$action" = "create" ] || [ "$action" = "merge" ]; }; then
-        echo "📝 BLOCKED: ${AGENT_NAME_GW} is in ADVISORY mode. No PRs allowed." >&2
-        exit 1
+        _deny mode_advisory "${AGENT_NAME_GW} is in ADVISORY mode — no PRs allowed; record the finding instead."
       fi
       ;;
     ISSUES_ONLY)
       if [ "$subcmd" = "pr" ] && { [ "$action" = "create" ] || [ "$action" = "merge" ]; }; then
-        echo "🎫 BLOCKED: ${AGENT_NAME_GW} is in ISSUES_ONLY mode. No PRs allowed." >&2
-        exit 1
+        _deny mode_issues_only "${AGENT_NAME_GW} is in ISSUES_ONLY mode — no PRs allowed; file an issue instead."
       fi
       ;;
     ISSUES_AND_PRS)
       if [ "$subcmd" = "pr" ] && [ "$action" = "merge" ]; then
-        echo "🔧 BLOCKED: ${AGENT_NAME_GW} is in ISSUES_AND_PRS mode. Merging requires human approval." >&2
-        exit 1
+        _deny mode_issues_and_prs "${AGENT_NAME_GW} is in ISSUES_AND_PRS mode — merging requires human approval; leave the PR for a maintainer."
       fi
       # NOTE (F6): This hold-label block is DEAD for `pr create`. A non-contributor
       # `gh pr create` is redirected far above via `exec hive-open-pr "$@"` (~line
@@ -948,44 +923,35 @@ if [ -n "$AGENT_MODE" ]; then
       # Note an EMPTY mode is different and still safe: it leaves AGENT_MODE=""
       # so the `if [ -n "$AGENT_MODE" ]` above is false and the level-based
       # fallback below applies. Only a non-empty unknown value lands here.
-      echo "⛔ BLOCKED: unrecognized agent mode '${AGENT_MODE}' for ${AGENT_NAME_GW} — refusing to run gh." >&2
-      echo "Valid modes: NO_GITHUB, ADVISORY, ISSUES_ONLY, ISSUES_AND_PRS, ISSUES_PRS_MERGE." >&2
-      echo "If ${MODE_FILE} exists with unexpected contents, it may have been tampered with; report to the operator." >&2
-      exit 1
+      _deny mode_unrecognized "unrecognized agent mode '${AGENT_MODE}' for ${AGENT_NAME_GW} — refusing to run gh (valid: NO_GITHUB, ADVISORY, ISSUES_ONLY, ISSUES_AND_PRS, ISSUES_PRS_MERGE); if ${MODE_FILE} has unexpected contents it may have been tampered with — report to the operator."
       ;;
   esac
 else
   # Fallback: level-based enforcement (for containers without HIVE_AGENT_MODE)
   if [ "$subcmd" = "issue" ] && [ "$action" = "create" ]; then
     if [[ "${AGENT_ID:-}" == "supervisor" || "${HIVE_AGENT:-}" == "supervisor" ]]; then
-      echo "⛔ BLOCKED: supervisor cannot create issues." >&2
-      exit 1
+      _deny supervisor_no_issues "supervisor cannot create issues; delegate the finding to a worker lane."
     fi
   fi
   if [ "$ACMM_LEVEL" -gt 0 ] && [ "$ACMM_LEVEL" -lt 3 ]; then
     if [ "$subcmd" = "issue" ] && [ "$action" = "create" ]; then
       _capture_advisory_finding
-      echo "⛔ BLOCKED: gh issue create is not allowed at ACMM L${ACMM_LEVEL}. Finding saved." >&2
-      exit 1
+      _deny acmm_level "gh issue create is not allowed at ACMM L${ACMM_LEVEL} — finding saved to the digest; do not retry."
     fi
     if [ "$subcmd" = "pr" ] && { [ "$action" = "create" ] || [ "$action" = "merge" ]; }; then
-      echo "⛔ BLOCKED: gh pr ${action} is not allowed at ACMM L${ACMM_LEVEL}." >&2
-      exit 1
+      _deny acmm_level "gh pr ${action} is not allowed at ACMM L${ACMM_LEVEL}; record the finding instead."
     fi
   fi
   if [ "$ACMM_LEVEL" -eq 3 ]; then
     if [ "$subcmd" = "pr" ] && [ "$action" = "merge" ]; then
-      echo "⛔ BLOCKED: gh pr merge is not allowed at ACMM L3." >&2
-      exit 1
+      _deny acmm_level "gh pr merge is not allowed at ACMM L3; leave the PR for a maintainer."
     fi
     if [ "$subcmd" = "issue" ] && [ "$action" = "create" ] && [ "$AGENT_NAME_GW" != "quality" ]; then
       _capture_advisory_finding
-      echo "⛔ BLOCKED: only quality can create issues at ACMM L3. Finding saved." >&2
-      exit 1
+      _deny acmm_level "only quality can create issues at ACMM L3 — finding saved to the digest; do not retry."
     fi
     if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && [ "$AGENT_NAME_GW" != "quality" ]; then
-      echo "⛔ BLOCKED: only quality can create PRs at ACMM L3." >&2
-      exit 1
+      _deny acmm_level "only quality can create PRs at ACMM L3; record the finding instead."
     fi
   fi
 fi
@@ -1063,10 +1029,7 @@ if [ "$subcmd" = "pr" ] && [ "$action" = "merge" ]; then
   # is the thing being gated), so the only safe answer is to require an explicit,
   # checkable identifier.
   if [ -z "$pr_num" ]; then
-    echo "⛔ BLOCKED: 'gh pr merge' needs an explicit PR number or URL." >&2
-    echo "The merge gate verifies the PR against ${MERGE_ELIGIBLE_FILE}, which it cannot do for an implicit current-branch merge." >&2
-    echo "Re-run as: gh pr merge <number> [--repo owner/repo]" >&2
-    exit 1
+    _deny merge_no_identifier "'gh pr merge' needs an explicit PR number or URL (the merge gate verifies against ${MERGE_ELIGIBLE_FILE}, impossible for an implicit current-branch merge); re-run as: gh pr merge <number> [--repo owner/repo]."
   fi
 
   if [ -n "$pr_num" ] && [ -f "$MERGE_ELIGIBLE_FILE" ]; then
@@ -1090,15 +1053,10 @@ except Exception as e:
 " "$pr_num" "$pr_repo" "$MERGE_ELIGIBLE_FILE" 2>/dev/null)
 
     if [ "$is_eligible" != "yes" ]; then
-      echo "⛔ BLOCKED: PR #${pr_num} is NOT in merge-eligible.json." >&2
-      echo "The merge gate requires all CI checks to pass before merging." >&2
-      echo "Run 'cat ${MERGE_ELIGIBLE_FILE} | python3 -m json.tool' to see eligible PRs." >&2
-      exit 1
+      _deny merge_not_eligible "PR #${pr_num} is NOT in merge-eligible.json (all CI checks must pass first); run 'cat ${MERGE_ELIGIBLE_FILE}' to see eligible PRs."
     fi
   elif [ -n "$pr_num" ] && [ ! -f "$MERGE_ELIGIBLE_FILE" ]; then
-    echo "⛔ BLOCKED: ${MERGE_ELIGIBLE_FILE} not found — cannot verify merge eligibility." >&2
-    echo "Run merge-gate.sh first, or wait for the next pipeline cycle." >&2
-    exit 1
+    _deny merge_gate_unavailable "${MERGE_ELIGIBLE_FILE} not found — cannot verify merge eligibility; run merge-gate.sh first or wait for the next pipeline cycle."
   fi
 fi
 
@@ -1139,8 +1097,7 @@ if [ "$subcmd" = "api" ]; then
   # agents — the read/write split opens READS only, never writes. Non-contributor
   # hive agents keep their existing write paths (governed by mode/ACMM gates above).
   if _contributor_mode && [ "$api_method" != "GET" ]; then
-    echo "⛔ BLOCKED: mutating gh api (${api_method}) is disabled for contributor agents." >&2
-    exit 1
+    _deny contributor_api_write "mutating gh api (${api_method}) is disabled for contributor agents; use gh issue/pr subcommands for writes."
   fi
 
   # An enforced lane's direct writes are refused here as well as at the proxy
@@ -1154,8 +1111,7 @@ if [ "$subcmd" = "api" ]; then
     case "$arg" in
       repos/*/issues\?*|repos/*/issues|repos/*/pulls\?*|repos/*/pulls)
         if [ "$api_method" != "GET" ]; then
-          echo "⛔ BLOCKED: mutating gh api (${api_method}) to issues/pulls is disabled for agents." >&2
-          exit 1
+          _deny api_write_issues_pulls "mutating gh api (${api_method}) to issues/pulls is disabled for agents; use hive-open-issue / hive-open-pr / hive-review instead."
         fi
         # GET is a read-only lookup — allowed so agents can check for existing PRs (#2356).
         ;;

@@ -504,6 +504,17 @@ jobs:
         working-directory: .
         run: bash bin/test_issue_classifier.sh
 
+      # bin/hive-gh.sh is the compact `gh --json` projection front for the
+      # common read verbs (#12127). Its one job is to shrink what lands in an
+      # agent's context WITHOUT hiding a field a merge/authorization gate
+      # reads (labels, author, head SHA, mergeable state, review decision,
+      # check conclusions) and WITHOUT closing the explicit full-fetch path.
+      # This EXECUTES the script against a stub gh that applies the real jq
+      # filters and asserts on the argv and the reshaped payload.
+      - name: hive-gh compact projection contract tests
+        working-directory: .
+        run: bash bin/test_hive_gh.sh
+
       # bin/kick-governor.sh (923 lines, called from bin/hive.sh, run every 15
       # min via kick-governor.timer) is the adaptive kick decision engine that
       # reads enumerate-actionable's actionable.json: it measures the backlog,

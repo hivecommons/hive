@@ -1297,6 +1297,11 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 
 		blocked := false
 		blockReason := ""
+		// blockCode is the machine-readable reason (#12127) that rides on the
+		// one-line 403 body and the X-Hive-Proxy-Reason header. Each gate that
+		// sets blockReason sets it; a gate that sets neither falls back to a
+		// generic code in ProxyDenialBody.
+		blockCode := ""
 
 		// Per-repo pause (#6203) and per-repo agent scope (#6204) are both
 		// checked BEFORE the mode chain, and outside it, for the same two
@@ -1325,17 +1330,21 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			if reason, paused := p.repoPauseRefusal(req.Method, req.URL.Path); paused {
 				blocked = true
 				blockReason = reason
+				blockCode = DenyReasonRepoPaused
 			} else if reason, refused := p.agentRepoScopeRefusal(agentName, req.Method, req.URL.Path); refused {
 				blocked = true
 				blockReason = reason
+				blockCode = DenyReasonAgentRepoScope
 			} else if reason, refused := p.autoMergeRefusal(req.Method, req.URL.Path); refused {
 				blocked = true
 				blockReason = reason
+				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if !isLinear {
 				if reason, kind, refused := WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(), agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
 					blocked = true
 					blockReason = reason
+					blockCode = DenyReasonWriteSurfaceEnforced
 					writeSurfaceKind = kind
 				}
 			}
@@ -1360,6 +1369,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// permissive default, backed by the REST table. Linear has no
 			// table underneath. See linear_rules.go.
 			blocked, blockReason = p.enforceLinear(req, agentName, mode, caps)
+			if blocked {
+				blockCode = DenyReasonLinear
+			}
 		} else if req.Method == "POST" && IsGraphQLPath(req.URL.Path) {
 			body, readErr := io.ReadAll(io.LimitReader(req.Body, graphQLBodyLimit))
 			if req.Body != nil {
@@ -1373,11 +1385,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			if reason, refused := p.graphQLAutoMergeRefusal(body); agentName != internalCallerName && refused {
 				blocked = true
 				blockReason = reason
+				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if agentName != internalCallerName {
 				if reason, refused := WriteSurfaceGraphQLRefusal(p.writeSurfaceEnforcedFunc(), agentName, body); refused {
 					blocked = true
 					blockReason = reason
+					blockCode = DenyReasonWriteSurfaceEnforced
 					writeSurfaceKind = WriteSurfaceKindGraphQL
 				}
 			}
@@ -1387,8 +1401,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blocked = true
 				if isMutation {
 					blockReason = "graphql mutation"
+					blockCode = DenyReasonGraphQLMutation
 				} else {
 					blockReason = "graphql"
+					blockCode = DenyReasonGraphQL
 				}
 			}
 			req.Body = io.NopCloser(strings.NewReader(string(body)))
@@ -1400,6 +1416,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// canary-egress checks below still apply.
 		} else if !AllowedByModeCaps(autonomyModeForRepo(agentName, ExtractRepo(req.URL.Path), mode), caps, req.Method, req.URL.Path) {
 			blocked = true
+			blockCode = DenyReasonMode
 			// An unidentified agent is silently treated as ADVISORY, which turns
 			// a permissions bug into an indistinguishable "policy denial". Say so
 			// loudly on writes: a write from an unknown caller means UID
@@ -1413,10 +1430,12 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// agent knows to use hive-open-pr rather than seeing only a mode error.
 			if msg, denied := DeniedMessage(req.Method, req.URL.Path); denied && msg != "" {
 				blockReason = msg
+				blockCode = DenyReasonHardDeny
 			}
 		} else if len(p.allowedRepos) > 0 && !RepoFilterAllowed(p.allowedRepos, req.Method, req.URL.Path) {
 			blocked = true
 			blockReason = "repo not in hive config"
+			blockCode = DenyReasonRepoNotInConfig
 		}
 		// Shape-gate agent-authored issue/comment REST writes. The issue-request
 		// watcher validates the file-drop creation path, but an agent's
@@ -1436,6 +1455,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blocked = true
 				if blockReason == "" {
 					blockReason = reason
+					blockCode = DenyReasonIssueShape
 				}
 			}
 		}
@@ -1444,6 +1464,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blocked = true
 				if blockReason == "" {
 					blockReason = reason
+					blockCode = DenyReasonCanaryEgress
 				}
 			}
 		}
@@ -1458,7 +1479,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				p.auditWriteRefused(agentName, writeSurfaceKind, req.Method, req.URL.Path)
 			}
 
-			respBody := fmt.Sprintf("⛔ ACMM proxy: %s (%s) blocked %s %s\n", agentName, mode, req.Method, detail)
+			if blockCode == "" {
+				blockCode = DenyReasonUnknown
+			}
+			respBody := ProxyDenialBody(agentName, mode, req.Method, detail, blockCode)
 			contentType := "text/plain"
 			if blockJSON {
 				contentType = "application/json"
@@ -1478,6 +1502,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			}
 			resp.Header.Set("Content-Type", contentType)
 			resp.Header.Set("X-Hive-Proxy-Blocked", "true")
+			resp.Header.Set(ProxyDenialHeader, blockCode)
 			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 			writeErr := resp.Write(client)
 			_ = client.SetWriteDeadline(time.Time{})
