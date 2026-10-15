@@ -1,0 +1,1 @@
+- `GET /api/evidence/summary` aggregates stored review evidence bundles into outcomes by author kind, reviewer calibration and per-model accuracy, weekly sentinel hits and shadow-gate counts, with `n` and `missing` counts on every series; it is read-only and never affects merging ([#12063](https://github.com/hivecommons/hive/issues/12063)).
