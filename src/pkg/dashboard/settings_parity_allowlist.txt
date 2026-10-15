@@ -485,13 +485,6 @@ project.repo_policies[].self_authorization_hold # TODO #11854
 project.repos[] # TODO #11854
 publication.owner # TODO #11854
 removed_agents[] # TODO #11854
-retro.analysis_model # TODO #11854
-retro.enabled # TODO #11854
-retro.long_stall_days # TODO #11854
-retro.max_fix_attempts # TODO #11854
-retro.max_kicks # TODO #11854
-retro.recent_closed_window_s # TODO #11854
-retro.scan_interval_s # TODO #11854
 review.acknowledge_no_findings # TODO #11854
 review.all_authors # TODO #11854
 review.backlog.labels[] # TODO #11854

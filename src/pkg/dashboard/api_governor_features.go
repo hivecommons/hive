@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -26,7 +27,10 @@ const (
 //
 //   - ioscan            (legacy API compatibility; UI moved to Security)
 //   - otel/tracing      (Config.OTel/Tracing Enabled + advanced exporter fields)
-//   - retro             (Config.Retro enabled + analysis model)
+//   - retro             (Config.Retro enabled, analysis model and the pacing
+//     knobs scan_interval_s, max_fix_attempts, max_kicks, long_stall_days and
+//     recent_closed_window_s; the lane is built at startup, so these take
+//     effect after a restart)
 //   - mint              (Config.Mint.Enabled + Issuer — NOT KeyPath: the signing
 //     key is a secret/PEM path and the dashboard overlay is deliberately
 //     secret-free)
@@ -83,6 +87,13 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		RetroEnabled       *bool   `json:"retroEnabled"`
 		RetroAnalysisModel *string `json:"retroAnalysisModel"`
+		// Retro pacing knobs. 0 means the built-in default (no window for
+		// recent_closed_window_s); negative values are rejected.
+		RetroScanIntervalS       *int `json:"retroScanIntervalS"`
+		RetroMaxFixAttempts      *int `json:"retroMaxFixAttempts"`
+		RetroMaxKicks            *int `json:"retroMaxKicks"`
+		RetroLongStallDays       *int `json:"retroLongStallDays"`
+		RetroRecentClosedWindowS *int `json:"retroRecentClosedWindowS"`
 
 		MintEnabled *bool   `json:"mintEnabled"`
 		MintIssuer  *string `json:"mintIssuer"`
@@ -162,6 +173,21 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		applyClaimsTTLs(&probe, body.ClaimsTTLS, body.ClaimsHumanTTLS, body.ClaimsAgentTTLS, body.ClaimsContributorTTLS, body.ClaimsMaxTTLS)
 		if err := probe.ValidateTTLs(); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	for _, f := range []struct {
+		v    *int
+		name string
+	}{
+		{body.RetroScanIntervalS, "scan_interval_s"},
+		{body.RetroMaxFixAttempts, "max_fix_attempts"},
+		{body.RetroMaxKicks, "max_kicks"},
+		{body.RetroLongStallDays, "long_stall_days"},
+		{body.RetroRecentClosedWindowS, "recent_closed_window_s"},
+	} {
+		if f.v != nil && *f.v < 0 {
+			jsonError(w, fmt.Sprintf("retro %s must be 0 (default) or greater", f.name), http.StatusBadRequest)
 			return
 		}
 	}
@@ -264,6 +290,20 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.RetroAnalysisModel != nil {
 		cfg.Retro.AnalysisModel = strings.TrimSpace(*body.RetroAnalysisModel)
+	}
+	for _, f := range []struct {
+		src *int
+		dst *int
+	}{
+		{body.RetroScanIntervalS, &cfg.Retro.ScanIntervalS},
+		{body.RetroMaxFixAttempts, &cfg.Retro.MaxFixAttempts},
+		{body.RetroMaxKicks, &cfg.Retro.MaxKicks},
+		{body.RetroLongStallDays, &cfg.Retro.LongStallDays},
+		{body.RetroRecentClosedWindowS, &cfg.Retro.RecentClosedWindowS},
+	} {
+		if f.src != nil {
+			*f.dst = *f.src
+		}
 	}
 	if body.MintEnabled != nil {
 		cfg.Mint.Enabled = *body.MintEnabled
@@ -458,6 +498,11 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"otelHasHeaders":             len(otelCfg.Headers) > 0,
 		"retroEnabled":               cfg.Retro.Enabled,
 		"retroAnalysisModel":         cfg.Retro.AnalysisModel,
+		"retroScanIntervalS":         cfg.Retro.ScanIntervalS,
+		"retroMaxFixAttempts":        cfg.Retro.MaxFixAttempts,
+		"retroMaxKicks":              cfg.Retro.MaxKicks,
+		"retroLongStallDays":         cfg.Retro.LongStallDays,
+		"retroRecentClosedWindowS":   cfg.Retro.RecentClosedWindowS,
 		"mintEnabled":                cfg.Mint.Enabled,
 		"mintIssuer":                 cfg.Mint.Issuer,
 		"planFromLabel":              planFromLabel,
@@ -501,6 +546,14 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 	}
 	for k, v := range claimsTTLsResponse(cfg.Governor.Claims) {
 		out[k] = v
+	}
+	// Built-in values a zero retro pacing knob falls back to, so the dialog
+	// can show them as placeholders.
+	out["retroDefaults"] = map[string]int{
+		"retroScanIntervalS":  retro.DefaultScanIntervalS,
+		"retroMaxFixAttempts": retro.DefaultMaxFixAttempts,
+		"retroMaxKicks":       retro.DefaultMaxKicks,
+		"retroLongStallDays":  retro.DefaultLongStallDays,
 	}
 	return out
 }
