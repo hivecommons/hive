@@ -8029,7 +8029,11 @@
       if (!_isAdmin) {
         return '<span class="' + stateClass + '" title="' + escAttr(title) + '">' + (on ? 'auto-promotion on' : 'auto-promotion paused') + '</span>';
       }
-      return '<button class="hv-btn btn-sm ' + stateClass + '" type="button" onclick="toggleStablePromotion(' + (!on) + ')" title="' + escAttr(title) + '">' + (on ? '⏸ pause stable auto-promotion' : '▶ resume stable auto-promotion') + '</button><span class="filter-summary" title="' + escAttr(title) + '">' + esc(on ? 'auto: on' : 'paused') + '</span>';
+      /* The button label already says which state we are in (pause ⇒ on,
+         resume ⇒ paused) and carries the detail tooltip, so no trailing
+         status chip: on the wrapped stable row it fell onto its own line
+         as a stray "auto: on" (hivecommons/hive#12210). */
+      return '<button class="hv-btn btn-sm ' + stateClass + '" type="button" onclick="toggleStablePromotion(' + (!on) + ')" title="' + escAttr(title) + '">' + (on ? '⏸ pause stable auto-promotion' : '▶ resume stable auto-promotion') + '</button>';
     }
     async function toggleStablePromotion(enabled) {
       if (!_isAdmin) return;

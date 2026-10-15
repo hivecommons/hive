@@ -1,0 +1,1 @@
+- hub dashboard: the stable release-channel row no longer renders a stray "auto: on"/"paused" chip on its own line after the pause/resume auto-promotion button; the button label already carries the state (hivecommons/hive#12210).
