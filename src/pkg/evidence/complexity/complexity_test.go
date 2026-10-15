@@ -25,7 +25,7 @@ type T[K any] struct{}
 
 func (t *T[K]) M() {}
 func (T[K]) V()    {}
-func (x *int) Odd() {}
+func (x *q.R) Odd() {}
 
 func Branchy(a, b int, ch chan int) int {
 	if a > 0 && b > 0 || a < b {
@@ -110,8 +110,9 @@ func TestHotspotsCapped(t *testing.T) {
 	if len(s.Hotspots) != maxHotspots {
 		t.Fatalf("hotspots=%d", len(s.Hotspots))
 	}
-	if s.Hotspots[0].File != "p.go" || s.Hotspots[1].File != "q.go" {
-		t.Fatalf("tie order: %+v", s.Hotspots[:2])
+	// Ties sort by file then name: p.go's 10 lexically-first functions fill the cap.
+	if s.Hotspots[0].Name != "Fa" || s.Hotspots[1].Name != "Fb" || s.Hotspots[9].File != "p.go" {
+		t.Fatalf("tie order: %+v", s.Hotspots)
 	}
 }
 
