@@ -28750,7 +28750,7 @@ function burnAreaChart() {
         overlay.className = 'gh-auth-overlay cred-dialog-overlay';
         overlay.innerHTML = `<div class="gh-auth-modal" style="max-width:480px;text-align:left">
           <h3 style="color:var(--amber);text-align:center">Configure LiteLLM</h3>
-          <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Settings → LiteLLM).</p>
+          <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Settings → Model Gateways → Legacy LiteLLM endpoint).</p>
           <div class="config-field">
             <label>Endpoint URL</label>
             <input type="text" id="litellm-setup-endpoint" placeholder="https://litellm.example.com" style="width:100%;box-sizing:border-box">
@@ -34208,7 +34208,30 @@ function burnAreaChart() {
         <div id="openrouter-fund-host"></div>
         <div id="gateways-form-host"></div>
         <div id="gateways-list-host"><div style="color:var(--muted);font-size:0.8rem">Loading gateways…</div></div>
-        <div id="inference-auth-host"><div style="color:var(--muted);font-size:0.8rem">Loading inference auth…</div></div>`;
+        <div id="inference-auth-host"><div style="color:var(--muted);font-size:0.8rem">Loading inference auth…</div></div>
+        ${renderGovLegacyLiteLLM()}`;
+    }
+
+    // renderGovLegacyLiteLLM exposes the legacy governor.litellm block — the
+    // "legacy endpoint" route diagnostics name — on the Model Gateways tab.
+    // Its standalone LiteLLM tab was retired, which left that endpoint, key
+    // and default model editable only in hive.yaml while Test results still
+    // told operators to reconcile it.
+    function renderGovLegacyLiteLLM() {
+      const litellm = (_configState.data && _configState.data.litellm) || {};
+      return `
+        <details id="legacy-litellm-section" class="card-inset mt-4">
+          <summary class="fw-semibold">Legacy LiteLLM endpoint (governor.litellm)${litellm.endpoint ? ' — ' + esc(litellm.endpoint) : ' — not set'}</summary>
+          <p class="text-muted fs-sm mt-2">
+            The pre-gateways LiteLLM settings for the built-in <code>litellm</code> backend. When a gateway named
+            <code>litellm</code> exists in the list above, agents use that gateway and this block only backs older
+            code paths; saving that gateway with a new endpoint repoints this block too. Otherwise this is the
+            endpoint, key and default model agents on the <code>litellm</code> backend use. The
+            <code>HIVE_LITELLM_ENDPOINT</code> environment variable overrides the endpoint here. Clear the endpoint
+            if it names a gateway you no longer use. Changes apply when you press Save.
+          </p>
+          ${renderGovLiteLLM(litellm)}
+        </details>`;
     }
 
     // ---- vLLM / llm-d discovery auth (#4217) --------------------------------
@@ -45216,7 +45239,7 @@ function burnAreaChart() {
           if (agents.length === 0) return false;
           return agents.every(a => _welcomeConfiguredValue(_welcomeAgentBackend(a)));
         },
-        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Settings → LiteLLM). Mix and match per agent.',
+        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Settings → Model Gateways). Mix and match per agent.',
         autoNote: 'Checks itself once every configured agent has a resolved method/backend.',
         actions: [{ label: 'Show me', action: 'welcomeShowAgentCard' }]
       },

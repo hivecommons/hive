@@ -108,6 +108,8 @@ Never put the key value itself in YAML.
 
 When a `gateways:` entry named `litellm` exists (the Model Gateways tab creates one), agents on the built-in `litellm` backend take **endpoint, default model, key and CA bundle from that gateway**, and the legacy `governor.litellm` block / `HIVE_LITELLM_ENDPOINT` are ignored for routing. Only when no such gateway has an endpoint does the legacy block (env var first, then YAML) route traffic. `local_proxy: true` wins over both. Every Test button prints the resulting route — `Agents on backend "litellm" send inference to POST <url> … — route source: …` — and warns when that is not the endpoint or key the test just exercised, so "Connection OK" is never shown for an endpoint no agent will use.
 
+The legacy `governor.litellm` block (the "legacy endpoint" these messages name) is edited in the dashboard under **Settings → Model Gateways → Legacy LiteLLM endpoint**, below the gateway list. Saving the gateway named `litellm` with a new endpoint repoints the legacy endpoint, default model and key store to match, so the two cannot drift apart again; clear the legacy endpoint there if it names a gateway you no longer use.
+
 
 ## OpenRouter scan-to-fund gateway
 
