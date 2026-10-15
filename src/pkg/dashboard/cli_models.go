@@ -662,6 +662,18 @@ type cliModelLastGoodFile struct {
 }
 
 func newCLIModelCache() *cliModelCache {
+	return newCLIModelCacheAt(time.Now)
+}
+
+// newCLIModelCacheAt is newCLIModelCache with an injectable clock. The clock
+// is installed BEFORE the persisted last-good catalogs are loaded, because
+// loadLastGood applies cliModelLastGoodTTL against it: a cache built with the
+// wall clock and re-clocked afterwards has already discarded every fixture
+// older than the TTL (hivecommons/hive#12036).
+func newCLIModelCacheAt(now func() time.Time) *cliModelCache {
+	if now == nil {
+		now = time.Now
+	}
 	c := &cliModelCache{
 		entries:       make(map[string]cliModelCacheEntry),
 		refreshing:    make(map[string]bool),
@@ -671,7 +683,7 @@ func newCLIModelCache() *cliModelCache {
 		lastGood:      make(map[string]cliModelCacheEntry),
 		failures:      make(map[string]int),
 		lastGoodDir:   cliModelLastGoodDir,
-		now:           time.Now,
+		now:           now,
 	}
 	c.loadLastGood()
 	return c

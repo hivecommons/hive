@@ -21,9 +21,7 @@ func newLastGoodTestCache(t *testing.T, now *time.Time) *cliModelCache {
 	prev := cliModelLastGoodDir
 	cliModelLastGoodDir = dir
 	t.Cleanup(func() { cliModelLastGoodDir = prev })
-	c := newCLIModelCache()
-	c.now = func() time.Time { return *now }
-	return c
+	return newCLIModelCacheAt(func() time.Time { return *now })
 }
 
 // TestCopilotSDKHelperExecErr_DeadlineNamesTimeout: a helper SIGKILLed by its
@@ -239,8 +237,10 @@ func TestCLIModelCache_LastGoodPersistsAcrossRestart(t *testing.T) {
 		}
 	}
 
-	restarted := newCLIModelCache() // cliModelLastGoodDir still points at the temp dir
-	restarted.now = func() time.Time { return now.Add(time.Hour) }
+	// cliModelLastGoodDir still points at the temp dir. The clock has to be
+	// in place before the load: the fixture is dated, so a wall-clock load
+	// would drop it as expired once the calendar passed At + TTL.
+	restarted := newCLIModelCacheAt(func() time.Time { return now.Add(time.Hour) })
 	r, ok := restarted.lastGoodFor("copilot", "why")
 	if !ok || !r.stale || r.discoveryErr != "why" || !equalStrings(r.models, []string{"gpt-5.4", "claude-opus-5.5"}) {
 		t.Fatalf("restarted cache did not load last-good: ok=%v %+v", ok, r)
@@ -249,8 +249,7 @@ func TestCLIModelCache_LastGoodPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("staleAt = %v, want %v", r.staleAt, now)
 	}
 
-	expired := newCLIModelCache()
-	expired.now = func() time.Time { return now.Add(cliModelLastGoodTTL + time.Minute) }
+	expired := newCLIModelCacheAt(func() time.Time { return now.Add(cliModelLastGoodTTL + time.Minute) })
 	if _, ok := expired.lastGoodFor("copilot", "why"); ok {
 		t.Fatal("expired last-good must not be served")
 	}
@@ -279,8 +278,7 @@ func TestQueryCLIModelsForBoot_ServesPersistedLastGood(t *testing.T) {
 		probedOnce.Do(func() { close(probed) })
 		return nil, errors.New("sdk helper: exit status 1 (stderr: nope)")
 	})
-	c := newCLIModelCache()
-	c.now = func() time.Time { return now.Add(time.Minute) }
+	c := newCLIModelCacheAt(func() time.Time { return now.Add(time.Minute) })
 	s := &Server{cliModels: c, logger: testLogger()}
 	r := s.queryCLIModelsForBoot("copilot")
 	if !r.stale || r.fallback || !equalStrings(r.models, []string{"gpt-5.4"}) {
