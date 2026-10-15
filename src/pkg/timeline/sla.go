@@ -533,8 +533,8 @@ func (h *SLAHistory) Series(repo string, now time.Time) []SLADay {
 	var days map[string]SLADay
 	if h != nil {
 		h.mu.Lock()
+		defer h.mu.Unlock()
 		days = h.days[repo]
-		h.mu.Unlock()
 	}
 	start := now.UTC().AddDate(0, 0, -(SLAHistoryDays - 1))
 	for i := 0; i < SLAHistoryDays; i++ {
