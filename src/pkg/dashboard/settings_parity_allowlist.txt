@@ -1,28 +1,18 @@
 # Current Settings dialog parity gaps.
 # Every entry must have a Settings control before it is removed.
 # TODO #11854
-agent_sandbox.env_allowlist[] # TODO #11854
-agent_sandbox.image # TODO #11854
 agent_sandbox.job.env_from_secrets[] # TODO #11854
 agent_sandbox.job.node_selector.<key> # TODO #11854
 agent_sandbox.job.resources.limits.<key> # TODO #11854
 agent_sandbox.job.resources.requests.<key> # TODO #11854
-agent_sandbox.job.service_account # TODO #11854
 agent_sandbox.job.tolerations[].effect # TODO #11854
 agent_sandbox.job.tolerations[].key # TODO #11854
 agent_sandbox.job.tolerations[].operator # TODO #11854
 agent_sandbox.job.tolerations[].value # TODO #11854
-agent_sandbox.job.ttl_seconds # TODO #11854
 agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
 agent_sandbox.job.volumes[].read_only # TODO #11854
-agent_sandbox.job.workspace_claim # TODO #11854
-agent_sandbox.job.workspace_claim_mount # TODO #11854
-agent_sandbox.network_mode # TODO #11854
-agent_sandbox.runtime # TODO #11854
-agent_sandbox.timeout_s # TODO #11854
-agent_sandbox.workspace_dir # TODO #11854
 agents.<key>.acmm_levels[] # TODO #11854
 agents.<key>.agent_spec # TODO #11854
 agents.<key>.aliases[] # TODO #11854

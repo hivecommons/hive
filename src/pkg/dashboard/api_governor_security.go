@@ -36,6 +36,16 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		ReviewReviewerAgents        *[]string `json:"reviewReviewerAgents"`
 		ReviewFixerAgent            *string   `json:"reviewFixerAgent"`
 		AgentSandboxEnabled         *bool     `json:"agentSandboxEnabled"`
+		SandboxImage                *string   `json:"agentSandboxImage"`
+		SandboxEnvAllowlist         *[]string `json:"agentSandboxEnvAllowlist"`
+		SandboxNetworkMode          *string   `json:"agentSandboxNetworkMode"`
+		SandboxTimeoutS             *int      `json:"agentSandboxTimeoutS"`
+		SandboxWorkspaceDir         *string   `json:"agentSandboxWorkspaceDir"`
+		SandboxRuntime              *string   `json:"agentSandboxRuntime"`
+		SandboxJobServiceAccount    *string   `json:"agentSandboxJobServiceAccount"`
+		SandboxJobTTLSeconds        *int      `json:"agentSandboxJobTtlSeconds"`
+		SandboxJobWorkspaceClaim    *string   `json:"agentSandboxJobWorkspaceClaim"`
+		SandboxJobClaimMount        *string   `json:"agentSandboxJobWorkspaceClaimMount"`
 		// Sentinel (suspicious-activity alerts) is pointer-typed per field
 		// so an absent key means "unchanged" — a save that only toggled a
 		// behavior must not wipe the sensitive-path list.
@@ -168,6 +178,55 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	if body.AgentSandboxEnabled != nil {
 		cfg.AgentSandbox.Enabled = *body.AgentSandboxEnabled
 	}
+	if rt := body.SandboxRuntime; rt != nil {
+		v := strings.TrimSpace(*rt)
+		if v != "" && !config.ValidSandboxRuntimes[v] {
+			http.Error(w, "invalid agentSandboxRuntime", http.StatusBadRequest)
+			return
+		}
+		cfg.AgentSandbox.Runtime = v
+	}
+	if body.SandboxTimeoutS != nil && *body.SandboxTimeoutS < 0 || body.SandboxJobTTLSeconds != nil && *body.SandboxJobTTLSeconds < 0 {
+		http.Error(w, "sandbox timeouts must be >= 0", http.StatusBadRequest)
+		return
+	}
+	for _, f := range []struct {
+		in  *string
+		dst *string
+	}{
+		{body.SandboxImage, &cfg.AgentSandbox.Image},
+		{body.SandboxNetworkMode, &cfg.AgentSandbox.NetworkMode},
+		{body.SandboxWorkspaceDir, &cfg.AgentSandbox.WorkspaceDir},
+	} {
+		if f.in != nil {
+			*f.dst = sanitizeString(strings.TrimSpace(*f.in))
+		}
+	}
+	if body.SandboxEnvAllowlist != nil {
+		cfg.AgentSandbox.EnvAllowlist = sanitizeStringSlice(*body.SandboxEnvAllowlist)
+	}
+	if body.SandboxTimeoutS != nil {
+		cfg.AgentSandbox.TimeoutS = *body.SandboxTimeoutS
+	}
+	if body.SandboxJobServiceAccount != nil || body.SandboxJobTTLSeconds != nil ||
+		body.SandboxJobWorkspaceClaim != nil || body.SandboxJobClaimMount != nil {
+		if cfg.AgentSandbox.Job == nil {
+			cfg.AgentSandbox.Job = &config.SandboxJobConfig{}
+		}
+		job := cfg.AgentSandbox.Job
+		if body.SandboxJobServiceAccount != nil {
+			job.ServiceAccount = sanitizeString(strings.TrimSpace(*body.SandboxJobServiceAccount))
+		}
+		if body.SandboxJobWorkspaceClaim != nil {
+			job.WorkspaceClaim = sanitizeString(strings.TrimSpace(*body.SandboxJobWorkspaceClaim))
+		}
+		if body.SandboxJobClaimMount != nil {
+			job.WorkspaceClaimMount = sanitizeString(strings.TrimSpace(*body.SandboxJobClaimMount))
+		}
+		if body.SandboxJobTTLSeconds != nil {
+			job.TTLSeconds = *body.SandboxJobTTLSeconds
+		}
+	}
 	if nextSentinel != nil {
 		cfg.Sentinel = *nextSentinel
 	}
@@ -226,30 +285,40 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 	credentialInjection := config.ResolveProxyInjectGHAuth(os.Getenv)
 
 	return map[string]interface{}{
-		"credentialWarnings":               credentialWarnings,
-		"credentialInjection":              credentialInjection,
-		"ioscanEnabled":                    cfg.Ioscan.IsEnabled(),
-		"ioscanFailMode":                   failMode,
-		"ioscanCanaries":                   cfg.Ioscan.CanariesEnabled(),
-		"intentEnforce":                    cfg.Intent.Enforce,
-		"intentAlignmentModel":             cfg.Intent.AlignmentModel,
-		"intentTestPathPatterns":           nonNilStrings(cfg.Intent.TestPathPatterns),
-		"intentDocsPathPatterns":           nonNilStrings(cfg.Intent.DocsPathPatterns),
-		"intentGuardrailPathPatterns":      nonNilStrings(cfg.Intent.GuardrailPathPatterns),
-		"intentFeatureSignals":             nonNilStrings(cfg.Intent.FeatureSignals),
-		"intentDefaults":                   intentDefaultsResponse(),
-		"reviewRequireApproval":            cfg.Review.RequireApproval,
-		"reviewFanOut":                     cfg.Review.FanOut,
-		"reviewMaxParallelReviews":         cfg.Review.EffectiveMaxParallelReviews(),
-		"reviewReviewerAgents":             cfg.Review.ReviewerAgents,
-		"reviewFixerAgent":                 cfg.Review.FixerAgent,
-		"reviewCapableAgents":              reviewCapable,
-		"reviewSeverityThresholdAvailable": false,
-		"agentSandboxEnabled":              cfg.AgentSandbox.Enabled,
-		"sandboxedAgents":                  sandboxed,
-		"totalAgents":                      len(cfg.Agents),
-		"sandboxWarnings":                  sandboxWarnings,
-		"sentinel":                         sentinelSectionResponse(cfg.Sentinel),
+		"credentialWarnings":                 credentialWarnings,
+		"credentialInjection":                credentialInjection,
+		"ioscanEnabled":                      cfg.Ioscan.IsEnabled(),
+		"ioscanFailMode":                     failMode,
+		"ioscanCanaries":                     cfg.Ioscan.CanariesEnabled(),
+		"intentEnforce":                      cfg.Intent.Enforce,
+		"intentAlignmentModel":               cfg.Intent.AlignmentModel,
+		"intentTestPathPatterns":             nonNilStrings(cfg.Intent.TestPathPatterns),
+		"intentDocsPathPatterns":             nonNilStrings(cfg.Intent.DocsPathPatterns),
+		"intentGuardrailPathPatterns":        nonNilStrings(cfg.Intent.GuardrailPathPatterns),
+		"intentFeatureSignals":               nonNilStrings(cfg.Intent.FeatureSignals),
+		"intentDefaults":                     intentDefaultsResponse(),
+		"reviewRequireApproval":              cfg.Review.RequireApproval,
+		"reviewFanOut":                       cfg.Review.FanOut,
+		"reviewMaxParallelReviews":           cfg.Review.EffectiveMaxParallelReviews(),
+		"reviewReviewerAgents":               cfg.Review.ReviewerAgents,
+		"reviewFixerAgent":                   cfg.Review.FixerAgent,
+		"reviewCapableAgents":                reviewCapable,
+		"reviewSeverityThresholdAvailable":   false,
+		"agentSandboxEnabled":                cfg.AgentSandbox.Enabled,
+		"agentSandboxImage":                  cfg.AgentSandbox.Image,
+		"agentSandboxEnvAllowlist":           nonNilStrings(cfg.AgentSandbox.EnvAllowlist),
+		"agentSandboxNetworkMode":            cfg.AgentSandbox.NetworkMode,
+		"agentSandboxTimeoutS":               cfg.AgentSandbox.TimeoutS,
+		"agentSandboxWorkspaceDir":           cfg.AgentSandbox.WorkspaceDir,
+		"agentSandboxRuntime":                cfg.AgentSandbox.Runtime,
+		"agentSandboxJobServiceAccount":      sandboxJobOrEmpty(cfg).ServiceAccount,
+		"agentSandboxJobTtlSeconds":          sandboxJobOrEmpty(cfg).TTLSeconds,
+		"agentSandboxJobWorkspaceClaim":      sandboxJobOrEmpty(cfg).WorkspaceClaim,
+		"agentSandboxJobWorkspaceClaimMount": sandboxJobOrEmpty(cfg).WorkspaceClaimMount,
+		"sandboxedAgents":                    sandboxed,
+		"totalAgents":                        len(cfg.Agents),
+		"sandboxWarnings":                    sandboxWarnings,
+		"sentinel":                           sentinelSectionResponse(cfg.Sentinel),
 	}
 }
 
@@ -335,4 +404,11 @@ func sanitizedHeaderMap(in map[string]string) map[string]string {
 		out[key] = strings.TrimSpace(v)
 	}
 	return out
+}
+
+func sandboxJobOrEmpty(cfg *config.Config) config.SandboxJobConfig {
+	if cfg.AgentSandbox.Job == nil {
+		return config.SandboxJobConfig{}
+	}
+	return *cfg.AgentSandbox.Job
 }
