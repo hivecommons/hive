@@ -31349,6 +31349,8 @@ function burnAreaChart() {
 
     const SETTINGS_SEARCH_STATIC_HITS = [
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: '', text: 'ACMM maturity level agent packs advisory fully autonomous' },
+      { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
+      { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Features', section: 'Dashboard', label: 'Strategy Lab', key: 'dashboard.strategy_lab', text: 'strategy_lab Strategy Lab dashboard feature experimental planner' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
@@ -40144,6 +40146,16 @@ function burnAreaChart() {
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)"><div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Safe references</div><p style="font-size:0.72rem;color:var(--muted)">Names only. Literal URLs, tokens, and API keys are rejected server-side.</p>${refRows || '<p style="font-size:0.72rem;color:var(--muted)">Select a platform to configure its references.</p>'}</div>`;
     }
 
+
+    function markAdvisoryQueueHealth(key, value) {
+      const current = (((_configState.data || {}).advisory || {}).queue_health) || {};
+      const prev = ((_configState.dirty.advisory || {}).queue_health) || {};
+      const next = Object.assign({}, current, prev, { [key]: value });
+      if (!_configState.data.advisory) _configState.data.advisory = {};
+      _configState.data.advisory.queue_health = next;
+      markDirty('advisory', 'queue_health', next);
+    }
+
     // renderGovAdvisory renders the advisory digest settings: how many findings
     // the digest shows, and the lifecycle controls that stop findings from
     // accumulating forever once the condition behind them is gone.
@@ -40156,38 +40168,76 @@ function burnAreaChart() {
       const maxFindings = a.max_findings === undefined ? 10 : a.max_findings;
       const stalenessDays = a.staleness_days === undefined ? 7 : a.staleness_days;
       const updateIntervalS = a.update_interval_s === undefined ? 0 : a.update_interval_s;
+      const postRetryBackoffS = a.post_retry_backoff_s === undefined ? 0 : a.post_retry_backoff_s;
+      const qh = a.queue_health || {};
       return `
         <p style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:14px">Controls the advisory digest posted to your repo: how much of it is shown, and when findings nobody re-reports are retired.</p>
 
         <div style="margin:18px 0">
           <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">What is shown</div>
           <div class="config-field">
-            <label>Max findings shown ${settingHelpMark('advisory', '', 'Max findings shown', `The digest renders this many findings, ranked by severity then recency across all agents. The remainder is counted in a note, never dropped silently. To render every finding, turn on "Show all findings" below.`)}</label>
+            <label>Max findings shown ${yamlHint('governor.advisory.max_findings')} ${settingHelpMark('advisory', '', 'Max findings shown', `The digest renders this many findings, ranked by severity then recency across all agents. The remainder is counted in a note, never dropped silently. To render every finding, turn on "Show all findings" below.`)}</label>
             <input type="number" min="1" step="1" value="${maxFindings}" data-change-action="gh59">
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${a.show_all ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="advisory" data-key="show_all"></div>
-            <span class="config-toggle-label">Show all findings <span style="color:var(--muted);font-weight:400">— override the max and show everything</span></span>
+            <span class="config-toggle-label">Show all findings ${yamlHint('governor.advisory.show_all')} <span style="color:var(--muted);font-weight:400">— override the max and show everything</span></span>
           </div>
         </div>
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
-          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">When it updates</div>
+          <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Where and when it posts</div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Digest target ${yamlHint('governor.advisory.target')} ${settingHelpMark('advisory', '', 'Digest target', `Choose where the advisory digest is rewritten each cycle. GitHub uses the pinned advisory issue on the primary repo; Linear posts to the issue named below.`)}</label>
+              <select data-change-action="markDirty" data-arg0="advisory" data-arg1="target" data-arg-types="s,s,v">
+                <option value="github" ${(a.target || 'github') === 'github' ? 'selected' : ''}>GitHub advisory issue</option>
+                <option value="linear" ${a.target === 'linear' ? 'selected' : ''}>Linear issue</option>
+              </select>
+            </div>
+            <div class="config-field">
+              <label>Linear issue ${yamlHint('governor.advisory.linear_issue')} ${settingHelpMark('advisory', '', 'Linear issue', `Issue key such as ONB-123. Required when the digest target is Linear.`)}</label>
+              <input type="text" value="${esc(a.linear_issue || '')}" placeholder="ONB-123" data-change-action="markDirty" data-arg0="advisory" data-arg1="linear_issue" data-arg-types="s,s,w">
+            </div>
+          </div>
           <div class="config-field">
-            <label>Update interval (s) ${settingHelpMark('advisory', '', 'Update interval (s)', `How often the digest comment on the pinned advisory issue is checked and refreshed. 0 = default (60s, every governor cycle). Longer values (30&ndash;3600s) reduce GitHub API writes and notification churn on watched repos; changes apply live from the next cycle. Unchanged digests are already skipped, and the periodic forced refresh that heals hand-edited comments stretches with this interval.`)}</label>
+            <label>Update interval (s) ${yamlHint('governor.advisory.update_interval_s')} ${settingHelpMark('advisory', '', 'Update interval (s)', `How often the digest comment on the pinned advisory issue is checked and refreshed. 0 = default (60s, every governor cycle). Longer values (30&ndash;3600s) reduce GitHub API writes and notification churn on watched repos; changes apply live from the next cycle. Unchanged digests are already skipped, and the periodic forced refresh that heals hand-edited comments stretches with this interval.`)}</label>
             <input type="number" min="0" max="3600" step="1" value="${updateIntervalS}" data-change-action="gh76">
           </div>
         </div>
 
         <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border)">
           <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:var(--sp-3)">Keeping findings current</div>
-          <div class="config-field">
-            <label>Staleness window (days) ${settingHelpMark('advisory', '', 'Staleness window (days)', `Agents re-report a finding for as long as its condition holds. A finding no agent has re-reported within this many days is auto-closed and leaves the digest.`)}</label>
-            <input type="number" min="1" step="1" value="${stalenessDays}" data-change-action="gh60">
+          <div class="config-field-row">
+            <div class="config-field">
+              <label>Staleness window (days) ${yamlHint('governor.advisory.staleness_days')} ${settingHelpMark('advisory', '', 'Staleness window (days)', `Agents re-report a finding for as long as its condition holds. A finding no agent has re-reported within this many days is auto-closed and leaves the digest.`)}</label>
+              <input type="number" min="1" step="1" value="${stalenessDays}" data-change-action="gh60">
+            </div>
+            <div class="config-field">
+              <label>Post retry backoff (s) ${yamlHint('governor.advisory.post_retry_backoff_s')} ${settingHelpMark('advisory', '', 'Post retry backoff (s)', `Seconds to pause advisory digest writes after GitHub refuses the pinned comment with a permissions error. 0 uses the shipped default; a negative value disables the backoff.`)}</label>
+              <input type="number" step="1" value="${postRetryBackoffS}" data-change-action="markDirty" data-arg0="advisory" data-arg1="post_retry_backoff_s" data-arg-types="s,s,N">
+            </div>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${a.pr_autoclose === false ? '' : 'on'}" data-action="toggleConfigSwitch" data-section="advisory" data-key="pr_autoclose"></div>
-            <span class="config-toggle-label">Close findings fixed by a merged PR <span style="color:var(--muted);font-weight:400">— match merged PR titles against open findings</span></span>
+            <span class="config-toggle-label">Close findings fixed by a merged PR ${yamlHint('governor.advisory.pr_autoclose')} <span style="color:var(--muted);font-weight:400">— match merged PR titles against open findings</span></span>
+          </div>
+        </div>
+
+        <div class="config-field">
+          <div class="config-subgroup">Queue health advice thresholds</div>
+          <div class="config-help">Whole-number thresholds for weekly owner advice. 0 uses the shipped default.</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Blocked PR % ${yamlHint('governor.advisory.queue_health.blocked_pr_pct')}</label><input type="number" min="0" step="1" value="${qh.blocked_pr_pct || 0}" data-change-action="markAdvisoryQueueHealth" data-arg0="blocked_pr_pct" data-arg-types="s,N"></div>
+            <div class="config-field"><label>Needs-human PR % ${yamlHint('governor.advisory.queue_health.needs_human_pr_pct')}</label><input type="number" min="0" step="1" value="${qh.needs_human_pr_pct || 0}" data-change-action="markAdvisoryQueueHealth" data-arg0="needs_human_pr_pct" data-arg-types="s,N"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Needs-human issue % ${yamlHint('governor.advisory.queue_health.needs_human_issue_pct')}</label><input type="number" min="0" step="1" value="${qh.needs_human_issue_pct || 0}" data-change-action="markAdvisoryQueueHealth" data-arg0="needs_human_issue_pct" data-arg-types="s,N"></div>
+            <div class="config-field"><label>Stale blocked PRs ${yamlHint('governor.advisory.queue_health.stale_blocked_prs')}</label><input type="number" min="0" step="1" value="${qh.stale_blocked_prs || 0}" data-change-action="markAdvisoryQueueHealth" data-arg0="stale_blocked_prs" data-arg-types="s,N"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Lane share % ${yamlHint('governor.advisory.queue_health.lane_share_pct')}</label><input type="number" min="0" step="1" value="${qh.lane_share_pct || 0}" data-change-action="markAdvisoryQueueHealth" data-arg0="lane_share_pct" data-arg-types="s,N"></div>
+            <div class="config-field"><label>Check share % ${yamlHint('governor.advisory.queue_health.check_share_pct')}</label><input type="number" min="0" step="1" value="${qh.check_share_pct || 0}" data-change-action="markAdvisoryQueueHealth" data-arg0="check_share_pct" data-arg-types="s,N"></div>
           </div>
         </div>`;
     }
