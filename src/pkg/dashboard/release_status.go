@@ -269,3 +269,17 @@ func buildSpokeReleaseStatus(imageRef, trackedChannel string, outcome *upgradeOu
 	}
 	return st
 }
+
+// enforceRunningCommitInvariant is the final guard on the Channel card: a
+// recorded success naming a commit other than the one running is history, not
+// current truth, whichever selector produced it (#11194).
+func enforceRunningCommitInvariant(at UpgradeAttemptStatus, runningSHA string) UpgradeAttemptStatus {
+	if at.State != upgradeAttemptSucceeded || at.Superseded || runningSHA == "" || at.Target == "" || sameCommitDashboard(runningSHA, at.Target) {
+		return at
+	}
+	at.Superseded = true
+	at.RunningCommit = shortSHADashboard(runningSHA)
+	at.Detail = fmt.Sprintf("The hive is running %s. The last recorded upgrade (to %s) has since been superseded — the hive was rolled by the hub or a floating image tag.",
+		at.RunningCommit, orUnknownSHA(at.Target))
+	return at
+}
