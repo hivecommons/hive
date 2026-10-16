@@ -134,7 +134,18 @@ func TestSkewNoticeInInitializeAndToolErrors(t *testing.T) {
 				t.Fatalf("unsupported err = %s, want unchanged %s", text, unsupported)
 			}
 
+			// /api/status/summary is served, so hive_status must succeed without any notice.
 			result, err = provider.handler(adminmcp.ToolHiveStatus)(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: []byte(`{}`)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			text = mustMarshalContentText(t, result.Content[0])
+			if result.IsError || strings.Contains(text, "hive-admin-mcp build") {
+				t.Fatalf("hive_status = %s, want success without notice", text)
+			}
+
+			// /api/status is not served: a hub 404 carries the notice only under skew.
+			result, err = provider.handler(adminmcp.ToolFleetStatus)(ctx, &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{Arguments: []byte(`{}`)}})
 			if err != nil {
 				t.Fatal(err)
 			}
