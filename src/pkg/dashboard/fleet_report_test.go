@@ -113,3 +113,14 @@ func TestFleetReportEvidenceOmitsCIPollNudgesWhenZero(t *testing.T) {
 		}
 	}
 }
+
+func TestFleetReportEvidenceIgnoresInferenceBlockedAgents(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
+	s := &Server{}
+	got := s.buildFleetReportEvidence(&StatusPayload{Agents: []FrontendAgent{
+		{Name: "supervisor", Role: "supervisor", StructuredStatus: "blocked", StatusEvidence: "blocked: inference (auth)"},
+	}})
+	if len(got) != 0 {
+		t.Fatalf("inference-blocked agent must not be hive-code evidence: %#v", got)
+	}
+}
