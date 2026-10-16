@@ -28249,6 +28249,17 @@ function burnAreaChart() {
         };
       }).filter(Boolean);
     }
+    // Row-label help for the GitHub API budget panel. Same ⓘ + portal tooltip
+    // the Overview and PRT metric labels use; copy mirrors pkg/github/etagcache.go
+    // and pkg/github/apibudget.go.
+    const GH_API_BUDGET_HELP = {
+      core: 'Requests left in GitHub’s core REST rate limit for the current hour, out of the hourly limit for this credential (5,000 for a token; App installations may get more). GitHub resets the counter once an hour. The bar turns yellow at 25% free and red at 10%. Below github.api_reserve (default 800) the governor enters conserve mode — it stretches the eval interval and skips optional steps such as recommendations and advisories; below github.api_critical (default 250) it stretches the interval further.',
+      etag: 'Share of cacheable GitHub REST GETs answered 304 Not Modified because the hive re-sent a remembered ETag (If-None-Match). GitHub does not charge a 304 against the core rate limit, so a higher rate means more of the hive’s polling is free. Counted since the process started, not over the 1h window — a low rate right after a restart is normal while the cache warms. The 304 column below shows the same hits per caller.',
+    };
+    function ghApiBudgetHelpMark(key, label) {
+      const id = 'gh-api-budget-' + key + '-tip';
+      return `<span class="config-info overview-term-info" tabindex="0" data-action="gh3" data-stop="1" aria-describedby="${id}" aria-label="${esc(label)} details">ⓘ<span id="${id}" class="config-tooltip" role="tooltip">${esc(GH_API_BUDGET_HELP[key] || '')}</span></span>`;
+    }
     function renderGitHubAPIBudgetPanel(ghRate) {
 
       ghRate = ghRate || {};
@@ -28268,8 +28279,8 @@ function burnAreaChart() {
       }).join('');
       return `<div id="gh-api-budget-panel" class="gh-api-budget-card">
         <div class="gh-api-budget-label">GitHub API budget (1h)</div>
-        <div class="gh-api-budget-row"><span>Core remaining</span><span class="gh-api-budget-strong">${core.remaining} / ${core.limit || '—'} (${core.remainingPct}% free)</span></div>
-        <div class="gh-api-budget-row"><span>ETag hit rate</span><span class="gh-api-budget-strong">${etagPct}%</span></div>
+        <div class="gh-api-budget-row"><span>Core remaining${ghApiBudgetHelpMark('core', 'Core remaining')}</span><span class="gh-api-budget-strong">${core.remaining} / ${core.limit || '—'} (${core.remainingPct}% free)</span></div>
+        <div class="gh-api-budget-row"><span>ETag hit rate${ghApiBudgetHelpMark('etag', 'ETag hit rate')}</span><span class="gh-api-budget-strong">${etagPct}%</span></div>
         ${bar}
         <div class="gh-api-budget-table-wrap">
           <table id="gh-api-budget-consumers" class="gh-api-budget-table">
