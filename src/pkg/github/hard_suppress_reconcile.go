@@ -25,7 +25,10 @@ import (
 //     another subsystem applied through the same App on an operator's behalf
 //     is not mistaken for the SHA sweep's; and
 //   - the reason lapsed: a pull request cross-referencing the issue merged
-//     after the label was applied.
+//     after the label was applied, or (for `blocked`) every native GitHub
+//     "blocked by" dependency of the issue is now closed (hivecommons/hive#12522
+//     — a child parked on an open blocker is unblocked by the blocker's own
+//     PR, which never mentions the child).
 //
 // A label a human applied (or re-applied) is never touched.
 
@@ -141,7 +144,21 @@ func (c *Client) reconcileHardSuppressIssue(ctx context.Context, owner, repo str
 		result.Skipped++
 		return
 	}
-	if mergedPR == "" {
+	reason := ""
+	if mergedPR != "" {
+		reason = mergedPR + " merged since"
+	} else if strings.EqualFold(label, blockedLabel) {
+		closed, err := c.blockersAllClosed(ctx, owner, repo, number)
+		if err != nil {
+			c.logger.Warn("hard-suppress reconcile: could not read \"blocked by\" dependencies", "repo", repo, "issue", number, "label", label, "error", err)
+			result.Skipped++
+			return
+		}
+		if len(closed) > 0 {
+			reason = "its \"blocked by\" dependencies (" + strings.Join(closed, ", ") + ") have all closed"
+		}
+	}
+	if reason == "" {
 		result.Skipped++
 		return
 	}
@@ -150,13 +167,43 @@ func (c *Client) reconcileHardSuppressIssue(ctx context.Context, owner, repo str
 		result.Skipped++
 		return
 	}
-	note := hardSuppressLiftedNote(label, labeledAt.Time, mergedPR)
+	note := hardSuppressLiftedNote(label, labeledAt.Time, reason)
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(note)}); err != nil {
 		c.logger.Warn("hard-suppress reconcile: could not post note", "repo", repo, "issue", number, "label", label, "error", err)
 	}
 	result.Lifted++
 	result.Items = append(result.Items, fmt.Sprintf("%s/%s#%d:%s", owner, repo, number, label))
-	c.logger.Info("HARD-SUPPRESS-LIFT", "repo", repo, "issue", number, "label", label, "merged_pr", mergedPR)
+	c.logger.Info("HARD-SUPPRESS-LIFT", "repo", repo, "issue", number, "label", label, "reason", reason)
+}
+
+// blockedLabel is the hard-suppress label a contributor relay applies on a
+// blocked verdict; it is the only one a "blocked by" dependency can explain.
+const blockedLabel = "blocked"
+
+// blockersAllClosed returns the "owner/repo#N" refs of the issue's native
+// GitHub "blocked by" dependencies when there is at least one and none is
+// still open, or nil when the issue has no blockers or any remains open.
+// Same-repo blockers are rendered as a bare #N.
+func (c *Client) blockersAllClosed(ctx context.Context, owner, repo string, number int) ([]string, error) {
+	blockers, err := c.fetchBlockedBy(ctx, owner, repo, number)
+	if err != nil {
+		return nil, err
+	}
+	if len(blockers) == 0 {
+		return nil, nil
+	}
+	refs := make([]string, 0, len(blockers))
+	for _, b := range blockers {
+		if b.State != "closed" {
+			return nil, nil
+		}
+		ref := fmt.Sprintf("#%d", b.Number)
+		if !strings.EqualFold(b.Owner, owner) || !strings.EqualFold(b.Repo, repo) {
+			ref = b.Owner + "/" + b.Repo + ref
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
 }
 
 // prMergedSinceForIssue returns the first pull request cross-referencing the
@@ -193,7 +240,9 @@ func (c *Client) prMergedSinceForIssue(ctx context.Context, owner, repo string, 
 	}
 }
 
-func hardSuppressLiftedNote(label string, labeledAt time.Time, mergedPR string) string {
-	return fmt.Sprintf("%s\nHive lifted the `%s` label it applied on %s: %s merged since, so the reason for the park no longer holds and the issue is back in the normal flow. Labels applied by a human are never lifted by this sweep (hivecommons/hive#12002).",
-		hardSuppressLiftedMarker, label, labeledAt.UTC().Format(time.RFC3339), mergedPR)
+// hardSuppressLiftedNote renders the one-line note; reason is a clause such
+// as "#12 merged since" or "its \"blocked by\" dependencies (#3) have all closed".
+func hardSuppressLiftedNote(label string, labeledAt time.Time, reason string) string {
+	return fmt.Sprintf("%s\nHive lifted the `%s` label it applied on %s: %s, so the reason for the park no longer holds and the issue is back in the normal flow. Labels applied by a human are never lifted by this sweep (hivecommons/hive#12002).",
+		hardSuppressLiftedMarker, label, labeledAt.UTC().Format(time.RFC3339), reason)
 }
