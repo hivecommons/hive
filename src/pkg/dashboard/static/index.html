@@ -3788,6 +3788,7 @@
     .nous-exp-stage { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .nous-exp-stage .nous-exp-stage-label { font-weight: 600; }
     .nous-exp-stage[data-stage="ready"] .nous-exp-stage-label { color: var(--green); }
+    .nous-exp-stage[data-loop-idle="1"] .nous-exp-stage-label { color: var(--yellow); }
     .nous-exp-stage[data-stage="proposed"] .nous-exp-stage-label { color: var(--yellow); }
     .nous-exp-stage[data-stage="running"] .nous-exp-stage-label { color: var(--accent); }
     .nous-exp-stage-detail { color: var(--muted); }
@@ -23513,7 +23514,12 @@ function burnAreaChart() {
         else { stage = 'baseline'; label = `collecting baseline ${n} / ${target}`; }
       }
       const detail = c.stageDetail ? `<span class="nous-exp-stage-detail">${escapeHtml(c.stageDetail)}</span>` : '';
-      return `<div class="nous-exp-stage" data-stage="${escapeHtml(stage)}"><span class="nous-exp-stage-label">${escapeHtml(label)}</span>${detail}</div>`;
+      // The hive designs no proposals itself: when the server reports the
+      // external experiment loop idle, point at how to run it (#12541).
+      const loopDocs = c.experimentLoopIdle
+        ? '<a class="nous-exp-stage-docs" href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">How to run the experiment loop</a>'
+        : '';
+      return `<div class="nous-exp-stage" data-stage="${escapeHtml(stage)}"${c.experimentLoopIdle ? ' data-loop-idle="1"' : ''}><span class="nous-exp-stage-label">${escapeHtml(label)}</span>${detail}${loopDocs}</div>`;
     }
 
     const NOUS_PRINCIPLES_EXPLAINER = 'Principles are durable lessons the lab distils from judged experiments (principles.json). A new lab starts at 0 and the count grows as experiments conclude; none are needed to start an experiment.';
