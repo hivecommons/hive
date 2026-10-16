@@ -3555,6 +3555,11 @@ func (s *HubServer) handleRegistry(w http.ResponseWriter, r *http.Request) {
 		if h.HiveType != "hosted" && !h.Online && hostedNames[h.Name] {
 			continue
 		}
+		// The compliance profile is admin-only (#11083, #12264): the rollup
+		// view is behind requireAdmin and the per-hive row is gated in my-hives,
+		// so it must not ride the unauthenticated public registry. h is a copy,
+		// so the stored entry (and what saveRegistryNow persists) is untouched.
+		h.Compliance = nil
 		filtered.Hives = append(filtered.Hives, h)
 	}
 	// #5691: repo-ownership overlaps, derived from the repo lists already in the

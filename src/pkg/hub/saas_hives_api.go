@@ -1120,6 +1120,15 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	// let the header polygon disagree with the rows it summarises.
 	fleetQuadrant := attachQuadrants(result, isAdmin, journeyNow)
 
+	// Compliance profile and posture summary are admin/owner-only (#11083, #12264):
+	// the fleet rollup (/api/hub/compliance) is admin-gated, so non-admin,
+	// non-owner members must not see the compliance summary in my-hives.
+	for i := range result {
+		if result[i].Role != "owner" && !isAdmin {
+			result[i].Compliance = nil
+		}
+	}
+
 	// Cosmetic owner labels: resolve opaque OIDC owner identities to their
 	// stored display names so "Group by owner" headers and tooltips read like
 	// people. Memoized — a fleet shares a handful of owners.
