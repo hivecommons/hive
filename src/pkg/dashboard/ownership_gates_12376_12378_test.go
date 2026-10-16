@@ -44,7 +44,8 @@ func TestBlockedIssueOwnership12376(t *testing.T) {
 		{"blocked with no recorded blocker, stale: ask the person", staleIssue11592("", "blocked"), blockedUnexplained12376, false},
 		{"label spelled in capitals", staleIssue11592("", "Blocked"), blockedUnexplained12376, false},
 		{"blocked with no recorded blocker, fresh: unchanged", freshIssue11565("blocked"), notYours11565, false},
-		{"blocked outside the queue, stale", staleNonActionable12376(repoWorkBucketFiltered, "Exempt label", "blocked"), blockedUnexplained12376, false},
+		{"blocked outside the queue, stale: links never read, unchanged", staleNonActionable12376(repoWorkBucketFiltered, "Exempt label", "blocked"), notYours11565, false},
+		{"blocked outside the queue with an open link: waiting elsewhere", withBlockers12376(staleNonActionable12376(repoWorkBucketFiltered, "Exempt label", "blocked"), "o/other#25"), notYours11565, true},
 		{"blocked and covered by an open PR: the PR closes it", covered, notYours11565, true},
 		{"blocked and parked: the parking rule decides", staleIssue11592("", "blocked", "needs-human"), want11565{OwnershipVerbReview, OwnershipReasonParkedNeedsHuman}, false},
 		{"blocked beats the safety net", staleIssue11592("quality", "blocked"), blockedUnexplained12376, false},
@@ -241,12 +242,22 @@ func TestPRHandMergeIsYourTurn12378(t *testing.T) {
 	}
 
 	// Through the snapshot: the verdict attached before the decision runs,
-	// and the PR counted once, in the inbox.
-	repos := []FrontendRepo{{Name: "r", Full: "o/r", OpenPrs: []any{FrontendPR{PullRequest: personPR11565()}}}}
-	attachRepoMergeVerdicts(repos, map[string]github.MergeVerdict{github.MergeVerdictKey(personPR11565()): *eligible})
+	// the PR counted once, in the inbox, and the lane asked under the PR's
+	// owner/repo name (the sweeps' allow-lists accept that spelling).
+	bare := personPR11565()
+	bare.Repo = ""
+	repos := []FrontendRepo{{Name: "r", Full: "o/r", OpenPrs: []any{FrontendPR{PullRequest: bare}}}}
+	attachRepoMergeVerdicts(repos, map[string]github.MergeVerdict{github.MergeVerdictKey(bare): *eligible})
 	env := ownershipEnv11565(5)
-	env.mergeLaneTakesAuthor = takes()
+	var askedRepo string
+	env.mergeLaneTakesAuthor = func(repo, author string) bool {
+		askedRepo = repo
+		return takes()(repo, author)
+	}
 	decideRepoOwnership(repos, config.DashboardIssueBandsConfig{}, env)
+	if askedRepo != "o/r" {
+		t.Fatalf("lane asked for repo %q, want owner/repo %q", askedRepo, "o/r")
+	}
 	got := repos[0].Ownership[ownershipKey(ownershipKindPR, personPR11565().Number)]
 	checkOwnership11565(t, got, handMerge12378)
 	if got.InboxRank != 1 {

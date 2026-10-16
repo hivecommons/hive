@@ -52,7 +52,7 @@ func defaultRunLoopDeps() runLoopDeps {
 		newTicker: func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} },
 		runEval: func(b *boot, restarted []string) {
 			runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores,
-				b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, restarted, b.approvalDesk, b.logger)
+				b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, &b.lastMergeVerdicts, b.advisoryStore, b.advisoryIssues, restarted, b.approvalDesk, b.logger)
 		},
 		runRotation: func(b *boot) {
 			runRotationCheck(b.ctx, b.cfg, b.rotationMgr, b.gov, b.agentMgr, b.logger)

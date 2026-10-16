@@ -99,6 +99,7 @@ func (f *evalCycleFixture) run(t *testing.T) {
 		nil, // metricsCollector
 		nil, // nousState
 		f.last,
+		nil, // lastMergeVerdicts
 		nil, // advisoryStore
 		f.advisoryIssues,
 		nil, // restartedAgents

@@ -65,7 +65,10 @@ func decideIssueOwnershipGated(in issueOwnershipInput, env ownershipEnv) Ownersh
 // another item: waiting elsewhere. With none recorded Hive cannot tell a
 // person-gate from an outside dependency, so once the issue has gone the stale
 // period untouched it asks the person who can lift it; a fresh block keeps
-// its earlier decision.
+// its earlier decision. Blocked-by links are read for actionable issues only
+// (the snapshot's depends_on), so a held or filtered issue with none recorded
+// keeps its earlier decision too: "nothing says on what" would be a claim
+// about links Hive never read.
 func blockedIssueOwnership(in issueOwnershipInput, env ownershipEnv) (Ownership, bool) {
 	if !labelSet(in.labels)[blockedWorkflowLabel] {
 		return Ownership{}, false
@@ -73,7 +76,7 @@ func blockedIssueOwnership(in issueOwnershipInput, env ownershipEnv) (Ownership,
 	if len(in.openBlockers) > 0 {
 		return waitingElsewhere(), true
 	}
-	if !env.stale(in.createdAt, in.updatedAt) {
+	if !in.actionable || !env.stale(in.createdAt, in.updatedAt) {
 		return Ownership{}, false
 	}
 	return yourTurn(OwnershipReasonBlockedUnexplained, "Labelled blocked, nothing says on what — name the blocker or lift it"), true

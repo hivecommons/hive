@@ -121,6 +121,7 @@ type boot struct {
 	repoCostCollector             *collect.RepoCostCollector
 	launchCostCollector           *collect.LaunchCostCollector
 	lastActionable                atomic.Pointer[github.ActionableResult]
+	lastMergeVerdicts             atomic.Pointer[map[string]github.MergeVerdict]
 	evalCycles                    uint64
 	knowledgeAPI                  *knowledge.KnowledgeAPI
 	beadSynth                     *knowledge.BeadSynthesizer

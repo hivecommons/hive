@@ -56,7 +56,7 @@ func overviewOwnershipSliceSpecs() []BandSpec {
 	return []BandSpec{
 		{Key: overviewSliceYourTurn, Label: "Your turn", Short: "your turn", Rule: "Hive is stuck on a person: no agent lane will move the item until you act. Items to close are counted separately."},
 		{Key: overviewSliceToClose, Label: "To close", Short: "to close", Rule: "Hive verified the work as done but could not close it, or a close is waiting on you — verify and close the item."},
-		{Key: overviewSliceWaiting, Label: "Waiting on someone else", Short: "waiting", Rule: "Gated on someone other than you: a hold a person or the dashboard pause placed, a Hive pull request still within the adjudicator's wait, a pending reporter confirmation, or an issue an open PR covers."},
+		{Key: overviewSliceWaiting, Label: "Waiting on someone else", Short: "waiting", Rule: "Gated on someone other than you: a hold a person or the dashboard pause placed, a Hive pull request still within the adjudicator's wait, a pending reporter confirmation, an issue an open PR covers, or a blocked issue with an open GitHub blocked-by link."},
 	}
 }
 

@@ -26,6 +26,9 @@ func TestMergeLaneTakesAuthor12378(t *testing.T) {
 	trustedOn := newEngine(TrustedAuthorPolicy{Enabled: true}, ContributorLanePolicy{})
 	trustedOtherRepo := newEngine(TrustedAuthorPolicy{Enabled: true, Repos: map[string]bool{"other": true}}, ContributorLanePolicy{})
 	contributorOn := newEngine(TrustedAuthorPolicy{}, ContributorLanePolicy{Enabled: true})
+	contributorBareRepo := newEngine(TrustedAuthorPolicy{}, ContributorLanePolicy{Enabled: true, Repos: map[string]bool{"widget": true}})
+	contributorFullRepo := newEngine(TrustedAuthorPolicy{}, ContributorLanePolicy{Enabled: true, Repos: map[string]bool{"acme/widget": true}})
+	trustedBareRepo := newEngine(TrustedAuthorPolicy{Enabled: true, Repos: map[string]bool{"widget": true}}, ContributorLanePolicy{})
 
 	cases := []struct {
 		name   string
@@ -46,6 +49,31 @@ func TestMergeLaneTakesAuthor12378(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.engine.MergeLaneTakesAuthor("widget", tc.author); got != tc.want {
 				t.Fatalf("MergeLaneTakesAuthor(widget, %q) = %v, want %v", tc.author, got, tc.want)
+			}
+		})
+	}
+
+	// The dashboard passes owner/repo; the sweeps' allow-lists are keyed by
+	// the configured name, bare or full. Both spellings must match.
+	repoCases := []struct {
+		name   string
+		engine *Engine
+		repo   string
+		author string
+		want   bool
+	}{
+		{"contributor lane, bare allow-list, owner/repo asked", contributorBareRepo, "acme/widget", "alice", true},
+		{"contributor lane, bare allow-list, bare asked", contributorBareRepo, "widget", "alice", true},
+		{"contributor lane, full allow-list, owner/repo asked", contributorFullRepo, "acme/widget", "alice", true},
+		{"contributor lane, full allow-list, bare asked", contributorFullRepo, "widget", "alice", false},
+		{"contributor lane, allow-list names another repo", contributorBareRepo, "acme/other", "alice", false},
+		{"trusted tier, bare allow-list, owner/repo asked", trustedBareRepo, "acme/widget", "maintainer", true},
+		{"trusted tier, bare allow-list, unauthorized author", trustedBareRepo, "acme/widget", "alice", false},
+	}
+	for _, tc := range repoCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.engine.MergeLaneTakesAuthor(tc.repo, tc.author); got != tc.want {
+				t.Fatalf("MergeLaneTakesAuthor(%q, %q) = %v, want %v", tc.repo, tc.author, got, tc.want)
 			}
 		})
 	}

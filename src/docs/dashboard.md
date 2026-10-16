@@ -250,7 +250,8 @@ their open counts. The terms, in the order they are tried:
 2. **Waiting on someone else** — the items the charts put in the slice of the
    same name: a hold whose sources include `person` or `dashboard_pause`, a hive
    `needs-human` PR still within the adjudicator wait, an issue awaiting reporter
-   confirmation, and an issue an open PR covers.
+   confirmation, an issue an open PR covers, and a `blocked` issue with an open
+   GitHub blocked-by link.
 3. **Held** — any other item with a hold.
 4. **Blocked** — a PR with a blocked verdict, merge conflicts or failing CI.
 5. **Outside** — the remaining items the scanner filters out, and draft PRs.
@@ -560,7 +561,7 @@ means the situation cannot occur at that level.
 | Issue Hive verified as done but could not close | Yours — `CLOSE` | same | same | same |
 | Issue covered by an open PR | Not yours — the PR closes it on merge | same | same | same |
 | `blocked` with an open GitHub blocked-by link | Not yours — waiting on the linked item | same | same | same |
-| `blocked` with no blocked-by link recorded | As the unclaimed row until it has had no activity for the stale period, then Yours — `REVIEW` (`blocked_unexplained`: name the blocker or lift the label) | same | same | same |
+| Actionable `blocked` issue with no blocked-by link recorded | As the unclaimed row until it has had no activity for the stale period, then Yours — `REVIEW` (`blocked_unexplained`: name the blocker or lift the label). Held and filtered issues keep their earlier row: their links are not read | same | same | same |
 | `Epic` · `2-discussing` · `needs-triage` on an issue | As the unclaimed row — still in the agent queue | same | same | same |
 | PR with a label that puts it in the Gated band (`needs-decision`, `2-discussing`, `needs-direction`, `needs-spec`, a renamed parking label, or a configured waiting label), no `needs-human`, unheld | Yours — `DECIDE` (`needs-decision`, `2-discussing`) / `STEER` / `SPEC` with the parking reason codes; any other gate label `REVIEW` (`pr_gate_label`) | same | same | same |
 | Non-draft, unheld PR whose GitHub review decision is `REVIEW_REQUIRED` or `CHANGES_REQUESTED` with a named branch-protection rule — the merge classifier's skip | Yours — `REVIEW` (`review_decision_required`, with the rule as the reason) | same | same | same |
@@ -582,7 +583,8 @@ PR rows of the table; (10) otherwise Not yours. The safety net then applies
 only to items that came out Not yours. Last, the gate rules apply to items
 that came out Not yours or only through the safety net (never to a held PR or
 an item waiting elsewhere): an issue labelled `blocked` is waiting elsewhere
-with an open blocked-by link and `blocked_unexplained` without one once stale;
+with an open blocked-by link and, when actionable (the only rows whose links
+are read), `blocked_unexplained` without one once stale;
 a pull request takes, in order, its gate label, its review decision, then the
 hand-merge rule. `hive/verified-open` (the agent found
 the work unfinished) cancels `hive/likely-done` for rules (6) and (7) and for

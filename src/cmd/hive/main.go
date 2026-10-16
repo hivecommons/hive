@@ -1623,7 +1623,7 @@ func (b *boot) wireBootClosures() {
 				installReviewBots(b.ghClient, b.cfg, b.logger)
 			},
 			EnumerateFunc: func() {
-				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, b.logger)
+				runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores, b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, &b.lastMergeVerdicts, b.advisoryStore, b.advisoryIssues, nil, b.approvalDesk, b.logger)
 			},
 			// The REPOSITORIES "Rescan" button. Unlike EnumerateFunc above — which
 			// runs the WHOLE eval cycle, kicks included — this only refreshes what
@@ -3124,6 +3124,13 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		actionable := b.lastActionable.Load()
 		govState := b.gov.GetState()
 		agentStatuses := b.agentMgr.AllStatuses()
+		// The last eval cycle's merge verdicts, so the your-turn decision
+		// reaches the same hand-merge answer on a rebuilt snapshot as on
+		// the cycle's own (#12378); nil before the first cycle.
+		var mergeVerdicts map[string]github.MergeVerdict
+		if v := b.lastMergeVerdicts.Load(); v != nil {
+			mergeVerdicts = *v
+		}
 		payload := dashboard.BuildFrontendStatus(
 			govState,
 			actionable,
@@ -3136,6 +3143,8 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 			b.ctx,
 			b.metricsCollector,
 			dashboard.WithContributeHub(b.dashSrv.ContributeHub()),
+			dashboard.WithMergeVerdicts(mergeVerdicts),
+			dashboard.WithMergeLaneTakesAuthor(mergeLaneTakesAuthorFunc(b.cfg, b.ghClient)),
 		)
 		if d := b.dashSrv.GetAdvisoryDigest(); d != nil {
 			payload.AdvisoryDigest = d
@@ -6999,6 +7008,7 @@ func runEvalCycle(
 	metricsCollector *dashboard.MetricsCollector,
 	nousState *dashboard.NousState,
 	lastActionable *atomic.Pointer[github.ActionableResult],
+	lastMergeVerdicts *atomic.Pointer[map[string]github.MergeVerdict],
 	advisoryStore *advisory.Store,
 	advisoryIssues map[string]int,
 	restartedAgents []string,
@@ -7159,6 +7169,12 @@ func runEvalCycle(
 	// painted from the sweep's own classification rather than a looser
 	// reading of GitHub's mergeable flag (hivecommons/hive#7478).
 	mergeVerdicts := writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, cfg.Intent.Enforce, intentVerdicts, cfg.Review.RequireApproval, requiredCheckSet, holdDriftPRs, cfg, logger)
+	// Kept for the snapshots refreshDashboard rebuilds between eval cycles
+	// (config reload, dashboard mutations, rescan), so a hand-merge PR's
+	// your-turn marker does not vanish until the next cycle (#12378).
+	if lastMergeVerdicts != nil {
+		lastMergeVerdicts.Store(&mergeVerdicts)
+	}
 
 	// Review-bot threads (hivecommons/hive#7360): list every unresolved
 	// external-review-bot thread on an open hive-authored PR into

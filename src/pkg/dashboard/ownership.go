@@ -149,7 +149,8 @@ const (
 // WaitingElsewhere marks a not-your-turn item that is gated on someone other
 // than the operator: a hold whose sources include a person or the dashboard's
 // pause, a hive needs-human PR still within the adjudicator wait, a pending
-// reporter confirmation, or an issue an open PR covers. The Overview equation
+// reporter confirmation, an issue an open PR covers, or a blocked issue with
+// an open GitHub blocked-by link. The Overview equation
 // and charts read it; it is never set on a your-turn item and is not part of
 // the ownership identity.
 type Ownership struct {

@@ -330,7 +330,7 @@ func overviewActionableEquations(totals FrontendOverviewTotals, part overviewPar
 
 const (
 	overviewYourTurnRule = "Items Hive is stuck on a person for: no agent lane will move them without a human action. Includes held, parked, outside and agent-filed items."
-	overviewWaitingRule  = "Items gated on someone other than you: a hold a person or the dashboard pause placed, a Hive pull request within the adjudicator's wait, a pending reporter confirmation, or an issue an open PR covers."
+	overviewWaitingRule  = "Items gated on someone other than you: a hold a person or the dashboard pause placed, a Hive pull request within the adjudicator's wait, a pending reporter confirmation, an issue an open PR covers, or a blocked issue with an open GitHub blocked-by link."
 )
 
 // overviewActionableKindEquation lists the terms that subtract from the open
