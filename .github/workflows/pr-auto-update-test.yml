@@ -13,6 +13,10 @@ on:
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+
 permissions:
   contents: read
 
