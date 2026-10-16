@@ -635,15 +635,15 @@ One line per worker showing what it is doing now, how long since it last acted, 
 
 ## FAQ
 
-Short answers to the questions people most often ask when they start using Hive.
+Short answers to the questions people ask once a hive is running, each linking to the guide that explains it fully.
 
-**What it tells you.** It answers common questions about levels, advice, contributors, cost and where to get help.
+**What it tells you.** It answers common questions about levels and `hold` labels, the Evidence card, release channels and upgrades, the Model Gateway, pausing, cost, the audit log and where to get help. Every question is a collapsible row; a filter box at the top hides rows that do not match what you type.
 
-**How the numbers are worked out.** This section has no numbers.
+**How the numbers are worked out.** This section has no numbers. The collapsed summary counts the questions.
 
-**What it is good for.** Read it in your first week. Each answer links to a fuller guide.
+**What it is good for.** Read it when something on the dashboard surprises you. Each answer links to a fuller guide, and the footer says where to ask when the answer is missing.
 
-**Example.** You wonder why Hive does not merge anything. The FAQ explains that merging starts at a higher level.
+**Example.** You wonder why Hive does not merge anything. The FAQ explains that merging starts at a higher level and that a `hold` label keeps a pull request out of every merge lane.
 
 **When it appears.** Always, at every level.
 
