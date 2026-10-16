@@ -450,6 +450,24 @@
     .evidence-modal-title { font-size: var(--fs-xl); padding: var(--sp-9) var(--sp-9) var(--sp-4); margin: var(--sp-0); color: var(--hub-dashboard-accent); flex-shrink: 0; }
     .evidence-modal-scroll { flex: 1; overflow: auto; padding: var(--sp-0) var(--sp-9) var(--sp-8); }
     .evidence-modal-foot { display: flex; justify-content: flex-end; padding: var(--sp-6) var(--sp-9); border-top: 1px solid var(--border); flex-shrink: 0; }
+    /* Filter chips (#12370): hive is multi-select, ACMM level single-select;
+       every panel below re-pools client-side from hives[].counts. */
+    .evidence-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; margin: 0 0 var(--sp-3); font-size: var(--fs-sm); color: var(--muted); }
+    .evidence-chips-label { margin-right: var(--sp-1); }
+    .evidence-chip { border: 1px solid var(--border); background: none; color: var(--text); border-radius: var(--r-pill); padding: 2px var(--sp-3); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+    .evidence-chip:hover { border-color: var(--hub-dashboard-accent); }
+    .evidence-chip.on { border-color: var(--hub-dashboard-accent); color: var(--hub-dashboard-accent); background: color-mix(in srgb, var(--hub-dashboard-accent) 15%, transparent); }
+    .evidence-chip-dim { opacity: .55; }
+    /* Fleet panels share the spoke evidence card's inline-SVG idiom. */
+    .evidence-svg { display: block; width: 100%; max-width: 640px; height: auto; margin: 0 0 var(--sp-2); }
+    .evidence-svg text { fill: var(--muted); font-size: var(--fs-2xs); }
+    .evidence-svg .evidence-bar.merged, .evidence-legend i.merged { fill: var(--green); background: var(--green); }
+    .evidence-svg .evidence-bar.reverted, .evidence-legend i.reverted { fill: var(--red); background: var(--red); }
+    .evidence-svg .evidence-bar.open, .evidence-legend i.open { fill: var(--muted); background: var(--muted); opacity: .5; }
+    .evidence-svg .evidence-bar.attempted, .evidence-legend i.attempted { fill: var(--blue); background: var(--blue); opacity: .6; }
+    .evidence-svg .evidence-bar.blocked, .evidence-legend i.blocked { fill: var(--orange); background: var(--orange); }
+    .evidence-legend { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin: 0 0 var(--sp-3); font-size: var(--fs-2xs); color: var(--muted); }
+    .evidence-legend i { display: inline-block; width: 8px; height: 8px; margin-right: var(--sp-1); }
     .th-mid { vertical-align: middle; }
     .journey-snoozed { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
     /* The relay badge marks a hive satisfying stage 2 through human
@@ -1199,27 +1217,314 @@
       return esc((h && (h.name || h.id)) || '');
     }
 
-    function evidenceViewHTML(data) {
-      data = data || {};
+    /* ---- Client-side re-pooling (#12370) ---------------------------------
+       The server pools the whole fleet. A hive / ACMM level selection is
+       re-pooled here from hives[].counts with the same minimum sample and
+       Wilson interval as pkg/hub/evidence.go, so a filtered rate reads the
+       same way as an unfiltered one. Without an active filter the server's
+       pooled numbers are shown untouched. */
+    var EVIDENCE_MIN_N = 10;
+    var EVIDENCE_AUTHOR_KINDS = ['human', 'agent', 'bot'];
+    var EVIDENCE_SHADOW_GATES = [['review_gate', 'Review gate', 'held'], ['intent', 'Intent verification', 'blocked']];
+    var _evidenceLast = null;
+    var _evidenceFilter = { hives: null, level: null };
+
+    function evidenceWilson(k, n) {
+      var z = 1.96, p = k / n, d = 1 + z * z / n;
+      var centre = (p + z * z / (2 * n)) / d;
+      var half = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d;
+      return [Math.max(0, centre - half), Math.min(1, centre + half)];
+    }
+
+    function evidenceRateOf(k, n) {
+      k = Number(k) || 0; n = Number(n) || 0;
+      if (n < EVIDENCE_MIN_N || n <= 0) return { n: n, rate: null };
+      var ci = evidenceWilson(k, n);
+      return { n: n, rate: k / n, lo: ci[0], hi: ci[1] };
+    }
+
+    function evidenceFilterActive(f) {
+      f = f || {};
+      return (Array.isArray(f.hives) && f.hives.length > 0) || (f.level !== null && f.level !== undefined);
+    }
+
+    function evidenceFilterHives(hives, f) {
+      f = f || {};
+      var ids = Array.isArray(f.hives) && f.hives.length ? f.hives : null;
+      return hives.filter(function(h) {
+        if (!h) return false;
+        if (ids && ids.indexOf(h.id) < 0) return false;
+        if (f.level !== null && f.level !== undefined && Number(h.acmm_level) !== Number(f.level)) return false;
+        return true;
+      });
+    }
+
+    function evidenceOutcomeAdd(a, o) {
+      o = o || {};
+      a.n += Number(o.n) || 0; a.merged += Number(o.merged) || 0; a.reverted += Number(o.reverted) || 0;
+      return a;
+    }
+    function evidenceOutcomeZero() { return { n: 0, merged: 0, reverted: 0 }; }
+
+    /* evidenceRepool rebuilds a GET /api/hub/evidence body for a subset of
+       hives. Hives without counts (never reported) only count toward spokes. */
+    function evidenceRepool(data, hives) {
+      var out = { spokes: hives.length, reporting: 0, hives: hives, calibration: [], by_acmm_level: [] };
+      var pooled = [], i;
+      for (i = 0; i < 6; i++) pooled.push({ n: 0, bad: 0 });
+      var fam = { same: { n: 0, bad: 0 }, cross: { n: 0, bad: 0 }, mixed: { n: 0, bad: 0 } };
+      var acmm = {};
+      var covered = 0, mergedTotal = 0;
+      var outcomes = {}, outcomeHives = 0, writes = {}, writeHives = 0;
+      var shadow = { hives: 0, review_gate: { hives: 0, held: evidenceOutcomeZero(), passed: evidenceOutcomeZero() }, intent: { hives: 0, held: evidenceOutcomeZero(), passed: evidenceOutcomeZero() } };
+      hives.forEach(function(h) {
+        var c = h && h.reported && h.counts;
+        if (!c) return;
+        out.reporting++;
+        if (c.recorded_90d !== null && c.recorded_90d !== undefined && h.prs_merged_90d !== null && h.prs_merged_90d !== undefined) {
+          covered += Number(c.recorded_90d) || 0; mergedTotal += Number(h.prs_merged_90d) || 0;
+        }
+        if (fam[h.family_mix]) { fam[h.family_mix].n += Number(c.verdicts_90d) || 0; fam[h.family_mix].bad += Number(c.false_approve_90d) || 0; }
+        var lvl = Number(h.acmm_level) || 0;
+        var a = acmm[lvl] || (acmm[lvl] = { level: lvl, hives: 0, merged: 0, reverted: 0 });
+        a.hives++; a.merged += Number(c.merged_90d) || 0; a.reverted += Number(c.reverted_14d_90d) || 0;
+        (Array.isArray(c.calibration) ? c.calibration : []).forEach(function(b, j) {
+          if (j < 6 && b) { pooled[j].n += Number(b.n) || 0; pooled[j].bad += Number(b.bad) || 0; }
+        });
+        if (c.outcomes_by_author_kind && typeof c.outcomes_by_author_kind === 'object') {
+          outcomeHives++;
+          Object.keys(c.outcomes_by_author_kind).forEach(function(k) {
+            var o = outcomes[k] || (outcomes[k] = { kind: k, hives: 0, n: 0, merged: 0, reverted: 0 });
+            o.hives++; evidenceOutcomeAdd(o, c.outcomes_by_author_kind[k]);
+          });
+        }
+        if (c.write_counters && typeof c.write_counters === 'object') {
+          writeHives++;
+          Object.keys(c.write_counters).forEach(function(t) {
+            var w = writes[t] || (writes[t] = { tier: t, hives: 0, attempted: 0, blocked: 0 });
+            var src = c.write_counters[t] || {};
+            w.hives++; w.attempted += Number(src.attempted) || 0; w.blocked += Number(src.blocked) || 0;
+          });
+        }
+        if (c.shadow_gate && typeof c.shadow_gate === 'object') {
+          shadow.hives++;
+          ['review_gate', 'intent'].forEach(function(g) {
+            var src = c.shadow_gate[g] || {};
+            var held = src.held || {}, passed = src.passed || {};
+            if ((Number(held.n) || 0) + (Number(passed.n) || 0) > 0) shadow[g].hives++;
+            evidenceOutcomeAdd(shadow[g].held, held); evidenceOutcomeAdd(shadow[g].passed, passed);
+          });
+        }
+      });
+      out.record_coverage = evidenceRateOf(covered, mergedTotal);
+      out.calibration = pooled.map(function(b, j) { var r = evidenceRateOf(b.bad, b.n); r.bucket = j; return r; });
+      out.family_false_approve_rate = {};
+      Object.keys(fam).forEach(function(k) { out.family_false_approve_rate[k] = evidenceRateOf(fam[k].bad, fam[k].n); });
+      out.by_acmm_level = Object.keys(acmm).map(Number).sort(function(x, y) { return x - y; }).map(function(l) {
+        var a = acmm[l];
+        return { level: a.level, hives: a.hives, merged_90d: a.merged, revert_rate: evidenceRateOf(a.reverted, a.merged) };
+      });
+      if (outcomeHives > 0) {
+        out.outcomes_by_author_kind = EVIDENCE_AUTHOR_KINDS.map(function(k) {
+          var o = outcomes[k] || { kind: k, hives: 0, n: 0, merged: 0, reverted: 0 };
+          o.merge_rate = evidenceRateOf(o.merged, o.n); o.revert_rate = evidenceRateOf(o.reverted, o.merged);
+          return o;
+        });
+      }
+      if (writeHives > 0) {
+        out.write_counters = Object.keys(writes).sort().map(function(t) {
+          var w = writes[t]; w.block_rate = evidenceRateOf(w.blocked, w.attempted); return w;
+        });
+      }
+      if (shadow.hives > 0) {
+        var side = function(o) { return { n: o.n, merged: o.merged, reverted: o.reverted, open: o.n - o.merged, revert_rate: evidenceRateOf(o.reverted, o.merged) }; };
+        out.shadow_gate = { hives: shadow.hives };
+        ['review_gate', 'intent'].forEach(function(g) {
+          out.shadow_gate[g] = { hives: shadow[g].hives, n: shadow[g].held.n + shadow[g].passed.n, held: side(shadow[g].held), passed: side(shadow[g].passed) };
+        });
+      }
+      return out;
+    }
+
+    /* Chips carry their key in a data attribute, never in the handler string:
+       a hive id is operator-controlled text. */
+    function evidenceChip(label, on, attrs, extraClass) {
+      return '<button type="button" class="evidence-chip' + (on ? ' on' : '') + (extraClass ? ' ' + extraClass : '') +
+        '" aria-pressed="' + (on ? 'true' : 'false') + '" ' + attrs + '>' + esc(label) + '</button>';
+    }
+
+    function evidenceChipsHTML(data, f) {
+      f = f || {};
       var hives = Array.isArray(data.hives) ? data.hives : [];
+      var selected = Array.isArray(f.hives) ? f.hives : [];
+      var levels = {};
+      hives.forEach(function(h) { if (h) levels[Number(h.acmm_level) || 0] = true; });
+      var out = '<div class="evidence-chips" role="group" aria-label="Filter by hive"><span class="evidence-chips-label">Hives:</span>' +
+        evidenceChip('All', selected.length === 0, 'onclick="evidenceClearHives()"');
+      hives.forEach(function(h) {
+        if (!h) return;
+        out += evidenceChip((h.name || h.id) || '', selected.indexOf(h.id) >= 0,
+          'data-hive="' + escAttr(h.id) + '" onclick="evidenceToggleHive(this.dataset.hive)"', h.reported ? '' : 'evidence-chip-dim');
+      });
+      out += '</div><div class="evidence-chips" role="group" aria-label="Filter by ACMM level"><span class="evidence-chips-label">ACMM level:</span>' +
+        evidenceChip('All', f.level === null || f.level === undefined, 'onclick="evidenceSetLevel(null)"');
+      Object.keys(levels).map(Number).sort(function(x, y) { return x - y; }).forEach(function(l) {
+        out += evidenceChip('L' + l, Number(f.level) === l && f.level !== null && f.level !== undefined,
+          'data-level="' + l + '" onclick="evidenceSetLevel(this.dataset.level)"');
+      });
+      return out + '</div>';
+    }
+
+    function evidenceToggleHive(id) {
+      var cur = Array.isArray(_evidenceFilter.hives) ? _evidenceFilter.hives.slice() : [];
+      var i = cur.indexOf(id);
+      if (i >= 0) cur.splice(i, 1); else cur.push(id);
+      _evidenceFilter.hives = cur.length ? cur : null;
+      evidenceRerender();
+    }
+    function evidenceClearHives() { _evidenceFilter.hives = null; evidenceRerender(); }
+    function evidenceSetLevel(level) {
+      _evidenceFilter.level = (level === null || level === undefined || level === '') ? null : Number(level);
+      evidenceRerender();
+    }
+    function evidenceRerender() {
+      var el = document.getElementById('evidence-body');
+      if (el && _evidenceLast) el.innerHTML = evidenceViewHTML(_evidenceLast, _evidenceFilter);
+    }
+
+    /* ---- Fleet panels (#12370): inline SVG like the spoke evidence card ---- */
+    function evidenceSvgLabel(s, max) { return esc(String(s).slice(0, max)); }
+
+    /* Stacked outcome bars: merged (not reverted) / reverted / open per row. */
+    function evidenceOutcomeBarsSvg(rows, ariaLabel) {
+      var w = 480, label = 170, valW = 36, rowH = 18, t = 4;
+      var barW = w - label - valW, h = t + rows.length * rowH;
+      var maxN = Math.max(1, Math.max.apply(null, rows.map(function(r) { return r.n; })));
+      var body = rows.map(function(row, i) {
+        var y0 = t + i * rowH, x0 = label;
+        var merged = Math.max(0, row.merged - row.reverted), open = Math.max(0, row.n - row.merged);
+        var tip = escAttr(row.label + ': merged ' + row.merged + ' (reverted ' + row.reverted + ') · open ' + open + ' · n=' + row.n);
+        var seg = function(cls, v) {
+          var sw = (v / maxN) * barW;
+          var r = v > 0 ? '<rect class="evidence-bar ' + cls + '" x="' + x0.toFixed(1) + '" y="' + (y0 + 2) + '" width="' + sw.toFixed(1) + '" height="10"><title>' + tip + '</title></rect>' : '';
+          x0 += sw;
+          return r;
+        };
+        return '<g><text x="0" y="' + (y0 + 11) + '">' + evidenceSvgLabel(row.label, 36) + '<title>' + tip + '</title></text>' +
+          seg('merged', merged) + seg('reverted', row.reverted) + seg('open', open) +
+          '<text x="' + (w - 2) + '" y="' + (y0 + 11) + '" text-anchor="end">' + row.n + '</text></g>';
+      }).join('');
+      return '<svg class="evidence-svg" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="' + escAttr(ariaLabel) + '">' + body + '</svg>' +
+        '<div class="evidence-legend"><span><i class="merged"></i>merged</span><span><i class="reverted"></i>merged, reverted or followed up within 14d</span><span><i class="open"></i>not merged</span></div>';
+    }
+
+    function evidenceOutcomesPanel(view) {
+      var rows = Array.isArray(view.outcomes_by_author_kind) ? view.outcomes_by_author_kind : null;
+      if (!rows) {
+        return '<section class="evidence-section"><h3 class="evidence-title">Outcome by author kind</h3>' +
+          '<p class="evidence-note">Outcome by author kind is not reported by any selected hive yet (needs a spoke with #12370).</p></section>';
+      }
+      var svg = evidenceOutcomeBarsSvg(rows.map(function(o) {
+        return { label: (o.kind || '') + ' authors', n: Number(o.n) || 0, merged: Number(o.merged) || 0, reverted: Number(o.reverted) || 0 };
+      }), 'Outcome by author kind: merged, reverted and open PRs for human, agent and bot authors');
+      return '<section class="evidence-section"><h3 class="evidence-title">Outcome by author kind</h3>' +
+        '<p class="evidence-note">PRs (latest evidence bundle per PR, 90 days) by author kind, pooled across the selected hives. Merged is not the same as correct; closed-without-merge is not recorded, so it counts as not merged.</p>' +
+        svg + '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr><th>Author kind</th><th>Hives</th><th>PRs</th>' +
+        evidenceRateHeads('Merge rate') + evidenceRateHeads('Revert rate') + '</tr></thead><tbody>' +
+        rows.map(function(o) {
+          return '<tr><td>' + esc(o.kind || '') + '</td><td>' + evidenceCount(o.hives) + '</td><td>' + evidenceCount(o.n) + '</td>' +
+            evidenceRateCells(o.merge_rate) + evidenceRateCells(o.revert_rate) + '</tr>';
+        }).join('') + '</tbody></table></div></section>';
+    }
+
+    /* Boundary enforcement: attempted vs proxy-blocked agent writes per tier. */
+    function evidenceWriteCountersSvg(rows) {
+      var w = 480, label = 150, valW = 44, rowH = 18, t = 4;
+      var barW = w - label - valW, h = t + rows.length * rowH;
+      var maxN = Math.max(1, Math.max.apply(null, rows.map(function(r) { return r.attempted; })));
+      var body = rows.map(function(row, i) {
+        var y0 = t + i * rowH;
+        var tip = escAttr(row.tier + ': ' + row.blocked + ' of ' + row.attempted + ' agent writes blocked by the proxy · ' + row.hives + ' hive(s)');
+        var aw = (row.attempted / maxN) * barW, bw = (row.blocked / maxN) * barW;
+        return '<g><text x="0" y="' + (y0 + 11) + '">' + evidenceSvgLabel(row.tier, 30) + '<title>' + tip + '</title></text>' +
+          (row.attempted > 0 ? '<rect class="evidence-bar attempted" x="' + label + '" y="' + (y0 + 2) + '" width="' + aw.toFixed(1) + '" height="10"><title>' + tip + '</title></rect>' : '') +
+          (row.blocked > 0 ? '<rect class="evidence-bar blocked" x="' + label + '" y="' + (y0 + 2) + '" width="' + bw.toFixed(1) + '" height="10"><title>' + tip + '</title></rect>' : '') +
+          '<text x="' + (w - 2) + '" y="' + (y0 + 11) + '" text-anchor="end">' + row.blocked + '/' + row.attempted + '</text></g>';
+      }).join('');
+      return '<svg class="evidence-svg" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="Boundary enforcement: attempted and proxy-blocked agent writes per intent tier">' + body + '</svg>' +
+        '<div class="evidence-legend"><span><i class="attempted"></i>attempted</span><span><i class="blocked"></i>blocked by the proxy</span></div>';
+    }
+
+    function evidenceWriteCountersPanel(view) {
+      var rows = Array.isArray(view.write_counters) ? view.write_counters : null;
+      if (!rows) {
+        return '<section class="evidence-section"><h3 class="evidence-title">Boundary enforcement</h3>' +
+          '<p class="evidence-note">Write counters are not reported by any selected hive yet (needs a spoke with #12370 and proxy write counters).</p></section>';
+      }
+      var norm = rows.map(function(r) { return { tier: String(r.tier || ''), hives: Number(r.hives) || 0, attempted: Number(r.attempted) || 0, blocked: Number(r.blocked) || 0, block_rate: r.block_rate }; });
+      return '<section class="evidence-section"><h3 class="evidence-title">Boundary enforcement</h3>' +
+        '<p class="evidence-note">Agent write attempts the proxy saw per intent tier and how many it blocked, pooled across the selected hives. Totals run since each spoke\u2019s proxy started, not over 90 days. A blocked write records nothing about merge eligibility.</p>' +
+        evidenceWriteCountersSvg(norm) +
+        '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr><th>Tier</th><th>Hives</th><th>Attempted</th><th>Blocked</th>' + evidenceRateHeads('Block rate') + '</tr></thead><tbody>' +
+        norm.map(function(r) {
+          return '<tr><td>' + esc(r.tier) + '</td><td>' + evidenceCount(r.hives) + '</td><td>' + evidenceCount(r.attempted) + '</td><td>' + evidenceCount(r.blocked) + '</td>' + evidenceRateCells(r.block_rate) + '</tr>';
+        }).join('') + '</tbody></table></div></section>';
+    }
+
+    function evidenceShadowPanel(view) {
+      var sg = view.shadow_gate && typeof view.shadow_gate === 'object' ? view.shadow_gate : null;
+      if (!sg) {
+        return '<section class="evidence-section"><h3 class="evidence-title">Shadow gates × outcome</h3>' +
+          '<p class="evidence-note">Shadow-gate observations are not reported by any selected hive yet (needs a spoke with #12370 and review.shadow / intent shadow mode on).</p></section>';
+      }
+      var bars = [], cells = '';
+      EVIDENCE_SHADOW_GATES.forEach(function(g) {
+        var gate = sg[g[0]] || {};
+        if (!(Number(gate.n) > 0)) return;
+        [['held', 'would have ' + g[2]], ['passed', 'would have passed']].forEach(function(side) {
+          var o = gate[side[0]] || {};
+          var row = { label: g[1] + ' · ' + side[1], n: Number(o.n) || 0, merged: Number(o.merged) || 0, reverted: Number(o.reverted) || 0 };
+          bars.push(row);
+          cells += '<tr><td>' + esc(g[1]) + '</td><td>' + esc(side[1]) + '</td><td>' + evidenceCount(row.n) + '</td><td>' + evidenceCount(row.merged) + '</td>' +
+            '<td>' + evidenceCount(Math.max(0, row.n - row.merged)) + '</td>' + evidenceRateCells(o.revert_rate) + '</tr>';
+        });
+      });
+      var body = bars.length ? evidenceOutcomeBarsSvg(bars, 'Shadow gates: PRs the review gate or intent verification would have stopped or passed, by actual outcome') :
+        '<p class="evidence-note">The selected hives report a shadow block but no gate has evaluated a PR yet.</p>';
+      return '<section class="evidence-section"><h3 class="evidence-title">Shadow gates × outcome</h3>' +
+        '<p class="evidence-note">' + evidenceCount(sg.hives) + ' hive(s) report shadow gates. Shadow mode only records; no merge was held or blocked anywhere in the fleet.</p>' +
+        body + '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr><th>Gate</th><th>Decision</th><th>PRs</th><th>Merged</th><th>Not merged</th>' + evidenceRateHeads('Revert rate') + '</tr></thead><tbody>' +
+        (cells || '<tr><td colspan="99" class="evidence-empty">No data reported yet.</td></tr>') + '</tbody></table></div></section>';
+    }
+
+    function evidenceViewHTML(data, filter) {
+      data = data || {};
+      filter = filter || _evidenceFilter;
+      var allHives = Array.isArray(data.hives) ? data.hives : [];
+      var active = evidenceFilterActive(filter);
+      var hives = active ? evidenceFilterHives(allHives, filter) : allHives;
+      var view = active ? evidenceRepool(data, hives) : data;
       var reported = hives.filter(function(h) { return h && h.reported; });
-      var out = '<p class="evidence-note">' + evidenceCount(data.reporting) + ' of ' + evidenceCount(data.spokes) +
-        ' hives report evidence. Rates show "' + EVIDENCE_NULL + '" below the minimum sample.</p>' +
+      var out = evidenceChipsHTML(data, filter) +
+        '<p class="evidence-note">' + evidenceCount(view.reporting) + ' of ' + evidenceCount(view.spokes) +
+        ' hives report evidence' + (active ? ' in this selection (' + evidenceCount(data.reporting) + ' of ' + evidenceCount(data.spokes) + ' fleet-wide)' : '') +
+        '. Rates show "' + EVIDENCE_NULL + '" below the minimum sample.</p>' +
         /* #12117 also lists a per-axis criteria table; GET /api/hub/evidence
            does not carry that data yet, so the gap is disclosed here rather
            than silently omitted. Tracked under #12080. */
-        '<p class="evidence-note">The per-axis criteria table is not reported by spokes yet (tracked in #12080).</p>';
+        '<p class="evidence-note">The per-axis criteria table is not reported by spokes yet (tracked in #12080).</p>' +
+        '<p class="evidence-note">Claim-vs-verdict totals are not reported by spokes yet.</p>';
 
-      var cov = data.record_coverage || {};
+      var cov = view.record_coverage || {};
       out += evidenceTable('Evidence coverage', '<th>Scope</th>' + evidenceRateHeads('Coverage'),
-        '<tr><td>Fleet</td>' + evidenceRateCells(cov) + '</tr>' +
+        '<tr><td>' + (active ? 'Selection' : 'Fleet') + '</td>' + evidenceRateCells(cov) + '</tr>' +
         hives.map(function(h) {
           return '<tr><td>' + evidenceHiveLabel(h) + '</td>' + evidenceRateCells(h.record_coverage) + '</tr>';
         }).join(''),
         'Merged PRs with an evidence record over merged PRs (90 days).');
 
-      var cal = Array.isArray(data.calibration) ? data.calibration : [];
-      var calHead = '<th>Bucket</th>' + evidenceRateHeads('Fleet') +
+      var cal = Array.isArray(view.calibration) ? view.calibration : [];
+      var calHead = '<th>Bucket</th>' + evidenceRateHeads(active ? 'Selection' : 'Fleet') +
         reported.map(function(h) { return '<th>' + evidenceHiveLabel(h) + '</th>'; }).join('');
       var calRows = cal.map(function(b, i) {
         var bucket = (b && b.bucket !== undefined) ? b.bucket : i;
@@ -1233,7 +1538,9 @@
       out += evidenceTable('Calibration curve', calHead, calRows,
         'Bad-outcome rate per reviewer confidence bucket (0–5), pooled across the fleet with each reporting hive overlaid.');
 
-      var acmm = Array.isArray(data.by_acmm_level) ? data.by_acmm_level : [];
+      out += evidenceOutcomesPanel(view);
+
+      var acmm = Array.isArray(view.by_acmm_level) ? view.by_acmm_level : [];
       out += evidenceTable('ACMM level × outcome', '<th>Level</th><th>Hives</th><th>Merged (90d)</th>' + evidenceRateHeads('Revert rate'),
         acmm.map(function(a) {
           return '<tr><td>L' + evidenceCount(a.level) + '</td><td>' + evidenceCount(a.hives) + '</td><td>' + evidenceCount(a.merged_90d) + '</td>' +
@@ -1241,7 +1548,9 @@
         }).join(''),
         'Median time-to-merge is not reported by spokes yet.');
 
-      var fam = data.family_false_approve_rate || {};
+      out += evidenceWriteCountersPanel(view);
+
+      var fam = view.family_false_approve_rate || {};
       out += evidenceTable('Same- vs cross-family false approve', '<th>Family mix</th>' + evidenceRateHeads('False approve'),
         EVIDENCE_FAMILY_MIXES.map(function(k) {
           return '<tr><td>' + esc(k) + '</td>' + evidenceRateCells(fam[k]) + '</tr>';
@@ -1263,14 +1572,7 @@
         }).join(''),
         'Revert rate by author kind is not reported by spokes yet.');
 
-      /* Shadow gate vs outcome is only emitted once spokes report it. */
-      if (data.shadow_gate && typeof data.shadow_gate === 'object') {
-        out += evidenceTable('Shadow gate vs outcome', '<th>Outcome</th>' + evidenceRateHeads('Rate'),
-          Object.keys(data.shadow_gate).map(function(k) {
-            var r = data.shadow_gate[k];
-            return (r && typeof r === 'object') ? '<tr><td>' + esc(k) + '</td>' + evidenceRateCells(r) + '</tr>' : '';
-          }).join(''));
-      }
+      out += evidenceShadowPanel(view);
       return out;
     }
 
@@ -1292,6 +1594,8 @@
       var el = document.getElementById('evidence-body');
       if (!modal || !el) return;
       el.innerHTML = '<div class="loading">Loading...</div>';
+      _evidenceLast = null;
+      _evidenceFilter = { hives: null, level: null };
       modal.style.display = 'flex';
       hiveHubRememberModalOpen(modal);
       var closeBtn = document.getElementById('evidence-close');
@@ -1299,6 +1603,7 @@
       try {
         var resp = await fetch('/api/hub/evidence');
         var data = resp.ok ? await resp.json() : null;
+        if (resp.ok) _evidenceLast = data;
         el.innerHTML = evidencePanelHTML(resp.ok ? 200 : resp.status, data);
       } catch (e) {
         el.innerHTML = '<div class="evidence-msg evidence-error" role="alert">Failed to load the evidence details: ' + esc((e && e.message) || 'network error') + '</div>';

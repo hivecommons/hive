@@ -1166,6 +1166,16 @@ type HeartbeatEvidence struct {
 	ReviewerFamilies      []string                                                     `json:"reviewer_families,omitempty"`
 	AuthorFamilies        []string                                                     `json:"author_families,omitempty"`
 	Calibration           [HeartbeatEvidenceCalibrationBuckets]HeartbeatEvidenceBucket `json:"calibration"`
+
+	// Fleet-panel aggregates (#12370), all additive: an old spoke omits them
+	// and the hub treats the absence as "not reported", never as zero.
+	// OutcomesByAuthorKind is keyed by human/agent/bot. WriteCounters is the
+	// proxy's attempted-vs-blocked agent write totals per intent tier since the
+	// proxy started (not a 90-day window). ShadowGate compares what the shadow
+	// review gate / intent verification would have done with the outcome.
+	OutcomesByAuthorKind map[string]HeartbeatEvidenceOutcome    `json:"outcomes_by_author_kind,omitempty"`
+	WriteCounters        map[string]HeartbeatEvidenceWriteCount `json:"write_counters,omitempty"`
+	ShadowGate           *HeartbeatEvidenceShadow               `json:"shadow_gate,omitempty"`
 }
 
 // HeartbeatEvidenceBucket is one calibration bucket: N verdicts, Bad of
@@ -1173,6 +1183,36 @@ type HeartbeatEvidence struct {
 type HeartbeatEvidenceBucket struct {
 	N   int `json:"n"`
 	Bad int `json:"bad"`
+}
+
+// HeartbeatEvidenceOutcome counts the PRs of one author kind: N PRs, Merged
+// of them merged, Reverted (a subset of Merged) reverted or followed up
+// within 14 days. N-Merged is still open.
+type HeartbeatEvidenceOutcome struct {
+	N        int `json:"n"`
+	Merged   int `json:"merged"`
+	Reverted int `json:"reverted"`
+}
+
+// HeartbeatEvidenceWriteCount is one tier's attempted and proxy-blocked
+// agent write counts.
+type HeartbeatEvidenceWriteCount struct {
+	Attempted int `json:"attempted"`
+	Blocked   int `json:"blocked"`
+}
+
+// HeartbeatEvidenceShadow is the shadow-gate block: ReviewGate is the
+// shadow review gate, Intent the shadow intent verification.
+type HeartbeatEvidenceShadow struct {
+	ReviewGate HeartbeatEvidenceShadowGate `json:"review_gate"`
+	Intent     HeartbeatEvidenceShadowGate `json:"intent"`
+}
+
+// HeartbeatEvidenceShadowGate splits the PRs one shadow gate evaluated into
+// the ones it would have stopped (Held) and let through (Passed).
+type HeartbeatEvidenceShadowGate struct {
+	Held   HeartbeatEvidenceOutcome `json:"held"`
+	Passed HeartbeatEvidenceOutcome `json:"passed"`
 }
 
 type StatusCollector func() *HeartbeatPayload

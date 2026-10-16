@@ -6,12 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 func TestBuildHeartbeatEvidence(t *testing.T) {
@@ -47,6 +49,15 @@ func TestBuildHeartbeatEvidence(t *testing.T) {
 		{Perspective: "security", Model: "claude-sonnet-5", Verdict: "approve", Confidence: 0.6},
 	}, 0, true)
 
+	// Shadow gates (#12370): the review gate would have held PR 1 (reverted)
+	// and passed PR 2 (merged); intent would have blocked PR 4 (open). PR 3
+	// carries a shadow block with no decision and must not count.
+	yesHeld, noHeld := true, false
+	reverted.Shadow = &evidence.Shadow{ReviewGate: &evidence.ShadowGate{WouldHaveHeld: &yesHeld}}
+	blocked.Shadow = &evidence.Shadow{ReviewGate: &evidence.ShadowGate{WouldHaveHeld: &noHeld}}
+	open.Shadow = &evidence.Shadow{Intent: &evidence.ShadowGate{WouldHaveBlocked: &yesHeld}}
+	followed.Shadow = &evidence.Shadow{}
+
 	// Outside the 90-day window.
 	old := evSummaryBundle("c/d", 5, evidence.AuthorAgent, tooOld, true, []evidence.Verdict{
 		{Perspective: "security", Model: "mistral-large", Verdict: "approve", Confidence: 0.9},
@@ -77,6 +88,63 @@ func TestBuildHeartbeatEvidence(t *testing.T) {
 		if b.N != want[i][0] || b.Bad != want[i][1] {
 			t.Errorf("calibration[%d] = %+v, want n=%d bad=%d", i, b, want[i][0], want[i][1])
 		}
+	}
+
+	// Fleet-panel aggregates (#12370). Agent: PR 1 (merged, reverted) + PR 4
+	// (open); human: PR 2 merged; bot: PR 3 merged and followed up.
+	wantOutcomes := map[string]spoke.HeartbeatEvidenceOutcome{
+		evidence.AuthorAgent: {N: 2, Merged: 1, Reverted: 1},
+		evidence.AuthorHuman: {N: 1, Merged: 1},
+		evidence.AuthorBot:   {N: 1, Merged: 1, Reverted: 1},
+	}
+	if !reflect.DeepEqual(got.OutcomesByAuthorKind, wantOutcomes) {
+		t.Errorf("outcomes_by_author_kind = %+v, want %+v", got.OutcomesByAuthorKind, wantOutcomes)
+	}
+	wantShadow := &spoke.HeartbeatEvidenceShadow{
+		ReviewGate: spoke.HeartbeatEvidenceShadowGate{
+			Held:   spoke.HeartbeatEvidenceOutcome{N: 1, Merged: 1, Reverted: 1},
+			Passed: spoke.HeartbeatEvidenceOutcome{N: 1, Merged: 1},
+		},
+		Intent: spoke.HeartbeatEvidenceShadowGate{Held: spoke.HeartbeatEvidenceOutcome{N: 1}},
+	}
+	if !reflect.DeepEqual(got.ShadowGate, wantShadow) {
+		t.Errorf("shadow_gate = %+v, want %+v", got.ShadowGate, wantShadow)
+	}
+	// buildHeartbeatEvidence never reads the proxy counter file.
+	if got.WriteCounters != nil {
+		t.Errorf("write_counters = %v, want nil from the bundle aggregation", got.WriteCounters)
+	}
+}
+
+// TestBuildHeartbeatEvidenceOmitsUnreportedPanels: with no shadow block and
+// an unknown author kind, the optional blocks stay nil so the hub reads them
+// as "not reported" and an old-spoke heartbeat shape is unchanged.
+func TestBuildHeartbeatEvidenceOmitsUnreportedPanels(t *testing.T) {
+	now := time.Now().UTC()
+	b := evSummaryBundle("a/b", 1, "martian", now.Add(-time.Hour), true, nil, 0, true)
+	got := buildHeartbeatEvidence([]*evidence.Bundle{b}, now, nil)
+	if got.OutcomesByAuthorKind != nil || got.ShadowGate != nil || got.WriteCounters != nil {
+		t.Fatalf("optional blocks must be nil: %+v", got)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"outcomes_by_author_kind", "write_counters", "shadow_gate"} {
+		if strings.Contains(string(raw), `"`+k+`"`) {
+			t.Errorf("json carries %q although nothing was reported: %s", k, raw)
+		}
+	}
+}
+
+func TestHeartbeatWriteCounters(t *testing.T) {
+	if got := heartbeatWriteCounters(nil); got != nil {
+		t.Fatalf("nil totals = %v, want nil", got)
+	}
+	got := heartbeatWriteCounters(map[string]EvidenceWriteCount{"guarded": {Attempted: 12, Blocked: 3}, "sandbox": {Attempted: 2}})
+	want := map[string]spoke.HeartbeatEvidenceWriteCount{"guarded": {Attempted: 12, Blocked: 3}, "sandbox": {Attempted: 2}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("write counters = %+v, want %+v", got, want)
 	}
 }
 
@@ -141,11 +209,25 @@ func TestEvidenceHeartbeat(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Proxy write counters (#12370) ride along from the durable counter file.
+	prevCounters := writeCountersPath
+	writeCountersPath = filepath.Join(dir, "write-counters.json")
+	t.Cleanup(func() { writeCountersPath = prevCounters })
+	if err := os.WriteFile(writeCountersPath, []byte(`{"totals":{"guarded":{"attempted":7,"blocked":2}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	s := newTestServer()
 	s.deps = &Dependencies{Config: &config.Config{}}
 	got = s.EvidenceHeartbeat()
 	if got == nil || got.Verdicts90d != 1 || got.Merged90d != 1 {
 		t.Fatalf("got %+v, want 1 verdict / 1 merged", got)
+	}
+	if got.OutcomesByAuthorKind[evidence.AuthorAgent] != (spoke.HeartbeatEvidenceOutcome{N: 1, Merged: 1}) {
+		t.Errorf("outcomes_by_author_kind = %+v, want one merged agent PR", got.OutcomesByAuthorKind)
+	}
+	if got.WriteCounters["guarded"] != (spoke.HeartbeatEvidenceWriteCount{Attempted: 7, Blocked: 2}) {
+		t.Errorf("write_counters = %+v, want guarded 7/2", got.WriteCounters)
 	}
 	want := s.deps.Config.AutoMerge.SelfAuthoredAutoMergeAllowed(s.deps.Config.ACMMLevel)
 	if got.AutomergeSelfAuthored == nil || *got.AutomergeSelfAuthored != want {

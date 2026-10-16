@@ -22,6 +22,9 @@ func TestSpokeEvidenceWireCompat(t *testing.T) {
 		AuthorFamilies:        []string{"gpt"},
 	}}
 	in.Evidence.Calibration[5] = spoke.HeartbeatEvidenceBucket{N: 9, Bad: 1}
+	in.Evidence.OutcomesByAuthorKind = map[string]spoke.HeartbeatEvidenceOutcome{"agent": {N: 8, Merged: 6, Reverted: 1}}
+	in.Evidence.WriteCounters = map[string]spoke.HeartbeatEvidenceWriteCount{"guarded": {Attempted: 20, Blocked: 3}}
+	in.Evidence.ShadowGate = &spoke.HeartbeatEvidenceShadow{Intent: spoke.HeartbeatEvidenceShadowGate{Held: spoke.HeartbeatEvidenceOutcome{N: 2, Merged: 1}}}
 	raw, err := json.Marshal(in)
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +43,29 @@ func TestSpokeEvidenceWireCompat(t *testing.T) {
 	}
 	if len(got.ReviewerFamilies) != 2 || len(got.AuthorFamilies) != 1 {
 		t.Errorf("families = %v / %v", got.ReviewerFamilies, got.AuthorFamilies)
+	}
+	// Fleet-panel blocks (#12370) cross the wire field-for-field.
+	if got.OutcomesByAuthorKind["agent"] != (EvidenceOutcome{N: 8, Merged: 6, Reverted: 1}) {
+		t.Errorf("outcomes_by_author_kind = %+v", got.OutcomesByAuthorKind)
+	}
+	if got.WriteCounters["guarded"] != (EvidenceWriteCount{Attempted: 20, Blocked: 3}) {
+		t.Errorf("write_counters = %+v", got.WriteCounters)
+	}
+	if got.ShadowGate == nil || got.ShadowGate.Intent.Held != (EvidenceOutcome{N: 2, Merged: 1}) || got.ShadowGate.ReviewGate != (EvidenceShadowGate{}) {
+		t.Errorf("shadow_gate = %+v", got.ShadowGate)
+	}
+
+	// A spoke predating #12370 sends the block without the panel keys.
+	raw, err = json.Marshal(spoke.HeartbeatPayload{Evidence: &spoke.HeartbeatEvidence{Verdicts90d: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = HeartbeatPayload{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := sanitizeEvidence(out.Evidence); got.OutcomesByAuthorKind != nil || got.WriteCounters != nil || got.ShadowGate != nil {
+		t.Fatalf("pre-#12370 spoke must leave the panel blocks nil: %+v", got)
 	}
 
 	// An old spoke sends no evidence key: the hub sees nil, not a zero block.

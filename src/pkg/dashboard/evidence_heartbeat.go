@@ -31,7 +31,23 @@ func (s *Server) EvidenceHeartbeat() *spoke.HeartbeatEvidence {
 		v := cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel)
 		selfMerge = &v
 	}
-	return buildHeartbeatEvidence(bundles, time.Now().UTC(), selfMerge)
+	out := buildHeartbeatEvidence(bundles, time.Now().UTC(), selfMerge)
+	out.WriteCounters = heartbeatWriteCounters(loadEvidenceWriteCounters(writeCountersPath))
+	return out
+}
+
+// heartbeatWriteCounters converts the proxy's per-tier totals (#12069) into
+// the heartbeat shape; nil when the counter file is absent, so the hub shows
+// "not reported" rather than zero attempts.
+func heartbeatWriteCounters(totals map[string]EvidenceWriteCount) map[string]spoke.HeartbeatEvidenceWriteCount {
+	if len(totals) == 0 {
+		return nil
+	}
+	out := make(map[string]spoke.HeartbeatEvidenceWriteCount, len(totals))
+	for tier, c := range totals {
+		out[tier] = spoke.HeartbeatEvidenceWriteCount{Attempted: int(c.Attempted), Blocked: int(c.Blocked)}
+	}
+	return out
 }
 
 // buildHeartbeatEvidence aggregates the newest bundle per PR created within
@@ -53,6 +69,9 @@ func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge
 
 	reviewers := map[string]bool{}
 	authors := map[string]bool{}
+	outcomes := map[string]spoke.HeartbeatEvidenceOutcome{}
+	var shadow spoke.HeartbeatEvidenceShadow
+	shadowSeen := false
 	for _, b := range latest {
 		merged := b.Merge != nil
 		failed := merged && (len(b.RevertedBy) > 0 || len(b.FollowedUpBy) > 0)
@@ -61,6 +80,20 @@ func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge
 		}
 		if failed {
 			out.Reverted14d90d++
+		}
+		switch b.Author.Kind {
+		case evidence.AuthorHuman, evidence.AuthorAgent, evidence.AuthorBot:
+			outcomes[b.Author.Kind] = addHeartbeatOutcome(outcomes[b.Author.Kind], merged, failed)
+		}
+		if sh := b.Shadow; sh != nil {
+			if sh.ReviewGate != nil && sh.ReviewGate.WouldHaveHeld != nil {
+				shadowSeen = true
+				addHeartbeatShadow(&shadow.ReviewGate, *sh.ReviewGate.WouldHaveHeld, merged, failed)
+			}
+			if sh.Intent != nil && sh.Intent.WouldHaveBlocked != nil {
+				shadowSeen = true
+				addHeartbeatShadow(&shadow.Intent, *sh.Intent.WouldHaveBlocked, merged, failed)
+			}
 		}
 		if f := knownModelFamily(b.Author.Model); f != "" {
 			authors[f] = true
@@ -92,7 +125,32 @@ func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge
 	}
 	out.ReviewerFamilies = sortedEvidenceFamilies(reviewers)
 	out.AuthorFamilies = sortedEvidenceFamilies(authors)
+	if len(outcomes) > 0 {
+		out.OutcomesByAuthorKind = outcomes
+	}
+	if shadowSeen {
+		out.ShadowGate = &shadow
+	}
 	return out
+}
+
+func addHeartbeatOutcome(o spoke.HeartbeatEvidenceOutcome, merged, failed bool) spoke.HeartbeatEvidenceOutcome {
+	o.N++
+	if merged {
+		o.Merged++
+	}
+	if failed {
+		o.Reverted++
+	}
+	return o
+}
+
+func addHeartbeatShadow(g *spoke.HeartbeatEvidenceShadowGate, stopped, merged, failed bool) {
+	if stopped {
+		g.Held = addHeartbeatOutcome(g.Held, merged, failed)
+	} else {
+		g.Passed = addHeartbeatOutcome(g.Passed, merged, failed)
+	}
 }
 
 // evidenceCalibrationBucket maps a confidence in [0,1] to bucket 0–5.

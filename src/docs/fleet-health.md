@@ -382,6 +382,14 @@ same store behind `GET /api/evidence/summary`):
   level (`AutoMerge.SelfAuthoredAutoMergeAllowed`).
 - `reviewer_families` / `author_families` — model families (`claude`, `gpt`,
   …) seen on verdicts and agent-authored PRs; unknown models are omitted.
+- Fleet-panel aggregates (#12370), each optional and omitted when the spoke
+  has nothing to report: `outcomes_by_author_kind` (`human`/`agent`/`bot` →
+  `{n, merged, reverted}` PRs, `reverted` ⊆ `merged`), `write_counters`
+  (intent tier → `{attempted, blocked}` agent writes seen by the proxy since it
+  started — not a 90-day window), and `shadow_gate` (`review_gate` / `intent`
+  → `{held, passed}`, each `{n, merged, reverted}`: what the shadow gate would
+  have done versus how the PR turned out). A spoke predating #12370 sends none
+  of them and the hub shows "not reported", never zero.
 
 The hub clamps every count (subset counts never exceed their total), caps and
 de-duplicates the family lists, and stores the result with the other per-hive

@@ -18,6 +18,8 @@ const (
 	maxEvidenceCount       = 10_000_000
 	maxEvidenceFamilies    = 16
 	maxEvidenceFamilyRunes = 64
+	maxEvidenceWriteTiers  = 16
+	maxEvidenceTierRunes   = 32
 
 	// EvidenceCalibrationBuckets is the number of confidence buckets (0–5).
 	EvidenceCalibrationBuckets = 6
@@ -42,6 +44,119 @@ type HeartbeatEvidence struct {
 	ReviewerFamilies      []string                                   `json:"reviewer_families,omitempty"`
 	AuthorFamilies        []string                                   `json:"author_families,omitempty"`
 	Calibration           [EvidenceCalibrationBuckets]EvidenceBucket `json:"calibration"`
+
+	// Fleet-panel aggregates (#12370); nil/absent on old spokes, which the
+	// view reports as "not reported" rather than zero. The JSON shape matches
+	// spoke.HeartbeatEvidence.
+	OutcomesByAuthorKind map[string]EvidenceOutcome    `json:"outcomes_by_author_kind,omitempty"`
+	WriteCounters        map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
+	ShadowGate           *EvidenceShadow               `json:"shadow_gate,omitempty"`
+}
+
+// EvidenceOutcome counts PRs: N total, Merged merged, Reverted (a subset of
+// Merged) reverted or followed up within 14 days; N-Merged are open.
+type EvidenceOutcome struct {
+	N        int `json:"n"`
+	Merged   int `json:"merged"`
+	Reverted int `json:"reverted"`
+}
+
+func (o EvidenceOutcome) add(x EvidenceOutcome) EvidenceOutcome {
+	return EvidenceOutcome{N: o.N + x.N, Merged: o.Merged + x.Merged, Reverted: o.Reverted + x.Reverted}
+}
+
+// EvidenceWriteCount is one intent tier's attempted and proxy-blocked agent
+// writes since the spoke's proxy started.
+type EvidenceWriteCount struct {
+	Attempted int `json:"attempted"`
+	Blocked   int `json:"blocked"`
+}
+
+// EvidenceShadow is a spoke's shadow-gate block: the shadow review gate and
+// the shadow intent verification, each split by what it would have done.
+type EvidenceShadow struct {
+	ReviewGate EvidenceShadowGate `json:"review_gate"`
+	Intent     EvidenceShadowGate `json:"intent"`
+}
+
+// EvidenceShadowGate splits the PRs one shadow gate evaluated into the ones
+// it would have stopped (Held) and let through (Passed).
+type EvidenceShadowGate struct {
+	Held   EvidenceOutcome `json:"held"`
+	Passed EvidenceOutcome `json:"passed"`
+}
+
+func (g EvidenceShadowGate) add(x EvidenceShadowGate) EvidenceShadowGate {
+	return EvidenceShadowGate{Held: g.Held.add(x.Held), Passed: g.Passed.add(x.Passed)}
+}
+
+// evidenceAuthorKinds is the fixed key set of OutcomesByAuthorKind; any other
+// key from a spoke is dropped.
+var evidenceAuthorKinds = []string{"human", "agent", "bot"}
+
+func sanitizeEvidenceOutcome(o EvidenceOutcome) EvidenceOutcome {
+	n := clampInt(o.N, 0, maxEvidenceCount)
+	merged := clampInt(o.Merged, 0, n)
+	return EvidenceOutcome{N: n, Merged: merged, Reverted: clampInt(o.Reverted, 0, merged)}
+}
+
+func sanitizeEvidenceOutcomes(in map[string]EvidenceOutcome) map[string]EvidenceOutcome {
+	if in == nil {
+		return nil
+	}
+	out := map[string]EvidenceOutcome{}
+	for _, k := range evidenceAuthorKinds {
+		if o, ok := in[k]; ok {
+			out[k] = sanitizeEvidenceOutcome(o)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func sanitizeEvidenceWriteCounters(in map[string]EvidenceWriteCount) map[string]EvidenceWriteCount {
+	if in == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := map[string]EvidenceWriteCount{}
+	for _, k := range keys {
+		// A tier is an ACMM mode name; anything outside the safe name
+		// alphabet is dropped rather than escaped.
+		tier := truncateReachRunes(strings.TrimSpace(k), maxEvidenceTierRunes)
+		if !safeNamePattern.MatchString(tier) {
+			continue
+		}
+		if _, dup := out[tier]; dup {
+			continue
+		}
+		c := in[k]
+		attempted := clampInt(c.Attempted, 0, maxEvidenceCount)
+		out[tier] = EvidenceWriteCount{Attempted: attempted, Blocked: clampInt(c.Blocked, 0, attempted)}
+		if len(out) == maxEvidenceWriteTiers {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func sanitizeEvidenceShadow(in *EvidenceShadow) *EvidenceShadow {
+	if in == nil {
+		return nil
+	}
+	gate := func(g EvidenceShadowGate) EvidenceShadowGate {
+		return EvidenceShadowGate{Held: sanitizeEvidenceOutcome(g.Held), Passed: sanitizeEvidenceOutcome(g.Passed)}
+	}
+	return &EvidenceShadow{ReviewGate: gate(in.ReviewGate), Intent: gate(in.Intent)}
 }
 
 func sanitizeEvidenceFamilies(in []string) []string {
@@ -83,6 +198,9 @@ func sanitizeEvidence(in *HeartbeatEvidence) *HeartbeatEvidence {
 		n := c(b.N)
 		out.Calibration[i] = EvidenceBucket{N: n, Bad: clampInt(b.Bad, 0, n)}
 	}
+	out.OutcomesByAuthorKind = sanitizeEvidenceOutcomes(in.OutcomesByAuthorKind)
+	out.WriteCounters = sanitizeEvidenceWriteCounters(in.WriteCounters)
+	out.ShadowGate = sanitizeEvidenceShadow(in.ShadowGate)
 	return out
 }
 
@@ -178,6 +296,177 @@ type EvidenceHive struct {
 	ReviewerFamilies      []string       `json:"reviewer_families,omitempty"`
 	AuthorFamilies        []string       `json:"author_families,omitempty"`
 	Calibration           []EvidenceRate `json:"calibration"`
+	// Counts carries the raw sanitized counts behind the rates above (and the
+	// fleet-panel aggregates) so the drill-down can re-pool a hive / ACMM
+	// level selection client-side (#12370). nil when the hive never reported.
+	Counts *EvidenceHiveCounts `json:"counts,omitempty"`
+}
+
+// EvidenceHiveCounts is the raw per-hive evidence behind EvidenceHive's rates.
+// Recorded90d is the hive's merged-with-record count capped at prs_merged_90d
+// (nil when GitHub reported no merged count).
+type EvidenceHiveCounts struct {
+	Verdicts90d          int                           `json:"verdicts_90d"`
+	FalseApprove90d      int                           `json:"false_approve_90d"`
+	FalseBlock90d        int                           `json:"false_block_90d"`
+	Merged90d            int                           `json:"merged_90d"`
+	Reverted14d90d       int                           `json:"reverted_14d_90d"`
+	Recorded90d          *int                          `json:"recorded_90d,omitempty"`
+	Calibration          []EvidenceBucket              `json:"calibration"`
+	OutcomesByAuthorKind map[string]EvidenceOutcome    `json:"outcomes_by_author_kind,omitempty"`
+	WriteCounters        map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
+	ShadowGate           *EvidenceShadow               `json:"shadow_gate,omitempty"`
+}
+
+// EvidenceAuthorKindOutcome is the pooled outcome of one author kind: Hives
+// is the reporting hives, MergeRate merged/n, RevertRate reverted/merged.
+type EvidenceAuthorKindOutcome struct {
+	Kind       string       `json:"kind"`
+	Hives      int          `json:"hives"`
+	N          int          `json:"n"`
+	Merged     int          `json:"merged"`
+	Reverted   int          `json:"reverted"`
+	MergeRate  EvidenceRate `json:"merge_rate"`
+	RevertRate EvidenceRate `json:"revert_rate"`
+}
+
+// EvidenceWriteTier is the pooled boundary enforcement of one intent tier.
+type EvidenceWriteTier struct {
+	Tier      string       `json:"tier"`
+	Hives     int          `json:"hives"`
+	Attempted int          `json:"attempted"`
+	Blocked   int          `json:"blocked"`
+	BlockRate EvidenceRate `json:"block_rate"`
+}
+
+// EvidenceShadowOutcomeRate is a pooled shadow-gate side with its revert rate
+// (reverted over merged).
+type EvidenceShadowOutcomeRate struct {
+	EvidenceOutcome
+	Open       int          `json:"open"`
+	RevertRate EvidenceRate `json:"revert_rate"`
+}
+
+func newEvidenceShadowOutcomeRate(o EvidenceOutcome) EvidenceShadowOutcomeRate {
+	return EvidenceShadowOutcomeRate{EvidenceOutcome: o, Open: o.N - o.Merged, RevertRate: newEvidenceRate(o.Reverted, o.Merged)}
+}
+
+// EvidenceShadowGateView is one pooled shadow gate.
+type EvidenceShadowGateView struct {
+	Hives  int                       `json:"hives"`
+	N      int                       `json:"n"`
+	Held   EvidenceShadowOutcomeRate `json:"held"`
+	Passed EvidenceShadowOutcomeRate `json:"passed"`
+}
+
+func newEvidenceShadowGateView(hives int, g EvidenceShadowGate) EvidenceShadowGateView {
+	return EvidenceShadowGateView{Hives: hives, N: g.Held.N + g.Passed.N,
+		Held: newEvidenceShadowOutcomeRate(g.Held), Passed: newEvidenceShadowOutcomeRate(g.Passed)}
+}
+
+// EvidenceShadowView is the pooled shadow-gate panel. Hives is the number of
+// hives that reported a shadow block at all.
+type EvidenceShadowView struct {
+	Hives      int                    `json:"hives"`
+	ReviewGate EvidenceShadowGateView `json:"review_gate"`
+	Intent     EvidenceShadowGateView `json:"intent"`
+}
+
+// evidencePool accumulates the fleet-panel aggregates of a set of hives.
+type evidencePool struct {
+	outcomes     map[string]*EvidenceAuthorKindOutcome
+	writes       map[string]*EvidenceWriteTier
+	outcomeHives int
+	writeHives   int
+	shadowHives  int
+	reviewHives  int
+	intentHives  int
+	reviewGate   EvidenceShadowGate
+	intentGate   EvidenceShadowGate
+}
+
+func newEvidencePool() *evidencePool {
+	return &evidencePool{outcomes: map[string]*EvidenceAuthorKindOutcome{}, writes: map[string]*EvidenceWriteTier{}}
+}
+
+func (p *evidencePool) add(e *HeartbeatEvidence) {
+	if len(e.OutcomesByAuthorKind) > 0 {
+		p.outcomeHives++
+		for kind, o := range e.OutcomesByAuthorKind {
+			a := p.outcomes[kind]
+			if a == nil {
+				a = &EvidenceAuthorKindOutcome{Kind: kind}
+				p.outcomes[kind] = a
+			}
+			a.Hives++
+			a.N += o.N
+			a.Merged += o.Merged
+			a.Reverted += o.Reverted
+		}
+	}
+	if len(e.WriteCounters) > 0 {
+		p.writeHives++
+		for tier, c := range e.WriteCounters {
+			a := p.writes[tier]
+			if a == nil {
+				a = &EvidenceWriteTier{Tier: tier}
+				p.writes[tier] = a
+			}
+			a.Hives++
+			a.Attempted += c.Attempted
+			a.Blocked += c.Blocked
+		}
+	}
+	if sh := e.ShadowGate; sh != nil {
+		p.shadowHives++
+		if sh.ReviewGate.Held.N+sh.ReviewGate.Passed.N > 0 {
+			p.reviewHives++
+		}
+		if sh.Intent.Held.N+sh.Intent.Passed.N > 0 {
+			p.intentHives++
+		}
+		p.reviewGate = p.reviewGate.add(sh.ReviewGate)
+		p.intentGate = p.intentGate.add(sh.Intent)
+	}
+}
+
+func (p *evidencePool) outcomesView() []EvidenceAuthorKindOutcome {
+	if p.outcomeHives == 0 {
+		return nil
+	}
+	out := make([]EvidenceAuthorKindOutcome, 0, len(evidenceAuthorKinds))
+	for _, kind := range evidenceAuthorKinds {
+		a := p.outcomes[kind]
+		if a == nil {
+			a = &EvidenceAuthorKindOutcome{Kind: kind}
+		}
+		a.MergeRate = newEvidenceRate(a.Merged, a.N)
+		a.RevertRate = newEvidenceRate(a.Reverted, a.Merged)
+		out = append(out, *a)
+	}
+	return out
+}
+
+func (p *evidencePool) writesView() []EvidenceWriteTier {
+	if p.writeHives == 0 {
+		return nil
+	}
+	out := make([]EvidenceWriteTier, 0, len(p.writes))
+	for _, a := range p.writes {
+		a.BlockRate = newEvidenceRate(a.Blocked, a.Attempted)
+		out = append(out, *a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Tier < out[j].Tier })
+	return out
+}
+
+func (p *evidencePool) shadowView() *EvidenceShadowView {
+	if p.shadowHives == 0 {
+		return nil
+	}
+	return &EvidenceShadowView{Hives: p.shadowHives,
+		ReviewGate: newEvidenceShadowGateView(p.reviewHives, p.reviewGate),
+		Intent:     newEvidenceShadowGateView(p.intentHives, p.intentGate)}
 }
 
 // EvidenceCalibrationBucket is one pooled fleet calibration bucket.
@@ -196,10 +485,13 @@ type EvidenceFamilyFalseApprove struct {
 // EvidenceACMMLevel is the pooled evidence of the reporting hives at one ACMM
 // level.
 type EvidenceACMMLevel struct {
-	Level      int          `json:"level"`
-	Hives      int          `json:"hives"`
-	Merged90d  int          `json:"merged_90d"`
-	RevertRate EvidenceRate `json:"revert_rate"`
+	Level                int                         `json:"level"`
+	Hives                int                         `json:"hives"`
+	Merged90d            int                         `json:"merged_90d"`
+	RevertRate           EvidenceRate                `json:"revert_rate"`
+	OutcomesByAuthorKind []EvidenceAuthorKindOutcome `json:"outcomes_by_author_kind,omitempty"`
+	WriteCounters        []EvidenceWriteTier         `json:"write_counters,omitempty"`
+	ShadowGate           *EvidenceShadowView         `json:"shadow_gate,omitempty"`
 }
 
 // EvidenceView is the GET /api/hub/evidence body.
@@ -210,7 +502,13 @@ type EvidenceView struct {
 	ByACMMLevel            []EvidenceACMMLevel         `json:"by_acmm_level"`
 	FamilyFalseApproveRate EvidenceFamilyFalseApprove  `json:"family_false_approve_rate"`
 	RecordCoverage         EvidenceRate                `json:"record_coverage"`
-	Hives                  []EvidenceHive              `json:"hives"`
+	// Fleet analogues of the spoke evidence panels (#12370): outcome by
+	// author kind, boundary enforcement per tier, shadow gates × outcome.
+	// Each is omitted when no spoke reports the block yet.
+	OutcomesByAuthorKind []EvidenceAuthorKindOutcome `json:"outcomes_by_author_kind,omitempty"`
+	WriteCounters        []EvidenceWriteTier         `json:"write_counters,omitempty"`
+	ShadowGate           *EvidenceShadowView         `json:"shadow_gate,omitempty"`
+	Hives                []EvidenceHive              `json:"hives"`
 }
 
 // buildEvidenceView pools the evidence summaries of every spoke. Spokes that
@@ -221,8 +519,12 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 	family := map[string]*EvidenceBucket{
 		evidenceFamilySame: {}, evidenceFamilyCross: {}, evidenceFamilyMixed: {},
 	}
-	type acmmPool struct{ hives, merged, reverted int }
+	type acmmPool struct {
+		hives, merged, reverted int
+		panels                  *evidencePool
+	}
 	acmm := map[int]*acmmPool{}
+	fleet := newEvidencePool()
 	var covered, mergedTotal int
 	for _, h := range hives {
 		out.Spokes++
@@ -231,10 +533,16 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 		if e := h.Evidence; e != nil {
 			out.Reporting++
 			row.Reported = true
+			counts := &EvidenceHiveCounts{Verdicts90d: e.Verdicts90d, FalseApprove90d: e.FalseApprove90d,
+				FalseBlock90d: e.FalseBlock90d, Merged90d: e.Merged90d, Reverted14d90d: e.Reverted14d90d,
+				Calibration: e.Calibration[:], OutcomesByAuthorKind: e.OutcomesByAuthorKind,
+				WriteCounters: e.WriteCounters, ShadowGate: e.ShadowGate}
+			row.Counts = counts
 			if h.PRsMerged90d != nil {
 				// Both counts are 90-day merged PRs; the record count comes from
 				// retained bundles so it is capped at the GitHub count.
 				recorded := clampInt(e.Merged90d, 0, *h.PRsMerged90d)
+				counts.Recorded90d = &recorded
 				row.RecordCoverage = newEvidenceRate(recorded, *h.PRsMerged90d)
 				covered += recorded
 				mergedTotal += *h.PRsMerged90d
@@ -246,12 +554,14 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 			}
 			a := acmm[h.ACMMLevel]
 			if a == nil {
-				a = &acmmPool{}
+				a = &acmmPool{panels: newEvidencePool()}
 				acmm[h.ACMMLevel] = a
 			}
 			a.hives++
 			a.merged += e.Merged90d
 			a.reverted += e.Reverted14d90d
+			a.panels.add(e)
+			fleet.add(e)
 			row.Verdicts90d, row.Merged90d = e.Verdicts90d, e.Merged90d
 			row.FalseApproveRate = newEvidenceRate(e.FalseApprove90d, e.Verdicts90d)
 			row.FalseBlockRate = newEvidenceRate(e.FalseBlock90d, e.Verdicts90d)
@@ -273,8 +583,13 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 	out.ByACMMLevel = make([]EvidenceACMMLevel, 0, len(acmm))
 	for level, a := range acmm {
 		out.ByACMMLevel = append(out.ByACMMLevel, EvidenceACMMLevel{Level: level, Hives: a.hives,
-			Merged90d: a.merged, RevertRate: newEvidenceRate(a.reverted, a.merged)})
+			Merged90d: a.merged, RevertRate: newEvidenceRate(a.reverted, a.merged),
+			OutcomesByAuthorKind: a.panels.outcomesView(), WriteCounters: a.panels.writesView(),
+			ShadowGate: a.panels.shadowView()})
 	}
+	out.OutcomesByAuthorKind = fleet.outcomesView()
+	out.WriteCounters = fleet.writesView()
+	out.ShadowGate = fleet.shadowView()
 	sort.Slice(out.ByACMMLevel, func(i, j int) bool { return out.ByACMMLevel[i].Level < out.ByACMMLevel[j].Level })
 	out.FamilyFalseApproveRate = EvidenceFamilyFalseApprove{
 		Same:  newEvidenceRate(family[evidenceFamilySame].Bad, family[evidenceFamilySame].N),
