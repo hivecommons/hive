@@ -8,7 +8,8 @@ one against that baseline before anything is applied for real.
 
 **The lab is repo-only.** Experiments on the hive's own runtime configuration
 (cadences, model assignments, thresholds) are out of scope and are not offered
-by the lab's UI or API.
+by the lab's UI or API. See [Hive-self background experiments](nous-hive-self-experiments.md)
+for the background-only experiment mode that tests Hive itself across opt-in cohorts.
 
 **There is no `nous:` block in `hive.yaml` or `hive.yaml.example`.** Despite
 what `src/README.md` used to say, Nous has no YAML config surface — it is
