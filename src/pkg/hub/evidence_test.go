@@ -102,3 +102,90 @@ func TestEvidenceEndpoint(t *testing.T) {
 		t.Fatalf("view = %+v", got)
 	}
 }
+
+func TestEvidenceFamilyMix(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		reviewers, authors []string
+		want               string
+	}{
+		{"no reviewers", nil, []string{"claude"}, evidenceFamilyUnknown},
+		{"no authors", []string{"claude"}, nil, evidenceFamilyUnknown},
+		{"same", []string{"claude"}, []string{"claude", "gpt"}, evidenceFamilySame},
+		{"cross", []string{"gpt"}, []string{"claude"}, evidenceFamilyCross},
+		{"mixed", []string{"claude", "gpt"}, []string{"claude"}, evidenceFamilyMixed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := evidenceFamilyMix(tc.reviewers, tc.authors); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildEvidenceViewDrillDownSections(t *testing.T) {
+	merged := func(v int) *int { return &v }
+	v := buildEvidenceView([]RegistryEntry{
+		{ID: "same", ACMMLevel: 3, PRsMerged90d: merged(40), Evidence: &HeartbeatEvidence{
+			Verdicts90d: 20, FalseApprove90d: 2, Merged90d: 30, Reverted14d90d: 3,
+			ReviewerFamilies: []string{"claude"}, AuthorFamilies: []string{"claude"}}},
+		{ID: "cross", ACMMLevel: 3, PRsMerged90d: merged(5), Evidence: &HeartbeatEvidence{
+			Verdicts90d: 10, FalseApprove90d: 1, Merged90d: 9, Reverted14d90d: 0,
+			ReviewerFamilies: []string{"gpt"}, AuthorFamilies: []string{"claude"}}},
+		{ID: "unknown", ACMMLevel: 5, Evidence: &HeartbeatEvidence{Verdicts90d: 50, FalseApprove90d: 50, Merged90d: 4}},
+		{ID: "silent", ACMMLevel: 1, PRsMerged90d: merged(100)},
+	})
+
+	for _, tc := range []struct {
+		name     string
+		got      EvidenceRate
+		wantN    int
+		wantRate *float64
+	}{
+		{"same-family false approve", v.FamilyFalseApproveRate.Same, 20, ptrFloat(0.1)},
+		{"cross-family false approve", v.FamilyFalseApproveRate.Cross, 10, ptrFloat(0.1)},
+		{"mixed-family is empty", v.FamilyFalseApproveRate.Mixed, 0, nil},
+		{"hive record coverage", v.Hives[1].RecordCoverage, 40, ptrFloat(0.75)},
+		{"record over-count is capped", v.Hives[0].RecordCoverage, 5, nil},
+		{"fleet record coverage", v.RecordCoverage, 45, ptrFloat(35.0 / 45)},
+		{"no github count is unknown", v.Hives[3].RecordCoverage, 0, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got.N != tc.wantN {
+				t.Fatalf("n = %d, want %d", tc.got.N, tc.wantN)
+			}
+			if (tc.got.Rate == nil) != (tc.wantRate == nil) {
+				t.Fatalf("rate = %v, want %v", tc.got.Rate, tc.wantRate)
+			}
+			if tc.wantRate == nil {
+				if tc.got.Lo != nil || tc.got.Hi != nil {
+					t.Fatalf("n<10 must carry no interval: %+v", tc.got)
+				}
+				return
+			}
+			if *tc.got.Rate != *tc.wantRate {
+				t.Fatalf("rate = %v, want %v", *tc.got.Rate, *tc.wantRate)
+			}
+			lo, hi := wilson(int(*tc.wantRate*float64(tc.wantN)+0.5), tc.wantN)
+			if tc.got.Lo == nil || tc.got.Hi == nil || *tc.got.Lo != lo || *tc.got.Hi != hi || lo > *tc.wantRate || hi < *tc.wantRate {
+				t.Fatalf("wilson = [%v,%v], want [%v,%v]", tc.got.Lo, tc.got.Hi, lo, hi)
+			}
+		})
+	}
+
+	if v.Hives[0].ID != "cross" || v.Hives[0].FamilyMix != evidenceFamilyCross || v.Hives[2].FamilyMix != "" || v.Hives[3].FamilyMix != evidenceFamilyUnknown {
+		t.Fatalf("family mix rows: %+v", v.Hives)
+	}
+	if len(v.ByACMMLevel) != 2 {
+		t.Fatalf("silent hives must not add an ACMM row: %+v", v.ByACMMLevel)
+	}
+	l3, l5 := v.ByACMMLevel[0], v.ByACMMLevel[1]
+	if l3.Level != 3 || l3.Hives != 2 || l3.Merged90d != 39 || l3.RevertRate.Rate == nil || *l3.RevertRate.Rate != 3.0/39 {
+		t.Fatalf("acmm 3: %+v", l3)
+	}
+	if l5.Level != 5 || l5.RevertRate.Rate != nil {
+		t.Fatalf("acmm 5 n<10 must be unknown: %+v", l5)
+	}
+}
+
+func ptrFloat(v float64) *float64 { return &v }

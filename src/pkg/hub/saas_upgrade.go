@@ -1029,10 +1029,11 @@ func (s *HubServer) triggerAutoUpgrades() {
 	for _, h := range hives {
 		s.mu.RLock()
 		var currentSHA, branch, upgradeTarget, imageRef, lastHeartbeat string
-		var alreadyUpgrading bool
+		var alreadyUpgrading, spokeUpgrading bool
 		var upgradeStartedAt time.Time
 		for _, reg := range s.registry.Hives {
 			if reg.ID == h.ID {
+				spokeUpgrading = reg.SpokeReportedUpgrading
 				currentSHA = reg.GitHash
 				branch = reg.GitBranch
 				alreadyUpgrading = reg.Upgrading
@@ -1178,6 +1179,20 @@ func (s *HubServer) triggerAutoUpgrades() {
 				// latest, this branch was skipped entirely and the hive stayed
 				// latched-upgrading forever behind an unreachable kubectl.
 				recoverTarget := upgradeTarget
+				if h.AutoUpgrade && spokeUpgrading {
+					// "Stale" means the upgrade never started, not that the
+					// rollout is slow. The spoke's own heartbeat payload says it
+					// is mid-rollout, so advancing would re-arm a new target and
+					// start another roll on top of the load that made this one
+					// slow. The heartbeat flag is trusted over kubectl Deployment
+					// status because it is available even when the hub cannot
+					// reach the cluster API. The registry latch is untouched, so
+					// the stuck-upgrade alert still fires off UpgradeStartedAt.
+					s.logger.Info("stale upgrade but spoke reports it is mid-rollout — not advancing target",
+						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
+						"target", upgradeTarget)
+					continue
+				}
 				if h.AutoUpgrade {
 					// Target advancement is an auto-upgrade behaviour: those
 					// hives always chase latest. A manual upgrade keeps exactly

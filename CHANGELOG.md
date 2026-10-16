@@ -11,6 +11,35 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-16 (v5.177.5)
+
+### Security
+
+- Go builder images (`src/Dockerfile`, `src/Dockerfile.contributor`, `src/Dockerfile.hub`) now pin the `golang:1.27-alpine` index digest that resolves to Go 1.27.2, picking up the 1.27.2 standard-library fixes in `net/http`, `net/http/internal/http2`, `net/http/httputil`, `net/textproto`, `crypto/tls` and `html/template` that `govulncheck` reported as reachable from the dashboard, proxy, hub and spoke heartbeat ([#12301](https://github.com/hivecommons/hive/issues/12301)).
+
+## 2026-10-16 (v5.177.4)
+
+### Changed
+
+- Expose more governor settings in the dashboard Settings dialog: the eval-loop pacing knobs (max and webhook eval intervals, conserve-mode multiplier, optional-sweep cadence and the provider spend-limit probe interval) are editable on the General tab with the threshold ownership shown read-only, the auto-merge queue label on the Labels tab, and claim comment/label mirroring, the claim stall gate and the rotation headroom source under Features; existing governor controls now show their YAML key (#11854).
+
+### Fixed
+
+- Dashboard Eval interval (seconds) control: help text now states the correct default (300 seconds) and indicates that changes apply from the next eval cycle, matching the adjacent Eval loop pacing block (#12294).
+
+## 2026-10-16 (v5.177.3)
+
+### Changed
+
+- dashboard: refresh cli_models.go CLI-version comment (#12291)
+- Expose the remaining GitHub connection settings in the dashboard Settings dialog: API quota floors, the agent reserve floor, the PR detail cache TTL, GraphQL PR batching, App-authored PRs and GitHub-signed commits are editable on the Forge App tab (forge, API URL, docs installation, OAuth client and token shown read-only, token masked), plus the good-first-issue scorer tuning and the github-actions[bot] PR takeover toggle under Features (#11854).
+
+### Fixed
+
+- Saving GitHub settings from the dashboard (GraphQL PR batching, PR detail cache TTL, App-authored PRs, App-signed commits, self-authorization hold) no longer races the GitHub client reading them live (#12279).
+- fix(dashboard): don't report inference-blocked agents as hive-code backend-auth defects (#12282)
+- Inference gateway 401/403 auth failures are no longer self-reported as an attributable hive-code `backend-auth` defect (#12284).
+
 ## 2026-10-16 (v5.177.2)
 
 ### Fixed

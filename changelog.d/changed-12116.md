@@ -1,0 +1,1 @@
+- The hub's owner-only `GET /api/hub/evidence` drill-down now also reports revert rate by ACMM level, same- vs cross-family reviewer false-approve rates, and per-hive evidence record coverage, each with `n` and a Wilson interval (null below 10 samples).

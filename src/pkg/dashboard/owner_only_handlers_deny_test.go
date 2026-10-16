@@ -98,6 +98,8 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		{"inception start", http.MethodPost, "/api/inception/start", srv.handleInceptionStart},
 		{"knowledge agent scopes put", http.MethodPut, "/api/config/knowledge/agent-scopes", srv.handleKnowledgeAgentScopesPut},
 		{"knowledge connectors put", http.MethodPut, "/api/config/knowledge/connectors", srv.handleKnowledgeConnectorsPut},
+		{"knowledge pipeline get", http.MethodGet, "/api/config/knowledge/pipeline", srv.handleKnowledgePipelineGet},
+		{"knowledge pipeline put", http.MethodPut, "/api/config/knowledge/pipeline", srv.handleKnowledgePipelinePut},
 		{"knowledge connectors sync", http.MethodPost, "/api/config/knowledge/connectors/docs/sync", srv.handleKnowledgeConnectorsSync},
 		{"knowledge connectors validate", http.MethodPost, "/api/config/knowledge/connectors/validate", srv.handleKnowledgeConnectorsValidate},
 		{"knowledge entry state", http.MethodPut, "/api/knowledge/entry/old-way/state", srv.handleKnowledgeEntryState},

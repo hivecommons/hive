@@ -1558,6 +1558,29 @@
     .prt-trend-svg .area.other { fill:var(--prt-actor-other); opacity:.52; }
     .prt-trend-svg .area.human { fill:var(--prt-actor-human); opacity:.62; }
     .prt-trend-svg .area.hive { fill:var(--prt-actor-hive); opacity:.72; }
+    .evidence-card { margin-top: var(--sp-4); }
+    .ev-panel { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); margin-top:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
+    .ev-panel > summary { cursor:pointer; font-size:var(--fs-xs); font-weight:600; color:var(--text); }
+    .ev-n { display:inline-block; margin-left:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); font-weight:400; color:var(--muted); }
+    .ev-svg { display:block; width:100%; max-width:640px; height:auto; margin-top:var(--sp-2); }
+    .ev-svg .ev-axis { stroke:var(--border); stroke-width:1; }
+    .ev-svg text { fill:var(--muted); font-size:var(--fs-2xs); }
+    .ev-svg .ev-line { fill:none; stroke:var(--ev-c); stroke-width:1.5; }
+    .ev-svg .ev-pt { fill:var(--ev-c); opacity:.85; }
+    .ev-svg .ev-pt-block { fill:none; stroke:var(--ev-c); stroke-width:1.5; }
+    .ev-svg .ev-bar.fa { fill:var(--orange); }
+    .ev-svg .ev-bar.fb { fill:var(--purple); }
+    .ev-svg .ev-unknown .ev-bar, .ev-svg .ev-unknown text { fill:var(--muted); opacity:.5; }
+    .ev-c0 { --ev-c: var(--blue); } .ev-c1 { --ev-c: var(--purple); } .ev-c2 { --ev-c: var(--cyan); }
+    .ev-c3 { --ev-c: var(--orange); } .ev-c4 { --ev-c: var(--yellow); } .ev-c5 { --ev-c: var(--amber); }
+    .ev-legend { display:flex; flex-wrap:wrap; gap:var(--sp-3); margin-top:var(--sp-1); font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-legend i { display:inline-block; width:8px; height:8px; margin-right:var(--sp-1); background:var(--ev-c); }
+    .ev-legend i.dot { border-radius:var(--r-pill); }
+    .ev-legend i.fa { background:var(--orange); }
+    .ev-legend i.fb { background:var(--purple); }
+    .ev-legend i.unknown { background:var(--muted); opacity:.5; }
+    .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
     .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
     .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
     .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
@@ -5944,6 +5967,7 @@
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="pr-throughput-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Throughput section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📈 Throughput <span class="dash-card-subtitle">pull/merge requests across tracked forges</span></h2>
     <div class="section-body">
       <div id="pr-throughput-card" class="prt-card advisory-subsection-card"></div>
+      <div id="evidence-card" class="prt-card advisory-subsection-card evidence-card" aria-live="polite"></div>
     </div>
   </div>
 
@@ -21945,6 +21969,7 @@ function burnAreaChart() {
     }
 
     async function fetchPRThroughput() {
+      fetchEvidenceSummary();
       const hours = prtHours;
       const repo = prtRepo;
       const role = prtRole;
@@ -21987,6 +22012,117 @@ function burnAreaChart() {
     window.setPRThroughputRepo = setPRThroughputRepo;
     window.setPRThroughputRole = setPRThroughputRole;
     window.exportPRThroughputCSV = exportPRThroughputCSV;
+
+    // Evidence sub-panel (#12064, RFC #12062): read-only reporting from
+    // /api/evidence/summary for the Throughput window and repo selector.
+    // Panels 2 (reviewer calibration) and 3 (reviewer accuracy × model) land
+    // first. UI only; nothing here changes merge behaviour.
+    const EV_PALETTE_SIZE = 6;
+    let evLast = null;
+
+    function evRate(num, den) {
+      const d = Number(den) || 0;
+      return d > 0 ? (Number(num) || 0) / d : null;
+    }
+
+    function evPanel(key, title, n, bodyHtml, note) {
+      const card = document.getElementById('evidence-card');
+      const prev = card && card.querySelector(`details[data-ev-panel="${key}"]`);
+      const open = prev ? prev.open : true;
+      return `<details class="ev-panel" data-ev-panel="${key}"${open ? ' open' : ''}><summary>${escapeHtml(title)}<span class="ev-n" title="Samples behind this panel">n=${Number(n) || 0}</span></summary>${bodyHtml}<div class="ev-note"><b>What this does not show:</b> ${escapeHtml(note)}</div></details>`;
+    }
+
+    function evCalibrationSvg(calib) {
+      const rows = calib.filter((p) => p && Array.isArray(p.buckets) && p.buckets.length);
+      if (!rows.length) return '<div class="ev-empty">— no reviewer verdicts with a confidence in this window</div>';
+      const names = rows[0].buckets.map((b) => String((b && b.bucket) || ''));
+      const w = 320, h = 150, l = 32, r = 10, t = 8, b = 22;
+      const pw = w - l - r, ph = h - t - b;
+      const x = (i) => l + (names.length > 1 ? (i * pw) / (names.length - 1) : pw / 2);
+      const y = (v) => t + ph - v * ph;
+      const maxN = Math.max(1, ...rows.map((p) => Math.max(0, ...p.buckets.map((k) => Number(k && k.n) || 0))));
+      const radius = (n) => (2 + 5 * Math.sqrt(n / maxN)).toFixed(1);
+      const pct = (v) => (v == null ? '—' : Math.round(v * 100) + '%');
+      let grid = '';
+      [0, 0.5, 1].forEach((v) => {
+        grid += `<line class="ev-axis" x1="${l}" x2="${w - r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text x="${l - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v * 100}%</text>`;
+      });
+      names.forEach((name, i) => {
+        grid += `<text x="${x(i).toFixed(1)}" y="${h - 6}" text-anchor="middle">${escapeHtml(name)}</text>`;
+      });
+      const series = rows.map((p, pi) => {
+        const persp = String(p.perspective || 'unknown');
+        const pts = p.buckets.map((k, i) => ({ i, n: Number(k && k.n) || 0, merge: evRate(k && k.merged, k && k.n), block: evRate(k && k.blocks, k && k.n) })).filter((q) => q.n > 0);
+        const line = pts.map((q) => `${x(q.i).toFixed(1)},${y(q.merge).toFixed(1)}`).join(' ');
+        const dots = pts.map((q) => {
+          const tip = escapeHtml(`${persp} · confidence ${names[q.i]}: merged ${pct(q.merge)} · blocked ${pct(q.block)} · n=${q.n}`);
+          return `<circle class="ev-pt" cx="${x(q.i).toFixed(1)}" cy="${y(q.merge).toFixed(1)}" r="${radius(q.n)}"><title>${tip}</title></circle><circle class="ev-pt-block" cx="${x(q.i).toFixed(1)}" cy="${y(q.block).toFixed(1)}" r="${radius(q.n)}"><title>${tip}</title></circle>`;
+        }).join('');
+        return `<g class="ev-c${pi % EV_PALETTE_SIZE}">${pts.length > 1 ? `<polyline class="ev-line" points="${line}"/>` : ''}${dots}</g>`;
+      }).join('');
+      const legend = rows.map((p, pi) => `<span class="ev-c${pi % EV_PALETTE_SIZE}"><i class="dot"></i>${escapeHtml(String(p.perspective || 'unknown'))} (n=${Number(p.n) || 0})</span>`).join('');
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer calibration: merge rate and block rate by confidence bucket per perspective">${grid}${series}</svg><div class="ev-legend">${legend}<span>● merged rate · ○ blocked rate · point size = samples</span></div>`;
+    }
+
+    function evAccuracySvg(models) {
+      const rows = [];
+      models.forEach((m) => {
+        if (!m) return;
+        const model = String(m.model || 'unknown');
+        const by = m.by_author_kind || {};
+        Object.keys(by).sort().forEach((kind) => {
+          const s = by[kind] || {};
+          rows.push({ model, kind, n: Number(s.n) || 0, approvals: Number(s.approvals) || 0, blocks: Number(s.blocks) || 0,
+            fa: evRate(s.approved_not_merged, s.approvals), fb: evRate(s.merged_after_block, s.blocks) });
+        });
+      });
+      if (!rows.length) return '<div class="ev-empty">— no reviewer verdicts in this window</div>';
+      const w = 320, label = 130, valW = 34, rowH = 24, t = 4;
+      const barW = w - label - valW;
+      const h = t + rows.length * rowH;
+      const pct = (v) => (v == null ? '—' : Math.round(v * 100) + '%');
+      const body = rows.map((row, i) => {
+        const y0 = t + i * rowH;
+        const tip = escapeHtml(`${row.model} · ${row.kind} authors: false-approve ${pct(row.fa)} of ${row.approvals} approvals · false-block ${pct(row.fb)} of ${row.blocks} blocks · n=${row.n}`);
+        const bar = (cls, v, yy) => `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${v == null ? 0 : (v * barW).toFixed(1)}" height="8"><title>${tip}</title></rect><text x="${w - 2}" y="${yy + 7}" text-anchor="end">${pct(v)}</text>`;
+        return `<g class="${row.model === 'unknown' ? 'ev-unknown' : ''}"><text x="0" y="${y0 + 13}">${escapeHtml(`${row.model} · ${row.kind}`.slice(0, 26))}<title>${tip}</title></text>${bar('fa', row.fa, y0 + 2)}${bar('fb', row.fb, y0 + 12)}</g>`;
+      }).join('');
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer accuracy by reviewer model and author kind: false-approve and false-block rates">${body}</svg><div class="ev-legend"><span><i class="fa"></i>false-approve (approved, not merged)</span><span><i class="fb"></i>false-block (blocked, merged anyway)</span><span><i class="unknown"></i>model unknown</span></div>`;
+    }
+
+    function renderEvidenceSummary(dto) {
+      const card = document.getElementById('evidence-card');
+      if (!card) return;
+      dto = dto || {};
+      const calib = Array.isArray(dto.reviewer_calibration) ? dto.reviewer_calibration : [];
+      const models = Array.isArray(dto.reviewer_accuracy_by_model) ? dto.reviewer_accuracy_by_model : [];
+      const calibN = calib.reduce((sum, p) => sum + (Number(p && p.n) || 0), 0);
+      const modelN = models.reduce((sum, m) => sum + (Number(m && m.n) || 0), 0);
+      const unknown = Number((dto.missing || {}).verdicts_model_unknown) || 0;
+      const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
+      const scope = (dto.all_time ? 'all time' : `last ${windowName ? windowName[1] : (Number(dto.hours) || 0) + 'h'}`) + (dto.repo ? ` · ${dto.repo}` : '');
+      card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}</div><span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>`
+        + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
+          'Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. Merged is not the same as correct, and a PR that is still open counts as not merged.')
+        + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
+          `Outcome is merged vs not merged, not ground truth: a block that was later fixed and merged counts as a false block, and an approval on a still-open PR counts as a false approve.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`);
+    }
+
+    async function fetchEvidenceSummary() {
+      const hours = prtHours;
+      const repo = prtRepo;
+      try {
+        let url = `/api/evidence/summary?hours=${encodeURIComponent(hours)}`;
+        if (repo) url += `&repo=${encodeURIComponent(repo)}`;
+        const r = await fetch(url);
+        if (hours !== prtHours || repo !== prtRepo) return; // a newer selection is in flight
+        if (!r.ok) { evLast = null; renderEvidenceSummary(null); return; } // 403/5xx: show n=0, never throw
+        const dto = await r.json();
+        if (hours !== prtHours || repo !== prtRepo) return;
+        evLast = dto;
+        renderEvidenceSummary(dto);
+      } catch (e) { if (!evLast) renderEvidenceSummary(null); }
+    }
 
     // ---- Approvals desk (RFC #4000) -------------------------------------
     // Pending operator-lane approvals. The panel stays hidden entirely unless
@@ -32973,6 +33109,8 @@ function burnAreaChart() {
     // `lazy: true` marks controls that a tab fills in after its own fetch.
     const SETTINGS_SEARCH_STATIC_HITS = [
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory fully autonomous' },
+      { tab: 'General', section: 'Governor', label: 'Eval loop pacing', key: 'governor.eval_interval_max_s', text: 'eval interval max cap webhook conserve multiplier optional sweep every n cycles provider spend limit budget probe threshold ownership pack governor.eval_interval_s governor.eval_interval_max_s governor.eval_interval_webhook_s governor.conserve_interval_multiplier governor.optional_sweep_every_n_cycles governor.provider_budget.probe_interval_s governor.thresholds_source governor.explain_mode' },
+      { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
@@ -32981,8 +33119,8 @@ function burnAreaChart() {
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
-      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s' },
-      { tab: 'Features', section: 'Agents & tooling', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s claim comments labels escalate stall needs-human governor.claims.comment governor.claims.label governor.claims.escalate_after_claims' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s headroom source ccleft builtin governor.rotation.headroom_source' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
@@ -33013,6 +33151,7 @@ function burnAreaChart() {
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
+      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
       { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
@@ -34048,7 +34187,7 @@ function burnAreaChart() {
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
         if (tabId === 'Appearance') loadThemeConfig();
-        if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); }
+        if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); loadKnowledgePipeline(); }
         if (tabId === 'Compliance') loadComplianceStatus();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
@@ -34252,9 +34391,10 @@ function burnAreaChart() {
     function renderGovKnowledgeSharing() {
       return '<div class="config-section">' +
         '<h3>Knowledge sharing</h3>' +
-        '<p class="text-muted fs-base">Control whether the read-only MCP endpoint can serve operational knowledge facts without dashboard credentials.</p>' +
+        '<p class="text-muted fs-base">Control whether the read-only MCP endpoint can serve operational knowledge facts without dashboard credentials. ' + yamlHint('knowledge.public.enabled') + ' Applies without a restart.</p>' +
         '<div id="public-knowledge-settings-control" data-public-knowledge-control="settings">' + renderPublicKnowledgeControl('settings') + '</div>' +
       '</div>' +
+        renderKnowledgePipelineSection() +
         renderKnowledgeConnectorsSection();
     }
 
@@ -34398,6 +34538,217 @@ function burnAreaChart() {
         + '<h3>Connectors</h3>'
         + '<p class="text-muted fs-base">External knowledge systems synced into the vault. Credentials are referenced by environment variable name or secret file path, never stored here.</p>'
         + '<div id="kc-connectors-root">' + renderKnowledgeConnectorsBody() + '</div></div>';
+    }
+
+    // ---- Settings → Knowledge → Knowledge pipeline ----
+    // The scalar knowledge.bead_synthesizer, curator, code_maps and primer
+    // keys, saved through PUT /api/config/knowledge/pipeline. The bead
+    // synthesizer switch applies at once; everything else is read at boot, so
+    // it applies after a restart. The engine, vault paths (directories the
+    // hive writes to) and primer merge strategy are display-only.
+    let _kpState = { loaded: false, error: '', data: {} };
+
+    async function loadKnowledgePipeline() {
+      try {
+        const r = await fetch('/api/config/knowledge/pipeline');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kpState = { loaded: true, error: '', data: data };
+      } catch (e) {
+        _kpState = { loaded: true, error: e.message, data: {} };
+      }
+      const el = document.getElementById('kp-pipeline-root');
+      if (el) el.innerHTML = renderKnowledgePipelineBody();
+    }
+
+    function renderKnowledgePipelineSection() {
+      return '<div class="config-section" data-section="knowledge-pipeline">'
+        + '<h3>Knowledge pipeline</h3>'
+        + '<p class="text-muted fs-base">How completed beads become wiki facts, how facts are promoted between layers, generated repository code maps, and the size of the knowledge primer each kick receives.</p>'
+        + '<div id="kp-pipeline-root">' + renderKnowledgePipelineBody() + '</div></div>';
+    }
+
+    function renderKnowledgePipelineBody() {
+      if (!_kpState.loaded) return '<p class="text-muted fs-base">Loading knowledge pipeline settings…</p>';
+      if (_kpState.error) return '<p class="kc-error">Failed to load knowledge pipeline settings: ' + esc(_kpState.error) + '</p>';
+      const d = _kpState.data || {};
+      const bs = d.bead_synthesizer || {};
+      const rp = bs.retention_policy || {};
+      const cu = d.curator || {};
+      const cm = d.code_maps || {};
+      const pr = d.primer || {};
+      const def = d.defaults || {};
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const dis = owner ? '' : 'disabled';
+      const restart = ' Requires restart.';
+      const mark = (label, tip) => settingHelpMark('settings', 'knowledge', label, tip);
+      const num = (id, label, path, value, placeholder, step, max, help, tip) => `
+          <div class="config-field">
+            <label for="kp-${id}">${esc(label)} ${yamlHint(path)} ${mark(label, tip)}</label>
+            <input id="kp-${id}" type="number" min="0" ${max ? `max="${max}"` : ''} step="${step}" value="${value ? esc(String(value)) : ''}" placeholder="${esc(String(placeholder))}" ${dis}>
+            <div class="config-help">${help}${restart}</div>
+          </div>`;
+      const choice = (id, label, path, value, values, emptyLabel, help, tip) => `
+          <div class="config-field">
+            <label for="kp-${id}">${esc(label)} ${yamlHint(path)} ${mark(label, tip)}</label>
+            <select id="kp-${id}" ${dis}>
+              <option value="" ${value ? '' : 'selected'}>${esc(emptyLabel)}</option>
+              ${values.map(v => `<option value="${esc(v)}" ${value === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
+            </select>
+            <div class="config-help">${help}${restart}</div>
+          </div>`;
+      const toggle = (id, label, path, on, help, live, tip) => `
+          <div class="config-toggle mt-3">
+            <div id="kp-${id}" class="config-toggle-switch ${on ? 'on' : ''} ${owner ? '' : 'disabled'}" data-action="${owner ? 'kpToggle' : ''}" data-arg-types="t" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
+            <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} ${mark(label, tip)} <span class="text-muted">— ${help}${live ? ' Applies without a restart.' : restart}</span></span>
+          </div>`;
+      const roRow = (label, path, value, fallback) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm break-all">${value ? '<code>' + esc(String(value)) + '</code>' : '<span class="text-muted">' + esc(fallback) + '</span>'} <span class="text-muted">— set in hive.yaml; requires restart</span></div></div>`;
+      const schedules = d.schedules || ['hourly', 'daily'];
+      const layers = d.layers || ['personal', 'project', 'org', 'community'];
+      return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Bead synthesizer</div>
+          ${toggle('bs-enabled', 'Synthesize completed beads into wiki facts', 'knowledge.bead_synthesizer.enabled', bs.enabled, 'on by default; starts or stops the running synthesizer.', true, 'Turns completed beads (and their merged PRs) into wiki facts on a schedule. On unless set to false. Saving starts or stops the running synthesizer at once.')}
+          <div class="config-field-row">
+            ${choice('bs-schedule', 'Schedule', 'knowledge.bead_synthesizer.schedule', bs.schedule, schedules, 'Default (' + (def.bead_synthesizer_schedule || 'hourly') + ')', 'How often a synthesis cycle runs.', 'hourly or daily. Empty restores the default (hourly).')}
+            ${choice('bs-target_layer', 'Target layer', 'knowledge.bead_synthesizer.target_layer', bs.target_layer, layers, 'Default (' + (def.bead_synthesizer_target_layer || 'project') + ')', 'Layer the synthesizer vault is registered at with the primer.', 'The primer layer the synthesized facts are served from. Empty restores the default (project).')}
+            ${num('bs-min_confidence', 'Minimum confidence', 'knowledge.bead_synthesizer.min_confidence', bs.min_confidence, def.bead_synthesizer_min_confidence || 0.5, '0.05', '1', 'Facts classified below this confidence (0–1) are skipped.', 'Facts whose classification confidence falls below this are not written. Between 0 and 1; 0 restores the default (0.5).')}
+          </div>
+          <div class="config-field-row">
+            ${num('bs-max_facts_per_cycle', 'Max facts per cycle', 'knowledge.bead_synthesizer.max_facts_per_cycle', bs.max_facts_per_cycle, def.bead_synthesizer_max_facts_per_cycle || 20, '1', '', 'Cap on facts written per cycle after deduplication.', 'Cap on facts written per synthesis cycle after deduplication. 0 restores the default (20).')}
+            ${num('bs-max_api_calls_per_cycle', 'Max GitHub API calls per cycle', 'knowledge.bead_synthesizer.max_api_calls_per_cycle', bs.max_api_calls_per_cycle, def.bead_synthesizer_max_api_calls_per_cycle || 40, '1', '', 'Cap on charged PR GETs per cycle; HIVE_BEAD_SYNTH_MAX_API_CALLS still overrides.', 'Cap on charged GitHub PR GETs per synthesis cycle. PR reads are conditional, so a 304 reuses the cached PR and does not count. The HIVE_BEAD_SYNTH_MAX_API_CALLS environment variable overrides this. 0 restores the default (40).')}
+          </div>
+          ${roRow('Vault path', 'knowledge.bead_synthesizer.vault_path', bs.vault_path, 'default ' + (def.bead_synthesizer_vault_path || ''))}
+          <div class="settings-subsection-title mt-4">Bead retention</div>
+          <div class="config-field-row">
+            ${num('rp-max_beads', 'Max beads', 'knowledge.bead_synthesizer.retention_policy.max_beads', rp.max_beads, 5000, '1', '', 'Archiving starts above this many beads.', 'The bead lifecycle manager archives the lowest-scored beads once a store holds more than this, down to 80% of it. 0 uses the default (5000).')}
+            ${num('rp-archive_after_synth_days', 'Archive after synthesis (days)', 'knowledge.bead_synthesizer.retention_policy.archive_after_synth_days', rp.archive_after_synth_days, 7, '1', '', 'Synthesized beads older than this become archive candidates.', 'Days after a bead has been synthesized into a fact before it may be archived. 0 uses the default (7).')}
+            ${num('rp-high_priority_retain_days', 'Keep high-priority beads (days)', 'knowledge.bead_synthesizer.retention_policy.high_priority_retain_days', rp.high_priority_retain_days, 30, '1', '', 'High-priority beads are kept at least this long.', 'Days a high-priority bead is kept before it may be archived. 0 uses the default (30).')}
+          </div>
+          ${toggle('rp-preserve_with_deps', 'Never archive beads with open dependents', 'knowledge.bead_synthesizer.retention_policy.preserve_with_deps', rp.preserve_with_deps, 'on when the retention block is absent.', false, 'A bead that other open beads depend on is never archived. On when no retention_policy block is set.')}
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Curator (scheduled promotion)</div>
+          ${toggle('cu-enabled', 'Promote facts on a schedule', 'knowledge.curator.enabled', cu.enabled, 'off by default; promotes verified facts with no human review.', false, 'Opt-in. On each run, verified facts in the source layer whose confidence reaches the threshold are copied into the target layer without human review. A schedule alone does not start it.')}
+          <div class="config-field-row">
+            ${choice('cu-schedule', 'Schedule', 'knowledge.curator.schedule', cu.schedule, schedules, 'Default (' + (def.curator_schedule || 'daily') + ')', 'How often the promotion sweep runs.', 'hourly or daily. Empty uses daily once the curator is enabled.')}
+            ${num('cu-auto_promote_threshold', 'Auto-promote threshold', 'knowledge.curator.auto_promote_threshold', cu.auto_promote_threshold, def.curator_auto_promote_threshold || 0.9, '0.05', '1', 'Minimum confidence (0–1) a verified fact needs to be promoted.', 'A verified fact is promoted only when its confidence is at least this. Between 0 and 1; 0 restores the default (0.9).')}
+          </div>
+          <div class="config-field-row">
+            ${choice('cu-promote_from', 'Promote from', 'knowledge.curator.promote_from', cu.promote_from, layers, 'Default (' + (def.curator_promote_from || 'project') + ')', 'Source layer for the sweep.', 'The layer facts are promoted from. Must differ from the target layer. Empty uses project.')}
+            ${choice('cu-promote_to', 'Promote to', 'knowledge.curator.promote_to', cu.promote_to, layers, 'Default (' + (def.curator_promote_to || 'org') + ')', 'Target layer for the sweep.', 'The layer promoted facts are copied into. Must differ from the source layer. Empty uses org.')}
+          </div>
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Repository code maps</div>
+          ${toggle('cm-enabled', 'Generate repository code maps', 'knowledge.code_maps.enabled', cm.enabled, 'off by default; the repositories to map stay yaml-only.', false, 'Opt-in. Writes a generated, size-capped summary of each repository listed under knowledge.code_maps in hive.yaml and regenerates it when HEAD moves.')}
+          <div class="config-field-row">
+            ${choice('cm-schedule', 'Schedule', 'knowledge.code_maps.schedule', cm.schedule, schedules, 'Default (hourly)', 'How often HEAD is checked.', 'hourly or daily. Empty uses hourly.')}
+            ${choice('cm-layer', 'Layer', 'knowledge.code_maps.layer', cm.layer, layers, 'Default (project)', 'Knowledge layer recorded on each map.', 'The layer recorded on each generated map. Empty uses project.')}
+            ${num('cm-max_bytes', 'Max bytes per map', 'knowledge.code_maps.max_bytes', cm.max_bytes, 16384, '1', '', 'Cap on the rendered size of each map.', 'Cap on the rendered size of each map, in bytes. 0 uses the generator default (16384).')}
+          </div>
+          ${roRow('Vault path', 'knowledge.code_maps.vault_path', cm.vault_path, 'default /data/vaults/code-maps')}
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Kick primer</div>
+          <div class="config-field-row">
+            ${num('pr-max_facts', 'Max facts', 'knowledge.primer.max_facts', pr.max_facts, def.primer_max_facts || 25, '1', '', 'Most facts placed in one kick primer.', 'The most knowledge facts placed in one kick primer. 0 restores the default (25).')}
+            ${num('pr-max_bytes', 'Max bytes', 'knowledge.primer.max_bytes', pr.max_bytes, def.primer_max_bytes || 4096, '1', '', 'Cap on the rendered primer; facts past it are dropped whole.', 'Cap on the rendered knowledge primer per kick. Facts past it are dropped whole and a marker says so. 0 restores the default (4096).')}
+          </div>
+          ${roRow('Merge strategy', 'knowledge.primer.merge_strategy', pr.merge_strategy, 'default ' + (def.primer_merge_strategy || 'precedence'))}
+          ${roRow('Engine', 'knowledge.engine', d.engine, 'unset')}
+          ${owner ? '<button class="hv-btn btn-primary mt-4" id="kp-save-btn" data-action="saveKnowledgePipeline">Save</button>' : '<div class="config-help mt-3">Owner role required to change these settings.</div>'}
+        </div>`;
+    }
+
+    function kpToggle(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const on = el.classList.toggle('on');
+      el.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+
+    async function saveKnowledgePipeline() {
+      const d = _kpState.data || {};
+      const cur = {
+        bead_synthesizer: d.bead_synthesizer || {},
+        retention_policy: (d.bead_synthesizer || {}).retention_policy || {},
+        curator: d.curator || {},
+        code_maps: d.code_maps || {},
+        primer: d.primer || {}
+      };
+      const fields = [
+        ['bead_synthesizer', 'enabled', 'bs-enabled', 'bool'],
+        ['bead_synthesizer', 'schedule', 'bs-schedule', 'str'],
+        ['bead_synthesizer', 'target_layer', 'bs-target_layer', 'str'],
+        ['bead_synthesizer', 'min_confidence', 'bs-min_confidence', 'frac'],
+        ['bead_synthesizer', 'max_facts_per_cycle', 'bs-max_facts_per_cycle', 'int'],
+        ['bead_synthesizer', 'max_api_calls_per_cycle', 'bs-max_api_calls_per_cycle', 'int'],
+        ['retention_policy', 'max_beads', 'rp-max_beads', 'int'],
+        ['retention_policy', 'archive_after_synth_days', 'rp-archive_after_synth_days', 'int'],
+        ['retention_policy', 'high_priority_retain_days', 'rp-high_priority_retain_days', 'int'],
+        ['retention_policy', 'preserve_with_deps', 'rp-preserve_with_deps', 'bool'],
+        ['curator', 'enabled', 'cu-enabled', 'bool'],
+        ['curator', 'schedule', 'cu-schedule', 'str'],
+        ['curator', 'auto_promote_threshold', 'cu-auto_promote_threshold', 'frac'],
+        ['curator', 'promote_from', 'cu-promote_from', 'str'],
+        ['curator', 'promote_to', 'cu-promote_to', 'str'],
+        ['code_maps', 'enabled', 'cm-enabled', 'bool'],
+        ['code_maps', 'schedule', 'cm-schedule', 'str'],
+        ['code_maps', 'layer', 'cm-layer', 'str'],
+        ['code_maps', 'max_bytes', 'cm-max_bytes', 'int'],
+        ['primer', 'max_facts', 'pr-max_facts', 'int'],
+        ['primer', 'max_bytes', 'pr-max_bytes', 'int']
+      ];
+      const body = {};
+      const put = (group, key, v) => {
+        if (group === 'retention_policy') {
+          body.bead_synthesizer = body.bead_synthesizer || {};
+          body.bead_synthesizer.retention_policy = body.bead_synthesizer.retention_policy || {};
+          body.bead_synthesizer.retention_policy[key] = v;
+        } else {
+          body[group] = body[group] || {};
+          body[group][key] = v;
+        }
+      };
+      for (const [group, key, id, kind] of fields) {
+        const el = document.getElementById('kp-' + id);
+        if (!el) continue;
+        const was = cur[group][key];
+        if (kind === 'bool') {
+          const on = el.classList.contains('on');
+          if (on !== !!was) put(group, key, on);
+        } else if (kind === 'str') {
+          const v = (el.value || '').trim();
+          if (v !== (was || '')) put(group, key, v);
+        } else {
+          const raw = (el.value || '').trim();
+          const v = raw === '' ? 0 : (kind === 'frac' ? parseFloat(raw) : parseInt(raw, 10));
+          if (isNaN(v) || v < 0 || (kind === 'frac' && v > 1)) { showToast(key + (kind === 'frac' ? ' must be between 0 and 1' : ' must be a non-negative number'), 'error'); return; }
+          if (v !== (was || 0)) put(group, key, v);
+        }
+      }
+      if (!Object.keys(body).length) { showToast('Nothing to save', 'error'); return; }
+      const btn = document.getElementById('kp-save-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      try {
+        const res = await fetch('/api/config/knowledge/pipeline', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        _kpState = { loaded: true, error: '', data: data };
+        const bsKeys = Object.keys(body.bead_synthesizer || {});
+        const liveOnly = Object.keys(body).length === 1 && bsKeys.length === 1 && bsKeys[0] === 'enabled';
+        showToast(liveOnly ? 'Knowledge settings saved' : 'Knowledge settings saved — restart the hive to apply them', 'success');
+        const el = document.getElementById('kp-pipeline-root');
+        if (el) el.innerHTML = renderKnowledgePipelineBody();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      }
     }
 
     async function kcSave(list, extra) {
@@ -38658,12 +39009,12 @@ function burnAreaChart() {
           <div class="mt-4">${securityPostureStripHtml()}</div>
         </div>
         <div class="config-field" style="margin-top:14px">
-          <label>Eval interval (seconds) ${settingHelpMark('settings', 'general', 'Eval interval (seconds)', `How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 60. Lower = more responsive, more API calls.`)}</label>
-          <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="60" data-change-action="gh70" style="width:140px">
-          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Changes take effect on next restart.</span>
+          <label>Eval interval (seconds) ${yamlHint('governor.eval_interval_s')} ${settingHelpMark('settings', 'general', 'Eval interval (seconds)', `How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 300. Lower = more responsive, more API calls.`)}</label>
+          <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="300" data-change-action="gh70" style="width:140px">
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Applies from the next eval cycle.</span>
         </div>
         <div class="config-field" style="margin-top:14px">
-          <label>Default explain mode ${settingHelpMark('agent-configuration', 'fleet-wide-default', 'Default explain mode', `Hive-wide default for agents that leave their own Explain Mode unset. Asks agents to say WHY they made each tool call, on EXPLAIN: lines alongside the work &mdash; they still act, they do not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. An agent with its own explicit value, including &quot;off&quot;, keeps it. Takes precedence over the HIVE_EXPLAIN_MODE deployment environment variable.`)}</label>
+          <label>Default explain mode ${yamlHint('governor.explain_mode')} ${settingHelpMark('agent-configuration', 'fleet-wide-default', 'Default explain mode', `Hive-wide default for agents that leave their own Explain Mode unset. Asks agents to say WHY they made each tool call, on EXPLAIN: lines alongside the work &mdash; they still act, they do not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. An agent with its own explicit value, including &quot;off&quot;, keeps it. Takes precedence over the HIVE_EXPLAIN_MODE deployment environment variable.`)}</label>
           <select data-change-action="gh75" style="width:320px">
             ${HIVE_EXPLAIN_MODES.map(m => `<option value="${m.value}" ${explainMode === m.value ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}
           </select>
@@ -38672,6 +39023,47 @@ function burnAreaChart() {
         <div class="config-toggle" style="margin-top:14px">
           <div class="config-toggle-switch ${attribOn ? 'on' : ''}" data-action="toggleAttributionTrailer" data-arg-types="t"></div>
           <span class="config-toggle-label">Show attribution trailer on PRs/issues ${settingHelpMark('settings', 'general', 'Show attribution trailer on PRs/issues', `Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.`)}</span>
+        </div>
+        ${renderGovLoopPacing(genAdv)}`;
+    }
+
+    // renderGovLoopPacing is the governor eval-loop pacing block on the General
+    // tab. The fields stage into the general-advanced section, so the footer
+    // Save sends them through PUT /api/config/governor/general-advanced. The
+    // loop recomputes its interval and sweep cadence every cycle, so a saved
+    // change applies from the next eval. 0 or empty restores the default.
+    function renderGovLoopPacing(genAdv) {
+      const d = genAdv.loop_defaults || {};
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const num = (key, label, path, help, tip) => `
+          <div class="config-field">
+            <label for="gov-loop-${key}">${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'general', label, tip)}</label>
+            <input id="gov-loop-${key}" type="number" min="0" step="1" value="${genAdv[key] ? esc(String(genAdv[key])) : ''}" placeholder="${esc(String(d[key] || ''))}" data-change-action="markDirty" data-arg0="general-advanced" data-arg1="${key}" data-arg-types="s,s,N" ${owner ? '' : 'disabled'}>
+            <div class="config-help">${help} Applies from the next eval cycle. 0 restores the default.</div>
+          </div>`;
+      const src = genAdv.thresholds_source || '';
+      const srcText = src === 'pack'
+        ? 'pack — seeded by an ACMM pack, so the thresholds still scale with repo count'
+        : 'operator — set by hand (or never seeded), so explicit thresholds are used verbatim';
+      return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Eval loop pacing</div>
+          <div class="config-field-row">
+            ${num('eval_interval_max_s', 'Max eval interval (seconds)', 'governor.eval_interval_max_s', 'Cap when API budget mode stretches evals.', 'Upper bound on the eval interval after the API-budget stretch and the webhook interval are applied. Must be at least the eval interval. Default 1800.')}
+            ${num('eval_interval_webhook_s', 'Webhook eval interval (seconds)', 'governor.eval_interval_webhook_s', 'Base interval while GitHub webhooks are healthy.', 'While signed GitHub webhooks keep arriving the base eval interval rises to this value, because webhooks already trigger the work polling would find. Capped by the max eval interval. Default 900.')}
+          </div>
+          <div class="config-field-row">
+            ${num('conserve_interval_multiplier', 'Conserve-mode multiplier', 'governor.conserve_interval_multiplier', 'Eval interval multiplier in API budget conserve mode.', 'When remaining GitHub API quota drops below the reserve, the eval interval is multiplied by this factor. Default 2.')}
+            ${num('optional_sweep_every_n_cycles', 'Optional sweeps every N cycles', 'governor.optional_sweep_every_n_cycles', 'Run optional sweeps every Nth normal cycle (1 = every cycle).', 'The optional enrichment steps of an eval cycle run only on every Nth cycle while the API budget is normal; in conserve or critical mode they are skipped regardless. Default 1, every cycle.')}
+          </div>
+          <div class="config-field-row">
+            ${num('provider_budget_probe_interval_s', 'Provider spend-limit probe (seconds)', 'governor.provider_budget.probe_interval_s', 'How long a provider spending-limit refusal suppresses kicks before one cycle probes again.', 'After the inference provider refuses on a spending limit, kicks are withheld; once the last refusal is older than this, one cycle&#39;s kicks go through to test whether the provider serves again. Shorter recovers sooner but burns a run on a still-clipped provider. Default 1800.')}
+          </div>
+          <div class="config-field">
+            <label>Threshold ownership ${yamlHint('governor.thresholds_source')}</label>
+            <div class="fs-sm">${esc(srcText)} <span class="text-muted">— read-only; editing any threshold on the Thresholds tab makes them operator-owned, applying a pack re-seeds them.</span></div>
+          </div>
+          ${owner ? '<div class="config-help">Save with the dialog Save button.</div>' : '<div class="config-help">Owner role required to change these settings.</div>'}
         </div>`;
     }
 
@@ -39033,14 +39425,14 @@ function burnAreaChart() {
         : '';
       return `
         <div class="config-field mb-7">
-          <label>Cadence mode scope ${settingHelpMark('governor-thresholds', '', 'Cadence mode scope', `Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.`)}</label>
+          <label>Cadence mode scope ${settingHelpMark('governor-thresholds', '', 'Cadence mode scope', `Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.`)} ${yamlHint('governor.cadence_scope')}</label>
           <select id="cfg-cadence-scope" data-change-action="markDirty" data-arg0="cadence-scope" data-arg1="cadenceScope" data-arg-types="s,s,v">
             ${[['aggregate', 'Aggregate (default)'], ['per_repo', 'Per repo']]
               .map(([v, label]) => `<option value="${v}" ${activeScope === v ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
         </div>
         <div class="config-field mb-7">
-          <label>Multi-repo threshold scaling ${settingHelpMark('governor-thresholds', '', 'Multi-repo threshold scaling', `How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.`)}</label>
+          <label>Multi-repo threshold scaling ${settingHelpMark('governor-thresholds', '', 'Multi-repo threshold scaling', `How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.`)} ${yamlHint('governor.threshold_scaling')}</label>
           <select id="cfg-threshold-scaling" data-change-action="markDirty" data-arg0="threshold-scaling" data-arg1="thresholdScaling" data-arg-types="s,s,v" ${activeScope === 'per_repo' ? 'disabled style="opacity:0.6"' : ''}>
             ${[['linear', 'Linear'], ['sqrt', 'Square-root (default)'], ['none', 'None']]
               .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
@@ -39265,6 +39657,9 @@ function burnAreaChart() {
       const reqList = (requireLabels || []).map((l, i) =>
         `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" data-action="removeListItem" data-arg0="labels" data-arg1="require" data-arg2="${i}" data-arg-types="s,s,j">✕</button></div>`
       ).join('');
+      const automergeLabel = (_configState.dirty.labels && _configState.dirty.labels.automerge !== undefined)
+        ? _configState.dirty.labels.automerge
+        : (_configState.data.automergeLabel || '');
       const writingGuide = (_configState.dirty.labels && _configState.dirty.labels.writing_guide !== undefined)
         ? _configState.dirty.labels.writing_guide
         : (_configState.data.writingGuide || '');
@@ -39290,6 +39685,12 @@ function burnAreaChart() {
             <input type="text" id="cfg-require-label-input" placeholder="label name" title="GitHub label an issue must carry before agents may work it (e.g. an approval/queue label).">
             <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="require" data-arg2="cfg-require-label-input" title="Add this label to the required (allow) list">+ Add</button>
           </div>
+        </div>
+        <h4 class="mt-6 mb-3">Auto-merge queue label</h4>
+        <div class="config-field">
+          <label for="cfg-automerge-label">Queue label ${yamlHint('governor.labels.automerge')} ${settingHelpMark('settings', 'labels', 'Auto-merge queue label', `The label a merger or owner queue action applies to a PR to queue it for auto-merge. Configurable because the label lives in the managed repository, where a convention may already exist (Prow-style projects use lgtm). Empty uses the default.`)}</label>
+          <input type="text" id="cfg-automerge-label" value="${esc(automergeLabel)}" placeholder="${esc(_configState.data.automergeLabelDefault || 'lgtm')}" data-change-action="markDirty" data-arg0="labels" data-arg1="automerge" data-arg-types="s,s,w">
+          <div class="config-help">Label applied by the merger queue; default is ${esc(_configState.data.automergeLabelDefault || 'lgtm')}. Requires restart.</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>
@@ -39793,7 +40194,7 @@ function burnAreaChart() {
           <div class="config-field"><label>Period (days) ${settingHelpMark('settings', 'budget', 'Period (days)', `Rolling window length in days for token budget accounting. Default is 7 (weekly). The budget resets at the end of each period.`)}</label><input type="number" value="${b.periodDays || 7}" data-change-action="gh44"></div>
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>USD Budget ${settingHelpMark('settings', 'budget', 'USD Budget', `Optional Bob budget cap in dollars for the period. Set to 0 to disable this dollar cap.`)}</label><input id="gov-budget-usd" type="number" step="0.01" min="0" value="${b.usd || 0}" data-change-action="gh85"></div>
+          <div class="config-field"><label>USD Budget ${yamlHint('governor.budget.usd')} ${settingHelpMark('settings', 'budget', 'USD Budget', `Optional Bob budget cap in dollars for the period. Set to 0 to disable this dollar cap.`)}</label><input id="gov-budget-usd" type="number" step="0.01" min="0" value="${b.usd || 0}" data-change-action="gh85"></div>
           <div class="config-field"><label>${esc(coinLabel)} Budget ${settingHelpMark('settings', 'budget', coinLabel + ' Budget', `Optional Bob coin cap for the period. Uses the configured Bob coin conversion; confirm the conversion with your Bob team.`)}</label><input id="gov-budget-coin" type="number" step="0.01" min="0" value="${bobCoin.budget || 0}" data-change-action="gh86"></div>
         </div>
         <div class="config-field">
@@ -39811,7 +40212,7 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle" style="margin-top:14px">
           <div class="config-toggle-switch ${h.modelLock ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="health" data-key="modelLock"></div>
-          <span class="config-toggle-label">Model Lock ${settingHelpMark('settings', 'budget', 'Model Lock', `When enabled, the governor will not automatically change any agent's model (e.g. downgrading from Opus to Sonnet during budget pressure). Agents keep their configured model regardless of budget status. Does NOT prevent manual model changes or agent kicks.`)}</span>
+          <span class="config-toggle-label">Model Lock ${yamlHint('governor.health.model_lock')} ${settingHelpMark('settings', 'budget', 'Model Lock', `When enabled, the governor will not automatically change any agent's model (e.g. downgrading from Opus to Sonnet during budget pressure). Agents keep their configured model regardless of budget status. Does NOT prevent manual model changes or agent kicks.`)}</span>
         </div>`;
     }
 
@@ -40608,8 +41009,8 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Alert TTL (sec) ${settingHelpMark('settings', 'sensing', 'Alert TTL (sec)', `How long a rate-limit alert stays active before auto-clearing. Default is 900 seconds (15 minutes). After this time, the agent is considered safe to kick again.`)}</label><input type="number" value="${s.ttlSeconds || 900}" data-change-action="gh48"></div>
-          <div class="config-field"><label>Pullback Duration (sec) ${settingHelpMark('settings', 'sensing', 'Pullback Duration (sec)', `How long to pause an agent after detecting a rate limit. During pullback, the governor skips kicks for this agent. Default is 900 seconds (15 minutes).`)}</label><input type="number" value="${s.pullbackSeconds || 900}" data-change-action="gh49"></div>
+          <div class="config-field"><label>Alert TTL (sec) ${yamlHint('governor.sensing.ttl_seconds')} ${settingHelpMark('settings', 'sensing', 'Alert TTL (sec)', `How long a rate-limit alert stays active before auto-clearing. Default is 900 seconds (15 minutes). After this time, the agent is considered safe to kick again.`)}</label><input type="number" value="${s.ttlSeconds || 900}" data-change-action="gh48"></div>
+          <div class="config-field"><label>Pullback Duration (sec) ${yamlHint('governor.sensing.pullback_seconds')} ${settingHelpMark('settings', 'sensing', 'Pullback Duration (sec)', `How long to pause an agent after detecting a rate limit. During pullback, the governor skips kicks for this agent. Default is 900 seconds (15 minutes).`)}</label><input type="number" value="${s.pullbackSeconds || 900}" data-change-action="gh49"></div>
         </div>`;
     }
 
@@ -42092,6 +42493,19 @@ function burnAreaChart() {
             <span class="config-toggle-label">Issue claims ${settingHelpMark('settings', 'features', 'Issue claims', `OFF by default. When on, the hub recognises a claim on an issue itself (a hive:claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.`)}</span>
           </div>
           ${renderClaimsTTLFields(f)}
+          <div class="config-toggle mt-3">
+            <div class="config-toggle-switch ${f.claimsComment !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsComment"></div>
+            <span class="config-toggle-label">Post claim comments ${yamlHint('governor.claims.comment')} ${settingHelpMark('settings', 'features', 'Post claim comments', `On by default when claims are enabled. Posts the claim, takeover and release comments on the GitHub issue. Off keeps claims in the ledger only.`)} <span class="text-muted">— requires restart.</span></span>
+          </div>
+          <div class="config-toggle mt-3">
+            <div class="config-toggle-switch ${f.claimsLabel !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsLabel"></div>
+            <span class="config-toggle-label">Apply claim labels ${yamlHint('governor.claims.label')} ${settingHelpMark('settings', 'features', 'Apply claim labels', `On by default when claims are enabled. Adds and removes the claimed and preempted labels on the GitHub issue as claims change hands.`)} <span class="text-muted">— requires restart.</span></span>
+          </div>
+          <div class="config-field mt-3">
+            <label>Escalate after claims ${yamlHint('governor.claims.escalate_after_claims')} ${settingHelpMark('settings', 'features', 'Escalate after claims', `How many claims one agent may make on an issue with nothing moving in between (no linked PR, referencing commit, label or assignee change, or close/reopen) before the next is refused and the issue is labelled needs-human with one summary comment. 0 uses the default; a negative number turns the gate off.`)}</label>
+            <input type="number" step="1" value="${f.claimsEscalateAfterClaims ? esc(String(f.claimsEscalateAfterClaims)) : ''}" placeholder="${esc(String(f.claimsEscalateAfterDefault || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="claimsEscalateAfterClaims" data-arg-types="s,s,N">
+            <div class="config-help">0 uses the default (${esc(String(f.claimsEscalateAfterDefault || 2))}); -1 turns the gate off. Requires restart.</div>
+          </div>
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Issue lifecycle ${settingHelpMark('settings', 'features', 'Issue lifecycle', `When a PR that fixes an issue merges, Hive posts a close marker and closes the fixed issue as completed itself, because GitHub only auto-closes keyword-linked PRs that target the repository default branch.`)}</div>
@@ -42242,6 +42656,13 @@ function burnAreaChart() {
             <div class="config-field-row" style="margin-top:10px">
               <div class="config-field"><label>Threshold percent ${yamlHint('governor.rotation.threshold_pct')} ${settingHelpMark('settings', 'features', 'Threshold percent', `Usage percentage from 1 to 100 at which a subscription provider is considered exhausted. Defaults to 85.`)}</label><input type="number" min="1" max="100" step="1" value="${f.rotationThresholdPct || 85}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationThresholdPct" data-arg-types="s,s,N"></div>
               <div class="config-field"><label>High-volume cadence seconds ${yamlHint('governor.rotation.high_volume_cadence_s')} ${settingHelpMark('settings', 'features', 'High-volume cadence seconds', `Agents with a cadence at or below this value never rotate onto subscription providers. Defaults to 1800 seconds.`)}</label><input type="number" min="1" step="1" value="${f.rotationHighVolumeCadenceS || 1800}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationHighVolumeCadenceS" data-arg-types="s,s,N"></div>
+            </div>
+            <div class="config-field mt-3">
+              <label>Headroom source ${yamlHint('governor.rotation.headroom_source')} ${settingHelpMark('settings', 'features', 'Headroom source', `Selects the provider headroom implementation. builtin (default) keeps the in-tree probers; ccleft opts in to ccleft-backed probers where available.`)}</label>
+              <select data-change-action="markDirty" data-arg0="features" data-arg1="rotationHeadroomSource" data-arg-types="s,s,v">
+                ${(f.rotationHeadroomSourceValues || ['builtin', 'ccleft']).map(v => `<option value="${esc(v)}" ${(f.rotationHeadroomSource || 'builtin') === v ? 'selected' : ''}>${esc(v === 'builtin' ? 'builtin (default)' : v)}</option>`).join('')}
+              </select>
+              <div class="config-help">Requires restart.</div>
             </div>
             <div class="config-field" style="margin-top:10px">
               <label>Providers ${settingHelpMark('settings', 'features', 'Providers', `Map provider names to their class, backing Hive backend IDs from /api/config/backends, and an optional monthly allowance for plans that report consumption but not entitlement.`)}</label>

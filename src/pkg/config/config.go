@@ -2403,7 +2403,11 @@ type ProviderBudgetConfig struct {
 
 // defaultProviderBudgetProbeIntervalS is the spend-rebuff probe interval when
 // unset: 30 minutes.
-const defaultProviderBudgetProbeIntervalS = 1800
+const defaultProviderBudgetProbeIntervalS = DefaultProviderBudgetProbeIntervalS
+
+// DefaultProviderBudgetProbeIntervalS is the exported spend-rebuff probe
+// interval default, for editors that show it as a placeholder.
+const DefaultProviderBudgetProbeIntervalS = 1800
 
 // EffectiveProbeInterval returns the spend-rebuff probe interval, applying the
 // default when unset. A negative or zero value means "unset" rather than
@@ -6450,24 +6454,36 @@ const (
 	DefaultGitHubAPICritical = 250
 )
 
+// DefaultEvalIntervalMaxS, DefaultEvalIntervalWebhookS,
+// DefaultConserveIntervalMultiplier and DefaultOptionalSweepEveryNCycles are
+// what a zero governor eval-loop knob becomes at Load (applyDefaults);
+// runtime editors substitute the same values so a cleared field restores the
+// default.
+const (
+	DefaultEvalIntervalMaxS           = 1800
+	DefaultEvalIntervalWebhookS       = 900
+	DefaultConserveIntervalMultiplier = 2
+	DefaultOptionalSweepEveryNCycles  = 1
+)
+
 const (
 	MaxAgentReplicas = 5
 
 	defaultDashboardPort          = 3002
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
-	defaultEvalIntervalMaxS       = 1800
-	defaultEvalIntervalWebhookS   = 900
-	defaultConserveIntervalMult   = 2
-	defaultOptionalSweepEveryN    = 1
+	defaultEvalIntervalMaxS       = DefaultEvalIntervalMaxS
+	defaultEvalIntervalWebhookS   = DefaultEvalIntervalWebhookS
+	defaultConserveIntervalMult   = DefaultConserveIntervalMultiplier
+	defaultOptionalSweepEveryN    = DefaultOptionalSweepEveryNCycles
 	defaultGitHubAPIReserve       = DefaultGitHubAPIReserve
 	defaultGitHubAPICritical      = DefaultGitHubAPICritical
 	defaultPollIntervalMins       = 5
-	defaultKnowledgeMaxFacts      = 25
-	defaultKnowledgeMaxBytes      = 4096
+	defaultKnowledgeMaxFacts      = DefaultKnowledgePrimerMaxFacts
+	defaultKnowledgeMaxBytes      = DefaultKnowledgePrimerMaxBytes
 	defaultKnowledgeEngine        = "llm-wiki"
-	defaultCuratorSchedule        = "daily"
-	defaultPromoteThreshold       = 0.9
+	defaultCuratorSchedule        = DefaultCuratorSchedule
+	defaultPromoteThreshold       = DefaultCuratorAutoPromoteThreshold
 	defaultSensingTTLSeconds      = 900
 	defaultSensingPullbackSeconds = 900
 	defaultBudgetPeriodDays       = 7
@@ -6868,7 +6884,7 @@ func (c *Config) applyDefaults() {
 			c.Knowledge.Primer.MaxBytes = defaultKnowledgeMaxBytes
 		}
 		if c.Knowledge.Primer.MergeStrategy == "" {
-			c.Knowledge.Primer.MergeStrategy = "precedence"
+			c.Knowledge.Primer.MergeStrategy = DefaultKnowledgePrimerMergeStrategy
 		}
 		if len(c.Knowledge.Primer.Priority) == 0 {
 			c.Knowledge.Primer.Priority = []string{"regression", "gotcha", "test_scaffold", "pattern", "decision"}
@@ -6886,22 +6902,22 @@ func (c *Config) applyDefaults() {
 			c.Knowledge.Curator.AutoPromoteThreshold = defaultPromoteThreshold
 		}
 		if c.Knowledge.BeadSynthesizer.Schedule == "" {
-			c.Knowledge.BeadSynthesizer.Schedule = "hourly"
+			c.Knowledge.BeadSynthesizer.Schedule = DefaultBeadSynthSchedule
 		}
 		if c.Knowledge.BeadSynthesizer.MinConfidence == 0 {
-			c.Knowledge.BeadSynthesizer.MinConfidence = 0.5
+			c.Knowledge.BeadSynthesizer.MinConfidence = DefaultBeadSynthMinConfidence
 		}
 		if c.Knowledge.BeadSynthesizer.TargetLayer == "" {
-			c.Knowledge.BeadSynthesizer.TargetLayer = "project"
+			c.Knowledge.BeadSynthesizer.TargetLayer = DefaultBeadSynthTargetLayer
 		}
 		if c.Knowledge.BeadSynthesizer.MaxFactsPerCycle == 0 {
-			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = 20
+			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = DefaultBeadSynthMaxFactsPerCycle
 		}
 		if c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle == 0 {
 			c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle = DefaultBeadSynthMaxAPICallsPerCycle
 		}
 		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
-			c.Knowledge.BeadSynthesizer.VaultPath = "/data/vaults/bead-synth-wiki"
+			c.Knowledge.BeadSynthesizer.VaultPath = DefaultBeadSynthVaultPath
 		}
 	}
 }

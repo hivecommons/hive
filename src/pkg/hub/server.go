@@ -336,6 +336,10 @@ type RegistryEntry struct {
 	Upgrading        bool      `json:"upgrading,omitempty"`
 	UpgradeTarget    string    `json:"upgradeTarget,omitempty"`
 	UpgradeStartedAt time.Time `json:"upgradeStartedAt,omitempty"`
+	// SpokeReportedUpgrading is the spoke's own latest heartbeat
+	// payload.Upgrading, unlike Upgrading above, which is also the hub's
+	// durable latch. In-memory only.
+	SpokeReportedUpgrading bool `json:"-"`
 	// UpgradeFailed records that the spoke reported an upgrade it could not
 	// complete, with the cause. Distinct from Upgrading: "failed" is a terminal
 	// state a human must see, not an in-flight one.
@@ -2239,6 +2243,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		entry.ClusterName = c.Name
 	}
 
+	entry.SpokeReportedUpgrading = payload.Upgrading
 	if payload.Upgrading {
 		entry.Upgrading = true
 	}
