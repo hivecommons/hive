@@ -728,12 +728,12 @@ always resolved server-side from the validated token.
 | `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1668` |
 | `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1676` |
 | `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1677` |
-| `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1675` |
+| `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1678` |
 | `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1679` |
-| `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1680` |
+| `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1683` |
 | `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1693` |
 | `POST` | `/api/contribute/register` | Hub handler-specific | Contribute Proxy | `pkg/hub/server.go:1694` |
-| `GET` | `/api/contribute/status` | Hub handler-specific | Contribute Status | `pkg/hub/server.go:1692` |
+| `GET` | `/api/contribute/status` | Hub handler-specific | Contribute Status | `pkg/hub/server.go:1695` |
 | `GET` | `/api/contribute/ws` | Hub handler-specific | Contribute WSProxy | `pkg/hub/server.go:1696` |
 | `POST` | `/api/github/webhook` | Hub handler-specific | GitHub Webhook | `pkg/hub/server.go:1697` |
 | `GET` | `/gh-setup` | Hub handler-specific | GitHub App Setup Router | `pkg/hub/server.go:1698` |
@@ -742,7 +742,7 @@ always resolved server-side from the validated token.
 | `GET` | `/api/docs` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1703` |
 | `GET` | `/api/reading-list` | Hub handler-specific | Reading List | `pkg/hub/server.go:1706` |
 | `GET` | `/reading` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1707` |
-| `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1711` |
+| `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1714` |
 | `GET` | `/cncf-reference-architecture/console` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1715` |
 | `GET` | `/cncf-reference-architecture/bluefin` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1716` |
 | `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1733` |
