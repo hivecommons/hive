@@ -172,7 +172,7 @@ func (c *Client) recentlyClosedSharedCIIncidents(ctx context.Context, owner, rep
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
-		opts.Page = resp.NextPage
+		opts.ListOptions.Page = resp.NextPage
 	}
 	return out, nil
 }
@@ -324,7 +324,7 @@ func (c *Client) latestFailedWorkflowRuns(ctx context.Context, owner, repo, sha 
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
-		opts.Page = resp.NextPage
+		opts.ListOptions.Page = resp.NextPage
 	}
 	var out []*gh.WorkflowRun
 	for _, run := range latest {
