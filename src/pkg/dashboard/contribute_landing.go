@@ -737,6 +737,9 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .me-standing b{color:var(--text)}
 .me-standing__link{color:var(--cc-accent);text-decoration:none;font-weight:600;white-space:nowrap}
 .me-standing__link:hover{text-decoration:underline}
+.me-fix-first{border-left:3px solid var(--cc-accent)}
+.me-fix-first__list{margin:var(--sp-2) 0 0;padding-left:var(--sp-5);color:var(--text-muted)}
+.me-fix-first__cause{color:var(--text-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:var(--fs-sm)}
 /* Contributor profile skins now live in pkg/dashboard/theme/themes/*.yaml and
    are loaded through the same /api/themes catalog as dashboard Appearance. The
    legacy localStorage key is still honored, but numeric skin ids map to theme ids. */
@@ -3449,7 +3452,8 @@ function loadMeStanding(){
       }
       var place=(p.rank&&p.total)?('You stand <b>#'+p.rank+'</b> of '+p.total):'You are on the board';
       mount.innerHTML='<div class="me-standing"><span>'+place+'</span>'
-        +'<a class="me-standing__link" href="/contribute/profile" id="me-standing-link">View your dossier &#9656;</a></div>';
+        +'<a class="me-standing__link" href="/contribute/profile" id="me-standing-link">View your dossier &#9656;</a></div>'
+        +renderFixFirst(p.fix_queue);
       var lnk=document.getElementById('me-standing-link');
       if(lnk)lnk.addEventListener('click',function(ev){
         ev.preventDefault();
@@ -3457,6 +3461,30 @@ function loadMeStanding(){
       });
     }).catch(function(e){console.error('standing load failed',e);});
   }).catch(function(e){console.error('auth status failed',e);});
+}
+
+// renderFixFirst is the "clean up your mess before taking on new stuff" strip
+// (hivecommons/hive#12436): the relay serves these red PRs before any new issue,
+// so the page says so and lists them ahead of the issue board.
+function renderFixFirst(fq){
+  if(!fq||(!fq.queued&&!fq.in_flight))return '';
+  var n=(fq.queued||0)+(fq.in_flight||0);
+  var h='<div class="me-standing me-fix-first"><span><b>You have '+n+' PR'+(n===1?'':'s')+' to fix first</b>'
+    +(fq.in_flight?(' &middot; '+fq.in_flight+' in flight'):'')
+    +(fq.queued?(' &middot; '+fq.queued+' queued'):'')
+    +' &mdash; your relay hands these out before new work.</span></div>';
+  var prs=fq.prs||[];
+  if(prs.length){
+    h+='<ul class="me-fix-first__list">';
+    for(var i=0;i<prs.length;i++){
+      var pr=prs[i];
+      var label=esc(pr.repo)+'#'+pr.number+(pr.title?(' '+esc(pr.title)):'');
+      h+='<li>'+(pr.url?('<a href="'+esc(pr.url)+'" target="_blank" rel="noopener">'+label+'</a>'):label)
+        +(pr.cause?(' <span class="me-fix-first__cause">'+esc(pr.cause)+'</span>'):'')+'</li>';
+    }
+    h+='</ul>';
+  }
+  return h;
 }
 
 function loadMeCard(){

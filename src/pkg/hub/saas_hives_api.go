@@ -310,14 +310,14 @@ type MyHiveEntry struct {
 	// satisfaction, productivity — computed on read and never persisted.
 	//
 	// It lives HERE rather than on RegistryEntry (where Journey sits) because
-	// unlike every other derived field on a row, a quadrant is not a property
-	// of the hive alone: the scores are percentiles against the other hives in
-	// the SAME view. Two requests over different filters legitimately produce
-	// different numbers for one hive, so caching it on the shared registry
-	// entry would let one caller's filtered population leak into another's.
+	// it is scored on read from the row's wire fields. Each criterion maps to
+	// 0-100 on a fixed, documented curve (quadrant_curve.go), so a hive's
+	// scores no longer depend on who else is in view; only the per-axis Delta
+	// is relative — to the median of the SAME view — which is why the field
+	// still cannot be cached on the shared registry entry.
 	//
-	// Nil when the caller is not entitled to see it, or when the population is
-	// too small to rank honestly — the browser renders nothing at all in that
+	// Nil when the caller is not entitled to see it, or when no criterion on
+	// any axis is measured yet — the browser renders nothing at all in that
 	// case rather than an empty chart.
 	Quadrant *Quadrant `json:"quadrant,omitempty"`
 }
@@ -1123,9 +1123,10 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	}
 
 	// Score the quadrant last, once every row is populated: the axes read
-	// fields the loop above fills in, and the scores are percentiles against
-	// this exact set of rows. Ranking against the whole registry instead would
-	// let the header polygon disagree with the rows it summarises.
+	// fields the loop above fills in, and each row's Delta is against the
+	// median of this exact set of rows. Taking the median over the whole
+	// registry instead would let the header polygon disagree with the rows it
+	// summarises.
 	fleetQuadrant := attachQuadrants(result, isAdmin, journeyNow)
 
 	// Cosmetic owner labels: resolve opaque OIDC owner identities to their
@@ -1140,7 +1141,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 
 	// Server-side scoping (filter/sort/pagination) happens LAST, after every
 	// set-wide computation above (drift norm, alerts, outage suppression,
-	// quadrant percentiles) has run over the caller's full visible set — the
+	// quadrant fleet median) has run over the caller's full visible set — the
 	// page is a wire-level view, not a different fleet. No query params →
 	// full set, exactly as before.
 	// Alert state is shared hub-wide, so fleet-relative alert facts (token-burn

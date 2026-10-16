@@ -346,8 +346,10 @@ in exactly one band, while non-winning states remain as badges on the pill:
 1. **Unclaimed** (`unclaimed`) — no other band matched: nobody is assigned,
    nothing claimed it, and no human gate applies. This does not by itself mean
    agents will pick it up.
-2. **Claimed** (`claimed`) — a claim is a comment; the `claimed` label is a
-   mirror Hive keeps in sync. The display band also recognises assignees and
+2. **Claimed** (`claimed`) — a claim is a comment; the `stage/020-claimed` /
+   `stage/030-pr-in-progress` label is a mirror Hive keeps in sync (the retired
+   `claimed` and `hive/in-progress` spellings are still recognised for the
+   migration cycle). The display band also recognises assignees and
    `hive/claimed-by-*`.
 3. **Needs triage** (`triage`) — an `agent/<role>` label and no human has
    acknowledged the proposal under #5117: no `approved-direction` label and no
@@ -359,8 +361,9 @@ in exactly one band, while non-winning states remain as badges on the pill:
    `2-discussing`, `Epic`, `needs-human`, or `needs-triage`. Note that the
    `needs-triage` *label* lands here, not in the Needs triage band.
 5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
-   `🐝 covered by PR` (formerly `hive/covered-by-pr`), and `hive/likely-done`: an agent believes the work
-   landed; verify and close.
+   `stage/040-covered-by-pr` (and any later mirrored PR stage; formerly
+   `🐝 covered by PR` / `hive/covered-by-pr`), and `hive/likely-done`: an agent
+   believes the work landed; verify and close.
 
 Precedence is confirm & close → needs human → claimed → needs triage → unclaimed,
 so a human gate beats an assignment and done beats all other display states.
@@ -374,7 +377,7 @@ Operators can tune only the display taxonomy under `dashboard.issue_bands`:
 dashboard:
   issue_bands:
     waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
-    done_labels: [hive/already-done, "🐝 covered by PR", hive/covered-by-pr, hive/likely-done]
+    done_labels: [hive/already-done, stage/040-covered-by-pr, "🐝 covered by PR", hive/covered-by-pr, hive/likely-done]
     stale_days: 14
 ```
 
@@ -409,7 +412,7 @@ queueing.
 
 ## Linked PR issue signals
 
-Repository issue pills show a `🔗` badge when Hive has verified a pull request related to that issue. Open PRs apply `🐝 covered by PR`; merged PRs on still-open issues apply `hive/likely-done`. The badge's tooltip grades the claim: "closes via PR #N" (the PR carries a closing keyword, or Hive linked it from the branch name), "covered by PR #N (partial)" (the PR says `Refs #N` / `Part of #N` and merging it will not close the issue), or "merged via PR #N". These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage.
+Repository issue pills show a `🔗` badge when Hive has verified a pull request related to that issue. Open PRs apply `stage/040-covered-by-pr` (the retired `🐝 covered by PR`); merged PRs on still-open issues apply `hive/likely-done`. The badge's tooltip grades the claim: "closes via PR #N" (the PR carries a closing keyword, or Hive linked it from the branch name), "covered by PR #N (partial)" (the PR says `Refs #N` / `Part of #N` and merging it will not close the issue), or "merged via PR #N". These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage.
 
 The badge is derived from Hive's own PR-claim evidence — the same source that applies the label — not from GitHub's closing-link data, so it is present for every covered issue whether the claim is closing or partial, and whether the issue is actionable or suppressed into the card's "covered by PR" group ([#12144](https://github.com/hivecommons/hive/issues/12144)). One badge renders per issue; when several PRs cover it the closing PR is primary, the count is appended (`🔗×2`), and the tooltip lists the rest. The status payload exposes the evidence as `linked_prs: [{number, state, merged, url, closing, reference}]` plus `claim_context` on each actionable `github.Issue` and on each `claimed_by_pr` entry in `nonActionableIssues`.
 

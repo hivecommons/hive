@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -164,6 +165,7 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 
 func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 	var patched bool
+	var stageStripped []string
 	var issueDetailGets int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -198,6 +200,9 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
 		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/needs-reporter-confirmation"):
 			w.WriteHeader(http.StatusNotFound)
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/stage/"):
+			stageStripped = append(stageStripped, path.Base(r.URL.Path))
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -213,6 +218,9 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 	}
 	if issueDetailGets != 1 {
 		t.Fatalf("backfill issue detail GETs = %d, want 1 from final close only", issueDetailGets)
+	}
+	if len(stageStripped) != 1 || stageStripped[0] != path.Base(CoveredByPRLabel) {
+		t.Fatalf("stage labels stripped on close = %v, want the covered-by-PR stage (#12436)", stageStripped)
 	}
 }
 

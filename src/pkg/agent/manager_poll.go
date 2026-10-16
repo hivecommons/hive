@@ -188,6 +188,8 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 							m.logger.Warn("giving up on token-triggered restart: the agent is still at a login prompt",
 								"agent", agent.Name,
 								"attempts", agent.tokenRestartAttempts,
+								"restarts_24h", agent.tokenRestartsInWindow(now),
+								"window_max", tokenRestartWindowMax,
 								"diagnosis", diag,
 							)
 						}

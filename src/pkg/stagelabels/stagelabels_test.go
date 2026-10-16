@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/claims"
 )
 
 func TestTableIsOrderedSparseAndUnique(t *testing.T) {
@@ -91,6 +93,28 @@ func TestAuthorFromTier(t *testing.T) {
 	for tier, want := range cases {
 		if got := AuthorFromTier(tier, req); got != want {
 			t.Errorf("tier %q → %v want %v", tier, got, want)
+		}
+	}
+}
+
+func TestAuthorMergePrecedence(t *testing.T) {
+	cases := []struct{ cur, next, want Author }{
+		{AuthorNone, AuthorUntrusted, AuthorUntrusted},
+		{AuthorNone, AuthorTrusted, AuthorTrusted},
+		// #12490: the trusted-author lane's verdict survives the contributor
+		// lane's "no registry profile" in either order.
+		{AuthorTrusted, AuthorUntrusted, AuthorTrusted},
+		{AuthorUntrusted, AuthorTrusted, AuthorTrusted},
+		{AuthorUntrusted, AuthorContributor, AuthorContributor},
+		{AuthorContributor, AuthorUntrusted, AuthorContributor},
+		{AuthorContributor, AuthorTrusted, AuthorTrusted},
+		{AuthorContributor, AuthorNewcomer, AuthorContributor},
+		{AuthorNewcomer, AuthorNone, AuthorNewcomer},
+		{AuthorNone, AuthorNone, AuthorNone},
+	}
+	for _, tc := range cases {
+		if got := tc.cur.Merge(tc.next); got != tc.want {
+			t.Errorf("%v.Merge(%v) = %v want %v", tc.cur, tc.next, got, tc.want)
 		}
 	}
 }
@@ -304,5 +328,60 @@ func TestStoreMarksForgetsAndSharedLoad(t *testing.T) {
 	first := Shared()
 	if first == nil || Shared() != first {
 		t.Fatal("Shared() must return one store")
+	}
+}
+
+// TestClaimLabelConstantsMatchStages pins pkg/claims' label strings (which
+// cannot import this package) to the stage table so the claim hooks and the
+// reconciler never disagree on the spelling.
+func TestClaimLabelConstantsMatchStages(t *testing.T) {
+	if got := Claimed.Label(); got != claims.LabelClaimed {
+		t.Fatalf("claims.LabelClaimed = %q, stage table says %q", claims.LabelClaimed, got)
+	}
+	if got := PRInProgress.Label(); got != claims.LabelPRInProgress {
+		t.Fatalf("claims.LabelPRInProgress = %q, stage table says %q", claims.LabelPRInProgress, got)
+	}
+	for _, l := range []string{claims.LegacyLabelClaimed, claims.LegacyLabelInProgress, LegacyCoveredByPR, LegacyCoveredByPRASCII, "CLAIMED"} {
+		if !IsLegacy(l) || !Owned(l) {
+			t.Errorf("%q should be a retired, owned label", l)
+		}
+	}
+	if IsLegacy(claims.LabelClaimed) || IsLegacy("hive/claimed-by-bob") {
+		t.Fatal("live stage label / who-modifier must not be legacy")
+	}
+	if !CarriesStageAtLeast([]string{"bug", MergeQueue.Label()}, CoveredByPR) {
+		t.Fatal("mirrored PR stage should count as covered")
+	}
+	if CarriesStageAtLeast([]string{Claimed.Label()}, CoveredByPR) || CarriesStageAtLeast(nil, Actionable) {
+		t.Fatal("claimed / no stage must not count as covered")
+	}
+}
+
+func TestStoreMarkNudged(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	s.MarkNudged("missing", "a", 1, now) // unknown key: no-op
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("MarkNudged created a record")
+	}
+	key := Key("acme/widget", 7)
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
+	s.MarkNudged(key, "a", 1, now)
+	r, _ := s.Get(key)
+	if r.NudgeHead != "a" || r.NudgeCount != 1 || !r.LastNudgeAt.Equal(now) {
+		t.Fatalf("after first: %+v", r)
+	}
+	s.MarkNudged(key, "a", 0, now.Add(time.Hour)) // n <= count increments
+	if r, _ = s.Get(key); r.NudgeCount != 2 {
+		t.Fatalf("increment: %+v", r)
+	}
+	s.MarkNudged(key, "b", 1, now.Add(2*time.Hour)) // new head restarts
+	if r, _ = s.Get(key); r.NudgeHead != "b" || r.NudgeCount != 1 {
+		t.Fatalf("new head: %+v", r)
+	}
+	// A stage change keeps the nudge memory (same head, no re-nudge).
+	s.Observe(key, ReviewPending, "")
+	if r, _ = s.Get(key); r.NudgeHead != "b" {
+		t.Fatalf("stage change dropped nudge memory: %+v", r)
 	}
 }

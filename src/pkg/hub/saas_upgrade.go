@@ -551,15 +551,28 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	}
 	if currentSHA != "" && latestSHA != "" && (sameCommit(currentSHA, latestSHA) || commitAtOrAheadOfTarget(currentSHA, latestSHA, s.logger)) {
 		s.mu.Unlock()
+		// Already at the reachable target is a clean NO-OP, not a refusal.
+		// This is the ordinary shape of an owner clicking Upgrade on a row
+		// rendered before the daily auto-upgrade landed: by the time the
+		// click arrives the spoke is on the target. Answering 409 here made
+		// every such click surface as "Upgrade failed" on both dashboards and
+		// persisted a failed self-upgrade record on the spoke (#12494).
+		// Nothing is armed or latched — see TestHandleUpgradeHiveStableAlreadyAtChannelIsNoop.
 		reason := manualUpgradeNoopReason(currentSHA, latestSHA, reach.Channel, regImageRef)
-		s.logger.Warn("manual upgrade not armed — spoke is already at its reachable target",
+		s.logger.Info("manual upgrade is a no-op — spoke is already at its reachable target",
 			"hive_id", id, "by", username, "cluster", cluster.ID,
 			"current", currentSHA, "reachable_target", latestSHA,
 			"channel", reach.Channel, "image_ref", regImageRef,
 			"reason", reason)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": reason})
+		_ = json.NewEncoder(w).Encode(upgradeNoopResponse{
+			Status:   upgradeStatusCurrent,
+			Current:  shortSHA(currentSHA),
+			Target:   shortSHA(latestSHA),
+			Channel:  reach.Channel,
+			ImageRef: regImageRef,
+			Message:  reason,
+		})
 		return
 	}
 	for i := range s.registry.Hives {
@@ -604,12 +617,28 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
 }
 
+// upgradeStatusCurrent is the `status` POST /api/saas/hives/{id}/upgrade
+// returns (HTTP 200) when the spoke is already at its reachable target and
+// nothing was armed. Both dashboards and the spoke relay branch on it to say
+// "already up to date" instead of "Upgrade failed".
+const upgradeStatusCurrent = "current"
+
+// upgradeNoopResponse is the body of the already-current no-op answer.
+type upgradeNoopResponse struct {
+	Status   string `json:"status"`
+	Current  string `json:"current"`
+	Target   string `json:"target"`
+	Channel  string `json:"channel,omitempty"`
+	ImageRef string `json:"image_ref,omitempty"`
+	Message  string `json:"message"`
+}
+
 func manualUpgradeNoopReason(currentSHA, targetSHA, channel, imageRef string) string {
 	if channel != "" {
-		return fmt.Sprintf("upgrade not armed — this spoke tracks :%s (%s), whose current image revision is already the running commit %s (hub-resolved target %s); wait for the channel to advance or switch the hive to a newer channel/branch tag",
+		return fmt.Sprintf("already up to date — this spoke tracks :%s (%s), whose current image revision is already the running commit %s (hub-resolved target %s); nothing to upgrade until the channel advances or the hive is switched to a newer channel/branch tag",
 			channel, orDash(imageRef), shortSHA(currentSHA), shortSHA(targetSHA))
 	}
-	return fmt.Sprintf("upgrade not armed — this spoke is already at the reachable target %s", shortSHA(targetSHA))
+	return fmt.Sprintf("already up to date — this spoke is already at the reachable target %s; nothing to upgrade", shortSHA(targetSHA))
 }
 
 // branchToTag converts a git branch name into a valid Docker image tag.

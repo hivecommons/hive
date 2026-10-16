@@ -52,12 +52,21 @@ func (f *fakeSource) count() int {
 type fakeClock struct {
 	mu sync.Mutex
 	t  time.Time
+	// calls, when set, receives a signal on every now() read (dropped if full).
+	calls chan struct{}
 }
 
 func (c *fakeClock) now() time.Time {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.t
+	t := c.t
+	c.mu.Unlock()
+	if c.calls != nil {
+		select {
+		case c.calls <- struct{}{}:
+		default:
+		}
+	}
+	return t
 }
 
 func (c *fakeClock) set(t time.Time) {
@@ -189,7 +198,7 @@ func TestRunnerRunOnceCancelledContext(t *testing.T) {
 func TestRunnerRunLoopHonoursTicksAndShutdown(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	r, srcs, _ := newRunner(t, []string{"o/a"}, now)
-	clock := &fakeClock{t: now}
+	clock := &fakeClock{t: now, calls: make(chan struct{}, 8)}
 	r.Now = clock.now
 	srcs.notify = make(chan string)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -204,10 +213,13 @@ func TestRunnerRunLoopHonoursTicksAndShutdown(t *testing.T) {
 		t.Fatalf("fetched before first tick: %v", srcs.fetched)
 	}
 	tick <- now
+	<-clock.calls
 	<-srcs.notify
-	// A tick in the same month is a no-op (unbuffered: the send returns once
-	// the loop received it, and the loop fetches nothing).
+	// A tick in the same month is a no-op. The send only proves the loop
+	// received the tick, so wait for the pass to sample the clock before
+	// moving it; that pass saw the old month and fetches nothing.
 	tick <- now
+	<-clock.calls
 	// After the month rolls the next tick writes again.
 	clock.set(now.AddDate(0, 1, 0))
 	tick <- now

@@ -181,5 +181,5 @@ in a new script.
 
 ## Not yet
 
-- Fleet averages of the Trust/Prod/Satis/Effic quadrants in the fleet widget.
+- The Trust/Prod/Satis/Effic fleet quadrant in the fleet widget. The hub already serves it as `fleet_quadrant` on `/api/saas/my-hives` (per-axis median with `n`, `criteria[]` and a plain `summary`; the shape only grows — see [Fleet quadrant](fleet-health.md#fleet-quadrant)), so a widget can read it today.
 - A native app with WidgetKit widgets and push notifications.

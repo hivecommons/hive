@@ -308,6 +308,12 @@ type Client struct {
 	// under its current spelling (hivecommons/hive#11888). Zero value is
 	// ready to use.
 	coveredByPRLabel coveredByPRLabelState
+	// stageFamily memoises repos whose stage/author label family has been
+	// provisioned this process (hivecommons/hive#12436). Zero value is ready.
+	stageFamily coveredByPRLabelState
+	// issueStage resolves the live `governor.labels.stage` policy for the
+	// issue stage reconciler; nil disables it.
+	issueStage func() IssueStagePolicy
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning
@@ -634,6 +640,11 @@ type Issue struct {
 	ClaimedBy      string     `json:"claimed_by,omitempty"`
 	ClaimExpiresAt *time.Time `json:"claim_expires_at,omitempty"`
 	ClaimSource    string     `json:"claim_source,omitempty"`
+	// ClaimKind is the marker's kind= (agent, human, contributor, external)
+	// when the live claim came from a `hive:claim` marker; empty otherwise.
+	// The issue stage reconciler reads it to tell stage/030-pr-in-progress
+	// (an agent kick is working) from stage/020-claimed.
+	ClaimKind string `json:"claim_kind,omitempty"`
 }
 
 // IssueDependency is the transport form of a source-aware work dependency.
@@ -3651,6 +3662,8 @@ type RepoWorkIssue struct {
 	URL       string    `json:"url,omitempty"`
 	Bucket    string    `json:"bucket"`
 	Reason    string    `json:"reason,omitempty"`
+	// ClaimKind is Issue.ClaimKind, copied for the issue stage reconciler.
+	ClaimKind string `json:"claim_kind,omitempty"`
 	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
 	// duplicate-PR guard suppressed into the claimed_by_pr bucket
 	// (hivecommons/hive#12144), so the repo card can render the same
@@ -3673,6 +3686,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		URL:          issue.URL,
 		Bucket:       bucket,
 		Reason:       reason,
+		ClaimKind:    issue.ClaimKind,
 		LinkedPRs:    append([]IssueLinkedPR(nil), issue.LinkedPRs...),
 		ClaimContext: issue.ClaimContext,
 	}
