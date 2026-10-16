@@ -5704,7 +5704,9 @@ func ValidateSnapshotURL(raw string) (string, error) {
 	if u.Path == "" || u.Path == "/" {
 		return u.Scheme + "://" + u.Host, nil
 	}
-	return strings.TrimRight(v, "/"), nil
+	// Rebuild from parsed parts so a bare trailing "#" (which url.Parse
+	// reports as an empty fragment) and an uppercase scheme do not survive.
+	return u.Scheme + "://" + u.Host + strings.TrimRight(u.EscapedPath(), "/"), nil
 }
 
 var snapshotFrameAncestorHostPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$`)
