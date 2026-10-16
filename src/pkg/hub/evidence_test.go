@@ -47,11 +47,10 @@ func TestBuildEvidenceViewSmallNIsUnknown(t *testing.T) {
 }
 
 func TestEvidenceCriteria(t *testing.T) {
-	yes := true
-	in := quadrantInputs{selfMergeAllowed: &yes, evidence: &HeartbeatEvidence{
+	in := quadrantInputs{evidence: &HeartbeatEvidence{
 		Verdicts90d: 20, FalseBlock90d: 4, FalseApprove90d: 1, Merged90d: 20, Reverted14d90d: 4}}
-	findCriterion(t, trustCriteria(in), "delegation")
-	findCriterion(t, efficiencyCriteria(in), "revert_rate")
+	findCriterion(t, trustCriteria(in), "false_approve_rate")
+	findCriterion(t, trustCriteria(in), "revert_rate")
 	findCriterion(t, satisfactionCriteria(in), "human_override_rate")
 	if got := satisfactionCriteria(quadrantInputs{evidence: &HeartbeatEvidence{Verdicts90d: 9}}); len(got) != 0 {
 		t.Fatalf("<10 verdicts must be unscored: %v", got)

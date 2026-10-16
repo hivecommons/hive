@@ -450,6 +450,54 @@ last stored summary. Reporting only: nothing here gates a merge.
 | "queue empty — idle" (green) | Nothing to work on — this is healthy | Nothing. Add work sources if you expected a backlog |
 | "no output expected — …-capable agent(s) off: NAMES" (green) | The agents that could produce this level's output are paused/off-schedule | Nothing, unless you want output — then resume the named agents |
 
+## Dashboard Fleet quadrant
+
+The `/dashboard` quadrant is a **read-only description**, not a merge gate or
+an ACMM recommendation. Its stable axes are Trust (top), Productivity (right),
+Satisfaction (bottom), Efficiency (left). Scores use fixed reference curves,
+not fleet percentiles: the whole fleet can improve without forcing half its
+hives below average. A single reporting hive can score; there is no minimum
+fleet population. Missing measurements never count as zero.
+
+| Axis | Measured criteria | Curve reference points |
+| --- | --- | --- |
+| Trust | 90-day revert/follow-up rate, false-approve rate, evidence coverage, proxy boundary blocked-write rate | Bad-outcome and blocked-write rates: 0 → 100, 25% → 0; coverage: 0% → 0, 100% → 100 |
+| Productivity | Audit merges per enrolled repo per week | 0 → 0, 5 → 100, logarithmic (`log1p`) |
+| Efficiency | Approximate tokens per merged PR, 7-day agent idle ratio | Tokens: 0 → 100, 10 million → 0, logarithmic (`log1p`); idle ratio: 0% → 100, 100% → 0 |
+| Satisfaction | False-block / human override rate and current SLA violation count | Override rate: 0 → 100, 25% → 0; SLA count: 0 → 100, 10 → 0 |
+
+All other curves are linear, clamped to 0–100. These named reference points in
+`pkg/hub/quadrant_axes.go` are transparent heuristics, not validated quality
+probabilities. Every measured criterion has weight 1. An axis is the rounded
+weighted mean of measured criteria; the composite averages scored axes only.
+The fleet polygon is the **median** per axis, with `n` reporting hives shown;
+per-hive deltas compare to that median. Missing axes render `—`.
+
+Rates need at least 10 outcomes/attempts; token cost needs at least 5 merges.
+Productivity prefers the hive's audit `RepoActivity` counts, normalized by
+`RepoActivityCountWindowHours` (14 days on older collectors), divided by enrolled
+repos. Repeated repo entries are counted once; activity outside enrolled repos
+is excluded. Summaries older than 24 hours are ignored. Where hive activity is
+absent, the 90-day org AI-author merge count is an **explicitly approximate
+fallback**, not a per-hive attribution. Current budget spend is normalized by
+elapsed days, then divided by daily merge rate: token cost is approximate
+because the numerator and denominator windows differ. Evidence coverage also
+uses an org-scoped denominator and is capped at 100%; it can understate a hive's
+coverage. Blocked writes mean out-of-bound attempts since proxy restart, not
+proof that a gate is effective. Idle ratio needs a covered 7-day trend and
+configured agents. The additive `agent_samples` trend field distinguishes a real
+zero idle ratio from no observed agents; older spokes without this denominator
+can contribute a positive ratio, but their ambiguous zero is left unmeasured.
+SLA violations are an operational satisfaction proxy, **not a human survey**.
+
+Expand **ⓘ** beside each axis on the fleet card or in a hive's keyboard-reachable
+hover for what it covers, native value, sub-score, weight, source/window, scoring
+formula, what good looks like, and what ours shows. Fleet criterion values and
+sub-scores are medians of reporting hives, not pooled rates, and do not
+reconstruct the median axis score. Time-to-merge, launch cost, and direct human
+feedback stay visibly **not measured yet**, excluded until their signals arrive.
+Per-hive details retain the existing owner/member or hub-admin visibility rule.
+
 ## Where the verdict comes from (for the curious)
 
 The verdict is computed in `src/pkg/hub/health_verdict.go` (base verdict and

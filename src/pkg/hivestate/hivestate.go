@@ -93,9 +93,11 @@ type Window struct {
 	QueuePRs         Quantiles `json:"queue_prs"`
 	QueueHold        Quantiles `json:"queue_hold"`
 	SLAViolationRate float64   `json:"sla_violation_rate"`
-	AgentIdleRatio   float64   `json:"agent_idle_ratio"`
-	KicksPerDay      float64   `json:"kicks_per_day"`
-	TokensPerDay     float64   `json:"tokens_per_day"`
+	// AgentSamples distinguishes a real zero idle ratio from no observed agents.
+	AgentSamples   int     `json:"agent_samples,omitempty"`
+	AgentIdleRatio float64 `json:"agent_idle_ratio"`
+	KicksPerDay    float64 `json:"kicks_per_day"`
+	TokensPerDay   float64 `json:"tokens_per_day"`
 }
 
 // Trends is the 24 h and 7 d summary of the hive state time series.
@@ -188,6 +190,7 @@ func summarizeWindow(sorted []Bucket, now time.Time, d time.Duration) Window {
 	covered := now.Sub(agg.Start)
 	w := Window{
 		Samples:          agg.Samples,
+		AgentSamples:     agg.AgentSamples,
 		CoverageHours:    round(covered.Hours(), 2),
 		QueueIssues:      quantiles(agg.QueueIssues),
 		QueuePRs:         quantiles(agg.QueuePRs),

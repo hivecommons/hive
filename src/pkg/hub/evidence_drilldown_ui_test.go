@@ -129,7 +129,10 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		"function esc(s) { return String(s == null ? '' : s); }",
 		"var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];",
 		"var QUADRANT_AXIS_LABELS = {trust:'Trust', productivity:'Productivity', satisfaction:'Satisfaction', efficiency:'Efficiency'};",
-		"function quadrantAxis(q, name) { return {scored: true, score: 50}; }",
+		"function escAttr(s) { return esc(s); }",
+		"function quadrantAxis(q, name) { return {axis: name, scored: true, score: 50}; }",
+		jsFunc(t, "quadrantAxisExplanationHTML"),
+		jsFunc(t, "quadrantSummaryHTML"),
 		"function quadrantSVG() { return '<svg></svg>'; }",
 		"var _allDashHives = [{}, {}];",
 		"var _fleetQuadrant = {scored_axes: 4};",
@@ -166,7 +169,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 	if strings.Count(got.Admin, "openEvidenceModal()") != 3 {
 		t.Errorf("admin fleet card should wire the drill click, its keydown and the button, got:\n%s", got.Admin)
 	}
-	for _, forbidden := range []string{"openEvidenceModal", `role="button"`, "tabindex", "fleet-quadrant-drill", "onkeydown", "fleet-quadrant-evidence-btn", "fleet-quadrant-hint"} {
+	for _, forbidden := range []string{"openEvidenceModal", `role="button"`, "tabindex", "fleet-quadrant-drill", "fleet-quadrant-evidence-btn", "fleet-quadrant-hint"} {
 		if strings.Contains(got.Member, forbidden) {
 			t.Errorf("member fleet card must stay unchanged but contains %q:\n%s", forbidden, got.Member)
 		}

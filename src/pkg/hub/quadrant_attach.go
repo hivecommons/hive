@@ -43,30 +43,6 @@ func budgetSpendPerDay(e RegistryEntry, now time.Time) (float64, bool) {
 // of agent activity no longer dominates the average.
 const minBudgetWindowElapsed = 6 * time.Hour
 
-// mergeAcceptanceRate is merged / (merged + rejected) over the reported window.
-//
-// This restores the trust sub-criterion the platform appeared not to support:
-// the counts already travel on the heartbeat, so no new instrumentation is
-// needed to compute it hub-side.
-//
-// It is weighted as ONE of trust's criteria and never allowed to stand alone,
-// because the underlying metric has two documented weaknesses. It is
-// Goodhart-gameable through PR size — a hive whose agents learn to submit
-// trivially small changes scores well without being more trustworthy — and it
-// is censored by construction: it counts only PRs that reached a verdict, so it
-// stayed green throughout a fleet-wide outage during which almost nothing was
-// being submitted at all.
-func mergeAcceptanceRate(e RegistryEntry) (float64, bool) {
-	if e.PRsMerged90d == nil || e.PRsRejected90d == nil {
-		return 0, false
-	}
-	total := *e.PRsMerged90d + *e.PRsRejected90d
-	if total < minPRsForReworkRate {
-		return 0, false
-	}
-	return float64(*e.PRsMerged90d) / float64(total), true
-}
-
 // fleetCountGroup identifies hives whose org-scoped counters measure the SAME
 // underlying work, so a criterion's population can count that work once.
 //
@@ -109,48 +85,59 @@ func fleetCountGroup(e RegistryEntry) string {
 // unreported signal into a genuine low score.
 func quadrantInputsFor(e RegistryEntry, now time.Time) quadrantInputs {
 	in := quadrantInputs{
-		acmmLevel:  e.ACMMLevel,
-		agentCount: e.AgentCount,
-		// The org-wide counters are collected per (org, ai-author) pair — see
-		// NewFleetStatsCollector — so that pair, not the hive ID, is what makes
-		// two hives' counts the same measurement rather than two of them.
-		countGroup: fleetCountGroup(e),
-		// WorkSource is empty for the DEFAULT GitHub Issues source rather than
-		// unknown, so an empty string is a real answer here: the hive is
-		// reading human-filed issues.
-		workSource:         e.WorkSource,
-		contributorCount:   e.ContributorCount,
-		activeContributors: e.ActiveContributors,
-		reposEnrolled:      len(e.Repos),
-		prsMerged90d:       e.PRsMerged90d,
-		prsRejected90d:     e.PRsRejected90d,
-		holdTotal:          e.HoldTotal,
-		awaitingReview:     e.AwaitingReview,
-		slaViolations:      e.SLAViolations,
-		tasksCompleted7d:   e.TasksCompleted7d,
-		budgetExhausted:    e.BudgetExhausted,
+		reposEnrolled:   len(e.Repos),
+		prsMerged90d:    e.PRsMerged90d,
+		slaViolations:   e.SLAViolations,
+		budgetExhausted: e.BudgetExhausted,
 	}
 	if rate, ok := budgetSpendPerDay(e, now); ok {
 		in.tokensPerDay = &rate
 	}
-	if rate, ok := mergeAcceptanceRate(e); ok {
-		in.mergeAcceptance = &rate
+	// Reject stale summaries; the count window is distinct from freshness.
+	if e.RepoActivity != nil && (e.RepoActivityCollectedAt.IsZero() || now.Sub(e.RepoActivityCollectedAt) <= 24*time.Hour) {
+		total := 0
+		seen := map[string]bool{}
+		for _, r := range e.RepoActivity {
+			key := strings.ToLower(r.Repo)
+			if seen[key] {
+				continue
+			}
+			for _, enrolled := range e.Repos {
+				if strings.EqualFold(enrolled, r.Repo) {
+					total += r.Merges.Count
+					seen[key] = true
+					break
+				}
+			}
+		}
+		in.repoMerges14d = &total
+		in.repoMergeDays = float64(e.RepoActivityCountWindowHours) / 24
+		if in.repoMergeDays <= 0 {
+			in.repoMergeDays = 14
+		} // older collectors' fixed window
 	}
 	if e.Evidence != nil {
 		in.evidence = e.Evidence
-		in.selfMergeAllowed = e.Evidence.AutomergeSelfAuthored
+		if trends := e.Evidence.HiveState; trends != nil && e.AgentCount > 0 {
+			w := trends.Last7d
+			// Older spokes lack the denominator: a positive idle ratio proves
+			// observation, but a zero alone does not prove all agents were busy.
+			if w.Samples > 0 && w.CoverageHours >= 1 && (w.AgentSamples > 0 || w.AgentIdleRatio > 0) {
+				in.agentIdleRatio = &w.AgentIdleRatio
+			}
+		}
 	}
 	return in
 }
 
 // canSeeQuadrant reports whether a caller may see a hive's quadrant.
 //
-// Scores rank hives against one another, so showing one to an unrelated user
+// Scores describe hive performance, so showing one to an unrelated user
 // would disclose how somebody else's project is performing. The rule is
 // therefore the same one the row's other owner-scoped affordances use: a role
 // on the hive, or hub admin.
 //
-// Note this gates only the per-hive score. The fleet AVERAGE is an aggregate
+// Note this gates only the per-hive score. The fleet median is an aggregate
 // over many hives and identifies none of them, so it is not gated here.
 func canSeeQuadrant(role string, isAdmin bool) bool {
 	return isAdmin || strings.TrimSpace(role) != ""
@@ -159,12 +146,10 @@ func canSeeQuadrant(role string, isAdmin bool) bool {
 // attachQuadrants scores a dashboard payload in place.
 //
 // The population is exactly the rows passed in — the caller's filtered view —
-// which is what keeps a row's score and the header's aggregate consistent with
-// each other. Ranking against the whole registry instead would let the header
-// polygon disagree with the rows it summarises, which is worse than either
-// being imprecise.
+// which keeps per-axis deltas and the header's median consistent. Absolute
+// per-hive scores themselves are independent of the filtered population.
 //
-// Returns the fleet average for the same population so the caller can render
+// Returns the fleet median for the same population so the caller can render
 // the reference polygon and the header without scoring twice.
 func attachQuadrants(rows []MyHiveEntry, isAdmin bool, now time.Time) Quadrant {
 	if len(rows) == 0 {

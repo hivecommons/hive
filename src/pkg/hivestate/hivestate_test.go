@@ -98,6 +98,22 @@ func TestQuantiles(t *testing.T) {
 	}
 }
 
+func TestIdleRatioObservationDenominator(t *testing.T) {
+	for _, tc := range []struct {
+		state   string
+		samples int
+	}{{"running", 1}, {"idle", 1}, {"paused", 0}} {
+		b := FromSnapshot(t0, Snapshot{AgentStates: map[string]string{"a": tc.state}})
+		w := summarizeWindow([]Bucket{b}, t0.Add(2*time.Hour), 7*24*time.Hour)
+		if w.AgentSamples != tc.samples {
+			t.Fatalf("%s: %+v", tc.state, w)
+		}
+		if tc.state == "running" && w.AgentIdleRatio != 0 {
+			t.Fatal("all-running agents must report measured zero idle")
+		}
+	}
+}
+
 func TestSummarizeWindows(t *testing.T) {
 	now := t0
 	var buckets []Bucket

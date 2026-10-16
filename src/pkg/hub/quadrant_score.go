@@ -1,193 +1,148 @@
 package hub
 
 import (
+	"fmt"
 	"math"
 )
 
-// ScoreFleet computes quadrants for a population of hives at once.
-//
-// It must be a fleet-level operation rather than a per-hive one because a
-// percentile is meaningless without the population. Callers pass every hive in
-// the current view and receive scores aligned by index.
-//
-// Small populations: below minFleetForPercentile a percentile would be noise
-// dressed up as precision (ranking three hives yields 0/50/100 regardless of
-// how close they actually are), so every axis reports unscored and the chart
-// honestly shows nothing rather than a confident fiction.
+func criterionExplanation(d criterionDefinition) CriterionScore {
+	curve := "linear"
+	if d.logarithmic {
+		curve = "log1p"
+	}
+	return CriterionScore{
+		Name: d.name, Covers: d.covers, Unit: d.unit, Source: d.source, Good: d.good,
+		How:    fmt.Sprintf("100 × (f(value) − f(%g)) / (f(%g) − f(%g)); f=%s; clamped to 0–100; weight 1", d.low, d.high, d.low, curve),
+		Weight: 1, Reason: "Not measured yet: not reported or below the stated sample floor",
+	}
+}
+
+// ScoreFleet uses absolute curves; a hive's score does not change when a peer
+// joins, leaves, or improves. The population is used ONLY for deltas and n.
 func ScoreFleet(inputs []quadrantInputs) []Quadrant {
 	out := make([]Quadrant, len(inputs))
-	if len(inputs) == 0 {
-		return out
-	}
-
-	// Gather each axis's sub-criteria for every hive up front, so a criterion's
-	// population can be assembled before any hive is scored.
-	perHive := make([]map[string][]subCriterion, len(inputs))
+	samples := map[string][]int{}
 	for i, in := range inputs {
-		perHive[i] = map[string][]subCriterion{}
-		for _, axis := range QuadrantAxisOrder {
-			perHive[i][axis] = criteriaFor(axis, in)
-		}
-	}
-
-	// Build the population sample for every (axis, criterion) pair. Only hives
-	// that actually reported a criterion contribute to its population — a hive
-	// that declined must not be counted as a zero, or it would drag the whole
-	// fleet's distribution toward the bottom and make everyone else look good
-	// for the wrong reason.
-	//
-	// Each contributed value is tagged with its hive's countGroup so the sample
-	// can be deduped below: several hives in one org report that org's WHOLE
-	// output as their own, and counting it once per hive would let a single
-	// org's activity stretch the distribution as many times as it has hives.
-	type critKey struct{ axis, name string }
-	populations := map[critKey][]float64{}
-	popGroups := map[critKey][]string{}
-	for i := range inputs {
-		for axis, crits := range perHive[i] {
-			for _, c := range crits {
-				k := critKey{axis, c.name}
-				populations[k] = append(populations[k], c.value)
-				popGroups[k] = append(popGroups[k], inputs[i].countGroup)
-			}
-		}
-	}
-	for k, vals := range populations {
-		populations[k] = dedupeByGroup(vals, popGroups[k])
-	}
-
-	// First pass: per-hive, per-axis scores.
-	axisSamples := map[string][]int{} // for medians / deltas
-	for i := range inputs {
 		q := Quadrant{Axes: make([]AxisScore, 0, len(QuadrantAxisOrder))}
 		for _, axis := range QuadrantAxisOrder {
-			crits := perHive[i][axis]
-			as := AxisScore{Axis: axis}
-
-			if len(crits) == 0 {
-				as.Scored = false
-				as.Reason = unscoredReason(axis)
-				q.Axes = append(q.Axes, as)
-				continue
-			}
-
-			// Average the criterion percentiles. Equal weighting is deliberate:
-			// any weighting scheme would encode a claim about relative
-			// importance that nobody has validated, and it would be invisible
-			// to the people reading the chart.
-			sum, n := 0, 0
-			weakest, weakestScore := "", 101
-			for _, c := range crits {
-				pop := populations[critKey{axis, c.name}]
-				if len(pop) < minFleetForPercentile {
-					continue
-				}
-				// Rank decides the ORDER among active hives; the absolute
-				// activity factor decides whether the hive is in the
-				// conversation at all. A criterion whose raw magnitude is zero
-				// scores zero here however the rest of the fleet ranks — which
-				// is the whole point: on a mostly-idle fleet a percentile alone
-				// puts everyone who did nothing at the median.
-				//
-				// Note this multiplies, so the hive is still SCORED (it
-				// reported a real measurement of zero); it simply scores low.
-				// Unscored — no measurement at all — is handled above by the
-				// empty-criteria branch and never reaches here.
-				s := percentileRank(c.value, pop, c.higherIsBetter)
-				s = clampScore(int(math.Round(
-					float64(s) * activityFactor(c.value, c.activityFloor))))
-				sum += s
-				n++
-				if c.nudge != "" && s < weakestScore {
-					weakest, weakestScore = c.nudge, s
+			a := AxisScore{Axis: axis}
+			measured := map[string]subCriterion{}
+			for _, c := range criteriaFor(axis, in) {
+				if !math.IsNaN(c.value) && !math.IsInf(c.value, 0) && c.value >= 0 {
+					measured[c.name] = c
 				}
 			}
-
-			if n == 0 {
-				// Criteria existed but the fleet is too small to rank them.
-				as.Scored = false
-				as.Reason = "Fleet too small to compare against"
-				q.Axes = append(q.Axes, as)
-				continue
+			sum, weight, weakest := 0.0, 0.0, 101
+			for _, d := range criterionDefinitions(axis) {
+				c := criterionExplanation(d)
+				if d.name == "merges_per_repo_week" || d.name == "tokens_per_pr" {
+					if in.repoMerges14d != nil {
+						days := in.repoMergeDays
+						if days <= 0 {
+							days = 14
+						}
+						c.Source += fmt.Sprintf("; using hive audit count over %g days", days)
+					} else {
+						c.Source += "; using org-wide AI-author fallback, not per-hive attribution"
+					}
+				}
+				if v, ok := measured[d.name]; ok {
+					s := criterionScore(d, v.value)
+					c.Value, c.Score, c.Measured, c.Reason = &v.value, &s, true, ""
+					sum += float64(s) * c.Weight
+					weight += c.Weight
+					if s <= 50 && s < weakest && v.nudge != "" {
+						a.Nudge, weakest = v.nudge, s
+					}
+				}
+				a.Criteria = append(a.Criteria, c)
 			}
-
-			as.Score = clampScore(int(math.Round(float64(sum) / float64(n))))
-			as.Scored = true
-			// Only surface a nudge when the axis is actually weak. A nudge on a
-			// strong axis reads as nagging and trains people to ignore them.
-			if weakestScore <= 50 {
-				as.Nudge = weakest
+			if weight > 0 {
+				a.Scored, a.Score = true, clampScore(int(math.Round(sum/weight)))
+				a.Summary = fmt.Sprintf("%s %d/100 from %d measured criteria; gaps excluded", axis, a.Score, int(weight))
+				samples[axis] = append(samples[axis], a.Score)
+			} else {
+				a.Reason = unscoredReason(axis)
+				a.Summary = a.Reason
 			}
-			q.Axes = append(q.Axes, as)
-			axisSamples[axis] = append(axisSamples[axis], as.Score)
+			q.Axes = append(q.Axes, a)
 		}
 		out[i] = q
 	}
-
-	// Second pass: deltas against the per-axis fleet median, and the composite.
-	medians := map[string]int{}
-	for axis, sample := range axisSamples {
-		medians[axis] = medianOf(sample)
-	}
 	for i := range out {
-		sum, n := 0, 0
 		for j := range out[i].Axes {
 			a := &out[i].Axes[j]
-			if !a.Scored {
-				continue
+			a.N = len(samples[a.Axis])
+			if a.Scored {
+				a.Delta = a.Score - medianOf(samples[a.Axis])
 			}
-			a.Delta = a.Score - medians[a.Axis]
-			sum += a.Score
-			n++
 		}
-		out[i].ScoredAxes = n
-		if n > 0 {
-			// Composite averages ONLY scored axes. Counting an unmeasured axis
-			// as zero would punish a hive for a signal the platform does not
-			// collect, which is exactly backwards.
-			out[i].Composite = clampScore(int(math.Round(float64(sum) / float64(n))))
-		}
+		setComposite(&out[i])
 	}
-
 	return out
 }
 
-// FleetAverage collapses a population's quadrants into a single reference
-// polygon — the shape drawn behind each row's kite and at the top of the
-// dashboard.
-//
-// Per axis it averages only the hives that scored that axis. An axis nobody
-// scored comes back unscored, so the aggregate never invents a value for a
-// signal the fleet does not collect.
+func setComposite(q *Quadrant) {
+	sum := 0
+	for _, a := range q.Axes {
+		if a.Scored {
+			sum += a.Score
+			q.ScoredAxes++
+		}
+	}
+	if q.ScoredAxes > 0 {
+		q.Composite = int(math.Round(float64(sum) / float64(q.ScoredAxes)))
+	}
+}
+
+// FleetAverage keeps its name for source compatibility; the polygon is now the
+// per-axis MEDIAN of scored hives. Criterion values are also medians, never a
+// pooled rate or a claim that the median sub-scores reconstruct the axis score.
 func FleetAverage(qs []Quadrant) Quadrant {
-	avg := Quadrant{Axes: make([]AxisScore, 0, len(QuadrantAxisOrder))}
-	sums := map[string]int{}
-	counts := map[string]int{}
-	for _, q := range qs {
-		for _, a := range q.Axes {
-			if !a.Scored {
-				continue
-			}
-			sums[a.Axis] += a.Score
-			counts[a.Axis]++
-		}
-	}
-	total, scored := 0, 0
+	out := Quadrant{Axes: make([]AxisScore, 0, len(QuadrantAxisOrder))}
 	for _, axis := range QuadrantAxisOrder {
-		as := AxisScore{Axis: axis}
-		if counts[axis] > 0 {
-			as.Score = clampScore(int(math.Round(float64(sums[axis]) / float64(counts[axis]))))
-			as.Scored = true
-			total += as.Score
-			scored++
-		} else {
-			as.Reason = unscoredReason(axis)
+		a := AxisScore{Axis: axis}
+		var scores []int
+		for _, q := range qs {
+			for _, s := range q.Axes {
+				if s.Axis == axis && s.Scored {
+					scores = append(scores, s.Score)
+				}
+			}
 		}
-		avg.Axes = append(avg.Axes, as)
+		a.N = len(scores)
+		for _, d := range criterionDefinitions(axis) {
+			c := criterionExplanation(d)
+			var values []float64
+			var subs []int
+			for _, q := range qs {
+				for _, s := range q.Axes {
+					if s.Axis == axis {
+						for _, sub := range s.Criteria {
+							if sub.Name == d.name && sub.Measured && sub.Value != nil && sub.Score != nil {
+								values = append(values, *sub.Value)
+								subs = append(subs, *sub.Score)
+							}
+						}
+					}
+				}
+			}
+			if len(values) > 0 {
+				v, s := medianFloat(values), medianOf(subs)
+				c.Measured, c.Value, c.Score, c.Reason = true, &v, &s, ""
+				c.Source += fmt.Sprintf("; median of %d reporting hives (not pooled)", len(values))
+			}
+			a.Criteria = append(a.Criteria, c)
+		}
+		if len(scores) > 0 {
+			a.Scored, a.Score = true, medianOf(scores)
+			a.Summary = fmt.Sprintf("%s median %d/100 · n=%d scored hives", axis, a.Score, a.N)
+		} else {
+			a.Reason = unscoredReason(axis)
+			a.Summary = a.Reason
+		}
+		out.Axes = append(out.Axes, a)
 	}
-	avg.ScoredAxes = scored
-	if scored > 0 {
-		avg.Composite = clampScore(int(math.Round(float64(total) / float64(scored))))
-	}
-	return avg
+	setComposite(&out)
+	return out
 }

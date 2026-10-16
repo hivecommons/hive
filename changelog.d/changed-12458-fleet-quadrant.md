@@ -1,0 +1,1 @@
+- The hub Fleet quadrant now uses fixed-reference evidence-based scores and scored-hive medians, prefers hive audit throughput over org-wide counts, and explains each axis's inputs, missing measurements, reference curves, and reporting population ([#12458](https://github.com/hivecommons/hive/issues/12458)).

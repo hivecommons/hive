@@ -738,3 +738,25 @@ always resolved server-side from the validated token.
 | `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1734` |
 | `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1739` |
 | `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1741` |
+
+### Dashboard quadrant payload
+
+Dashboard hive rows expose `quadrant` only to callers with a role on the hive or
+hub admins. `fleet_quadrant` describes the current view. The existing `axes`,
+`composite`, `scored_axes`, and per-axis `axis`, `score`, `scored`, `reason`,
+`delta`, `nudge` fields remain. Scores now use fixed 0–100 curves rather than
+percentiles, and the fleet polygon uses the median of scored hives per axis.
+
+Added per-axis fields: `n` (scored hive count in the view), `summary`, and
+`criteria[]`. Each criterion includes `name`, `covers`, `unit`, `source`, `good`,
+`how`, `weight`, `measured`, `value`, `score`, and an optional missing-data
+`reason`. Unmeasured criterion values and scores are **null**; measured zero
+remains zero. Missing criteria are excluded from the weighted mean (currently
+weight 1 each). Unscored axes remain `scored:false`, so their numeric `score`
+is meaningless. Fleet criterion values and sub-scores are reporting-hive medians,
+not pooled rates or components that reconstruct the median axis score.
+
+See [Fleet quadrant](fleet-health.md#dashboard-fleet-quadrant) for input windows,
+reference points, org-wide fallbacks, and limitations. These scores never change
+merge eligibility. The evidence endpoint remains independent; its selectable
+windows do not change dashboard quadrant windows.

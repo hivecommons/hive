@@ -377,12 +377,17 @@
        parent .table-wrap keeps overflow visible, so this escapes the cell. */
     .quadrant-cell .quadrant-hover {
       display: none; position: absolute; right: 0; bottom: calc(100% + 8px);
-      z-index: 60; width: 240px; padding: 10px 12px; text-align: left;
+      z-index: 60; width: 340px; max-height: 70vh; overflow-y: auto; padding: 10px 12px; text-align: left;
       background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.45); cursor: default; white-space: normal;
       font-size: 0.72rem; line-height: 1.4; color: var(--text);
     }
     .quadrant-cell:hover .quadrant-hover, .quadrant-cell:focus-within .quadrant-hover { display: block; }
+    .quadrant-axis-explainer { text-align: left; font-size: 0.72rem; }
+    .quadrant-axis-explainer summary { cursor: pointer; }
+    .quadrant-axis-explainer > div { max-width: 36rem; max-height: 50vh; overflow-y: auto; white-space: normal; }
+    .quadrant-axis-explainer li { margin-bottom: var(--sp-3); }
+    .quadrant-summary { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-3); }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: var(--fs-sm); color: var(--muted); }
 
@@ -1100,7 +1105,7 @@
     function quadrantCell(h) {
       var q = h && h.quadrant;
       if (!q) return '';
-      return '<span class="quadrant-cell" style="position:relative;display:inline-block;cursor:help">' +
+      return '<span class="quadrant-cell" tabindex="0" style="position:relative;display:inline-block;cursor:help">' +
         quadrantSVG(q, _fleetQuadrant, 22, false) +
         '<span class="quadrant-hover">' + quadrantPanelHTML(q) + '</span>' +
         '</span>';
@@ -1109,6 +1114,32 @@
     /* quadrantPanelHTML is the shared hover body — the same chart drawn large,
        with the composite and whichever nudges apply. Used by BOTH the column
        hover and the status hover so the two can never drift. */
+    function quadrantAxisExplanationHTML(a) {
+      var criteria = (a.criteria || []).map(function(c) {
+        return '<li><strong>' + esc(c.name) + '</strong>: ' + esc(c.covers) +
+          '<br>' + (c.measured ? esc(String(c.value)) + ' ' + esc(c.unit) + ' → ' + esc(String(c.score)) + '/100' :
+            esc(c.reason || 'Not measured yet')) +
+          '<br>Source: ' + esc(c.source) + '<br>How it\'s scored: ' + esc(c.how) +
+          '<br>What good looks like: ' + esc(c.good) + '</li>';
+      }).join('');
+      return '<details class="quadrant-axis-explainer" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">' +
+        '<summary aria-label="' + escAttr((QUADRANT_AXIS_LABELS[a.axis] || a.axis) + ' explanation') + '">ⓘ ' +
+        esc(QUADRANT_AXIS_LABELS[a.axis] || a.axis) + '</summary>' +
+        '<div><strong>What this covers</strong><ul>' + criteria + '</ul>' +
+        '<p><strong>How it\'s scored</strong>: weighted mean of measured criteria only (weight 1 each). ' +
+        'Fleet score is the median of scored hives, not a percentile; criterion medians are descriptive, not pooled rates.</p>' +
+        '<p><strong>What ours shows</strong>: ' + esc(a.summary || a.reason || 'Not measured yet') + '</p></div></details>';
+    }
+
+    function quadrantSummaryHTML(q) {
+      var measured = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
+        .filter(function(a) { return a.scored; }).sort(function(a, b) { return a.score - b.score; });
+      if (!measured.length) return '<div class="quadrant-summary">No measured axes yet; missing inputs are not failures.</div>';
+      return '<div class="quadrant-summary">Lowest measured axis: ' +
+        esc(QUADRANT_AXIS_LABELS[measured[0].axis]) + ' (' + esc(String(measured[0].score)) + '/100). ' +
+        measured.length + ' of 4 axes measured; missing inputs excluded.</div>';
+    }
+
     function quadrantPanelHTML(q) {
       if (!q) return '';
       var nudges = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
@@ -1131,11 +1162,14 @@
             (q.scored_axes ? q.composite : '—') + '</span> · ' + (q.scored_axes || 0) + ' of 4 axes scored</div>' +
         '</div>' +
         (nudges ? '<div style="font-size:0.7rem;margin-top:var(--sp-3);border-top:1px solid var(--line);padding-top:var(--sp-3)">' + nudges + '</div>' : '') +
-        (reasons ? '<div style="font-size:0.65rem;margin-top:var(--sp-2)">' + reasons + '</div>' : '');
+        (reasons ? '<div style="font-size:0.65rem;margin-top:var(--sp-2)">' + reasons + '</div>' : '') +
+        quadrantSummaryHTML(q) + QUADRANT_AXES.map(function(name) {
+          return quadrantAxisExplanationHTML(quadrantAxis(q, name));
+        }).join('');
     }
 
     /* fleetQuadrantHeaderHTML is the aggregate above the table: the same kite,
-       averaged over the CURRENT filtered view.
+       taking scored-hive medians over the CURRENT filtered view.
 
        This is the surface that turns the instrument from per-hive feedback into
        a platform signal. One hive with a collapsed efficiency spoke is that
@@ -1162,7 +1196,8 @@
           '<span style="font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">' +
             esc(QUADRANT_AXIS_LABELS[name]) + '</span>' +
           '<span style="font-size:0.95rem;font-weight:600;color:' + (a.scored ? 'var(--text)' : 'var(--muted)') + '">' +
-            esc(val) + '</span></div>';
+            esc(val) + '</span><span class="text-muted">n=' + (a.n || 0) + '</span>' +
+          quadrantAxisExplanationHTML(a) + '</div>';
       }).join('');
       /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
          against itself would render two identical overlaid polygons. */
@@ -1173,7 +1208,7 @@
             '<div class="fleet-quadrant-head" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-2)">' +
               '<span>Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view</span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
             '<div style="display:flex;gap:14px">' + axes + '</div>' +
-            fleetQuadrantHintHTML() +
+            quadrantSummaryHTML(q) + fleetQuadrantHintHTML() +
           '</div>' +
         '</div>';
     }
@@ -4148,7 +4183,7 @@
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
-    /* Fleet-average quadrant for the CURRENT view, served alongside the rows.
+    /* Fleet-median quadrant for the CURRENT view, served alongside the rows.
        Null until the first payload lands, which quadrantSVG handles by drawing
        no reference polygon rather than an empty one collapsed at the centre. */
     var _fleetQuadrant = null;
@@ -4188,12 +4223,11 @@
        v5: rows carry the fleet-divergence view (fleetRollup + agentVerdicts:
        expected/actual/able per agent); a v4 cache would omit the new per-agent
        drill-down until the first poll landed.
-       v6: agent verdicts carry restart-storm telemetry and reset markers. */
-    var HIVES_CACHE_VERSION = 6;
-    /* v5/v6 only added optional per-row telemetry. Rendering tolerates those
-       fields being absent, so keep accepting a recent cache instead of showing
-       the spinner for the whole /api/saas/my-hives round-trip after a deploy. */
-    var HIVES_CACHE_MIN_READ_VERSION = 5;
+       v6: agent verdicts carry restart-storm telemetry and reset markers.
+       v7: fixed-reference quadrant scores and median fleet aggregation. Older
+       ranks must not be painted as though they used the new scoring model. */
+    var HIVES_CACHE_VERSION = 7;
+    var HIVES_CACHE_MIN_READ_VERSION = 7;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
