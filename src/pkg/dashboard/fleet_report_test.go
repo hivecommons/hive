@@ -22,8 +22,8 @@ func TestFleetReportEvidenceIncludesRuntimeGatewayFaults(t *testing.T) {
 		t.Fatalf("evidence len=%d, want 1: %#v", len(got), got)
 	}
 	// Auth faults are no longer a hive-code-defect symptom here: the
-	// inferencehealth store reports them as the inference_auth_failed
-	// runtime class (#11868), so only the upstream fault remains.
+	// inferencehealth store does not self-report them either (#12284),
+	// so only the upstream fault remains.
 	if got[0].Component != "inference-gateway" || got[0].ErrorClass != "other http 502" || !got[0].Attributable {
 		t.Fatalf("unexpected evidence: %#v", got[0])
 	}
@@ -111,5 +111,16 @@ func TestFleetReportEvidenceOmitsCIPollNudgesWhenZero(t *testing.T) {
 		if ev.ErrorClass == "CI-poll nudge" {
 			t.Fatalf("zero CIPollNudges should not produce evidence: %#v", ev)
 		}
+	}
+}
+
+func TestFleetReportEvidenceIgnoresInferenceBlockedAgents(t *testing.T) {
+	fleetreport.SetDefaultTrackerForTest(t, fleetreport.NewRuntimeTracker(nil))
+	s := &Server{}
+	got := s.buildFleetReportEvidence(&StatusPayload{Agents: []FrontendAgent{
+		{Name: "supervisor", Role: "supervisor", StructuredStatus: "blocked", StatusEvidence: "blocked: inference (auth)"},
+	}})
+	if len(got) != 0 {
+		t.Fatalf("inference-blocked agent must not be hive-code evidence: %#v", got)
 	}
 }

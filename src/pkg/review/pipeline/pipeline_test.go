@@ -56,6 +56,9 @@ func TestDerive_Stages(t *testing.T) {
 	capped.FixAttempts = 3
 	capped.MaxFixAttempts = 3
 
+	incomplete := agg(review.VerdictIncomplete, "head", t1)
+	incomplete.Reasons = []string{"review coverage incomplete: missing docs-currency"}
+
 	cases := []struct {
 		name       string
 		in         Inputs
@@ -88,6 +91,11 @@ func TestDerive_Stages(t *testing.T) {
 				{Repo: testRepo, Number: 8, HeadSHA: "head", Perspective: "docs", Dispatched: t0},
 			}}},
 			stage: StageReviewing, since: t1, action: ActionWait, reasonPart: "2 review perspective",
+		},
+		{
+			name:  "incomplete aggregate is still reviewing, not held",
+			in:    Inputs{PR: basePR(), Verdicts: []review.Aggregate{incomplete}},
+			stage: StageReviewing, since: t1, action: ActionWait, reasonPart: "missing docs-currency",
 		},
 		{
 			name:  "changes_requested verdict",

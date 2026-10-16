@@ -115,6 +115,34 @@ Add one widget per hive. In **Edit Widget**, set the **Parameter** field to
 that hive's URL; the token in the Keychain is shared. A widget with no
 parameter uses the URL you entered at setup.
 
+## Fleet widget (hub mode)
+
+The same script can show every hive you can see on the hub at once. Set the
+widget's **Parameter** to `hub` (or `hub:<hub URL>` for a hub other than
+`https://hive.hivecommons.dev`). To set it up, run the script once in Scriptable
+via `scriptable:///run/Hive?hub=1` (or `?hub=<hub URL>`); it asks for a GitHub
+token if none is stored yet. Add `&setup=1` to change the hub URL or token later.
+
+| Size | Shows |
+|---|---|
+| **medium** | Fleet totals — open issues, open PRs, and the "your turn" issues and PRs — each with a sparkline, plus **N hives need you** (hives with any actionable issue or PR) |
+| **large** | The medium view plus the hives with the most actionable work (`act_issues + act_prs`), each with its online dot, counts and ACMM level; tap a row to open that hive |
+| **small** | The two "your turn" totals and the "need you" line |
+| **Lock Screen** | `🐝 12 hives · 3 need you · turn 5/4` |
+
+Tapping the widget opens the hub's **Fleet** page.
+
+- Data comes from one call, `GET /api/hub/widget`, with the GitHub token in
+  `Authorization: Bearer`. It uses the hub's normal sign-in check: hub admins
+  see every hive, everyone else sees the hives they own or have been granted.
+  A per-hive widget token (`hwt_…`) does not work on the hub.
+- The "your turn" sparklines use the history the hub already keeps from
+  heartbeats (one sample per 15 minutes, 7 days). The hub does not keep a
+  history of total open issues and PRs, so those sparklines are built from the
+  samples the widget stores on the phone and grow the longer it is installed.
+- Open issue and PR counts come from each hive's heartbeat. Hives running a
+  build that does not report them yet show 0 until they upgrade.
+
 ## Changing URL or token
 
 In Scriptable, run the script with the setup form again: open the script
@@ -124,6 +152,7 @@ entries by running
 ```js
 Keychain.remove("hive.widget.github-token");
 Keychain.remove("hive.widget.default-url");
+Keychain.remove("hive.widget.hub-url");
 ```
 
 in a new script.
@@ -144,6 +173,7 @@ in a new script.
   (which iOS stores in plain text) and never written to the history file.
 - With a widget token the widget only calls `GET /api/widget/summary`; with a
   GitHub token it calls `GET /api/history` and `GET /api/status/summary`.
+  In hub mode it calls only `GET /api/hub/widget` on the hub.
 - The QR code encodes a `scriptable://` link, so the token goes straight from
   the camera to Scriptable and is never sent to any web server.
 - If you use a GitHub token, use one with no repository permissions: it is an
@@ -151,5 +181,5 @@ in a new script.
 
 ## Not yet
 
-- Hub-level fleet widget (all your hives in one glance) — owner only.
+- Fleet averages of the Trust/Prod/Satis/Effic quadrants in the fleet widget.
 - A native app with WidgetKit widgets and push notifications.

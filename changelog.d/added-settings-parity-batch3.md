@@ -1,1 +1,0 @@
-- Expose data directories, standalone deployment, review evidence, GitLab/Gitea forge, token mint limits, design-first planning, supersession and compliance windows, swarm banner and tool approval inbox settings in the dashboard Settings dialog, and show YAML keys on the existing escalation, intent, sentinel, auto-merge and publication controls.

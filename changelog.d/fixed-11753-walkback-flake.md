@@ -1,1 +1,0 @@
-- Fixed the `TestFetchBranchSHASpokeTargetWalkbackStopsAtCurrentTarget` CI flake (#11753): the test helpers waited only 2s for leaked background commit-behind/commit-order resolvers whose GitHub compare call may run for 10s, so the wait now covers the resolvers' full timeout.

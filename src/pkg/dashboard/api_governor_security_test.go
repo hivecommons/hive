@@ -17,6 +17,7 @@ func TestGovernorSecurityEndpointUpdatesOverlayFields(t *testing.T) {
 		"ioscanFailMode":           "closed",
 		"ioscanCanaries":           true,
 		"intentEnforce":            true,
+		"intentShadow":             true,
 		"intentAlignmentModel":     "gpt-4o",
 		"reviewRequireApproval":    true,
 		"reviewFanOut":             true,
@@ -34,7 +35,7 @@ func TestGovernorSecurityEndpointUpdatesOverlayFields(t *testing.T) {
 	if !deps.Config.Ioscan.FailClosed() || !deps.Config.Ioscan.CanariesEnabled() {
 		t.Fatalf("ioscan settings not updated: %+v", deps.Config.Ioscan)
 	}
-	if !deps.Config.Intent.Enforce || !deps.Config.Review.RequireApproval || !deps.Config.Review.FanOut || !deps.Config.AgentSandbox.Enabled {
+	if !deps.Config.Intent.Enforce || !deps.Config.Intent.Shadow || !deps.Config.Review.RequireApproval || !deps.Config.Review.FanOut || !deps.Config.AgentSandbox.Enabled {
 		t.Fatalf("security settings not updated: intent=%+v review=%+v sandbox=%+v",
 			deps.Config.Intent, deps.Config.Review, deps.Config.AgentSandbox)
 	}
@@ -50,7 +51,7 @@ func TestGovernorSecurityEndpointUpdatesOverlayFields(t *testing.T) {
 		t.Fatalf("security section missing: %#v", body["security"])
 	}
 	if sec["ioscanFailMode"] != "closed" || sec["reviewCapableAgents"].(float64) != 1 ||
-		sec["intentAlignmentModel"] != "gpt-4o" {
+		sec["intentAlignmentModel"] != "gpt-4o" || sec["intentShadow"] != true {
 		t.Fatalf("security section wrong: %#v", sec)
 	}
 }

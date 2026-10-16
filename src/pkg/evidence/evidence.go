@@ -119,6 +119,9 @@ type PostedReview struct {
 
 // CI is the check-run summary captured for the head SHA.
 type CI struct {
+	// Status is the merge-gate verdict (success, failure or pending) at
+	// CapturedAt; empty on records written before it was captured.
+	Status     string    `json:"status,omitempty"`
 	Checks     []Check   `json:"checks,omitempty"`
 	CapturedAt time.Time `json:"captured_at"`
 }

@@ -321,6 +321,7 @@ One card per repository Hive looks after, listing its open issues and pull reque
 - The **needs-human** count in the header counts open pull requests that need a person to review or decide. Needs-human means waiting on a person.
 - Each card ends with a collapsible **Filter** section. Press **🔎 Filter** in the Projects toolbar to open the facet bar: tick labels (every label present on the repo's open issues and pull requests is offered, with a live count), add free-text terms (`"rate limit"` matches as a phrase, unquoted words must all appear, `-term` excludes; matching is case-insensitive over title, number and labels), and narrow by type (issue / PR), state (claimed, unclaimed, parked, covered by PR) or author kind (hive / human / bot). Labels and terms match **any** by default; switch to **all** for AND. The section lists the matching items for that repo — number, title linked to GitHub, one pill per label, age, and the PR icon for pull requests — and is collapsed by default only while it is empty; its open/closed state is remembered per repo.
 - The same selection applies to every card. Name it and press **Save** to keep it; saved filters appear as chips next to the built-in presets and can be renamed, updated or deleted inline (no browser dialogs). Presets cannot be deleted but can be hidden. **Needs human** is the default preset: issues and pull requests carrying the hard-suppress labels (`needs-direction`, `needs-decision`, `needs-spec`, `needs-human` — honouring `issue_filter.hard_suppress_labels` overrides), `needs-signal`, or a hold label (`hold`, `on-hold`, `hold/review`, the hive's own hold label), sorted in that priority order so operator decisions come first. The label set comes from the server (`labelPresets[]` on `/api/status`), so it never drifts from the labels Hive itself parks on (ADR-0019). Saved filters, the active selection and hidden presets are stored in the browser's localStorage per hive (`hive-label-filters:<hiveId>`).
+- Any saved filter or preset can be **pinned to the sidebar** (☆ Pin to sidebar in the facet bar). Pinned filters appear in a **Filters** group at the bottom of the left navigation, each with a live count of matching items across every project. Clicking one opens a **cross-repo view** in place of the project cards: one list of matching issues and pull requests grouped by repository (groups collapse and remember their state), with the facet bar on top so you can refine and re-save. **Needs human** is pinned by default; unpin it from the facet bar. Choosing any other sidebar entry, or **← Project cards**, returns to the cards. Pin state is stored with the saved filter.
 
 **What it is good for.** Use it to act on single items. Open the legend above the cards to learn what each pill means.
 
@@ -430,21 +431,21 @@ Every open PR across the governed repos in one deterministic rank order (GET /ap
 
 **Settings that change it.** The review settings in **Settings** change the loop cap, ranking rules and which repositories are included. See [Review queue triage](review-queue-triage.md).
 
-## Strategy Lab
+## Experiment Lab
 
-An experimental planner that tries out changes to how Hive works and records what it learned.
+An experimental planner that tries out code changes in your repositories and records what it learned.
 
-**What it tells you.** The Strategy Lab runs small experiments on Hive's own settings. It shows its goals, its plan and a ledger of results.
+**What it tells you.** The Experiment Lab (formerly the Strategy Lab) runs small experiments on your repositories' code. It shows its goal, its plan and a ledger of results.
 
 **How the numbers are worked out.** The ledger lists each experiment and its result. The section has no other numbers.
 
-**What it is good for.** Try it only if you want Hive to tune itself. You approve or stop each experiment.
+**What it is good for.** Try it only if you want Hive to propose code changes on its own. You approve or stop each experiment.
 
-**Example.** The lab proposes a faster schedule for one worker for a day. You approve it, and the ledger records the result.
+**Example.** The lab proposes splitting a slow test package across two CI jobs. You approve it, and the ledger records the result.
 
-**When it appears.** Only when the Strategy Lab setting is on and the autonomy level is L4 or above. The autonomy level is how much Hive may do on its own, from L1 to L6.
+**When it appears.** Only when the Experiment Lab setting is on and the autonomy level is L4 or above. The autonomy level is how much Hive may do on its own, from L1 to L6.
 
-**Settings that change it.** `dashboard.strategy_lab: true` turns it on. See [Strategy Lab](strategy-lab.md).
+**Settings that change it.** `dashboard.experiment_lab: true` turns it on (`dashboard.strategy_lab` is a deprecated alias for one release). See [Experiment Lab](strategy-lab.md).
 
 ## Inception
 

@@ -153,9 +153,16 @@ type Config struct {
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
 	DuplicateSweep DuplicateSweepConfig `yaml:"duplicate_sweep,omitempty" json:"duplicate_sweep,omitempty"`
+	// GoodFirstIssue is hive-curated `good first issue` advertising for
+	// contributors who bring their own coding agent. Default off.
+	GoodFirstIssue GoodFirstIssueConfig `yaml:"good_first_issue,omitempty" json:"good_first_issue,omitempty"`
 	// SupersessionSweep tunes the superseded-PR sweep. Closing human-authored
 	// PRs is opt-in (hivecommons/hive#11418); the default only comments.
 	SupersessionSweep SupersessionSweepConfig `yaml:"supersession_sweep,omitempty" json:"supersession_sweep,omitempty"`
+	// SharedCIRerun gates re-running failed jobs on PRs stamped
+	// `<!-- hive-shared-ci-<n> -->` once incident #n closes
+	// (hivecommons/hive#12253). Default on.
+	SharedCIRerun SharedCIRerunConfig `yaml:"shared_ci_rerun,omitempty" json:"shared_ci_rerun,omitempty"`
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
@@ -797,7 +804,11 @@ type ClassifierConfig struct {
 // enforcement. The zero value is report-only with built-in path patterns, so an
 // absent intent: block preserves existing merge eligibility behavior.
 type IntentConfig struct {
-	Enforce               bool     `yaml:"enforce,omitempty" json:"enforce,omitempty"`
+	Enforce bool `yaml:"enforce,omitempty" json:"enforce,omitempty"`
+	// Shadow evaluates the intent gate as if enforce were on without acting
+	// on it, recording shadow.intent.would_have_blocked on the evidence
+	// bundle. It never blocks a merge and is ignored when Enforce is on.
+	Shadow                bool     `yaml:"shadow,omitempty" json:"shadow,omitempty"`
 	AlignmentModel        string   `yaml:"alignment_model,omitempty" json:"alignment_model,omitempty"`
 	TestPathPatterns      []string `yaml:"test_path_patterns,omitempty" json:"test_path_patterns,omitempty"`
 	DocsPathPatterns      []string `yaml:"docs_path_patterns,omitempty" json:"docs_path_patterns,omitempty"`
@@ -2392,7 +2403,11 @@ type ProviderBudgetConfig struct {
 
 // defaultProviderBudgetProbeIntervalS is the spend-rebuff probe interval when
 // unset: 30 minutes.
-const defaultProviderBudgetProbeIntervalS = 1800
+const defaultProviderBudgetProbeIntervalS = DefaultProviderBudgetProbeIntervalS
+
+// DefaultProviderBudgetProbeIntervalS is the exported spend-rebuff probe
+// interval default, for editors that show it as a placeholder.
+const DefaultProviderBudgetProbeIntervalS = 1800
 
 // EffectiveProbeInterval returns the spend-rebuff probe interval, applying the
 // default when unset. A negative or zero value means "unset" rather than
@@ -4917,7 +4932,7 @@ func (c *Config) EffectiveAIAuthor() string {
 	if c.Project.AIAuthor != "" {
 		return c.Project.AIAuthor
 	}
-	if c.GitHub.AppAuthoredPRsEnabled() {
+	if c.GitHubAppAuthoredPRsEnabled() {
 		return c.GitHub.BotLogin()
 	}
 	return ""
@@ -5535,9 +5550,17 @@ type DashboardConfig struct {
 	Port               int    `yaml:"port"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
-	// StrategyLab opts the in-dashboard Strategy Lab/Nous UI back in while it
-	// is hidden by default for rework.
-	StrategyLab bool `yaml:"strategy_lab" json:"strategy_lab"`
+	// ExperimentLab opts the in-dashboard Experiment Lab/Nous UI back in
+	// while it is hidden by default for rework.
+	ExperimentLab bool `yaml:"experiment_lab,omitempty" json:"experiment_lab,omitempty"`
+	// StrategyLab is the pre-rename alias of ExperimentLab (RFC #11585 part
+	// 2, #11695). It is read ONLY so an operator's explicit
+	// dashboard.strategy_lab: true keeps working for one release; applyDefaults
+	// folds it into ExperimentLab via migrateDeprecatedStrategyLab and clears
+	// it so a re-save writes the documented key.
+	//
+	// Deprecated: set dashboard.experiment_lab instead.
+	StrategyLab bool `yaml:"strategy_lab,omitempty" json:"strategy_lab,omitempty"`
 	// SnapshotFrameAncestors is the explicit set of HTTPS origins allowed to
 	// embed the public, read-only /snapshot document. Empty keeps the historical
 	// fail-closed framing policy (X-Frame-Options: DENY plus CSP
@@ -6422,18 +6445,39 @@ func (c *Config) GitHubDefinitionAllowed(slug string) bool {
 	return c.GitHubPromptAllowed(slug)
 }
 
+// DefaultGitHubAPIReserve and DefaultGitHubAPICritical are the values a zero
+// github.api_reserve / github.api_critical means, both at Load (applyDefaults)
+// and in Validate; runtime editors substitute the same values so a cleared
+// field restores the default instead of failing the boot-time bound.
+const (
+	DefaultGitHubAPIReserve  = 800
+	DefaultGitHubAPICritical = 250
+)
+
+// DefaultEvalIntervalMaxS, DefaultEvalIntervalWebhookS,
+// DefaultConserveIntervalMultiplier and DefaultOptionalSweepEveryNCycles are
+// what a zero governor eval-loop knob becomes at Load (applyDefaults);
+// runtime editors substitute the same values so a cleared field restores the
+// default.
+const (
+	DefaultEvalIntervalMaxS           = 1800
+	DefaultEvalIntervalWebhookS       = 900
+	DefaultConserveIntervalMultiplier = 2
+	DefaultOptionalSweepEveryNCycles  = 1
+)
+
 const (
 	MaxAgentReplicas = 5
 
 	defaultDashboardPort          = 3002
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
-	defaultEvalIntervalMaxS       = 1800
-	defaultEvalIntervalWebhookS   = 900
-	defaultConserveIntervalMult   = 2
-	defaultOptionalSweepEveryN    = 1
-	defaultGitHubAPIReserve       = 800
-	defaultGitHubAPICritical      = 250
+	defaultEvalIntervalMaxS       = DefaultEvalIntervalMaxS
+	defaultEvalIntervalWebhookS   = DefaultEvalIntervalWebhookS
+	defaultConserveIntervalMult   = DefaultConserveIntervalMultiplier
+	defaultOptionalSweepEveryN    = DefaultOptionalSweepEveryNCycles
+	defaultGitHubAPIReserve       = DefaultGitHubAPIReserve
+	defaultGitHubAPICritical      = DefaultGitHubAPICritical
 	defaultPollIntervalMins       = 5
 	defaultKnowledgeMaxFacts      = 25
 	defaultKnowledgeMaxBytes      = 4096
@@ -6777,6 +6821,7 @@ func (c *Config) applyDefaults() {
 		c.Governor.Sensing.PullbackSeconds = defaultSensingPullbackSeconds
 	}
 	c.migrateDeprecatedHealthSettings()
+	c.migrateDeprecatedStrategyLab()
 	if c.Governor.Budget.PeriodDays == 0 {
 		c.Governor.Budget.PeriodDays = defaultBudgetPeriodDays
 	}
@@ -6867,6 +6912,9 @@ func (c *Config) applyDefaults() {
 		}
 		if c.Knowledge.BeadSynthesizer.MaxFactsPerCycle == 0 {
 			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = 20
+		}
+		if c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle == 0 {
+			c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle = DefaultBeadSynthMaxAPICallsPerCycle
 		}
 		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
 			c.Knowledge.BeadSynthesizer.VaultPath = "/data/vaults/bead-synth-wiki"
@@ -8236,6 +8284,20 @@ type ReviewConfig struct {
 	// Only repos in ReviseRepos are eligible, so this cannot re-post anywhere
 	// the hive has not been granted the quieter in-place path.
 	ReviseVerdictsBefore string `yaml:"revise_verdicts_before,omitempty" json:"revise_verdicts_before,omitempty"`
+	// PendingTTL is how long a dispatched review may go without a verdict
+	// before its dispatch record expires and the perspectives are asked
+	// again (Go duration string, default DefaultPendingReviewTTL). A reviewer
+	// kick turn that dies — model timeout, proxy read timeout, pod restart —
+	// posts no verdict, and before this the pending record made every
+	// perspective look covered until someone pushed a new commit
+	// (hivecommons/hive#12045). "0" or unset means the default; a negative
+	// value disables expiry.
+	PendingTTL string `yaml:"pending_ttl,omitempty" json:"pending_ttl,omitempty"`
+	// MaxRedispatch caps how many times one PR head's pending reviews may
+	// expire before the planner stops re-kicking and records a requires_human
+	// hold (reason prefix review-dispatch-exhausted). 0 means
+	// DefaultMaxRedispatch.
+	MaxRedispatch int `yaml:"max_redispatch,omitempty" json:"max_redispatch,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the
@@ -8366,6 +8428,21 @@ type SupersessionSweepConfig struct {
 	// supersession notice. Non-positive means
 	// github.DefaultSupersessionGracePeriod (24h).
 	GracePeriod time.Duration `yaml:"grace_period,omitempty" json:"grace_period,omitempty"`
+}
+
+// SharedCIRerunConfig gates the shared-CI rerun sweep
+// (github.SweepSharedCIReruns): when a `[shared-ci]` incident issue closes,
+// Hive re-runs the failed jobs of every open PR stamped with that incident's
+// `<!-- hive-shared-ci-<n> -->` marker, once per PR per incident.
+type SharedCIRerunConfig struct {
+	// Enabled is *bool so unset means on; set `shared_ci_rerun.enabled: false`
+	// to disable.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the sweep runs; unset means on.
+func (c SharedCIRerunConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // AutoMergeConfig gates the App-self-merge sweep (SweepSelfAuthoredAutoMerges).

@@ -100,7 +100,9 @@ func TestFeaturesSections_AnchorsAndHeadings(t *testing.T) {
 			t.Errorf("featuresSectionTocHtml missing %s", want)
 		}
 	}
-	scroll := extractJSFunction(t, html, "settingsScrollToSection")
+	// settingsScrollToSection resolves the body and delegates the scroll to
+	// configScrollBodyTo, which the section rail shares.
+	scroll := extractJSFunction(t, html, "settingsScrollToSection") + extractJSFunction(t, html, "configScrollBodyTo")
 	if !strings.Contains(scroll, "getElementById('config-body')") || !strings.Contains(scroll, "body.scrollTo(") {
 		t.Error("settingsScrollToSection must scroll #config-body, the dialog's scroll container")
 	}

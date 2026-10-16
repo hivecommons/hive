@@ -6,14 +6,14 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta property="og:title" content="Hive — AI agents and Spektacular runs that maintain your repo">
-  <meta property="og:description" content="Hive works with Claude Code, Copilot CLI, Goose, Codex, OpenHands, Gemini, LiteLLM, vLLM, llm-d, watsonx.ai and OpenRouter.">
+  <meta property="og:description" content="Hive is a co-maintainer system for your GitHub projects: AI agents (Claude, Copilot, Codex, Antigravity, Goose) do the chores. You decide how much they may do.">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Hive — AI agents and Spektacular runs that maintain your repo">
-  <meta name="twitter:description" content="Hive works with Claude Code, Copilot CLI, Goose, Codex, OpenHands, Gemini, LiteLLM, vLLM, llm-d, watsonx.ai and OpenRouter.">
+  <meta name="twitter:description" content="Hive is a co-maintainer system for your GitHub projects: AI agents (Claude, Copilot, Codex, Antigravity, Goose) do the chores. You decide how much they may do.">
   <meta property="og:url" content="https://hive.hivecommons.dev">
   <link rel="canonical" href="https://hive.hivecommons.dev">
-  <meta name="description" content="Hive works with Claude Code, Copilot CLI, Goose, Codex, OpenHands, Gemini, LiteLLM, vLLM, llm-d, watsonx.ai and OpenRouter.">
+  <meta name="description" content="Hive is a co-maintainer system for your GitHub projects: AI agents (Claude, Copilot, Codex, Antigravity, Goose) do the chores. You decide how much they may do.">
   <title>Hive — AI agents and Spektacular runs that maintain your repo</title>
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/components.css">
@@ -138,6 +138,8 @@
     }
     .hero-sub-links a { color: var(--blue); }
     .hero-sub-links a:hover { text-decoration: underline; }
+    .hero-lede a { color: var(--blue); }
+    .hero-lede a:hover { text-decoration: underline; }
 
     /* ── Hero rotator: crossfading value statements. Slides are absolutely
        stacked so the block height stays stable while they fade; a spacer sizes
@@ -640,37 +642,48 @@
     <!-- ── Hero ── -->
     <section class="hero section-pad" id="product">
       <div>
-        <p class="section-label">Earned Autonomy for AI Agents</p>
+        <p class="section-label">A co-maintainer that never sleeps</p>
 
-        <!-- ── Rotating hero: 5 value statements, auto-crossfading (JS). The
-             spacer sizes the block to the tallest slide so nothing jumps as
-             slides fade. Auto-rotation is disabled under prefers-reduced-motion. -->
+        <!-- ── Rotating hero: one slide per key idea from the plain-language
+             intro at docs.hivecommons.dev/docs/community/what-is-hive-commons,
+             in the same order and the same words (keep them in sync; no new
+             claims here). Auto-crossfading (JS); the spacer sizes the block to
+             the tallest slide so nothing jumps as slides fade. Auto-rotation is
+             disabled under prefers-reduced-motion. -->
         <div class="hero-rotator" id="hero-rotator" aria-live="polite">
           <!-- Spacer (aria-hidden, non-interactive): duplicates the tallest slide
                so the rotator reserves its height and nothing jumps on crossfade. -->
           <div class="hero-slide-spacer" aria-hidden="true">
-            <h1>You earn automation with test coverage</h1>
-            <p class="hero-lede">Give a mediocre model good tests and enough turns around the loop, and it will get there. The tests do the reasoning &mdash; so coverage, not model choice, is what earns the next of six autonomy levels. You decide when to raise it.</p>
+            <h1>A swarm working on your behalf</h1>
+            <p class="hero-lede">The contributor relay lets anyone who wants to help your project donate their compute and model tokens. They bring their own agent; their API keys and CLI logins stay on their machine. Nobody is added as a collaborator: for each task the hive mints a short-lived, task-scoped GitHub token, then it expires. Contributors work your curated queue under your trust level, filters and gates &mdash; and you still hold every merge decision. <a href="https://docs.hivecommons.dev/docs/community/what-is-hive-commons#contributor-relay-a-swarm-working-on-your-behalf" target="_blank" rel="noopener noreferrer">About the contributor relay</a></p>
           </div>
           <div class="hero-slide is-active">
-            <h1>Put your project on autopilot</h1>
-            <p class="hero-lede">The autonomous development lifecycle (ADLC), self-hosted and yours: a fleet of AI agents triages issues, writes the fixes, opens the pull requests or merge requests, and merges them when checks pass &mdash; so you spend your time on the work you actually love.</p>
+            <h1>A co-maintainer that never sleeps</h1>
+            <p class="hero-lede">Hive is a co-maintainer system for your GitHub projects. Point it at a repo and it watches the things that pile up &mdash; issues, pull requests, failing CI, CVEs, dependabot alerts &mdash; and sends AI coding agents (Claude, Copilot, Codex, Antigravity, Goose&hellip;) to deal with them: triage, fixes, reviews, releases. You decide how much it is allowed to do. Agents do the chores, while you decide what matters. <a href="https://docs.hivecommons.dev/docs/community/what-is-hive-commons#what-hive-is" target="_blank" rel="noopener noreferrer">What Hive is</a></p>
           </div>
           <div class="hero-slide">
-            <h1>You earn automation with test coverage</h1>
-            <p class="hero-lede">Give a mediocre model good tests and enough turns around the loop, and it will get there. The tests do the reasoning &mdash; so coverage, not model choice, is what earns the next of six autonomy levels. You decide when to raise it.</p>
+            <h1>More than a terminal agent</h1>
+            <p class="hero-lede">A terminal agent is a power tool: you hold it, aim it, and it stops when you stop. Hive is the workshop that runs the power tools for you, on three rules: <strong>short-lived agents</strong> (every task starts a fresh agent and ends it), <strong>external context</strong> (what the agent needs to know lives in your repo and audit trail, re-injected each time), and <strong>prompts driven by deterministic facts</strong> (templates filled from the issue, the CI log, the diff, the trust level &mdash; not hand-tuned prose). <a href="https://docs.hivecommons.dev/docs/community/what-is-hive-commons#i-already-use-an-agent-how-is-this-different" target="_blank" rel="noopener noreferrer">How it differs</a></p>
           </div>
           <div class="hero-slide">
-            <h1>A deterministic pipeline, not a prompt</h1>
-            <p class="hero-lede">Every fix runs the gauntlet &mdash; build, lint, test, and policy checks &mdash; before anything merges. Autonomy comes from a repeatable pipeline you can audit, not from trusting a model's good mood.</p>
+            <h1>The limits are set in code</h1>
+            <p class="hero-lede">Hive picks the work from your real queue, not from a chat prompt, and sets the limits in code. Six trust levels from the AI Codebase Maturity Model (ACMM) &mdash; a framework for how much autonomy a codebase is ready to give agents &mdash; run from L1 advise-only to L6 merge on green CI. Each level gets exactly the GitHub permissions it needs and no more. Start at the bottom; you never have to move up. <a href="https://docs.hivecommons.dev/docs/hive/acmm-policy-matrix" target="_blank" rel="noopener noreferrer">The six levels</a></p>
           </div>
           <div class="hero-slide">
-            <h1>From a big issue to a reviewed plan</h1>
-            <p class="hero-lede">Click Plan and the architect breaks an epic into a task DAG for you to approve before any work begins. You review the plan; the fleet executes it (ACMM L5&ndash;L6).</p>
+            <h1>Checks before and after, written down</h1>
+            <p class="hero-lede">Deterministic filters decide what an agent may see; gates (tests, coverage, review, security) decide what may land. The model only makes the judgment calls in between. Every action goes in an audit log, owned by a named human. Deterministic where it can be, a model only where it must be &mdash; that hybrid is what makes the output trustworthy. <a href="https://docs.hivecommons.dev/docs/community/what-is-hive-commons#i-already-use-an-agent-how-is-this-different" target="_blank" rel="noopener noreferrer">Checks and the audit log</a></p>
           </div>
           <div class="hero-slide">
-            <h1>The AI maintainer you own outright</h1>
-            <p class="hero-lede">Free, open-source, and self-hosted. Point it at your project, bring your own model, and run the whole fleet on your own terms &mdash; no per-seat license, no data leaving your cluster.</p>
+            <h1>Hub and spoke</h1>
+            <p class="hero-lede">A <strong>spoke</strong> is one running Hive, serving your repo(s) &mdash; it is where agents actually work. It runs on your Kubernetes cluster, Podman, or Docker Compose. A <strong>hub</strong> is the control plane for many spokes: it registers, provisions, upgrades and watches them. A spoke works alone. A hub is how you see and manage a fleet of them. <a href="https://docs.hivecommons.dev/docs/community/what-is-hive-commons#hub-and-spoke" target="_blank" rel="noopener noreferrer">Hub and spoke</a></p>
+          </div>
+          <div class="hero-slide">
+            <h1>A swarm working on your behalf</h1>
+            <p class="hero-lede">The contributor relay lets anyone who wants to help your project donate their compute and model tokens. They bring their own agent; their API keys and CLI logins stay on their machine. Nobody is added as a collaborator: for each task the hive mints a short-lived, task-scoped GitHub token, then it expires. Contributors work your curated queue under your trust level, filters and gates &mdash; and you still hold every merge decision. <a href="https://docs.hivecommons.dev/docs/community/what-is-hive-commons#contributor-relay-a-swarm-working-on-your-behalf" target="_blank" rel="noopener noreferrer">About the contributor relay</a></p>
+          </div>
+          <div class="hero-slide">
+            <h1>The project, or the hosted service</h1>
+            <p class="hero-lede"><strong>Hive the project</strong> is Apache-2.0 code in the hivecommons/hive repository &mdash; run it yourself. <strong>Hive the hosted service</strong> is this site, hive.hivecommons.dev: a hub we operate so you can onboard a spoke without a cluster. Same software, one deployment of it. <a href="https://docs.hivecommons.dev/docs/community/what-is-hive-commons#hive-the-project-vs-the-hosted-service" target="_blank" rel="noopener noreferrer">Project vs hosted service</a> &middot; <a href="https://docs.hivecommons.dev/docs/community/what-is-hive-commons#does-hive-fit-my-project" target="_blank" rel="noopener noreferrer">Does Hive fit my project?</a></p>
           </div>
         </div>
 

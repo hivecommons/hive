@@ -1,1 +1,0 @@
-- Changed the `hive/covered-by-pr` issue label to `🐝 covered by PR` (hive amber). Hive renames the legacy label in place the first time it is needed in a repository, so issues that already carry it keep it without per-issue writes; readers (claim sync, close-on-merge backfill, dashboard done band) accept both spellings during the transition (#11888).

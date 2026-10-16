@@ -1,1 +1,0 @@
-- In-memory attempted vs blocked agent GitHub write counters in the proxy, keyed by ACMM mode and block reason (`GitHubProxy.WriteCounts()`); no change to gating or auto-merge. Part of #12069.

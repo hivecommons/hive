@@ -133,3 +133,94 @@ console.log('ok');
 		t.Fatalf("unexpected node output: %s", out)
 	}
 }
+
+// TestDashboardLabelFilterPinnedSidebar drives the pinned-filter sidebar and
+// the cross-repo view (hivecommons/hive#12172, PR 2) through a tiny DOM shim:
+// pinned entries render with live cross-repo counts, opening one swaps the
+// card grid for the grouped list, and navigating elsewhere restores the grid.
+func TestDashboardLabelFilterPinnedSidebar(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: pinned sidebar behavior was not executed")
+	}
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(raw)
+	const beginMarker = "// ── Label filter (hf) pure helpers (begin)"
+	const endMarker = "    function renderRepos(repos) {"
+	start := strings.Index(html, beginMarker)
+	end := strings.Index(html, endMarker)
+	if start < 0 || end < start {
+		t.Fatal("label filter block boundaries not found")
+	}
+	for _, id := range []string{`id="hf-nav-group"`, `id="hf-nav-items"`, `id="hf-crossrepo"`} {
+		if !strings.Contains(html, id) {
+			t.Fatalf("index.html is missing %s", id)
+		}
+	}
+	if !strings.Contains(html, "if (typeof hfOnNavigate === 'function') hfOnNavigate(section);") {
+		t.Fatal("ocNavigate must notify the label filter so the cross-repo view closes on navigation")
+	}
+
+	shim := `
+const store = {};
+const localStorage = { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
+global.localStorage = localStorage; global.window = global;
+window._lastStatus = { hiveId: 'h1', labelPresets: [{ key: 'needs-human', label: 'Needs human', labels: ['needs-direction', 'needs-decision', 'needs-spec', 'needs-signal', 'needs-human', 'hold'] }],
+  repos: [
+    { name: 'acme/repo', actionableIssues: [{ number: 1, title: 'A', labels: ['needs-human'], created_at: '2026-01-01T00:00:00Z' }], openPrs: [{ number: 2, title: 'P', labels: ['needs-signal'], created_at: '2026-01-02T00:00:00Z' }] },
+    { name: 'acme/two', actionableIssues: [{ number: 9, title: 'Z', labels: ['needs-direction'], created_at: '2026-01-05T00:00:00Z' }] },
+    { name: 'acme/none', actionableIssues: [{ number: 4, title: 'plain', labels: ['bug'], created_at: '2026-01-05T00:00:00Z' }] }
+  ] };
+function mkEl(id) { return { id, innerHTML: '', value: '', hidden: false, classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } }, setAttribute() {}, getAttribute() { return null; }, contains() { return false; }, querySelector() { return null; }, querySelectorAll() { return []; }, focus() {}, dataset: {} }; }
+const els = {};
+global.document = { getElementById: id => els[id] || (els[id] = mkEl(id)), activeElement: null, querySelectorAll: () => [], querySelector: () => null };
+function esc(s) { return String(s == null ? '' : s); }
+function pillAge() { return ''; } function issueCoveringPR() { return null; } function setIfChanged(el, h) { el.innerHTML = h; } function showToast() {}
+function miniHiveKey() { return 'h1'; } function writeSectionCollapsedKey(id, c) { localStorage.setItem('sec:' + id, c ? '1' : '0'); } const SECTION_LS_PREFIX = 'sec:';
+const navCalls = [];
+// Mirrors the real ocNavigate contract: it notifies hfOnNavigate after switching sections.
+function ocNavigate(section) { navCalls.push(section); hfOnNavigate(section); }
+function renderRepos() { hfRenderEditor(); hfRenderPinned(); hfRenderCrossRepo(); }
+`
+	assertions := `
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+renderRepos();
+assert(els['hf-nav-group'].hidden === false, 'Needs human is pinned by default so the Filters group shows');
+assert(/data-action="hfOpenCrossRepo"/.test(els['hf-nav-items'].innerHTML), 'pinned entry opens the cross-repo view');
+assert(/badge-count[^>]*>3</.test(els['hf-nav-items'].innerHTML), 'count badge sums matches across all repos');
+hfOpenCrossRepo('preset:needs-human');
+assert(navCalls.join(',') === 'repos-section', 'opening navigates to Projects');
+assert(els['repos'].hidden === true && els['hf-crossrepo'].hidden === false, 'grid swapped for the cross-repo panel');
+const panel = els['hf-crossrepo'].innerHTML;
+assert((panel.match(/hf-crossrepo-group/g) || []).length === 2, 'only repos with matches get a group');
+assert(/id="hf-x-acme-repo"/.test(panel) && /id="hf-x-acme-two"/.test(panel) && !/acme-none/.test(panel), 'groups keyed per repo');
+assert(/data-action="hfToggleSection"/.test(panel), 'groups are collapsible via the shared hf toggle');
+assert(/hfCloseCrossRepo/.test(panel), 'panel offers a way back to the cards');
+hfToggleSection('hf-x-acme-repo');
+assert(store['sec:hf-x-acme-repo'] === '1', 'group collapse state persists with the section collapse keys');
+hfOnNavigate('overview-section');
+assert(els['hf-crossrepo'].hidden === true && els['repos'].hidden === false, 'navigating elsewhere restores the card grid');
+hfOpenCrossRepo('preset:needs-human');
+hfCloseCrossRepo();
+assert(els['hf-crossrepo'].hidden === true && els['repos'].hidden === false, 'close button restores the card grid');
+hfTogglePin('preset:needs-human');
+assert(els['hf-nav-group'].hidden === true, 'unpinning the last filter hides the Filters group');
+assert(JSON.parse(store['hive-label-filters:h1']).presetPins['needs-human'] === false, 'pin state persists with the store');
+console.log('ok');
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "label_filter_pinned.js")
+	if err := os.WriteFile(path, []byte(shim+html[start:end]+assertions), 0o600); err != nil {
+		t.Fatalf("writing script: %v", err)
+	}
+	out, err := exec.Command(node, path).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "ok") {
+		t.Fatalf("unexpected node output: %s", out)
+	}
+}

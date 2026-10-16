@@ -596,14 +596,26 @@ func TestBuildFrontendStatus(t *testing.T) {
 	if len(payload.Agents) != 1 {
 		t.Errorf("agents len = %d", len(payload.Agents))
 	}
-	if payload.Features.StrategyLab {
-		t.Error("features.strategy_lab = true by default, want false")
+	if payload.Features.ExperimentLab || payload.Features.StrategyLab {
+		t.Error("features.experiment_lab/strategy_lab = true by default, want false")
 	}
 
+	cfg.Dashboard.ExperimentLab = true
+	payload = BuildFrontendStatus(govState, nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
+	if !payload.Features.ExperimentLab {
+		t.Error("features.experiment_lab = false with dashboard.experiment_lab enabled, want true")
+	}
+	if !payload.Features.StrategyLab {
+		t.Error("features.strategy_lab alias = false with dashboard.experiment_lab enabled, want true for the one-release alias window (#11695)")
+	}
+
+	// The deprecated dashboard.strategy_lab key still lights the feature when
+	// a config bypasses applyDefaults.
+	cfg.Dashboard.ExperimentLab = false
 	cfg.Dashboard.StrategyLab = true
 	payload = BuildFrontendStatus(govState, nil, statuses, cfg, nil, gov, nil, nil, nil, nil)
-	if !payload.Features.StrategyLab {
-		t.Error("features.strategy_lab = false with dashboard.strategy_lab enabled, want true")
+	if !payload.Features.ExperimentLab {
+		t.Error("features.experiment_lab = false with deprecated dashboard.strategy_lab enabled, want true")
 	}
 }
 

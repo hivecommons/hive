@@ -143,6 +143,92 @@ paths:
                   is_admin:
                     type: boolean
 
+  /api/hub/widget:
+    get:
+      tags: [Dashboard]
+      summary: Fleet summary for the iPhone widget
+      description: Every hive the authenticated user can see (hub admins see all; others see hives they own or hold a role on; pool placeholders are excluded), sorted by act_issues + act_prs descending, with fleet totals and the fleet's actionable-work history. Accepts the hub session or a GitHub token as Authorization Bearer.
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Fleet widget summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  generated_at:
+                    type: string
+                    format: date-time
+                  totals:
+                    type: object
+                    properties:
+                      hives:
+                        type: integer
+                      online:
+                        type: integer
+                      need_you:
+                        type: integer
+                        description: Hives with at least one actionable issue or PR
+                      issues:
+                        type: integer
+                      prs:
+                        type: integer
+                      act_issues:
+                        type: integer
+                      act_prs:
+                        type: integer
+                      agents_running:
+                        type: integer
+                      agents_total:
+                        type: integer
+                  hives:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        project:
+                          type: string
+                        url:
+                          type: string
+                        online:
+                          type: boolean
+                        acmm_level:
+                          type: integer
+                        issues:
+                          type: integer
+                        prs:
+                          type: integer
+                        act_issues:
+                          type: integer
+                        act_prs:
+                          type: integer
+                        agents_running:
+                          type: integer
+                        agents_total:
+                          type: integer
+                        last_heartbeat:
+                          type: string
+                          format: date-time
+                  history:
+                    type: array
+                    description: Fleet actionable issues and PRs per 15-minute bucket, at most 48 points
+                    items:
+                      type: object
+                      properties:
+                        t:
+                          type: integer
+                          description: Unix seconds
+                        act_issues:
+                          type: integer
+                        act_prs:
+                          type: integer
+        '401':
+          description: Not authenticated
+
   /api/saas/hives:
     post:
       tags: [Hosted]
@@ -404,6 +490,12 @@ components:
           type: integer
         actionablePRs:
           type: integer
+        openIssues:
+          type: integer
+          description: All open issues across the hive's repos, from the heartbeat. Omitted when the spoke does not report it.
+        openPRs:
+          type: integer
+          description: All open PRs across the hive's repos, from the heartbeat. Omitted when the spoke does not report it.
         contributorCount:
           type: integer
         activeContributors:

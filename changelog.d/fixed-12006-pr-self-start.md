@@ -1,1 +1,0 @@
-- **timeline: an agent commenting on its own PR no longer records a `started` stage on the PR journey.** The Delivery SLA now ignores PR-keyed journeys when deriving `pr_to_merge`, so merges are no longer double-counted and `n_started` is no longer inflated (#12006, part of #11998).

@@ -1,1 +1,0 @@
-- leaderboard: Battle Log `hive#N` links and Hive of the Week now treat a hive's own project repos as public whenever the hub registry lists the hive as public (`hub.is_public`), so `HIVE_PUBLIC_REPOS` is an optional addition rather than a required, drifting duplicate of the registry (#12109)

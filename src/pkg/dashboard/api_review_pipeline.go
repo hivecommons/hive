@@ -78,6 +78,7 @@ func (s *Server) handleReviewPipeline(w http.ResponseWriter, r *http.Request) {
 
 	opts := ghpkg.ReviewQueueOptions{
 		Verdicts:     artifact,
+		Dispatch:     dispatch,
 		ChangedPaths: ghpkg.CachedPRChangedPaths,
 		Now:          time.Now(),
 	}

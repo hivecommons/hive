@@ -1,6 +1,9 @@
 package proxy
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // WriteCounts is a snapshot of agent GitHub write traffic seen by the proxy
 // since it started (#12175). Tier is the agent's ACMM mode at request time.
@@ -19,6 +22,9 @@ type WriteCounts struct {
 type writeCounters struct {
 	mu    sync.Mutex
 	tiers map[string]*WriteCounts
+	// pending holds counts not yet merged into the durable file.
+	pending DurableWriteCounts
+	now     func() time.Time
 }
 
 // record counts one write attempt for tier. A non-empty blockReason also
@@ -34,6 +40,11 @@ func (c *writeCounters) record(tier, blockReason string) {
 		wc = &WriteCounts{BlockedByReason: make(map[string]int64)}
 		c.tiers[tier] = wc
 	}
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	c.pending.add(tier, blockReason, now())
 	wc.Attempted++
 	if blockReason != "" {
 		wc.Blocked++

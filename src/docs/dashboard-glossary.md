@@ -30,7 +30,7 @@ The operator sidebar keeps the existing destinations, IDs, `data-action` handler
 | Dashboard | Overview, Governor, Throughput |
 | Agents | Dynamic agent tree, `+ Add agent`, `+ Group` |
 | Resources | Projects, Contributors |
-| Intelligence | Advisory, ACMM Eval, Inception, Knowledge, Strategy Lab |
+| Intelligence | Advisory, ACMM Eval, Inception, Knowledge, Experiment Lab |
 | Admin | Tokens, Cost, Review, Agents, Agent activity, Audit Log, Diagnostics |
 | Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Join our Discord, Report an Issue |
 

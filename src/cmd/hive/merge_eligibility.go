@@ -382,10 +382,7 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	// intent.Verdict.BlocksMerge is the one shared refusal predicate; the
 	// App self-merge sweep gates on the same function (#6258).
 	if v, ok := g.intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && v.BlocksMerge(g.enforceIntent) {
-		reason := v.Reason
-		if v.Authorized && v.Alignment != nil && v.Alignment.Misaligned() {
-			reason = intent.ReasonAlignmentMisaligned + ": " + v.Alignment.Rationale
-		}
+		reason := v.BlockReason()
 		return mergeBucketSkip, blockedOrOutstanding("intent verification: " + reason), reason
 	}
 
@@ -868,6 +865,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		if intentReason != "" {
 			iv := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]
 			logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", iv.Tier, "reason", intentReason)
+		}
+		if bucket == mergeBucketEligible {
+			recordIntentShadow(cfg, logger, enforceIntent, intentVerdicts, pr, fullRepo, time.Now())
 		}
 		row := failingPR{
 			Number:          pr.Number,

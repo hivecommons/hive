@@ -1,1 +1,0 @@
-- Expose issue close-on-merge, Jev, duplicate PR sweep, agent policy repo, PR follow-up window and re-entrant turn settings in the dashboard Settings dialog (Features tab).

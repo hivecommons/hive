@@ -36,7 +36,7 @@ const (
 	prEnricherMissTTLEnv         = "HIVE_BEAD_SYNTH_MISS_TTL"
 	prEnricherDefaultMissTTL     = 24 * time.Hour
 	prEnricherMaxAPICallsEnv     = "HIVE_BEAD_SYNTH_MAX_API_CALLS"
-	prEnricherDefaultMaxAPICalls = 200
+	prEnricherDefaultMaxAPICalls = 40
 	prEnricherUnlimitedAPICalls  = 0
 )
 
@@ -80,6 +80,7 @@ func NewBeadSynthesizer(
 
 	if ghClient != nil && config.Org != "" {
 		s.enricher = NewPREnricher(ghClient, config.Org, config.Repos, logger)
+		s.enricher.maxAPICalls = beadSynthMaxAPICalls(config.MaxAPICallsPerCycle)
 	}
 
 	if config.RetentionPolicy != nil {
@@ -797,6 +798,14 @@ type PREnricher struct {
 	missTTL     time.Duration
 	maxAPICalls int
 	apiCalls    int
+	// etags survives ClearCache so unchanged PRs revalidate with
+	// If-None-Match; a 304 is not charged against the GitHub rate limit.
+	etags map[string]prETagEntry
+}
+
+type prETagEntry struct {
+	etag string
+	pr   *gh.PullRequest
 }
 
 type prFetchStatus int
@@ -824,7 +833,8 @@ func NewPREnricher(client *gh.Client, org string, repos []string, logger *slog.L
 		misses:      make(map[string]time.Time),
 		now:         time.Now,
 		missTTL:     beadSynthMissTTL(),
-		maxAPICalls: beadSynthMaxAPICalls(),
+		maxAPICalls: beadSynthMaxAPICalls(0),
+		etags:       make(map[string]prETagEntry),
 	}
 }
 
@@ -957,7 +967,7 @@ func (e *PREnricher) fetchPRWithStatus(ctx context.Context, owner, repo string, 
 	}
 	e.mu.Unlock()
 
-	pr, resp, err := e.ghClient.PullRequests.Get(hgithub.WithRESTCaller(ctx, "hive:bead_synthesizer"), owner, repo, number)
+	pr, resp, err := e.getPRConditional(ctx, key, owner, repo, number)
 	if err != nil {
 		// Only a definitive 404 is a cacheable miss. A transient failure
 		// (rate limit, network) must stay retryable, or one bad window would
@@ -982,6 +992,38 @@ func (e *PREnricher) fetchPRWithStatus(ctx context.Context, owner, repo string, 
 	e.mu.Unlock()
 
 	return pr, prFetchFound
+}
+
+// getPRConditional GETs a PR, sending If-None-Match when a previous body is
+// remembered and returning that body on 304.
+func (e *PREnricher) getPRConditional(ctx context.Context, key, owner, repo string, number int) (*gh.PullRequest, *gh.Response, error) {
+	req, err := e.ghClient.NewRequest("GET", fmt.Sprintf("repos/%v/%v/pulls/%d", owner, repo, number), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	e.mu.Lock()
+	prev, hadPrev := e.etags[key]
+	e.mu.Unlock()
+	if hadPrev {
+		req.Header.Set("If-None-Match", prev.etag)
+	}
+
+	pr := new(gh.PullRequest)
+	resp, err := e.ghClient.Do(hgithub.WithRESTCaller(ctx, "hive:bead_synthesizer"), req, pr)
+	if resp != nil && resp.StatusCode == http.StatusNotModified && hadPrev {
+		return prev.pr, resp, nil
+	}
+	if err != nil {
+		return nil, resp, err
+	}
+	if etag := resp.Header.Get("ETag"); etag != "" {
+		e.mu.Lock()
+		if _, ok := e.etags[key]; ok || len(e.etags) < prEnricherMissCacheSize {
+			e.etags[key] = prETagEntry{etag: etag, pr: pr}
+		}
+		e.mu.Unlock()
+	}
+	return pr, resp, nil
 }
 
 // fetchPRFromRepos tries each configured repo to find the PR.
@@ -1099,14 +1141,20 @@ func beadSynthMissTTL() time.Duration {
 	return prEnricherDefaultMissTTL
 }
 
-func beadSynthMaxAPICalls() int {
+// beadSynthMaxAPICalls resolves the per-cycle cap: the env var wins, then the
+// configured value, then the default.
+func beadSynthMaxAPICalls(configured int) int {
+	fallback := prEnricherDefaultMaxAPICalls
+	if configured > 0 {
+		fallback = configured
+	}
 	raw := strings.TrimSpace(os.Getenv(prEnricherMaxAPICallsEnv))
 	if raw == "" {
-		return prEnricherDefaultMaxAPICalls
+		return fallback
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 0 {
-		return prEnricherDefaultMaxAPICalls
+		return fallback
 	}
 	return n
 }

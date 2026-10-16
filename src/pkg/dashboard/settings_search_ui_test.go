@@ -30,8 +30,8 @@ func TestGovernorSettingsSearchStaticWiring(t *testing.T) {
 func TestGovernorSettingsSearchIndexesKnownSettings(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"Strategy Lab",
-		"dashboard.strategy_lab",
+		"Experiment Lab",
+		"dashboard.experiment_lab",
 		"Kick log source",
 		"logging.kick_log_source",
 		"Watchdog",

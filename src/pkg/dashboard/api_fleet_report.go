@@ -147,8 +147,8 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		class := strings.ToLower(strings.TrimSpace(fault.ErrorClass))
 		component := "inference-gateway"
 		if class == "auth" || class == "budget" {
-			// auth is reported as the inference_auth_failed runtime class by
-			// the inferencehealth store itself; budget is the operator's.
+			// auth and budget are operator/upstream conditions, not hive
+			// code defects.
 			continue
 		}
 		errClass := class
@@ -158,10 +158,9 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		out = append(out, fleetreport.Evidence{Component: component, Agent: fault.Name, ErrorClass: errClass, Count: 1, Window: time.Hour, Severity: "high", Attributable: true})
 	}
 	for _, a := range status.Agents {
-		if strings.Contains(strings.ToLower(a.StructuredStatus), "blocked") && strings.Contains(strings.ToLower(a.StatusEvidence), "inference") {
-			out = append(out, fleetreport.Evidence{Component: "backend-auth", Agent: a.Name, Lane: a.Role, ErrorClass: "backend authentication failure", Count: 1, Window: time.Hour, Severity: "high", Attributable: true})
-			continue
-		}
+		// An agent blocked on inference (auth, quota, provider outage) is an
+		// operator/upstream condition, not a hive code defect; the runtime
+		// tracker reports genuine hive-side classes separately.
 		// a.Restarts is a cumulative process restart counter that every cadence
 		// kick increments, so it cannot distinguish a crash loop from healthy
 		// scheduled cycling. Only an explicit crash state is evidence here.

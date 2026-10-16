@@ -484,8 +484,13 @@ func buildFeatures(cfg *config.Config) FrontendFeatures {
 	if cfg == nil {
 		return FrontendFeatures{}
 	}
+	// The deprecated dashboard.strategy_lab alias is normally folded into
+	// ExperimentLab by applyDefaults; honour it here too for configs built
+	// without going through the loader.
+	enabled := cfg.Dashboard.ExperimentLab || cfg.Dashboard.StrategyLab
 	return FrontendFeatures{
-		StrategyLab: cfg.Dashboard.StrategyLab,
+		ExperimentLab: enabled,
+		StrategyLab:   enabled,
 	}
 }
 
@@ -3140,10 +3145,12 @@ func apiBudgetMap(snapshot github.APIBudgetSnapshot) map[string]any {
 		mode = "normal"
 	}
 	out := map[string]any{
-		"mode":          mode,
-		"remaining":     snapshot.Remaining,
-		"limit":         snapshot.Limit,
-		"skipped_steps": append([]string(nil), snapshot.SkippedSteps...),
+		"mode":             mode,
+		"remaining":        snapshot.Remaining,
+		"limit":            snapshot.Limit,
+		"skipped_steps":    append([]string(nil), snapshot.SkippedSteps...),
+		"unstick_steps":    append([]string(nil), github.APIBudgetUnstickSteps...),
+		"enrichment_steps": append([]string(nil), github.APIBudgetEnrichmentSteps...),
 	}
 	if !snapshot.Reset.IsZero() {
 		out["reset"] = snapshot.Reset.Format(time.RFC3339)

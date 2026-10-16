@@ -234,8 +234,14 @@ type Dependencies struct {
 	ReviewEvents *eventdispatch.Dispatcher
 }
 
+// NousScopeRepo is the only experiment scope the Experiment Lab supports.
+// Governor-scope experiments are out of scope for the lab.
+const NousScopeRepo = "repo"
+
 type NousState struct {
-	Mode         string                   `json:"mode"`
+	Mode string `json:"mode"`
+	// Scope is always NousScopeRepo; it is kept as a field for state
+	// compatibility with the experiment loop's status publishing.
 	Scope        string                   `json:"scope"`
 	Phase        string                   `json:"phase"`
 	Status       map[string]interface{}   `json:"status"`

@@ -541,12 +541,34 @@ func TestHandleNousMode_MissingMode(t *testing.T) {
 
 func TestHandleNousScope_WithNous(t *testing.T) {
 	s, deps := apiServerWithNous(t)
-	rec := doPut(s, "/api/nous/scope", map[string]string{"scope": "limited"})
+	deps.Nous.Scope = ""
+	rec := doPut(s, "/api/nous/scope", map[string]string{"scope": "Repo"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	if deps.Nous.Scope != "limited" {
-		t.Errorf("scope = %q, want limited", deps.Nous.Scope)
+	if deps.Nous.Scope != NousScopeRepo {
+		t.Errorf("scope = %q, want %q", deps.Nous.Scope, NousScopeRepo)
+	}
+}
+
+// The Experiment Lab is repo-only: the legacy governor/both scopes (and
+// anything else) are rejected with 400 and leave the state untouched.
+func TestHandleNousScope_RejectsNonRepo(t *testing.T) {
+	for _, scope := range []string{"governor", "both", "limited"} {
+		t.Run(scope, func(t *testing.T) {
+			s, deps := apiServerWithNous(t)
+			deps.Nous.Scope = NousScopeRepo
+			rec := doPut(s, "/api/nous/scope", map[string]string{"scope": scope})
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "repo-only") {
+				t.Errorf("body = %s, want repo-only explanation", rec.Body.String())
+			}
+			if deps.Nous.Scope != NousScopeRepo {
+				t.Errorf("scope = %q, want unchanged %q", deps.Nous.Scope, NousScopeRepo)
+			}
+		})
 	}
 }
 
@@ -1292,7 +1314,7 @@ func TestHandleNousMode_NilNous(t *testing.T) {
 func TestHandleNousScope_NilNous(t *testing.T) {
 	s, deps := apiServer(t)
 	deps.Nous = nil
-	rec := doPut(s, "/api/nous/scope", map[string]string{"scope": "test"})
+	rec := doPut(s, "/api/nous/scope", map[string]string{"scope": "repo"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d", rec.Code)
 	}
@@ -3928,6 +3950,9 @@ func TestSidebarDiskUsesInjectablePath(t *testing.T) {
 	}
 }
 
+// The Experiment Lab is repo-only: the research question is always the repo
+// one, a stale governorGoal is ignored, and the reported scope is "repo"
+// regardless of what the stored status says.
 func TestHandleNousStatus_ResearchQuestion(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -3935,11 +3960,10 @@ func TestHandleNousStatus_ResearchQuestion(t *testing.T) {
 		goals interface{}
 		want  string
 	}{
-		{"governor scope", "governor", map[string]interface{}{"governorGoal": " gov? ", "repoGoal": "repo?"}, "gov?"},
-		{"repo scope", "repo", map[string]interface{}{"governorGoal": "gov?", "repoGoal": "repo?"}, "repo?"},
-		{"both falls back to repo", "both", map[string]interface{}{"governorGoal": "", "repoGoal": "repo?"}, "repo?"},
-		{"governor scope ignores repo goal", "governor", map[string]interface{}{"repoGoal": "repo?"}, ""},
-		{"no goals", "governor", nil, ""},
+		{"repo scope", "repo", map[string]interface{}{"repoGoal": " repo? "}, "repo?"},
+		{"stale governor scope still uses repo goal", "governor", map[string]interface{}{"governorGoal": "gov?", "repoGoal": "repo?"}, "repo?"},
+		{"governor goal alone is ignored", "both", map[string]interface{}{"governorGoal": "gov?"}, ""},
+		{"no goals", "", nil, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3956,6 +3980,38 @@ func TestHandleNousStatus_ResearchQuestion(t *testing.T) {
 			if got["researchQuestion"] != tc.want {
 				t.Errorf("researchQuestion = %v, want %q", got["researchQuestion"], tc.want)
 			}
+			if got["scope"] != NousScopeRepo {
+				t.Errorf("scope = %v, want %q", got["scope"], NousScopeRepo)
+			}
 		})
+	}
+}
+
+// Governor phase data published into the status map is stripped from the
+// API response; only the repo phase block survives.
+func TestHandleNousStatus_RepoOnlyPhases(t *testing.T) {
+	s, deps := apiServerWithNous(t)
+	deps.Nous.Status = map[string]interface{}{
+		"phases": map[string]interface{}{
+			"governor": map[string]interface{}{"phase": "DESIGN", "iteration": 3},
+			"repo":     map[string]interface{}{"phase": "FRAMING", "iteration": 1},
+		},
+	}
+	rec := doGet(s, "/api/nous/status")
+	var got struct {
+		Phases map[string]interface{} `json:"phases"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := got.Phases["governor"]; ok {
+		t.Errorf("governor phase leaked into status: %v", got.Phases)
+	}
+	repo, _ := got.Phases["repo"].(map[string]interface{})
+	if repo["phase"] != "FRAMING" {
+		t.Errorf("repo phase = %v, want FRAMING", repo)
+	}
+	if deps.Nous.Status["phases"].(map[string]interface{})["governor"] == nil {
+		t.Error("stored status must not be mutated by the handler")
 	}
 }

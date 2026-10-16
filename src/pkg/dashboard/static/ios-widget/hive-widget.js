@@ -23,11 +23,21 @@
 // for any user already allowed on the hive, so no server-side change is
 // needed. Use a fine-grained token with no repository permissions — it is
 // only used to prove who you are.
+//
+// Hub mode (fleet view): set the widget parameter to `hub` (or
+// `hub:<hub URL>`) to show every hive you can see on the hub instead of one
+// hive: fleet totals with sparklines and "N hives need you" (medium), plus the
+// hives with the most actionable work (large). It reads `/api/hub/widget` with
+// the GitHub token; widget tokens are per hive and do not work on the hub.
 
 const VERSION = "1";
 const KEYCHAIN_TOKEN_KEY = "hive.widget.github-token";
 const KEYCHAIN_URL_KEY = "hive.widget.default-url";
 const KEYCHAIN_WIDGET_TOKEN_PREFIX = "hive.widget.read-token:";
+const KEYCHAIN_HUB_URL_KEY = "hive.widget.hub-url";
+const DEFAULT_HUB_URL = "https://hive.hivecommons.dev";
+const HUB_WIDGET_PATH = "/api/hub/widget";
+const HUB_TOP_HIVES = 6;
 const WIDGET_TOKEN_PREFIX = "hwt_";
 const HISTORY_DAYS = 7;
 const HISTORY_BUCKET_MIN = 15; // one locally kept sample per 15 minutes
@@ -374,6 +384,209 @@ function buildWidget(base, data, family) {
   return w;
 }
 
+// -------------------------------------------------------------- hub mode
+
+// Returns the hub URL when this run is in hub (fleet) mode, else "".
+// Widget parameter `hub` or `hub:<url>`; deep link `?hub=1` or `?hub=<url>`.
+function hubModeURL(q) {
+  const p = (args.widgetParameter || "").trim();
+  const m = /^hub(?::(.*))?$/i.exec(p);
+  const fromParam = m ? normalizeURL(m[1] || "") : null;
+  const fromQuery = q && q.hub !== undefined ? (q.hub === "1" ? "" : normalizeURL(q.hub)) : null;
+  if (fromParam === null && fromQuery === null) return "";
+  const stored = Keychain.contains(KEYCHAIN_HUB_URL_KEY) ? normalizeURL(Keychain.get(KEYCHAIN_HUB_URL_KEY)) : "";
+  return fromParam || fromQuery || stored || DEFAULT_HUB_URL;
+}
+
+async function setupHub(hub) {
+  const a = new Alert();
+  a.title = "Hive fleet widget setup";
+  a.message = "Hub URL and a GitHub token (fine-grained, no repository permissions) for an account that can sign in to the hub. The token is stored in the iOS Keychain.";
+  a.addTextField(DEFAULT_HUB_URL, hub || DEFAULT_HUB_URL);
+  a.addSecureTextField("GitHub token", token());
+  a.addAction("Save");
+  a.addCancelAction("Cancel");
+  if ((await a.present()) === -1) return "";
+  const url = normalizeURL(a.textFieldValue(0)) || DEFAULT_HUB_URL;
+  const tok = a.textFieldValue(1).trim();
+  if (!tok || isWidgetToken(tok)) {
+    const e = new Alert();
+    e.title = "A GitHub token is required";
+    e.message = "Widget tokens (hwt_…) only work on one hive, not on the hub.";
+    e.addAction("OK");
+    await e.present();
+    return "";
+  }
+  Keychain.set(KEYCHAIN_HUB_URL_KEY, url);
+  Keychain.set(KEYCHAIN_TOKEN_KEY, tok);
+  return url;
+}
+
+async function getHubJSON(hub) {
+  const req = new Request(hub + HUB_WIDGET_PATH);
+  req.timeoutInterval = FETCH_TIMEOUT_S;
+  req.headers = { Authorization: "Bearer " + token(), Accept: "application/json" };
+  const body = await req.loadString();
+  const status = req.response ? req.response.statusCode : 0;
+  if (status !== 200) throw new Error("HTTP " + status + " " + HUB_WIDGET_PATH);
+  try { return JSON.parse(body); } catch (e) { throw new Error("not JSON (login page?) " + HUB_WIDGET_PATH); }
+}
+
+// The hub keeps history only for the actionable counts, so the open issue/PR
+// sparklines come from the totals this script samples on the phone.
+async function loadHubData(hub) {
+  const key = hub + "#fleet";
+  const state = loadLocal(key);
+  let live = null, err = null;
+  try {
+    const resp = await getHubJSON(hub);
+    const t = resp.totals || {};
+    const now = Date.now();
+    state.samples = mergeSamples(state.samples || [], [{
+      t: now,
+      issues: Number(t.issues || 0),
+      prs: Number(t.prs || 0),
+      actIssues: Number(t.act_issues || 0),
+      actPrs: Number(t.act_prs || 0),
+    }]);
+    state.hubHistory = (Array.isArray(resp.history) ? resp.history : [])
+      .map((p) => ({ t: Number(p.t) * 1000, actIssues: Number(p.act_issues || 0), actPrs: Number(p.act_prs || 0) }))
+      .filter((p) => p.t > 0);
+    state.totals = t;
+    state.hives = (Array.isArray(resp.hives) ? resp.hives : []).slice(0, HUB_TOP_HIVES);
+    state.meta = { fetchedAt: now };
+    saveLocal(key, state);
+    live = true;
+  } catch (e) {
+    err = String(e.message || e);
+  }
+  return { state, live, err };
+}
+
+function buildHubWidget(hub, data, family) {
+  const w = new ListWidget();
+  w.backgroundColor = C.bg;
+  w.url = hub + "/fleet";
+  w.refreshAfterDate = new Date(Date.now() + REFRESH_MIN * 60 * 1000);
+
+  const st = data.state;
+  const t = st.totals || {};
+  const local = st.samples || [];
+  const server = (st.hubHistory || []).length > 1 ? st.hubHistory : local;
+  const need = Number(t.need_you || 0);
+
+  if (family === "accessoryRectangular" || family === "accessoryInline") {
+    const line = w.addText(`🐝 ${t.hives || 0} hives · ${need} need you · turn ${t.act_issues || 0}/${t.act_prs || 0}`);
+    line.font = Font.mediumSystemFont(12);
+    return w;
+  }
+
+  const compact = family === "small";
+  w.setPadding(10, 10, 8, 10);
+  const header = w.addStack();
+  header.centerAlignContent();
+  const title = header.addText("🐝 Fleet · " + (t.hives || 0) + " hives");
+  title.font = Font.boldSystemFont(compact ? 10 : 12);
+  title.textColor = C.text;
+  title.lineLimit = 1;
+  title.minimumScaleFactor = 0.6;
+  header.addSpacer();
+  if (!compact && t.agents_total) {
+    const ag = header.addText(`${t.agents_running || 0}/${t.agents_total} agents`);
+    ag.font = Font.mediumSystemFont(9);
+    ag.textColor = C.muted;
+  }
+  w.addSpacer(6);
+
+  if (!st.totals) {
+    const e = w.addText(data.err ? "Can't reach hub\n" + data.err : "No data yet");
+    e.font = Font.mediumSystemFont(11);
+    e.textColor = C.red;
+    return w;
+  }
+
+  const opts = compact
+    ? { compact: true, sparkW: 40, sparkH: 18 }
+    : { compact: false, sparkW: 64, sparkH: 24 };
+  const sourceFor = (m) => (m.key === "actIssues" || m.key === "actPrs" ? server : local);
+  // Small has room for the "your turn" pair only.
+  const rows = compact ? [[METRICS[2], METRICS[3]]] : [[METRICS[0], METRICS[1]], [METRICS[2], METRICS[3]]];
+  const grid = w.addStack();
+  grid.layoutVertically();
+  rows.forEach((pair, r) => {
+    const row = grid.addStack();
+    row.layoutHorizontally();
+    metricCell(row, pair[0], sourceFor(pair[0]), opts);
+    row.addSpacer(6);
+    metricCell(row, pair[1], sourceFor(pair[1]), opts);
+    if (r < rows.length - 1) grid.addSpacer(6);
+  });
+
+  w.addSpacer(4);
+  const needText = need ? `${need} hive${need === 1 ? " needs" : "s need"} you` : "No hive needs you";
+  const needLine = w.addText(needText);
+  needLine.font = Font.semiboldSystemFont(compact ? 9 : 10);
+  needLine.textColor = need ? C.amber : C.green;
+
+  if (family === "large") {
+    w.addSpacer(6);
+    for (const h of st.hives || []) {
+      const work = Number(h.act_issues || 0) + Number(h.act_prs || 0);
+      const row = w.addStack();
+      row.centerAlignContent();
+      if (h.url) row.url = h.url;
+      const dot = row.addText(h.online ? "●" : "○");
+      dot.font = Font.systemFont(8);
+      dot.textColor = h.online ? C.green : C.red;
+      row.addSpacer(4);
+      const name = row.addText(h.project || h.id);
+      name.font = Font.mediumSystemFont(11);
+      name.textColor = C.text;
+      name.lineLimit = 1;
+      row.addSpacer();
+      const counts = row.addText(`turn ${h.act_issues || 0}/${h.act_prs || 0} · ${h.issues || 0}i ${h.prs || 0}pr · L${h.acmm_level || 0}`);
+      counts.font = Font.regularSystemFont(9);
+      counts.textColor = work ? C.amber : C.muted;
+      w.addSpacer(3);
+    }
+  }
+
+  w.addSpacer();
+  const f = w.addText((data.live ? "updated " : "stale · ") + ago((st.meta || {}).fetchedAt));
+  f.font = Font.regularSystemFont(8);
+  f.textColor = data.live ? C.muted : C.red;
+  return w;
+}
+
+async function runHub(hub, q) {
+  if (!config.runsInWidget) {
+    if (!token() || q.setup) {
+      hub = await setupHub(hub);
+      if (!hub) { Script.complete(); return; }
+    } else {
+      Keychain.set(KEYCHAIN_HUB_URL_KEY, hub);
+    }
+  }
+  if (!token()) {
+    const w = new ListWidget();
+    w.backgroundColor = C.bg;
+    const t = w.addText("🐝 Hive fleet\nOpen Scriptable and run this script with ?hub=1 once to set the GitHub token.");
+    t.font = Font.mediumSystemFont(11);
+    t.textColor = C.text;
+    Script.setWidget(w);
+    Script.complete();
+    return;
+  }
+  const data = await loadHubData(hub);
+  const w = buildHubWidget(hub, data, config.widgetFamily || "large");
+  if (config.runsInWidget) {
+    Script.setWidget(w);
+  } else {
+    await w.presentLarge();
+  }
+  Script.complete();
+}
+
 // ------------------------------------------------------------------ main
 
 async function main() {
@@ -381,6 +594,8 @@ async function main() {
   // scriptable:///run/Hive?url=<hive>: adopt that hive as the default so the
   // setup form only needs the token.
   const q = args.queryParameters || {};
+  const hub = hubModeURL(q);
+  if (hub) { await runHub(hub, q); return; }
   // The dashboard's QR code / "Open in Scriptable" link also hands over the
   // read-only widget token as widgetToken=hwt_…; store it for that hive.
   const handedURL = normalizeURL(q.url);

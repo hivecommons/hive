@@ -10,7 +10,7 @@ function openSettings(h) {
   // Enough config for conditionally rendered sections (watchdog, otel
   // fields) to appear, as they do against a live hive.
   state.data = {
-    dashboard: { strategy_lab: false, port: 3001 },
+    dashboard: { experiment_lab: false, port: 3001 },
     health: { watchdog: { mode: 'observe', probe_interval_s: 30 } },
     features: { tracingEnabled: true, rotationEnabled: true },
   };
@@ -40,7 +40,7 @@ module.exports = {
     openSettings(h);
     const d = h.document;
     const input = d.getElementById('settings-search-input');
-    input.value = 'strategy lab';
+    input.value = 'experiment lab';
     h.call('applySettingsSearch', input.value);
     const groups = Array.from(d.querySelectorAll('.settings-search-group')).map(g => g.getAttribute('data-settings-search-tab'));
     const hits = Array.from(d.querySelectorAll('.settings-search-hit')).map(x => ({ tab: x.getAttribute('data-arg0'), key: x.getAttribute('data-arg1'), label: x.getAttribute('data-arg2'), action: x.getAttribute('data-action') }));
@@ -49,7 +49,7 @@ module.exports = {
     clickAction(h, btn);
     await h.flush();
     const body = d.getElementById('config-body');
-    const row = body.querySelector('[data-setting-key="dashboard.strategy_lab"]');
+    const row = body.querySelector('[data-setting-key="dashboard.experiment_lab"]');
     const scrolled = h.scrollCalls.map(c => ({ key: c.el.getAttribute('data-setting-key'), block: c.opts && c.opts.block }));
     return {
       groups, hits,
@@ -78,7 +78,7 @@ module.exports = {
     const first = { tab: activeTab(h), key: row1 ? row1.getAttribute('data-setting-key') : '', scrolled: h.scrollCalls.length };
     h.scrollCalls.length = 0;
     h.call('switchConfigTab', 'General');
-    h.call('applySettingsSearch', 'strategy lab');
+    h.call('applySettingsSearch', 'experiment lab');
     input.listeners.keydown.forEach(fn => fn({ key: 'Enter', preventDefault() {} }));
     await h.flush();
     const row2 = d.getElementById('config-body').querySelector('.cfg-row-flash');
@@ -106,11 +106,11 @@ module.exports = {
     openSettings(h);
     const d = h.document;
     const statics = h.resolveName('SETTINGS_SEARCH_STATIC_HITS');
-    statics.push({ tab: 'Features', section: 'Dashboard', label: 'Drifted Lab', key: 'dashboard.strategy_lab', text: 'zzdrifted' });
+    statics.push({ tab: 'Features', section: 'Dashboard', label: 'Drifted Lab', key: 'dashboard.experiment_lab', text: 'zzdrifted' });
     h.resolveName('_settingsSearch').index = null;
     h.call('applySettingsSearch', 'zzdrifted');
     const groups = Array.from(d.querySelectorAll('.settings-search-group')).map(g => g.getAttribute('data-settings-search-tab'));
-    const resolved = h.call('settingsSearchResolveTab', 'Features', 'dashboard.strategy_lab');
+    const resolved = h.call('settingsSearchResolveTab', 'Features', 'dashboard.experiment_lab');
     const hit = d.querySelector('.settings-search-hit');
     if (!hit) return { error: 'no hit', groups };
     clickAction(h, hit);

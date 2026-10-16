@@ -1,1 +1,0 @@
-- Fix the hub admin users table actions so icon buttons stay side-by-side with zebra-striped rows.

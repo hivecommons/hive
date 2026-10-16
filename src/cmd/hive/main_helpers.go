@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
@@ -318,5 +319,9 @@ func selfMergeIntentGate(cfg *config.Config, beadStores map[string]*beads.Store)
 		Config:     intentConfigFromCfg(cfg),
 		Enforce:    func() bool { return cfg != nil && cfg.Intent.Enforce },
 		BeadStores: beadStores,
+		Shadow:     func() bool { return intentShadowEnabled(cfg) },
+		RecordShadow: func(fullRepo string, number int, head string, gate evidence.ShadowGate) {
+			writeIntentShadow(cfg, slog.Default(), "self-merge", fullRepo, number, head, &gate)
+		},
 	}
 }

@@ -141,7 +141,7 @@ const DASHBOARD_SECTION_HELP = {
   'overview-section': { heading: 'Overview', help: 'Overview help.' },
   'governor': { heading: 'Governor', help: 'Governor help.' },
   'repos-section': { heading: 'Projects', help: 'Projects help.' },
-  'nous-section': { heading: 'Strategy Lab', help: 'Strategy Lab help.' },
+  'nous-section': { heading: 'Experiment Lab', help: 'Experiment Lab help.' },
 };
 function dashboardDocsHref(page, anchor) { return '/docs/' + page + '.md' + (anchor ? '#' + anchor : ''); }
 function dashboardSectionHelpAnchor(heading) { return String(heading || '').toLowerCase().replace(/[^\w\s-]/g, '').trim().replace(/\s/g, '-'); }
@@ -152,7 +152,7 @@ const cases = [
   ['overview-section', '🍩 Overview', sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"')],
   ['governor', '🚦 Governor', sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration', ' data-arg0="governor"')],
   ['repos-section', '📦 Projects', sectionSettingsGear('Projects', 'gh1', 'Manage monitored projects')],
-  ['nous-section', '🧪 Strategy Lab', sectionSettingsGear('Strategy Lab', 'openNousConfig', 'Strategy Lab Configuration')],
+  ['nous-section', '🧪 Experiment Lab', sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration')],
 ];
 for (const [id, title, settingsHtml] of cases) {
   const header = sectionCardHeader({ id, title, settingsHtml });
@@ -189,7 +189,7 @@ func TestDashboardSectionSettingsGearsAvoidLegacyFarRightActions(t *testing.T) {
 		`settingsHtml: sectionSettingsGear('Overview', 'toggleOverviewChartSettings'`,
 		`settingsHtml: sectionSettingsGear('Governor', 'openConfigDialog'`,
 		`settingsHtml: sectionSettingsGear('Projects', 'gh1'`,
-		`settingsHtml: sectionSettingsGear('Strategy Lab', 'openNousConfig'`,
+		`settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig'`,
 		".section-settings-gear",
 	} {
 		if !strings.Contains(html, want) {

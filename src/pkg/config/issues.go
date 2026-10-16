@@ -19,6 +19,15 @@ const (
 	// matching issues.* settings with a Go duration ("10m", "24h").
 	CloseOnMergeIntervalEnvVar = "HIVE_CLOSE_ON_MERGE_INTERVAL"
 	CloseOnMergeRecheckEnvVar  = "HIVE_CLOSE_ON_MERGE_RECHECK"
+
+	// DefaultSHAHoldTrustedLabel is the soft label the SHA-hold sweep applies
+	// to a trusted reporter's bug that lacks a commit SHA, instead of the hard
+	// `hold` (hivecommons/hive#12002).
+	DefaultSHAHoldTrustedLabel = "needs-sha"
+	// DefaultHardSuppressReconcileInterval is how often the eval loop runs
+	// the reconcile that lifts hive-applied `hold`/`blocked` labels whose
+	// reason lapsed (hivecommons/hive#12002).
+	DefaultHardSuppressReconcileInterval = 30 * time.Minute
 )
 
 type IssuesConfig struct {
@@ -35,6 +44,46 @@ type IssuesConfig struct {
 	// use the per-issue hive: needs-confirmation marker when only one issue
 	// needs reporter verification.
 	ReporterConfirmation *bool `yaml:"reporter_confirmation,omitempty" json:"reporter_confirmation,omitempty"`
+	// SHAHoldTrustedLabel is the soft label the SHA-hold sweep applies to a
+	// bug filed by a reporter in issue_filter.reporter_trust's trusted
+	// associations (OWNER/MEMBER/COLLABORATOR by default) when no commit SHA
+	// is present. Unset uses DefaultSHAHoldTrustedLabel; "hold" restores the
+	// legacy hard hold for every reporter.
+	SHAHoldTrustedLabel *string `yaml:"sha_hold_trusted_label,omitempty" json:"sha_hold_trusted_label,omitempty"`
+	// LiftHiveHardSuppress enables the reconcile that lifts a `hold`/`blocked`
+	// label hive itself applied once a PR referencing the issue has merged
+	// since. Default true; a human-applied label is never lifted.
+	LiftHiveHardSuppress *bool `yaml:"lift_hive_hard_suppress,omitempty" json:"lift_hive_hard_suppress,omitempty"`
+	// HardSuppressReconcileInterval is the reconcile cadence; see
+	// DefaultHardSuppressReconcileInterval.
+	HardSuppressReconcileInterval time.Duration `yaml:"hard_suppress_reconcile_interval,omitempty" json:"hard_suppress_reconcile_interval,omitempty"`
+}
+
+// EffectiveSHAHoldTrustedLabel returns the trusted-reporter SHA label.
+func (i IssuesConfig) EffectiveSHAHoldTrustedLabel() string {
+	if i.SHAHoldTrustedLabel == nil {
+		return DefaultSHAHoldTrustedLabel
+	}
+	if v := strings.TrimSpace(*i.SHAHoldTrustedLabel); v != "" {
+		return v
+	}
+	return DefaultSHAHoldTrustedLabel
+}
+
+// LiftHiveHardSuppressEnabled reports whether the hard-suppress reconcile runs.
+func (i IssuesConfig) LiftHiveHardSuppressEnabled() bool {
+	if i.LiftHiveHardSuppress == nil {
+		return true
+	}
+	return *i.LiftHiveHardSuppress
+}
+
+// EffectiveHardSuppressReconcileInterval returns the reconcile cadence.
+func (i IssuesConfig) EffectiveHardSuppressReconcileInterval() time.Duration {
+	if i.HardSuppressReconcileInterval <= 0 {
+		return DefaultHardSuppressReconcileInterval
+	}
+	return i.HardSuppressReconcileInterval
 }
 
 func (i IssuesConfig) CloseOnMergeEnabled() bool {

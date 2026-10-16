@@ -136,6 +136,10 @@ func quadrantInputsFor(e RegistryEntry, now time.Time) quadrantInputs {
 	if rate, ok := mergeAcceptanceRate(e); ok {
 		in.mergeAcceptance = &rate
 	}
+	if e.Evidence != nil {
+		in.evidence = e.Evidence
+		in.selfMergeAllowed = e.Evidence.AutomergeSelfAuthored
+	}
 	return in
 }
 
