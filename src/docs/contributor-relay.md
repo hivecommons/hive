@@ -1718,6 +1718,55 @@ may later send `knowledge_state` with the same two fields when its background
 knowledge refresh changes the loaded state; old hubs ignore the new message, and
 new hubs treat an absent field as not reported rather than false.
 
+## Priority PR-fix scheduling groundwork (#12436)
+
+The hub accepts optional `capabilities.parallel_sessions` on `auth_response`.
+It counts **all** sessions, including the primary: omitted/zero or one means
+single-session; three means one primary plus at most two parallel fixes.
+Declarations are advisory, bounded to 0–64, and do not override server-side
+concurrency limits or credential/acceptance gates. This field alone does **not**
+opt a relay into interrupts. No `fix-pr` server capability is advertised yet.
+
+`pkg/contributefix` supplies the scheduling primitive for the stage-072 adapter:
+
+- Create one queue per contributor account, not per socket/session. Supply only
+  verified, claim-linked feedback, with repo, PR number, head SHA, PR creation
+  time, failing checks and review asks. External authors without a relay claim
+  must not be put in a relay queue.
+- `Dispatch` reserves fix tasks with `kind: fix-pr`, `priority: interrupt`, a
+  `prs` list of head-specific feedback, and instructions to push to the existing
+  branches with the same sign-off. Its IDs are **local reservation IDs**, not
+  replacements for the wire task ID/generation or scoped credential checks.
+- Human changes-requested feedback precedes CI-red feedback; otherwise oldest
+  PR first, with a stable repo/number tie-break. CI tasks coalesce only with the
+  same repository, check name **and** nonempty error signature. Matching feedback
+  arriving after delivery waits for that batch, rather than mutating its payload
+  or running a second task for the same cause concurrently.
+- Parallel dispatch reserves at most `min(parallel_sessions - 1,
+  max_parallel_fixes)` tasks, never the primary session. The caller invokes
+  `Dispatch` again after `Finish` to refill slots. Offline queues do not dispatch.
+- Single-session dispatch proposes `preempt` once. The adapter must park the
+  primary with its claim alive, finish the fix, actually resume the primary,
+  then acknowledge `ResumePrimary`. The focus window starts at that resume,
+  not at dispatch or completion. A duplicate acknowledgement cannot extend it.
+- Reject delivery **before acceptance** with `Reject`; this restores queued
+  feedback without overwriting a newer head. Accepted-task failures instead use
+  `Finish`, with retry policy handled by the adapter. Stale completion IDs cannot
+  free newer slots, and stale green observations cannot remove a newer head.
+- `Counts` reports queued **PRs** and in-flight **tasks** (a coalesced task may
+  cover multiple PRs). Every new-work claim boundary must consult `canClaimNew`;
+  pending, in-flight, or not-yet-resumed work prevents taking new issues.
+
+This is groundwork, not end-to-end delivery: the queue is in memory and is not
+wired into stage reconciliation or task selection yet. Before enabling it, the
+adapter must persist/recover reservations, apply presence and grace settings,
+log enqueue/dequeue, publish profile/dashboard counts, send idempotent GitHub
+nudges, and adopt expired work through the gated takeover path. The in-repository
+relay (`bin/contributor-relay.js`) still needs parallel launch/park/resume handling
+and heartbeat capability updates. Stage mirrors, legacy writer retirement, and
+Settings/config parity also remain tracked by #12436. Do not advertise interrupt
+support or suppress fresh claims until that integration is complete.
+
 ## Custom stylesheets
 
 The contributor leaderboard and spoke dashboard accept a shareable custom stylesheet parameter, letting a hive brand its public surfaces from a public GitHub repo. See [Custom stylesheets](custom-stylesheets.md) for the accepted `owner/repo/path.css@ref` form, the server-side sanitizer rules, scoping, and the size cap.
