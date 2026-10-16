@@ -458,9 +458,17 @@ func TaskRequirementsFromLabels(labels []string) ContributorTaskRequirements {
 // requirements. Unknown always fits for backward compatibility; only an explicit
 // contradictory declaration excludes the client.
 func ContributorCanRunTask(caps *ContributorCapabilities, cliBackend string, req ContributorTaskRequirements) bool {
-	if req.IsZero() || caps == nil || caps.IsZero() {
+	if req.IsZero() || caps == nil {
 		return true
 	}
+	// The isolation class is display-only (#12200): a declaration that carries
+	// only it is still "declared nothing" for the fit decision.
+	fit := *caps
+	fit.IsolationClass = ""
+	if fit.IsZero() {
+		return true
+	}
+	caps = &fit
 	if req.ContainerRuntime != "" {
 		have := strings.ToLower(strings.TrimSpace(caps.ContainerRuntime))
 		want := strings.ToLower(req.ContainerRuntime)
