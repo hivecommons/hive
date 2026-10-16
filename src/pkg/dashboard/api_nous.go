@@ -30,6 +30,9 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 	status["phases"] = nousRepoOnlyPhases(status["phases"])
 	status["researchQuestion"] = nousResearchQuestion(goals)
 	s.addNousProgressStatus(status, config, ledger, principles)
+	status["projectRepos"] = s.nousProjectRepos()
+	status["availableRepos"] = status["projectRepos"]
+	status["repoTargets"] = s.nousRepoTargets()
 	jsonResponse(w, status)
 }
 
@@ -252,9 +255,112 @@ func (s *Server) handleNousConfigGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deps.Nous.Mu.Lock()
-	cfg := s.deps.Nous.Config
+	cfg := make(map[string]interface{}, len(s.deps.Nous.Config)+6)
+	for k, v := range s.deps.Nous.Config {
+		cfg[k] = v
+	}
+	mode := s.deps.Nous.Mode
+	principles := append([]NousPrinciple(nil), s.deps.Nous.Principles...)
 	s.deps.Nous.Mu.Unlock()
+
+	projectRepos := s.nousProjectRepos()
+	repoTargets := s.nousRepoTargetsFrom(cfg, projectRepos)
+	cfg["projectRepos"] = projectRepos
+	cfg["availableRepos"] = projectRepos
+	cfg["repoTargets"] = repoTargets
+	cfg["principles"] = principles
+
+	campaign := map[string]interface{}{"mode": mode}
+	if ff, ok := cfg["fast_fail"]; ok {
+		campaign["fast_fail"] = ff
+	}
+	if sched, ok := cfg["schedule"]; ok {
+		campaign["schedule"] = sched
+	}
+	cfg["campaign"] = campaign
+
+	repoCampaign := map[string]interface{}{}
+	if goals, ok := cfg["goals"].(map[string]interface{}); ok {
+		if rq, ok := goals["repoGoal"].(string); ok {
+			repoCampaign["research_question"] = strings.TrimSpace(rq)
+		}
+	}
+	cfg["repoCampaign"] = repoCampaign
 	jsonResponse(w, cfg)
+}
+
+func (s *Server) nousProjectRepos() []string {
+	if s == nil || s.deps.Config == nil {
+		return nil
+	}
+	cfg := s.deps.Config
+	seen := map[string]bool{}
+	var repos []string
+	add := func(repo string) {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			return
+		}
+		key := strings.ToLower(repo)
+		if !seen[key] {
+			seen[key] = true
+			repos = append(repos, repo)
+		}
+	}
+	for _, repo := range cfg.Project.Repos {
+		add(repo)
+	}
+	add(cfg.Project.PrimaryRepo)
+	return repos
+}
+
+func (s *Server) nousRepoTargets() []string {
+	if s == nil || s.deps.Nous == nil {
+		return nil
+	}
+	s.deps.Nous.Mu.Lock()
+	cfg := make(map[string]interface{}, len(s.deps.Nous.Config))
+	for k, v := range s.deps.Nous.Config {
+		cfg[k] = v
+	}
+	s.deps.Nous.Mu.Unlock()
+	return s.nousRepoTargetsFrom(cfg, s.nousProjectRepos())
+}
+
+func (s *Server) nousRepoTargetsFrom(cfg map[string]interface{}, projectRepos []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(repo string) {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			return
+		}
+		key := strings.ToLower(repo)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, repo)
+		}
+	}
+	if reposCfg, ok := cfg["repos"].(map[string]interface{}); ok {
+		if raw, ok := reposCfg["repos"].([]interface{}); ok {
+			for _, v := range raw {
+				if s, ok := v.(string); ok {
+					add(s)
+				}
+			}
+		}
+		if raw, ok := reposCfg["repos"].([]string); ok {
+			for _, v := range raw {
+				add(v)
+			}
+		}
+	}
+	if len(out) == 0 {
+		for _, repo := range projectRepos {
+			add(repo)
+		}
+	}
+	return out
 }
 
 func (s *Server) handleNousConfigGoals(w http.ResponseWriter, r *http.Request) {
