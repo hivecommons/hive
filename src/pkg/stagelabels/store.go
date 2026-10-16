@@ -36,6 +36,11 @@ type Record struct {
 	// RegressionCommented records that the one-line regression comment for
 	// the current regression was posted, so it is never posted twice.
 	RegressionCommented bool `json:"regression_commented,omitempty"`
+	// RegressionCommentHead is the head SHA the last regression comment was
+	// posted for. Unlike RegressionCommented it survives a recover→regress
+	// flap, so a gate flapping on one head posts at most one regression
+	// comment for it (hivecommons/hive#12557). Empty for items without a head.
+	RegressionCommentHead string `json:"regression_comment_head,omitempty"`
 	// StallCommented records that the stall note for the current stage
 	// visit was posted (stages with StallNote only).
 	StallCommented bool `json:"stall_commented,omitempty"`
@@ -74,6 +79,18 @@ type Record struct {
 
 // Regressed reports whether the item carries an unresolved regression.
 func (r Record) Regressed() bool { return r.RegressedFrom != None }
+
+// RegressionCommentDue reports whether the regression comment for the
+// current regression still needs posting on head: not when it was already
+// posted for this regression, nor when one was already posted for the same
+// non-empty head SHA in an earlier recover→regress cycle.
+func (r Record) RegressionCommentDue(head string) bool {
+	if r.RegressionCommented {
+		return false
+	}
+	head = strings.TrimSpace(head)
+	return head == "" || !strings.EqualFold(r.RegressionCommentHead, head)
+}
 
 // Transition is what Observe reports about one stage update.
 type Transition struct {
@@ -274,13 +291,28 @@ func IsRegression(from, to Stage) bool {
 
 // MarkRegressionCommented records that the regression comment was posted.
 func (s *Store) MarkRegressionCommented(key string) {
+	s.MarkRegressionCommentedForHead(key, "")
+}
+
+// MarkRegressionCommentedForHead records that the regression comment was
+// posted for head, so later regressions on the same head stay silent (see
+// RegressionCommentDue). An empty head records the comment only for the
+// current regression.
+func (s *Store) MarkRegressionCommentedForHead(key, head string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || r.RegressionCommented {
+	if !ok {
+		return
+	}
+	head = strings.TrimSpace(head)
+	if r.RegressionCommented && (head == "" || r.RegressionCommentHead == head) {
 		return
 	}
 	r.RegressionCommented = true
+	if head != "" {
+		r.RegressionCommentHead = head
+	}
 	s.items[key] = r
 	s.dirty = true
 }

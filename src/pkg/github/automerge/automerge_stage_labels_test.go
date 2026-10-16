@@ -872,3 +872,44 @@ func TestApplyStageLabels_StripsStrayOwnershipLabelsFromContributorPR(t *testing
 		}
 	}
 }
+
+// hivecommons/hive#12557: a gate flapping between merge-queue and a pending
+// stage on one unchanged head used to post a stage-regressed comment every
+// sweep, because each recover re-armed the dedupe. One comment per head.
+func TestApplyStageLabelsRegressionFlapOnSameHeadCommentsOnce(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 17, 15, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	observe := func(labels []string, reason string) {
+		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(12423, labels...), reason, false, nil)
+		e.noteStageAuthor("acme", "widget", 12423, stagelabels.AuthorTrusted)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued := []string{"stage/100-merge-queue", "author/trusted"}
+	held := []string{"stage/050-review-pending", "stage/regressed", "author/trusted"}
+
+	observe(nil, "head-changed-since-eval")
+	api.reset()
+	comments := 0
+	for i := 0; i < 4; i++ {
+		clock.advance(6 * time.Minute)
+		observe(queued, "pending: head pushed 54s ago (< min_head_age)")
+		comments += len(api.comments)
+		api.reset()
+		clock.advance(6 * time.Minute)
+		observe(held, "head-changed-since-eval")
+		comments += len(api.comments)
+		api.reset()
+	}
+	if comments != 1 {
+		t.Fatalf("regression comments across 4 flaps on one head = %d, want 1", comments)
+	}
+}

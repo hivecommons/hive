@@ -44,6 +44,11 @@ type nousCampaignView struct {
 	StageLabel  string `json:"stageLabel"`
 	StageDetail string `json:"stageDetail,omitempty"`
 	NextAction  string `json:"nextAction,omitempty"`
+	// ExperimentLoopIdle marks a ready card in suggest/evolve mode on a hive
+	// where the external experiment loop has written nothing for
+	// NousLoopIdleCycles evaluation cycles (#12541), so the UI can point at
+	// the docs instead of promising proposals that will never come.
+	ExperimentLoopIdle bool `json:"experimentLoopIdle,omitempty"`
 }
 
 // nousCampaignStage fills the lifecycle fields of v from the lab mode and the
@@ -52,11 +57,14 @@ type nousCampaignView struct {
 // → ready. The ready stage distinguishes "lab is in observe mode, press
 // Generate proposals" from "lab is in suggest/evolve mode, waiting for the
 // experiment loop", because the hive process itself designs no proposals.
-func nousCampaignStage(v *nousCampaignView, mode string, rows []nousExperimentProgress) {
+// loopIdle reports that the experiment loop is known not to be running
+// (#12541); the waiting ready stage then says so instead of waiting forever.
+func nousCampaignStage(v *nousCampaignView, mode string, rows []nousExperimentProgress, loopIdle bool) {
 	if v == nil {
 		return
 	}
 	v.NextAction = ""
+	v.ExperimentLoopIdle = false
 	switch v.Status {
 	case nous.StatusArchived:
 		v.Stage, v.StageLabel, v.StageDetail = NousStageConcluded, "concluded", "Archived; baseline, hypotheses and results are frozen read-only."
@@ -96,6 +104,10 @@ func nousCampaignStage(v *nousCampaignView, mode string, rows []nousExperimentPr
 		v.Stage, v.StageLabel = NousStageReady, "ready — generate proposals"
 		v.StageDetail = "Baseline complete. The lab is in Observe mode (data collection only); Generate proposals switches it to Suggest so proposals can be designed for your review."
 		v.NextAction = NousActionGenerateProposals
+	case loopIdle:
+		v.Stage, v.StageLabel = NousStageReady, "ready — the experiment loop is not running on this hive"
+		v.StageDetail = fmt.Sprintf("Baseline complete and the lab is in %s mode, but the experiment loop has written nothing to /var/run/nous/governor in the last %d evaluation cycles. The hive designs no proposals itself; they come only from the external experiment loop — see \"The experiment loop\" in the Experiment Lab operator guide.", strings.Title(strings.ToLower(mode)), NousLoopIdleCycles)
+		v.ExperimentLoopIdle = true
 	default:
 		v.Stage, v.StageLabel = NousStageReady, "ready — generating proposals"
 		v.StageDetail = "Baseline complete and the lab is in " + strings.Title(strings.ToLower(mode)) + " mode. Proposals appear here as soon as the experiment loop designs them; nothing more is needed from you."

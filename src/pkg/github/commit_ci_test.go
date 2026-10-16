@@ -397,3 +397,49 @@ func TestEvaluateCommitCIReportsFailingNonRequired(t *testing.T) {
 		t.Fatalf("FailingNonRequired=%v want %v", st.FailingNonRequired, want)
 	}
 }
+
+// HeadCommitPushedAt reads the head commit's committer date (#12557), clamps
+// it to the PR's creation, and reports errors instead of guessing.
+func TestHeadCommitPushedAt(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/o/r/git/commits/abc":
+			_, _ = w.Write([]byte(`{"sha":"abc","committer":{"name":"c","date":"2026-10-16T17:15:00Z"}}`))
+		case "/repos/o/r/git/commits/nodate":
+			_, _ = w.Write([]byte(`{"sha":"nodate"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}
+	}))
+	defer api.Close()
+	client := gh.NewClient(nil)
+	base, err := url.Parse(api.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = base
+	ctx := context.Background()
+	committed := time.Date(2026, 10, 16, 17, 15, 0, 0, time.UTC)
+
+	pr := &gh.PullRequest{
+		CreatedAt: &gh.Timestamp{Time: committed.Add(-time.Hour)},
+		UpdatedAt: &gh.Timestamp{Time: committed.Add(3 * time.Hour)},
+	}
+	if got, err := HeadCommitPushedAt(ctx, client, "o", "r", "abc", pr); err != nil || !got.Equal(committed) {
+		t.Fatalf("HeadCommitPushedAt = %v, %v; want %v", got, err, committed)
+	}
+	created := committed.Add(time.Hour)
+	if got, err := HeadCommitPushedAt(ctx, client, "o", "r", "abc", &gh.PullRequest{CreatedAt: &gh.Timestamp{Time: created}}); err != nil || !got.Equal(created) {
+		t.Fatalf("clamped HeadCommitPushedAt = %v, %v; want %v", got, err, created)
+	}
+	for _, sha := range []string{"nodate", "missing", " "} {
+		if got, err := HeadCommitPushedAt(ctx, client, "o", "r", sha, pr); err == nil || !got.IsZero() {
+			t.Fatalf("sha %q: got %v, %v; want zero and an error", sha, got, err)
+		}
+	}
+	if _, err := HeadCommitPushedAt(ctx, nil, "o", "r", "abc", pr); err == nil {
+		t.Fatal("nil client must error")
+	}
+}

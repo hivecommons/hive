@@ -38,6 +38,7 @@ func TestNousMultiExperimentCardsUI(t *testing.T) {
 		"<summary>Can I run more than one experiment at once?</summary>",
 		".nous-conflict-warn {",
 		".nous-exp-row .campaign-row-title {",
+		`.nous-exp-stage[data-loop-idle="1"] .nous-exp-stage-label { color: var(--yellow); }`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)
@@ -132,6 +133,14 @@ assert.match(c4, /Baseline 672 \/ 672/);
 const waiting = nousExperimentCard(Object.assign({}, ready, { stageLabel: 'ready — generating proposals', stageDetail: 'Baseline complete and the lab is in Suggest mode. Proposals appear here as soon as the experiment loop designs them; nothing more is needed from you.', nextAction: '' }));
 assert.doesNotMatch(waiting, /Generate proposals</);
 assert.match(waiting, /nothing more is needed from you/);
+assert.doesNotMatch(waiting, /data-loop-idle|How to run the experiment loop/);
+// #12541: the hive designs no proposals itself. When the server reports the
+// external experiment loop idle, the card says so and links the docs
+// instead of promising proposals forever.
+const idle = nousExperimentCard(Object.assign({}, ready, { stageLabel: 'ready — the experiment loop is not running on this hive', stageDetail: 'Baseline complete and the lab is in Suggest mode, but the experiment loop has written nothing to /var/run/nous/governor in the last 24 evaluation cycles.', nextAction: '', experimentLoopIdle: true }));
+assert.match(idle, /<div class="nous-exp-stage" data-stage="ready" data-loop-idle="1"><span class="nous-exp-stage-label">ready — the experiment loop is not running on this hive<\/span>/);
+assert.match(idle, /<a class="nous-exp-stage-docs" href="https:\/\/github\.com\/hivecommons\/hive\/blob\/v5\/src\/docs\/dashboard-sections\.md#experiment-lab" target="_blank" rel="noopener noreferrer">How to run the experiment loop<\/a>/);
+assert.doesNotMatch(idle, /generating proposals|Generate proposals</);
 // Older servers without stage fields: derived locally, never blank.
 assert.match(nousExperimentCard({ id: 5, question: 'q', status: 'active', snapshots: 10, target: 672 }), /data-stage="baseline"><span class="nous-exp-stage-label">collecting baseline 10 \/ 672</);
 assert.match(nousExperimentCard({ id: 6, question: 'q', status: 'active', snapshots: 700, target: 672, complete: true }), /data-stage="ready"/);

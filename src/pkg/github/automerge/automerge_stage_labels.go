@@ -748,7 +748,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 		}
 		if tr.Regressed {
-			if rec, ok := store.Get(key); ok && !rec.RegressionCommented {
+			// Keyed by head SHA: a gate flapping between two stages on one
+			// head (e.g. min_head_age) must not post every sweep (#12557).
+			if rec, ok := store.Get(key); ok && rec.RegressionCommentDue(obs.HeadSHA) {
 				body := stagelabels.RegressionComment(tr.Prev, tr.Next, obs.Reason)
 				if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 					c.warn("stage labels: regression comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
@@ -756,7 +758,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 						firstErr = err
 					}
 				} else {
-					store.MarkRegressionCommented(key)
+					store.MarkRegressionCommentedForHead(key, obs.HeadSHA)
 					result.Comments++
 				}
 			}
