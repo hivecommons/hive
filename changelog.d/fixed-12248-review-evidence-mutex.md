@@ -1,0 +1,1 @@
+- Fixed the merge-eligibility poll loop stalling behind a GitHub PR fetch: the review evidence writer now fetches PR metadata before taking `reviewEvidenceMu` instead of while holding it (#12248).
