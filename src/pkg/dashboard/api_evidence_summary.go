@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -40,7 +41,31 @@ type EvidenceSummary struct {
 	SentinelPerWeek  EvidenceSentinelSeries          `json:"sentinel_hits_per_week"`
 	ShadowGate       EvidenceShadowGate              `json:"shadow_gate"`
 	ReviewerAccuracy *review.ReviewerAccuracySummary `json:"reviewer_accuracy,omitempty"`
-	Missing          EvidenceMissing                 `json:"missing"`
+	// WriteCounters is the proxy's attempted-vs-blocked agent write totals per
+	// intent tier (#12069); omitted when the counter file is absent or unreadable.
+	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
+	Missing       EvidenceMissing               `json:"missing"`
+}
+
+// EvidenceWriteCount is one tier's attempted and proxy-blocked write counts.
+type EvidenceWriteCount struct {
+	Attempted int64 `json:"attempted"`
+	Blocked   int64 `json:"blocked"`
+}
+
+// loadEvidenceWriteCounters reads the durable counter file; any failure yields nil.
+func loadEvidenceWriteCounters(path string) map[string]EvidenceWriteCount {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var f struct {
+		Totals map[string]EvidenceWriteCount `json:"totals"`
+	}
+	if json.Unmarshal(data, &f) != nil || len(f.Totals) == 0 {
+		return nil
+	}
+	return f.Totals
 }
 
 // EvidenceOutcomes counts PRs for one author kind. Closed is always 0 today:
@@ -142,6 +167,7 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := buildEvidenceSummary(bundles, now, hours, repo, kind)
 	resp.Missing.RecordsUnreadable = unreadable
+	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
 
 	days := (hours + 23) / 24
 	if days < 1 || days > reviewerAccuracyMaxWindowDays {

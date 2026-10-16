@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -112,5 +114,25 @@ func TestHandleEvidenceSummaryEmpty(t *testing.T) {
 	}
 	if resp.N != 0 || resp.Hours != 24 {
 		t.Errorf("resp = %+v", resp)
+	}
+}
+
+func TestLoadEvidenceWriteCounters(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "wc.json")
+	body := `{"totals":{"observe":{"attempted":5,"blocked":2,"blocked_by_reason":{"x":2}}},"weeks":{}}`
+	if err := os.WriteFile(good, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := loadEvidenceWriteCounters(good)
+	if got["observe"] != (EvidenceWriteCount{Attempted: 5, Blocked: 2}) {
+		t.Errorf("got %+v", got)
+	}
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte("{nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if loadEvidenceWriteCounters(bad) != nil || loadEvidenceWriteCounters(filepath.Join(dir, "missing.json")) != nil {
+		t.Error("unreadable or absent file must yield nil")
 	}
 }
