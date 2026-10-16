@@ -629,6 +629,10 @@ func isDCOContext(name string) bool {
 	return strings.EqualFold(strings.TrimSpace(name), "dco")
 }
 
+// CommitCIReasonIsPending reports whether a commit-CI skip reason means the
+// checks are still running or not yet reported, as opposed to failing.
+func CommitCIReasonIsPending(reason string) bool { return commitCIReasonIsPending(reason) }
+
 func commitCIReasonIsPending(reason string) bool {
 	return strings.HasSuffix(reason, "-pending") || strings.HasPrefix(reason, "pending: ") || strings.HasPrefix(reason, "required-check-missing:")
 }

@@ -3985,6 +3985,41 @@ type LabelsConfig struct {
 	// every managed repo to grow a second label meaning the same thing.
 	// Defaults to DefaultAutoMergeLabel.
 	AutoMerge string `yaml:"automerge"`
+	// Stage configures the hive-owned stage/NN-* pipeline labels
+	// (hivecommons/hive#12429; docs/labels-and-control-signals.md).
+	Stage StageLabelsConfig `yaml:"stage"`
+}
+
+// StageLabelsConfig is governor.labels.stage: the hive-owned stage/NN-*,
+// author/* and stage/stalled|regressed label families.
+type StageLabelsConfig struct {
+	// Enabled turns the stage reconciler on. nil = true.
+	Enabled *bool `yaml:"enabled"`
+	// Dwell overrides the expected time an item may sit in a stage before
+	// it is marked stage/stalled, keyed by stage slug (e.g. "review-pending":
+	// "1h"). Unset slugs keep the built-in table default; "0" means never.
+	Dwell map[string]string `yaml:"dwell,omitempty"`
+}
+
+// IsEnabled reports whether the stage reconciler runs (default on).
+func (s StageLabelsConfig) IsEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
+// DwellOverrides parses Dwell into durations, skipping unparsable entries.
+func (s StageLabelsConfig) DwellOverrides() map[string]time.Duration {
+	if len(s.Dwell) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Duration, len(s.Dwell))
+	for slug, raw := range s.Dwell {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil || d < 0 {
+			continue
+		}
+		out[strings.ToLower(strings.TrimSpace(slug))] = d
+	}
+	return out
 }
 
 type SensingConfig struct {

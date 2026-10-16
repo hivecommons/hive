@@ -468,6 +468,19 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
 | `supersession_sweep.close_contributor_prs` | `false` | Allows closing superseded human-authored PRs after the grace window. Off: they only get the notice. |
 | `supersession_sweep.grace_period` | `24h` (`DefaultSupersessionGracePeriod`) when 0/unset | How long a human-authored PR stays open after the grace-window notice. Changing it rewrites the notice and restarts the window. |
 
+## Stage labels (`governor.labels.stage`)
+
+The hive owns one ordered `stage/NNN-*` label per open issue/PR
+(`010-actionable` … `100-merge-queue`), an `author/*` admission-tier label on
+PRs, and red `stage/stalled` / `stage/regressed` markers when progress is
+disrupted; `label:stage/stalled` or `label:stage/regressed` across repos is
+everything off the happy path. Default on; `governor.labels.stage.enabled:
+false` stops the reconciler, `governor.labels.stage.dwell.<slug>` re-times a
+stage's stalled threshold (Settings → Labels). The retired `🐝 covered by PR`,
+`claimed` and `hive/in-progress` labels are removed from open items on the
+first cycle after upgrade. Full table, state diagram and migration note:
+[labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine).
+
 ## Shared-CI rerun sweep (`shared_ci_rerun`)
 
 When a fix lane defers a red PR to a `[shared-ci] <check> failing across
