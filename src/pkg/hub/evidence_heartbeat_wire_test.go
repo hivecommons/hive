@@ -20,6 +20,7 @@ func TestSpokeEvidenceWireCompat(t *testing.T) {
 		AutomergeSelfAuthored: &yes,
 		ReviewerFamilies:      []string{"claude", "gpt"},
 		AuthorFamilies:        []string{"gpt"},
+		ByAuthorKind:          map[string]spoke.HeartbeatEvidenceBucket{"agent": {N: 12, Bad: 1}},
 	}}
 	in.Evidence.Calibration[5] = spoke.HeartbeatEvidenceBucket{N: 9, Bad: 1}
 	raw, err := json.Marshal(in)
@@ -34,6 +35,9 @@ func TestSpokeEvidenceWireCompat(t *testing.T) {
 	if got == nil || got.Verdicts90d != 30 || got.FalseApprove90d != 2 || got.FalseBlock90d != 3 ||
 		got.Merged90d != 12 || got.Reverted14d90d != 1 || got.Calibration[5] != (EvidenceBucket{N: 9, Bad: 1}) {
 		t.Fatalf("decoded = %+v", got)
+	}
+	if got.ByAuthorKind["agent"] != (EvidenceBucket{N: 12, Bad: 1}) {
+		t.Fatalf("author kinds lost on wire: %+v", got.ByAuthorKind)
 	}
 	if got.AutomergeSelfAuthored == nil || !*got.AutomergeSelfAuthored {
 		t.Errorf("automerge_self_authored = %v", got.AutomergeSelfAuthored)

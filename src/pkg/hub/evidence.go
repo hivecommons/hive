@@ -33,6 +33,9 @@ type EvidenceBucket struct {
 // HeartbeatEvidence is a spoke's evidence-pipeline summary (#12063). nil means
 // the beat carried none (old spoke) and the stored summary is kept.
 type HeartbeatEvidence struct {
+	// ByAuthorKind counts merged PRs (N) and linked reverts (Bad), not follow-ups.
+	// Nil means the spoke predates this dataset.
+	ByAuthorKind          map[string]EvidenceBucket                  `json:"by_author_kind,omitempty"`
 	Verdicts90d           int                                        `json:"verdicts_90d"`
 	FalseApprove90d       int                                        `json:"false_approve_90d"`
 	FalseBlock90d         int                                        `json:"false_block_90d"`
@@ -74,6 +77,17 @@ func sanitizeEvidence(in *HeartbeatEvidence) *HeartbeatEvidence {
 		AutomergeSelfAuthored: in.AutomergeSelfAuthored,
 		ReviewerFamilies:      sanitizeEvidenceFamilies(in.ReviewerFamilies),
 		AuthorFamilies:        sanitizeEvidenceFamilies(in.AuthorFamilies),
+	}
+	if in.ByAuthorKind != nil {
+		out.ByAuthorKind = map[string]EvidenceBucket{}
+		remaining := out.Merged90d
+		for _, kind := range []string{"human", "agent", "bot"} {
+			if b, ok := in.ByAuthorKind[kind]; ok {
+				n := clampInt(b.N, 0, remaining)
+				out.ByAuthorKind[kind] = EvidenceBucket{N: n, Bad: clampInt(b.Bad, 0, n)}
+				remaining -= n
+			}
+		}
 	}
 	// A subset can never exceed its total.
 	out.FalseApprove90d = clampInt(in.FalseApprove90d, 0, out.Verdicts90d)
@@ -204,6 +218,7 @@ type EvidenceACMMLevel struct {
 
 // EvidenceView is the GET /api/hub/evidence body.
 type EvidenceView struct {
+	RevertRateByAuthorKind map[string]EvidenceRate     `json:"revert_rate_by_author_kind"`
 	Spokes                 int                         `json:"spokes"`
 	Reporting              int                         `json:"reporting"`
 	Calibration            []EvidenceCalibrationBucket `json:"calibration"`
@@ -218,6 +233,7 @@ type EvidenceView struct {
 func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 	out := EvidenceView{Hives: []EvidenceHive{}}
 	var pooled [EvidenceCalibrationBuckets]EvidenceBucket
+	authorKinds := map[string]EvidenceBucket{}
 	family := map[string]*EvidenceBucket{
 		evidenceFamilySame: {}, evidenceFamilyCross: {}, evidenceFamilyMixed: {},
 	}
@@ -230,6 +246,14 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 			PRsMerged90d: h.PRsMerged90d, Calibration: []EvidenceRate{}}
 		if e := h.Evidence; e != nil {
 			out.Reporting++
+			for _, kind := range []string{"human", "agent", "bot"} {
+				if b, ok := e.ByAuthorKind[kind]; ok {
+					p := authorKinds[kind]
+					p.N += b.N
+					p.Bad += b.Bad
+					authorKinds[kind] = p
+				}
+			}
 			row.Reported = true
 			if h.PRsMerged90d != nil {
 				// Both counts are 90-day merged PRs; the record count comes from
@@ -280,6 +304,10 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 		Same:  newEvidenceRate(family[evidenceFamilySame].Bad, family[evidenceFamilySame].N),
 		Cross: newEvidenceRate(family[evidenceFamilyCross].Bad, family[evidenceFamilyCross].N),
 		Mixed: newEvidenceRate(family[evidenceFamilyMixed].Bad, family[evidenceFamilyMixed].N),
+	}
+	out.RevertRateByAuthorKind = map[string]EvidenceRate{}
+	for kind, b := range authorKinds {
+		out.RevertRateByAuthorKind[kind] = newEvidenceRate(b.Bad, b.N)
 	}
 	out.RecordCoverage = newEvidenceRate(covered, mergedTotal)
 	sort.Slice(out.Hives, func(i, j int) bool { return out.Hives[i].ID < out.Hives[j].ID })

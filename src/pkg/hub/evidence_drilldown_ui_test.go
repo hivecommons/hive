@@ -102,7 +102,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 // TestFleetQuadrantFallbackLinkWhenNothingScored: the card is the only entry
 // point to the evidence view, and it is not drawn until an axis is scored, so
 // admins get a one-line link in its place; members still get nothing. The
-// header keeps returning '' on its own (TestFleetQuadrantHeaderWiring pins
+// header keeps returning ” on its own (TestFleetQuadrantHeaderWiring pins
 // that), so the link is mounted beside it and the pair is rendered here the
 // way the hives container does.
 func TestFleetQuadrantFallbackLinkWhenNothingScored(t *testing.T) {
@@ -149,6 +149,7 @@ func TestFleetQuadrantFallbackLinkWhenNothingScored(t *testing.T) {
 
 const evidenceFixtureJS = `{
   spokes: 3, reporting: 2,
+  revert_rate_by_author_kind: {human: {n: 0, rate: null}, agent: {n: 20, rate: 0.05, lo: 0.0089, hi: 0.236}, bot: {n: 2, rate: null}},
   calibration: [
     {bucket: 0, n: 40, rate: 0.1, lo: 0.04, hi: 0.23},
     {bucket: 1, n: 4, rate: null},
@@ -191,7 +192,9 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 		"2 of 3 hives report evidence",
 		// Sections #12117 lists that spokes do not report yet are disclosed in place.
 		"Median time-to-merge is not reported by spokes yet.",
-		"Revert rate by author kind is not reported by spokes yet.",
+		"Revert rate by author kind",
+		"<tr><td>agent</td><td>20</td><td>5.0%</td><td class=\"evidence-ci\">0.9% – 23.6%</td></tr>",
+		"<tr><td>bot</td><td>2</td><td>—</td><td class=\"evidence-ci\">—</td></tr>",
 		"The per-axis criteria table is not reported by spokes yet (tracked in #12080).",
 		"Evidence coverage", "Calibration curve", "ACMM level × outcome",
 		"Same- vs cross-family false approve", "Per-hive evidence",

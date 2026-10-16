@@ -37,7 +37,10 @@ func (s *Server) EvidenceHeartbeat() *spoke.HeartbeatEvidence {
 // buildHeartbeatEvidence aggregates the newest bundle per PR created within
 // evidenceHeartbeatWindow of now. Same-PR dedup matches buildEvidenceSummary.
 func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge *bool) *spoke.HeartbeatEvidence {
-	out := &spoke.HeartbeatEvidence{AutomergeSelfAuthored: selfMerge}
+	out := &spoke.HeartbeatEvidence{AutomergeSelfAuthored: selfMerge,
+		ByAuthorKind: map[string]spoke.HeartbeatEvidenceBucket{
+			evidence.AuthorHuman: {}, evidence.AuthorAgent: {}, evidence.AuthorBot: {},
+		}}
 	cutoff := now.Add(-evidenceHeartbeatWindow)
 
 	latest := map[string]*evidence.Bundle{}
@@ -58,6 +61,15 @@ func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge
 		failed := merged && (len(b.RevertedBy) > 0 || len(b.FollowedUpBy) > 0)
 		if merged {
 			out.Merged90d++
+			if counts, ok := out.ByAuthorKind[b.Author.Kind]; ok {
+				counts.N++
+				// Follow-ups are not reverts. Backlinks are captured by the
+				// evidence linker within its 14-day post-merge window.
+				if len(b.RevertedBy) > 0 {
+					counts.Bad++
+				}
+				out.ByAuthorKind[b.Author.Kind] = counts
+			}
 		}
 		if failed {
 			out.Reverted14d90d++

@@ -1261,7 +1261,14 @@
             '<td>' + evidenceCount(h.verdicts_90d) + '</td>' + evidenceRateCells(h.false_approve_rate) + evidenceRateCells(h.false_block_rate) +
             '<td>' + evidenceCount(h.merged_90d) + '</td>' + evidenceRateCells(h.revert_rate) + '</tr>';
         }).join(''),
-        'Revert rate by author kind is not reported by spokes yet.');
+        '90-day evidence summary.');
+
+      var authorReverts = data.revert_rate_by_author_kind || {};
+      out += evidenceTable('Revert rate by author kind', '<th>Author kind</th>' + evidenceRateHeads('Revert rate'),
+        ['human', 'agent', 'bot'].map(function(k) {
+          return '<tr><td>' + esc(k) + '</td>' + evidenceRateCells(authorReverts[k]) + '</tr>';
+        }).join(''),
+        'Linked reverts within 14 days of merge / merged PRs in the 90-day evidence window. Follow-ups excluded; only spokes reporting author-kind counts contribute.');
 
       /* Shadow gate vs outcome is only emitted once spokes report it. */
       if (data.shadow_gate && typeof data.shadow_gate === 'object') {
