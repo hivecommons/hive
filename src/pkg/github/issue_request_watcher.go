@@ -597,8 +597,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
-	if signal := issueRequestStartSignal(kind, req.Body); signal != "" {
-		c.notifyAgentStart(req.Agent, req.Repo, req.Number, signal)
+	startSignal := issueRequestStartSignal(kind, req.Body)
+	if startSignal != "" {
+		c.notifyAgentStart(req.Agent, req.Repo, req.Number, startSignal)
 	}
 
 	action := AuditActionAgentIssueCreated
@@ -646,6 +647,8 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		slog.String("repo", req.Repo), slog.String("kind", kind),
 		slog.Int("number", resp.Number), slog.Bool("reused", resp.AlreadyExisted),
 		slog.Bool("consolidated", resp.Consolidated),
+		slog.String("start_signal", startSignal),
+		slog.Bool("deferral", kind == "comment" && startSignal == ""),
 		slog.String("agent", req.Agent))
 }
 
