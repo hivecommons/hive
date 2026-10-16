@@ -1001,7 +1001,7 @@
     }
 
     /* ---- Quadrant kite -------------------------------------------------
-       Trust / Efficiency / Satisfaction / Productivity, drawn as a four-axis
+       Trust / Productivity / Satisfaction / Efficiency, drawn as a four-axis
        polygon. ONE renderer at two sizes: a ~22px shape in the table column and
        the same shape at ~170px with labels and numbers in its hover. They must
        never fork — the small kite is legible only because it is literally the
@@ -1015,6 +1015,15 @@
     var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];
     var QUADRANT_AXIS_LABELS = { trust: 'Trust', productivity: 'Prod', satisfaction: 'Satis', efficiency: 'Effic' };
     var QUADRANT_AXIS_FULL = { trust: 'Trust', productivity: 'Productivity', satisfaction: 'Satisfaction', efficiency: 'Efficiency' };
+    /* One-letter corner marks for unlabelled kites; clockwise from north this
+       reads T, P, S, E — the same order as the TRUST / PROD / SATIS / EFFIC
+       tiles beside the chart. */
+    var QUADRANT_AXIS_LETTERS = { trust: 'T', productivity: 'P', satisfaction: 'S', efficiency: 'E' };
+    /* Smallest unlabelled kite that gets corner letters; px font size; and the
+       gap between the outer diamond's tip and the letter. */
+    var QUADRANT_LETTER_MIN_SIZE = 48;
+    var QUADRANT_LETTER_FONT_SIZE = 9;
+    var QUADRANT_LETTER_GAP = 5;
     /* Angles clockwise from north, index-aligned with QUADRANT_AXES. */
     var QUADRANT_ANGLES = [0, 90, 180, 270];
 
@@ -1057,7 +1066,13 @@
        must calibrate; it is omitted when the fleet scored nothing, since an
        empty reference would collapse to a dot and read as data. */
     function quadrantSVG(q, fleet, size, labelled) {
-      var pad = labelled ? size * 0.26 : 2;
+      /* Unlabelled kites of a legible size get one letter per axis tip
+         (T/P/S/E) so a viewer can tell which corner is which without the
+         hover. The 22px table kite is too small for even that — its letters
+         would be noise and collide with neighbouring cells — so it stays bare
+         and relies on its hover panel. */
+      var lettered = !labelled && size >= QUADRANT_LETTER_MIN_SIZE;
+      var pad = labelled ? size * 0.26 : (lettered ? size * 0.14 : 2);
       var cx = size / 2, cy = size / 2, radius = size / 2 - pad;
       var s = '<svg viewBox="0 0 ' + size + ' ' + size + '" width="' + size + '" height="' + size +
         '" role="img" aria-label="' + escAttr(quadrantAriaLabel(q)) + '" style="display:block;overflow:visible">';
@@ -1088,6 +1103,21 @@
         if (!a.scored) continue;
         var p = quadrantPoint(i, a.score, true, cx, cy, radius);
         s += '<circle cx="' + p[0].toFixed(2) + '" cy="' + p[1].toFixed(2) + '" r="' + (labelled ? 2.5 : 1.5) + '" fill="var(--hub-dashboard-accent)"/>';
+      }
+      if (lettered) {
+        for (var i = 0; i < 4; i++) {
+          var name = QUADRANT_AXES[i];
+          var lp = quadrantPoint(i, 100, true, cx, cy, radius + QUADRANT_LETTER_GAP);
+          var ang = QUADRANT_ANGLES[i];
+          var anchor = ang === 90 ? 'start' : (ang === 270 ? 'end' : 'middle');
+          /* North sits on its baseline above the tip, south hangs below it,
+             east/west centre vertically on the tip. */
+          var baseline = ang === 0 ? 'auto' : (ang === 180 ? 'hanging' : 'central');
+          s += '<text x="' + lp[0].toFixed(2) + '" y="' + lp[1].toFixed(2) + '" text-anchor="' + anchor +
+            '" dominant-baseline="' + baseline + '" font-size="' + QUADRANT_LETTER_FONT_SIZE +
+            '" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="var(--muted)" opacity="0.75">' +
+            '<title>' + esc(QUADRANT_AXIS_FULL[name]) + '</title>' + esc(QUADRANT_AXIS_LETTERS[name]) + '</text>';
+        }
       }
       if (labelled) {
         for (var i = 0; i < 4; i++) {

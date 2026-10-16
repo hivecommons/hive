@@ -1,0 +1,1 @@
+- Hub dashboard Fleet quadrant kite now marks each axis tip with a small muted letter (T, P, S, E — Trust north, then clockwise Productivity, Satisfaction, Efficiency) with full-name `<title>` hints, so a viewer can tell which corner is which without opening the hover.
