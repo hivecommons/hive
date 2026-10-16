@@ -63,6 +63,13 @@ const (
 	DefaultGoodFirstIssueMaxPerRepo  = gfi.DefaultMaxPerRepo
 	DefaultGoodFirstIssueMaxPerSweep = gfi.DefaultMaxPerSweep
 	DefaultGoodFirstIssueMinAge      = gfi.DefaultMinAge
+
+	DefaultGoodFirstIssueMinBodyChars     = gfi.DefaultMinBodyChars
+	DefaultGoodFirstIssueMaxBodyChars     = gfi.DefaultMaxBodyChars
+	DefaultGoodFirstIssueMaxPackages      = gfi.DefaultMaxPackages
+	DefaultGoodFirstIssueMinScore         = gfi.DefaultMinScore
+	DefaultGoodFirstIssueReselectCooldown = gfi.DefaultReselectCooldown
+	DefaultGoodFirstIssueDocsBase         = gfi.DefaultDocsBase
 )
 
 // IntervalOrDefault resolves the sweep cadence.

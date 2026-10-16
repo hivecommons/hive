@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
-	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -410,12 +409,12 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 			"goodFirstIssueMaxPerRepo":       strconv.Itoa(config.DefaultGoodFirstIssueMaxPerRepo),
 			"goodFirstIssueMaxPerSweep":      strconv.Itoa(config.DefaultGoodFirstIssueMaxPerSweep),
 			"goodFirstIssueMinAge":           config.DefaultGoodFirstIssueMinAge.String(),
-			"goodFirstIssueMinBodyChars":     strconv.Itoa(gfi.DefaultMinBodyChars),
-			"goodFirstIssueMaxBodyChars":     strconv.Itoa(gfi.DefaultMaxBodyChars),
-			"goodFirstIssueMaxPackages":      strconv.Itoa(gfi.DefaultMaxPackages),
-			"goodFirstIssueMinScore":         strconv.Itoa(gfi.DefaultMinScore),
-			"goodFirstIssueReselectCooldown": gfi.DefaultReselectCooldown.String(),
-			"goodFirstIssueDocsUrl":          gfi.DefaultDocsBase,
+			"goodFirstIssueMinBodyChars":     strconv.Itoa(config.DefaultGoodFirstIssueMinBodyChars),
+			"goodFirstIssueMaxBodyChars":     strconv.Itoa(config.DefaultGoodFirstIssueMaxBodyChars),
+			"goodFirstIssueMaxPackages":      strconv.Itoa(config.DefaultGoodFirstIssueMaxPackages),
+			"goodFirstIssueMinScore":         strconv.Itoa(config.DefaultGoodFirstIssueMinScore),
+			"goodFirstIssueReselectCooldown": config.DefaultGoodFirstIssueReselectCooldown.String(),
+			"goodFirstIssueDocsUrl":          config.DefaultGoodFirstIssueDocsBase,
 		},
 	}
 }
