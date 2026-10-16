@@ -114,6 +114,9 @@ func TestEvidenceBackfillWritesBundlesFromHistory(t *testing.T) {
 	if merged.Merge == nil || merged.Merge.Actor != "carol" || merged.Merge.Method != evidenceBackfillUnrecorded || merged.Merge.SHA != "m105" {
 		t.Errorf("105 merge = %+v", merged.Merge)
 	}
+	if d, ok := merged.TimeToMerge(); !ok || d != 24*time.Hour || !merged.Merge.OpenedAt.Equal(merged.CreatedAt) {
+		t.Errorf("105 time to merge = %v, %v (opened_at %v)", d, ok, merged.Merge.OpenedAt)
+	}
 	if merged.Author.Kind != evidence.AuthorHuman || merged.Backfill.AuthorKindRule != authorRuleHuman {
 		t.Errorf("105 author = %+v rule %s", merged.Author, merged.Backfill.AuthorKindRule)
 	}

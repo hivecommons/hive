@@ -60,7 +60,8 @@
         "actor": {"type": "string", "minLength": 1},
         "method": {"type": "string", "minLength": 1},
         "at": {"type": "string", "format": "date-time"},
-        "sha": {"type": "string", "minLength": 1}
+        "sha": {"type": "string", "minLength": 1},
+        "opened_at": {"type": "string", "format": "date-time"}
       }
     },
     "revert_of": {"$ref": "#/$defs/bundle_ids"},

@@ -152,11 +152,15 @@ type Action struct {
 }
 
 // MergeEvent records who or what merged the PR. It is nil until merge.
+// OpenedAt is when the PR was opened on GitHub, so At minus OpenedAt is its
+// time to merge; zero on bundles recorded before it was captured. It is not
+// the bundle's CreatedAt, which for a live bundle is when review started.
 type MergeEvent struct {
-	Actor  string    `json:"actor"`
-	Method string    `json:"method"`
-	At     time.Time `json:"at"`
-	SHA    string    `json:"sha"`
+	Actor    string    `json:"actor"`
+	Method   string    `json:"method"`
+	At       time.Time `json:"at"`
+	SHA      string    `json:"sha"`
+	OpenedAt time.Time `json:"opened_at,omitzero"`
 }
 
 // Shadow records what shadow-mode gates would have done for the head SHA.
@@ -304,6 +308,9 @@ func (b *Bundle) Validate() error {
 	}
 	if m := b.Merge; m != nil && (m.Actor == "" || m.Method == "" || m.SHA == "") {
 		bad("merge: actor, method and sha are required")
+	}
+	if m := b.Merge; m != nil && !m.OpenedAt.IsZero() && m.OpenedAt.After(m.At) {
+		bad("merge.opened_at must not be after merge.at")
 	}
 	if sh := b.Shadow; sh != nil {
 		if g := sh.ReviewGate; g != nil {
