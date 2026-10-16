@@ -1,9 +1,12 @@
 package hub
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hivestate"
 )
 
 // These tests pin the invariants that are SILENT when broken. A quadrant that
@@ -14,15 +17,14 @@ import (
 func iptr(v int) *int         { return &v }
 func fptr(v float64) *float64 { return &v }
 
-// fleetOf builds n hives with enough variation to exercise percentile ranking,
-// so tests are never accidentally run against a population below the floor.
+// fleetOf builds n hives with a little variation so fleet medians are not all
+// ties.
 func fleetOf(n int, mut func(i int, in *quadrantInputs)) []quadrantInputs {
 	out := make([]quadrantInputs, n)
 	for i := range out {
 		out[i] = quadrantInputs{
 			acmmLevel:     (i % 5) + 1,
 			reposEnrolled: i%4 + 1,
-			reposInOrg:    8,
 		}
 		if mut != nil {
 			mut(i, &out[i])
@@ -31,341 +33,6 @@ func fleetOf(n int, mut func(i int, in *quadrantInputs)) []quadrantInputs {
 	return out
 }
 
-// TestUnscoredIsNotZero is the single most important invariant in the package.
-// If an unmeasured axis ever scores 0 instead of reporting Scored=false, the
-// chart tells owners they are failing at something the platform never measured.
-func TestUnscoredIsNotZero(t *testing.T) {
-	qs := ScoreFleet(fleetOf(10, nil))
-	for _, q := range qs {
-		for _, a := range q.Axes {
-			if a.Axis != AxisSatisfaction {
-				continue
-			}
-			if a.Scored {
-				t.Fatalf("satisfaction must never be scored — no signal exists; got score=%d", a.Score)
-			}
-			if a.Reason == "" {
-				t.Error("an unscored axis must carry a reason, or the hover shows a bare gap")
-			}
-		}
-	}
-}
-
-// TestCompositeExcludesUnscoredAxes guards the composite against counting a
-// missing signal as a zero. With satisfaction always unscored, a 4-axis mean
-// would cap every hive at 75 and make the whole fleet look mediocre.
-func TestCompositeExcludesUnscoredAxes(t *testing.T) {
-	in := fleetOf(10, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(i)
-		in.tasksCompleted7d = iptr(i)
-	})
-	qs := ScoreFleet(in)
-	for i, q := range qs {
-		if q.ScoredAxes == 0 {
-			continue
-		}
-		sum := 0
-		for _, a := range q.Axes {
-			if a.Scored {
-				sum += a.Score
-			}
-		}
-		want := sum / q.ScoredAxes
-		if diff := q.Composite - want; diff > 1 || diff < -1 {
-			t.Errorf("hive %d: composite %d not the mean of %d scored axes (~%d)",
-				i, q.Composite, q.ScoredAxes, want)
-		}
-		if q.ScoredAxes > 3 {
-			t.Errorf("hive %d: %d axes scored, but satisfaction has no signal", i, q.ScoredAxes)
-		}
-	}
-}
-
-// TestDecliningHiveDoesNotJoinPopulation is subtle and high-consequence. A hive
-// that cannot report a criterion must be ABSENT from that criterion's
-// population, not present as a zero — otherwise it drags the distribution down
-// and inflates everyone else's percentile.
-//
-// Positive control included: the same fleet WITH the criterion reported must
-// score differently, proving the test observes the mechanism it claims to.
-func TestDecliningHiveDoesNotJoinPopulation(t *testing.T) {
-	// Six hives report relay activity; four decline entirely (nil).
-	withDecliners := fleetOf(10, func(i int, in *quadrantInputs) {
-		if i < 6 {
-			in.tasksCompleted7d = iptr(10 + i)
-		}
-	})
-	// Same six values, but the decliners report a real zero instead of nil.
-	withZeros := fleetOf(10, func(i int, in *quadrantInputs) {
-		if i < 6 {
-			in.tasksCompleted7d = iptr(10 + i)
-		} else {
-			in.tasksCompleted7d = iptr(0)
-		}
-	})
-
-	a := ScoreFleet(withDecliners)
-	b := ScoreFleet(withZeros)
-
-	prodOf := func(q Quadrant) (int, bool) {
-		for _, ax := range q.Axes {
-			if ax.Axis == AxisProductivity {
-				return ax.Score, ax.Scored
-			}
-		}
-		return 0, false
-	}
-
-	sa, oka := prodOf(a[0])
-	sb, okb := prodOf(b[0])
-	if !oka || !okb {
-		t.Fatal("expected hive 0 to score productivity in both fleets")
-	}
-	if sa == sb {
-		t.Errorf("nil (declined) and 0 (measured) produced the same score %d — "+
-			"absent evidence is being treated as a measurement", sa)
-	}
-}
-
-// TestNudgeOnlyWhenWeak keeps the instrument from nagging. A nudge that fires
-// on something already strong trains people to ignore nudges everywhere.
-//
-// The gate is deliberately on the weakest CRITERION, not on the axis average. A
-// hive can sit at a high autonomy level with a strict governor and still have
-// only one of eight repos enrolled: the axis averages well, but "only 1 of 8
-// org repos enrolled" is precisely the thing that would move it forward.
-// Suppressing that because the axis looks fine would hide the one actionable
-// finding on the row, which is the opposite of what this instrument is for.
-//
-// So the invariant is: a nudge implies SOME contributing criterion ranked at or
-// below the median — never that the whole axis did.
-func TestNudgeOnlyWhenWeak(t *testing.T) {
-	inputs := fleetOf(12, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(i * 3)
-		in.workSource = "issues"
-	})
-	qs := ScoreFleet(inputs)
-
-	// criterionPercentile re-derives one criterion's rank against the same
-	// population ScoreFleet used, so the assertion checks the real gate rather
-	// than a reimplementation of it.
-	criterionPercentile := func(axis string, idx int, want subCriterion) int {
-		var pop []float64
-		for j := range inputs {
-			for _, oc := range criteriaFor(axis, inputs[j]) {
-				if oc.name == want.name {
-					pop = append(pop, oc.value)
-				}
-			}
-		}
-		return percentileRank(want.value, pop, want.higherIsBetter)
-	}
-
-	for i, q := range qs {
-		for _, a := range q.Axes {
-			if !a.Scored || a.Nudge == "" {
-				continue
-			}
-			weakEnough := false
-			for _, c := range criteriaFor(a.Axis, inputs[i]) {
-				if c.nudge == a.Nudge && criterionPercentile(a.Axis, i, c) <= 50 {
-					weakEnough = true
-				}
-			}
-			if !weakEnough {
-				t.Errorf("hive %d: axis %s carries nudge %q, but no contributing criterion ranked at or below the median",
-					i, a.Axis, a.Nudge)
-			}
-		}
-	}
-}
-
-// TestNudgeAbsentWhenEverythingIsStrong is the positive control for the gate
-// above: a hive that leads the fleet on every productivity criterion must carry
-// no productivity nudge, or the gate is suppressing nothing at all.
-func TestNudgeAbsentWhenEverythingIsStrong(t *testing.T) {
-	inputs := fleetOf(12, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr((i + 1) * 10)
-		in.tasksCompleted7d = iptr((i + 1) * 10)
-		in.contributorCount = 4
-		in.activeContributors = 4
-		// Non-default work source, so that criterion is at its best value too.
-		in.workSource = "linear"
-	})
-	qs := ScoreFleet(inputs)
-	for _, a := range qs[11].Axes {
-		if a.Axis == AxisProductivity && a.Nudge != "" {
-			t.Errorf("the fleet-leading hive still carries a productivity nudge %q — the gate suppresses nothing", a.Nudge)
-		}
-	}
-}
-
-// TestSmallFleetIsUnscored stops the chart claiming precision it cannot have.
-// Ranking three hives yields 0/50/100 no matter how close they really are.
-func TestSmallFleetIsUnscored(t *testing.T) {
-	qs := ScoreFleet(fleetOf(3, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(i)
-	}))
-	for i, q := range qs {
-		for _, a := range q.Axes {
-			if a.Scored {
-				t.Errorf("hive %d: axis %s scored in a fleet of 3 — below the percentile floor",
-					i, a.Axis)
-			}
-		}
-	}
-	// Positive control: the same shape at fleet size 10 DOES score, proving the
-	// floor is what suppressed it rather than the inputs being unscorable.
-	big := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(i)
-	}))
-	any := false
-	for _, q := range big {
-		if q.ScoredAxes > 0 {
-			any = true
-		}
-	}
-	if !any {
-		t.Error("positive control failed: fleet of 10 scored nothing, so the small-fleet test proves nothing")
-	}
-}
-
-// TestCostRatioFloor guards the tokens-per-PR RATIO against being computed off
-// one or two merges, where it reflects fixed setup spend rather than how the
-// hive runs.
-//
-// It asserts the criterion, not the axis. The axis legitimately still scores
-// here: the burn RATE (tokens per day) carries no PR floor because it is
-// meaningful whatever a hive has shipped, and only the ratio that divides by
-// merged PRs needs a denominator worth dividing by.
-func TestCostRatioFloor(t *testing.T) {
-	below := efficiencyCriteria(quadrantInputs{
-		tokensPerDay: fptr(50000),
-		prsMerged90d: iptr(minMergedPRsForCostRatio - 1),
-	})
-	for _, c := range below {
-		if c.name == "tokens_per_pr" {
-			t.Errorf("tokens_per_pr was computed on %d merged PRs — below the floor",
-				minMergedPRsForCostRatio-1)
-		}
-	}
-	// Positive control: at the floor the ratio DOES appear, proving the check
-	// above observes the floor rather than a criterion that never fires.
-	at := efficiencyCriteria(quadrantInputs{
-		tokensPerDay: fptr(50000),
-		prsMerged90d: iptr(minMergedPRsForCostRatio),
-	})
-	found := false
-	for _, c := range at {
-		if c.name == "tokens_per_pr" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("tokens_per_pr missing at %d merged PRs — the floor test proves nothing",
-			minMergedPRsForCostRatio)
-	}
-}
-
-// TestReworkRateRanksRejectionAsBad guards the direction of the rework
-// criterion. If it inverts, the hives wasting the most budget on PRs nobody
-// merged would score BEST on efficiency — rewarding exactly the behaviour the
-// axis exists to flag, while still drawing a perfectly plausible kite.
-func TestReworkRateRanksRejectionAsBad(t *testing.T) {
-	// Hive 0 is clean (10 merged, 0 rejected); hive 9 is mostly rework.
-	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(10)
-		in.prsRejected90d = iptr(i * 2)
-	}))
-	effOf := func(q Quadrant) (int, bool) {
-		for _, a := range q.Axes {
-			if a.Axis == AxisEfficiency {
-				return a.Score, a.Scored
-			}
-		}
-		return 0, false
-	}
-	clean, ok1 := effOf(qs[0])
-	messy, ok2 := effOf(qs[9])
-	if !ok1 || !ok2 {
-		t.Fatal("expected efficiency to score for both hives")
-	}
-	if clean <= messy {
-		t.Errorf("rework ranking inverted: clean hive %d, high-rework hive %d — "+
-			"wasted effort is scoring as efficiency", clean, messy)
-	}
-}
-
-// TestReworkFloorSuppressesNoise stops a single rejection out of two PRs
-// reading as a 50%% rework rate and flagging a hive that has barely started.
-func TestReworkFloorSuppressesNoise(t *testing.T) {
-	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(1)
-		in.prsRejected90d = iptr(1) // total 2, below minPRsForReworkRate
-	}))
-	for i, q := range qs {
-		for _, a := range q.Axes {
-			if a.Axis != AxisEfficiency || !a.Scored {
-				continue
-			}
-			if strings.Contains(a.Nudge, "rejected") {
-				t.Errorf("hive %d: rework nudge fired on a 2-PR sample: %q", i, a.Nudge)
-			}
-		}
-	}
-}
-
-// TestAxisOrderStable pins the canonical order. The small kite in the table is
-// readable only because the axes never move; a reorder would silently change
-// what every previously-learned shape means.
-func TestAxisOrderStable(t *testing.T) {
-	want := []string{AxisTrust, AxisProductivity, AxisSatisfaction, AxisEfficiency}
-	if len(QuadrantAxisOrder) != len(want) {
-		t.Fatalf("axis count changed: %v", QuadrantAxisOrder)
-	}
-	for i := range want {
-		if QuadrantAxisOrder[i] != want[i] {
-			t.Fatalf("axis order changed at %d: got %s want %s — every learned kite shape now means something else",
-				i, QuadrantAxisOrder[i], want[i])
-		}
-	}
-	qs := ScoreFleet(fleetOf(6, nil))
-	for _, q := range qs {
-		for i, a := range q.Axes {
-			if a.Axis != want[i] {
-				t.Fatalf("emitted axes out of canonical order: %v", q.Axes)
-			}
-		}
-	}
-}
-
-// TestLowerIsBetterInverted proves cost-style criteria rank the right way. If
-// this inverts, the most expensive hives score best and the chart rewards
-// exactly what it should flag.
-func TestLowerIsBetterInverted(t *testing.T) {
-	pop := []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-	cheap := percentileRank(1, pop, false)
-	dear := percentileRank(10, pop, false)
-	if cheap <= dear {
-		t.Errorf("cost ranking inverted: cheap=%d dear=%d — expensive hives are scoring better", cheap, dear)
-	}
-}
-
-// TestFleetAverageIgnoresUnscored keeps the reference polygon honest: an axis
-// nobody could score must not appear as a real value behind every row.
-func TestFleetAverageIgnoresUnscored(t *testing.T) {
-	avg := FleetAverage(ScoreFleet(fleetOf(10, nil)))
-	for _, a := range avg.Axes {
-		if a.Axis == AxisSatisfaction && a.Scored {
-			t.Error("fleet average invented a satisfaction score")
-		}
-	}
-	if avg.ScoredAxes == 0 {
-		t.Error("fleet average scored nothing at all — the reference polygon would be empty")
-	}
-}
-
-// axisOf pulls one axis out of a quadrant, for the tests below.
 func axisOf(q Quadrant, axis string) (AxisScore, bool) {
 	for _, a := range q.Axes {
 		if a.Axis == axis {
@@ -375,391 +42,521 @@ func axisOf(q Quadrant, axis string) (AxisScore, bool) {
 	return AxisScore{}, false
 }
 
-// --- Absolute activity floor (BUG 1) -----------------------------------------
-
-// TestIdleFleetScoresLowNotMedian is the headline regression.
-//
-// A percentile puts a uniformly-tied population at 50 — ties count as half —
-// so before the activity gate a fleet where NOBODY had merged anything scored
-// every hive at ~50 on productivity and reported a healthy, average fleet that
-// did not exist. The live fleet is exactly this shape: 28 of 62 hives at zero
-// merged PRs.
-//
-// The invariant: doing nothing, measured, scores near zero. Not near the median.
-func TestIdleFleetScoresLowNotMedian(t *testing.T) {
-	// Twenty hives, all genuinely idle: they REPORT (so they are scored, not
-	// unscored) and every reported number is zero.
-	idle := ScoreFleet(fleetOf(20, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(0)
-		in.tasksCompleted7d = iptr(0)
-	}))
-
-	for i, q := range idle {
-		a, ok := axisOf(q, AxisProductivity)
-		if !ok || !a.Scored {
-			t.Fatalf("hive %d: productivity must still be SCORED — a measured zero is "+
-				"a real measurement, not absent evidence", i)
-		}
-		if a.Score >= idleFleetMaxScore {
-			t.Errorf("hive %d: an entirely idle hive scored productivity %d — "+
-				"doing nothing is ranking at or near the fleet median, which is the "+
-				"bug this gate exists to prevent", i, a.Score)
+func criterionOf(t *testing.T, a AxisScore, name string) CriterionScore {
+	t.Helper()
+	for _, c := range a.Criteria {
+		if c.Name == name {
+			return c
 		}
 	}
+	t.Fatalf("criterion %q not listed on axis %s", name, a.Axis)
+	return CriterionScore{}
+}
 
-	// Positive control. The same fleet shape, but every hive genuinely busy,
-	// MUST produce high scores — otherwise the assertion above would pass on a
-	// scorer that simply returns zero for everything and proves nothing.
-	busy := ScoreFleet(fleetOf(20, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(activityFloorMergedPRs * (i + 2))
-		in.tasksCompleted7d = iptr(activityFloorRelayTasks * (i + 2))
-	}))
-	top, ok := axisOf(busy[19], AxisProductivity)
-	if !ok || !top.Scored {
-		t.Fatal("positive control: the busiest hive must score productivity")
+// evidenceWith builds a heartbeat evidence block with enough verdicts and
+// merges to clear minEvidenceN.
+func evidenceWith(verdicts, falseApprove, falseBlock, merged, reverted int) *HeartbeatEvidence {
+	return &HeartbeatEvidence{Verdicts90d: verdicts, FalseApprove90d: falseApprove, FalseBlock90d: falseBlock,
+		Merged90d: merged, Reverted14d90d: reverted}
+}
+
+// --- Curves -----------------------------------------------------------------
+
+// TestCurveEdges pins the 0–100 mapping at and beyond both ends, in both
+// directions and both shapes, so a threshold change is a deliberate edit here
+// rather than a silent drift in every score.
+func TestCurveEdges(t *testing.T) {
+	cases := []struct {
+		name string
+		c    curve
+		v    float64
+		want int
+	}{
+		{"linear worst", curve{curveLinear, 0, 1}, 0, 0},
+		{"linear best", curve{curveLinear, 0, 1}, 1, 100},
+		{"linear mid", curve{curveLinear, 0, 1}, 0.5, 50},
+		{"linear beyond best clamps", curve{curveLinear, 0, 1}, 3, 100},
+		{"linear below worst clamps", curve{curveLinear, 0, 1}, -1, 0},
+		{"lower-is-better worst", curve{curveLinear, curveRevertWorst, curveRevertBest}, 0.10, 0},
+		{"lower-is-better best", curve{curveLinear, curveRevertWorst, curveRevertBest}, 0, 100},
+		{"lower-is-better half", curve{curveLinear, curveRevertWorst, curveRevertBest}, 0.05, 50},
+		{"lower-is-better beyond worst clamps", curve{curveLinear, curveRevertWorst, curveRevertBest}, 0.9, 0},
+		{"log worst", curve{curveLog, curveThroughputWorst, curveThroughputBest}, 0.1, 0},
+		{"log best", curve{curveLog, curveThroughputWorst, curveThroughputBest}, 10, 100},
+		{"log geometric midpoint", curve{curveLog, curveThroughputWorst, curveThroughputBest}, 1, 50},
+		{"log zero output is worst", curve{curveLog, curveThroughputWorst, curveThroughputBest}, 0, 0},
+		{"log zero cost is best", curve{curveLog, curveTokensPerMergeWorst, curveTokensPerMergeBest}, 0, 100},
+		{"log cost mid", curve{curveLog, 1000, 10}, 100, 50},
+		{"degenerate curve scores zero", curve{curveLinear, 1, 1}, 1, 0},
 	}
-	if top.Score <= idleFleetMaxScore {
-		t.Errorf("positive control failed: the fleet-leading BUSY hive scored only %d — "+
-			"the idle assertion above would pass even on a scorer that always returns 0",
-			top.Score)
+	for _, c := range cases {
+		if got := c.c.score(c.v); got != c.want {
+			t.Errorf("%s: score(%v) = %d, want %d", c.name, c.v, got, c.want)
+		}
 	}
 }
 
-// idleFleetMaxScore is the ceiling an entirely idle hive must stay under.
-//
-// Set well below 50 (the value a tied percentile produces) so the test fails
-// loudly if the gate is removed, but not at 0 — the productivity axis averages
-// several criteria and the exempt ones (work source, human-blocked, SLA) still
-// contribute a real rank to an idle hive, which is correct: a hive with nothing
-// blocked genuinely is not blocked.
-const idleFleetMaxScore = 35
-
-// TestSinglePRDoesNotReachTopDecile pins the ramp's shape.
-//
-// The operator's specific complaint: one hive with THREE merged PRs outranked
-// 28 idle ones and landed high. Rank alone said it beat 28 hives, so it did.
-// With the gate its three PRs earn ~30% of that rank, which keeps it ABOVE the
-// idle hives (it did do more) without putting it near the top of the fleet.
-func TestSinglePRDoesNotReachTopDecile(t *testing.T) {
-	// One hive with a single merged PR among nineteen idle ones — the live
-	// fleet's shape, where a lone PR previously outranked everybody.
-	in := fleetOf(20, func(i int, in *quadrantInputs) {
-		if i == 0 {
-			in.prsMerged90d = iptr(1)
-			return
+// TestEveryCriterionHasASpec guards the catalogue: every name an axis lists
+// resolves to a spec with a label, a positive weight, a formatter, a non-flat
+// curve and the two explainer sentences. A missing entry would render as an
+// empty row with weight 0 and no explanation.
+func TestEveryCriterionHasASpec(t *testing.T) {
+	seen := map[string]string{}
+	for _, axis := range QuadrantAxisOrder {
+		for _, name := range quadrantCriteriaOrder[axis] {
+			if prev, dup := seen[name]; dup {
+				t.Errorf("criterion %q listed on both %s and %s — it would count twice", name, prev, axis)
+			}
+			seen[name] = axis
+			spec, ok := criterionSpecs[name]
+			if !ok {
+				t.Errorf("criterion %q on %s has no spec", name, axis)
+				continue
+			}
+			if spec.name != name || spec.label == "" || spec.weight <= 0 || spec.format == nil || spec.good == "" {
+				t.Errorf("criterion %q spec is incomplete: %+v", name, spec)
+			}
+			if spec.curve.best == spec.curve.worst {
+				t.Errorf("criterion %q has a flat curve", name)
+			}
+			if strings.TrimSpace(spec.howText()) == "" {
+				t.Errorf("criterion %q has no 'how it is scored' sentence", name)
+			}
 		}
-		in.prsMerged90d = iptr(0)
+	}
+	for name := range criterionSpecs {
+		if _, listed := seen[name]; !listed {
+			t.Errorf("spec %q is not listed on any axis", name)
+		}
+	}
+}
+
+// TestCriteriaTableGolden pins each axis's criteria list and weights. Any
+// change here is a change to what the quadrant MEANS and must be deliberate —
+// and mirrored in docs/fleet-health.md.
+func TestCriteriaTableGolden(t *testing.T) {
+	want := map[string][]string{
+		AxisTrust:        {"revert_rate:2", "false_approve_rate:2", "autonomy:2", "delegation:1", "merge_acceptance:1", "evidence_coverage:1", "boundary_block_rate:1", "breadth:1"},
+		AxisProductivity: {"merge_throughput:3", "relay_7d:1", "contributor_engagement:1", "work_source:1", "human_blocked:1", "sla_violations:1", "time_to_merge:2"},
+		AxisEfficiency:   {"tokens_per_merge:3", "tokens_per_day:1", "rework_rate:1", "output_per_agent:1", "agent_idle_ratio:1", "cost_per_merge:2"},
+		AxisSatisfaction: {"human_override_rate:2", "sla_kept:1", "hold_lift_latency:1", "contributor_return:1", "pulse:2"},
+	}
+	for _, axis := range QuadrantAxisOrder {
+		var got []string
+		for _, c := range criteriaFor(axis, quadrantInputs{}) {
+			got = append(got, c.spec.name+":"+fmtCount(c.spec.weight))
+		}
+		if strings.Join(got, ",") != strings.Join(want[axis], ",") {
+			t.Errorf("%s criteria table changed:\n got %v\nwant %v", axis, got, want[axis])
+		}
+		// The builder must list the catalogue's order exactly once each, or
+		// the fleet explainer (which walks quadrantCriteriaOrder) and the
+		// per-hive explainer (which walks the builder) would disagree.
+		var order []string
+		for _, c := range criteriaFor(axis, quadrantInputs{}) {
+			order = append(order, c.spec.name)
+		}
+		if strings.Join(order, ",") != strings.Join(quadrantCriteriaOrder[axis], ",") {
+			t.Errorf("%s builder order %v != quadrantCriteriaOrder %v", axis, order, quadrantCriteriaOrder[axis])
+		}
+	}
+}
+
+// --- Unmeasured is not zero ------------------------------------------------------
+
+// TestUnmeasuredCriterionExcludedFromAxis is the single most important
+// invariant in the package: a criterion with no input is listed as unmeasured
+// and contributes NOTHING to the axis, rather than a zero that drags it down.
+func TestUnmeasuredCriterionExcludedFromAxis(t *testing.T) {
+	// Only autonomy is measured on Trust here: L6 scores 100, so the axis
+	// must be exactly 100. If any unmeasured criterion leaked in as a zero
+	// the weighted mean would fall well below.
+	a := scoreAxis(AxisTrust, trustCriteria(quadrantInputs{acmmLevel: 6}))
+	if !a.Scored || a.Score != 100 {
+		t.Fatalf("Trust with only L6 measured = %d (scored=%v), want 100 — an unmeasured criterion is being scored as zero", a.Score, a.Scored)
+	}
+	if a.Measured != 1 || a.Unmeasured != 7 {
+		t.Errorf("measured/unmeasured = %d/%d, want 1/7", a.Measured, a.Unmeasured)
+	}
+	for _, c := range a.Criteria {
+		if c.Name == critAutonomy {
+			continue
+		}
+		if c.Measured || c.Reason == "" || c.Score != 0 || c.Display != "" {
+			t.Errorf("criterion %s should be listed unmeasured with a reason, got %+v", c.Name, c)
+		}
+	}
+}
+
+// TestNoCriteriaMeansUnscoredWithReason: an axis with nothing measured is
+// unscored (collapsed spoke), never 0, and says what is missing.
+func TestNoCriteriaMeansUnscoredWithReason(t *testing.T) {
+	qs := ScoreFleet([]quadrantInputs{{}})
+	for _, a := range qs[0].Axes {
+		if a.Axis == AxisProductivity {
+			// work_source is always measured (empty = human-filed issues), so
+			// Productivity scores even on an empty input.
+			continue
+		}
+		if a.Scored {
+			t.Errorf("%s scored %d on an empty input", a.Axis, a.Score)
+		}
+		if a.Reason == "" || !strings.Contains(a.Reason, "Not measured yet") {
+			t.Errorf("%s unscored without a 'Not measured yet' reason: %q", a.Axis, a.Reason)
+		}
+		if !strings.Contains(a.Summary, "not measured yet") {
+			t.Errorf("%s summary should say not measured yet: %q", a.Axis, a.Summary)
+		}
+	}
+}
+
+// TestMeasuredZeroDiffersFromNil: a reported zero scores at the bottom of its
+// curve; a nil is unmeasured. The two must never collapse into one.
+func TestMeasuredZeroDiffersFromNil(t *testing.T) {
+	withZero := scoreAxis(AxisProductivity, productivityCriteria(quadrantInputs{tasksCompleted7d: iptr(0)}))
+	withNil := scoreAxis(AxisProductivity, productivityCriteria(quadrantInputs{}))
+	z := criterionOf(t, withZero, critRelay)
+	n := criterionOf(t, withNil, critRelay)
+	if !z.Measured || z.Score != 0 {
+		t.Errorf("relay 0 should be measured and score 0, got %+v", z)
+	}
+	if n.Measured {
+		t.Errorf("relay nil should be unmeasured, got %+v", n)
+	}
+	if withZero.Measured == withNil.Measured {
+		t.Error("a measured zero and a nil changed the measured count identically")
+	}
+}
+
+// --- Satisfaction root cause ------------------------------------------------------
+
+// TestSatisfactionScoresFromEvidenceAndHiveState is the fix for the fleet-wide
+// "SATIS —": a single hive with ≥10 verdicts (or a 7-day hive-state trend)
+// scores the axis, with no population floor to kill it, and the unmeasured
+// criteria are listed so the reader sees what would feed them.
+func TestSatisfactionScoresFromEvidenceAndHiveState(t *testing.T) {
+	a := scoreAxis(AxisSatisfaction, satisfactionCriteria(quadrantInputs{evidence: evidenceWith(20, 0, 1, 20, 0)}))
+	if !a.Scored {
+		t.Fatalf("satisfaction unscored with 20 verdicts: %s", a.Reason)
+	}
+	o := criterionOf(t, a, critOverride)
+	if !o.Measured || o.Display != "5.0%" || o.Score != 50 {
+		t.Errorf("override rate 1/20 → %+v, want measured 5.0%% scoring 50", o)
+	}
+	if a.Unmeasured != 4 {
+		t.Errorf("unmeasured = %d, want 4 (sla_kept, hold-lift, return, pulse)", a.Unmeasured)
+	}
+	p := criterionOf(t, a, critPulse)
+	if p.Measured || !strings.Contains(p.Reason, "thumbs") {
+		t.Errorf("pulse must be unmeasured and say what would feed it, got %+v", p)
+	}
+
+	// Hive state alone also scores the axis.
+	hs := &HeartbeatEvidence{HiveState: &hivestate.Trends{Last7d: hivestate.Window{Samples: 24, SLAViolationRate: 0.25}}}
+	b := scoreAxis(AxisSatisfaction, satisfactionCriteria(quadrantInputs{evidence: hs}))
+	if !b.Scored || b.Score != 75 {
+		t.Errorf("SLA kept 75%% alone → score %d (scored=%v), want 75", b.Score, b.Scored)
+	}
+
+	// Below the verdict floor the override criterion is unmeasured, not 0.
+	few := scoreAxis(AxisSatisfaction, satisfactionCriteria(quadrantInputs{evidence: evidenceWith(5, 0, 5, 5, 0)}))
+	if c := criterionOf(t, few, critOverride); c.Measured {
+		t.Errorf("5 verdicts must leave override unmeasured, got %+v", c)
+	}
+	if few.Scored {
+		t.Error("nothing measured must leave satisfaction unscored")
+	}
+}
+
+// --- Trust fed from evidence -------------------------------------------------------
+
+func TestTrustUsesEvidence(t *testing.T) {
+	e := evidenceWith(40, 2, 0, 50, 1)
+	e.WriteCounters = map[string]EvidenceWriteCount{"L3": {Attempted: 30, Blocked: 3}, "L4": {Attempted: 20, Blocked: 2}}
+	in := quadrantInputs{acmmLevel: 4, prsMerged90d: iptr(200), prsRejected90d: iptr(20), evidence: e}
+	in.mergeAcceptance = fptr(200.0 / 220)
+	a := scoreAxis(AxisTrust, trustCriteria(in))
+	if !a.Scored {
+		t.Fatal(a.Reason)
+	}
+	checks := map[string]struct {
+		display string
+		score   int
+	}{
+		critRevert:       {"2.0%", 80},
+		critFalseApprove: {"5.0%", 50},
+		critCoverage:     {"25.0%", 25},
+		critBoundary:     {"10.0%", 50},
+		critAutonomy:     {"L4", 60},
+	}
+	for name, want := range checks {
+		c := criterionOf(t, a, name)
+		if !c.Measured || c.Display != want.display || c.Score != want.score {
+			t.Errorf("%s = %+v, want %s scoring %d", name, c, want.display, want.score)
+		}
+	}
+	if c := criterionOf(t, a, critDelegation); c.Measured {
+		t.Error("delegation must be unmeasured when automerge_self_authored is nil")
+	}
+	// Weighted mean: revert 80×2 + false-approve 50×2 + autonomy 60×2 +
+	// acceptance (90.9% → 82)×1 + coverage 25×1 + boundary 50×1 over weight 9.
+	if want := (80*2 + 50*2 + 60*2 + 82 + 25 + 50 + 4) / 9; a.Score != want {
+		t.Errorf("Trust = %d, want weighted mean %d", a.Score, want)
+	}
+}
+
+// --- Efficiency does not reward idleness -------------------------------------------
+
+func TestEfficiencyBurnRateOnlyForShippingHives(t *testing.T) {
+	idle := scoreAxis(AxisEfficiency, efficiencyCriteria(quadrantInputs{tokensPerDay: fptr(1000), prsMerged90d: iptr(0), prsRejected90d: iptr(0)}))
+	if c := criterionOf(t, idle, critTokensPerDay); c.Measured {
+		t.Errorf("an idle hive's burn rate must be unmeasured, got %+v", c)
+	}
+	busy := scoreAxis(AxisEfficiency, efficiencyCriteria(quadrantInputs{tokensPerDay: fptr(1_000_000), prsMerged90d: iptr(30), prsRejected90d: iptr(0), agentCount: 3}))
+	if c := criterionOf(t, busy, critTokensPerDay); !c.Measured || c.Score != 50 {
+		t.Errorf("1M tokens/day on a shipping hive → %+v, want measured scoring 50", c)
+	}
+	// 1M/day × 90 / 30 merges = 3M per merge: log midpoint of 100k..20M is
+	// ~1.41M, so 3M lands a little below 50.
+	if c := criterionOf(t, busy, critTokensPerPR); !c.Measured || c.Display != "3.0M tokens" || c.Score < 30 || c.Score > 45 {
+		t.Errorf("tokens per merge → %+v, want 3.0M tokens scoring 30–45", c)
+	}
+	if c := criterionOf(t, busy, critCostPerMerge); c.Measured || !strings.Contains(c.Reason, "launch-cost") {
+		t.Errorf("cost per merge must be listed unmeasured naming the launch-cost API, got %+v", c)
+	}
+}
+
+// --- Productivity scale ---------------------------------------------------------------
+
+// TestProductivityUsesHiveSpecificThroughput: the hive's own RepoActivity
+// merges beat the org-wide collector count, and a busy hive actually scores
+// high — the fix for "16/100 on a fleet with thousands of merges".
+func TestProductivityUsesHiveSpecificThroughput(t *testing.T) {
+	own := scoreAxis(AxisProductivity, productivityCriteria(quadrantInputs{mergesPerWeek: fptr(12), activeRepos: 3, prsMerged90d: iptr(3746)}))
+	c := criterionOf(t, own, critThroughput)
+	if !c.Measured || c.Display != "4.0 merges/repo/week" || c.Score < 75 || c.Score > 85 {
+		t.Errorf("throughput from RepoActivity → %+v, want 4.0/repo/week scoring ~80", c)
+	}
+	fallback := scoreAxis(AxisProductivity, productivityCriteria(quadrantInputs{prsMerged90d: iptr(130), reposEnrolled: 2}))
+	f := criterionOf(t, fallback, critThroughput)
+	if !f.Measured || !strings.HasPrefix(f.Display, "5.1 merges") || f.Score < 80 {
+		t.Errorf("fallback throughput → %+v, want ~5.1/repo/week from the org count", f)
+	}
+	if c := criterionOf(t, fallback, critTimeToMerge); c.Measured || c.Reason == "" {
+		t.Errorf("time to merge must be listed unmeasured, got %+v", c)
+	}
+}
+
+// --- Fleet median -------------------------------------------------------------------
+
+func TestFleetMedianNotMean(t *testing.T) {
+	// Nine hives at L1 (Trust 0) and one at L6 (Trust 100): the mean is 10,
+	// the median 0. The fleet must report the median and n.
+	in := fleetOf(10, func(i int, in *quadrantInputs) {
+		in.acmmLevel = 1
+		if i == 9 {
+			in.acmmLevel = 6
+		}
 	})
+	fleet := FleetMedian(ScoreFleet(in))
+	if fleet.Aggregate != QuadrantFleetAggregate || fleet.N != 10 {
+		t.Errorf("fleet aggregate/n = %q/%d, want median/10", fleet.Aggregate, fleet.N)
+	}
+	tr, _ := axisOf(fleet, AxisTrust)
+	if !tr.Scored || tr.Score != 0 || tr.N != 10 {
+		t.Errorf("fleet Trust = %+v, want median 0 over n=10", tr)
+	}
+	au := criterionOf(t, tr, critAutonomy)
+	if !au.Measured || au.N != 10 || au.Display != "L1" {
+		t.Errorf("fleet autonomy criterion = %+v, want median L1 over 10 hives", au)
+	}
+	if c := criterionOf(t, tr, critRevert); c.Measured || c.Reason == "" {
+		t.Errorf("a criterion no hive measured must be unmeasured with a reason on the fleet, got %+v", c)
+	}
+	if !strings.Contains(tr.Summary, "median of 10 hives") {
+		t.Errorf("fleet summary = %q", tr.Summary)
+	}
+	sat, _ := axisOf(fleet, AxisSatisfaction)
+	if sat.Scored || sat.Reason == "" {
+		t.Errorf("fleet satisfaction with no reporting hive = %+v, want unscored with reason", sat)
+	}
+}
+
+func TestFleetMedianIgnoresUnscored(t *testing.T) {
+	in := fleetOf(6, func(i int, in *quadrantInputs) {
+		if i < 2 {
+			in.evidence = evidenceWith(20, 0, 2, 20, 0) // 10% override → 0
+		}
+	})
+	fleet := FleetMedian(ScoreFleet(in))
+	sat, _ := axisOf(fleet, AxisSatisfaction)
+	if !sat.Scored || sat.N != 2 {
+		t.Errorf("fleet satisfaction should be the median of the 2 scoring hives, got %+v", sat)
+	}
+}
+
+// --- Composite, delta, nudges -------------------------------------------------------------
+
+func TestCompositeExcludesUnscoredAxes(t *testing.T) {
+	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) { in.prsMerged90d = iptr(i) }))
+	for i, q := range qs {
+		if q.ScoredAxes == 0 {
+			t.Fatalf("hive %d scored nothing", i)
+		}
+		sum := 0
+		for _, a := range q.Axes {
+			if a.Scored {
+				sum += a.Score
+			}
+		}
+		want := sum / q.ScoredAxes
+		if diff := q.Composite - want; diff > 1 || diff < -1 {
+			t.Errorf("hive %d: composite %d not the mean of %d scored axes (~%d)", i, q.Composite, q.ScoredAxes, want)
+		}
+	}
+}
+
+func TestDeltaAgainstFleetMedian(t *testing.T) {
+	in := fleetOf(5, func(i int, in *quadrantInputs) { in.acmmLevel = i + 1 }) // Trust 0,20,40,60,80
 	qs := ScoreFleet(in)
-
-	lone, ok := axisOf(qs[0], AxisProductivity)
-	if !ok || !lone.Scored {
-		t.Fatal("the one active hive must score productivity")
-	}
-	if lone.Score >= topDecileScore {
-		t.Errorf("a hive with ONE merged PR scored %d, reaching the top decile — "+
-			"outranking idle hives is not the same as leading the fleet", lone.Score)
-	}
-
-	// It must still be ABOVE the idle hives: the gate scales activity down, it
-	// does not erase the distinction between one PR and none. Without this the
-	// test would pass on a gate that flattened everybody to zero.
-	idle, _ := axisOf(qs[1], AxisProductivity)
-	if lone.Score <= idle.Score {
-		t.Errorf("the hive with one merged PR (%d) did not outscore an idle one (%d) — "+
-			"the gate has erased real activity rather than scaling it", lone.Score, idle.Score)
-	}
-
-	// Positive control: a hive at the activity floor in the SAME fleet shape
-	// does reach the top decile, proving the ceiling above is enforced by the
-	// ramp rather than by the criterion being incapable of scoring high.
-	atFloor := fleetOf(20, func(i int, in *quadrantInputs) {
-		if i == 0 {
-			in.prsMerged90d = iptr(activityFloorMergedPRs)
-			return
+	for i, q := range qs {
+		tr, _ := axisOf(q, AxisTrust)
+		if want := tr.Score - 40; tr.Delta != want {
+			t.Errorf("hive %d Trust delta = %d, want %d (median 40)", i, tr.Delta, want)
 		}
-		in.prsMerged90d = iptr(0)
+	}
+}
+
+// TestNudgeOnlyWhenWeak keeps the instrument from nagging: a nudge implies a
+// measured criterion scored at or below 50, and it is that criterion's nudge.
+func TestNudgeOnlyWhenWeak(t *testing.T) {
+	inputs := fleetOf(12, func(i int, in *quadrantInputs) {
+		in.prsMerged90d = iptr(i * 3)
+		in.workSource = "issues"
 	})
-	lead, ok := axisOf(ScoreFleet(atFloor)[0], AxisProductivity)
-	if !ok || lead.Score < topDecileScore {
-		t.Errorf("positive control failed: a hive at the %d-PR activity floor scored only %d — "+
-			"the top decile is unreachable, so the ceiling test proves nothing",
-			activityFloorMergedPRs, lead.Score)
-	}
-}
-
-// topDecileScore is the "top of the fleet" boundary the ramp must keep a
-// barely-active hive out of, and a floor-satisfying hive must be able to reach.
-const topDecileScore = 90
-
-// TestMeasuredZeroStillDiffersFromNil is the load-bearing invariant the
-// activity gate must NOT break.
-//
-// The gate makes measured zero score LOW, which brings it closer to the
-// intuition of "nothing". It must still be categorically different from nil:
-// zero is a measurement and SCORES; nil is absent evidence and stays
-// Scored=false, rendering as a collapsed spoke. Folding them together would
-// tell owners they are failing at something never measured.
-func TestMeasuredZeroStillDiffersFromNil(t *testing.T) {
-	// Every productivity signal absent → unscored.
-	absent := ScoreFleet(fleetOf(10, nil))
-	for i, q := range absent {
-		if a, ok := axisOf(q, AxisProductivity); ok && a.Scored {
-			t.Fatalf("hive %d: productivity scored %d with NO productivity signal reported — "+
-				"absent evidence has collapsed into a measurement", i, a.Score)
-		}
-	}
-
-	// The same fleet reporting a real zero → scored, and scored LOW.
-	measured := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(0)
-	}))
-	for i, q := range measured {
-		a, ok := axisOf(q, AxisProductivity)
-		if !ok || !a.Scored {
-			t.Fatalf("hive %d: a reported zero must be SCORED — it is a measurement", i)
-		}
-		if a.Score >= idleFleetMaxScore {
-			t.Errorf("hive %d: measured zero scored %d, near the median", i, a.Score)
+	for i, q := range ScoreFleet(inputs) {
+		for _, a := range q.Axes {
+			if !a.Scored || a.Nudge == "" {
+				continue
+			}
+			weak := false
+			for _, c := range criteriaFor(a.Axis, inputs[i]) {
+				if c.measured && c.nudge == a.Nudge && c.score() <= 50 {
+					weak = true
+				}
+			}
+			if !weak {
+				t.Errorf("hive %d: axis %s carries nudge %q but no measured criterion at or below 50 owns it", i, a.Axis, a.Nudge)
+			}
 		}
 	}
 }
 
-// --- Org-shared counts (BUG 3) -----------------------------------------------
-
-// TestOrgSharedCountsDoNotMultiply guards the population against one org's
-// output being counted once per hive enrolled in it.
-//
-// FleetStatsCollector counts AI-author PRs across a whole ORG, so every hive in
-// that org reports the org's entire output as its own. Three live hives each
-// reported prsMerged90d=3746 for this reason. Counted three times, that single
-// org adds two phantom members at the top of the distribution and pushes every
-// other hive's percentile down.
-// orgDedupeResidualTolerance is how far a deduped fleet's score may sit from
-// the same fleet with a single hive in the org.
-//
-// It is not zero because dedupe legitimately SHRINKS the population: three rows
-// collapse to one, so the percentile's denominator drops by two and every rank
-// shifts by a point or so. That residual is arithmetic, not multiplication. The
-// bug being guarded moves the score by tens of points, so a few points of slack
-// keeps the test honest without making it brittle to population size.
-const orgDedupeResidualTolerance = 5
-
-func TestOrgSharedCountsDoNotMultiply(t *testing.T) {
-	// A modest hive whose rank we watch, plus one org reported by three hives.
-	const shared = 3746
-	build := func(coOrgHives int) []quadrantInputs {
-		in := fleetOf(10, func(i int, in *quadrantInputs) {
-			in.prsMerged90d = iptr(activityFloorMergedPRs * 2)
-		})
-		for i := 0; i < coOrgHives; i++ {
-			in[i].countGroup = "bigco/ai-bot"
-			in[i].prsMerged90d = iptr(shared)
-		}
-		return in
-	}
-
-	// Hive 9 is an ordinary hive in every case. Its score is the probe: one
-	// org's output must weigh on the distribution the same whether that org is
-	// represented by one hive or by three.
-	one, _ := axisOf(ScoreFleet(build(1))[9], AxisProductivity)
-	three, _ := axisOf(ScoreFleet(build(3))[9], AxisProductivity)
-	if !one.Scored || !three.Scored {
-		t.Fatal("expected the ordinary hive to score productivity in both fleets")
-	}
-
-	// The counterfactual: the SAME three co-org hives left ungrouped, i.e. the
-	// buggy behaviour where one org's output is counted once per hive in it.
-	undeduped := build(3)
-	for i := 0; i < 3; i++ {
-		undeduped[i].countGroup = ""
-	}
-	multiplied, _ := axisOf(ScoreFleet(undeduped)[9], AxisProductivity)
-
-	// Triple-counting must visibly depress an unrelated hive's rank — that is
-	// the harm. If it does not, this test is measuring nothing.
-	if multiplied.Score >= one.Score {
-		t.Fatalf("positive control failed: triple-counting one org left an unrelated hive at "+
-			"%d vs %d — the duplicates are not affecting the distribution at all, so the "+
-			"dedupe assertion below proves nothing", multiplied.Score, one.Score)
-	}
-
-	// And dedupe must undo essentially all of that harm. An exact match with
-	// the single-reporter case is not required: collapsing three rows to one
-	// legitimately shrinks the population by two, which shifts a percentile
-	// slightly. What must not survive is the multiplication.
-	if three.Score <= multiplied.Score {
-		t.Errorf("dedupe did not help: unrelated hive scored %d with dedupe and %d without, "+
-			"against %d when the org had a single hive", three.Score, multiplied.Score, one.Score)
-	}
-	if diff := one.Score - three.Score; diff > orgDedupeResidualTolerance {
-		t.Errorf("an unrelated hive scored %d when one org-hive reported but %d when three "+
-			"co-org hives did (tolerance %d) — one org's output is still being weighed "+
-			"more than once", one.Score, three.Score, orgDedupeResidualTolerance)
+func TestNudgeAbsentWhenEverythingIsStrong(t *testing.T) {
+	in := quadrantInputs{mergesPerWeek: fptr(30), activeRepos: 2, tasksCompleted7d: iptr(40),
+		contributorCount: 4, activeContributors: 4, workSource: "linear", holdTotal: iptr(0), slaViolations: iptr(0)}
+	a := scoreAxis(AxisProductivity, productivityCriteria(in))
+	if a.Nudge != "" || a.Score < 95 {
+		t.Errorf("a hive at the top of every productivity curve got score %d nudge %q", a.Score, a.Nudge)
 	}
 }
 
-// TestCountGroupKeyedOnOrgAndAuthor pins what makes two counts "the same
-// measurement". Org alone would wrongly merge two teams in one org running
-// different AI authors, whose output genuinely IS distinct.
-func TestCountGroupKeyedOnOrgAndAuthor(t *testing.T) {
-	same := fleetCountGroup(RegistryEntry{Org: "BigCo", AIAuthor: "ai-bot"})
-	if got := fleetCountGroup(RegistryEntry{Org: "bigco", AIAuthor: "AI-Bot"}); got != same {
-		t.Errorf("case difference produced different groups (%q vs %q) — GitHub orgs and "+
-			"logins are case-insensitive, so duplicates would slip through", got, same)
+// --- Summaries & wire shape ----------------------------------------------------------------
+
+func TestAxisSummaryReadsPlainly(t *testing.T) {
+	e := evidenceWith(40, 0, 0, 50, 0)
+	a := scoreAxis(AxisTrust, trustCriteria(quadrantInputs{acmmLevel: 3, prsMerged90d: iptr(800), evidence: e}))
+	if !strings.HasPrefix(a.Summary, "Trust "+fmtCount(float64(a.Score))+": ") {
+		t.Errorf("summary should open with the axis and score: %q", a.Summary)
 	}
-	if got := fleetCountGroup(RegistryEntry{Org: "bigco", AIAuthor: "other-bot"}); got == same {
-		t.Error("two different AI authors in one org share a count group — genuinely " +
-			"distinct output is being deduped away")
+	if !strings.Contains(a.Summary, "0.0% of merges reverted but 6.2% of merges carry evidence") {
+		t.Errorf("summary should quote the strongest and weakest facts: %q", a.Summary)
 	}
-	// Unknown halves must never group: an unidentifiable hive counts once, on
-	// its own, rather than being merged with every other unidentifiable hive.
-	if g := fleetCountGroup(RegistryEntry{Org: "bigco"}); g != "" {
-		t.Errorf("a hive with no AI author got group %q — it cannot be shown to duplicate anyone", g)
-	}
-	if g := fleetCountGroup(RegistryEntry{AIAuthor: "ai-bot"}); g != "" {
-		t.Errorf("a hive with no org got group %q", g)
-	}
-	// AIAuthorEffective is who the agents ACTUALLY author as and must win.
-	eff := fleetCountGroup(RegistryEntry{Org: "bigco", AIAuthor: "cfg", AIAuthorEffective: "app[bot]"})
-	if eff != "bigco/app[bot]" {
-		t.Errorf("effective author ignored: got %q", eff)
+	if !strings.Contains(a.Summary, "4 of 8 criteria not measured yet") {
+		t.Errorf("summary should count unmeasured criteria: %q", a.Summary)
 	}
 }
 
-// --- Trust criterion set (BUG 2) ---------------------------------------------
-
-// TestTrustCriteriaSetIsExplicit stops Trust silently dropping a criterion.
-//
-// This is the exact failure being fixed: the governor criterion matched
-// "observe"/"advisory"/"enforce" while governor.Mode only ever emits SURGE,
-// BUSY, QUIET or IDLE, so it contributed to NOTHING on every hive in the fleet
-// — one of three Trust criteria gone, with the axis still rendering a plausible
-// number and nothing anywhere reporting a problem.
-//
-// Asserting the criterion SET by name means any future mismatch of this shape
-// fails loudly here instead of vanishing into a percentile.
-func TestTrustCriteriaSetIsExplicit(t *testing.T) {
-	// A hive reporting every trust signal the hub can receive.
-	full := quadrantInputs{
-		acmmLevel:       4,
-		reposEnrolled:   3,
-		reposInOrg:      9,
-		mergeAcceptance: fptr(0.8),
+// TestQuadrantJSONBackwardCompatible: the pre-existing keys the browser and
+// the iOS widget read are still emitted with the same names and types.
+func TestQuadrantJSONBackwardCompatible(t *testing.T) {
+	qs := ScoreFleet(fleetOf(5, nil))
+	b, err := json.Marshal(FleetMedian(qs))
+	if err != nil {
+		t.Fatal(err)
 	}
-	want := map[string]bool{
-		"autonomy":         true,
-		"merge_acceptance": true,
-		"breadth":          true,
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
 	}
-	got := map[string]bool{}
-	for _, c := range trustCriteria(full) {
-		got[c.name] = true
-	}
-	for name := range want {
-		if !got[name] {
-			t.Errorf("trust criterion %q did not fire on a hive reporting every trust signal — "+
-				"a criterion is being silently dropped", name)
+	for _, k := range []string{"axes", "composite", "scored_axes", "aggregate", "n"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("fleet quadrant JSON lacks %q", k)
 		}
 	}
-	for name := range got {
-		if !want[name] {
-			t.Errorf("unexpected trust criterion %q — if it is a real delegation signal, add it "+
-				"to want; if it is a proxy for one, it does not belong on Trust", name)
-		}
+	var axes []map[string]json.RawMessage
+	if err := json.Unmarshal(m["axes"], &axes); err != nil {
+		t.Fatal(err)
 	}
-	if len(got) != len(want) {
-		t.Errorf("trust scored on %d criteria, want %d: got %v", len(got), len(want), got)
+	for _, k := range []string{"axis", "score", "scored", "delta", "criteria", "measured", "unmeasured", "summary"} {
+		if _, ok := axes[0][k]; !ok {
+			t.Errorf("axis JSON lacks %q", k)
+		}
 	}
 }
 
-// TestGovernorCadenceIsNotATrustSignal is the regression guard for the
-// conceptual half of the bug. The governor's modes are WORKLOAD CADENCE — how
-// hard it is currently driving agents — and must never be folded into Trust.
-// A hive at SURGE is busy, not trusted; a hive at IDLE is quiet, not
-// distrusted.
-//
-// The check is structural: no trust criterion may vary with the governor's
-// actual emitted modes, which is guaranteed here by quadrantInputs no longer
-// carrying the mode at all. If somebody reintroduces it, this fails.
+func TestAxisOrderStable(t *testing.T) {
+	for _, q := range ScoreFleet(fleetOf(3, nil)) {
+		for i, a := range q.Axes {
+			if a.Axis != QuadrantAxisOrder[i] {
+				t.Fatalf("axis %d is %s, want %s", i, a.Axis, QuadrantAxisOrder[i])
+			}
+		}
+	}
+}
+
+// TestGovernorCadenceIsNotATrustSignal: the governor's modes are WORKLOAD
+// CADENCE and must never be folded into Trust.
 func TestGovernorCadenceIsNotATrustSignal(t *testing.T) {
+	base := scoreAxis(AxisTrust, trustCriteria(quadrantInputsFor(RegistryEntry{Org: "o", AIAuthor: "a", ACMMLevel: 3}, time.Now())))
 	for _, mode := range []string{"SURGE", "BUSY", "QUIET", "IDLE"} {
-		e := RegistryEntry{Org: "o", AIAuthor: "a", ACMMLevel: 3, GovernorMode: mode}
-		in := quadrantInputsFor(e, time.Now())
-		base := quadrantInputsFor(RegistryEntry{Org: "o", AIAuthor: "a", ACMMLevel: 3}, time.Now())
-		if len(trustCriteria(in)) != len(trustCriteria(base)) {
-			t.Errorf("governor mode %q changed the trust criteria — workload cadence is "+
-				"being read as a trust posture", mode)
+		in := quadrantInputsFor(RegistryEntry{Org: "o", AIAuthor: "a", ACMMLevel: 3, GovernorMode: mode}, time.Now())
+		if a := scoreAxis(AxisTrust, trustCriteria(in)); a.Score != base.Score || a.Measured != base.Measured {
+			t.Errorf("governor mode %q changed Trust", mode)
 		}
 	}
-	// Positive control: something that IS a trust signal does change the set,
-	// proving the comparison above can detect a difference at all.
-	withACMM := trustCriteria(quadrantInputs{acmmLevel: 3})
-	without := trustCriteria(quadrantInputs{})
-	if len(withACMM) == len(without) {
-		t.Error("positive control failed: ACMM level did not change the trust criteria, " +
-			"so the cadence assertion above cannot detect anything")
+}
+
+// TestInputsFromRegistryEntry covers the new attach paths: RepoActivity →
+// merges per week, and the hive-state token trend as the burn-rate fallback.
+func TestInputsFromRegistryEntry(t *testing.T) {
+	e := RegistryEntry{
+		ACMMLevel:                    3,
+		RepoActivity:                 []RepoActivityWire{{Repo: "o/a", Merges: ActivityStatWire{Count: 14}}, {Repo: "o/b", Merges: ActivityStatWire{Count: 0}}},
+		RepoActivityCountWindowHours: 14 * 24,
+		Evidence:                     &HeartbeatEvidence{HiveState: &hivestate.Trends{Last7d: hivestate.Window{Samples: 48, TokensPerDay: 250000}}},
+	}
+	in := quadrantInputsFor(e, time.Now())
+	if in.mergesPerWeek == nil || *in.mergesPerWeek != 7 || in.activeRepos != 2 {
+		t.Errorf("mergesPerWeek/activeRepos = %v/%d, want 7/2", in.mergesPerWeek, in.activeRepos)
+	}
+	if in.tokensPerDay == nil || *in.tokensPerDay != 250000 {
+		t.Errorf("tokensPerDay fallback = %v, want 250000 from hive state", in.tokensPerDay)
+	}
+	if _, _, ok := repoMergesPerWeek(RegistryEntry{}); ok {
+		t.Error("no RepoActivity must be unmeasured")
 	}
 }
 
-// --- Activity ramp shape ------------------------------------------------------
-
-// TestActivityFactorRamp pins the ramp itself: zero at zero, linear to the
-// floor, flat above it, and exempt when no floor is set.
-func TestActivityFactorRamp(t *testing.T) {
-	if f := activityFactor(0, 10); f != 0 {
-		t.Errorf("zero activity gave factor %v, want 0 — idle would still rank", f)
-	}
-	if f := activityFactor(5, 10); f != 0.5 {
-		t.Errorf("half the floor gave factor %v, want 0.5 — the ramp is not linear", f)
-	}
-	if f := activityFactor(10, 10); f != 1 {
-		t.Errorf("at the floor the factor was %v, want 1", f)
-	}
-	if f := activityFactor(1000, 10); f != 1 {
-		t.Errorf("far above the floor the factor was %v, want 1 — activity beyond the "+
-			"floor must not keep inflating the rank", f)
-	}
-	// Exemption: ratios and postures where zero is a real (often good) value.
-	// Gating rework_rate would score the CLEANEST hives worst.
-	if f := activityFactor(0, 0); f != 1 {
-		t.Errorf("an exempt criterion was gated (factor %v, want 1) — criteria where zero "+
-			"is a good outcome would be inverted", f)
-	}
-}
-
-// TestCleanHiveNotPunishedByGate is the inversion guard for the exemption. A
-// hive with zero REJECTED PRs has the best possible rework rate; if the gate
-// were applied blanketly its zero would score it worst on efficiency, exactly
-// reversing the axis.
-func TestCleanHiveNotPunishedByGate(t *testing.T) {
-	qs := ScoreFleet(fleetOf(10, func(i int, in *quadrantInputs) {
-		in.prsMerged90d = iptr(20)
-		in.prsRejected90d = iptr(i * 2) // hive 0 clean, hive 9 mostly rework
-	}))
-	clean, ok1 := axisOf(qs[0], AxisEfficiency)
-	messy, ok2 := axisOf(qs[9], AxisEfficiency)
-	if !ok1 || !ok2 || !clean.Scored || !messy.Scored {
-		t.Fatal("expected efficiency to score for both hives")
-	}
-	if clean.Score <= messy.Score {
-		t.Errorf("the clean hive scored %d and the high-rework hive %d — the activity gate "+
-			"has inverted a lower-is-better criterion by treating its zero as idleness",
-			clean.Score, messy.Score)
-	}
-}
-
-// TestEmptyFleetDoesNotPanic covers the day-one state, which is exactly when a
-// nil-handling bug would surface in front of the operator.
 func TestEmptyFleetDoesNotPanic(t *testing.T) {
 	if got := ScoreFleet(nil); len(got) != 0 {
 		t.Errorf("expected no scores for an empty fleet, got %d", len(got))
 	}
-	avg := FleetAverage(nil)
-	if avg.Composite != 0 || avg.ScoredAxes != 0 {
-		t.Errorf("empty fleet average should be zero-valued, got %+v", avg)
+	fleet := FleetMedian(nil)
+	if fleet.Composite != 0 || fleet.ScoredAxes != 0 || fleet.N != 0 {
+		t.Errorf("empty fleet median should be zero-valued, got %+v", fleet)
 	}
-	if len(avg.Axes) != len(QuadrantAxisOrder) {
-		t.Errorf("average must still emit all four axes so the renderer has a stable shape, got %d", len(avg.Axes))
+	if len(fleet.Axes) != len(QuadrantAxisOrder) {
+		t.Errorf("fleet must still emit all four axes so the renderer has a stable shape, got %d", len(fleet.Axes))
 	}
 }

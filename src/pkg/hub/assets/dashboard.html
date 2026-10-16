@@ -383,6 +383,35 @@
       font-size: 0.72rem; line-height: 1.4; color: var(--text);
     }
     .quadrant-cell:hover .quadrant-hover, .quadrant-cell:focus-within .quadrant-hover { display: block; }
+    /* Per-axis explainers: the ⓘ beside each axis label opens one popover
+       (fleet card and per-hive hover share the renderer). Classes + tokens
+       only — the style ratchet forbids new inline sizing here. */
+    .quadrant-axes { display: flex; gap: var(--sp-4); }
+    .quadrant-axis { display: flex; flex-direction: column; align-items: center; gap: var(--sp-0); min-width: 3.5em; position: relative; }
+    .quadrant-axis-label { display: inline-flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+    .quadrant-axis-score { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+    .quadrant-axis-score.is-unscored { color: var(--muted); }
+    .quadrant-info { background: none; border: 1px solid var(--border); border-radius: var(--r-pill); color: var(--muted); width: 1.4em; height: 1.4em; padding: var(--sp-0); font: inherit; font-size: var(--fs-2xs); line-height: 1; cursor: pointer; flex-shrink: 0; text-transform: none; letter-spacing: 0; }
+    .quadrant-info:hover, .quadrant-info:focus-visible, .quadrant-info[aria-expanded="true"] { color: var(--hub-dashboard-accent); border-color: var(--hub-dashboard-accent); outline: none; }
+    .quadrant-explainer { position: absolute; left: 0; top: 100%; z-index: 70; width: max-content; max-width: 26rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-4) var(--sp-5); font-size: var(--fs-xs); color: var(--text); line-height: 1.45; box-shadow: var(--shadow-lg, 0 8px 24px var(--overlay-scrim)); text-align: left; text-transform: none; letter-spacing: 0; font-weight: 400; cursor: default; }
+    .quadrant-explainer[hidden] { display: none; }
+    .quadrant-explainer h4 { margin: var(--sp-3) 0 var(--sp-1); font-size: var(--fs-2xs); color: var(--hub-dashboard-accent); text-transform: uppercase; letter-spacing: 0.5px; }
+    .quadrant-explainer h4:first-child { margin-top: 0; }
+    .quadrant-explainer p { margin: 0; }
+    .quadrant-explainer-close { float: right; background: none; border: 0; color: var(--muted); font: inherit; cursor: pointer; padding: var(--sp-0) var(--sp-2); }
+    .quadrant-criteria { list-style: none; margin: 0; padding: 0; }
+    .quadrant-criteria li { display: flex; gap: var(--sp-2); align-items: baseline; padding: var(--sp-0) 0; }
+    .quadrant-criteria .quadrant-criterion-label { flex: 1 1 auto; }
+    .quadrant-criteria .quadrant-criterion-value { color: var(--muted); white-space: nowrap; }
+    .quadrant-criteria .quadrant-criterion-score { font-weight: 600; min-width: 2.5em; text-align: right; }
+    .quadrant-criteria .quadrant-criterion-weight { color: var(--muted); font-size: var(--fs-2xs); }
+    .quadrant-criteria li.is-unmeasured { color: var(--muted); }
+    .quadrant-criteria li.is-unmeasured .quadrant-criterion-reason { font-style: italic; }
+    .quadrant-summary { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-1); max-width: 28rem; }
+    .quadrant-summary strong { color: var(--text); font-weight: 600; }
+    .quadrant-hover .quadrant-axes { justify-content: center; flex-wrap: wrap; margin-top: var(--sp-2); }
+    .quadrant-hover .quadrant-explainer { left: auto; right: 0; }
+    .fleet-quadrant-n { color: var(--muted); }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: var(--fs-sm); color: var(--muted); }
 
@@ -985,6 +1014,7 @@
        QuadrantAxisOrder and the two must not drift. */
     var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];
     var QUADRANT_AXIS_LABELS = { trust: 'Trust', productivity: 'Prod', satisfaction: 'Satis', efficiency: 'Effic' };
+    var QUADRANT_AXIS_FULL = { trust: 'Trust', productivity: 'Productivity', satisfaction: 'Satisfaction', efficiency: 'Efficiency' };
     /* Angles clockwise from north, index-aligned with QUADRANT_AXES. */
     var QUADRANT_ANGLES = [0, 90, 180, 270];
 
@@ -1115,6 +1145,102 @@
       return pill + fw;
     }
 
+    /* ---- Per-axis explainers ---------------------------------------------
+       Every axis carries its criteria from the server (quadrant.go
+       CriterionScore): label, current value, sub-score, weight, and for an
+       unmeasured criterion the reason it is excluded from the axis average.
+       The popover has four sections — what this covers, how it is scored,
+       what good looks like, what ours shows — mirroring the evidence
+       explainers so one learned pattern serves both surfaces. Rendered
+       hidden alongside the ⓘ; quadrantToggleExplainer shows one at a time. */
+    var _quadrantExplainerSeq = 0;
+    function quadrantExplainerId(prefix, axis) {
+      _quadrantExplainerSeq++;
+      return 'quadrant-explainer-' + prefix + '-' + axis + '-' + _quadrantExplainerSeq;
+    }
+
+    function quadrantCriteriaListHTML(crits) {
+      if (!crits || !crits.length) return '<p class="text-muted">No criteria reported for this axis yet.</p>';
+      return '<ul class="quadrant-criteria">' + crits.map(function(c) {
+        var w = c.weight ? '<span class="quadrant-criterion-weight">×' + esc(String(c.weight)) + '</span>' : '';
+        if (c.measured) {
+          return '<li class="is-measured"><span class="quadrant-criterion-label">' + esc(c.label || c.name) + '</span>' +
+            '<span class="quadrant-criterion-value">' + esc(c.display || String(c.value)) + '</span>' +
+            '<span class="quadrant-criterion-score">' + esc(String(c.score)) + '</span>' + w + '</li>';
+        }
+        return '<li class="is-unmeasured"><span class="quadrant-criterion-label">' + esc(c.label || c.name) + '</span>' +
+          '<span class="quadrant-criterion-reason">' + esc(c.reason || 'Not measured yet') + '</span>' + w + '</li>';
+      }).join('') + '</ul>';
+    }
+
+    function quadrantExplainerHTML(a, id) {
+      if (!a) return '';
+      var label = QUADRANT_AXIS_FULL[a.axis] || a.axis;
+      var crits = a.criteria || [];
+      var measured = crits.filter(function(c) { return c.measured; });
+      var how = measured.length ? measured.map(function(c) { return c.how; }).filter(Boolean) : crits.map(function(c) { return c.how; }).filter(Boolean);
+      var good = measured.length ? measured.map(function(c) { return c.good; }).filter(Boolean) : crits.map(function(c) { return c.good; }).filter(Boolean);
+      var ours = a.scored ? (a.summary || (label + ' ' + a.score)) : (a.reason || 'Not measured yet');
+      var scaleNote = 'Each criterion maps to 0–100 on a fixed, documented curve; the axis is the weighted mean of the measured criteria only. ' +
+        'Criteria marked "not measured yet" are left out of the average rather than counted as zero.';
+      return '<div id="' + escAttr(id) + '" class="quadrant-explainer" role="region" aria-label="' + escAttr('About the ' + label + ' axis') + '" hidden onclick="event.stopPropagation()">' +
+        '<button type="button" class="quadrant-explainer-close" aria-label="Close explanation" onclick="event.stopPropagation();quadrantCloseExplainers()">\u00D7</button>' +
+        '<h4>What this covers</h4>' + quadrantCriteriaListHTML(crits) +
+        '<h4>How it\'s scored</h4><p>' + esc(scaleNote) + (how.length ? ' ' + esc(how.join(' ')) : '') + '</p>' +
+        '<h4>What good looks like</h4><p>' + (good.length ? esc(good.join(' ')) : esc('No measured criteria yet, so there is nothing to compare against.')) + '</p>' +
+        '<h4>What ours shows</h4><p>' + esc(ours) + '</p></div>';
+    }
+
+    function quadrantInfoButtonHTML(a, id) {
+      var label = QUADRANT_AXIS_FULL[a.axis] || a.axis;
+      return '<button type="button" class="quadrant-info" aria-expanded="false" aria-controls="' + escAttr(id) + '"' +
+        ' aria-label="' + escAttr('What the ' + label + ' axis covers') + '" title="' + escAttr('What the ' + label + ' axis covers') + '"' +
+        ' onclick="event.stopPropagation();quadrantToggleExplainer(this, \'' + escAttr(id) + '\')">i</button>';
+    }
+
+    /* quadrantAxisTileHTML is one labelled axis (label + ⓘ + score) with its
+       hidden explainer; shared by the fleet card and the per-hive hover. */
+    function quadrantAxisTileHTML(a, prefix) {
+      var id = quadrantExplainerId(prefix, a.axis);
+      var val = a.scored ? String(a.score) : '—';
+      return '<div class="quadrant-axis">' +
+        '<span class="quadrant-axis-label">' + esc(QUADRANT_AXIS_LABELS[a.axis] || a.axis) + quadrantInfoButtonHTML(a, id) + '</span>' +
+        '<span class="quadrant-axis-score' + (a.scored ? '' : ' is-unscored') + '">' + esc(val) + '</span>' +
+        quadrantExplainerHTML(a, id) +
+        '</div>';
+    }
+
+    /* quadrantSummaryHTML is the one-line plain reading under the glyph:
+       the strongest and weakest measured criteria of the weakest scored axis,
+       or the first axis summary the server sent. */
+    function quadrantSummaryHTML(q) {
+      if (!q) return '';
+      var scored = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
+        .filter(function(a) { return a.scored && a.summary; });
+      if (!scored.length) return '';
+      scored.sort(function(x, y) { return x.score - y.score; });
+      return '<div class="quadrant-summary">' + esc(scored[0].summary) + '</div>';
+    }
+
+    function quadrantCloseExplainers() {
+      if (!document.querySelectorAll) return false;
+      var any = false;
+      document.querySelectorAll('.quadrant-explainer:not([hidden])').forEach(function(el) { el.hidden = true; any = true; });
+      document.querySelectorAll('.quadrant-info[aria-expanded="true"]').forEach(function(b) { b.setAttribute('aria-expanded', 'false'); });
+      return any;
+    }
+
+    function quadrantToggleExplainer(btn, id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var open = !el.hidden;
+      quadrantCloseExplainers();
+      if (!open) {
+        el.hidden = false;
+        if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', 'true');
+      }
+    }
+
     /* quadrantCell is the table column: the small kite plus its own hover
        panel, so a lopsided shape can be diagnosed without leaving the row.
        Renders nothing at all for a hive with no quadrant — the server omits it
@@ -1148,10 +1274,13 @@
           return '<div class="text-muted mt-1">' +
             esc(QUADRANT_AXIS_LABELS[a.axis]) + ': ' + esc(a.reason) + '</div>';
         }).join('');
+      var tiles = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'hive'); }).join('');
       return '<div style="display:flex;flex-direction:column;align-items:center;gap:var(--sp-3)">' +
           quadrantSVG(q, _fleetQuadrant, 170, true) +
           '<div style="font-size:0.7rem;color:var(--muted)">Composite <span style="color:var(--text);font-weight:600">' +
             (q.scored_axes ? q.composite : '—') + '</span> · ' + (q.scored_axes || 0) + ' of 4 axes scored</div>' +
+          '<div class="quadrant-axes">' + tiles + '</div>' +
+          quadrantSummaryHTML(q) +
         '</div>' +
         (nudges ? '<div style="font-size:0.7rem;margin-top:var(--sp-3);border-top:1px solid var(--line);padding-top:var(--sp-3)">' + nudges + '</div>' : '') +
         (reasons ? '<div style="font-size:0.65rem;margin-top:var(--sp-2)">' + reasons + '</div>' : '');
@@ -1178,15 +1307,10 @@
     function fleetQuadrantHeaderHTML() {
       var q = _fleetQuadrant;
       if (!q || !q.scored_axes) return '';
-      var axes = QUADRANT_AXES.map(function(name) {
-        var a = quadrantAxis(q, name);
-        var val = a.scored ? String(a.score) : '—';
-        return '<div style="display:flex;flex-direction:column;align-items:center;gap:1px;min-width:52px">' +
-          '<span style="font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">' +
-            esc(QUADRANT_AXIS_LABELS[name]) + '</span>' +
-          '<span style="font-size:0.95rem;font-weight:600;color:' + (a.scored ? 'var(--text)' : 'var(--muted)') + '">' +
-            esc(val) + '</span></div>';
-      }).join('');
+      var axes = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet'); }).join('');
+      /* n is the number of hives the median was taken over; it can be smaller
+         than the rows in view because unscored hives do not enter the median. */
+      var agg = (q.aggregate || 'median') + (q.n ? ' of ' + q.n : '');
       /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
          against itself would render two identical overlaid polygons. */
       return '<div' + fleetQuadrantDrillAttrs() + ' style="display:flex;align-items:center;gap:var(--sp-6);margin:0 auto 12px;padding:10px 14px;' +
@@ -1194,8 +1318,9 @@
           quadrantSVG(q, null, 78, false) +
           '<div>' +
             '<div class="fleet-quadrant-head" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-2)">' +
-              '<span>Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view</span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
-            '<div style="display:flex;gap:14px">' + axes + '</div>' +
+              '<span>Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view <span class="fleet-quadrant-n">· ' + esc(agg) + '</span></span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
+            '<div class="quadrant-axes">' + axes + '</div>' +
+            quadrantSummaryHTML(q) +
             fleetQuadrantHintHTML() +
           '</div>' +
         '</div>';
@@ -2899,6 +3024,7 @@
       var tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
       if (tag === 'select') return;
       if (typeof evidenceCloseExplainers === 'function' && evidenceCloseExplainers()) { e.preventDefault(); e.stopPropagation(); return; }
+      if (typeof quadrantCloseExplainers === 'function' && quadrantCloseExplainers()) { e.preventDefault(); e.stopPropagation(); return; }
       if (!hiveHubDismissTopModal()) return;
       e.preventDefault();
       e.stopPropagation();
@@ -4427,8 +4553,10 @@
        v5: rows carry the fleet-divergence view (fleetRollup + agentVerdicts:
        expected/actual/able per agent); a v4 cache would omit the new per-agent
        drill-down until the first poll landed.
-       v6: agent verdicts carry restart-storm telemetry and reset markers. */
-    var HIVES_CACHE_VERSION = 6;
+       v6: agent verdicts carry restart-storm telemetry and reset markers.
+       v7: quadrant axes carry criteria, summaries and the fleet median n that
+       the per-axis explainers render; a v6 cache would paint empty ⓘ popovers. */
+    var HIVES_CACHE_VERSION = 7;
     /* v5/v6 only added optional per-row telemetry. Rendering tolerates those
        fields being absent, so keep accepting a recent cache instead of showing
        the spinner for the whole /api/saas/my-hives round-trip after a deploy. */
@@ -9026,7 +9154,7 @@
         /* QUADRANT folds the four axis sorts plus the composite. Sorting by a
            single axis is the point of the column: "weakest efficiency" turns
            the table into a worklist rather than a picture. */
-        '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored against the hives in the current view. Hover a kite for the numbers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: autonomy level, governor posture, merge acceptance and enrolled scope') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: token burn rate, spend per merged PR, rework and output per agent') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merged PRs, relay throughput, work-source autonomy and work stalled on a human')) + '</th>' +
+        '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored 0–100 on fixed curves from the hive's own evidence; the fleet shape behind each kite is the median. Hover a kite for the numbers and ⓘ for what each axis covers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: revert rate, false-approve rate, autonomy level, delegation, merge acceptance, evidence coverage and boundary blocks') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: tokens per merged PR, burn rate, rework, output per agent and agent idle time') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merge throughput per active repo, relay throughput, contributor engagement, work-source autonomy and work stalled on a human')) + '</th>' +
         '<th class="th-mid" title="Compliance framework profiles and the pass rate of the latest posture-check run; click the pill to open the hive&#39;s Compliance settings">Compliance</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is

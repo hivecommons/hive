@@ -1,9 +1,7 @@
 package hub
 
 import (
-	"math"
 	"sort"
-	"strings"
 )
 
 // Quadrant axis identifiers. These strings are the wire form (JSON keys, sort
@@ -23,6 +21,43 @@ const (
 // reorder per-hive or per-view.
 var QuadrantAxisOrder = []string{AxisTrust, AxisProductivity, AxisSatisfaction, AxisEfficiency}
 
+// QuadrantAxisLabels are the plain-language axis names used in server-side
+// summaries. The browser keeps its own short labels for the glyph.
+var QuadrantAxisLabels = map[string]string{
+	AxisTrust:        "Trust",
+	AxisProductivity: "Productivity",
+	AxisSatisfaction: "Satisfaction",
+	AxisEfficiency:   "Efficiency",
+}
+
+// QuadrantFleetAggregate names how the fleet quadrant collapses per-hive
+// scores. It travels on the wire so the card can say "median of n" rather than
+// leave the reader to guess whether a few very active hives pulled a mean up.
+const QuadrantFleetAggregate = "median"
+
+// CriterionScore is one sub-criterion of one axis as shown to the reader.
+//
+// Measured=false means the hive (or, on the fleet quadrant, no hive) reported
+// the input this criterion needs. An unmeasured criterion is listed — so the
+// explainer can say "not measured yet" and what would feed it — but it is
+// EXCLUDED from the axis mean, never scored as zero.
+//
+// On the fleet quadrant Value/Display/Score are medians over the hives that
+// measured the criterion and N is how many did.
+type CriterionScore struct {
+	Name     string  `json:"name"`
+	Label    string  `json:"label"`
+	Measured bool    `json:"measured"`
+	Value    float64 `json:"value"`
+	Display  string  `json:"display,omitempty"`
+	Score    int     `json:"score"`
+	Weight   float64 `json:"weight"`
+	How      string  `json:"how"`
+	Good     string  `json:"good"`
+	Reason   string  `json:"reason,omitempty"`
+	N        int     `json:"n,omitempty"`
+}
+
 // AxisScore is one axis of one hive's quadrant.
 //
 // Scored=false means "not enough evidence", NOT "zero". Renderers must draw an
@@ -31,7 +66,7 @@ var QuadrantAxisOrder = []string{AxisTrust, AxisProductivity, AxisSatisfaction, 
 // say what is missing instead of showing a bare gap.
 type AxisScore struct {
 	Axis   string `json:"axis"`
-	Score  int    `json:"score"`  // 0-100 percentile; meaningless unless Scored
+	Score  int    `json:"score"`  // 0-100; meaningless unless Scored
 	Scored bool   `json:"scored"` // false = insufficient data, render collapsed
 	Reason string `json:"reason,omitempty"`
 
@@ -43,6 +78,21 @@ type AxisScore struct {
 	// Nudge is the specific next action suggested by the weakest contributing
 	// sub-criterion, or empty when the axis is healthy or unscored.
 	Nudge string `json:"nudge,omitempty"`
+
+	// Criteria lists every sub-criterion the axis is defined by, measured or
+	// not, in a stable order. It is what the ⓘ explainer renders.
+	Criteria []CriterionScore `json:"criteria,omitempty"`
+
+	// Measured / Unmeasured count the criteria above, so a score built from
+	// one criterion is never mistaken for one built from six.
+	Measured   int `json:"measured"`
+	Unmeasured int `json:"unmeasured"`
+
+	// Summary is the one-line plain reading of the axis ("Trust 48: …").
+	Summary string `json:"summary,omitempty"`
+
+	// N is, on the fleet quadrant only, how many hives scored this axis.
+	N int `json:"n,omitempty"`
 }
 
 // Quadrant is a hive's full four-axis score plus the composite.
@@ -58,6 +108,11 @@ type Quadrant struct {
 	// surfaced so a composite built from one axis is never mistaken for one
 	// built from four.
 	ScoredAxes int `json:"scored_axes"`
+
+	// Aggregate and N are set on the fleet quadrant only: how the per-hive
+	// scores were collapsed ("median") and over how many hives.
+	Aggregate string `json:"aggregate,omitempty"`
+	N         int    `json:"n,omitempty"`
 }
 
 // quadrantInputs is the per-hive evidence the scorer consumes. It is a distinct
@@ -68,285 +123,89 @@ type Quadrant struct {
 //
 // Pointer fields mean "not reported". A nil is the ONLY way to express absent
 // evidence; a zero value is a real measurement of zero. Conflating the two is
-// precisely the bug the sufficiency floor exists to prevent.
+// precisely the bug the measured/unmeasured split exists to prevent.
 type quadrantInputs struct {
-	// countGroup identifies hives whose org-scoped counters measure THE SAME
-	// underlying work. It is the (org, ai-author) pair the spoke's
-	// FleetStatsCollector queries GitHub with: that collector counts AI-author
-	// PRs across the whole org, so every hive enrolled in an org reports that
-	// org's ENTIRE output as its own.
-	//
-	// Three hives in the live fleet each reported prsMerged90d=3746 for this
-	// reason — one org's output counted three times. Left unhandled it does not
-	// merely give those three hives the same score, it stretches the whole
-	// distribution: the population sample gains two phantom members at the top,
-	// pushing every other hive's percentile down and making the fleet's real
-	// spread unreadable.
-	//
-	// Population building therefore counts a group ONCE (see dedupeByGroup).
-	// Empty means "ungrouped" — the hive stands alone and always counts once,
-	// which is the correct default for a hive whose org is unknown.
-	countGroup string
-
 	// --- Trust -----------------------------------------------------------
 	acmmLevel     int // 1-6; 0 = unknown
 	reposEnrolled int
-	reposInOrg    int // 0 = unknown, so breadth is unscorable
+	reposInOrg    int // 0 = unknown, so breadth is unmeasured
 
 	// mergeAcceptance is merged / (merged + rejected) over the reported
-	// window, computed hub-side from counts that already travel.
-	//
-	// Weighted as one criterion among several and never alone: the metric is
-	// Goodhart-gameable through PR size, and it is censored by construction
-	// because it counts only PRs that reached a verdict — it stayed green
-	// through a fleet-wide outage in which almost nothing was submitted.
+	// window, computed hub-side from counts that already travel. One criterion
+	// among several and never alone: it is Goodhart-gameable through PR size
+	// and censored by construction (it counts only PRs that reached a verdict).
 	mergeAcceptance *float64
 
 	// selfMergeAllowed is whether the hive's ACMM level lets the App merge its
-	// own PRs without a human approval (#12080). nil = not reported.
+	// own PRs without a human approval. nil = not reported.
 	selfMergeAllowed *bool
 
-	// evidence is the spoke's evidence summary; nil = not reported.
+	// evidence is the spoke's evidence summary (reviewer verdict outcomes,
+	// reverts, proxy write counters, hive-state trends); nil = not reported.
 	evidence *HeartbeatEvidence
 
 	// --- Efficiency ------------------------------------------------------
-	// tokensPerDay is the hive's CURRENT burn rate, derived from the governor's
-	// windowed budget spend normalised by elapsed window time.
-	//
-	// Normalising matters twice over: budget windows are per-spoke
-	// configuration (default 7 days but not fixed), and any given beat lands at
-	// an arbitrary point inside one. Comparing raw spend across hives would
-	// rank window length and beat timing rather than efficiency.
-	//
-	// Tokens rather than dollars is deliberate — the USD figures never leave
-	// the spoke, and tokens are provider-price-independent, so a hive's score
-	// does not move when a model is repriced or when two hives run different
-	// backends.
+	// tokensPerDay is the hive's CURRENT burn rate: the governor's windowed
+	// budget spend normalised by elapsed window time, or the 7-day hive-state
+	// trend when the budget window is not reported. Tokens rather than dollars
+	// because USD never leaves the spoke and tokens are provider-price
+	// independent.
 	tokensPerDay *float64
 
 	// budgetExhausted reports the governor actively suppressing agent kicks.
-	// It bears on both efficiency and productivity: near-zero throughput means
-	// something very different when a hive is throttled than when it is idle.
 	budgetExhausted *bool
 
 	// prsMerged90d / prsRejected90d are the spoke's AI-author PR counts across
-	// its org, already travelling on the heartbeat via FleetStatsCollector.
-	// Nil means "not computed yet", which the existing hub code is careful to
-	// distinguish from zero — the same discipline this struct uses throughout.
-	//
-	// NOTE the window mismatch: tokensTotal is lifetime while these are 90-day.
-	// The resulting ratio is therefore approximate, and the hover must say so
-	// rather than presenting it as an exact cost-per-PR.
+	// its ORG, from FleetStatsCollector. Nil means "not computed yet".
 	prsMerged90d   *int
 	prsRejected90d *int
 	agentCount     int
 
 	// --- Productivity ----------------------------------------------------
-	// Throughput reuses prsMerged90d above: it is org-wide and attributed to
-	// the AI author, which is exactly the attribution this axis requires. The
-	// repo-wide github.PRIssueCounts is NOT available hub-side (it never leaves
-	// the spoke), and the outreach counter is -org: scoped, so neither of the
-	// two tempting alternatives is usable here even if they were reachable.
+	// mergesPerWeek / activeRepos come from the hive's own audit-derived
+	// RepoActivity summary, so unlike prsMerged90d they describe THIS hive's
+	// output across the repos it actually touched. nil = not reported.
+	mergesPerWeek *float64
+	activeRepos   int
+
 	workSource         string
 	contributorCount   int
 	activeContributors int
 
 	// tasksCompleted7d is contributor-relay throughput, summed on the spoke
 	// from its hourly buckets. A flat zero is a real measurement for a hive
-	// with no contributors rather than a gap — read alongside contributorCount
-	// to tell the two apart.
+	// with no contributors rather than a gap.
 	tasksCompleted7d *int
 
-	// holdTotal and awaitingReview both measure work stalled on a HUMAN rather
-	// than on the agents, from opposite ends: items parked behind a hold label,
-	// and plans blocked on a decision. slaViolations is work aging past its
-	// threshold whatever the cause.
-	//
-	// These are inverse signals — more is worse — which the criteria below
-	// express through higherIsBetter rather than by negating the values, so the
-	// raw numbers stay readable in a debugger.
+	// holdTotal and awaitingReview both measure work stalled on a HUMAN;
+	// slaViolations is work aging past its threshold whatever the cause.
 	holdTotal      *int
 	awaitingReview *int
 	slaViolations  *int
 
 	// --- Satisfaction ----------------------------------------------------
-	// Intentionally empty. There is no satisfaction signal in the platform
-	// today. Operational hygiene (health checks, advisory depth, attention
-	// debt) is deliberately NOT substituted here: hygiene is not satisfaction,
-	// and padding the axis with a proxy would make every other axis less
-	// trustworthy by association. The axis renders collapsed until a real
-	// signal — e.g. a lightweight pulse on agent output — exists.
+	// Fed from evidence (human override rate) and the hive-state SLA trend;
+	// the criteria with no signal yet are listed as unmeasured so the axis
+	// says what would feed it rather than rendering a bare dash.
 }
 
-// Sufficiency floors. Below these a sub-criterion contributes nothing and, if
-// an axis has no contributing sub-criteria at all, the axis is unscored.
-//
-// These are named rather than inlined because they encode a judgement call —
-// "how much output before a cost-per-PR figure means anything" — that a future
-// reader will want to find and argue with.
+// Sufficiency floors. Below these a sub-criterion is unmeasured rather than
+// scored on noise.
 const (
 	// minMergedPRsForCostRatio is how many merged PRs a hive needs before
-	// tokens-per-PR is meaningful. With one or two merges the ratio is
-	// dominated by fixed setup spend and says more about when the hive was
-	// created than how efficiently it runs.
+	// tokens-per-merge is meaningful. With one or two merges the ratio is
+	// dominated by fixed setup spend.
 	minMergedPRsForCostRatio = 5
 
 	// minPRsForReworkRate is the smallest merged+rejected total that gives a
 	// stable rejection rate. Below it a single rejection swings the figure by
-	// tens of percent, which would flag hives for noise.
+	// tens of percent.
 	minPRsForReworkRate = 4
 
-	// minFleetForPercentile is the smallest population in which a percentile
-	// is honest. Ranking three hives against each other produces scores of 0,
-	// 50 and 100 that look authoritative and mean almost nothing.
-	minFleetForPercentile = 5
+	// minHiveStateSamples is the smallest 7-day hive-state sample count the
+	// trend ratios (agent idle, SLA kept) are read from.
+	minHiveStateSamples = 6
 )
-
-// activityFloor is the absolute magnitude at which a criterion's percentile
-// counts in full.
-//
-// It exists because a percentile cannot see magnitude. Below this value the
-// percentile is scaled down toward zero; at or above it the fleet-relative rank
-// stands unmodified. The scale is the criterion's own native unit, which is why
-// each criterion carries its own floor rather than sharing one constant — five
-// merged PRs and five contributor-relay tasks are not the same amount of
-// evidence.
-//
-// activityFloor==0 means the criterion is EXEMPT: its value is a ratio,
-// posture or inverse count where "zero" is not "idle". A rework rate of zero is
-// the BEST possible outcome, not an absence of activity, and gating it would
-// score the cleanest hives worst. The exemption is opt-in per criterion for
-// exactly this reason — a blanket gate would silently invert those axes.
-const (
-	// activityFloorMergedPRs is the merged-PR count at which throughput
-	// percentile counts in full. Ten in ninety days is roughly one a week: a
-	// hive that is genuinely, continuously working rather than one that landed
-	// a couple of things. Below it the ramp means three merged PRs earns about
-	// a third of its rank, which is the intended answer to "a hive with 3
-	// merged PRs must not outrank 28 idle ones and land high".
-	activityFloorMergedPRs = 10
-
-	// activityFloorRelayTasks is the 7-day contributor-relay count at which the
-	// relay reads as genuinely in use. Set at five — under one a day — because
-	// the relay is a lighter-weight action than a merged PR and a lower bar
-	// still distinguishes "in use" from "configured and idle".
-	activityFloorRelayTasks = 5
-
-	// activityFloorOutputPerAgent is merged PRs per agent at which a seat reads
-	// as productive. One over ninety days is a deliberately low bar — the
-	// criterion flags agents that shipped NOTHING, and anything above zero at
-	// least demonstrates the seat works.
-	activityFloorOutputPerAgent = 1
-
-	// activityFloorTokensPerDay is the daily burn at which a hive is doing
-	// enough work for its cost figures to describe anything. A hive burning
-	// almost nothing is not efficient, it is idle — and without this it would
-	// take the top of the lower-is-better cost ranking precisely BECAUSE it
-	// does nothing, which is the same median-for-idleness bug wearing a
-	// different sign. 50k tokens/day is a few agent runs.
-	activityFloorTokensPerDay = 50000
-)
-
-// activityFactor ramps a criterion's absolute magnitude into a 0..1 multiplier
-// on its fleet percentile.
-//
-// The ramp is LINEAR from 0 at zero activity to 1 at the floor, then flat. A
-// linear ramp is deliberate over a step: a step at the floor would create a
-// cliff where the tenth merged PR is worth more than the previous nine put
-// together, which is both unfair and easy to game. A linear ramp makes each
-// unit of real work worth the same amount until the criterion is satisfied.
-//
-// The multiplicative form — score = percentile × factor — is what preserves the
-// fleet-relative property while fixing its blindness. Rank still decides the
-// ORDER among active hives; magnitude decides whether the hive is in the
-// conversation at all. An additive or replacement scheme would throw away the
-// self-calibration that makes the fleet-average polygon meaningful.
-//
-// floor<=0 means the criterion is exempt (see the constants above) and the
-// percentile passes through untouched.
-func activityFactor(value, floor float64) float64 {
-	if floor <= 0 {
-		return 1
-	}
-	if value <= 0 {
-		// Measured zero. NOT unscored — the hive reported, so it scores, and it
-		// scores at the bottom rather than at the fleet median. This single
-		// line is the difference between "28 idle hives at 50" and the truth.
-		return 0
-	}
-	if value >= floor {
-		return 1
-	}
-	return value / floor
-}
-
-// dedupeByGroup collapses values that share a countGroup down to one
-// representative, so an org-wide counter reported by several hives in the same
-// org contributes to a criterion's population ONCE.
-//
-// The representative is the MAXIMUM of the group's reported values rather than
-// the first or the mean. The counter is org-wide and identical by construction,
-// so in the healthy case every choice agrees; they differ only when the hives'
-// collectors ran at different times or one is stale, and the freshest count is
-// the largest over a fixed trailing window. Taking the max therefore keeps the
-// most complete measurement instead of letting collection timing decide.
-//
-// Hives with an empty countGroup are ungrouped and each contribute their own
-// value, which is the right default when the org is unknown.
-//
-// Note this dedupes the POPULATION only. Each hive is still SCORED against that
-// population with its own value, so co-org hives still get identical scores —
-// correctly, since they are reporting the same underlying work. What is fixed
-// is the distribution no longer being stretched by phantom duplicates.
-func dedupeByGroup(values []float64, groups []string) []float64 {
-	out := make([]float64, 0, len(values))
-	best := map[string]int{} // countGroup -> index into out
-	for i, v := range values {
-		g := ""
-		if i < len(groups) {
-			g = strings.TrimSpace(groups[i])
-		}
-		if g == "" {
-			out = append(out, v)
-			continue
-		}
-		if j, seen := best[g]; seen {
-			if v > out[j] {
-				out[j] = v
-			}
-			continue
-		}
-		best[g] = len(out)
-		out = append(out, v)
-	}
-	return out
-}
-
-// percentileRank returns where value sits within population, as 0-100.
-//
-// It uses the standard "fraction of the population strictly below, plus half
-// those equal" definition, which keeps ties at the same score and puts a
-// uniformly-tied population at 50 rather than at 0 or 100 depending on
-// comparison direction.
-//
-// higherIsBetter=false inverts the sense, for metrics like cost-per-PR where a
-// smaller number is the good outcome.
-func percentileRank(value float64, population []float64, higherIsBetter bool) int {
-	if len(population) < minFleetForPercentile {
-		return 0
-	}
-	below, equal := 0, 0
-	for _, p := range population {
-		switch {
-		case p == value:
-			equal++
-		case (p < value) == higherIsBetter:
-			below++
-		}
-	}
-	pct := (float64(below) + 0.5*float64(equal)) / float64(len(population)) * 100
-	return clampScore(int(math.Round(pct)))
-}
 
 // clampScore keeps a score inside 0-100 regardless of arithmetic drift.
 func clampScore(n int) int {
@@ -360,13 +219,28 @@ func clampScore(n int) int {
 }
 
 // medianOf returns the median of a sample, or 0 for an empty one. Used for the
-// per-axis Delta, which is what makes the hover actionable.
+// per-axis Delta and for every fleet figure: a median is what keeps three very
+// busy hives from pulling the fleet's number away from what most hives show.
 func medianOf(sample []int) int {
 	if len(sample) == 0 {
 		return 0
 	}
 	s := append([]int(nil), sample...)
 	sort.Ints(s)
+	mid := len(s) / 2
+	if len(s)%2 == 1 {
+		return s[mid]
+	}
+	return (s[mid-1] + s[mid]) / 2
+}
+
+// medianFloat is medianOf for native-unit criterion values.
+func medianFloat(sample []float64) float64 {
+	if len(sample) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), sample...)
+	sort.Float64s(s)
 	mid := len(s) / 2
 	if len(s)%2 == 1 {
 		return s[mid]
