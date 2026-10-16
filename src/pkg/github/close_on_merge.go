@@ -579,7 +579,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		res.Action, res.Reason = CloseOnMergeAwaiting, "needs_confirmation_or_human"
 		return res
 	}
-	if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partial() {
+	if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partialForDirectClose(closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issueNumber)) {
 		c.markPartiallyAddressed(ctx, issueRepo, issueNumber, pr.GetNumber(), issue, cov, opts)
 		res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
 		return res
@@ -618,6 +618,20 @@ type closeOnMergeCoverage struct {
 func (cov closeOnMergeCoverage) partial() bool {
 	if !cov.Closing || cov.Remainder {
 		return true
+	}
+	return cov.FilesKnown && len(cov.Cited) > 0 && len(cov.Untouched) == len(cov.Cited)
+}
+
+// partialForDirectClose is the guard for the direct close path, where the
+// claim may come from the branch name, claim metadata or a comment link rather
+// than a closing keyword. A missing keyword alone is therefore not partial
+// coverage; a textual reference without a closing keyword (`Refs #N`) is.
+func (cov closeOnMergeCoverage) partialForDirectClose(refsIssue bool) bool {
+	if cov.Remainder {
+		return true
+	}
+	if !cov.Closing {
+		return refsIssue
 	}
 	return cov.FilesKnown && len(cov.Cited) > 0 && len(cov.Untouched) == len(cov.Cited)
 }

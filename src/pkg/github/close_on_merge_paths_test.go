@@ -479,6 +479,10 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
 				case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/labels/"):
 					w.WriteHeader(http.StatusNotFound)
+				case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
+					_ = json.NewEncoder(w).Encode(map[string]any{"name": strings.TrimPrefix(r.URL.Path, "/repos/o/r/labels/")})
+				case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues/7/labels":
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
 				default:
 					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 				}
