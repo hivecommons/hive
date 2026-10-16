@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // TriggerRuntimeError is the fleet-report trigger for the "unusual runtime
@@ -484,7 +485,7 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	if strings.TrimSpace(hive) == "" {
 		hive = instance
 	}
-	labels := []string{LabelFleetReport, LabelSelfReport, LabelKindBug, LabelNeedsTriage, "severity:" + labelValue(ev.Severity), "trigger:" + TriggerRuntimeError, "class:" + labelValue(ev.Class)}
+	labels := []string{LabelFleetReport, LabelSelfReport, originlabel.SelfReport, LabelKindBug, LabelNeedsTriage, "severity:" + labelValue(ev.Severity), "trigger:" + TriggerRuntimeError, "class:" + labelValue(ev.Class)}
 	if hl := HiveLabel(hive); hl != "" && hive != instance {
 		labels = append(labels, hl)
 	}

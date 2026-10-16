@@ -145,8 +145,11 @@ writes no entry.
 
 The open-time signed rewrite in `pr_request_signed.go` is part of `open_pr`
 and is covered by that operation's `agent_pr_created` entry. Creating a
-missing label on a repository (the hold label, `origin/review`) is a side
-effect of the labeled write and is not audited on its own.
+missing label on a repository (the hold label, any `origin/*` provenance
+label) is a side effect of the labeled write and is not audited on its own.
+Every issue-creating write above stamps exactly one `origin/<source>` label
+in code (`pkg/originlabel.With`; see the "Label axes" table in
+`labels-and-control-signals.md`), so provenance is never left to a prompt.
 
 ## Lane allowlist
 

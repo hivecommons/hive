@@ -13,8 +13,10 @@ import (
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 const (
@@ -240,8 +242,17 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 		Title: gh.Ptr(advisoryTitle),
 		Body:  gh.Ptr(body),
 	}
+	var advisoryLabels []string
 	if labelExists {
-		req.Labels = &[]string{advisoryLabelName}
+		advisoryLabels = []string{advisoryLabelName}
+	}
+	if err := c.ensureOriginLabel(ctx, owner, repo, originlabel.Advisory); err != nil {
+		c.logger.Warn("could not ensure origin/advisory label, issue will be created without it", slog.String("error", err.Error()))
+	} else {
+		advisoryLabels = WithOriginLabel(advisoryLabels, originlabel.Advisory)
+	}
+	if len(advisoryLabels) > 0 {
+		req.Labels = &advisoryLabels
 	}
 	// Idempotency across concurrent callers (#11579): findAdvisoryIssue is a
 	// search-then-create with no key, so two EnsureAdvisoryIssue callers
@@ -579,7 +590,11 @@ func (c *Client) ensureAdvisoryLabel(ctx context.Context, owner, repo string, is
 	if labelErr != nil && !strings.Contains(labelErr.Error(), "already_exists") {
 		return
 	}
-	_, _, _ = c.client.Issues.AddLabelsToIssue(ctx, owner, repo, issueNum, []string{advisoryLabelName})
+	labels := []string{advisoryLabelName}
+	if err := c.ensureOriginLabel(ctx, owner, repo, originlabel.Advisory); err == nil {
+		labels = WithOriginLabel(labels, originlabel.Advisory)
+	}
+	_, _, _ = c.client.Issues.AddLabelsToIssue(ctx, owner, repo, issueNum, labels)
 }
 
 // findDigestComment returns the ID of the digest comment this client should

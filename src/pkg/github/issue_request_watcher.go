@@ -16,9 +16,11 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // IssueRequestDir is where agents drop issue-create and comment requests. An
@@ -515,6 +517,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if req.NeedsDecision {
 			createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
 		}
+		// Provenance is the relay's call, not the prompt's: every issue an
+		// agent files through hive-open-issue carries exactly origin/agent
+		// (agent/<lane> says which lane), whatever labels it asked for.
+		createLabels = WithOriginLabel(createLabels, originlabel.Agent)
 		res, err = c.createIssue(ctx, req.Repo, req.Title, body, createLabels, true)
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this

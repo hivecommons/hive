@@ -803,6 +803,19 @@ func TestHandleACMMCreateIssue_BodyFormattingAndLabels(t *testing.T) {
 	if !acmmEvalContainsStr(labels, "acmm") || !acmmEvalContainsStr(labels, "ai-fix-requested") {
 		t.Fatalf("labels = %v, want to include acmm and ai-fix-requested", labels)
 	}
+	if n := countLabelsWithPrefix(labels, ghpkg.OriginLabelPrefix); n != 1 || !acmmEvalContainsStr(labels, ghpkg.OriginDashboardLabel) {
+		t.Fatalf("labels = %v, want exactly one origin/* label (%s), got %d", labels, ghpkg.OriginDashboardLabel, n)
+	}
+}
+
+func countLabelsWithPrefix(labels []string, prefix string) int {
+	n := 0
+	for _, l := range labels {
+		if strings.HasPrefix(l, prefix) {
+			n++
+		}
+	}
+	return n
 }
 
 func TestHandleACMMCreateIssue_LabelCreateFailsButNotAlreadyExists_NoLabelsAssigned(t *testing.T) {

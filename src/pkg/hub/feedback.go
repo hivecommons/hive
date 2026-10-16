@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	ghauth "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 const (
@@ -482,9 +483,9 @@ func hubFeedbackRepo(req feedbackReportRequest) (string, string) {
 }
 func hubFeedbackLabels(req feedbackReportRequest) []string {
 	if req.RequestType == feedbackTypeBug {
-		return []string{"kind/bug", "user-feedback"}
+		return []string{"kind/bug", "user-feedback", originlabel.Feedback}
 	}
-	return []string{"enhancement", "user-feedback"}
+	return []string{"enhancement", "user-feedback", originlabel.Feedback}
 }
 
 func parseHubFeedbackRefs(raw string) ([]feedbackIssueStatus, error) {

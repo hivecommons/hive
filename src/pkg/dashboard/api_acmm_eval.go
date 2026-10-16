@@ -11,6 +11,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/github"
@@ -305,6 +306,9 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 	var labels []string
 	if labelExists {
 		labels = []string{acmmIssueLabelName, "ai-fix-requested"}
+	}
+	if labelExists {
+		labels = github.WithOriginLabel(labels, github.OriginDashboardLabel)
 	}
 
 	// The consolidating create reuses an open issue with the same subject or

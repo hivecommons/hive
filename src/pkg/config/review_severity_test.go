@@ -161,7 +161,8 @@ func TestReviewBacklogEffectiveLabelsNeverDoubleLabels(t *testing.T) {
 		{"new plus legacy", []string{"origin/review", "from-review"}, []string{"origin/review"}},
 		{"case duplicates", []string{"Nit", "nit", "FROM-REVIEW"}, []string{"Nit", "origin/review"}},
 		{"only legacy", []string{"from-review"}, []string{"origin/review"}},
-		{"empty slice keeps no default", []string{}, []string{}},
+		{"empty slice still carries provenance", []string{}, []string{"origin/review"}},
+		{"unrelated labels gain provenance", []string{"nit"}, []string{"nit", "origin/review"}},
 	}
 	for _, tc := range cases {
 		got := ReviewBacklogConfig{Labels: tc.in}.EffectiveLabels()

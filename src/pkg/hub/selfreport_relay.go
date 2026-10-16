@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // Self-report relay (hivecommons/hive#11868). Spokes whose GitHub credential
@@ -174,7 +176,7 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		npsJSONError(w, "rate limit exceeded", http.StatusTooManyRequests)
 		return
 	}
-	labels := append([]string(nil), req.Labels...)
+	labels := originlabel.With(req.Labels, originlabel.SelfReport)
 	if !containsString(labels, selfReportRelayLabel) {
 		labels = append(labels, selfReportRelayLabel)
 	}

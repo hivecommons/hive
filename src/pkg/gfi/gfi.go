@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 const (
@@ -88,6 +90,7 @@ var DefaultExcludeLabels = []string{
 	"hive/in-progress", "hive/already-done", "hive/covered-by-pr", "🐝 covered by pr",
 	// The hive's own reports to itself are never a newcomer's first issue.
 	"hive/advisory", "hive/selfreport", "hive/sentinel", "hive/fleet", "fleet",
+	originlabel.Advisory, originlabel.SelfReport, originlabel.Recommendations,
 }
 
 // sizeLabels are labels that already say "small".

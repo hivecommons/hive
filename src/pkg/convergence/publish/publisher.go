@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/mutation"
 	"github.com/hivecommons/hive/pkg/convergence/proof"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // Typed publisher errors. Callers match with errors.Is; every refusal is also
@@ -264,7 +265,7 @@ func (p *Publisher) file(ctx context.Context, f Finding, grant Grant, mode strin
 	}
 	effect := p.effect(f, grant, mutation.EffectCreateIssue, channelPublic)
 	res, err := p.execute(ctx, f, grant, mode, effect, lookup, func() (string, error) {
-		ref, err := p.Issues.CreateIssue(ctx, f.Repo, f.Title, f.Body(), append([]string{PublicLabel}, f.Labels...))
+		ref, err := p.Issues.CreateIssue(ctx, f.Repo, f.Title, f.Body(), originlabel.With(append([]string{PublicLabel}, f.Labels...), originlabel.Audit))
 		if err != nil {
 			return "", err
 		}

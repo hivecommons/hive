@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/originlabel"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -95,7 +96,7 @@ type githubIssueBacklogSink struct{ c *Client }
 func (githubIssueBacklogSink) Destination() string { return config.ReviewBacklogGitHubIssue }
 
 func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBacklogItem) (ReviewBacklogRef, error) {
-	res, err := s.c.createIssue(ctx, item.Repo, item.Title, item.Body, item.Labels, true)
+	res, err := s.c.createIssue(ctx, item.Repo, item.Title, item.Body, WithOriginLabel(item.Labels, originlabel.Review), true)
 	if err != nil {
 		return ReviewBacklogRef{}, err
 	}
@@ -148,28 +149,16 @@ func (s githubIssueBacklogSink) ItemOpen(ctx context.Context, repo string, ref R
 
 // reviewBacklogTarget resolves the sink and labels for one filing pass. When
 // the configured destination could not be built (its work source is not
-// active or not configured) the sink is the GitHub issue fallback, and the
-// origin/review label is always applied so the fallback items stay findable.
+// active or not configured) the sink is the GitHub issue fallback. Every
+// destination's items carry exactly one origin/review label so the backlog
+// is findable by the same provenance axis as every other hive filer.
 func (c *Client) reviewBacklogTarget(r ReviewBacklogRouting) (ReviewBacklogSink, []string) {
-	labels := append([]string(nil), r.Backlog.EffectiveLabels()...)
+	labels := WithOriginLabel(r.Backlog.EffectiveLabels(), originlabel.Review)
 	sink := r.Sink
 	if sink == nil {
 		sink = c.ReviewBacklogIssueSink()
 	}
-	want, ok := config.NormalizeReviewBacklogDestination(r.Backlog.Destination)
-	if !ok || sink.Destination() != want {
-		labels = appendLabelOnce(labels, reviewBacklogLabel)
-	}
 	return sink, labels
-}
-
-func appendLabelOnce(labels []string, label string) []string {
-	for _, l := range labels {
-		if strings.EqualFold(strings.TrimSpace(l), label) {
-			return labels
-		}
-	}
-	return append(labels, label)
 }
 
 // reviewBacklogDailyCap is review.backlog.max_per_pr_per_day when routing is

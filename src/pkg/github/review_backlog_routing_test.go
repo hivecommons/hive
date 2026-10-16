@@ -85,8 +85,12 @@ func TestReviewBacklogTargetFallsBackToGitHubWithOriginReviewLabel(t *testing.T)
 	}
 	fake := &fakeBacklogSink{dest: config.ReviewBacklogJira}
 	sink, labels = c.reviewBacklogTarget(ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: "jira", Labels: []string{"nit"}}, Sink: fake})
-	if sink != fake || strings.Join(labels, ",") != "nit" {
-		t.Fatalf("configured sink: got %v %v, want the jira sink with [nit]", sink.Destination(), labels)
+	if sink != fake || strings.Join(labels, ",") != "nit,origin/review" {
+		t.Fatalf("configured sink: got %v %v, want the jira sink with [nit origin/review]", sink.Destination(), labels)
+	}
+	_, labels = c.reviewBacklogTarget(ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Labels: []string{"from-review", "origin/review", "nit"}}})
+	if strings.Join(labels, ",") != "origin/review,nit" {
+		t.Fatalf("legacy config labels = %v, want exactly one origin/review", labels)
 	}
 	_, labels = c.reviewBacklogTarget(ReviewBacklogRouting{})
 	if strings.Join(labels, ",") != "origin/review" {
@@ -258,7 +262,7 @@ func TestReviewBacklogRoutesBelowLineFindingsWithDedupAndDailyCap(t *testing.T) 
 		t.Fatalf("created = %d, want 2 (daily cap) below-line items", len(sink.created))
 	}
 	first := sink.created[0]
-	if first.Repo != "o/r" || first.Title != "Review backlog (correctness): unused variable" || strings.Join(first.Labels, ",") != "nit" {
+	if first.Repo != "o/r" || first.Title != "Review backlog (correctness): unused variable" || strings.Join(first.Labels, ",") != "nit,origin/review" {
 		t.Fatalf("first item = %+v", first)
 	}
 	for _, want := range []string{

@@ -15,6 +15,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // origin/<source> is the provenance axis of the label vocabulary: it records
@@ -24,35 +25,45 @@ import (
 // origin/* label as a gate; the family is informational and shares one
 // neutral colour so operators recognise it at a glance.
 const (
-	OriginLabelPrefix = config.OriginLabelPrefix
-	OriginReviewLabel = config.OriginReviewLabel
+	OriginLabelPrefix = originlabel.Prefix
+	OriginReviewLabel = originlabel.Review
+	// The rest of the origin/* vocabulary (pkg/originlabel), re-exported so
+	// packages that already depend on pkg/github need no extra import.
+	OriginAgentLabel           = originlabel.Agent
+	OriginAdvisoryLabel        = originlabel.Advisory
+	OriginRecommendationsLabel = originlabel.Recommendations
+	OriginSelfReportLabel      = originlabel.SelfReport
+	OriginFeedbackLabel        = originlabel.Feedback
+	OriginUpstreamLabel        = originlabel.Upstream
+	OriginAuditLabel           = originlabel.Audit
+	OriginDashboardLabel       = originlabel.Dashboard
 	// LegacyFromReviewLabel is the retired name of OriginReviewLabel.
 	LegacyFromReviewLabel = config.LegacyReviewBacklogLabel
 	// OriginLabelColor is the shared colour of every origin/* label; it
 	// matches the purple from-review used before the rename.
-	OriginLabelColor = "8250df"
+	OriginLabelColor = originlabel.Color
 
 	OriginLabelMigrationID       = "origin-provenance-labels-v1"
 	originLabelMigrationFileStem = "origin-label-migration"
 )
 
-// originLabelDescriptions documents the known origin/* sources. Unknown
-// sources still get the shared colour and a generic description, so a
-// future filer only has to pick a name.
-var originLabelDescriptions = map[string]string{
-	OriginReviewLabel: "Filed by Hive from a review-swarm backlog finding (provenance only, not a routing or hold signal)",
+// WithOriginLabel is originlabel.With: labels carrying exactly one origin/*
+// label. Every server-side filer in this package runs its label list through
+// it before creating an issue, so provenance is enforced centrally rather
+// than left to a prompt or a caller.
+func WithOriginLabel(labels []string, origin string) []string {
+	return originlabel.With(labels, origin)
 }
 
 // IsOriginLabel reports whether name belongs to the origin/* family.
 func IsOriginLabel(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
-	return strings.HasPrefix(name, OriginLabelPrefix) && len(name) > len(OriginLabelPrefix)
+	return originlabel.Is(name)
 }
 
 // CanonicalOriginLabel maps a retired provenance label (from-review) to its
-// origin/* replacement; see config.CanonicalOriginLabel.
+// origin/* replacement; see originlabel.Canonical.
 func CanonicalOriginLabel(name string) (string, bool) {
-	return config.CanonicalOriginLabel(name)
+	return originlabel.Canonical(name)
 }
 
 // originLabelDefinition returns the colour and description for an origin/*
@@ -61,11 +72,7 @@ func originLabelDefinition(name string) (issueLabelDefinition, bool) {
 	if !IsOriginLabel(name) {
 		return issueLabelDefinition{}, false
 	}
-	desc, known := originLabelDescriptions[strings.TrimSpace(name)]
-	if !known {
-		desc = "Hive provenance: where this issue came from (origin/<source>; informational only)"
-	}
-	return issueLabelDefinition{color: OriginLabelColor, description: desc}, true
+	return issueLabelDefinition{color: OriginLabelColor, description: originlabel.Description(name)}, true
 }
 
 // issueLabelDefinitionFor resolves the colour/description Hive uses when it
@@ -89,7 +96,7 @@ func (c *Client) ensureOriginLabel(ctx context.Context, owner, repo, name string
 	}
 	existing, _, err := c.client.Issues.GetLabel(ctx, owner, repo, name)
 	if err == nil {
-		if strings.EqualFold(strings.TrimSpace(existing.GetColor()), def.color) {
+		if have := strings.TrimSpace(existing.GetColor()); have == "" || strings.EqualFold(have, def.color) {
 			return nil
 		}
 		_, _, err = c.client.Issues.EditLabel(ctx, owner, repo, name, &gh.Label{

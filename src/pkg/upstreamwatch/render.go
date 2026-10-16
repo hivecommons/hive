@@ -3,6 +3,8 @@ package upstreamwatch
 import (
 	"fmt"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 const (
@@ -85,10 +87,7 @@ func RenderIssue(upstream string, item Item, j Judgement, label string) Issue {
 	b.WriteString("\n")
 	b.WriteString(Marker(upstream, item))
 	b.WriteString("\n")
-	var labels []string
-	if l := strings.TrimSpace(label); l != "" {
-		labels = []string{l}
-	}
+	labels := originlabel.With([]string{label}, originlabel.Upstream)
 	return Issue{Title: titlePrefix + title, Body: b.String(), Labels: labels}
 }
 

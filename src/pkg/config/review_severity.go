@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // ReviewSeverityConfig is `review.severity` (hivecommons/hive#11088): the one
@@ -82,14 +84,14 @@ var ValidReviewBacklogDestinations = []string{ReviewBacklogGitHubIssue, ReviewBa
 // says which agent works it.
 const DefaultReviewBacklogLabel = OriginReviewLabel
 
-// Origin provenance labels. Every hive-authored issue that carries a
-// provenance marker uses one origin/<source> label so operators can tell
-// "where did this come from" apart from "who works it" (agent/<lane>) and
-// "where is it in the pipeline" (stage/*).
+// Origin provenance labels (pkg/originlabel). Every hive-authored issue
+// carries exactly one origin/<source> label so operators can tell "where did
+// this come from" apart from "who works it" (agent/<lane>) and "where is it
+// in the pipeline" (stage/*).
 const (
-	OriginLabelPrefix = "origin/"
+	OriginLabelPrefix = originlabel.Prefix
 	// OriginReviewLabel marks issues filed from review-swarm backlog findings.
-	OriginReviewLabel = OriginLabelPrefix + "review"
+	OriginReviewLabel = originlabel.Review
 	// LegacyReviewBacklogLabel is the pre-origin/* name of OriginReviewLabel.
 	// Config still accepts it; the hive maps it to OriginReviewLabel when
 	// filing and migrates open items once at startup.
@@ -99,19 +101,13 @@ const (
 // OriginLabelRenames maps retired provenance label names to their origin/*
 // replacement. Readers use CanonicalOriginLabel; the startup reconciler swaps
 // the old name for the new one on open items.
-var OriginLabelRenames = map[string]string{
-	LegacyReviewBacklogLabel: OriginReviewLabel,
-}
+var OriginLabelRenames = originlabel.Retired
 
 // CanonicalOriginLabel returns the origin/* replacement for a retired
 // provenance label, or the trimmed input unchanged when it is not renamed.
 // renamed reports whether a mapping applied.
 func CanonicalOriginLabel(name string) (canonical string, renamed bool) {
-	name = strings.TrimSpace(name)
-	if to, ok := OriginLabelRenames[strings.ToLower(name)]; ok {
-		return to, true
-	}
-	return name, false
+	return originlabel.Canonical(name)
 }
 
 // DefaultReviewBacklogMaxPerPRPerDay caps backlog items filed per PR per day
@@ -189,26 +185,17 @@ func (b ReviewBacklogConfig) EffectiveDestination(workSourceType string) string 
 	return d
 }
 
-// EffectiveLabels returns labels with the default applied. Retired
-// provenance names (from-review) are mapped to their origin/* replacement and
-// the result is de-duplicated case-insensitively, so a config that still lists
-// the old name never double-labels an item.
+// EffectiveLabels returns labels with the default applied. The result always
+// carries exactly one origin/* label — origin/review — so review backlog
+// items share the provenance family with every other hive filer: retired
+// names (from-review) and any other origin/* entry are dropped, blanks are
+// skipped and duplicates folded case-insensitively, so a config that still
+// lists the old name never double-labels an item.
 func (b ReviewBacklogConfig) EffectiveLabels() []string {
 	if b.Labels == nil {
 		return []string{DefaultReviewBacklogLabel}
 	}
-	out := make([]string, 0, len(b.Labels))
-	seen := map[string]bool{}
-	for _, l := range b.Labels {
-		l, _ = CanonicalOriginLabel(l)
-		key := strings.ToLower(l)
-		if l == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		out = append(out, l)
-	}
-	return out
+	return originlabel.With(b.Labels, OriginReviewLabel)
 }
 
 // EffectiveMaxPerPRPerDay returns max_per_pr_per_day with the default applied.

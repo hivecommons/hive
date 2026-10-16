@@ -19,6 +19,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
@@ -892,9 +893,9 @@ func feedbackRepo(req feedbackReportRequest) (owner, repo string) {
 }
 func feedbackLabels(req feedbackReportRequest) []string {
 	if req.RequestType == feedbackTypeBug {
-		return []string{"kind/bug", "user-feedback"}
+		return []string{"kind/bug", "user-feedback", github.OriginFeedbackLabel}
 	}
-	return []string{"enhancement", "user-feedback"}
+	return []string{"enhancement", "user-feedback", github.OriginFeedbackLabel}
 }
 
 func fetchFeedbackIssueStatuses(ctx context.Context, client *http.Client, apiBase, token string, refs []feedbackSubmissionRecord) ([]feedbackIssueStatus, error) {

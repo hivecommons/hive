@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 func resetSelfReportRate(t *testing.T) {
@@ -127,6 +129,9 @@ func TestHubSelfReportIngestCreatesUnderAppIdentity(t *testing.T) {
 	_ = json.Unmarshal(gh.bodies[1], &payload)
 	if !strings.Contains(strings.Join(payload.Labels, ","), selfReportRelayLabel) || !strings.Contains(payload.Body, "hive-fleet-fingerprint:abc123") {
 		t.Fatalf("issue payload = %+v", payload)
+	}
+	if countOriginLabels(payload.Labels) != 1 || !containsString(payload.Labels, originlabel.SelfReport) {
+		t.Fatalf("relayed issue labels = %v, want exactly one %s", payload.Labels, originlabel.SelfReport)
 	}
 }
 

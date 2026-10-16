@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/convergence/outcome"
 	"github.com/hivecommons/hive/pkg/convergence/proof"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 const (
@@ -28,6 +29,7 @@ var testNow = time.Date(2026, 9, 22, 20, 0, 0, 0, time.UTC)
 type fakeIssue struct {
 	number int
 	body   string
+	labels []string
 }
 
 // fakeSeam is an in-memory forge issue seam that counts creates, remembers
@@ -59,8 +61,19 @@ func (s *fakeSeam) CreateIssue(ctx context.Context, repo, title, body string, la
 		s.dropNext = false
 		return ref, nil
 	}
-	s.issues[repo] = append(s.issues[repo], fakeIssue{number: ref.Number, body: body})
+	s.issues[repo] = append(s.issues[repo], fakeIssue{number: ref.Number, body: body, labels: append([]string(nil), labels...)})
 	return ref, nil
+}
+
+// lastLabels returns the labels of the most recent issue created in repo.
+func (s *fakeSeam) lastLabels(repo string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	is := s.issues[repo]
+	if len(is) == 0 {
+		return nil
+	}
+	return is[len(is)-1].labels
 }
 
 func (s *fakeSeam) FindIssueByMarker(ctx context.Context, repo, marker string) (forge.IssueRef, bool, error) {
@@ -267,6 +280,9 @@ func TestPublishReplayFilesOneIssueForTwoExecutions(t *testing.T) {
 	if seam.count() != 1 {
 		t.Fatalf("two executions created %d issues, want 1", seam.count())
 	}
+	if got := seam.lastLabels(testRepo); strings.Join(got, ",") != PublicLabel+","+originlabel.Audit {
+		t.Fatalf("public finding labels = %v, want [%s %s] (exactly one origin/* label)", got, PublicLabel, originlabel.Audit)
+	}
 
 	// With the marker lookup blind, the journal alone must still replay the
 	// recorded result rather than filing again.
@@ -309,6 +325,9 @@ func TestPublishSensitiveGoesToPrivateRepoNeverPublic(t *testing.T) {
 	pub, err := p.Publish(context.Background(), f, grant)
 	if err != nil || pub.State != StatePrivate || pub.Private.Number == 0 {
 		t.Fatalf("sensitive publish = %+v err=%v", pub, err)
+	}
+	if got := private.lastLabels(testPrivate); strings.Join(got, ",") != repoChannelLabel+","+originlabel.Audit {
+		t.Fatalf("private disclosure labels = %v, want [%s %s]", got, repoChannelLabel, originlabel.Audit)
 	}
 	if public.count() != 0 {
 		t.Fatalf("sensitive finding hit the public issue seam %d times", public.count())

@@ -62,6 +62,13 @@ func newRecServer(t *testing.T, org, repo string) *recServer {
 			})
 		}
 	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels/", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/labels", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"name": "origin/recommendations"})
+	})
 	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/", org, repo), func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPatch {
 			s.editCalls++
@@ -99,8 +106,8 @@ func TestPostRecommendations_CreatesWithLabelsWhenWorthOpening(t *testing.T) {
 		t.Fatalf("createCalls = %d, want 1", srv.createCalls)
 	}
 	labels, _ := srv.createBodies[0]["labels"].([]any)
-	if len(labels) != 2 {
-		t.Fatalf("labels on create = %v, want the 2 configured labels", srv.createBodies[0]["labels"])
+	if len(labels) != 3 || labels[0] != "hive" || labels[1] != "digest" || labels[2] != OriginRecommendationsLabel {
+		t.Fatalf("labels on create = %v, want the 2 configured labels plus exactly one %s", srv.createBodies[0]["labels"], OriginRecommendationsLabel)
 	}
 }
 

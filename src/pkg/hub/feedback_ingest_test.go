@@ -214,7 +214,7 @@ func TestHubFeedbackIngestCreatesIssueWithAppToken(t *testing.T) {
 	if !strings.HasPrefix(payload.Body, "Opened by @hub-bot on behalf of @alice from hive h1 (https://hub.example)") || strings.Contains(payload.Body, "@spoke-claimed") {
 		t.Fatalf("issue body attribution used the wrong credential:\n%s", payload.Body)
 	}
-	if strings.Join(payload.Labels, ",") != "enhancement,user-feedback" {
+	if strings.Join(payload.Labels, ",") != "enhancement,user-feedback,origin/feedback" {
 		t.Fatalf("labels = %v", payload.Labels)
 	}
 }

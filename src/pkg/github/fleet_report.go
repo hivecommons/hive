@@ -9,8 +9,10 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 const fleetReportRepo = "hivecommons/hive"
@@ -125,7 +127,7 @@ func (c *Client) EnsureFleetReportWithOptions(ctx context.Context, report fleetr
 		}
 	}
 
-	res, err := c.createIssue(ctx, repo, report.Title, report.Body, report.Labels, true)
+	res, err := c.createIssue(ctx, repo, report.Title, report.Body, WithOriginLabel(report.Labels, originlabel.SelfReport), true)
 	if err != nil {
 		return FleetReportResult{}, err
 	}

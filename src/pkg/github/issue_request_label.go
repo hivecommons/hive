@@ -3,6 +3,8 @@ package github
 import (
 	"sort"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // The standalone `label` relay operation (hivecommons/hive#9587).
@@ -39,7 +41,9 @@ var reservedExactLabels = []string{
 // ownership (`hive/claimed-by-<agent>`), the PR-claim bookkeeping labels and
 // most verification state labels are written by hive code paths that read
 // them back as fact.
-var reservedLabelPrefixes = []string{"hive/"}
+// origin/* is provenance the filing path sets at creation; an agent neither
+// adds nor removes it afterwards.
+var reservedLabelPrefixes = []string{"hive/", originlabel.Prefix}
 
 // agentRecordableHiveStateLabels are the narrow exceptions agents may add
 // because hive explicitly asks for them as the agent's audited verdict. The

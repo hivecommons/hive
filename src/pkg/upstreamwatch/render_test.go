@@ -58,7 +58,7 @@ func TestRenderIssue(t *testing.T) {
 				"<!-- upstream-ref: up/widgets#42 -->",
 			},
 			absent: []string{"gone.go"},
-			labels: []string{"upstream/port"},
+			labels: []string{"upstream/port", "origin/upstream"},
 		},
 		{
 			name:     "release",
@@ -68,7 +68,7 @@ func TestRenderIssue(t *testing.T) {
 			title:    "upstream: v2.0.0",
 			contains: []string{"upstream release", "**Port difficulty:** moderate\n", "<!-- upstream-ref: up/widgets@v2.0.0 -->"},
 			absent:   []string{"### Affected files", "### Summary"},
-			labels:   []string{"custom"},
+			labels:   []string{"custom", "origin/upstream"},
 		},
 		{
 			name:     "empty title falls back to ref and long file lists are bounded",
@@ -76,6 +76,7 @@ func TestRenderIssue(t *testing.T) {
 			j:        Judgement{Class: ClassChore, Difficulty: DifficultyHard, Applicable: true, Present: many},
 			title:    "upstream: upstream#7",
 			contains: []string{"- ... and 5 more"},
+			labels:   []string{"origin/upstream"},
 		},
 	}
 	for _, tc := range tests {
@@ -107,8 +108,8 @@ func TestRenderIssue_TruncatesSummary(t *testing.T) {
 	if !strings.Contains(got.Body, "_(truncated)_") || strings.Contains(got.Body, strings.Repeat("a", maxSummaryRunes+1)) {
 		t.Fatal("summary was not truncated")
 	}
-	if got.Labels != nil {
-		t.Fatalf("Labels = %v, want none for an empty label", got.Labels)
+	if strings.Join(got.Labels, ",") != "origin/upstream" {
+		t.Fatalf("Labels = %v, want only the origin label for an empty label", got.Labels)
 	}
 }
 

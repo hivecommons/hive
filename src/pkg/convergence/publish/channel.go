@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // Disclosure is what a private channel receives for a sensitive finding.
@@ -77,7 +78,7 @@ func (c RepoChannel) Disclose(ctx context.Context, d Disclosure) (DisclosureRef,
 	if c.Issues == nil {
 		return DisclosureRef{}, fmt.Errorf("%w: private repo channel has no issue seam", ErrNoPrivateChannel)
 	}
-	ref, err := c.Issues.CreateIssue(ctx, c.Repo, d.Finding.Title, d.Body, []string{repoChannelLabel})
+	ref, err := c.Issues.CreateIssue(ctx, c.Repo, d.Finding.Title, d.Body, originlabel.With([]string{repoChannelLabel}, originlabel.Audit))
 	if err != nil {
 		return DisclosureRef{}, err
 	}

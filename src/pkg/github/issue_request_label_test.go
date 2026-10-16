@@ -283,7 +283,7 @@ func TestIssueRequestWatcher_LabelMalformed(t *testing.T) {
 }
 
 func TestReservedLabelForAgents(t *testing.T) {
-	for _, label := range []string{"lgtm", " LGTM ", "hold", "hive/anything", "approved-direction"} {
+	for _, label := range []string{"lgtm", " LGTM ", "hold", "hive/anything", "approved-direction", "origin/review", "Origin/Agent"} {
 		if !reservedLabelForAgents(label, AutoMergeQueuedLabel) {
 			t.Errorf("reservedLabelForAgents(%q) = false, want true", label)
 		}

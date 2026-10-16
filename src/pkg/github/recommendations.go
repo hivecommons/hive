@@ -7,8 +7,10 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 // RecommendationsResult reports what the post did, so a caller can log the
@@ -82,6 +84,12 @@ func (c *Client) PostRecommendations(ctx context.Context, repo, title, body stri
 			c.logger.Debug("recommendations: nothing actionable and no issue exists — not opening one",
 				slog.String("repo", repo))
 			return RecommendationsResult{}, nil
+		}
+		if err := c.ensureOriginLabel(ctx, owner, repoName, originlabel.Recommendations); err != nil {
+			c.logger.Warn("recommendations: could not ensure origin label, creating without it",
+				slog.String("repo", repo), slog.String("error", err.Error()))
+		} else {
+			labels = WithOriginLabel(labels, originlabel.Recommendations)
 		}
 		created, _, err := c.client.Issues.Create(ctx, owner, repoName, &gh.IssueRequest{
 			Title:  gh.Ptr(title),

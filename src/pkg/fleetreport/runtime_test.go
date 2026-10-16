@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/logscrub"
+	"github.com/hivecommons/hive/pkg/originlabel"
 )
 
 func fakeClock(start time.Time) (func() time.Time, func(time.Duration)) {
@@ -116,9 +117,19 @@ func TestBuildRuntimeReportCarriesMarkersAndLabels(t *testing.T) {
 		}
 		return false
 	}
-	for _, l := range []string{LabelSelfReport, LabelKindBug, LabelNeedsTriage, LabelFleetReport, "class:restart-storm", "severity:high", "trigger:" + TriggerRuntimeError, "hive/hosted-aslom"} {
+	for _, l := range []string{LabelSelfReport, originlabel.SelfReport, LabelKindBug, LabelNeedsTriage, LabelFleetReport, "class:restart-storm", "severity:high", "trigger:" + TriggerRuntimeError, "hive/hosted-aslom"} {
 		if !hasLabel(l) {
 			t.Fatalf("labels missing %q: %v", l, r.Labels)
+		}
+	}
+	if origins := 0; true {
+		for _, l := range r.Labels {
+			if originlabel.Is(l) {
+				origins++
+			}
+		}
+		if origins != 1 {
+			t.Fatalf("runtime report carries %d origin/* labels, want exactly one: %v", origins, r.Labels)
 		}
 	}
 	if r.Class != ClassRestartStorm || r.Trigger != TriggerRuntimeError || r.Hive != "hosted-aslom" {
