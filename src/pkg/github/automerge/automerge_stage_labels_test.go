@@ -691,8 +691,8 @@ func TestClassifyStageRedCheckIsRepairStageNever080Or100(t *testing.T) {
 	}
 	// Modifiers that park the PR still outrank a red optional check.
 	held := classifyStage(stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "label:hold", Detail: red})
-	if held.Stage != stagelabels.NeedsHuman {
-		t.Fatalf("held=%+v want needs-human", held)
+	if held.Stage != stagelabels.NeedsDecision || !held.Human {
+		t.Fatalf("held=%+v want needs-decision (human)", held)
 	}
 }
 
