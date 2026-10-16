@@ -709,29 +709,29 @@ always resolved server-side from the validated token.
 | `GET` | `/api/hub/clusters` | Hub auth | List Clusters | `pkg/hub/saas.go:528` |
 | `GET` | `/api/hub/image-pulls` | Hub auth | Per-Release Image Pull Series | `pkg/hub/saas.go:377` |
 | `GET` | `/api/reach` | Hub admin | PR Reach Report (?pr=NNN or ?recent=K) | `pkg/hub/saas.go:519` |
-| `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1722` |
-| `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1723` |
-| `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1664` |
-| `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1665` |
-| `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1673` |
-| `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1674` |
-| `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1675` |
-| `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1676` |
-| `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1680` |
-| `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1690` |
-| `POST` | `/api/contribute/register` | Hub handler-specific | Contribute Proxy | `pkg/hub/server.go:1691` |
-| `GET` | `/api/contribute/status` | Hub handler-specific | Contribute Status | `pkg/hub/server.go:1692` |
-| `GET` | `/api/contribute/ws` | Hub handler-specific | Contribute WSProxy | `pkg/hub/server.go:1693` |
-| `POST` | `/api/github/webhook` | Hub handler-specific | GitHub Webhook | `pkg/hub/server.go:1694` |
-| `GET` | `/gh-setup` | Hub handler-specific | GitHub App Setup Router | `pkg/hub/server.go:1695` |
-| `GET` | `/learn` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1696` |
-| `GET` | `/get-started` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1697` |
-| `GET` | `/api/docs` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1700` |
-| `GET` | `/api/reading-list` | Hub handler-specific | Reading List | `pkg/hub/server.go:1703` |
-| `GET` | `/reading` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1704` |
-| `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1711` |
-| `GET` | `/cncf-reference-architecture/console` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1712` |
-| `GET` | `/cncf-reference-architecture/bluefin` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1713` |
-| `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1730` |
-| `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1735` |
-| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1737` |
+| `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1726` |
+| `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1727` |
+| `POST` | `/api/heartbeat` | Hub handler-specific | Heartbeat | `pkg/hub/server.go:1668` |
+| `POST` | `/api/task-status` | Hub handler-specific | Task Status | `pkg/hub/server.go:1669` |
+| `GET` | `/api/registry` | Hub handler-specific | Registry | `pkg/hub/server.go:1677` |
+| `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1678` |
+| `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1679` |
+| `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1680` |
+| `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1684` |
+| `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1694` |
+| `POST` | `/api/contribute/register` | Hub handler-specific | Contribute Proxy | `pkg/hub/server.go:1695` |
+| `GET` | `/api/contribute/status` | Hub handler-specific | Contribute Status | `pkg/hub/server.go:1696` |
+| `GET` | `/api/contribute/ws` | Hub handler-specific | Contribute WSProxy | `pkg/hub/server.go:1697` |
+| `POST` | `/api/github/webhook` | Hub handler-specific | GitHub Webhook | `pkg/hub/server.go:1698` |
+| `GET` | `/gh-setup` | Hub handler-specific | GitHub App Setup Router | `pkg/hub/server.go:1699` |
+| `GET` | `/learn` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1700` |
+| `GET` | `/get-started` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1701` |
+| `GET` | `/api/docs` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1704` |
+| `GET` | `/api/reading-list` | Hub handler-specific | Reading List | `pkg/hub/server.go:1707` |
+| `GET` | `/reading` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1708` |
+| `GET` | `/cncf-reference-architecture` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1715` |
+| `GET` | `/cncf-reference-architecture/console` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1716` |
+| `GET` | `/cncf-reference-architecture/bluefin` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1717` |
+| `GET` | `/{$}` | Hub handler-specific | Static HTML page | `pkg/hub/server.go:1734` |
+| `GET` | `/og-card.png` | Hub handler-specific | OGCard | `pkg/hub/server.go:1739` |
+| `GET` | `/` | Public | Static asset fallback (`http.FileServerFS` over the embedded `static/` tree) for any path no other route claims | `pkg/hub/server.go:1741` |
