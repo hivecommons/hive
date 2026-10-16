@@ -70,6 +70,7 @@ func TestV4OwnerOnlyHandlerGapsRejectUnverifiedOwners(t *testing.T) {
 		{"git sources disconnect", http.MethodPost, "/api/config/git-sources/disconnect", srv.handleGitSourcesDisconnect},
 		{"governor add agent", http.MethodPost, "/api/config/governor/agents", srv.handleGovernorAddAgent},
 		{"governor attribution", http.MethodPut, "/api/config/governor/attribution", srv.handleGovernorAttribution},
+		{"governor cadence templates", http.MethodPost, "/api/config/governor/cadence-templates", srv.handleGovernorCadenceTemplates},
 		{"governor bob key", http.MethodPut, "/api/config/governor/bob", srv.handleGovernorBobKey},
 		{"governor bob key clear", http.MethodDelete, "/api/config/governor/bob", srv.handleGovernorBobKeyClear},
 		{"governor budget", http.MethodPut, "/api/config/governor/budget", srv.handleGovernorBudget},

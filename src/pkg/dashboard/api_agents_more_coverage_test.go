@@ -216,3 +216,56 @@ func TestCovH2_ApplyPackNoDir(t *testing.T) {
 		t.Fatalf("expected error when agents_dir not configured")
 	}
 }
+
+// TestCadenceTemplatesAPI covers the handleGovernorCadenceTemplates handler (#12300).
+func TestCadenceTemplatesAPI(t *testing.T) {
+	s, deps := apiServer(t)
+
+	// Bad body → 400.
+	if rec := doPost(s, "/api/config/governor/cadence-templates", "not-json"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("cadence template bad body: expected 400, got %d", rec.Code)
+	}
+
+	// Unknown template → 400.
+	if rec := doPost(s, "/api/config/governor/cadence-templates", map[string]any{"template": "unknown"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("cadence template unknown: expected 400, got %d", rec.Code)
+	}
+
+	// Valid template (testing) → 200 and sets conservative cadences.
+	rec := doPost(s, "/api/config/governor/cadence-templates", map[string]any{"template": "testing"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cadence template testing: expected 200, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	for _, agentName := range []string{"scanner"} {
+		if surge := deps.Config.Governor.Modes["surge"].Cadences[agentName]; surge != "pause" {
+			t.Errorf("expected surge=pause for %s, got %v", agentName, surge)
+		}
+		if busy := deps.Config.Governor.Modes["busy"].Cadences[agentName]; busy != "2h" {
+			t.Errorf("expected busy=2h for %s, got %v", agentName, busy)
+		}
+	}
+
+	// Valid template (weekly) → 200.
+	if rec := doPost(s, "/api/config/governor/cadence-templates", map[string]any{"template": "weekly-sprint"}); rec.Code != http.StatusOK {
+		t.Fatalf("cadence template weekly: expected 200, got %d", rec.Code)
+	}
+	if surge := deps.Config.Governor.Modes["surge"].Cadences["scanner"]; surge != "1h" {
+		t.Errorf("expected surge=1h for scanner, got %v", surge)
+	}
+
+	// Valid template (biweekly) → 200.
+	if rec := doPost(s, "/api/config/governor/cadence-templates", map[string]any{"template": "biweekly"}); rec.Code != http.StatusOK {
+		t.Fatalf("cadence template biweekly: expected 200, got %d", rec.Code)
+	}
+	if surge := deps.Config.Governor.Modes["surge"].Cadences["scanner"]; surge != "2h" {
+		t.Errorf("expected surge=2h for scanner, got %v", surge)
+	}
+
+	// Valid template (daily) → 200.
+	if rec := doPost(s, "/api/config/governor/cadence-templates", map[string]any{"template": "daily"}); rec.Code != http.StatusOK {
+		t.Fatalf("cadence template daily: expected 200, got %d", rec.Code)
+	}
+	if surge := deps.Config.Governor.Modes["surge"].Cadences["scanner"]; surge != "30m" {
+		t.Errorf("expected surge=30m for scanner, got %v", surge)
+	}
+}
