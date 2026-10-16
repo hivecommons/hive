@@ -5691,22 +5691,29 @@ func validateSnapshotURL(raw string, allowLegacyQueryFragment bool) (string, err
 	if v == "" {
 		return "", nil
 	}
+	// Errors echo a redacted form only: query strings and userinfo may carry secrets.
+	shown := redactSnapshotURL(v)
 	u, err := url.Parse(v)
 	if err != nil {
-		return "", fmt.Errorf("hub.snapshot_url %q: %w", raw, err)
+		// *url.Error.Error() embeds the raw URL, so unwrap to the bare cause.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return "", fmt.Errorf("hub.snapshot_url %q: %w", shown, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("hub.snapshot_url %q: must be an absolute http:// or https:// URL", raw)
+		return "", fmt.Errorf("hub.snapshot_url %q: must be an absolute http:// or https:// URL", shown)
 	}
 	if u.Hostname() == "" {
-		return "", fmt.Errorf("hub.snapshot_url %q: missing host", raw)
+		return "", fmt.Errorf("hub.snapshot_url %q: missing host", shown)
 	}
 	if u.User != nil {
-		return "", fmt.Errorf("hub.snapshot_url %q: credentials are not allowed", raw)
+		return "", fmt.Errorf("hub.snapshot_url %q: credentials are not allowed", shown)
 	}
 	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
 		if !allowLegacyQueryFragment {
-			return "", fmt.Errorf("hub.snapshot_url %q: query and fragment are not allowed", raw)
+			return "", fmt.Errorf("hub.snapshot_url %q: query and fragment are not allowed", shown)
 		}
 		// Do not log the URL: legacy query strings may contain credentials.
 		log.Printf("[config] warning: hub.snapshot_url contains a legacy query or fragment; remove it before updating this field through the dashboard")
@@ -5719,6 +5726,29 @@ func validateSnapshotURL(raw string, allowLegacyQueryFragment bool) (string, err
 	// Rebuild from parsed parts so a bare trailing "#" (which url.Parse
 	// reports as an empty fragment) and an uppercase scheme do not survive.
 	return u.Scheme + "://" + u.Host + strings.TrimRight(u.EscapedPath(), "/"), nil
+}
+
+// redactSnapshotURL returns raw with any query/fragment suffix and any
+// userinfo masked, so validation errors can name the value without echoing
+// secrets. It works on the raw text so it is safe to use even when parsing
+// failed.
+func redactSnapshotURL(raw string) string {
+	v := raw
+	if i := strings.IndexAny(v, "?#"); i >= 0 {
+		v = v[:i+1] + "[redacted]"
+	}
+	start := 0
+	if s := strings.Index(v, "://"); s >= 0 {
+		start = s + len("://")
+	}
+	authEnd := len(v)
+	if slash := strings.Index(v[start:], "/"); slash >= 0 {
+		authEnd = start + slash
+	}
+	if at := strings.LastIndex(v[start:authEnd], "@"); at >= 0 {
+		v = v[:start] + "[redacted]@" + v[start+at+1:]
+	}
+	return v
 }
 
 var snapshotFrameAncestorHostPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$`)

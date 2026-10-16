@@ -1,8 +1,6 @@
 package config
 
 import (
-	"bytes"
-	"log"
 	"strings"
 	"testing"
 )
@@ -59,21 +57,47 @@ func TestValidateSnapshotURL(t *testing.T) {
 }
 
 func TestLoad_HubSnapshotURLLegacyWarning(t *testing.T) {
-	var logs bytes.Buffer
-	previous := log.Writer()
-	log.SetOutput(&logs)
-	t.Cleanup(func() { log.SetOutput(previous) })
-
 	legacyURL := "https://snap.example.com/snapshot?token=private-snapshot-token#top"
 	path := writeTempConfig(t, minimalValidYAML("acme", "ghp_tok")+"\nhub:\n  snapshot_url: "+legacyURL+"\n")
-	if _, err := Load(path); err != nil {
-		t.Fatalf("Load() with legacy snapshot_url: %v", err)
+	logs := captureLog(t, func() {
+		if _, err := Load(path); err != nil {
+			t.Fatalf("Load() with legacy snapshot_url: %v", err)
+		}
+	})
+	if !strings.Contains(logs, "warning: hub.snapshot_url contains a legacy query or fragment") {
+		t.Fatalf("missing legacy URL warning in logs: %s", logs)
 	}
-	if !strings.Contains(logs.String(), "warning: hub.snapshot_url contains a legacy query or fragment") {
-		t.Fatalf("missing legacy URL warning in logs: %s", logs.String())
-	}
-	if strings.Contains(logs.String(), "private-snapshot-token") {
+	if strings.Contains(logs, "private-snapshot-token") {
 		t.Fatal("legacy URL warning leaked query credentials")
+	}
+}
+
+// Validation errors name the field and host but must never echo query
+// strings or userinfo, which legacy URLs may use to carry secrets.
+func TestValidateSnapshotURL_ErrorsRedactSecrets(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{name: "query on rejected scheme", in: "ftp://snap.example.com/snapshot?token=private-snapshot-token"},
+		{name: "query with credentials", in: "https://user:private-snapshot-token@snap.example.com/snapshot?token=private-snapshot-token"},
+		{name: "query rejected by dashboard", in: "https://snap.example.com/snapshot?token=private-snapshot-token#private-fragment"},
+		{name: "query on unparseable url", in: "https://snap.example.com:bad/snapshot?token=private-snapshot-token"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ValidateSnapshotURL(tc.in)
+			if err == nil {
+				t.Fatalf("ValidateSnapshotURL(%q) expected error", tc.in)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "hub.snapshot_url") || !strings.Contains(msg, "snap.example.com") {
+				t.Fatalf("error = %q, should name the field and host", msg)
+			}
+			if strings.Contains(msg, "private-") {
+				t.Fatalf("error = %q, leaked a secret-bearing URL component", msg)
+			}
+		})
 	}
 }
 
