@@ -23645,6 +23645,238 @@
         }
       }
     },
+    "/api/evidence/summary": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Read-only evidence summary over stored review evidence bundles",
+        "description": "Any dashboard session. Aggregates the schema-v1 review evidence bundles under /data/evidence (latest bundle per PR) for the window: PR outcomes by author kind, reviewer confidence calibration per perspective, reviewer accuracy by model, sentinel hits per ISO week, the shadow-gate would_have_held count, and the reviewer-accuracy summary for the same window. `missing` reports what could not be computed (verdicts without a model, bundles with empty CI, unreadable records). Observation only (#12063): nothing here is consulted by any merge decision.",
+        "parameters": [
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Window in hours; default 24, capped like /api/pr-throughput; 0 means all time."
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one repository as owner/name."
+          },
+          {
+            "name": "author_kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "human",
+                "agent",
+                "bot"
+              ]
+            },
+            "description": "Restrict to PRs by one author kind."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence summary for the window",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hours": {
+                      "type": "integer"
+                    },
+                    "all_time": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "author_kind": {
+                      "type": "string"
+                    },
+                    "n": {
+                      "type": "integer",
+                      "description": "PRs (latest bundle per PR) in the window."
+                    },
+                    "outcomes_by_author_kind": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "n": {
+                            "type": "integer"
+                          },
+                          "merged": {
+                            "type": "integer"
+                          },
+                          "closed": {
+                            "type": "integer"
+                          },
+                          "open": {
+                            "type": "integer"
+                          },
+                          "reverted_14d": {
+                            "type": "integer",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "reviewer_calibration": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "perspective": {
+                            "type": "string"
+                          },
+                          "n": {
+                            "type": "integer"
+                          },
+                          "buckets": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "bucket": {
+                                  "type": "string"
+                                },
+                                "n": {
+                                  "type": "integer"
+                                },
+                                "approvals": {
+                                  "type": "integer"
+                                },
+                                "blocks": {
+                                  "type": "integer"
+                                },
+                                "merged": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "reviewer_accuracy_by_model": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "n": {
+                            "type": "integer"
+                          },
+                          "by_author_kind": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "n": {
+                                  "type": "integer"
+                                },
+                                "approvals": {
+                                  "type": "integer"
+                                },
+                                "blocks": {
+                                  "type": "integer"
+                                },
+                                "merged_after_block": {
+                                  "type": "integer"
+                                },
+                                "approved_not_merged": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "sentinel_hits_per_week": {
+                      "type": "object",
+                      "properties": {
+                        "n": {
+                          "type": "integer"
+                        },
+                        "weeks": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "week": {
+                                "type": "string"
+                              },
+                              "hits": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "shadow_gate": {
+                      "type": "object",
+                      "properties": {
+                        "n": {
+                          "type": "integer"
+                        },
+                        "would_have_held": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "reviewer_accuracy": {
+                      "type": "object",
+                      "description": "Reviewer accuracy summary for the same window; omitted when unavailable."
+                    },
+                    "missing": {
+                      "type": "object",
+                      "properties": {
+                        "verdicts_model_unknown": {
+                          "type": "integer"
+                        },
+                        "records_empty_ci": {
+                          "type": "integer"
+                        },
+                        "records_unreadable": {
+                          "type": "integer"
+                        },
+                        "reviewer_accuracy_unavailable": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad hours, repo or author_kind"
+          },
+          "500": {
+            "description": "Evidence directory unreadable"
+          }
+        }
+      }
+    },
     "/api/review/pipeline": {
       "get": {
         "tags": [
