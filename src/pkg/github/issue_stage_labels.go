@@ -23,7 +23,11 @@ package github
 // PR` labels: one cycle after upgrade every open issue carries its stage
 // label instead. Health (`stage/stalled`) is tracked for
 // the issue's own stages (010–030); an issue mirroring its PR's stage
-// leaves health to the PR, where the reason is legible.
+// leaves health to the PR, where the reason is legible. For those issue
+// stages the dwell is still measured from stage entry: the issue list
+// payload carries no comment count or activity timestamp the hive did not
+// bump itself (hivecommons/hive#12491), so the PR engine's no-activity
+// clock (Store.NoteActivity, require_quiet) does not apply here.
 
 import (
 	"context"

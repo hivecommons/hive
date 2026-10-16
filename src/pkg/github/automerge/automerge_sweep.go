@@ -2164,6 +2164,7 @@ func (c *Engine) invalidateQueuedAutoMerge(ctx context.Context, owner, repo stri
 	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		return fmt.Errorf("commenting on stale auto-merge approval: %w", err)
 	}
+	c.noteOwnStageComment(owner, repo, number)
 	return nil
 }
 

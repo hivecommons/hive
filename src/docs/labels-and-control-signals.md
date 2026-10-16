@@ -243,8 +243,13 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 Labels come from the issue list payload the cycle already fetched — no
 per-issue GETs — and are written only when the planned set differs from the
 current one. When the stage is mirrored from a PR, `stage/stalled` belongs to
-the PR and is not written on the issue; when the issue falls back between its
-*own* stages (a claim or kick lapsed with no PR: 030 → 010) it gets one
+the PR and is not written on the issue; for the issue's *own* stages
+(010–030) the dwell is still measured from stage entry, because the list
+payload carries no comment count or activity timestamp the hive did not
+bump itself (`updated_at` moves on every hive write, #12491) — the PR
+engine's no-activity clock and `stalled.require_quiet` below do not apply
+to issues. When the issue falls back between its
+own stages (a claim or kick lapsed with no PR: 030 → 010) it gets one
 explanatory comment and a history hop in the store. The claim
 relay (`hive-open-issue claim`) writes `stage/020-claimed` /
 `stage/030-pr-in-progress` directly alongside `hive/claimed-by-<who>` so the
@@ -294,10 +299,13 @@ stage but written only on change:
 
 ### `stage/stalled` — "nobody is working this"
 
-`stage/stalled` means **no activity by anyone but the hive for the stage's
-dwell**: no head push, no comment, no review or reviewer verdict, no CI
-status change and no label change for the time in the table
-(`governor.labels.stage.dwell.<slug>` overrides it; `0` = never).
+On a PR, `stage/stalled` means **no activity by anyone but the hive for the
+stage's dwell**: no head push, no comment, no review or reviewer verdict, no
+CI status change and no label change for the time in the table
+(`governor.labels.stage.dwell.<slug>` overrides it; `0` = never). On an
+issue in its own stages (010–030) it still means "sat in the stage past the
+dwell" (see above): the issue list payload has no activity signal the hive
+does not bump itself.
 
 - **Never while the item is waiting on the hive.** Required checks still
   running, or `050-review-pending` with no reviewer verdict for the current
@@ -307,16 +315,24 @@ status change and no label change for the time in the table
   green and no verdict, wrongly marked stalled). At 050 the label is possible
   only once the verdict exists and nobody acted on it for the dwell.
 - **Cleared at once on any activity.** The next cycle that sees a new head,
-  a new comment, a changed verdict/CI/label set removes it; the hive's own
-  comments (stage notes, nudges, regression lines) do not count.
-- **Real timestamps.** "Last activity" comes from the head commit date,
-  the PR's comment counters and the verdict/CI/label digest the lanes already
+  a new comment, a changed verdict/CI/label set removes it. The automerge
+  engine's own comments (stage notes, nudges, regression lines, rebase
+  requests, stale-approval and hold-release notes) do not count; a comment
+  from another hive process (the reviewer swarm's review comment, a merge
+  note) is indistinguishable from a person's in the comment counter and
+  does — so a stall can only come later than the rule says, never earlier.
+- **No `updated_at`.** "Last activity" is derived from the head SHA, the
+  PR's comment counters and the verdict/CI/label digest the lanes already
   fetched — never `updated_at`, which GitHub bumps for the hive's own writes
-  ([#12491](https://github.com/hivecommons/hive/issues/12491)). State lives
-  in `/data/stage-labels.json`; no extra API calls.
+  ([#12491](https://github.com/hivecommons/hive/issues/12491)). A change is
+  dated by the cycle that first observes it (at most one sweep interval
+  late; the list payload carries no commit or comment timestamps). State
+  lives in `/data/stage-labels.json`; no extra API calls.
 - `governor.labels.stage.stalled.require_quiet: false` restores the older
   rule (dwell measured from entering the stage); waiting on the hive still
-  never stalls.
+  never stalls. The review queue's `stage.stalled` / `stage.past_dwell` and
+  the `hive_held` count follow the same dwell overrides and `require_quiet`
+  setting as the label.
 - Only a stall in `080-awaiting-merge-admission` is explained in a comment
   (`<!-- hive:stage-stalled -->`, `stage 080-…: no activity for 30m0s: <lane
   reason>`), because that stall is the hive's fault, not the author's.
@@ -334,8 +350,8 @@ status change and no label change for the time in the table
   (`stage.history[]` on the review-queue entry, newest last, capped at 12).
   Leaving a repair stage (`070`/`072`/`074`) for `050`/`060` is the repair
   route itself and is not commented.
-- **Filter `label:stage/stalled` across repos = everything a person has
-  walked away from.**
+- **Filter `label:stage/stalled` across repos = every PR a person has
+  walked away from, plus every issue that sat in 010–030 past its dwell.**
 
 ### Off the happy path: 072 → nudge → 074 → takeover
 

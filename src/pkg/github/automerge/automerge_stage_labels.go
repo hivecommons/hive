@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -147,9 +146,6 @@ type stageDetail struct {
 	// fetch (the list payload has none); CommentsKnown says it was seen.
 	Comments      int
 	CommentsKnown bool
-	// HeadCommittedAt is the head commit's committer date when the deep
-	// fetch carried it; it is the real timestamp of a push.
-	HeadCommittedAt time.Time
 }
 
 // redCheck returns the first red non-required check on head, or "".
@@ -260,9 +256,6 @@ func (t *StageTracker) drain() [][]stageObservation {
 			if detail.CommentsKnown {
 				o.Detail.Comments, o.Detail.CommentsKnown = detail.Comments, true
 			}
-			if !detail.HeadCommittedAt.IsZero() {
-				o.Detail.HeadCommittedAt = detail.HeadCommittedAt
-			}
 			list = append(list, o)
 		}
 		sort.Slice(list, func(i, j int) bool { return stageLanePrecedence[list[i].Lane] > stageLanePrecedence[list[j].Lane] })
@@ -365,9 +358,9 @@ func (c *Engine) noteStageRedChecks(owner, repo string, number int, head string,
 }
 
 // noteStagePR records what a lane's deep PullRequests.Get learned that the
-// list payload lacks: the comment count (outside activity) and, when the
-// payload carries it, the head commit date. Both feed the quiet clock
-// behind stage/stalled.
+// list payload lacks: the comment count, which feeds the quiet clock behind
+// stage/stalled. Neither payload carries a commit or comment timestamp, so
+// activity is dated by the cycle that first observes it (Activity.At zero).
 func (c *Engine) noteStagePR(owner, repo string, number int, pr *gh.PullRequest) {
 	if !c.stagePolicy().Enabled || pr == nil {
 		return
@@ -378,9 +371,22 @@ func (c *Engine) noteStagePR(owner, repo string, number int, pr *gh.PullRequest)
 	})
 }
 
+// noteOwnStageComment records that this engine posted a comment on the PR
+// outside ApplyStageLabels (takeover notice, rebase request, stale-approval
+// or hold-release note), so the next observed comment count does not read
+// as outside activity and restart the quiet clock. Comments from other hive
+// processes (the reviewer swarm's review comments) are not visible here and
+// still count as activity: the stall is then later, never earlier.
+func (c *Engine) noteOwnStageComment(owner, repo string, number int) {
+	if !c.stagePolicy().Enabled {
+		return
+	}
+	c.stageStoreOrShared().CountOwnComments(stageKey(owner, repo, number), 1)
+}
+
 // stageActivity derives this cycle's outside-activity view of a PR.
 func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Activity {
-	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1, At: obs.Detail.HeadCommittedAt}
+	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1}
 	if obs.Detail.CommentsKnown {
 		a.Comments = obs.Detail.Comments
 	}
@@ -397,7 +403,7 @@ func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Ac
 		labels = append(labels, strings.ToLower(l))
 	}
 	sort.Strings(labels)
-	a.Digest = verdict + "|ci:" + strconv.Itoa(int(ci)) + "|" + strings.Join(labels, ",")
+	a.Digest = verdict + "|ci:" + ci.String() + "|" + strings.Join(labels, ",")
 	// Checks still running, or a review-pending head with no reviewer
 	// verdict yet, is waiting on the hive, not on a person.
 	a.WaitingOnHive = ci == ciReasonPending ||
@@ -440,6 +446,20 @@ const (
 	ciReasonPending
 	ciReasonRed
 )
+
+// String is the stable name persisted in Record.ActivityDigest
+// (/data/stage-labels.json); it must not follow the iota, or an upgrade
+// that renumbers the enum would read every PR as active and reset its
+// quiet clock.
+func (k ciReasonKind) String() string {
+	switch k {
+	case ciReasonPending:
+		return "pending"
+	case ciReasonRed:
+		return "red"
+	}
+	return "none"
+}
 
 func classifyCIReason(reason string) ciReasonKind {
 	switch {

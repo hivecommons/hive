@@ -232,8 +232,11 @@ type ReviewQueueStageHop struct {
 	Regressed bool      `json:"regressed,omitempty"`
 }
 
-// reviewQueueStage projects the stage store's record for a PR.
-func reviewQueueStage(store *stagelabels.Store, full string, number int, now time.Time) *ReviewQueueStage {
+// reviewQueueStage projects the stage store's record for a PR, deciding
+// stalled/past_dwell with the same dwell overrides and require_quiet
+// policy the engine labels with (ReviewQueueOptions.StageDwell /
+// StageStalledFromEntry) so the pill never disagrees with the label.
+func reviewQueueStage(store *stagelabels.Store, full string, number int, opts ReviewQueueOptions, now time.Time) *ReviewQueueStage {
 	if store == nil {
 		return nil
 	}
@@ -246,11 +249,11 @@ func reviewQueueStage(store *stagelabels.Store, full string, number int, now tim
 		EnteredAt:      rec.EnteredAt,
 		LastActivityAt: rec.LastActivityAt,
 		WaitingOnHive:  rec.WaitingOnHive,
-		Stalled:        stagelabels.Stalled(rec, nil, now),
+		Stalled:        stagelabels.StalledWith(rec, opts.StageDwell, now, !opts.StageStalledFromEntry),
 	}
 	if q := rec.QuietFor(now); q > 0 {
 		out.QuietFor = q.Truncate(time.Minute).String()
-		if d := stagelabels.Dwell(rec.Stage, nil); d > 0 && q >= d {
+		if d := stagelabels.Dwell(rec.Stage, opts.StageDwell); d > 0 && q >= d {
 			out.PastDwell = true
 		}
 	}
@@ -298,6 +301,13 @@ type ReviewQueueOptions struct {
 	// StageStore, when set, supplies each entry's Stage (stage-label engine
 	// record). nil leaves Stage unset.
 	StageStore *stagelabels.Store
+	// StageDwell is governor.labels.stage.dwell (per-slug overrides) and
+	// StageStalledFromEntry is governor.labels.stage.stalled.require_quiet
+	// == false: the policy the engine labels stage/stalled with. The zero
+	// values are the engine's defaults (table dwell, quiet required), so a
+	// caller without config still agrees with a default-configured engine.
+	StageDwell            map[string]time.Duration
+	StageStalledFromEntry bool
 	// Now is the reference time for ages. Zero means time.Now().
 	Now time.Time
 }
@@ -393,7 +403,7 @@ func buildReviewQueueEntry(pr PullRequest, full, key string, opts ReviewQueueOpt
 		HiveAuthored: reviewQueueHiveAuthored(pr, opts.AIAuthor),
 		Held:         opts.Held[key],
 		CIState:      reviewCIState(pr),
-		Stage:        reviewQueueStage(opts.StageStore, full, pr.Number, now),
+		Stage:        reviewQueueStage(opts.StageStore, full, pr.Number, opts, now),
 	}
 	if !pr.CreatedAt.IsZero() && now.After(pr.CreatedAt) {
 		e.AgeHours = int(now.Sub(pr.CreatedAt).Hours())

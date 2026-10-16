@@ -124,15 +124,14 @@ type Activity struct {
 	// Digest summarises the verdict, CI state and non-hive labels; any
 	// change is activity.
 	Digest string
-	// At, when non-zero, is the real timestamp of the activity (e.g. the
-	// head commit date); zero means "now".
+	// At, when non-zero, is the real timestamp of the activity when the
+	// caller has one; zero means "now" (the cycle that first observed it,
+	// which is what the PR reconciler passes: the list payload carries no
+	// commit or comment timestamps).
 	At time.Time
 	// WaitingOnHive says the item is waiting on the hive (checks running,
 	// verdict pending): it must not stall.
 	WaitingOnHive bool
-	// HiveHeldWarned is set once the hive-side alert for a hive-held item
-	// past its dwell has been logged; activity resets it.
-	HiveHeldWarned bool
 }
 
 // QuietSince is when the item's current quiet period began: the later of
