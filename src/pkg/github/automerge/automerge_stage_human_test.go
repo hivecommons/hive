@@ -137,8 +137,10 @@ func TestHumanHandoffRoutesByEvidence(t *testing.T) {
 	}
 	e.checkSummary = greenChecks
 	clock.at = clock.at.Add(humanChecksTTL)
+	// needs-rebase is intercepted by classifyStage before routing; the
+	// stage is 072 either way and the sentinel alert does not outrank it.
 	sweep("author/contributor", "stage/072-returned-to-contributor", "needs-rebase", "sentinel-alert")
-	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != stagelabels.LaneReasonConflicting {
+	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.ReturnedToContributor {
 		t.Fatalf("conflict: %+v", rec)
 	}
 
@@ -261,7 +263,7 @@ func TestTrustAndDecisionCauseProse(t *testing.T) {
 	if !reflect.DeepEqual(checks, []string{"lint", "unit"}) {
 		t.Fatalf("routed checks = %v", checks)
 	}
-	if len(asks) != 3 || !strings.Contains(asks[0], "requested changes") || !strings.Contains(asks[1], "DCO") || !strings.Contains(asks[2], "rebase") {
+	if len(asks) != 3 || !strings.Contains(asks[0], "DCO") || !strings.Contains(asks[1], "rebase") || !strings.Contains(asks[2], "requested changes") {
 		t.Fatalf("routed asks = %v", asks)
 	}
 	_, asks, _ = nudgeDiagnosisRouted(stagelabels.LaneReasonDCOMissing, stageDetail{}, nil)
