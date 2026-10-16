@@ -1,0 +1,1 @@
+- Agents whose pane keeps showing Working with no transcript activity now recover instead of refusing kicks forever (hivecommons/hive#12505). After at least six undeliverable kicks and twice `busy_no_activity_threshold` of silence (60m by default), the session is restarted through the restart-storm breaker, at most once per 30m per agent.

@@ -1615,7 +1615,8 @@ type AgentConfig struct {
 	AgentSpec       string `yaml:"agent_spec" json:"agent_spec,omitempty"`
 	// BusyNoActivityThreshold is how long a Working pane may go without any
 	// Copilot transcript activity before repeated undeliverable kicks surface
-	// an operator-visible condition. Unset defaults to 30m.
+	// an operator-visible condition. Unset defaults to 30m. A pane that stays
+	// in that condition for twice the threshold is restarted.
 	BusyNoActivityThreshold time.Duration `yaml:"busy_no_activity_threshold,omitempty" json:"busy_no_activity_threshold,omitempty"`
 	// MaxTurnDuration is an optional visibility-only ceiling for a Working
 	// turn. 0 disables it; exceeding it raises busy-over-ceiling but never
