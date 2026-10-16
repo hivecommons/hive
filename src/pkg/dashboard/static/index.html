@@ -3591,7 +3591,7 @@
     .nous-mode-btn.active-evolve { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); font-weight: 700; }
     .nous-mode-btn:hover:not([class*="active-"]) { background: var(--panel-strong); }
     .nous-progress { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin: var(--sp-4) var(--sp-0); }
-    .nous-progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+    .nous-progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s; background: var(--amber); }
     .nous-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
     .nous-stat { text-align: center; }
     .nous-stat .val { font-size: 1.3rem; font-weight: 700; color: var(--fg); }
@@ -3612,6 +3612,14 @@
     .nous-btn-reject { margin-left: var(--sp-4); }
     .nous-experiment-live { background: var(--green-bg); border: 1px solid var(--green); border-radius: 8px; padding: var(--sp-5); margin-bottom: 10px; }
     .nous-experiment-live h4 { margin: var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-0); font-size: var(--fs-base); color: var(--text); }
+    .nous-progress-summary, .nous-exp-list, .nous-results-list { display: grid; gap: var(--sp-3); }
+    .nous-progress-label, .nous-exp-head, .nous-result-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+    .nous-progress-copy, .nous-exp-meta, .nous-exp-metrics, .nous-output-links { font-size: var(--fs-xs); color: var(--muted); }
+    .nous-exp-row, .nous-result-row { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: var(--panel); }
+    .nous-exp-title { font-size: var(--fs-sm); color: var(--text); font-weight: 700; min-width: var(--sp-0); overflow-wrap: anywhere; }
+    .nous-status-pill { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); color: var(--muted); background: var(--surface); white-space: nowrap; }
+    .nous-exp-metrics, .nous-output-links { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); margin-top: var(--sp-2); }
+    .nous-output-links a { color: var(--accent); }
 
     /* Nous Config Panel */
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
@@ -6497,7 +6505,7 @@
 
         <details class="faq-q" id="faq-claims">
           <summary>Why did an agent comment on or label my issue as claimed?</summary>
-          <p>Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply visible <code>hive/claimed-by-&lt;agent&gt;</code> and <code>hive/in-progress</code> labels (with a timestamped <code>hive:claim</code> start marker) and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
+          <p>Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply visible <code>hive/claimed-by-&lt;agent&gt;</code> and <code>stage/030-pr-in-progress</code> labels (with a timestamped <code>hive:claim</code> start marker) and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
           <p>Claims are issue writes, so they require the same ACMM issue-writing permission as comments and issue creation. The optional claim-expiry feature is default-off under <code>governor.claims.enabled</code>; when off, ordinary work assignment still relies on the existing queue/lease rules.</p>
         </details>
 
@@ -14924,7 +14932,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     const REPO_ISSUE_BAND_DEFAULTS = {
       waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
-      doneLabels: ['hive/already-done', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
+      doneLabels: ['hive/already-done', 'stage/040-covered-by-pr', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
       staleDays: 14
     };
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -15070,7 +15078,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (labels.has('blocked')) kinds.push('issue:blocked');
       if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('issue:needs-decision');
       if (labels.has('epic')) kinds.push('issue:epic');
-      if (issueLabels.some(l => l === 'claimed' || l === 'hive/in-progress' || l.startsWith('hive/claimed-by-')) || ((issue && issue.assignees) || []).length) kinds.push('issue:claimed');
+      if (issueLabels.some(l => l === 'claimed' || l === 'hive/in-progress' || l === 'stage/020-claimed' || l === 'stage/030-pr-in-progress' || l.startsWith('hive/claimed-by-')) || ((issue && issue.assignees) || []).length) kinds.push('issue:claimed');
       if (info && info.role) kinds.push('issue:role');
       if (issueIsStale(issue)) kinds.push('issue:stale');
       if (Array.isArray(issue && issue.linked_prs) && issue.linked_prs.length) kinds.push('issue:linked-pr');
@@ -15685,8 +15693,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // The covering-PR glyph on an issue pill is derived from hive's own
-    // PR-claim evidence (linked_prs, the same source that applies
-    // `🐝 covered by PR`), not from GitHub's closing-link data, so a partial
+    // PR-claim evidence (linked_prs, the same source that drives
+    // `stage/040-covered-by-pr`), not from GitHub's closing-link data, so a partial
     // PR (`Refs #N`) shows the glyph without hive having to arm auto-close
     // on merge (hivecommons/hive#12144). One badge per issue: the open
     // closing PR wins, then any open PR, then a merged one. Returns null
@@ -22018,7 +22026,7 @@ function burnAreaChart() {
     const PRT_SLA_SPANS = [
       { key: 'open_to_triage', target: '', label: 'Open → triage', color: 'var(--muted)', wait: 'collecting — needs issue created_at (recorded at the next enumeration)', tip: 'Hours from the issue being opened on GitHub to the hive classifying it.' },
       { key: 'triage_to_start', target: '', label: 'Triage → start', color: 'var(--muted)', wait: 'collecting — first numbers after an agent starts a classified issue', tip: 'Hours from the hive classifying the issue to an agent starting work on it.' },
-      { key: 'start_to_pr', hist: 'start_to_pr_p50', target: 'start_to_pr_h', label: 'Start → PR', color: 'var(--accent)', wait: 'collecting — first numbers after the next linked PR (hive-open-pr --issues) opens', tip: 'Hours from the hive/in-progress start mark (an agent claimed, commented or opened a PR on the issue) to the PR that fixes it being opened.' },
+      { key: 'start_to_pr', hist: 'start_to_pr_p50', target: 'start_to_pr_h', label: 'Start → PR', color: 'var(--accent)', wait: 'collecting — first numbers after the next linked PR (hive-open-pr --issues) opens', tip: 'Hours from the stage/030-pr-in-progress start mark (an agent claimed, commented or opened a PR on the issue) to the PR that fixes it being opened.' },
       { key: 'pr_to_merge', hist: 'pr_to_merge_p50', target: 'pr_to_merge_h', label: 'PR → merge', color: 'var(--green)', wait: 'collecting — first numbers after the next linked PR merges', tip: 'Hours from the fixing PR opening to its merge (hive-driven or observed).' },
       { key: 'open_to_merge', hist: 'open_to_merge_p50', target: 'open_to_merge_h', label: 'Open → merge', color: 'var(--orange)', wait: 'collecting — needs issue created_at (next enumeration) and a linked PR merge', tip: 'Hours from the issue being opened on GitHub to the fixing PR merging — the end-to-end delivery time.' },
     ];
@@ -22097,8 +22105,8 @@ function burnAreaChart() {
       const ttl = Number(report && report.claim_ttl_s);
       const ttlText = Number.isFinite(ttl) && ttl > 0 ? fmtSLAHours(ttl / 3600) : 'the claim TTL';
       const tip = n
-        ? `${n} issue${n === 1 ? '' : 's'} marked hive/in-progress for longer than ${ttlText} with no PR yet. Click to list them.`
-        : `No issue has carried hive/in-progress past ${ttlText} without a PR.`;
+        ? `${n} issue${n === 1 ? '' : 's'} marked stage/030-pr-in-progress for longer than ${ttlText} with no PR yet. Click to list them.`
+        : `No issue has carried stage/030-pr-in-progress past ${ttlText} without a PR.`;
       if (n === 1) {
         const s0 = stale[0];
         return `<a class="prt-sla-stale" data-sla-state="breach" href="${esc(prtSLAIssueURL(s0.repo, s0.number))}" target="_blank" rel="noopener" title="${esc(tip)}" aria-label="${esc(tip)}">⚠ 1 stale in-progress · ${esc(s0.repo)}#${esc(String(s0.number))}</a>`;
@@ -23305,6 +23313,73 @@ function burnAreaChart() {
         'To get started, leave it in Observe while it builds a baseline (it needs a few days of snapshots), then switch to Suggest to review its first proposals.');
     }
 
+    function nousFmtDuration(sec) {
+      const n = Number(sec) || 0;
+      if (n <= 0) return 'now';
+      const h = Math.ceil(n / 3600);
+      if (h >= 1) return `~${h}h`;
+      return `~${Math.max(1, Math.ceil(n / 60))}m`;
+    }
+
+    function nousProgressBar(pct, label) {
+      const w = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      return `<div class="nous-progress" role="progressbar" aria-label="${escapeHtml(label || 'Progress')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${w}"><div class="nous-progress-fill" style="width:${w}%"></div></div>`;
+    }
+
+    function nousMetricValue(v, unit) {
+      if (v == null || Number.isNaN(Number(v))) return '—';
+      const n = Number(v);
+      const body = Math.abs(n) >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10);
+      return `${body}${unit || ''}`;
+    }
+
+    function nousMetricLine(m) {
+      const b = nousMetricValue(m.baseline, m.unit);
+      const e = nousMetricValue(m.experiment, m.unit);
+      const d = m.delta == null ? '' : ` Δ ${nousMetricValue(m.delta, m.unit)}`;
+      return `<span>${escapeHtml(m.label || m.name)}: ${escapeHtml(b)} → ${escapeHtml(e)}${escapeHtml(d)}</span>`;
+    }
+
+    function nousOutputLinks(outputs) {
+      const links = (outputs || []).map(o => {
+        const title = o.title || o.type || 'output';
+        if (o.url) return `<a href="${escapeHtml(o.url)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>`;
+        return `<span>${escapeHtml(title)}</span>`;
+      });
+      return links.length ? `<div class="nous-output-links">${links.join('')}</div>` : '';
+    }
+
+    function nousExperimentProgressRows(experiments) {
+      if (!experiments || !experiments.length) return '<div class="nous-lab-empty">No defined experiments yet — switch to Suggest after baseline completes to review proposals.</div>';
+      return `<div class="nous-exp-list">${experiments.map(exp => {
+        const title = exp.title || exp.hypothesis || exp.id || 'experiment';
+        const phase = exp.phase || exp.status || 'defined';
+        const eta = exp.nextOutputEta || (exp.nextOutputEtaSeconds ? nousFmtDuration(exp.nextOutputEtaSeconds) : '');
+        const counts = exp.snapshotCounts || {};
+        const countsText = ['baseline','experiment','cooldown','judging'].map(k => `${k} ${Number(counts[k]) || 0}`).join(' · ');
+        const metrics = (exp.metricsSoFar || []).slice(0, 4).map(nousMetricLine).join('');
+        const remaining = exp.remainingSeconds ? `${nousFmtDuration(exp.remainingSeconds)} left in ${phase}` : (phase === 'judged' ? 'output available' : 'waiting for timestamps');
+        return `<div class="nous-exp-row">
+          <div class="nous-exp-head"><div class="nous-exp-title">${escapeHtml(title)}</div><span class="nous-status-pill">${escapeHtml(phase)}</span></div>
+          ${exp.hypothesis && exp.hypothesis !== title ? `<div class="nous-progress-copy">${escapeHtml(exp.hypothesis)}</div>` : ''}
+          ${nousProgressBar(exp.progressPct, `${title} phase progress`)}
+          <div class="nous-exp-meta">${escapeHtml(remaining)} · snapshots: ${escapeHtml(countsText)}${eta ? ` · next output ${escapeHtml(eta)}` : ''}</div>
+          ${metrics ? `<div class="nous-exp-metrics">${metrics}</div>` : ''}
+          ${nousOutputLinks(exp.outputs)}
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    function nousResultsRows(results) {
+      if (!results || !results.length) return '';
+      return `<div class="nous-card mt-5"><h3>Results</h3><div class="nous-results-list">${results.map(r => {
+        const title = r.title || r.hypothesis || r.id || 'experiment';
+        const verdict = r.verdict || r.status || 'judged';
+        const delta = r.delta ? ` · ${r.delta}` : '';
+        return `<div class="nous-result-row"><div class="nous-result-head"><strong>${escapeHtml(title)}</strong><span class="nous-status-pill">${escapeHtml(verdict)}</span></div><div class="nous-progress-copy">${escapeHtml((r.hypothesis || '') + delta)}</div>${nousOutputLinks(r.outputs)}</div>`;
+      }).join('')}</div></div>`;
+    }
+
     function renderNous() {
       if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
@@ -23444,8 +23519,18 @@ function burnAreaChart() {
       // Data collection progress
       html += '<div class="nous-card mt-5">';
       html += '<h3>Data Collection</h3>';
-      html += `<div style="font-size:0.72rem;color:var(--muted)">${s.snapshotCount || 0} snapshots recorded \u00b7 one per governor evaluation cycle, kept 24 h raw then hourly for 30 days</div>`;
-      html += '<div class="nous-pending-params">Observe records a snapshot of hive state every governor evaluation cycle (the hive-state time series). No experiments run until you switch to Suggest/Evolve and approve proposals.</div>';
+      const base = s.baseline || {};
+      const basePct = base.percent != null ? Math.round(Number(base.percent)) : Math.round(Number(s.baseline_pct || 0));
+      const baseCount = Number(base.snapshots != null ? base.snapshots : (s.snapshotCount || 0));
+      const baseTarget = Number(base.target || s.snapshotTarget || 0);
+      html += '<div class="nous-progress-summary">';
+      html += `<div class="nous-progress-label"><strong>Baseline: ${baseCount} / ${baseTarget} snapshots (${basePct}%)</strong><span class="nous-progress-copy">${base.complete ? 'Complete — switch to Suggest when ready.' : `${base.remainingSnapshots || 0} remaining · ETA ${nousFmtDuration(base.etaSeconds)}`}</span></div>`;
+      html += nousProgressBar(basePct, 'Baseline snapshot collection');
+      html += `<div class="nous-progress-copy">Collecting: ${escapeHtml(((base.collecting || ['queue issues','queue PRs','queue on hold','SLA violations','agents kicked','agent states','total tokens']).join(', ')))}. Retention: ${escapeHtml(base.retention || '24 h raw snapshots, then hourly buckets for 30 days')}.</div>`;
+      html += '</div>';
+      html += '<div class="nous-pending-params">Observe records the hive-state time series every governor evaluation cycle. Experiments wait for Suggest/Evolve and operator approval before repo changes run.</div>';
+      html += '<h3 class="mt-5">Experiment Progress</h3>';
+      html += nousExperimentProgressRows(s.experiments || []);
 
       // Show experiment proposals from ledger
       const dryRuns = ledger.filter(e => e.type === 'dry_run').slice(-5);
@@ -23502,6 +23587,8 @@ function burnAreaChart() {
         html += '<button class="hv-btn btn-danger nous-btn nous-btn-reject" data-action="nousReject" title="Reject this experiment proposal. Nous will discard it and generate a new hypothesis based on collected data.">Reject</button>';
         html += '</div></div>';
       }
+
+      html += nousResultsRows(s.results || []);
 
       // Principles
       if (principles.length > 0) {
@@ -33659,6 +33746,15 @@ function burnAreaChart() {
           fetchGitVersion();
           return;
         }
+        var okBody = await resp.json().catch(function() { return {}; });
+        if (okBody && okBody.status === 'current') {
+          /* The hub armed nothing: this spoke is already at its reachable
+             target. Plain "up to date", never "failed" (#12494). */
+          showToast(okBody.message || ('Already up to date at ' + (okBody.current || versionShortSHA(currentHash) || 'the current build')), 'info');
+          versionClearUpgradeProgress();
+          fetchGitVersion();
+          return;
+        }
         _upgradeInProgress = true;
         _upgradeTargetHash = displayHash || null;
         showToast('Upgrade started — waiting for rollout to complete', 'success');
@@ -33985,6 +34081,8 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
       { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled regressed author tier governor.labels.stage.enabled' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
+      { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
+      { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
@@ -38009,6 +38107,16 @@ function burnAreaChart() {
         </div>
 
         <div class="config-field">
+          <label for="hub-max-parallel-fixes">Fix budget: parallel fix sessions ${yamlHint('contribute.max_parallel_fixes')} ${settingHelpMark('contributor-relay', 'fix-pr-tasks', 'Fix budget', `Ceiling on how many red-PR fix-pr sub-sessions one contributor's relay may run beside its primary session (the relay advertises its own count; the hub clamps to this). Default 2; 1 forces preempt mode. Queued fixes beyond capacity are served before new work ("contributors should clean up their mess before taking on new stuff").`)}</label>
+          <input type="number" id="hub-max-parallel-fixes" min="1" max="16" value="${hub.contribute_max_parallel_fixes || 2}" data-change-action="markDirty" data-arg0="hub" data-arg1="contribute_max_parallel_fixes" data-arg-types="s,s,N">
+        </div>
+        <div class="config-field">
+          <label for="hub-min-focus-window">Fix budget: minimum focus window ${yamlHint('contribute.min_focus_window')}</label>
+          <input type="text" id="hub-min-focus-window" value="${esc(hub.contribute_min_focus_window || '')}" placeholder="30m" data-change-action="markDirty" data-arg0="hub" data-arg1="contribute_min_focus_window" data-arg-types="s,s,w">
+          <div class="config-help">In preempt mode, after a fix preempted the primary task, the hive will not preempt again until the resumed task has run uninterrupted for this long. Go duration; default 30m.</div>
+        </div>
+
+        <div class="config-field">
           <label>Contributor Agent Roles ${settingHelpMark('contributor-trust-and-roles', 'delegated-clanker-agent-roles', 'Contributor Agent Roles', `Default roles scanner, quality, and outreach are always delegatable. Check privileged roles to let owners assign them from a Contributor agent (ClankeR) card; supervisor is never delegatable.`)}</label>
           <div style="display:flex;flex-direction:column;gap:var(--sp-3)">
             ${['scanner','quality','outreach'].map(function(r) {
@@ -40340,7 +40448,7 @@ function burnAreaChart() {
       const defaults = sla.defaults || { start_to_pr_h: 4, pr_to_merge_h: 24, open_to_merge_h: 72 };
       const dirty = _configState.dirty.sla || {};
       const fields = [
-        ['start_to_pr_h', 'Start → PR', 'Hours from the hive/in-progress start mark to the fixing PR opening.'],
+        ['start_to_pr_h', 'Start → PR', 'Hours from the stage/030-pr-in-progress start mark to the fixing PR opening.'],
         ['pr_to_merge_h', 'PR → merge', 'Hours from the fixing PR opening to its merge.'],
         ['open_to_merge_h', 'Open → merge', 'Hours from the issue opening on GitHub to the fixing PR merging.'],
       ];
@@ -40657,6 +40765,15 @@ function burnAreaChart() {
       const stageDwell = (_configState.dirty.labels && _configState.dirty.labels.stage_dwell !== undefined)
         ? _configState.dirty.labels.stage_dwell
         : (_configState.data.stageLabelsDwell || '');
+      const stageNudgeOn = (_configState.dirty.labels && _configState.dirty.labels.stage_nudge_enabled !== undefined)
+        ? _configState.dirty.labels.stage_nudge_enabled
+        : (_configState.data.stageNudgeEnabled !== false);
+      const stageNudgeRenudge = (_configState.dirty.labels && _configState.dirty.labels.stage_nudge_renudge_interval !== undefined)
+        ? _configState.dirty.labels.stage_nudge_renudge_interval
+        : (_configState.data.stageNudgeRenudge || '');
+      const stagePresenceWindow = (_configState.dirty.labels && _configState.dirty.labels.stage_presence_window !== undefined)
+        ? _configState.dirty.labels.stage_presence_window
+        : (_configState.data.stagePresenceWindow || '');
       return `
         ${renderOutsideBucketsPanel(labels, requireLabels)}
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
@@ -40692,6 +40809,17 @@ function burnAreaChart() {
           <label for="cfg-stage-dwell">Dwell overrides ${yamlHint('governor.labels.stage.dwell.<key>')}</label>
           <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">
           <div class="config-help">How long an item may sit in a stage before it gets <code>stage/stalled</code>; comma-separated <code>slug=duration</code>, <code>0</code> = never. Unset stages use the built-in table.</div>
+        </div>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageNudgeOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_nudge_enabled"></div><span class="config-toggle-label">Contributor nudge on returned-to-contributor ${yamlHint('governor.labels.stage.contributor_nudge.enabled')} ${settingHelpMark('settings', 'labels', 'Contributor nudge', `When a contributor's PR enters stage/072-returned-to-contributor (red CI, changes requested, conflicts) the hive posts ONE @-mention comment per head with the failing checks / review asks and, for relay contributors, pushes a fix-pr task to their relay session (parallel sub-session when the relay advertises parallel_sessions, otherwise preempting the current task). Re-nudged once at the stall threshold; cap 2 per head. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-field">
+          <label for="cfg-stage-nudge-renudge">Re-nudge interval ${yamlHint('governor.labels.stage.contributor_nudge.renudge_interval')}</label>
+          <input type="text" id="cfg-stage-nudge-renudge" value="${esc(stageNudgeRenudge)}" placeholder="24h (stage dwell)" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_nudge_renudge_interval" data-arg-types="s,s,w">
+          <div class="config-help">Go duration before the single re-nudge; empty = the returned-to-contributor dwell.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-presence-window">Contributor presence window ${yamlHint('governor.labels.stage.presence_window')}</label>
+          <input type="text" id="cfg-stage-presence-window" value="${esc(stagePresenceWindow)}" placeholder="15m" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_presence_window" data-arg-types="s,s,w">
+          <div class="config-help">A contributor counts as online when their relay heartbeat is within this window; online contributors get the fix-pr interrupt immediately, offline ones only the comment (their fix waits in the queue).</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>

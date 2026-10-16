@@ -570,6 +570,20 @@ type AgentVerdictJSON struct {
 	Unknown        bool   `json:"unknown,omitempty"`
 	BlockedReason  string `json:"blockedReason,omitempty"`
 	RestartProblem string `json:"restartProblem,omitempty"`
+	// Restarts carries the spoke's 24h restart ledger so the dashboard badge
+	// can show the real count; without it the badge rendered "×0/24h" next to
+	// a RestartProblem that said ×23 (#12466).
+	Restarts *AgentRestartTelemetry `json:"restarts,omitempty"`
+}
+
+// agentRestartsForVerdict exposes the restart ledger only when it says
+// something, keeping legacy spokes' rows free of an all-zero object.
+func agentRestartsForVerdict(a AgentSummary) *AgentRestartTelemetry {
+	if a.Restarts == (AgentRestartTelemetry{}) {
+		return nil
+	}
+	r := a.Restarts
+	return &r
 }
 
 // buildAgentVerdicts derives the per-agent verdict rows for one hive, skipping
@@ -614,6 +628,7 @@ func buildAgentVerdicts(agents []AgentSummary, blockers hiveBlockers, queuedWork
 			Unknown:              v.CapabilityTier == tierGray,
 			BlockedReason:        v.BlockedReason,
 			RestartProblem:       agentRestartProblemReason(a),
+			Restarts:             agentRestartsForVerdict(a),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

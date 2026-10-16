@@ -35,6 +35,12 @@ type StageLabelPolicy struct {
 	Enabled bool
 	// Dwell overrides the stage table's expected dwell per stage slug.
 	Dwell map[string]time.Duration
+	// ContributorNudge turns the stage-072 nudge comment + relay interrupt
+	// on (governor.labels.stage.contributor_nudge.enabled, default true).
+	ContributorNudge bool
+	// RenudgeInterval is the delay before the single re-nudge; 0 uses the
+	// stage's dwell (the stall threshold).
+	RenudgeInterval time.Duration
 }
 
 // stageRESTCaller tags the label/comment writes for /api/gh-rate-limits.
@@ -73,6 +79,11 @@ type stageObservation struct {
 	Merged  bool
 	Err     bool
 	Detail  stageDetail
+	// Author, Title, URL and OpenedAt feed the stage-072 contributor nudge.
+	Author   string
+	Title    string
+	URL      string
+	OpenedAt time.Time
 }
 
 // StageTracker accumulates observations across the lanes of one cycle. One
@@ -191,6 +202,10 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	if pr.GetHead() != nil {
 		obs.HeadSHA = pr.GetHead().GetSHA()
 	}
+	obs.Author = hgithub.SafeGetLogin(pr.GetUser())
+	obs.Title = pr.GetTitle()
+	obs.URL = pr.GetHTMLURL()
+	obs.OpenedAt = pr.GetCreatedAt().Time
 	c.stageTrackerOrShared().record(obs)
 }
 
@@ -206,12 +221,15 @@ func (c *Engine) noteStageVerdict(owner, repo string, number int, v ContributorL
 	})
 }
 
-// noteStageAuthor records the author's admission tier as the lane computed it.
+// noteStageAuthor records the author's admission tier as the lane computed
+// it. Lanes disagree by design (the contributor lane reports "untrusted"
+// for a maintainer with no registry profile), so tiers merge by precedence
+// rather than last-writer-wins (#12490).
 func (c *Engine) noteStageAuthor(owner, repo string, number int, a stagelabels.Author) {
 	if !c.stagePolicy().Enabled || a == stagelabels.AuthorNone {
 		return
 	}
-	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) { d.Author = a })
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) { d.Author = d.Author.Merge(a) })
 }
 
 // stageVerdict is a lane's opinion about a PR's stage.
@@ -239,7 +257,8 @@ func classifyCIReason(reason string) ciReasonKind {
 	switch {
 	case reason == "":
 		return ciReasonNone
-	case hgithub.CommitCIReasonIsPending(reason), reason == "ci-unverified", reason == "check-pending":
+	case hgithub.CommitCIReasonIsPending(reason), reason == "ci-unverified", reason == "check-pending",
+		strings.HasPrefix(reason, "required-check-pending:"):
 		return ciReasonPending
 	case strings.HasPrefix(reason, "required-check-failing:"), strings.HasPrefix(reason, "check-failing:"),
 		strings.HasPrefix(reason, "status-"), strings.HasPrefix(reason, "check-"), reason == "check-runs":
@@ -392,9 +411,7 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Author, st
 		// The most specific author tier wins: the contributor lane knows
 		// registry/claim tiers the trusted-author lane cannot see, so a
 		// trusted-author "trusted" is kept but its absence is refined.
-		if o.Detail.Author != stagelabels.AuthorNone && (author == stagelabels.AuthorNone || o.Detail.Author == stagelabels.AuthorTrusted || author == stagelabels.AuthorUntrusted) {
-			author = o.Detail.Author
-		}
+		author = author.Merge(o.Detail.Author)
 	}
 	if best.Rank == 1 && author == stagelabels.AuthorNone {
 		author = stagelabels.AuthorUntrusted
@@ -444,10 +461,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
+		prevRec, hadPrev := store.Get(key)
 		if verdict.Terminal {
 			store.Forget(key)
+			c.resolveNudge(ctx, prevRec, hadPrev, obs)
 		} else {
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
+			if verdict.Stage != stagelabels.ReturnedToContributor {
+				c.resolveNudge(ctx, prevRec, hadPrev, obs)
+			}
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{
 				Stage:     verdict.Stage,
@@ -501,6 +523,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					store.MarkStallCommented(key)
 					result.Comments++
 				}
+			}
+		}
+		if want.Stage == stagelabels.ReturnedToContributor && policy.ContributorNudge {
+			n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 		if tr.Regressed {

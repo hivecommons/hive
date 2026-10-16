@@ -3463,6 +3463,31 @@
                       "type": "object",
                       "nullable": true
                     },
+                    "baseline": {
+                      "type": "object",
+                      "description": "Observe-phase snapshot collection progress and retention/collection details.",
+                      "properties": {
+                        "snapshots": { "type": "integer" },
+                        "target": { "type": "integer" },
+                        "percent": { "type": "number" },
+                        "evalIntervalSeconds": { "type": "integer" },
+                        "remainingSnapshots": { "type": "integer" },
+                        "etaSeconds": { "type": "integer" },
+                        "complete": { "type": "boolean" },
+                        "collecting": { "type": "array", "items": { "type": "string" } },
+                        "retention": { "type": "string" }
+                      }
+                    },
+                    "experiments": {
+                      "type": "array",
+                      "description": "Server-computed phase progress for pending, active, and judged experiments.",
+                      "items": { "type": "object" }
+                    },
+                    "results": {
+                      "type": "array",
+                      "description": "Judged experiment outputs with verdicts and PR/issue/principle links when recorded.",
+                      "items": { "type": "object" }
+                    },
                     "hasRecommendations": {
                       "type": "boolean"
                     },

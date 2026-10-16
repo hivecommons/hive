@@ -161,16 +161,24 @@ func TestLedgerHasContributor(t *testing.T) {
 	}
 }
 
-// A hive agent's claim mirrors hive/in-progress next to `claimed`; a human or
-// contributor claim does not — the label states that an AGENT began a PR.
+// A hive agent's claim mirrors stage/030-pr-in-progress; a human or
+// contributor claim mirrors stage/020-claimed — one stage label per issue,
+// never the retired `claimed` / `hive/in-progress` pair (hivecommons/hive#12436).
 func TestClaimLabelsFor(t *testing.T) {
 	agent := claimLabelsFor(claims.Claim{Kind: claims.KindAgent})
-	if len(agent) != 2 || agent[0] != claims.LabelClaimed || agent[1] != github.InProgressLabel {
+	if len(agent) != 1 || agent[0] != github.InProgressLabel || github.InProgressLabel != "stage/030-pr-in-progress" {
 		t.Fatalf("agent labels = %v", agent)
 	}
 	for _, kind := range []claims.Kind{claims.KindHuman, claims.KindContributor, claims.KindExternal} {
-		if got := claimLabelsFor(claims.Claim{Kind: kind}); len(got) != 1 || got[0] != claims.LabelClaimed {
-			t.Fatalf("%s labels = %v, want only claimed", kind, got)
+		if got := claimLabelsFor(claims.Claim{Kind: kind}); len(got) != 1 || got[0] != claims.LabelClaimed || claims.LabelClaimed != "stage/020-claimed" {
+			t.Fatalf("%s labels = %v, want only stage/020-claimed", kind, got)
+		}
+	}
+	for _, labels := range [][]string{agent, claimLabelsFor(claims.Claim{Kind: claims.KindHuman})} {
+		for _, l := range labels {
+			if l == claims.LegacyLabelClaimed || l == claims.LegacyLabelInProgress {
+				t.Fatalf("retired label %q must not be written", l)
+			}
 		}
 	}
 }

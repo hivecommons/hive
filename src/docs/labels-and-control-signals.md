@@ -198,6 +198,38 @@ stateDiagram-v2
     s100 --> [*]: merged (labels removed)
 ```
 
+### How an issue's stage is decided
+
+The enumeration cycle already sorts every open issue into a work bucket
+(actionable, live claim, in-progress start mark, covered by an open PR,
+filtered …) before the scanner kicks anything. `src/pkg/github/issue_stage_labels.go`
+(`SyncIssueStageLabels`, REST caller `hive:issue_stage_labels`) runs once per
+cycle after the claim guards and the in-progress sweep, so the buckets are
+final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12436)):
+
+| Enumeration bucket | Stage |
+|---|---|
+| carries `hive/likely-done` (a PR merged, awaiting confirmation) | no stage — every hive-owned label removed, timing forgotten |
+| actionable (no claim, no PR) | `010-actionable` |
+| live claim (`<!-- hive:claim … -->` marker / ledger) by a human or relay contributor | `020-claimed` |
+| live claim by one of the hive's own agents, or an in-progress start mark (`kind=agent` marker from `hive-open-issue claim`) | `030-pr-in-progress` |
+| covered by an open PR, PR not yet staged by the automerge sweep | `040-covered-by-pr` |
+| covered by an open PR the sweep has staged (≥ 050) | **mirrors the PR's stage** (`050-review-pending` … `100-merge-queue`) so the issue list reads the same as the PR list |
+| exempt / filtered / reporter triage / advisory / dependency dashboard | no stage |
+
+Labels come from the issue list payload the cycle already fetched — no
+per-issue GETs — and are written only when the planned set differs from the
+current one. When the stage is mirrored from a PR, `stage/stalled` and
+`stage/regressed` belong to the PR and are not written on the issue; when the
+issue falls back between its *own* stages (a claim or kick lapsed with no PR:
+030 → 010) it gets `stage/regressed` and one explanatory comment. The claim
+relay (`hive-open-issue claim`) writes `stage/020-claimed` /
+`stage/030-pr-in-progress` directly alongside `hive/claimed-by-<who>` so the
+label is right as soon as the claim lands; `hive-open-pr --issues` swaps 030
+for 040 when the PR opens; close-on-merge strips every hive-owned label from
+an issue it closes. Timing and mirroring share the PR engine's state file
+(`/data/stage-labels.json`, issues and PRs share a number space per repo).
+
 ### How a PR's stage is decided
 
 The automerge sweep already computes one reason per PR per lane each cycle
@@ -260,52 +292,78 @@ stage but written only on change:
 When a contributor PR goes red the hive does not just relabel it (full flow in
 [hive-merge.md](hive-merge.md#stage-labels)):
 
-1. `stage/072-returned-to-contributor` and one `<!-- hive:contributor-nudge
-   head=<sha> -->` comment @-mentioning the author with the failing checks /
-   review asks and "reply here or push a new head". Re-posted only for a new
-   head; re-nudged once at the stall threshold, then no more (cap: 2 per
-   head).
-2. Relay contributors (claim marker carries `session=`) also receive the
-   diagnosis in their relay session as a `fix-pr` interrupt task: a client
-   that advertises `parallel_sessions` spawns a bounded parallel fix session
-   (`contribute.max_parallel_fixes`); otherwise the task preempts the primary
-   session, which parks its current issue (claim kept alive) and resumes
-   after the PR is green. Presence = heartbeat within
-   `governor.labels.stage.presence_window` (default 15m); online grace
-   `contributor_grace_online` (2h), offline grace `contributor_grace_offline`
-   (1h after the nudge).
-3. If the author stays unavailable past the grace, the PR moves to
-   `stage/074-adopted-by-hive` and is re-laned through the existing
-   maintainer takeover/supersede path (a branch from the fork head, rebased
-   and fixed, opened as a superseding PR that preserves the original author's
-   commits and sign-off); one comment on the original PR says so.
+1. `stage/072-returned-to-contributor` and ONE `<!-- hive:contributor-nudge
+   head=<sha> n=<1|2> mode=<comment|queued|spawn|preempt> -->` comment
+   @-mentioning the author with the failing checks / review asks and "reply
+   here or push a new head". Re-posted only for a new head; re-nudged once
+   more after `governor.labels.stage.contributor_nudge.renudge_interval`
+   (default = the stage's 24h dwell, i.e. at `stage/stalled`), then no more
+   — **cap: 2 nudges per head**. `mode=` records how the relay side was
+   handled so the comment itself answers "did their agent get interrupted?".
+   `governor.labels.stage.contributor_nudge.enabled: false` turns the
+   comment and the relay task off; the stage label still moves.
+2. Relay contributors (the author has a contributor profile and a live relay
+   connection) also receive the diagnosis in their relay session as a
+   `fix-pr` task with `priority: interrupt`. Presence = a relay heartbeat
+   within `governor.labels.stage.presence_window` (default 15m); an offline
+   or external author gets the GitHub comment only (`mode=comment`). The hub
+   picks the delivery mode from what the relay advertised at DECLARE:
+   - `mode=spawn` — the relay declared `parallel_sessions` and
+     `max_parallel_fixes` (its `HIVE_MAX_PARALLEL_FIXES`, default 1, only
+     when the backend has a headless entry point): a bounded parallel
+     sub-session fixes the red PR while the primary session keeps its task.
+   - `mode=preempt` — no parallel capability: the primary agent is told to
+     park its current issue (WIP committed/stashed; the claim and lease stay
+     alive), fix the PR on its existing branch with the same sign-off, print
+     `HIVE_FIX_PR_DONE <task_id>` (or `HIVE_FIX_PR_FAILED <task_id> <reason>`),
+     then resume. A headless primary cannot be interrupted, so the relay
+     defers the fix and runs it before its next `ready`.
+   - `mode=queued` — the contributor is over their fix budget (below); the
+     task waits server-side and the PR carries stage 072 + the comment only.
+   Protocol fields and client behaviour:
+   [contributor-relay.md § fix-pr tasks](contributor-relay.md#fix-pr-tasks).
+3. If the author stays unavailable past the grace (`contributor_grace_online`
+   2h after an online nudge, `contributor_grace_offline` 1h after an offline
+   one), the PR moves to `stage/074-adopted-by-hive` and is re-laned through
+   the maintainer takeover/supersede path (a branch from the fork head,
+   rebased and fixed, opened as a superseding PR that preserves the original
+   author's commits and sign-off); one comment on the original PR says so.
 4. A new head from the author at any point before adoption returns the PR
-   to the normal `050 → 100` path with no adoption.
-5. Backpressure: interrupts never exceed the contributor's advertised
-   parallel capacity (default 1); further red PRs wait in a per-contributor
-   FIFO (oldest first, human changes-requested before CI-red) carrying stage
-   072 and the GitHub comment only. Preempt mode allows one preemption at a
-   time and honours `contribute.min_focus_window` (30m) before the next.
-   Failures with the same cause are coalesced into one task; a queued PR
-   whose adoption grace expires goes to 074 instead of interrupting — the
-   hive absorbs the overflow, not the human.
+   to the normal `050 → 100` path with no adoption; the hub drops the PR from
+   the contributor's fix queue.
+5. Backpressure — the per-contributor fix budget. Capacity = the relay's
+   advertised `max_parallel_fixes` (fix sub-sessions beside the primary),
+   clamped by `contribute.max_parallel_fixes` (default 2); an unadvertised
+   relay has capacity 1 (preempt mode). At most that many `fix-pr` tasks are
+   in flight per contributor; the rest wait in a per-contributor FIFO
+   (oldest PR first, a human changes-requested before CI-red) carrying stage
+   072 and the GitHub comment only. Preempt mode allows ONE preemption at a
+   time and never preempts again until the parked task has resumed and run
+   for `contribute.min_focus_window` (default 30m). Failures with the same
+   cause (same failing check + error signature) are coalesced into one task
+   listing every affected PR. A queued PR whose adoption grace expires goes
+   to 074 instead of interrupting — the hive absorbs the overflow, not the
+   human. Queue depth / in-flight is exposed as `fix_queue` on the
+   contributor profile API and on the contribute page; the hub logs one line
+   per enqueue/dequeue (`fixqueue: … event=…`).
 6. Governing rule of the contributor fix scheduler, verbatim from the
    operator: **"contributors should clean up their mess before taking on new
    stuff."** Every ordering decision — task boundary, dequeue, a new-issue
    claim via the relay or the contribute page — checks the contributor's
-   red-PR queue first: queued `fix-pr` tasks are handed out oldest first and a
-   fresh issue is served only when that queue is empty. The contribute UI
-   shows "You have N PRs to fix first" and offers those PRs before new
+   red-PR queue first: queued `fix-pr` tasks are handed out oldest first
+   (even to a relay that advertises no fix-pr support, as an ordinary task)
+   and a fresh issue is served only when that queue is empty. The contribute
+   page shows "You have N PRs to fix first" and offers those PRs before new
    issues. Preemption of in-progress work still obeys the single-preempt +
-   focus-window rule.
+   focus-window rule; this ordering applies at task-boundary time.
 7. Capacity ≥ 2: fixes are dispatched immediately as parallel sub-sessions,
-   up to capacity − 1 so the primary session keeps going and is never
-   preempted; further failures queue, and each finished fix session frees a
-   slot that is refilled automatically with the next queued `fix-pr`.
+   up to the advertised count so the primary session keeps going and is
+   never preempted; further failures queue, and each finished fix session
+   (`task_complete`/`task_failed` for the fix's `task_id`) frees a slot that
+   is refilled automatically with the next queued `fix-pr`.
 
-Step 1's label and the regression comment ship with the stage engine; the
-nudge comment, relay `fix-pr` task, presence/grace timers and adoption kick
-are tracked in the follow-up PR linked from #12429.
+Steps 1, 2 and 5–7 ship with the stage engine and the contribute hub; the
+074 adoption kick and grace timers (steps 3–4) are the last part of #12436.
 
 ### Modifiers, not stages
 
@@ -327,10 +385,12 @@ those labels — it uses the `<!-- hive:claim … -->` marker comment
 no gate. On the first cycle after upgrade the reconciler removes them from
 every open item it writes a stage for, so open items lose
 `claimed` / `hive/in-progress` / `🐝 covered by PR` and gain their stage label;
-the repo-level labels can be deleted afterwards. The issue-side stages
-(010–040), issue→PR mirroring and the retirement of the legacy writers land
-in the follow-up PR linked from #12429; until then the PR-side reconciler
-already removes the legacy labels from PRs it labels.
+the repo-level labels can be deleted afterwards. The legacy writers are gone:
+the claim relay and ledger mirror write `stage/020-claimed` /
+`stage/030-pr-in-progress`, the PR-claim sync writes `stage/040-covered-by-pr`,
+and the in-progress sweep still recognises `hive/in-progress` as a trigger for
+one migration cycle so a lapsed mark from an older spoke is cleared rather
+than orphaned. `hive/claimed-by-<who>` is kept as the grey "who" modifier.
 
 ## Matching rules
 

@@ -1,0 +1,1 @@
+Hub dashboard: the per-agent restart-storm badge now shows the real 24h restart count. The verdict row the badge read never carried the spoke's restart ledger, so it rendered "agent restarts: guide ×0/24h" next to a storm of ×23 (#12466). The verdict JSON now includes `restarts`, and the badge falls back to the count embedded in `restartProblem` when a hub omits it.

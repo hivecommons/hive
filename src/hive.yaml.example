@@ -104,6 +104,14 @@ project:
 #       url: https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md
 #     - label: Chat with other contributors
 #       url: https://hivecommons.dev/discord
+#   # Stage-072 fix budget (hivecommons/hive#12436): how many red-PR fix-pr
+#   # sub-sessions one contributor's relay may run beside its primary session
+#   # (the relay advertises its own count; the hub clamps to this). 1 forces
+#   # preempt mode. Queued fixes are served before new work.
+#   max_parallel_fixes: 2
+#   # Preempt mode: minimum uninterrupted run time of a resumed primary task
+#   # before the hub may preempt that contributor again.
+#   min_focus_window: 30m
 
 # GitHub App / PR policy. The #5117 self-authorization hold defaults on through
 # ACMM L5 and off at ACMM L6 Fully Autonomous. App-authored PRs whose only
@@ -454,6 +462,10 @@ governor:
       #   review-pending: 1h
       #   returned-to-contributor: 24h
       #   awaiting-merge-admission: 30m  # a stall here = the lane, not the author; the hive comments the last skip reason
+      # contributor_nudge:              # stage/072: one @-mention comment per head + relay fix-pr interrupt (#12436)
+      #   enabled: true
+      #   renudge_interval: 24h         # second (and last) nudge; default = the stage dwell
+      # presence_window: 15m            # relay heartbeat this fresh = contributor online → relay interrupt, else comment only
 
   # Optional: read actionable work from Linear instead of GitHub Issues.
   # Secrets should come from env interpolation, not literal values.

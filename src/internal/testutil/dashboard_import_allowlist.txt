@@ -20,6 +20,7 @@ github.com/hivecommons/hive/pkg/convergence
 github.com/hivecommons/hive/pkg/dashboard
 github.com/hivecommons/hive/pkg/defsrc
 github.com/hivecommons/hive/pkg/evidence
+github.com/hivecommons/hive/pkg/fixqueue
 github.com/hivecommons/hive/pkg/fleetreport
 github.com/hivecommons/hive/pkg/github
 github.com/hivecommons/hive/pkg/governor

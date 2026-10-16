@@ -4995,11 +4995,11 @@ func clampInt(v, min, max int) int {
 const maxFleetCount = 10_000_000
 
 // maxQuadrantSpend bounds a hive's reported per-window token spend for the same
-// reason maxFleetCount bounds counts, but the stakes differ: quadrant scores are
-// fleet-RELATIVE percentiles, so one absurd value does not merely look wrong on
-// its own row — it stretches the distribution and pushes every honest hive
-// toward the same end of the axis. A trillion tokens in one budget window is
-// orders of magnitude beyond any real usage.
+// reason maxFleetCount bounds counts: quadrant criteria map it onto fixed
+// curves and the fleet view takes a median, so one absurd value cannot flatten
+// other hives, but it would still render as a nonsense row and feed the
+// per-hive Delta. A trillion tokens in one budget window is orders of magnitude
+// beyond any real usage.
 const maxQuadrantSpend int64 = 1_000_000_000_000
 
 // clampFleetCount validates a spoke-reported fleet count pointer. nil stays nil
@@ -5022,7 +5022,7 @@ func clampFleetCount(v *int) *int {
 //
 // The upper bound is deliberately generous — this is a token count over a
 // budget window, not a small tally — but it exists so a corrupt payload cannot
-// dominate a fleet-relative percentile and flatten every other hive's score.
+// render as an absurd efficiency reading or skew the fleet median.
 func clampQuadrantSpend(v *int64) *int64 {
 	if v == nil || *v < 0 {
 		return nil

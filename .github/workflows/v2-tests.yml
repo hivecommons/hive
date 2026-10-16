@@ -143,6 +143,15 @@ concurrency:
 #    (^(A|B|...)$) make slices pairwise disjoint and jointly exhaustive.
 #  - the aggregate `test` job (the required-check name) fails closed: it
 #    requires list-packages AND every shard to succeed.
+#
+# Affected-package selection (#12454), pull requests only: list-packages diffs
+# the PR merge commit against its base parent and runs
+# .github/scripts/affected-go-packages.sh, which selects the changed packages
+# plus their reverse dependencies and falls back to the full suite for
+# anything it cannot reason about (workflow/script/harness/module/asset
+# changes, analysis failures). Every shard job still runs and reports; a lane
+# with nothing selected succeeds without testing, so `test` and `coverage`
+# never wait on a missing context. Push and scheduled runs are always full.
 jobs:
   required-context-scope:
     name: required context scope
@@ -207,7 +216,7 @@ jobs:
   # hub floor. Adding a hub test no longer moves the gate's wall clock by its
   # full duration — only by 1/H of it.
   test-hub:
-    needs: required-context-scope
+    needs: [required-context-scope, list-packages]
     if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (hub ${{ matrix.idx }}/4)
     strategy:
@@ -220,22 +229,45 @@ jobs:
       run:
         working-directory: src
     steps:
+      # Affected-package selection (#12454): when this lane has nothing to
+      # test on a PR it still runs and reports success, so no context the
+      # aggregates or branch protection wait on can go missing. Anything but
+      # an explicit "nothing selected" runs the lane (fail toward testing).
+      - name: Affected-package selection
+        id: select
+        working-directory: .
+        env:
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
+          RUN_LANE: ${{ needs.list-packages.outputs.run-hub }}
+        run: |
+          if [ "$SELECTION" = partial ] && [ "$RUN_LANE" = false ]; then
+            echo "Affected-package selection: pkg/hub is not affected by this diff; reporting success without running tests. Push and scheduled runs test it in full."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.select.outputs.run == 'true'
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
       # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
+        if: steps.select.outputs.run == 'true'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.select.outputs.run == 'true'
         with:
           cache: false
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
+        if: steps.select.outputs.run == 'true'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Install gotestsum
+        if: steps.select.outputs.run == 'true'
         run: |
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           go install gotest.tools/gotestsum@v1.13.0
@@ -247,7 +279,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
+        if: ${{ steps.select.outputs.run == 'true' && (!contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')) }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -256,6 +288,7 @@ jobs:
             hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.select.outputs.run == 'true'
         with:
           node-version: '22'
       - name: Guard shared node tool cache (repair a half-written entry)
@@ -264,7 +297,7 @@ jobs:
         # canary repairs this too, but its cron is starved to a ~5h cadence, so
         # heal the node from the hot path: drop the marker (never the directory,
         # a sibling job may be mid-run) so the next job re-extracts.
-        if: ${{ always() }}
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: |
           set -u
           command -v npm >/dev/null 2>&1 && exit 0
@@ -279,6 +312,7 @@ jobs:
           exit 1
 
       - name: Restore cgo toolchain package cache
+        if: steps.select.outputs.run == 'true'
         id: restore-cgo-apt-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -294,6 +328,7 @@ jobs:
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        if: steps.select.outputs.run == 'true'
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
@@ -304,7 +339,7 @@ jobs:
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true') }}
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -312,7 +347,7 @@ jobs:
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
 
       - name: Test slice of pkg/hub
-        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true') }}
         env:
           IDX: ${{ matrix.idx }}
           TOTAL: ${{ strategy.job-total }}
@@ -344,11 +379,11 @@ jobs:
 
       - name: Surface flaky reruns
         id: flaky-reruns
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-hub-${{ matrix.idx }}.txt" "hub ${{ matrix.idx }}/4"
 
       - name: Upload flaky rerun report
-        if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.flaky-reruns.outputs.has-flakes == 'true') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flaky-tests-hub-${{ matrix.idx }}
@@ -357,7 +392,7 @@ jobs:
           retention-days: 14
 
       - name: Slowest tests in this slice
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "hub ${{ matrix.idx }}/4" test-hub-${{ matrix.idx }}.log
 
       # Uploaded even on failure so the coverage job (and humans) can inspect
@@ -365,7 +400,7 @@ jobs:
       # coverprofile is never written, and this upload must not mask the real
       # test failure with an artifact error.
       - name: Upload shard coverage artifacts
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-shard-hub-${{ matrix.idx }}
@@ -389,7 +424,7 @@ jobs:
   # job below merges them by summing per-block counts before scoring, so the
   # agent floor is applied to the union, never to a partial run.
   test-agent:
-    needs: required-context-scope
+    needs: [required-context-scope, list-packages]
     if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (agent ${{ matrix.idx }}/5)
     strategy:
@@ -402,22 +437,45 @@ jobs:
       run:
         working-directory: src
     steps:
+      # Affected-package selection (#12454): when this lane has nothing to
+      # test on a PR it still runs and reports success, so no context the
+      # aggregates or branch protection wait on can go missing. Anything but
+      # an explicit "nothing selected" runs the lane (fail toward testing).
+      - name: Affected-package selection
+        id: select
+        working-directory: .
+        env:
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
+          RUN_LANE: ${{ needs.list-packages.outputs.run-agent }}
+        run: |
+          if [ "$SELECTION" = partial ] && [ "$RUN_LANE" = false ]; then
+            echo "Affected-package selection: pkg/agent is not affected by this diff; reporting success without running tests. Push and scheduled runs test it in full."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.select.outputs.run == 'true'
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
       # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
+        if: steps.select.outputs.run == 'true'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.select.outputs.run == 'true'
         with:
           cache: false
           go-version-file: src/go.mod
       - name: Guard shared Go cache (fall back when the runner volume is full)
+        if: steps.select.outputs.run == 'true'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Install gotestsum
+        if: steps.select.outputs.run == 'true'
         run: |
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           go install gotest.tools/gotestsum@v1.13.0
@@ -429,7 +487,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
+        if: ${{ steps.select.outputs.run == 'true' && (!contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')) }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -438,6 +496,7 @@ jobs:
             hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Restore cgo toolchain package cache
+        if: steps.select.outputs.run == 'true'
         id: restore-cgo-apt-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -453,6 +512,7 @@ jobs:
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        if: steps.select.outputs.run == 'true'
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
@@ -463,7 +523,7 @@ jobs:
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true') }}
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -478,14 +538,14 @@ jobs:
       # asserting something this lane actually enforces.
       # Same bounded/annotated install path as the cgo steps (#6648).
       - name: Install tmux (precondition for the behavioural gate)
-        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true') }}
         run: |
           bash "$GITHUB_WORKSPACE/.github/scripts/ci-install-tool.sh" \
             --require tmux --for 'the behavioural gate' \
             --apt tmux --apk tmux --verify 'tmux -V'
 
       - name: Test slice of pkg/agent
-        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true') }}
         env:
           IDX: ${{ matrix.idx }}
           TOTAL: ${{ strategy.job-total }}
@@ -522,11 +582,11 @@ jobs:
 
       - name: Surface flaky reruns
         id: flaky-reruns
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-agent-${{ matrix.idx }}.txt" "agent ${{ matrix.idx }}/5"
 
       - name: Upload flaky rerun report
-        if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.flaky-reruns.outputs.has-flakes == 'true') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flaky-tests-agent-${{ matrix.idx }}
@@ -535,11 +595,11 @@ jobs:
           retention-days: 14
 
       - name: Slowest tests in this slice
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "agent ${{ matrix.idx }}/5" test-agent-${{ matrix.idx }}.log
 
       - name: Upload shard coverage artifacts
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-shard-agent-${{ matrix.idx }}
@@ -562,11 +622,21 @@ jobs:
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.partition.outputs.matrix }}
+      # Affected-package selection (#12454). `full` on every non-PR event.
+      selection: ${{ steps.select.outputs.selection }}
+      selected: ${{ steps.select.outputs.selected }}
+      run-hub: ${{ steps.select.outputs.run-hub }}
+      run-agent: ${{ steps.select.outputs.run-agent }}
+      run-dashboard: ${{ steps.select.outputs.run-dashboard }}
     defaults:
       run:
         working-directory: src
     steps:
+      # Depth 2 so the PR merge commit's two parents (base tip, PR head) are
+      # present for the affected-package diff below.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -628,6 +698,65 @@ jobs:
           path: .ci/apt-cache/cgo-race
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
 
+      # Affected-package selection (#12454). Pull requests only: push to the
+      # release branches, the hourly schedule and manual dispatches always run
+      # the full suite and are the safety net for anything selection misses.
+      # The PR checkout is the merge commit, so HEAD^1..HEAD is exactly the
+      # change this PR makes to the current base; anything unexpected (not a
+      # merge commit, second parent is not the PR head, analysis failure) and
+      # every fallback in .github/scripts/affected-go-packages.sh mean `all`.
+      # Set the repo variable HIVE_AFFECTED_TEST_SELECTION=off to force the
+      # full suite on PRs without a code change.
+      - name: Select affected packages
+        id: select
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SELECTION_SWITCH: ${{ vars.HIVE_AFFECTED_TEST_SELECTION }}
+        run: |
+          set -uo pipefail
+          sel=../affected-pkgs.txt
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "$GITHUB_EVENT_NAME run: full suite (only pull requests use affected-package selection)."
+            echo all > "$sel"
+          elif [ "${SELECTION_SWITCH:-}" = off ]; then
+            echo "HIVE_AFFECTED_TEST_SELECTION=off: full suite."
+            echo all > "$sel"
+          elif [ -z "${PR_HEAD_SHA:-}" ] || [ "$(git rev-parse -q --verify 'HEAD^2' || true)" != "$PR_HEAD_SHA" ]; then
+            echo "::notice::checkout is not the PR merge commit of $PR_HEAD_SHA; running the full suite"
+            echo all > "$sel"
+          else
+            bash "$GITHUB_WORKSPACE/.github/scripts/affected-go-packages.sh" 'HEAD^1' HEAD "$sel" || echo all > "$sel"
+          fi
+          [ -f "$sel" ] || echo all > "$sel"
+          mod=$(go list -m)
+          if [ "$(head -n1 "$sel")" = all ]; then
+            selection=full
+            run_hub=true run_agent=true run_dashboard=true
+          else
+            selection=partial
+            has() { grep -Fxq "$mod/$1" "$sel" && echo true || echo false; }
+            run_hub=$(has pkg/hub) run_agent=$(has pkg/agent) run_dashboard=$(has pkg/dashboard)
+          fi
+          {
+            echo "selection=$selection"
+            echo "selected=$(paste -sd' ' "$sel")"
+            echo "run-hub=$run_hub"
+            echo "run-agent=$run_agent"
+            echo "run-dashboard=$run_dashboard"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Go test selection"
+            echo ""
+            if [ "$selection" = full ]; then
+              echo "Full suite."
+            else
+              echo "Affected packages only ($(grep -c . "$sel" || true)); hub=$run_hub agent=$run_agent dashboard-shuffle=$run_dashboard."
+              echo ""
+              sed 's/^/- /' "$sel"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "selection=$selection hub=$run_hub agent=$run_agent dashboard=$run_dashboard"
+
       - name: Partition packages into balanced buckets
         id: partition
         run: |
@@ -646,6 +775,15 @@ jobs:
           if [ ! -s rest-pkgs.txt ]; then
             echo "::error::go list produced no rest packages — failing closed"
             exit 1
+          fi
+          # Affected-package selection narrows membership only after the
+          # fail-closed check above ran on the full list. The bucket count
+          # stays R, so every `test (rest i/R)` context still reports; a
+          # bucket left empty succeeds without running (see test-rest).
+          if [ "$(head -n1 ../affected-pkgs.txt)" != all ]; then
+            grep -Fx -f ../affected-pkgs.txt rest-pkgs.txt > rest-selected.txt || true
+            echo "affected-package selection: $(wc -l < rest-selected.txt) of $(wc -l < rest-pkgs.txt) rest packages"
+            mv rest-selected.txt rest-pkgs.txt
           fi
 
           # Weights = measured -short -race package wall seconds on the
@@ -725,20 +863,42 @@ jobs:
       run:
         working-directory: src
     steps:
+      # Affected-package selection (#12454): when this lane has nothing to
+      # test on a PR it still runs and reports success, so no context the
+      # aggregates or branch protection wait on can go missing. Anything but
+      # an explicit "nothing selected" runs the lane (fail toward testing).
+      - name: Affected-package selection
+        id: select
+        working-directory: .
+        env:
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
+          PKGS: ${{ matrix.pkgs }}
+        run: |
+          if [ "$SELECTION" = partial ] && [ -z "$PKGS" ]; then
+            echo "Affected-package selection: no affected package landed in this bucket; reporting success without running tests. Push and scheduled runs test it in full."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.select.outputs.run == 'true'
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
       # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
+        if: steps.select.outputs.run == 'true'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.select.outputs.run == 'true'
         with:
           cache: false
           go-version-file: src/go.mod
       # Dashboard tests execute JavaScript even on runners without preinstalled Node.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.select.outputs.run == 'true'
         with:
           node-version: '22'
       - name: Guard shared node tool cache (repair a half-written entry)
@@ -747,7 +907,7 @@ jobs:
         # canary repairs this too, but its cron is starved to a ~5h cadence, so
         # heal the node from the hot path: drop the marker (never the directory,
         # a sibling job may be mid-run) so the next job re-extracts.
-        if: ${{ always() }}
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: |
           set -u
           command -v npm >/dev/null 2>&1 && exit 0
@@ -761,9 +921,11 @@ jobs:
           echo "::error::npm is not on PATH after actions/setup-node on $RUNNER_NAME (half-written shared tool cache, see #10518); marker removed, re-run this job"
           exit 1
       - name: Guard shared Go cache (fall back when the runner volume is full)
+        if: steps.select.outputs.run == 'true'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Install gotestsum
+        if: steps.select.outputs.run == 'true'
         run: |
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           go install gotest.tools/gotestsum@v1.13.0
@@ -775,7 +937,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
+        if: ${{ steps.select.outputs.run == 'true' && (!contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')) }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -784,6 +946,7 @@ jobs:
             hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Restore cgo toolchain package cache
+        if: steps.select.outputs.run == 'true'
         id: restore-cgo-apt-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -799,6 +962,7 @@ jobs:
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        if: steps.select.outputs.run == 'true'
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
@@ -809,7 +973,7 @@ jobs:
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true') }}
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -821,7 +985,7 @@ jobs:
       # tests were consequently merged already-failing and stayed red on the
       # default branch, undetected. All of ./cmd/... passes under -short -race.
       - name: Test
-        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true') }}
         env:
           PKGS: ${{ matrix.pkgs }}
           # The converted skips in the rest packages gate on repo files being
@@ -854,11 +1018,11 @@ jobs:
 
       - name: Surface flaky reruns
         id: flaky-reruns
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-rest-${{ matrix.idx }}.txt" "rest ${{ matrix.idx }}/${{ matrix.total }}"
 
       - name: Upload flaky rerun report
-        if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.flaky-reruns.outputs.has-flakes == 'true') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flaky-tests-rest-${{ matrix.idx }}
@@ -867,11 +1031,11 @@ jobs:
           retention-days: 14
 
       - name: Slowest tests in this bucket
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "rest ${{ matrix.idx }}/${{ matrix.total }}" test-rest-${{ matrix.idx }}.log
 
       - name: Upload shard coverage artifacts
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-shard-rest-${{ matrix.idx }}
@@ -899,7 +1063,7 @@ jobs:
   # No -coverprofile here: pkg/dashboard's coverage floor is scored from the
   # rest-bucket profile; this lane exists only to vary the execution order.
   test-dashboard-shuffle:
-    needs: required-context-scope
+    needs: [required-context-scope, list-packages]
     if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: test (dashboard shuffle ${{ matrix.idx }}/2)
     strategy:
@@ -912,20 +1076,42 @@ jobs:
       run:
         working-directory: src
     steps:
+      # Affected-package selection (#12454): when this lane has nothing to
+      # test on a PR it still runs and reports success, so no context the
+      # aggregates or branch protection wait on can go missing. Anything but
+      # an explicit "nothing selected" runs the lane (fail toward testing).
+      - name: Affected-package selection
+        id: select
+        working-directory: .
+        env:
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
+          RUN_LANE: ${{ needs.list-packages.outputs.run-dashboard }}
+        run: |
+          if [ "$SELECTION" = partial ] && [ "$RUN_LANE" = false ]; then
+            echo "Affected-package selection: pkg/dashboard is not affected by this diff; reporting success without running tests. Push and scheduled runs test it in full."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.select.outputs.run == 'true'
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
       # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
+        if: steps.select.outputs.run == 'true'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.select.outputs.run == 'true'
         with:
           cache: false
           go-version-file: src/go.mod
       # Dashboard tests execute JavaScript even on runners without preinstalled Node.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.select.outputs.run == 'true'
         with:
           node-version: '22'
       - name: Guard shared node tool cache (repair a half-written entry)
@@ -934,7 +1120,7 @@ jobs:
         # canary repairs this too, but its cron is starved to a ~5h cadence, so
         # heal the node from the hot path: drop the marker (never the directory,
         # a sibling job may be mid-run) so the next job re-extracts.
-        if: ${{ always() }}
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: |
           set -u
           command -v npm >/dev/null 2>&1 && exit 0
@@ -948,9 +1134,11 @@ jobs:
           echo "::error::npm is not on PATH after actions/setup-node on $RUNNER_NAME (half-written shared tool cache, see #10518); marker removed, re-run this job"
           exit 1
       - name: Guard shared Go cache (fall back when the runner volume is full)
+        if: steps.select.outputs.run == 'true'
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
 
       - name: Install gotestsum
+        if: steps.select.outputs.run == 'true'
         run: |
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           go install gotest.tools/gotestsum@v1.13.0
@@ -962,7 +1150,7 @@ jobs:
       # turning the ~2-minute per-job -race recompile into an incremental one.
       # Restore-only in PR jobs: balance/miss costs seconds, never correctness.
       - name: Restore warm Go build cache
-        if: ${{ !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners') }}
+        if: ${{ steps.select.outputs.run == 'true' && (!contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')) }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -971,6 +1159,7 @@ jobs:
             hive-go-build-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Restore cgo toolchain package cache
+        if: steps.select.outputs.run == 'true'
         id: restore-cgo-apt-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -986,6 +1175,7 @@ jobs:
       # when possible, retry short egress flakes with backoff, and fail loudly
       # with a ::error:: if neither cache nor mirrors can provide the tool.
       - name: Prepare cgo toolchain for race tests
+        if: steps.select.outputs.run == 'true'
         id: prepare-cgo-toolchain
         env:
           HIVE_CI_APT_CACHE_DIR: ${{ github.workspace }}/.ci/apt-cache/cgo-race
@@ -996,7 +1186,7 @@ jobs:
             --apt 'gcc libc6-dev' --apk 'gcc musl-dev' --verify 'gcc --version'
 
       - name: Save cgo toolchain package cache
-        if: always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.restore-cgo-apt-cache.outputs.cache-hit != 'true' && steps.prepare-cgo-toolchain.outputs.apt-cache-populated == 'true') }}
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -1004,7 +1194,7 @@ jobs:
           key: hive-cgo-race-apt-${{ runner.os }}-${{ runner.arch }}-gcc-libc6-dev-v2
 
       - name: Test pkg/dashboard in shuffled order
-        if: steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (steps.prepare-cgo-toolchain.outputs.toolchain-ready == 'true') }}
         env:
           IDX: ${{ matrix.idx }}
           TOTAL: ${{ strategy.job-total }}
@@ -1040,11 +1230,11 @@ jobs:
 
       - name: Surface flaky reruns
         id: flaky-reruns
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/ci-gotestsum-flake-summary.sh" "flaky-tests-dashboard-shuffle-${{ matrix.idx }}.txt" "dashboard shuffle ${{ matrix.idx }}/2"
 
       - name: Upload flaky rerun report
-        if: always() && steps.flaky-reruns.outputs.has-flakes == 'true'
+        if: ${{ steps.select.outputs.run == 'true' && (always() && steps.flaky-reruns.outputs.has-flakes == 'true') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: flaky-tests-dashboard-shuffle-${{ matrix.idx }}
@@ -1053,11 +1243,11 @@ jobs:
           retention-days: 14
 
       - name: Slowest tests in this lane
-        if: always()
+        if: ${{ steps.select.outputs.run == 'true' && (always()) }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/slowest-tests.sh" "dashboard shuffle ${{ matrix.idx }}/2" test-dashboard-shuffle-${{ matrix.idx }}.log
 
       - name: Upload shuffle log
-        if: failure()
+        if: ${{ steps.select.outputs.run == 'true' && (failure()) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-dashboard-shuffle-log-${{ matrix.idx }}
@@ -1092,6 +1282,7 @@ jobs:
           TEST_DASHBOARD_SHUFFLE_RESULT: ${{ needs.test-dashboard-shuffle.result }}
           RUN_TESTS: ${{ needs.required-context-scope.outputs.run-tests }}
           SCOPE_RESULT: ${{ needs.required-context-scope.result }}
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
         run: |
           set -euo pipefail
 
@@ -1104,6 +1295,11 @@ jobs:
             echo "No v2 test paths changed; reporting required test context success without running shards."
             exit 0
           fi
+
+          # Lanes with nothing selected still ran (and succeeded) — see the
+          # Affected-package selection step in each shard — so the fail-closed
+          # result check below is unchanged by selection.
+          echo "Go test selection: ${SELECTION:-<missing>} (partial = affected packages only on this PR; push and scheduled runs are always full)"
 
           shard_names=(
             list-packages
@@ -1198,7 +1394,7 @@ jobs:
     # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
-    needs: [required-context-scope, test-hub, test-agent, test-rest]
+    needs: [required-context-scope, list-packages, test-hub, test-agent, test-rest]
     steps:
       - name: Report coverage not required for this diff
         if: ${{ needs.required-context-scope.result == 'success' && needs.required-context-scope.outputs.run-tests != 'true' }}
@@ -1214,25 +1410,48 @@ jobs:
           echo "::error::Coverage requires successful test shards (hub=${{ needs.test-hub.result }}, agent=${{ needs.test-agent.result }}, rest=${{ needs.test-rest.result }})"
           exit 1
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Affected-package selection (#12454). On a partial PR run only the
+      # selected packages produced profiles, so only they are scored — each
+      # against its unchanged floor below. There is no repo-wide total floor
+      # to weaken, and this job never writes a floor or baseline (floors are
+      # code, ratcheted by hand; coverage-hourly.yml scores the full suite).
+      # An empty selection (no Go package affected) has nothing to score.
+      - name: Decide what coverage to score
+        id: cov-scope
         if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
+        env:
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
+          SELECTED: ${{ needs.list-packages.outputs.selected }}
+        run: |
+          if [ "$SELECTION" = partial ] && [ -z "${SELECTED// /}" ]; then
+            echo "Affected-package selection chose no Go package; no coverage to score. Push and scheduled runs score the full suite."
+            echo "score=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Coverage scoring: ${SELECTION:-<missing>} selection."
+            echo "score=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: ${{ steps.cov-scope.outputs.score == 'true' }}
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
       # src/go.mod bump) stop clobbering each other's rm -rf + copy (#11175,
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
-        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
+        if: ${{ steps.cov-scope.outputs.score == 'true' }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
+        if: ${{ steps.cov-scope.outputs.score == 'true' }}
         with:
           go-version-file: src/go.mod
           cache-dependency-path: src/go.sum
 
       - name: List packages present in checkout
-        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
+        if: ${{ steps.cov-scope.outputs.score == 'true' }}
         working-directory: src
+        env:
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
         run: |
           # The coverage scorer consumes shard artifacts, but the package set it
           # scores must still be bounded by the checked-out tree for this run.
@@ -1243,9 +1462,18 @@ jobs:
             echo "::error::go list produced no packages for coverage scoring"
             exit 1
           fi
+          # On a partial selection the shard logs only cover the selected
+          # packages, so take the no-test-files gate from the whole tree
+          # instead (cheap: go list only). Same definition as the `?` /
+          # `coverage: 0.0%` lines a full run classifies below.
+          : > ../no-test-pkgs.txt
+          if [ "$SELECTION" = partial ]; then
+            go list -f '{{if not (or .TestGoFiles .XTestGoFiles)}}{{.ImportPath}}{{end}}' ./pkg/... ./cmd/... \
+              | { grep . || true; } | LC_ALL=C sort -u > ../no-test-pkgs.txt
+          fi
 
       - name: Download shard coverage artifacts
-        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
+        if: ${{ steps.cov-scope.outputs.score == 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: test-shard-*
@@ -1253,8 +1481,11 @@ jobs:
           merge-multiple: true
 
       - name: Check per-package coverage
-        if: ${{ needs.required-context-scope.outputs.run-tests == 'true' }}
+        if: ${{ steps.cov-scope.outputs.score == 'true' }}
         working-directory: shards
+        env:
+          SELECTION: ${{ needs.list-packages.outputs.selection }}
+          SELECTED: ${{ needs.list-packages.outputs.selected }}
         run: |
           THRESHOLD=90
           FAILED=""
@@ -1402,6 +1633,24 @@ jobs:
           TOTAL=$(awk '$1 == "TOTAL" {print $2 "%"}' pkg-pcts.txt)
           echo "Total coverage (./pkg/...): ${TOTAL:-unavailable}"
 
+          # Partial selection (#12454): every number here covers the selected
+          # packages only. Per-package floors still apply unchanged to each of
+          # them; the total is informational and not comparable to the
+          # repo-wide figure, so it is labelled rather than compared.
+          PARTIAL=false
+          SELECTED_SCORED=""
+          if [ "$SELECTION" = partial ]; then
+            PARTIAL=true
+            for p in $SELECTED; do
+              case "$p" in */pkg/*|*/cmd/*) ;; *) continue ;; esac
+              grep -Fxq "$p" ../existing-pkgs.txt && SELECTED_SCORED="$SELECTED_SCORED $p"
+            done
+            echo "Partial selection: scoring only the $(wc -w <<<"$SELECTED_SCORED") selected ./pkg/... and ./cmd/... packages; the total above is over the selected packages and is not comparable to the repo-wide total."
+            if [ -z "$TOTAL" ] && ! grep -q '/pkg/' <<<"$SELECTED_SCORED"; then
+              TOTAL="n/a (no ./pkg/... package selected)"
+            fi
+          fi
+
           # Fail closed. Every step below is a filter, and an empty filter
           # result looks exactly like "nothing was wrong". This gate silently
           # scored zero packages for the whole window in which it still matched
@@ -1461,10 +1710,30 @@ jobs:
           # Second fail-closed guard, for the same reason as the TOTAL one:
           # an empty pkg-states.txt means the scoring loop never executes and
           # every floor is vacuously satisfied.
-          if [ ! -s pkg-states.txt ]; then
+          if [ ! -s pkg-states.txt ] && { [ "$PARTIAL" != true ] || [ -n "$SELECTED_SCORED" ]; }; then
             echo "COVERAGE GATE FAILED: no package pass/fail states parsed from test-*.log."
             echo "No package could be scored against its floor."
             exit 1
+          fi
+
+          # Partial selection: every selected package must have been run and
+          # classified — a selected package missing here was never tested.
+          # The no-test-files gate is taken from the whole tree (see "List
+          # packages present in checkout") so an unselected untested package
+          # still fails exactly as it would on a full run.
+          if [ "$PARTIAL" = true ]; then
+            MISSING=""
+            for p in $SELECTED_SCORED; do
+              awk -v p="$p" '$2 == p { f = 1 } END { exit !f }' pkg-states.txt || MISSING="$MISSING $p"
+            done
+            if [ -n "$MISSING" ]; then
+              echo "COVERAGE GATE FAILED: selected package(s) produced no test result:$MISSING"
+              exit 1
+            fi
+            while read -r p; do
+              [ -n "$p" ] || continue
+              awk -v p="$p" '$2 == p { f = 1 } END { exit !f }' pkg-states.txt || echo "? $p" >> pkg-states.txt
+            done < ../no-test-pkgs.txt
           fi
 
           # Floor-map key: cmd packages get a "cmd/" prefix so cmd/hivectl can
