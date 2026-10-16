@@ -22606,7 +22606,16 @@ function burnAreaChart() {
       html += '<div class="nous-card mt-5">';
       html += '<h3>Data Collection</h3>';
       html += `<div class="nous-progress"><div class="nous-progress-fill" style="width:${snapPct}%;background:var(--blue)"></div></div>`;
-      html += `<div style="font-size:0.72rem;color:var(--muted)">${s.snapshotCount || 0} / ${s.snapshotTarget || 672} snapshots — ${snapPct >= 75 ? (mode === 'observe' ? 'Ready to upgrade to Suggest' : 'Baseline sufficient') : 'Collecting baseline data'}</div>`;
+      const snapCount = s.snapshotCount || 0;
+      const snapTarget = s.snapshotTarget || 672;
+      let snapText;
+      if (snapCount >= snapTarget) {
+        snapText = `Baseline complete \u00b7 ${snapCount.toLocaleString()} snapshots collected (target ${snapTarget.toLocaleString()})`;
+      } else {
+        snapText = `${snapCount.toLocaleString()} / ${snapTarget.toLocaleString()} snapshots \u2014 ${snapPct >= 75 ? (mode === 'observe' ? 'Baseline sufficient \u2014 switch to Suggest when ready' : 'Baseline sufficient') : 'Collecting baseline data'}`;
+      }
+      html += `<div style="font-size:0.72rem;color:var(--muted)">${snapText}</div>`;
+      html += '<div style="font-size:0.72rem;color:var(--muted);margin-top:4px">Observe records a snapshot of hive state every governor evaluation cycle to build a baseline; no experiments run until you switch to Suggest/Evolve and approve/apply proposals.</div>';
 
       // Show experiment proposals from ledger
       const dryRuns = ledger.filter(e => e.type === 'dry_run').slice(-5);
