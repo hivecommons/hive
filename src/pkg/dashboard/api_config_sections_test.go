@@ -304,6 +304,42 @@ func TestReviewConfigGet_ReturnsSection(t *testing.T) {
 	}
 }
 
+// review.shadow (hivecommons/hive#12104) round-trips through the review GET
+// and has a Settings toggle that stages into the review section like
+// require_approval does.
+func TestReviewConfigShadow_SettingsParity(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Config.Review.Shadow = true
+	rec := doGetNoRole(s, "/api/config/review")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET review: expected 200, got %d", rec.Code)
+	}
+	var got struct {
+		Shadow bool `json:"shadow"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Shadow {
+		t.Fatalf("GET review did not surface shadow: %s", rec.Body.String())
+	}
+
+	raw, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(raw)
+	for _, want := range []string{
+		`data-action="toggleConfigSwitch" data-section="review" data-key="shadow"`,
+		`${rv.shadow ? 'on' : ''}`,
+		"Shadow-evaluate the review gate (record only)",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing review.shadow toggle piece %q", want)
+		}
+	}
+}
+
 func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 	s := covApiServer(t)
 
@@ -319,6 +355,7 @@ func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 
 	rec := doPut(s, "/api/config/review", map[string]any{
 		"require_approval":     true,
+		"shadow":               true,
 		"fan_out":              true,
 		"max_parallel_reviews": 2,
 		"reviewer_agents":      []string{" rev-a ", "", "rev-b"},
@@ -328,7 +365,7 @@ func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 		t.Fatalf("valid put: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	rv := s.deps.Config.Review
-	if !rv.RequireApproval || !rv.FanOut || rv.MaxParallelReviews != 2 {
+	if !rv.RequireApproval || !rv.Shadow || !rv.FanOut || rv.MaxParallelReviews != 2 {
 		t.Fatalf("scalars not applied: %+v", rv)
 	}
 	if len(rv.ReviewerAgents) != 2 || rv.ReviewerAgents[0] != "rev-a" || rv.ReviewerAgents[1] != "rev-b" {
@@ -342,7 +379,7 @@ func TestReviewConfigPut_ValidatesAndApplies(t *testing.T) {
 	if rec := doPut(s, "/api/config/review", map[string]any{}); rec.Code != http.StatusOK {
 		t.Fatalf("empty put: expected 200, got %d", rec.Code)
 	}
-	if !s.deps.Config.Review.RequireApproval || s.deps.Config.Review.MaxParallelReviews != 2 {
+	if !s.deps.Config.Review.RequireApproval || !s.deps.Config.Review.Shadow || s.deps.Config.Review.MaxParallelReviews != 2 {
 		t.Fatalf("empty put mutated config: %+v", s.deps.Config.Review)
 	}
 }
