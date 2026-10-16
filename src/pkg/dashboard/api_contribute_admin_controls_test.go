@@ -714,3 +714,35 @@ func TestLeaderboardTabPublic_ControlsStayGated(t *testing.T) {
 		t.Errorf("read viewer PUT /api/config/governor/hub got %d, want 403", ghW.Code)
 	}
 }
+
+func putGovernorHub(t *testing.T, s *Server, body string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/hub", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
+	w := httptest.NewRecorder()
+	s.handleGovernorHub(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("governor hub update got %d, want 200 (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestGovernorHubPartialPutKeepsSnapshotURL(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Hub.SnapshotURL = "https://snap.example.com"
+
+	putGovernorHub(t, s, `{"contribute_skip_assigned_to_others":true}`)
+	if got := deps.Config.Hub.SnapshotURL; got != "https://snap.example.com" {
+		t.Errorf("snapshot_url = %q, want preserved when omitted", got)
+	}
+}
+
+func TestGovernorHubExplicitEmptySnapshotURLClears(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Hub.SnapshotURL = "https://snap.example.com"
+
+	putGovernorHub(t, s, `{"snapshot_url":""}`)
+	if got := deps.Config.Hub.SnapshotURL; got != "" {
+		t.Errorf("snapshot_url = %q, want cleared by explicit empty string", got)
+	}
+}
