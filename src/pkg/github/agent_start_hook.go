@@ -48,11 +48,39 @@ func (c *Client) notifyAgentStart(agent, repo string, number int, signal string)
 	}
 }
 
-// commentDeferral matches explicit statements that work is being postponed.
-// Such a comment is not evidence of work starting, even when it names the
-// issue or its blocker. Explicit label, claim and PR requests remain start
-// signals independently of any accompanying deferral comment (#12387).
-var commentDeferral = regexp.MustCompile(`(?i)\b(?:deferred|deferring|picks?\s+up\s+(?:once|after)|blocked\s+by\s+#\d+|waiting\s+(?:on|for)\s+#\d+)\b`)
+// commentDeferral matches the deferral forms from #12387: a comment that
+// opens with "Deferred"/"Deferring" (markdown emphasis allowed), "deferred
+// this cycle", "deferring … until/pending", "picks up once/after", a present
+// tense "blocked by #N" (opening the comment or a line, or "is/still/currently
+// blocked by #N") and "waiting on/for #N". Such a comment is not evidence of
+// work starting, even when it names the issue or its blocker. A past-tense
+// mention ("previously blocked by #N") or an aside ("cleanup deferred to #N")
+// in an ordinary work comment does not match. Explicit label, claim and PR
+// requests remain start signals independently of any accompanying comment.
+var commentDeferral = regexp.MustCompile(`(?im)(?:^\W*deferr(?:ed|ing)\b` +
+	`|\bdeferred\s+this\s+cycle\b` +
+	`|\bdeferr(?:ed|ing)\s+(?:\w+\s+){0,2}?(?:until|pending)\b` +
+	`|\bpicks?\s+up\s+(?:once|after)\b` +
+	`|^\W*blocked\s+by\s+#\d+` +
+	`|\b(?:is|am|are|still|currently|remains?)\s+blocked\s+by\s+#\d+` +
+	`|\bwaiting\s+(?:on|for)\s+#\d+)`)
+
+// commentStartOverride matches an explicit statement that work is starting
+// or resuming. It wins over commentDeferral so a resume comment such as
+// "Previously blocked by #N; that merged, starting now." still records the
+// claim that keeps a second agent off the issue (#10527). A negated start
+// ("not starting until #N merges") does not override.
+var commentStartOverride = regexp.MustCompile(`(?i)\b(?:starting|started|resuming|resumed|picking\s+(?:this\s+|it\s+)?up|picked\s+(?:this\s+|it\s+)?up|back\s+on\s+(?:this|it)\b|no\s+longer\s+blocked|unblocked)\b`)
+var commentNegatedStart = regexp.MustCompile(`(?i)\b(?:not|never|won't|cannot|can't|before|without)\s+(?:be\s+)?(?:start|resum|pick)`)
+
+// commentIsDeferral reports whether a comment body is an explicit deferral
+// that carries no overriding statement of work starting.
+func commentIsDeferral(body string) bool {
+	if !commentDeferral.MatchString(body) {
+		return false
+	}
+	return !commentStartOverride.MatchString(body) || commentNegatedStart.MatchString(body)
+}
 
 // issueRequestStartSignal maps a successful issue request to its start
 // signal, or "" when it does not show work starting. Creating an issue,
@@ -60,7 +88,7 @@ var commentDeferral = regexp.MustCompile(`(?i)\b(?:deferred|deferring|picks?\s+u
 func issueRequestStartSignal(kind, body string) string {
 	switch kind {
 	case "comment":
-		if commentDeferral.MatchString(body) {
+		if commentIsDeferral(body) {
 			return ""
 		}
 		return AgentStartSignalComment

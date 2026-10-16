@@ -123,7 +123,9 @@ func TestAgentStartHook_DeferralCommentIsNotStart(t *testing.T) {
 		t.Fatalf("deferral: comments = %d, starts = %+v; want one comment and no start", commented, *calls)
 	}
 
-	if _, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 41, Body: "Starting the fix now that #12322 merged.", Agent: "scanner"}); err != nil {
+	// The resume comment names the former blocker in past tense: the start
+	// phrase must win so the claim is recorded while the agent works.
+	if _, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 41, Body: "Previously blocked by #12322; that merged, starting the fix now.", Agent: "scanner"}); err != nil {
 		t.Fatal(err)
 	}
 	c.ProcessIssueRequestsOnce(context.Background())
@@ -139,8 +141,13 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Picks up once #12322 merges.",
 		"Will pick up after #12322 merges.",
 		"BLOCKED BY #12322",
+		"This is blocked by #12322 until the schema lands.",
+		"Still blocked by #12322.",
 		"Waiting on #12322 to land.",
 		"Waiting for #12322 to merge.",
+		"**Deferred this cycle**: #12322 is open and edits the same files. **Picks up once #12322 merges.**",
+		"Not starting yet; still blocked by #12322.",
+		"Can't start yet: waiting on #12322.",
 	} {
 		t.Run(body, func(t *testing.T) {
 			if got := issueRequestStartSignal("comment", body); got != "" {
@@ -153,9 +160,19 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 			}
 		})
 	}
+	// Work and resume comments that mention a blocker or a deferral in
+	// passing must still signal a start, or the #10527 duplicate-dispatch
+	// gap reopens on exactly the resume path #12387 is about.
 	for _, body := range []string{
 		"Starting work on this issue.",
 		"verified on v5",
+		"Previously blocked by #12322; that merged, starting now.",
+		"Was blocked by #12322, now merged, starting.",
+		"No longer blocked by #12322 - starting now",
+		"Unblocked: #12322 landed. Resuming.",
+		"Picking this up now that #12322 merged.",
+		"Done; cleanup deferred to #999.",
+		"Fixed; deferred the cleanup to #999.",
 	} {
 		if got := issueRequestStartSignal("comment", body); got != AgentStartSignalComment {
 			t.Errorf("work comment %q reported %q", body, got)

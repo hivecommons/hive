@@ -1,1 +1,1 @@
-- Deferral comments such as “Deferred this cycle”, “Picks up once #N merges”, and “blocked by #N” no longer create or renew agent start-signal claims that leave idle issues marked in progress for two hours.
+- Deferral comments such as “Deferred this cycle”, “Picks up once #N merges”, and “blocked by #N” no longer create or renew agent start-signal claims (a comment that also says work is starting or resuming still does) that leave idle issues marked in progress for two hours.
