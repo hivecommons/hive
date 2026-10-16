@@ -466,7 +466,7 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .clanker-inflight{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2)}
 .clanker-inflight .work-title{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:28ch}
 .clanker-inflight .work-stage{color:var(--status-attention)}
-.work-kind{font-size:var(--fs-xs);font-weight:700;letter-spacing:.04em;padding:0 6px;border-radius:var(--r-pill);border:1px solid transparent;font-family:inherit}
+.work-kind{font-size:var(--fs-xs);font-weight:700;letter-spacing:.04em;padding:var(--sp-0) var(--sp-3);border-radius:var(--r-pill);border:1px solid transparent;font-family:inherit}
 .work-kind.new{background:color-mix(in srgb,var(--status-info) var(--component-tint),transparent);color:var(--status-info);border-color:color-mix(in srgb,var(--status-info) var(--component-border),transparent)}
 .work-kind.rework{background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border-color:color-mix(in srgb,var(--status-attention) var(--component-border),transparent)}
 .clanker-idle-rework,.clanker-rework-pending{color:var(--status-error);font-weight:600}
