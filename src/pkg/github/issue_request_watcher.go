@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/logscrub"
@@ -120,10 +121,11 @@ type IssueRequest struct {
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
-// full label is claimLabelPrefix + <sanitized agent name>, e.g.
-// "hive/claimed-by-scanner". Namespaced so it is easy to filter/sweep and never
-// collides with a project's own labels.
-const claimLabelPrefix = "hive/claimed-by-"
+// full label is claims.ClaimedByLabel of an agent claim, e.g.
+// "hive/claimed-by-scanner" (see claims.ClaimedByPrefix for the one suffix
+// rule). Namespaced so it is easy to filter/sweep and never collides with a
+// project's own labels.
+const claimLabelPrefix = claims.ClaimedByPrefix
 
 // IssueResponse is written next to a consumed request as <name>.result.json.
 type IssueResponse struct {

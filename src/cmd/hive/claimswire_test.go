@@ -249,3 +249,70 @@ func TestInProgressSetting(t *testing.T) {
 		t.Fatalf("agent_ttl_s not honoured: %+v", set)
 	}
 }
+
+// A human claim relayed through the ledger (dashboard, /claim, hivectl, a
+// Copilot CLI session acting for the person) mirrors `hive/claimed-by-<login>`
+// and replaces a hand-applied backend-named label; release removes the
+// holder's label and nothing else.
+func TestClaimHooks_ClaimedByLabelUsesLoginNeverBackend(t *testing.T) {
+	var mu sync.Mutex
+	var added, removed []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/issues/9", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"number":9,"labels":[{"name":"stage/010-actionable"},{"name":"hive/claimed-by-copilot"}]}`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/9/labels", func(w http.ResponseWriter, r *http.Request) {
+		var body []string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		added = append(added, body...)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/9/labels/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		removed = append(removed, strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/9/labels/"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := &config.Config{}
+	cfg.Governor.Claims.Label = boolPtr(true)
+	cfg.Governor.Claims.Comment = boolPtr(false)
+	hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
+	claim := claims.Claim{Repo: "acme/widgets", Issue: 9, Holder: "clubanderson", Kind: claims.KindHuman, Session: "copilot"}
+	hooks.OnClaimed(claim, claims.OutcomeClaimed)
+	has := func(list []string, want string) bool {
+		for _, l := range list {
+			if l == want || l == strings.ReplaceAll(want, "/", "%2F") {
+				return true
+			}
+		}
+		return false
+	}
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return has(added, "hive/claimed-by-clubanderson")
+	}, "claim hook never added the login claimed-by label")
+	mu.Lock()
+	if !has(removed, "hive/claimed-by-copilot") {
+		t.Fatalf("removed %v, want the backend-named label replaced", removed)
+	}
+	for _, l := range added {
+		if claims.ClaimedByLabelIsBackend(l) {
+			t.Fatalf("backend name leaked into labels: %v", added)
+		}
+	}
+	removed = nil
+	mu.Unlock()
+
+	hooks.OnReleased(claim, "released by clubanderson")
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return has(removed, "hive/claimed-by-clubanderson")
+	}, "release never removed the holder's claimed-by label")
+}

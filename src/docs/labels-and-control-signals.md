@@ -468,6 +468,34 @@ the reconciler never touches them: `hold` / `hold/*`, `needs-human`,
 grey "who" modifier a stage cannot carry), `lgtm`, `author/*`, and the agent
 provenance labels.
 
+#### `hive/claimed-by-<who>`: one rule for the suffix
+
+`<who>` names the party **accountable** for the claim, derived from the claim
+marker by `claims.ClaimedByLabel` (`src/pkg/claims/claimedby.go`):
+
+| Claim | Marker | Label |
+|---|---|---|
+| A person — dashboard, `/claim`, hivectl, or a Copilot CLI / Claude Code / Codex session acting on their behalf | `kind=human who=<login>` | `hive/claimed-by-<login>` (e.g. `hive/claimed-by-clubanderson`) |
+| A relay contributor or external bot | `kind=contributor` / `kind=external`, `who=<login>` | `hive/claimed-by-<login>` |
+| A hive agent with no human principal | `kind=agent who=<agent>` | `hive/claimed-by-<agent>` (e.g. `hive/claimed-by-scanner`) |
+
+A backend or model name (`copilot`, `claude`, `codex`, `gemini`, `pi`) is
+**never** a suffix: it names the tool, not who answers for the work. A
+hive-agent claim whose name is a backend falls back to
+`hive/claimed-by-agent`; a human/contributor claim with no usable login gets
+no label. The suffix keeps the login's case and is reduced to
+`[A-Za-z0-9_-]`; `session=` / `hive=` are not inputs. The writers all go
+through the helper — the claim relay (`hive-open-issue claim`,
+`src/pkg/github/issue_inprogress.go`) and the claim-ledger hooks
+(`src/cmd/hive/claimswire.go`, `Client.ApplyClaimedByLabel`), which replace
+any other `hive/claimed-by-*` on the issue when a claim lands, and remove
+the holder's label — only the holder's — when the ledger releases or hands
+the claim over. The issue reconciler heals the one malformed form a
+hand-applied label can introduce: a backend-named suffix is swapped for the
+live holder's login (dropped when the issue carries no live claim); a label
+naming a principal is never touched, so an issue may carry one label per
+party (a person's and a contributor's) while both claims are live.
+
 ### Migration from retired labels
 
 `🐝 covered by PR` (and its pre-#11888 spelling `hive/covered-by-pr`), the bare

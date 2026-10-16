@@ -69,6 +69,9 @@ type IssueStageResult struct {
 	Comments int
 	// Healed counts issues found carrying more than one stage label.
 	Healed int
+	// ClaimedByHealed counts backend-named `hive/claimed-by-*` labels
+	// rewritten to the holder's login (see healBackendClaimedByLabels).
+	ClaimedByHealed int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -88,6 +91,7 @@ type IssueStageInput struct {
 	Labels    []string
 	Bucket    string // "" for an issue still in the actionable set
 	ClaimKind string
+	ClaimedBy string
 	Claim     *IssueClaimContext
 }
 
@@ -131,7 +135,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
-		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, Claim: issue.ClaimContext})
+		out = append(out, IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: issue.Labels, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, Claim: issue.ClaimContext})
 	}
 	repos := make([]string, 0, len(result.WorkDetailsByRepo))
 	for repo := range result.WorkDetailsByRepo {
@@ -143,7 +147,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, ClaimKind: row.ClaimKind, Claim: row.ClaimContext})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, Claim: row.ClaimContext})
 		}
 	}
 	return out
@@ -183,6 +187,7 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 		}
 		seen[key] = true
 		res.Items++
+		res.ClaimedByHealed += healBackendClaimedByLabels(ctx, client, in, logger)
 		stage, mirrored, reason := IssueStageFor(in, prStage)
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
