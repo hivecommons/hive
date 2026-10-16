@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const snapshotDirName = "complexity"
-
 // monthFileLen is len("2006-01.json").
 const monthFileLen = 12
 

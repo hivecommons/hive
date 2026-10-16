@@ -17,6 +17,11 @@ import (
 // yet on a hosted spoke, transient archive error) waits for a retry.
 const CheckInterval = time.Hour
 
+// DefaultStartDelay is how long Start waits before the first check, so the
+// snapshot pass does not compete with the rest of boot (and a hosted spoke
+// has had time to receive its GitHub App over the heartbeat).
+const DefaultStartDelay = 2 * time.Minute
+
 // RetainMonths is how many monthly snapshots are kept per repo (RFC #12062
 // open question; 24 covers the two-year maintainability trend panel 7 draws).
 // Older files are removed after a successful write.
@@ -72,8 +77,11 @@ type Runner struct {
 	// RetainMonths.
 	Retain int
 	// Now is the clock; nil means time.Now.
-	Now    func() time.Time
-	Logger *slog.Logger
+	Now func() time.Time
+	// StartDelay is how long Start waits before the first check; <=0 means
+	// DefaultStartDelay.
+	StartDelay time.Duration
+	Logger     *slog.Logger
 }
 
 // RunResult summarises one pass.
@@ -216,10 +224,16 @@ func (r *Runner) snapshot(ctx context.Context, repo, month string, now time.Time
 	return Write(r.Root, s)
 }
 
-// Run does one pass immediately, then one on every tick, until ctx is done.
-// It returns when ctx is cancelled, so callers can wait on it for shutdown.
+func (r *Runner) startDelay() time.Duration {
+	if r.StartDelay > 0 {
+		return r.StartDelay
+	}
+	return DefaultStartDelay
+}
+
+// Run does one pass per tick until ctx is done. It returns when ctx is
+// cancelled, so callers can wait on it for shutdown.
 func (r *Runner) Run(ctx context.Context, tick <-chan time.Time) {
-	r.RunOnce(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -230,12 +244,22 @@ func (r *Runner) Run(ctx context.Context, tick <-chan time.Time) {
 	}
 }
 
-// Start runs the runner in the background on a CheckInterval ticker and
-// returns a channel closed when it has stopped (after ctx is cancelled).
+// Start runs the runner in the background: a first check after StartDelay,
+// then one every CheckInterval. The returned channel is closed when the loop
+// has stopped (after ctx is cancelled). Nothing runs — and nothing is logged
+// — before the delay elapses, so a cancel during it is silent.
 func (r *Runner) Start(ctx context.Context) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		first := time.NewTimer(r.startDelay())
+		defer first.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-first.C:
+		}
+		r.RunOnce(ctx)
 		t := time.NewTicker(CheckInterval)
 		defer t.Stop()
 		r.Run(ctx, t.C)

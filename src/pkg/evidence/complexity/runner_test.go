@@ -199,7 +199,11 @@ func TestRunnerRunLoopHonoursTicksAndShutdown(t *testing.T) {
 		defer close(done)
 		r.Run(ctx, tick)
 	}()
-	// First pass runs on start.
+	// Nothing runs until the first tick.
+	if srcs.count() != 0 {
+		t.Fatalf("fetched before first tick: %v", srcs.fetched)
+	}
+	tick <- now
 	<-srcs.notify
 	// A tick in the same month is a no-op (unbuffered: the send returns once
 	// the loop received it, and the loop fetches nothing).
@@ -218,6 +222,7 @@ func TestRunnerRunLoopHonoursTicksAndShutdown(t *testing.T) {
 func TestRunnerStartStopsOnCancel(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	r, srcs, _ := newRunner(t, []string{"o/a"}, now)
+	r.StartDelay = time.Nanosecond
 	srcs.notify = make(chan string)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := r.Start(ctx)
@@ -225,6 +230,20 @@ func TestRunnerStartStopsOnCancel(t *testing.T) {
 	cancel()
 	<-done
 	if srcs.count() != 1 {
+		t.Fatalf("fetched = %v", srcs.fetched)
+	}
+}
+
+func TestRunnerStartCancelledDuringDelayDoesNothing(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	r, srcs, _ := newRunner(t, []string{"o/a"}, now)
+	// Default delay (minutes): cancelling first must exit without a pass or
+	// a log line, which is what a boot test that tears down fast relies on.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := r.Start(ctx)
+	cancel()
+	<-done
+	if srcs.count() != 0 {
 		t.Fatalf("fetched = %v", srcs.fetched)
 	}
 }

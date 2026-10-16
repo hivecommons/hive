@@ -176,7 +176,7 @@ panel and the study.
   added to the managed repos' CI). A background loop checks hourly which
   managed repos have no file for the current month and snapshots only those,
   so a pass in a month that is already covered is a `stat` per repo. The first
-  check happens at boot. The loop stops with the process and a shutdown waits
+  check runs two minutes after boot. The loop stops with the process and a shutdown waits
   for an in-flight pass.
 - **Source:** the repo's default branch, fetched as a GitHub tarball through
   the App (no `git` on the spoke, no clone cache). The archive is extracted
