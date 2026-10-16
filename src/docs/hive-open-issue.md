@@ -148,8 +148,12 @@ to `Unclaimed` when the claim expires. Because the park applies a
 hive-controlled label, the lane needs `label` in its write allowlist as well
 as `comment`, and the target must be an issue: a pull request is refused
 before any write (a PR that needs a person is a `requires_human` review
-verdict, not a needs-decision label). The flag applies only to `issue` and
-`comment`; on any other kind the script exits `2` and writes nothing.
+verdict, not a needs-decision label). The watcher tags such a comment with a
+hidden `<!-- hive:owner-step -->` marker; while it is the newest unanswered
+owner step and lists no lettered options, the "What to reply" notice offers
+`/hive done` so the owner can say the step is done and send the issue back to
+be verified and closed. The flag applies only to `issue` and `comment`; on any
+other kind the script exits `2` and writes nothing.
 
 Every lane that can comment or file issues carries this rule in its policy (ci-maintainer, sec-check, quality, architect, outreach, strategist, guide and scanner), including the ADR-0019 `needs-direction` escalation and workflow-file hand-offs. Lanes that only record beads (advisory) note the owner-only step in the bead instead.
 

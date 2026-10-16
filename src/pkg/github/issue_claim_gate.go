@@ -19,7 +19,7 @@ func (c *Client) IssueClaimBlockReason(ctx context.Context, repo string, number 
 		return "", fmt.Errorf("checking issue claim labels: %w", err)
 	}
 	labels := extractLabels(issue.Labels)
-	if hasIssueNeedsHumanLabel(labels) {
+	if c.hasNeedsHumanLabel(labels) {
 		return "needs-human", nil
 	}
 	if c.isHeld(labels) {

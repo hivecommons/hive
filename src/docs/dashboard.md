@@ -657,7 +657,9 @@ or bands (hivecommons/hive#11566).
 - **The menu** lists only actions the dashboard already offers to the viewer,
   always offers "Open on GitHub", and gives reply commands a copy control:
   `DECIDE`, `STEER` and `REVIEW` on a parked issue offer `/hive approve` and
-  `/hive decision <text>`; `SPEC` offers "Design before planning" to an owner
+  `/hive decision <text>`, except on a label-driven repository without label
+  approval, where the sweep refuses both and the menu says to use the
+  repository's triage labels instead; `SPEC` offers "Design before planning" to an owner
   at L5 and above (it hands the issue to the architect) and says that adding
   the spec or removing the label releases it; `TRIAGE` and `ADMIT` and
   `INSPECT` say what releases the item (the admission label comes from

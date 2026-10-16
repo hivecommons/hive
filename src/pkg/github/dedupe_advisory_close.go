@@ -133,7 +133,7 @@ func (c *Client) sweepDedupeAdvisoryChecklist(ctx context.Context, repo string, 
 	if verdict == dedupeVerdictYes {
 		return c.reclassifyDedupeChecklist(ctx, repo, owner, repoName, issue, opts), true
 	}
-	if hasIssueParkingLabel(labels) {
+	if c.hasParkingLabel(labels) {
 		res.Action, res.Reason = CloseOnMergeSkipped, "dedupe_advisory_parked"
 		return res, true
 	}

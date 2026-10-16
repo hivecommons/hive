@@ -18208,6 +18208,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     //   ctx.canToggleHold    the user may use the existing hold toggle here
     //   ctx.held         the PR is held
     //   ctx.sentinelLabel, ctx.admissionLabels   names for the notes
+    //   ctx.labelDriven  the repo's sweep refuses /hive approve and /hive decision
     // Only actions the dashboard already offers, only to a user it already
     // offers them to, are listed; "Open on GitHub" is always present.
     function yourTurnMenuModel(ctx) {
@@ -18216,7 +18217,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const after = [];
       const parkedIssue = ctx.kind === 'issue' && String(own.reason_code || '').indexOf('parked_needs_') === 0;
       if (own.verb === 'DECIDE' || own.verb === 'STEER' || (own.verb === 'REVIEW' && parkedIssue)) {
-        after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
+        if (ctx.labelDriven) after.push({ type: 'note', text: 'This repository is label-driven: accept or un-park it with the repository\'s triage labels; Hive refuses /hive approve and /hive decision here.' });
+        else after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
       }
       if (own.verb === 'SPEC') {
         if (ctx.kind === 'issue' && ctx.isOwner && ctx.planningAllowed && !ctx.hasPlan) actions.push({ type: 'action', id: 'design', label: 'Design before planning' });
@@ -18303,7 +18305,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         hasPlan: !!planIssueLinks()[repoFull + '#' + number],
         canToggleHold: repoHoldPermissionKnown(repoFull),
         sentinelLabel: window._hiveSentinelLabel || '',
-        admissionLabels: (window._lastStatus || {}).admissionLabels || []
+        admissionLabels: (window._lastStatus || {}).admissionLabels || [],
+        labelDriven: !!own.label_driven
       };
     }
 

@@ -163,6 +163,11 @@ type Ownership struct {
 	// Link points at the dashboard section that acts on the item (a run or
 	// the approval desk; hivecommons/hive#12380). Display only.
 	Link string `json:"link,omitempty"`
+	// LabelDriven marks a your-turn issue on a repo whose un-park sweep
+	// refuses `/hive approve` and `/hive decision` (label-driven triage
+	// without label approval); the menu offers the triage labels instead.
+	// It is not part of the ownership identity.
+	LabelDriven bool `json:"label_driven,omitempty"`
 }
 
 func notYourTurn() Ownership { return Ownership{} }
@@ -213,6 +218,9 @@ type ownershipEnv struct {
 	operatorWaits *operatorWaits
 	// reviewSwarm is the rest of what the review pipeline reads.
 	reviewSwarm reviewSwarmState
+	// unparkCommandsRefused reports a repo whose sweep refuses the `/hive`
+	// un-park commands (labelDrivenRefusesUnparkCommands). Nil means none.
+	unparkCommandsRefused func(repo string) bool
 }
 
 func (e ownershipEnv) laneCanOpenPRFor(lane, repo string) bool {
@@ -725,6 +733,7 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 			number, _ := strconv.Atoi(num)
 			inbox = append(inbox, ranked{repo: i, key: key, verb: bandRank(ownershipVerbOrder, decision.Verb), activity: activity[key], repoName: repoName, number: number, kind: kind})
 		}
+		markLabelDrivenReplies(decisions, repoName, env)
 		repo.Ownership = decisions
 		repo.ownershipURLs = urls
 		repo.ACMMLevel = env.levelFor(repoName)
@@ -791,6 +800,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*agent.AgentPr
 	env.reviewerLaneAvailable = func(repo string) bool {
 		return reviewerLaneAvailable(cfg, agentStatuses, currentMode, repo)
 	}
+	env.unparkCommandsRefused = func(repo string) bool { return labelDrivenRefusesUnparkCommands(cfg, repo) }
 	env.laneCanOpenPR = laneCanOpenPRAt(env, agentStatuses)
 	return env
 }

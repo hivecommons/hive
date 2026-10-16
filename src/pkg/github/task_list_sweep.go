@@ -645,7 +645,7 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 	if err := c.ensureRefsRemainderComment(ctx, owner, repo, number, renderRefsRemainderComment(refs, partial, untouched)); err != nil {
 		return err
 	}
-	if needsHuman && !hasIssueNeedsHumanLabel(labels) {
+	if needsHuman && !c.hasNeedsHumanLabel(labels) {
 		_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{issueNeedsHumanLabel})
 		if err != nil {
 			return fmt.Errorf("adding %s label to %s/%s#%d: %w", issueNeedsHumanLabel, owner, repo, number, err)
@@ -870,7 +870,7 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 	if c.isHeld(labels) {
 		return TaskListSweepEvent{}, taskListReasonHeld, nil
 	}
-	if c.isExempt(labels) || hasIssueNeedsHumanLabel(labels) {
+	if c.isExempt(labels) || c.hasNeedsHumanLabel(labels) {
 		return TaskListSweepEvent{}, taskListReasonExempt, nil
 	}
 	body := issue.GetBody()

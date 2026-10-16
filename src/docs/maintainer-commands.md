@@ -16,6 +16,7 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 | --- | --- | --- | --- | --- | --- |
 | `/hive approve` | Accepts the recommendation already written on a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human`, `needs-decision`, or `needs-direction`; pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `needs-human`, `needs-decision`, and `needs-direction` when present; adds `approved-direction`; never removes `hold`. |
 | `/hive decision <text>` | Gives explicit direction for a parked issue. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human`, `needs-decision`, or `needs-direction`; pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `needs-human`, `needs-decision`, and `needs-direction` when present; adds `approved-direction`; never removes `hold`. |
+| `/hive done` | Says you did a step only the owner can do (a repository setting, secret, app install, …); the issue goes back to the queue so Hive re-checks the step and closes the issue once the fix is verified. The "What to reply" notice offers it on issues an agent parked with `hive-open-issue comment --needs-decision`. | Human commenter with `write`, `maintain`, or `admin` repository permission. | Open issues carrying `needs-human`, `needs-decision`, or `needs-direction`; pull requests are ignored. | Next un-park sweep, normally within 5 minutes. | Removes `needs-human`, `needs-decision`, and `needs-direction` when present; adds `approved-direction`; never removes `hold`. |
 | `/hive help` | Posts this command list. On parked issues it also repeats the issue-specific approve/decision options. | Any human commenter with at least `triage` repository permission for the on-demand workflow; the sweep path on parked issues requires `write`, `maintain`, or `admin`. | Any open issue or pull request. | GitHub Actions on the new comment; if Actions is unavailable on a parked issue, the next un-park sweep can also answer. | None. |
 | `/fixed` | Confirms that an open issue's fix is verified and closes it as completed. Alias: `/close`. Plain-language confirmations such as "yes, this has been fixed" are accepted only when Hive is already waiting for reporter confirmation. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Open issues only, not pull requests. | GitHub Actions on the new comment. | Adds `hive: reporter-confirmed`; removes `hive/likely-done` and `needs-reporter-confirmation` when present. |
 | `/reopen` | Reopens a closed issue that was closed too early. | The issue reporter, or a human with `write`, `maintain`, or `admin` repository permission. | Closed issues only, not pull requests. | GitHub Actions on the new comment. | Removes `needs-reporter-confirmation` when present. The reopen sticks: close-on-merge does not close the issue again for a PR that merged before the reopen, whether Hive (`<!-- hive-close-on-merge -->` comment) or GitHub's closing keyword closed it; Hive records the latter with a `<!-- hive-reopened-after-merge pr=<pr> -->` comment. A later PR can still close it. |
@@ -29,8 +30,8 @@ https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md
 
 ## Eligibility rules
 
-The un-park sweep only honors `/hive approve`, `/hive decision <text>`, and the
-sweep fallback for `/hive help` when the command is the first non-empty line of
+The un-park sweep only honors `/hive approve`, `/hive decision <text>`,
+`/hive done`, and the sweep fallback for `/hive help` when the command is the first non-empty line of
 the comment, outside quoted text and fenced code. The comment must be newer than
 seven days, unedited, authored by a human rather than the hive or another bot
 (the account named in `project.ai_author` counts as the hive, so a maintainer
@@ -38,6 +39,19 @@ who is also `ai_author` cannot use these commands; Hive replies saying so),
 and posted by someone who currently has `write`, `maintain`, or `admin`
 permission on the repository. A `/hive decision` must include non-empty
 instructions.
+
+"Parked" means the issue carries `needs-human`, `needs-decision`, or
+`needs-direction`, or a label the operator configured for one of those buckets
+in `project.issue_filter.hard_suppress_labels`; the sweep reads the same
+configured names as the dashboard's "Your turn" inbox, so a renamed label still
+gets the notice and is cleared by the commands. `needs-spec` (and its renamed
+labels) is never handled by these commands.
+
+The "What to reply" notice lists the lettered options (`Option A:`,
+`**A.** …`) the issue body offers, or the newest Hive comment that lists them.
+`/hive approve` picks the recommended option when the text names one, else the
+first option. When there are no options and no recommendation, the notice
+offers only `/hive decision <your instructions>`.
 
 The on-demand `/hive help` workflow uses the same first-line command shape, is
 ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`

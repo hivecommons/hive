@@ -502,7 +502,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			err = c.AddLabels(ctx, req.Repo, req.Number, []string{c.needsDecisionLabel()})
 		}
 		if err == nil {
-			err = c.CreateIssueComment(ctx, req.Repo, req.Number, body)
+			err = c.CreateIssueComment(ctx, req.Repo, req.Number, ownerStepCommentBody(body, req.NeedsDecision))
 		}
 		if err == nil {
 			resp.OK = true
