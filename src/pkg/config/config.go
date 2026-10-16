@@ -5676,6 +5676,39 @@ func ValidateDashboardPublicURL(raw string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 
+// ValidateSnapshotURL validates and normalizes hub.snapshot_url:
+// an absolute http(s) URL with an optional path, returning the URL with any
+// trailing slash trimmed when the path is otherwise root/empty. Query,
+// fragment and credentials are not allowed. Empty is valid and means "unset".
+func ValidateSnapshotURL(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", nil
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return "", fmt.Errorf("hub.snapshot_url %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("hub.snapshot_url %q: must be an absolute http:// or https:// URL", raw)
+	}
+	if u.Hostname() == "" {
+		return "", fmt.Errorf("hub.snapshot_url %q: missing host", raw)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("hub.snapshot_url %q: credentials are not allowed", raw)
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+		return "", fmt.Errorf("hub.snapshot_url %q: query and fragment are not allowed", raw)
+	}
+	if u.Path == "" || u.Path == "/" {
+		return u.Scheme + "://" + u.Host, nil
+	}
+	// Rebuild from parsed parts so a bare trailing "#" (which url.Parse
+	// reports as an empty fragment) and an uppercase scheme do not survive.
+	return u.Scheme + "://" + u.Host + strings.TrimRight(u.EscapedPath(), "/"), nil
+}
+
 var snapshotFrameAncestorHostPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$`)
 
 // ValidateSnapshotFrameAncestors validates and normalizes the /snapshot framing

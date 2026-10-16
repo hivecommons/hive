@@ -67,6 +67,13 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"complexity.filter((r) => r.months.length >= 2).length",
 		"Report-only; Go-only cyclomatic complexity. No causal claim",
 		"evMaintainabilitySvg(complexity, dto.acmm_changes)",
+		"dto.claim_vs_verdict",
+		"evPanel('claim-vs-verdict', 'Claim vs verdict', claimN, evClaimVsVerdictSvg(claims),",
+		"no agent-authored PRs with evidence in this window",
+		"['ci_not_green', 'cv-ci', 'CI not green'], ['verdict_not_approve', 'cv-swarm', 'swarm not approve'], ['both', 'cv-both', 'both']",
+		"records_empty_ci",
+		"Only agent-authored PRs",
+		".ev-svg .ev-bar.cv-both",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("Evidence card missing snippet %q", snippet)
@@ -164,6 +171,7 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evShadowGateSvg",
 		"evMaintainabilityRows",
 		"evMaintainabilitySvg",
+		"evClaimVsVerdictSvg",
 		"escapeHtml",
 	} {
 		decl := regexp.MustCompile(`(?m)^\s*(async\s+)?function\s+` + fn + `\s*\(`)

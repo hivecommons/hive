@@ -1592,6 +1592,14 @@
     .ev-legend i.oc { background:var(--muted); opacity:.6; }
     .ev-legend i.or { background:var(--red); }
     .ev-svg text.ev-sub { opacity:.7; }
+    .ev-svg .ev-bar.cv-claim { fill:var(--blue); opacity:.6; }
+    .ev-svg .ev-bar.cv-ci { fill:var(--orange); }
+    .ev-svg .ev-bar.cv-swarm { fill:var(--purple); }
+    .ev-svg .ev-bar.cv-both { fill:var(--red); }
+    .ev-legend i.cv-claim { background:var(--blue); opacity:.6; }
+    .ev-legend i.cv-ci { background:var(--orange); }
+    .ev-legend i.cv-swarm { background:var(--purple); }
+    .ev-legend i.cv-both { background:var(--red); }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
     .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
@@ -22240,6 +22248,40 @@ function burnAreaChart() {
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Maintainability trend: median cyclomatic, over-threshold functions and warnings by tool; vertical ACMM first-observed markers">${body}${labels}</svg><div class="ev-legend">${legend}<span>Dashed: ${escapeHtml(tools.join(', ') || 'no warning tools')} · vertical dotted: ACMM level first observed</span></div>`;
     }
 
+    // Panel 5 (#12365): claim vs verdict. Each ISO week of agent-authored PRs
+    // gets grouped bars: claimed done (every agent PR), CI not green (captured
+    // checks only), swarm not approve, and both. Read-only; no gate reads it.
+    function evClaimVsVerdictSvg(weeks) {
+      const rows = (Array.isArray(weeks) ? weeks : []).filter((w) => w && Number(w.n) > 0);
+      if (!rows.length) return '<div class="ev-empty">— no agent-authored PRs with evidence in this window</div>';
+      const series = [['claimed', 'cv-claim', 'claimed done'], ['ci_not_green', 'cv-ci', 'CI not green'], ['verdict_not_approve', 'cv-swarm', 'swarm not approve'], ['both', 'cv-both', 'both']];
+      const w = 320, h = 150, l = 26, r = 6, t = 8, b = 22;
+      const pw = w - l - r, ph = h - t - b;
+      const groupW = pw / rows.length;
+      const barW = Math.max(2, (groupW * 0.8) / series.length);
+      const maxN = Math.max(1, ...rows.map((row) => Number(row.claimed) || 0));
+      const y = (v) => t + ph - (v / maxN) * ph;
+      let grid = '';
+      [0, 0.5, 1].forEach((f) => {
+        const v = Math.round(maxN * f);
+        grid += `<line class="ev-axis" x1="${l}" x2="${w - r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text x="${l - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`;
+      });
+      const body = rows.map((row, i) => {
+        const x0 = l + i * groupW + groupW * 0.1;
+        const captured = Number(row.ci_captured) || 0;
+        const tip = escapeHtml(`${row.week}: claimed ${Number(row.claimed) || 0} · CI not green ${Number(row.ci_not_green) || 0} of ${captured} with CI captured · swarm not approve ${Number(row.verdict_not_approve) || 0} · both ${Number(row.both) || 0} · n=${Number(row.n) || 0}`);
+        const bars = series.map(([key, cls], si) => {
+          const v = Number(row[key]) || 0;
+          if (!(v > 0)) return '';
+          return `<rect class="ev-bar ${cls}" x="${(x0 + si * barW).toFixed(1)}" y="${y(v).toFixed(1)}" width="${barW.toFixed(1)}" height="${(t + ph - y(v)).toFixed(1)}"><title>${tip}</title></rect>`;
+        }).join('');
+        const label = rows.length > 8 ? String(row.week || '').replace(/^\d{4}-/, '') : String(row.week || '');
+        return `<g>${bars}<text x="${(x0 + (groupW * 0.8) / 2).toFixed(1)}" y="${h - 6}" text-anchor="middle">${escapeHtml(label)}<title>${tip}</title></text></g>`;
+      }).join('');
+      const legend = series.map(([, cls, label]) => `<span><i class="${cls}"></i>${label}</span>`).join('');
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Claim vs verdict: agent-authored PRs per week that claimed done against CI not green and swarm not approve">${grid}${body}</svg><div class="ev-legend">${legend}</div>`;
+    }
+
     function renderEvidenceSummary(dto) {
       const card = document.getElementById('evidence-card');
       if (!card) return;
@@ -22254,6 +22296,9 @@ function burnAreaChart() {
       const complexityN = complexity.filter((r) => r.months.length >= 2).length;
       const outcomes = dto.outcomes_by_author_kind || {};
       const outcomeN = Object.keys(outcomes).reduce((sum, k) => sum + (Number(outcomes[k] && outcomes[k].n) || 0), 0);
+      const claims = Array.isArray(dto.claim_vs_verdict) ? dto.claim_vs_verdict : [];
+      const claimN = claims.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
+      const emptyCI = Number((dto.missing || {}).records_empty_ci) || 0;
       const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
       const scope = (dto.all_time ? 'all time' : `last ${windowName ? windowName[1] : (Number(dto.hours) || 0) + 'h'}`) + (dto.repo ? ` · ${dto.repo}` : '');
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}</div><span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>`
@@ -22265,6 +22310,8 @@ function burnAreaChart() {
           `Outcome is merged vs not merged, not ground truth: a block that was later fixed and merged counts as a false block, and an approval on a still-open PR counts as a false approve.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
         + evPanel('maintainability', 'Maintainability trend', complexityN, evMaintainabilitySvg(complexity, dto.acmm_changes),
           'Report-only; Go-only cyclomatic complexity. No causal claim: complexity may rise. n = repos with at least 2 monthly snapshots in the selected window (boundary months included). Monthly repo measurements ignore author kind. Tool measurements can be unavailable; gaps are not zero. ACMM markers show the first month each level is seen in stored bundles, not the exact configuration change; returns to an earlier level are not shown.')
+        + evPanel('claim-vs-verdict', 'Claim vs verdict', claimN, evClaimVsVerdictSvg(claims),
+          `Only agent-authored PRs; opening or marking a PR ready is taken as the agent claiming done. CI conclusion is as captured at merge-eligibility evaluation, not the final run, and a PR with no captured checks is left out of the CI column rather than counted as agreement${emptyCI ? ` (${emptyCI} record(s) in this window had empty CI)` : ''}. A non-approve verdict is not proof the agent was wrong.`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
           'Shadow mode only records; no merge was held or blocked. Closed-without-merge is not recorded in bundles, so a closed PR counts as still open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }

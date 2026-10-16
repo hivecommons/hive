@@ -186,3 +186,59 @@ func TestBuildEvidenceSummaryShadowGate(t *testing.T) {
 		t.Errorf("no shadow bundles must yield zero shadow gate, got %+v", z)
 	}
 }
+
+// TestBuildEvidenceSummaryClaimVsVerdict pins panel 5 (#12365): weekly rows
+// of agent-authored PRs, CI disagreement only over records with captured
+// checks, swarm disagreement over any non-approve verdict, and empty-CI
+// records disclosed rather than counted as agreement.
+func TestBuildEvidenceSummaryClaimVsVerdict(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC) // 2026-W42
+	wk42 := now.Add(-2 * time.Hour)
+	wk41 := now.Add(-8 * 24 * time.Hour)
+	approve := []evidence.Verdict{{Perspective: "security", Model: "m", Verdict: "approve", Confidence: 0.9}}
+	mixed := []evidence.Verdict{
+		{Perspective: "security", Model: "m", Verdict: "approve", Confidence: 0.9},
+		{Perspective: "quality", Model: "m", Verdict: "changes_requested", Confidence: 0.6},
+	}
+	redCI := func(b *evidence.Bundle) *evidence.Bundle {
+		b.CI.Checks = append(b.CI.Checks, evidence.Check{Name: "lint", Conclusion: "failure"})
+		return b
+	}
+	bundles := []*evidence.Bundle{
+		// W42: CI green, swarm approve → claimed only
+		evSummaryBundle("a/b", 1, evidence.AuthorAgent, wk42, true, approve, 0, true),
+		// W42: CI red, swarm approve → ci_not_green
+		redCI(evSummaryBundle("a/b", 2, evidence.AuthorAgent, wk42, false, approve, 0, true)),
+		// W42: CI red, swarm changes_requested → both
+		redCI(evSummaryBundle("a/b", 3, evidence.AuthorAgent, wk42, false, mixed, 0, true)),
+		// W42: empty CI, swarm changes_requested → verdict only; CI column excludes it
+		evSummaryBundle("a/b", 4, evidence.AuthorAgent, wk42, false, mixed, 0, false),
+		// W42: human-authored, CI red → not an agent claim
+		redCI(evSummaryBundle("a/b", 5, evidence.AuthorHuman, wk42, false, mixed, 0, true)),
+		// W41: no verdicts, CI green → claimed only
+		evSummaryBundle("a/b", 6, evidence.AuthorAgent, wk41, true, nil, 0, true),
+		// W41: superseded bundle for #6 with red CI must not count
+		redCI(evSummaryBundle("a/b", 6, evidence.AuthorAgent, wk41.Add(-time.Hour), false, nil, 0, true)),
+	}
+
+	got := buildEvidenceSummary(bundles, now, 24*14, "", "")
+	if len(got.ClaimVsVerdict) != 2 {
+		t.Fatalf("claim_vs_verdict = %+v", got.ClaimVsVerdict)
+	}
+	if want := (EvidenceClaimWeek{Week: "2026-W41", N: 1, Claimed: 1, CICaptured: 1}); got.ClaimVsVerdict[0] != want {
+		t.Errorf("W41 = %+v, want %+v", got.ClaimVsVerdict[0], want)
+	}
+	if want := (EvidenceClaimWeek{Week: "2026-W42", N: 4, Claimed: 4, CICaptured: 3, CINotGreen: 2, VerdictNotApprove: 2, Both: 1}); got.ClaimVsVerdict[1] != want {
+		t.Errorf("W42 = %+v, want %+v", got.ClaimVsVerdict[1], want)
+	}
+	if got.Missing.RecordsEmptyCI != 1 {
+		t.Errorf("records_empty_ci = %d, want 1", got.Missing.RecordsEmptyCI)
+	}
+
+	if h := buildEvidenceSummary(bundles, now, 0, "", "human").ClaimVsVerdict; len(h) != 0 {
+		t.Errorf("author_kind=human must yield no agent claims, got %+v", h)
+	}
+	if e := buildEvidenceSummary(nil, now, 24, "", "").ClaimVsVerdict; e == nil || len(e) != 0 {
+		t.Errorf("empty input must yield an empty (non-null) slice, got %#v", e)
+	}
+}

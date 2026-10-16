@@ -1345,6 +1345,24 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	var snapshotURL string
+	if body.SnapshotURL != nil {
+		normalized, err := config.ValidateSnapshotURL(*body.SnapshotURL)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		snapshotURL = normalized
+	}
+	var snapshotFrameAncestors []string
+	if body.SnapshotFrameAncestors != nil {
+		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		snapshotFrameAncestors = normalized
+	}
 	// #7451: on a hub-managed spoke the hub owns dashboard_url — the next
 	// heartbeat would revert an edit, and until it did the new value would
 	// be the OAuth callback origin (oauth_origin.go), so a typo locks the
@@ -1366,7 +1384,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		cfg.Hub.DashboardURL = body.DashboardURL
 	}
 	if body.SnapshotURL != nil {
-		cfg.Hub.SnapshotURL = *body.SnapshotURL
+		cfg.Hub.SnapshotURL = snapshotURL
 	}
 	if body.IsPublic != nil {
 		cfg.Hub.IsPublic = *body.IsPublic
@@ -1375,12 +1393,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		cfg.Hub.AutoSnapshot = *body.AutoSnapshot
 	}
 	if body.SnapshotFrameAncestors != nil {
-		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
-		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		cfg.Dashboard.SnapshotFrameAncestors = normalized
+		cfg.Dashboard.SnapshotFrameAncestors = snapshotFrameAncestors
 	}
 	if body.AutoUpgrade != nil {
 		cfg.Hub.AutoUpgrade = *body.AutoUpgrade

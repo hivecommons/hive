@@ -44,9 +44,52 @@ type EvidenceSummary struct {
 	// WriteCounters is the proxy's attempted-vs-blocked agent write totals per
 	// intent tier (#12069); omitted when the counter file is absent or unreadable.
 	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
-	Missing       EvidenceMissing               `json:"missing"`
 	// ACMMChanges records the first observed month of each policy level per repo.
 	ACMMChanges []EvidenceACMMChange `json:"acmm_changes,omitempty"`
+	// ClaimVsVerdict is panel 5 (#12365): per ISO week, agent-authored PRs
+	// whose author said "done" versus what CI and the swarm said.
+	ClaimVsVerdict []EvidenceClaimWeek `json:"claim_vs_verdict"`
+	Missing        EvidenceMissing     `json:"missing"`
+}
+
+// EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
+// PR). Claimed counts every such PR: opening or marking it ready is the agent
+// saying "done". CINotGreen counts PRs with at least one captured check whose
+// conclusion is not success; CICaptured is that column's denominator, since a
+// record with no captured checks is disclosed under missing.records_empty_ci
+// and never counted as agreement. VerdictNotApprove counts PRs with any
+// perspective verdict other than approve; Both counts PRs in both columns.
+type EvidenceClaimWeek struct {
+	Week              string `json:"week"`
+	N                 int    `json:"n"`
+	Claimed           int    `json:"claimed"`
+	CICaptured        int    `json:"ci_captured"`
+	CINotGreen        int    `json:"ci_not_green"`
+	VerdictNotApprove int    `json:"verdict_not_approve"`
+	Both              int    `json:"both"`
+}
+
+// evidenceCINotGreen reports whether any captured check concluded with
+// something other than success. Empty CI is not disagreement; callers must
+// check len(b.CI.Checks) first.
+func evidenceCINotGreen(b *evidence.Bundle) bool {
+	for _, c := range b.CI.Checks {
+		if c.Conclusion != "success" {
+			return true
+		}
+	}
+	return false
+}
+
+// evidenceVerdictNotApprove reports whether any perspective verdict is
+// something other than approve. No verdicts is not disagreement.
+func evidenceVerdictNotApprove(b *evidence.Bundle) bool {
+	for _, v := range b.Verdicts {
+		if v.Verdict != string(review.VerdictApprove) {
+			return true
+		}
+	}
+	return false
 }
 
 // EvidenceWriteCount is one tier's attempted and proxy-blocked write counts.
@@ -278,6 +321,7 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 		Calibration:     []EvidencePerspectiveCalib{},
 		ReviewerModels:  []EvidenceModelAccuracy{},
 		SentinelPerWeek: EvidenceSentinelSeries{Weeks: []EvidenceSentinelWeek{}},
+		ClaimVsVerdict:  []EvidenceClaimWeek{},
 	}
 	for _, k := range []string{evidence.AuthorHuman, evidence.AuthorAgent, evidence.AuthorBot} {
 		resp.Outcomes[k] = EvidenceOutcomes{}
@@ -316,6 +360,7 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 	calibs := map[string]*calib{}
 	models := map[string]*EvidenceModelAccuracy{}
 	weeks := map[string]int{}
+	claims := map[string]*EvidenceClaimWeek{}
 
 	for _, key := range keys {
 		b := latest[key]
@@ -331,6 +376,32 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 		resp.Outcomes[b.Author.Kind] = o
 		if len(b.CI.Checks) == 0 {
 			resp.Missing.RecordsEmptyCI++
+		}
+		if b.Author.Kind == evidence.AuthorAgent {
+			y, w := b.CreatedAt.UTC().ISOWeek()
+			wk := fmt.Sprintf("%04d-W%02d", y, w)
+			c := claims[wk]
+			if c == nil {
+				c = &EvidenceClaimWeek{Week: wk}
+				claims[wk] = c
+			}
+			c.N++
+			c.Claimed++
+			ciBad := false
+			if len(b.CI.Checks) > 0 {
+				c.CICaptured++
+				ciBad = evidenceCINotGreen(b)
+			}
+			swarmBad := evidenceVerdictNotApprove(b)
+			if ciBad {
+				c.CINotGreen++
+			}
+			if swarmBad {
+				c.VerdictNotApprove++
+			}
+			if ciBad && swarmBad {
+				c.Both++
+			}
 		}
 
 		if sh := b.Shadow; sh != nil {
@@ -436,6 +507,14 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 	sort.Strings(wk)
 	for _, w := range wk {
 		resp.SentinelPerWeek.Weeks = append(resp.SentinelPerWeek.Weeks, EvidenceSentinelWeek{Week: w, Hits: weeks[w]})
+	}
+	cw := make([]string, 0, len(claims))
+	for w := range claims {
+		cw = append(cw, w)
+	}
+	sort.Strings(cw)
+	for _, w := range cw {
+		resp.ClaimVsVerdict = append(resp.ClaimVsVerdict, *claims[w])
 	}
 	resp.ShadowGate.WouldHaveHeld = resp.ShadowGate.ReviewGate.Held.N
 	resp.ShadowGate.WouldHaveBlocked = resp.ShadowGate.Intent.Held.N
