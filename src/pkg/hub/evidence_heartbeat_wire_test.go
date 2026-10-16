@@ -3,8 +3,10 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
@@ -20,6 +22,10 @@ func TestSpokeEvidenceWireCompat(t *testing.T) {
 		AutomergeSelfAuthored: &yes,
 		ReviewerFamilies:      []string{"claude", "gpt"},
 		AuthorFamilies:        []string{"gpt"},
+		HiveState: &hivestate.Trends{
+			Last24h: hivestate.Window{Samples: 720, CoverageHours: 23.9, QueueIssues: hivestate.Quantiles{Median: 4, P90: 9}, SLAViolationRate: 0.1, AgentIdleRatio: 0.4, KicksPerDay: 30, TokensPerDay: 1e6},
+			Last7d:  hivestate.Window{Samples: 1000, QueuePRs: hivestate.Quantiles{Median: 2, P90: 3}},
+		},
 	}}
 	in.Evidence.Calibration[5] = spoke.HeartbeatEvidenceBucket{N: 9, Bad: 1}
 	in.Evidence.OutcomesByAuthorKind = map[string]spoke.HeartbeatEvidenceOutcome{"agent": {N: 8, Merged: 6, Reverted: 1}}
@@ -53,6 +59,9 @@ func TestSpokeEvidenceWireCompat(t *testing.T) {
 	}
 	if got.ShadowGate == nil || got.ShadowGate.Intent.Held != (EvidenceOutcome{N: 2, Merged: 1}) || got.ShadowGate.ReviewGate != (EvidenceShadowGate{}) {
 		t.Errorf("shadow_gate = %+v", got.ShadowGate)
+	}
+	if got.HiveState == nil || *got.HiveState != *in.Evidence.HiveState {
+		t.Errorf("hive_state = %+v, want %+v", got.HiveState, in.Evidence.HiveState)
 	}
 
 	// A spoke predating #12370 sends the block without the panel keys.
@@ -96,5 +105,40 @@ func TestSanitizeEvidenceDropsMalformedFamilies(t *testing.T) {
 	}
 	if len(got.ReviewerFamilies) != maxEvidenceFamilies || got.ReviewerFamilies[0] != "claude" {
 		t.Errorf("families = %v, want %d entries starting with claude", got.ReviewerFamilies, maxEvidenceFamilies)
+	}
+}
+
+func TestSanitizeHiveStateBounds(t *testing.T) {
+	if sanitizeHiveState(nil) != nil {
+		t.Fatal("nil must stay nil")
+	}
+	if got := sanitizeEvidence(&HeartbeatEvidence{}); got.HiveState != nil {
+		t.Fatalf("absent hive_state = %+v, want nil", got.HiveState)
+	}
+	bad := hivestate.Window{
+		Samples: -1, CoverageHours: 1000,
+		QueueIssues:      hivestate.Quantiles{Median: 5, P90: 2},
+		QueuePRs:         hivestate.Quantiles{Median: -3, P90: maxEvidenceCount + 1},
+		SLAViolationRate: 2, AgentIdleRatio: math.NaN(),
+		KicksPerDay: -4, TokensPerDay: math.Inf(1),
+	}
+	got := sanitizeEvidence(&HeartbeatEvidence{HiveState: &hivestate.Trends{Last24h: bad, Last7d: bad}}).HiveState
+	if got == nil {
+		t.Fatal("hive_state dropped")
+	}
+	for name, w := range map[string]struct {
+		w     hivestate.Window
+		hours float64
+	}{"24h": {got.Last24h, 24}, "7d": {got.Last7d, 168}} {
+		want := hivestate.Window{
+			CoverageHours:    w.hours,
+			QueueIssues:      hivestate.Quantiles{Median: 5, P90: 5},
+			QueuePRs:         hivestate.Quantiles{Median: 0, P90: maxEvidenceCount},
+			SLAViolationRate: 1,
+			TokensPerDay:     maxHiveStatePerDay,
+		}
+		if w.w != want {
+			t.Errorf("%s = %+v, want %+v", name, w.w, want)
+		}
 	}
 }

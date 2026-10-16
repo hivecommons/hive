@@ -2,8 +2,6 @@ package dashboard
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -21,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
@@ -252,6 +251,9 @@ type NousState struct {
 	GateResponse map[string]interface{}   `json:"gate_response,omitempty"`
 	SnapshotDir  string                   `json:"-"`
 	Mu           sync.Mutex               `json:"-"`
+
+	stateOnce  sync.Once
+	stateStore *hivestate.Store
 }
 
 type NousPrinciple struct {
@@ -275,20 +277,23 @@ func NousBaselinePct(count int) float64 {
 	return pct
 }
 
-type NousSnapshot struct {
-	Timestamp     string            `json:"timestamp"`
-	Mode          string            `json:"mode"`
-	QueueIssues   int               `json:"queue_issues"`
-	QueuePRs      int               `json:"queue_prs"`
-	QueueHold     int               `json:"queue_hold"`
-	SLAViolations int               `json:"sla_violations"`
-	AgentsKicked  []string          `json:"agents_kicked,omitempty"`
-	AgentStates   map[string]string `json:"agent_states,omitempty"`
-	TotalTokens   int64             `json:"total_tokens"`
+// NousSnapshot is one per-eval-cycle hive state record. The series now lives
+// in pkg/hivestate (#12339); the alias keeps existing callers compiling.
+type NousSnapshot = hivestate.Snapshot
+
+// HiveState returns the hive state time series backed by SnapshotDir, or nil
+// when no directory is configured. Collection is independent of Nous mode.
+func (ns *NousState) HiveState() *hivestate.Store {
+	if ns == nil || ns.SnapshotDir == "" {
+		return nil
+	}
+	ns.stateOnce.Do(func() { ns.stateStore = hivestate.NewStore(ns.SnapshotDir) })
+	return ns.stateStore
 }
 
 func (ns *NousState) RecordSnapshot(govState governor.State, actionable *ghpkg.ActionableResult, agentsKicked []string, agentStatuses map[string]*agent.AgentProcess, tokenSummary *tokens.AggregateSummary) error {
-	if ns.SnapshotDir == "" {
+	store := ns.HiveState()
+	if store == nil {
 		return nil
 	}
 
@@ -311,18 +316,9 @@ func (ns *NousState) RecordSnapshot(govState governor.State, actionable *ghpkg.A
 		snap.TotalTokens = tokenSummary.TotalTokens
 	}
 
-	data, err := json.Marshal(snap)
-	if err != nil {
-		return fmt.Errorf("marshaling snapshot: %w", err)
-	}
-
-	filename := fmt.Sprintf("%s/%d.json", ns.SnapshotDir, time.Now().UnixMilli())
-	if err := os.WriteFile(filename, data, 0o644); err != nil {
-		return fmt.Errorf("writing snapshot: %w", err)
-	}
-
+	err := store.Record(snap)
 	ns.refreshStatus()
-	return nil
+	return err
 }
 
 func (ns *NousState) refreshStatus() {

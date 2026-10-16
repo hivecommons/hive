@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hivestate"
 )
 
 const (
@@ -38,7 +40,8 @@ type EvidenceBucket struct {
 }
 
 // HeartbeatEvidence is a spoke's evidence-pipeline summary (#12063). nil means
-// the beat carried none (old spoke) and the stored summary is kept.
+// the beat carried none (old spoke) and the stored summary is kept. HiveState
+// is the spoke's 24 h / 7 d hive state trends (#12339).
 type HeartbeatEvidence struct {
 	Verdicts90d           int                                        `json:"verdicts_90d"`
 	FalseApprove90d       int                                        `json:"false_approve_90d"`
@@ -62,6 +65,9 @@ type HeartbeatEvidence struct {
 	// Absent on old spokes; the hub then reports the hive as "not reported
 	// for this window" rather than reusing the 90-day block.
 	Windows map[string]*HeartbeatEvidence `json:"windows,omitempty"`
+
+	// HiveState is the spoke's 24 h / 7 d hive-state trends (#12339).
+	HiveState *hivestate.Trends `json:"hive_state,omitempty"`
 }
 
 // evidenceWindowHours maps a selectable window key to its hours. The empty
@@ -234,7 +240,54 @@ func sanitizeEvidence(in *HeartbeatEvidence) *HeartbeatEvidence {
 		}
 		out.Windows[key] = sanitizeEvidence(w)
 	}
+	out.HiveState = sanitizeHiveState(in.HiveState)
 	return out
+}
+
+// maxHiveStatePerDay bounds the per-day rates a spoke can report.
+const maxHiveStatePerDay = 1e12
+
+// sanitizeHiveState returns a bounded copy of a spoke's hive state trends:
+// counts and per-day rates non-negative, ratios in [0,1], coverage within
+// the window, p90 never below the median.
+func sanitizeHiveState(in *hivestate.Trends) *hivestate.Trends {
+	if in == nil {
+		return nil
+	}
+	return &hivestate.Trends{
+		Last24h: sanitizeHiveStateWindow(in.Last24h, 24),
+		Last7d:  sanitizeHiveStateWindow(in.Last7d, 7*24),
+	}
+}
+
+func sanitizeHiveStateWindow(w hivestate.Window, hours float64) hivestate.Window {
+	c := func(v int) int { return clampInt(v, 0, maxEvidenceCount) }
+	q := func(x hivestate.Quantiles) hivestate.Quantiles {
+		m := c(x.Median)
+		return hivestate.Quantiles{Median: m, P90: clampInt(x.P90, m, maxEvidenceCount)}
+	}
+	return hivestate.Window{
+		Samples:          c(w.Samples),
+		CoverageHours:    clampEvidenceFloat(w.CoverageHours, hours),
+		QueueIssues:      q(w.QueueIssues),
+		QueuePRs:         q(w.QueuePRs),
+		QueueHold:        q(w.QueueHold),
+		SLAViolationRate: clampEvidenceFloat(w.SLAViolationRate, 1),
+		AgentIdleRatio:   clampEvidenceFloat(w.AgentIdleRatio, 1),
+		KicksPerDay:      clampEvidenceFloat(w.KicksPerDay, maxHiveStatePerDay),
+		TokensPerDay:     clampEvidenceFloat(w.TokensPerDay, maxHiveStatePerDay),
+	}
+}
+
+// clampEvidenceFloat clamps v to [0, hi]; NaN becomes 0.
+func clampEvidenceFloat(v, hi float64) float64 {
+	if !(v > 0) {
+		return 0
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 // evidenceRate returns num/den, or false when den is below minEvidenceN.

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/hivestate"
 )
 
 func TestClassifyErrorsFlagsPeriodicBrokenPipeAndIgnoresBenignTimeouts(t *testing.T) {
@@ -368,5 +369,34 @@ func TestRecoveryBodyNamesACMMCriterion(t *testing.T) {
 	got := RecoveryReport(OpenIssue{Trigger: TriggerACMMShortfall}, Report{Fingerprint: "abc123", InstanceID: "inst", Criterion: "green-ci-streak", Trigger: TriggerACMMShortfall})
 	if !strings.Contains(got.Body, "`green-ci-streak`") {
 		t.Fatalf("recovery body dropped the criterion: %q", got.Body)
+	}
+}
+
+func TestReportsCarryHiveStateOutsideBody(t *testing.T) {
+	trends := &hivestate.Trends{Last24h: hivestate.Window{Samples: 3, QueueIssues: hivestate.Quantiles{Median: 4, P90: 8}}}
+	obs := Observation{Mode: "busy", ACMMLevel: 2, HiveState: trends}
+	ev := Evidence{Component: "merge", ErrorClass: "conflict", Severity: "high", Class: "unclassified_error_repeated", Message: "boom"}
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	reports := []Report{
+		BuildReport(obs, "ci", "CI", ev, "fp", "inst", "v", "c"),
+		BuildDefectReport(obs, ev, "fp", "inst", "v", "c"),
+		BuildRuntimeReport(obs, ev, "fp", "inst", "hive", "v", "c", now),
+	}
+	obs.HiveState = nil
+	bare := []Report{
+		BuildReport(obs, "ci", "CI", ev, "fp", "inst", "v", "c"),
+		BuildDefectReport(obs, ev, "fp", "inst", "v", "c"),
+		BuildRuntimeReport(obs, ev, "fp", "inst", "hive", "v", "c", now),
+	}
+	for i, r := range reports {
+		if r.HiveState != trends {
+			t.Errorf("report %d hive_state = %+v, want the observation's trends", i, r.HiveState)
+		}
+		if bare[i].HiveState != nil {
+			t.Errorf("report %d without trends = %+v, want nil", i, bare[i].HiveState)
+		}
+		if r.Body != bare[i].Body {
+			t.Errorf("report %d body changed with hive state; trends must not alter the body hash", i)
+		}
 	}
 }

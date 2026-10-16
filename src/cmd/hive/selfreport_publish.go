@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
@@ -69,6 +70,8 @@ type selfReportRelayRequest struct {
 	Version     string               `json:"version,omitempty"`
 	Repo        string               `json:"repo,omitempty"`
 	Evidence    fleetreport.Evidence `json:"evidence"`
+	// HiveState is the reporting hive's 24 h / 7 d state trends (#12339).
+	HiveState *hivestate.Trends `json:"hive_state,omitempty"`
 }
 
 type selfReportRelayResponse struct {
@@ -180,7 +183,7 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 			var relayed selfReportRelayResponse
 			relayed, err = deps.relay(ctx, selfReportRelayRequest{
 				HiveID: deps.hiveSlug, Fingerprint: report.Fingerprint, Class: report.Class, Title: report.Title, Body: report.Body,
-				Labels: report.Labels, Version: deps.version, Repo: deps.repo, Evidence: firstEvidence(report),
+				Labels: report.Labels, Version: deps.version, Repo: deps.repo, Evidence: firstEvidence(report), HiveState: report.HiveState,
 			})
 			if err == nil {
 				write = github.FleetReportResult{Number: relayed.Number, URL: relayed.URL, Created: !relayed.Joined, Joined: relayed.Joined, Commented: relayed.Joined}

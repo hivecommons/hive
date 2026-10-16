@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/evidence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
@@ -232,6 +233,34 @@ func TestEvidenceHeartbeat(t *testing.T) {
 	want := s.deps.Config.AutoMerge.SelfAuthoredAutoMergeAllowed(s.deps.Config.ACMMLevel)
 	if got.AutomergeSelfAuthored == nil || *got.AutomergeSelfAuthored != want {
 		t.Errorf("automerge_self_authored = %v, want %v", got.AutomergeSelfAuthored, want)
+	}
+	if got.HiveState != nil {
+		t.Errorf("hive_state without a Nous series = %+v, want nil", got.HiveState)
+	}
+
+	// With a recorded snapshot the block carries the hive state trends (#12339).
+	snapDir := t.TempDir()
+	s.deps.Nous = &NousState{SnapshotDir: snapDir, Status: map[string]interface{}{}}
+	if err := s.deps.Nous.HiveState().Record(hivestate.Snapshot{QueueIssues: 6, QueuePRs: 2}); err != nil {
+		t.Fatal(err)
+	}
+	got = s.EvidenceHeartbeat()
+	if got == nil || got.HiveState == nil || got.HiveState.Last24h.Samples != 1 || got.HiveState.Last24h.QueueIssues.Median != 6 {
+		t.Fatalf("hive_state = %+v, want one 24h sample with median queue_issues 6", got.HiveState)
+	}
+}
+
+func TestNousStateHiveState(t *testing.T) {
+	var nilNous *NousState
+	if nilNous.HiveState() != nil {
+		t.Fatal("nil NousState must have no series")
+	}
+	if (&NousState{}).HiveState() != nil {
+		t.Fatal("NousState without SnapshotDir must have no series")
+	}
+	ns := &NousState{SnapshotDir: t.TempDir()}
+	if st := ns.HiveState(); st == nil || st != ns.HiveState() {
+		t.Fatal("HiveState must return one stable store")
 	}
 }
 
