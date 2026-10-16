@@ -35102,14 +35102,16 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Experimental', label: 'Nous / Experiment Lab', key: 'nous.dispatcher', text: 'nous experiment lab experimenter dispatcher inline sdk gate poll fetch allowlist artifact repository branch path sync interval nous.dispatcher nous.gate_poll_seconds nous.fetch_allowlist nous.artifact_repo.repo nous.artifact_repo.branch nous.artifact_repo.path nous.artifact_repo.sync_interval_seconds' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
       { tab: 'Logging', section: 'Logging', label: 'Read scan bound (MB)', key: 'governor.logging.read_scan_max_mb', text: 'log read scan bound megabytes admin mcp log_read cursor' },
+      { tab: 'General', section: 'Governor', label: 'Eval loop pacing', key: 'governor.eval_interval_max_s', text: 'eval interval max cap webhook conserve multiplier optional sweep every n cycles provider spend limit budget probe threshold ownership pack governor.eval_interval_s governor.eval_interval_max_s governor.eval_interval_webhook_s governor.conserve_interval_multiplier governor.optional_sweep_every_n_cycles governor.provider_budget.probe_interval_s governor.thresholds_source governor.explain_mode' },
+      { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
-      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s' },
-      { tab: 'Features', section: 'Agents & tooling', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Issue claims: claim lifetimes', key: 'governor.claims.human_ttl_s', text: 'issue claims claim lifetime ttl expiry human agent contributor maximum governor.claims.human_ttl_s governor.claims.agent_ttl_s governor.claims.contributor_ttl_s governor.claims.max_ttl_s claim comments labels escalate stall needs-human governor.claims.comment governor.claims.label governor.claims.escalate_after_claims' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Provider rotation thresholds', key: 'governor.rotation.threshold_pct', text: 'provider rotation threshold percent high volume cadence subscription exhausted governor.rotation.threshold_pct governor.rotation.high_volume_cadence_s headroom source ccleft builtin governor.rotation.headroom_source' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Trajectory review', key: 'governor.trajectory.enabled', text: 'trajectory review reviewer model interval endpoint transcript lines divergence pause alert governor.trajectory.enabled governor.trajectory.model governor.trajectory.interval_s governor.trajectory.endpoint governor.trajectory.transcript_lines governor.trajectory.on_divergence' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog', key: 'governor.watchdog', text: 'watchdog activity stale agent detection health restart alerts' },
       { tab: 'Health', section: 'Watchdog', label: 'Watchdog details', key: 'governor.watchdog.probe_interval_s', text: 'governor watchdog auth probe enabled liveness readiness restart backoff crash loop healthy reset stuck overlay production shell prompt governor.watchdog.auth_probe governor.watchdog.enabled governor.watchdog.liveness.shell_prompt_after governor.watchdog.liveness.stuck_overlay_after governor.watchdog.mode governor.watchdog.probe_interval_s governor.watchdog.readiness.no_production_for governor.watchdog.restart.backoff[] governor.watchdog.restart.crash_loop_after governor.watchdog.restart.healthy_reset' },
@@ -35117,12 +35119,13 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Quality loops & release health', label: 'Retro loop', key: 'retro.enabled', text: 'retro loop quality post-completion analysis model scan interval fix attempts kicks long stall recent closed window retro.enabled retro.analysis_model retro.scan_interval_s retro.max_fix_attempts retro.max_kicks retro.long_stall_days retro.recent_closed_window_s' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Close issues on merge', key: 'issues.close_on_merge', text: 'issues close on merge reporter confirmation sweep backfill recheck interval issues.close_on_merge issues.close_on_merge_interval issues.close_on_merge_backfill_interval issues.close_on_merge_recheck issues.reporter_confirmation' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Duplicate PR sweep', key: 'duplicate_sweep.enabled', text: 'duplicate pr sweep superseded comments budget duplicate_sweep.enabled duplicate_sweep.post_comments duplicate_sweep.max_comments duplicate_sweep.max_prs_per_repo' },
-      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Good first issue curation', key: 'good_first_issue.enabled', text: 'good first issue help wanted gfi curation new contributors coding agent clanker relay advertise welcome comment good_first_issue.enabled good_first_issue.max_per_repo good_first_issue.max_per_sweep good_first_issue.min_age good_first_issue.interval' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Good first issue curation', key: 'good_first_issue.enabled', text: 'good first issue help wanted gfi curation new contributors coding agent clanker relay advertise welcome comment good_first_issue.enabled good_first_issue.max_per_repo good_first_issue.max_per_sweep good_first_issue.min_age good_first_issue.interval scorer body length packages score reselect cooldown docs url welcome comment template good_first_issue.min_body_chars good_first_issue.max_body_chars good_first_issue.max_packages good_first_issue.min_score good_first_issue.reselect_cooldown good_first_issue.docs_url good_first_issue.comment_template' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Jev decisions', key: 'jev.provider', text: 'jev typed decisions provider openrouter typesafe model endpoint api key env timeout jev.provider jev.model jev.endpoint jev.api_key_env jev.timeout' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
       { tab: 'Features', section: 'Integrations & observability', label: 'Standalone deployment upgrades', key: 'deployment.podman_mode', text: 'deployment podman quadlet rootless rootful docker compose upgrade helper request dir deployment.podman_mode deployment.upgrade_helper deployment.upgrade_request_dir' },
+      { tab: 'Features', section: 'Review gate', label: 'Review gate: comments, dispatch and out-of-scope findings', key: 'review.post_comments', text: 'review swarm post comments fan out parallel perspectives combined all authors fix human prs acknowledge no findings confidence score priority labels fixer agent human decision label reviews per head revise verdicts webhook event driven debounce pending ttl redispatch out of scope backlog issues recommendations review.post_comments review.event_driven review.event_debounce_s review.pending_ttl review.max_redispatch review.max_reviews_per_head review.revise_verdicts_before review.out_of_scope_backlog_disabled review.max_out_of_scope_backlog_issues review.recommendations.enabled review.recommendations.min_ready_to_open' },
       { tab: 'Features', section: 'Review gate', label: 'Review evidence bundles', key: 'evidence.enabled', text: 'review evidence bundles audit signing key ed25519 evidence.enabled evidence.signing_key_file' },
       { tab: 'Features', section: 'Integrations & observability', label: 'GitLab and Gitea forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Token mint key and TTL', key: 'mint.max_ttl_seconds', text: 'token mint signing key path max ttl lifetime jwt mint.key_path mint.max_ttl_seconds' },
@@ -35131,7 +35134,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Quality loops & release health', label: 'Compliance posture windows', key: 'compliance.posture_checks.window_days', text: 'compliance posture look-back window history retention compliance.posture_checks.window_days compliance.posture_checks.history_days' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Swarm banner wording', key: 'swarm.event_name', text: 'swarm event name call to arms leaderboard title banner swarm.event_name swarm.call_to_arms swarm.leaderboard_title' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Tool approval inbox path', key: 'tool_approval.inbox_path', text: 'tool approval inbox pending approvals path tool_approval.inbox_path' },
-      { tab: 'Features', section: 'Auto-merge', label: 'Auto-merge sweep limits', key: 'auto_merge.min_head_age', text: 'auto merge max merges per sweep minimum head age required author role auto_merge.max_merges auto_merge.min_head_age auto_merge.trusted_authors.require_role' },
+      { tab: 'Features', section: 'Auto-merge', label: 'Auto-merge sweep limits', key: 'auto_merge.min_head_age', text: 'auto merge max merges per sweep minimum head age required author role auto_merge.max_merges auto_merge.min_head_age auto_merge.trusted_authors.require_role bot takeover github-actions auto_merge.bot_takeover.enabled' },
       { tab: 'Features', section: 'Experimental', label: 'Long-running runs: checkpoints, triage and Spek recheck', key: 'runs.checkpoints.implement', text: 'runs checkpoints spec plan implement hold owner approval wait timeout severity triage clarify comment body length spek spektacular recheck cadence interval delta tasks discovery proxy timeout runs.checkpoints.spec runs.checkpoints.implement runs.wait_timeout_seconds runs.wait_severity runs.triage.min_body_chars runs.triage.clarify_comment runs.spektacular.binary runs.spektacular.recheck.enabled runs.spektacular.recheck.default_interval runs.spektacular.recheck.max_delta_tasks runs.spektacular.recheck.discovery_proxy runs.spektacular.recheck.discovery.enabled runs.spektacular.recheck.discovery.timeout runs.spektacular.recheck.discovery.max_total_items' },
       { tab: 'Features', section: 'Experimental', label: 'External execution: Flue, OMP and vibe-kanban', key: 'runs.external.flue.mode', text: 'external execution flue omp vibe kanban workbench report-only shadow endpoint workflow version project state dir mcp command runs.external.flue.mode runs.external.flue.endpoint runs.external.flue.workflow_version runs.external.omp.mode runs.external.omp.workflow_version runs.external.vibe_kanban.enabled runs.external.vibe_kanban.mode runs.external.vibe_kanban.project_id runs.external.vibe_kanban.state_dir runs.external.vibe_kanban.workflow_version runs.external.vibe_kanban.mcp_command' },
       { tab: 'Features', section: 'Integrations & observability', label: 'OpenTelemetry export', key: 'otel.enabled', text: 'otel opentelemetry export endpoint headers insecure sample ratio service name otel.enabled otel.endpoint otel.headers.<key> otel.insecure otel.sample_ratio otel.service_name' },
@@ -35139,6 +35142,7 @@ function burnAreaChart() {
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
+      { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
 
@@ -37703,7 +37707,106 @@ function burnAreaChart() {
             <div class="mt-1">fingerprint: <code style="font-size:0.72rem">${esc(k.fingerprint)}</code></div>
           </div>`).join('');
       }
+      html += renderForgeGitHubSettings(data.settings || {});
       host.innerHTML = html;
+    }
+
+    // renderForgeGitHubSettings shows the rest of the github: block. Identity
+    // keys and the token are display-only: they decide which forge and
+    // credentials the hive authenticates with, so they come from hub
+    // provisioning (or hive.yaml on a standalone hive). The token is never
+    // sent to the browser, only whether one is set.
+    let _forgeGitHubSettings = {};
+    function renderForgeGitHubSettings(st) {
+      _forgeGitHubSettings = st;
+      const d = st.defaults || {};
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const managedNote = st.hub_managed
+        ? 'managed by the hub — change it from the hub dashboard'
+        : 'set in hive.yaml; requires restart';
+      const roRow = (label, path, valueHtml) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm break-all">${valueHtml} <span class="text-muted">— ${esc(managedNote)}</span></div></div>`;
+      const shown = v => v ? '<code>' + esc(String(v)) + '</code>' : '<span class="text-muted">unset</span>';
+      const num = (key, label, path, placeholder, help, restart, mark) => `
+          <div class="config-field">
+            <label for="forge-gh-${key}">${esc(label)} ${yamlHint(path)} ${mark}</label>
+            <input id="forge-gh-${key}" type="number" min="0" step="1" value="${st[key] ? esc(String(st[key])) : ''}" placeholder="${esc(String(placeholder))}" ${owner ? '' : 'disabled'}>
+            <div class="config-help">${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</div>
+          </div>`;
+      const toggle = (key, label, path, help, restart, mark) => `
+          <div class="config-toggle mt-3">
+            <div id="forge-gh-${key}" class="config-toggle-switch ${st[key] ? 'on' : ''} ${owner ? '' : 'disabled'}" data-action="${owner ? 'forgeGitHubToggle' : ''}" data-arg-types="t" role="switch" aria-checked="${st[key] ? 'true' : 'false'}"></div>
+            <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} ${mark} <span class="text-muted">— ${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</span></span>
+          </div>`;
+      return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Connection identity</div>
+          ${roRow('Forge', 'github.forge', shown(st.forge))}
+          ${roRow('API URL', 'github.api_url', shown(st.api_url))}
+          ${roRow('Docs org installation ID', 'github.docs_installation_id', shown(st.docs_installation_id))}
+          ${roRow('Login OAuth client ID', 'github.oauth_client_id', shown(st.oauth_client_id))}
+          ${roRow('Personal access token', 'github.token', st.token_set ? '<span>set (hidden)</span>' : '<span class="text-muted">not set</span>')}
+          <div class="config-help">The App private key path is <code>github.key_file</code>, edited above. An empty forge or API URL is derived from the App config.</div>
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">API quota, PR scans and authorship</div>
+          <div class="config-field-row">
+            ${num('api_reserve', 'API reserve', 'github.api_reserve', 800, 'Remaining core REST quota below which Hive skips optional sweeps (conserve mode). 0 uses the default (800).', true, settingHelpMark('operator-reference', 'github-api-budget-governor', 'API reserve', 'Below this many remaining core REST calls the governor enters conserve mode: optional sweeps are skipped and the eval interval is multiplied. 0 restores the default (800).'))}
+            ${num('api_critical', 'API critical floor', 'github.api_critical', 250, 'Lower floor where Hive enters critical mode and stretches the eval interval further. Must be below the reserve. 0 uses the default (250).', true, settingHelpMark('operator-reference', 'github-api-budget-governor', 'API critical floor', 'Below this many remaining calls the governor also sheds unstick steps and stretches the eval interval 4x. Must stay below the reserve; 0 restores the default (250).'))}
+            ${num('agent_reserve_floor', 'Agent reserve floor', 'github.agent_reserve_floor', d.agent_reserve_floor || 400, 'Agent reads through the API proxy get a 429 once the shared core bucket drops below this, so daemon merge and scan work is never starved.', true, settingHelpMark('operator-reference', 'github-api-quota', 'Agent reserve floor', 'Protects the shared core bucket from agent traffic: once the latest rate-limit reading drops below the floor, agent reads through the API proxy are refused with a 429 until the bucket recovers. 0 uses the default.'))}
+          </div>
+          <div class="config-field-row">
+            ${num('pr_detail_ttl_s', 'PR detail cache TTL (seconds)', 'github.pr_detail_ttl_s', d.pr_detail_ttl_s || 1800, 'Reuses a PR detail response while the PR list still reports the same head SHA and updated_at. 0 uses the default.', false, settingHelpMark('operator-reference', 'notable-fields', 'PR detail cache TTL', 'How long a GET /pulls/{number} detail response is reused while the cheap PR list still reports the same head SHA and updated_at and GitHub has resolved mergeable_state. 0 uses the default.'))}
+            ${num('graphql_pr_batch_page_size', 'GraphQL PR batch page size', 'github.graphql_pr_batch_page_size', d.graphql_pr_batch_page_size || 50, 'Page size for the batched pullRequests query, 1–100. 0 uses the default.', false, settingHelpMark('operator-reference', 'notable-fields', 'GraphQL PR batch page size', 'Page size for the GraphQL pullRequests(first:) batch query. Values above GitHub&#39;s maximum of 100 are rejected; 0 uses the default.'))}
+          </div>
+          ${toggle('graphql_pr_batch', 'Batch open-PR scans with GraphQL', 'github.graphql_pr_batch', 'one paginated query per repo instead of per-PR detail and check-run reads.', false, settingHelpMark('operator-reference', 'notable-fields', 'Batch open-PR scans with GraphQL', 'On by default. One paginated GraphQL query per repository scan fills the PR detail and CI rollup caches, replacing most per-PR detail and check-run reads. Off returns to the REST-only scan path.'))}
+          ${toggle('app_authored_prs', 'Author agent PRs as the App bot', 'github.app_authored_prs', 'agents open PRs and commit as &lt;slug&gt;[bot] with the App installation token when project.ai_author is empty.', true, settingHelpMark('github-app-setup', '', 'Author agent PRs as the App bot', 'With a GitHub App installed, agents open PRs and commit as &lt;slug&gt;[bot] using the installation token whenever project.ai_author is empty, so PR authorship is the App rather than a personal account.'))}
+          ${toggle('app_signed_commits', 'Re-author agent PRs as GitHub-signed commits', 'github.app_signed_commits', 'needed when a base branch requires signed commits; rewrites the agent branch before the PR opens.', false, settingHelpMark('github-app-setup', 'signed-commits-on-agent-prs-app_signed_commits', 'Re-author agent PRs as GitHub-signed commits', 'Opt-in; needs an installed App. Before a PR opens, the watcher squashes the agent branch into one commit created through the GraphQL createCommitOnBranch mutation, which GitHub signs and shows as Verified, so a required_signatures ruleset accepts it. Unsigned follow-up commits are reconciled the same way.'))}
+          ${owner ? '<button class="hv-btn btn-primary mt-4" id="forge-gh-save-btn" data-action="saveForgeGitHubSettings">Save</button>' : '<div class="config-help mt-3">Owner role required to change these settings.</div>'}
+        </div>`;
+    }
+
+    function forgeGitHubToggle(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const on = el.classList.toggle('on');
+      el.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+
+    async function saveForgeGitHubSettings() {
+      const st = _forgeGitHubSettings || {};
+      const body = {};
+      for (const key of ['api_reserve', 'api_critical', 'agent_reserve_floor', 'pr_detail_ttl_s', 'graphql_pr_batch_page_size']) {
+        const el = document.getElementById('forge-gh-' + key);
+        if (!el) continue;
+        const raw = (el.value || '').trim();
+        const v = raw === '' ? 0 : parseInt(raw, 10);
+        if (isNaN(v) || v < 0) { showToast(key + ' must be a non-negative number', 'error'); return; }
+        if (v !== (st[key] || 0)) body[key] = v;
+      }
+      for (const key of ['graphql_pr_batch', 'app_authored_prs', 'app_signed_commits']) {
+        const el = document.getElementById('forge-gh-' + key);
+        if (!el) continue;
+        const on = el.classList.contains('on');
+        if (on !== !!st[key]) body[key] = on;
+      }
+      if (!Object.keys(body).length) { showToast('Nothing to save', 'error'); return; }
+      const btn = document.getElementById('forge-gh-save-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      try {
+        const res = await fetch('/api/config/github', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        const restart = ['api_reserve', 'api_critical', 'agent_reserve_floor', 'app_authored_prs'].some(k => k in body);
+        showToast(restart ? 'GitHub settings saved — restart the hive to apply the quota floors or authorship change' : 'GitHub settings saved', 'success');
+        loadForgeApps();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      }
     }
 
     // forgeAppNeedsInstall: PRIMARY rule, checked FIRST and sufficient BY
@@ -37770,7 +37873,7 @@ function burnAreaChart() {
             <label style="font-size:0.72rem;color:var(--muted)">App ID<input id="forge-app-appid" type="number" value="${esc(String(a.app_id || ''))}" style="${inputStyle}"></label>
             <label style="font-size:0.72rem;color:var(--muted)">Installation ID<input id="forge-app-instid" type="number" value="${esc(String(a.installation_id || ''))}" style="${inputStyle}"></label>
           </div>
-          <label style="font-size:0.72rem;color:var(--muted)">Key file path<input id="forge-app-keyfile" type="text" value="${esc(a.key_file || '')}" style="${inputStyle};margin-bottom:var(--sp-4)"></label>
+          <label style="font-size:0.72rem;color:var(--muted)">Key file path ${yamlHint('github.key_file')}<input id="forge-app-keyfile" type="text" value="${esc(a.key_file || '')}" style="${inputStyle};margin-bottom:var(--sp-4)"></label>
           <label style="font-size:0.72rem;color:var(--muted)">Private key (PEM — write-only, replaces the key file; never displayed back)<textarea id="forge-app-pem" rows="3" placeholder="-----BEGIN RSA PRIVATE KEY----- (leave empty to keep the current key)" style="${inputStyle};font-family:monospace;margin-bottom:var(--sp-4)"></textarea></label>
           <button class="hv-btn btn-primary" id="forge-app-save-btn" data-action="saveForgeApp">Save</button>
         </div>`;
@@ -40937,12 +41040,12 @@ function burnAreaChart() {
           <div class="mt-4">${securityPostureStripHtml()}</div>
         </div>
         <div class="config-field" style="margin-top:14px">
-          <label>Eval interval (seconds) ${settingHelpMark('settings', 'general', 'Eval interval (seconds)', `How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 60. Lower = more responsive, more API calls.`)}</label>
-          <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="60" data-change-action="gh70" style="width:140px">
-          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Changes take effect on next restart.</span>
+          <label>Eval interval (seconds) ${yamlHint('governor.eval_interval_s')} ${settingHelpMark('settings', 'general', 'Eval interval (seconds)', `How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 300. Lower = more responsive, more API calls.`)}</label>
+          <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="300" data-change-action="gh70" style="width:140px">
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Applies from the next eval cycle.</span>
         </div>
         <div class="config-field" style="margin-top:14px">
-          <label>Default explain mode ${settingHelpMark('agent-configuration', 'fleet-wide-default', 'Default explain mode', `Hive-wide default for agents that leave their own Explain Mode unset. Asks agents to say WHY they made each tool call, on EXPLAIN: lines alongside the work &mdash; they still act, they do not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. An agent with its own explicit value, including &quot;off&quot;, keeps it. Takes precedence over the HIVE_EXPLAIN_MODE deployment environment variable.`)}</label>
+          <label>Default explain mode ${yamlHint('governor.explain_mode')} ${settingHelpMark('agent-configuration', 'fleet-wide-default', 'Default explain mode', `Hive-wide default for agents that leave their own Explain Mode unset. Asks agents to say WHY they made each tool call, on EXPLAIN: lines alongside the work &mdash; they still act, they do not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. An agent with its own explicit value, including &quot;off&quot;, keeps it. Takes precedence over the HIVE_EXPLAIN_MODE deployment environment variable.`)}</label>
           <select data-change-action="gh75" style="width:320px">
             ${HIVE_EXPLAIN_MODES.map(m => `<option value="${m.value}" ${explainMode === m.value ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}
           </select>
@@ -40951,6 +41054,47 @@ function burnAreaChart() {
         <div class="config-toggle" style="margin-top:14px">
           <div class="config-toggle-switch ${attribOn ? 'on' : ''}" data-action="toggleAttributionTrailer" data-arg-types="t"></div>
           <span class="config-toggle-label">Show attribution trailer on PRs/issues ${settingHelpMark('settings', 'general', 'Show attribution trailer on PRs/issues', `Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.`)}</span>
+        </div>
+        ${renderGovLoopPacing(genAdv)}`;
+    }
+
+    // renderGovLoopPacing is the governor eval-loop pacing block on the General
+    // tab. The fields stage into the general-advanced section, so the footer
+    // Save sends them through PUT /api/config/governor/general-advanced. The
+    // loop recomputes its interval and sweep cadence every cycle, so a saved
+    // change applies from the next eval. 0 or empty restores the default.
+    function renderGovLoopPacing(genAdv) {
+      const d = genAdv.loop_defaults || {};
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const num = (key, label, path, help, tip) => `
+          <div class="config-field">
+            <label for="gov-loop-${key}">${esc(label)} ${yamlHint(path)} ${settingHelpMark('settings', 'general', label, tip)}</label>
+            <input id="gov-loop-${key}" type="number" min="0" step="1" value="${genAdv[key] ? esc(String(genAdv[key])) : ''}" placeholder="${esc(String(d[key] || ''))}" data-change-action="markDirty" data-arg0="general-advanced" data-arg1="${key}" data-arg-types="s,s,N" ${owner ? '' : 'disabled'}>
+            <div class="config-help">${help} Applies from the next eval cycle. 0 restores the default.</div>
+          </div>`;
+      const src = genAdv.thresholds_source || '';
+      const srcText = src === 'pack'
+        ? 'pack — seeded by an ACMM pack, so the thresholds still scale with repo count'
+        : 'operator — set by hand (or never seeded), so explicit thresholds are used verbatim';
+      return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Eval loop pacing</div>
+          <div class="config-field-row">
+            ${num('eval_interval_max_s', 'Max eval interval (seconds)', 'governor.eval_interval_max_s', 'Cap when API budget mode stretches evals.', 'Upper bound on the eval interval after the API-budget stretch and the webhook interval are applied. Must be at least the eval interval. Default 1800.')}
+            ${num('eval_interval_webhook_s', 'Webhook eval interval (seconds)', 'governor.eval_interval_webhook_s', 'Base interval while GitHub webhooks are healthy.', 'While signed GitHub webhooks keep arriving the base eval interval rises to this value, because webhooks already trigger the work polling would find. Capped by the max eval interval. Default 900.')}
+          </div>
+          <div class="config-field-row">
+            ${num('conserve_interval_multiplier', 'Conserve-mode multiplier', 'governor.conserve_interval_multiplier', 'Eval interval multiplier in API budget conserve mode.', 'When remaining GitHub API quota drops below the reserve, the eval interval is multiplied by this factor. Default 2.')}
+            ${num('optional_sweep_every_n_cycles', 'Optional sweeps every N cycles', 'governor.optional_sweep_every_n_cycles', 'Run optional sweeps every Nth normal cycle (1 = every cycle).', 'The optional enrichment steps of an eval cycle run only on every Nth cycle while the API budget is normal; in conserve or critical mode they are skipped regardless. Default 1, every cycle.')}
+          </div>
+          <div class="config-field-row">
+            ${num('provider_budget_probe_interval_s', 'Provider spend-limit probe (seconds)', 'governor.provider_budget.probe_interval_s', 'How long a provider spending-limit refusal suppresses kicks before one cycle probes again.', 'After the inference provider refuses on a spending limit, kicks are withheld; once the last refusal is older than this, one cycle&#39;s kicks go through to test whether the provider serves again. Shorter recovers sooner but burns a run on a still-clipped provider. Default 1800.')}
+          </div>
+          <div class="config-field">
+            <label>Threshold ownership ${yamlHint('governor.thresholds_source')}</label>
+            <div class="fs-sm">${esc(srcText)} <span class="text-muted">— read-only; editing any threshold on the Thresholds tab makes them operator-owned, applying a pack re-seeds them.</span></div>
+          </div>
+          ${owner ? '<div class="config-help">Save with the dialog Save button.</div>' : '<div class="config-help">Owner role required to change these settings.</div>'}
         </div>`;
     }
 
@@ -41312,14 +41456,14 @@ function burnAreaChart() {
         : '';
       return `
         <div class="config-field mb-7">
-          <label>Cadence mode scope ${settingHelpMark('governor-thresholds', '', 'Cadence mode scope', `Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.`)}</label>
+          <label>Cadence mode scope ${settingHelpMark('governor-thresholds', '', 'Cadence mode scope', `Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.`)} ${yamlHint('governor.cadence_scope')}</label>
           <select id="cfg-cadence-scope" data-change-action="markDirty" data-arg0="cadence-scope" data-arg1="cadenceScope" data-arg-types="s,s,v">
             ${[['aggregate', 'Aggregate (default)'], ['per_repo', 'Per repo']]
               .map(([v, label]) => `<option value="${v}" ${activeScope === v ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
         </div>
         <div class="config-field mb-7">
-          <label>Multi-repo threshold scaling ${settingHelpMark('governor-thresholds', '', 'Multi-repo threshold scaling', `How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.`)}</label>
+          <label>Multi-repo threshold scaling ${settingHelpMark('governor-thresholds', '', 'Multi-repo threshold scaling', `How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.`)} ${yamlHint('governor.threshold_scaling')}</label>
           <select id="cfg-threshold-scaling" data-change-action="markDirty" data-arg0="threshold-scaling" data-arg1="thresholdScaling" data-arg-types="s,s,v" ${activeScope === 'per_repo' ? 'disabled style="opacity:0.6"' : ''}>
             ${[['linear', 'Linear'], ['sqrt', 'Square-root (default)'], ['none', 'None']]
               .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
@@ -41544,6 +41688,9 @@ function burnAreaChart() {
       const reqList = (requireLabels || []).map((l, i) =>
         `<div class="config-list-item"><span>${esc(l)}</span><button class="remove-item" data-action="removeListItem" data-arg0="labels" data-arg1="require" data-arg2="${i}" data-arg-types="s,s,j">✕</button></div>`
       ).join('');
+      const automergeLabel = (_configState.dirty.labels && _configState.dirty.labels.automerge !== undefined)
+        ? _configState.dirty.labels.automerge
+        : (_configState.data.automergeLabel || '');
       const writingGuide = (_configState.dirty.labels && _configState.dirty.labels.writing_guide !== undefined)
         ? _configState.dirty.labels.writing_guide
         : (_configState.data.writingGuide || '');
@@ -41569,6 +41716,12 @@ function burnAreaChart() {
             <input type="text" id="cfg-require-label-input" placeholder="label name" title="GitHub label an issue must carry before agents may work it (e.g. an approval/queue label).">
             <button class="hv-btn btn-primary" data-action="addListItem" data-arg0="labels" data-arg1="require" data-arg2="cfg-require-label-input" title="Add this label to the required (allow) list">+ Add</button>
           </div>
+        </div>
+        <h4 class="mt-6 mb-3">Auto-merge queue label</h4>
+        <div class="config-field">
+          <label for="cfg-automerge-label">Queue label ${yamlHint('governor.labels.automerge')} ${settingHelpMark('settings', 'labels', 'Auto-merge queue label', `The label a merger or owner queue action applies to a PR to queue it for auto-merge. Configurable because the label lives in the managed repository, where a convention may already exist (Prow-style projects use lgtm). Empty uses the default.`)}</label>
+          <input type="text" id="cfg-automerge-label" value="${esc(automergeLabel)}" placeholder="${esc(_configState.data.automergeLabelDefault || 'lgtm')}" data-change-action="markDirty" data-arg0="labels" data-arg1="automerge" data-arg-types="s,s,w">
+          <div class="config-help">Label applied by the merger queue; default is ${esc(_configState.data.automergeLabelDefault || 'lgtm')}. Requires restart.</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>
@@ -41868,7 +42021,7 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle rt-toggle-lg">
           <div class="config-toggle-switch ${rtHoldDefault ? 'on' : ''} ${rtHoldEnvLocked ? 'disabled' : ''}" data-action="${rtHoldEnvLocked ? '' : 'toggleReporterTrustHoldDefault'}" data-arg-types="t" title="${rtHoldEnvLocked ? 'HIVE_REPORTER_TRUST_HOLD is set; the environment controls this value.' : 'Hold, at every ACMM level, any PR whose rationale traces to an issue from a reporter this hive does not trust'}"></div>
-          <span class="config-toggle-label">All repos: hold PRs for untrusted reporters at every level (#9665) <span class="rt-sub">— follows the Labels tab's reporter-trust switch${rtGateOn ? '' : ' (currently off)'} unless set here; a human removes the hold, Hive never does</span></span>
+          <span class="config-toggle-label">All repos: hold PRs for untrusted reporters at every level (#9665) ${yamlHint('github.reporter_trust_hold')} <span class="rt-sub">— follows the Labels tab's reporter-trust switch${rtGateOn ? '' : ' (currently off)'} unless set here; a human removes the hold, Hive never does</span></span>
         </div>
         <div class="config-list">
           ${list || '<div class="fs-sm text-muted mb-3">No repos configured</div>'}
@@ -42072,7 +42225,7 @@ function burnAreaChart() {
           <div class="config-field"><label>Period (days) ${settingHelpMark('settings', 'budget', 'Period (days)', `Rolling window length in days for token budget accounting. Default is 7 (weekly). The budget resets at the end of each period.`)}</label><input type="number" value="${b.periodDays || 7}" data-change-action="gh44"></div>
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>USD Budget ${settingHelpMark('settings', 'budget', 'USD Budget', `Optional Bob budget cap in dollars for the period. Set to 0 to disable this dollar cap.`)}</label><input id="gov-budget-usd" type="number" step="0.01" min="0" value="${b.usd || 0}" data-change-action="gh85"></div>
+          <div class="config-field"><label>USD Budget ${yamlHint('governor.budget.usd')} ${settingHelpMark('settings', 'budget', 'USD Budget', `Optional Bob budget cap in dollars for the period. Set to 0 to disable this dollar cap.`)}</label><input id="gov-budget-usd" type="number" step="0.01" min="0" value="${b.usd || 0}" data-change-action="gh85"></div>
           <div class="config-field"><label>${esc(coinLabel)} Budget ${settingHelpMark('settings', 'budget', coinLabel + ' Budget', `Optional Bob coin cap for the period. Uses the configured Bob coin conversion; confirm the conversion with your Bob team.`)}</label><input id="gov-budget-coin" type="number" step="0.01" min="0" value="${bobCoin.budget || 0}" data-change-action="gh86"></div>
         </div>
         <div class="config-field">
@@ -42090,7 +42243,7 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle" style="margin-top:14px">
           <div class="config-toggle-switch ${h.modelLock ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="health" data-key="modelLock"></div>
-          <span class="config-toggle-label">Model Lock ${settingHelpMark('settings', 'budget', 'Model Lock', `When enabled, the governor will not automatically change any agent's model (e.g. downgrading from Opus to Sonnet during budget pressure). Agents keep their configured model regardless of budget status. Does NOT prevent manual model changes or agent kicks.`)}</span>
+          <span class="config-toggle-label">Model Lock ${yamlHint('governor.health.model_lock')} ${settingHelpMark('settings', 'budget', 'Model Lock', `When enabled, the governor will not automatically change any agent's model (e.g. downgrading from Opus to Sonnet during budget pressure). Agents keep their configured model regardless of budget status. Does NOT prevent manual model changes or agent kicks.`)}</span>
         </div>`;
     }
 
@@ -42887,8 +43040,8 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-field-row">
-          <div class="config-field"><label>Alert TTL (sec) ${settingHelpMark('settings', 'sensing', 'Alert TTL (sec)', `How long a rate-limit alert stays active before auto-clearing. Default is 900 seconds (15 minutes). After this time, the agent is considered safe to kick again.`)}</label><input type="number" value="${s.ttlSeconds || 900}" data-change-action="gh48"></div>
-          <div class="config-field"><label>Pullback Duration (sec) ${settingHelpMark('settings', 'sensing', 'Pullback Duration (sec)', `How long to pause an agent after detecting a rate limit. During pullback, the governor skips kicks for this agent. Default is 900 seconds (15 minutes).`)}</label><input type="number" value="${s.pullbackSeconds || 900}" data-change-action="gh49"></div>
+          <div class="config-field"><label>Alert TTL (sec) ${yamlHint('governor.sensing.ttl_seconds')} ${settingHelpMark('settings', 'sensing', 'Alert TTL (sec)', `How long a rate-limit alert stays active before auto-clearing. Default is 900 seconds (15 minutes). After this time, the agent is considered safe to kick again.`)}</label><input type="number" value="${s.ttlSeconds || 900}" data-change-action="gh48"></div>
+          <div class="config-field"><label>Pullback Duration (sec) ${yamlHint('governor.sensing.pullback_seconds')} ${settingHelpMark('settings', 'sensing', 'Pullback Duration (sec)', `How long to pause an agent after detecting a rate limit. During pullback, the governor skips kicks for this agent. Default is 900 seconds (15 minutes).`)}</label><input type="number" value="${s.pullbackSeconds || 900}" data-change-action="gh49"></div>
         </div>`;
     }
 
@@ -44299,6 +44452,10 @@ function burnAreaChart() {
               <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh98">Add bot</button>
             </div>
           </div>
+          <div class="config-toggle mt-4">
+            <div class="config-toggle-switch ${am.bot_takeover_enabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="bot_takeover_enabled"></div>
+            <span class="config-toggle-label">Take over github-actions[bot] PRs whose checks cannot run ${yamlHint('auto_merge.bot_takeover.enabled')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Take over github-actions[bot] PRs', `On by default. Applies only when github-actions[bot] is a trusted bot author above. A PR that bot opens with a workflow GITHUB_TOKEN never triggers pull_request checks, so it can never go green. Once its head is older than both the minimum head age and 30 minutes with no pull_request run, the App pushes the same change as one signed-off commit to hive/takeover-&lt;n&gt;, opens a PR that supersedes it and closes the bot PR. One attempt per bot head SHA. Applies on the next sweep.`)}</span>
+          </div>
           <div class="config-field" id="am-trusted-authors">
             <label>Trusted-author auto-merge ${settingHelpMark('hive-merge', 'trusted-author-auto-merge', 'Trusted-author auto-merge', `Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.`)}</label>
             <div class="config-toggle mt-3">
@@ -44387,20 +44544,20 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.fan_out ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="fan_out"></div>
-            <span class="config-toggle-label">Fan out to multiple reviewers in parallel ${settingHelpMark('review-swarm', 'configuration', 'Fan out to multiple reviewers in parallel', `Runs the configured reviewer agents concurrently instead of one after another, bounded by Max parallel reviews. Faster on PRs with several reviewers, at the cost of more agents running at once.`)}</span>
+            <span class="config-toggle-label">Fan out to multiple reviewers in parallel ${yamlHint('review.fan_out')} ${settingHelpMark('review-swarm', 'configuration', 'Fan out to multiple reviewers in parallel', `Runs the configured reviewer agents concurrently instead of one after another, bounded by Max parallel reviews. Faster on PRs with several reviewers, at the cost of more agents running at once.`)}</span>
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Max parallel reviews ${settingHelpMark('review-swarm', 'configuration', 'Max parallel reviews', `Caps how many reviewer agents run concurrently when fan-out is on. 0 or empty uses the default.`)}</label>
+            <label>Max parallel reviews ${yamlHint('review.max_parallel_reviews')} ${settingHelpMark('review-swarm', 'configuration', 'Max parallel reviews', `Caps how many reviewer agents run concurrently when fan-out is on. 0 or empty uses the default.`)}</label>
             <input type="number" min="0" step="1" value="${rv.max_parallel_reviews || ''}" placeholder="3" data-change-action="gh73">
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Max perspectives per PR ${settingHelpMark('review-swarm', 'configuration', 'Max perspectives per PR', `Caps how many review perspectives ONE PR may be given in a single cycle. Parallel review slots are a fixed budget spent in PR order, so without a cap the first PR in a deep queue absorbs every slot for its own perspectives &mdash; more opinions on one PR instead of coverage across many. Capping spends the same budget breadth-first. No coverage is lost: perspectives skipped this cycle are still missing next cycle and get dispatched then, so this schedules depth rather than dropping it. It also bounds how many comments one PR can collect at once, which matters once reviewers publish. 0 or empty means no cap (the default).`)}</label>
+            <label>Max perspectives per PR ${yamlHint('review.max_perspectives_per_pr')} ${settingHelpMark('review-swarm', 'configuration', 'Max perspectives per PR', `Caps how many review perspectives ONE PR may be given in a single cycle. Parallel review slots are a fixed budget spent in PR order, so without a cap the first PR in a deep queue absorbs every slot for its own perspectives &mdash; more opinions on one PR instead of coverage across many. Capping spends the same budget breadth-first. No coverage is lost: perspectives skipped this cycle are still missing next cycle and get dispatched then, so this schedules depth rather than dropping it. It also bounds how many comments one PR can collect at once, which matters once reviewers publish. 0 or empty means no cap (the default).`)}</label>
             <input type="number" min="0" step="1" value="${rv.max_perspectives_per_pr || ''}" placeholder="0 — no cap" data-change-action="gh81">
           </div>
           <div class="config-subgroup">Perspectives</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rv.combined_perspectives ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="combined_perspectives"></div>
-            <span class="config-toggle-label">Review every perspective in one session, one comment ${settingHelpMark('review-swarm', 'configuration', 'Review every perspective in one session, one comment', `Off: each perspective is its own agent session and its own review comment, and &quot;Max perspectives per PR&quot; caps how many a PR gets &mdash; which is how a fleet ends up reviewing only correctness. On: ONE session judges every enabled perspective and leaves ONE comment, with findings grouped under the perspective they belong to. The diff and surrounding tree are read once instead of once per perspective. Each perspective still records its own verdict, so any one of them can still hold a PR for a human. The per-PR cap does not apply in this mode: it exists to bound comments, and a combined review is always exactly one.`)}</span>
+            <span class="config-toggle-label">Review every perspective in one session, one comment ${yamlHint('review.combined_perspectives')} ${settingHelpMark('review-swarm', 'configuration', 'Review every perspective in one session, one comment', `Off: each perspective is its own agent session and its own review comment, and &quot;Max perspectives per PR&quot; caps how many a PR gets &mdash; which is how a fleet ends up reviewing only correctness. On: ONE session judges every enabled perspective and leaves ONE comment, with findings grouped under the perspective they belong to. The diff and surrounding tree are read once instead of once per perspective. Each perspective still records its own verdict, so any one of them can still hold a PR for a human. The per-PR cap does not apply in this mode: it exists to bound comments, and a combined review is always exactly one.`)}</span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${f.planMatchEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="planMatchEnabled"></div>
@@ -44423,35 +44580,61 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.all_authors ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="all_authors"></div>
-            <span class="config-toggle-label">Review every PR, not just agent-authored ${settingHelpMark('review-swarm', 'configuration', 'Review every PR, not just agent-authored', `By default the review swarm only looks at PRs the hive's own agents opened &mdash; the work the hive is answerable for. Turn this on to make EVERY open PR eligible regardless of who opened it, including contributors' and other bots'. Use it where the PR queue itself is the problem: a person's PR waiting on a review is no less stuck than an agent's, and it has someone waiting on the other end. Expect more reviews, and reviews on repositories where humans are the main authors. This only makes those PRs REVIEWED; whether Hive may also push fix commits to them is the next toggle.`)}</span>
+            <span class="config-toggle-label">Review every PR, not just agent-authored ${yamlHint('review.all_authors')} ${settingHelpMark('review-swarm', 'configuration', 'Review every PR, not just agent-authored', `By default the review swarm only looks at PRs the hive's own agents opened &mdash; the work the hive is answerable for. Turn this on to make EVERY open PR eligible regardless of who opened it, including contributors' and other bots'. Use it where the PR queue itself is the problem: a person's PR waiting on a review is no less stuck than an agent's, and it has someone waiting on the other end. Expect more reviews, and reviews on repositories where humans are the main authors. This only makes those PRs REVIEWED; whether Hive may also push fix commits to them is the next toggle.`)}</span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.fix_human_prs ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="fix_human_prs"></div>
-            <span class="config-toggle-label">Push fix commits to PRs Hive did not open ${settingHelpMark('review-swarm', 'configuration', 'Push fix commits to PRs Hive did not open', `OFF by default. When a review verdict is changes_requested on a PR opened by a person, a maintainer, or another bot, Hive will COMMIT TO THAT PERSON'S PR BRANCH: the &quot;Fixer agent&quot; below checks the branch out, makes the change, and pushes it &mdash; including onto an outside contributor's fork when &quot;allow edits by maintainers&quot; is on. Off, the reviewer still posts its findings, with the proposed fix as a suggestion or patch block in the comment, and the author decides what to change; each withheld push is recorded in the audit log. Hive's own agents' PRs are fixed either way. &quot;Review every PR&quot; never turns this on by itself. Owner only.`)}</span>
+            <span class="config-toggle-label">Push fix commits to PRs Hive did not open ${yamlHint('review.fix_human_prs')} ${settingHelpMark('review-swarm', 'configuration', 'Push fix commits to PRs Hive did not open', `OFF by default. When a review verdict is changes_requested on a PR opened by a person, a maintainer, or another bot, Hive will COMMIT TO THAT PERSON'S PR BRANCH: the &quot;Fixer agent&quot; below checks the branch out, makes the change, and pushes it &mdash; including onto an outside contributor's fork when &quot;allow edits by maintainers&quot; is on. Off, the reviewer still posts its findings, with the proposed fix as a suggestion or patch block in the comment, and the author decides what to change; each withheld push is recorded in the audit log. Hive's own agents' PRs are fixed either way. &quot;Review every PR&quot; never turns this on by itself. Owner only.`)}</span>
           </div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rv.contributor_prs && rv.contributor_prs.base_sync ? 'on' : ''}" data-action="toggleContributorPRBaseSync"></div>
             <span class="config-toggle-label">Sync lane-authored contributor fork PRs with base ${settingHelpMark('review-swarm', 'configuration', 'Sync lane-authored contributor fork PRs with base', `OFF by default. Owner gate for review.contributor_prs.base_sync. When a Hive-authored lane PR lives on a contributor fork, is behind or dirty, and has &quot;allow edits by maintainers&quot; enabled, Hive may call GitHub&apos;s update-branch API. Clean BEHIND PRs get a GitHub-authored merge commit; DIRTY PRs fall back to the base-moved repair note and kick. Requires the agent mode that permits update-branch (ISSUES_PRS_MERGE).`)}</span>
           </div>
+          <div class="config-toggle mt-4">
+            <div class="config-toggle-switch ${rv.post_comments ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="post_comments"></div>
+            <span class="config-toggle-label">Post review comments ${yamlHint('review.post_comments')} ${settingHelpMark('review-swarm', 'configuration', 'Post review comments', `OFF by default. Reviewers publish their verdict as a PR comment through the hive-review relay, in addition to returning it to the merge gate. Off, the verdict stays internal, which on a hive without auto-merge means nobody reads it. Turn this on so a review reaches the human who has to decide.`)}</span>
+          </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.acknowledge_no_findings ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="acknowledge_no_findings"></div>
-            <span class="config-toggle-label">Comment even when there are no findings ${settingHelpMark('review-swarm', 'configuration', 'Comment even when there are no findings', `A reviewer with nothing useful to say stays silent by default, which keeps PRs uncluttered but is indistinguishable from a reviewer that never ran. Turn this on to have a clean review leave one short line recording that it reviewed and found nothing, so review coverage is visible on the PR itself. The acknowledgement is capped at a single line &mdash; it is evidence, not a report. Requires &quot;post review comments&quot;.`)}</span>
+            <span class="config-toggle-label">Comment even when there are no findings ${yamlHint('review.acknowledge_no_findings')} ${settingHelpMark('review-swarm', 'configuration', 'Comment even when there are no findings', `A reviewer with nothing useful to say stays silent by default, which keeps PRs uncluttered but is indistinguishable from a reviewer that never ran. Turn this on to have a clean review leave one short line recording that it reviewed and found nothing, so review coverage is visible on the PR itself. The acknowledgement is capped at a single line &mdash; it is evidence, not a report. Requires &quot;post review comments&quot;.`)}</span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.confidence_score ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="confidence_score"></div>
-            <span class="config-toggle-label">Show a mergeability confidence score ${settingHelpMark('review-swarm', 'configuration', 'Show a mergeability confidence score', `Appends one line to each review comment: <b>Confidence: 4/5</b> (safe) &mdash; 1 medium finding. The score is derived from the verdicts and finding severities the perspectives reported, never asked of the model, so it means the same thing on every PR: 4&ndash;5 safe, 1&ndash;3 needs attention, 0 do not merge. Always recorded in the verdict artifact; this only controls whether the comment shows it.`)}</span>
+            <span class="config-toggle-label">Show a mergeability confidence score ${yamlHint('review.confidence_score')} ${settingHelpMark('review-swarm', 'configuration', 'Show a mergeability confidence score', `Appends one line to each review comment: <b>Confidence: 4/5</b> (safe) &mdash; 1 medium finding. The score is derived from the verdicts and finding severities the perspectives reported, never asked of the model, so it means the same thing on every PR: 4&ndash;5 safe, 1&ndash;3 needs attention, 0 do not merge. Always recorded in the verdict artifact; this only controls whether the comment shows it.`)}</span>
           </div>
           <div class="config-toggle" style="margin-top:10px">
             <div class="config-toggle-switch ${rv.priority_labels ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="priority_labels"></div>
-            <span class="config-toggle-label">Label PRs with their review-queue priority ${settingHelpMark('review-swarm', 'configuration', 'Label PRs with their review-queue priority', `OFF by default. Mirrors each open PR's place in the review queue (GET /api/review/queue) onto exactly one of review-priority/high, review-priority/normal or review-priority/low - high for fixes, normal for refactors, docs and unclassified PRs, low for test-only PRs - so the order shows up in plain GitHub searches. Applied by the hive from the computed rank, never by the PR's author, on contributor PRs too. The labels are never created: create them in each repo first; a repo without them is skipped.`)}</span>
+            <span class="config-toggle-label">Label PRs with their review-queue priority ${yamlHint('review.priority_labels')} ${settingHelpMark('review-swarm', 'configuration', 'Label PRs with their review-queue priority', `OFF by default. Mirrors each open PR's place in the review queue (GET /api/review/queue) onto exactly one of review-priority/high, review-priority/normal or review-priority/low - high for fixes, normal for refactors, docs and unclassified PRs, low for test-only PRs - so the order shows up in plain GitHub searches. Applied by the hive from the computed rank, never by the PR's author, on contributor PRs too. The labels are never created: create them in each repo first; a repo without them is skipped.`)}</span>
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Fixer agent ${settingHelpMark('review-swarm', 'configuration', 'Fixer agent', `The agent kicked to address reviewer findings before re-review. Use the agent ID (the key in the roster, not its display name). Blank falls back to the PR's authoring agent, then scanner.`)}</label>
+            <label>Fixer agent ${yamlHint('review.fixer_agent')} ${settingHelpMark('review-swarm', 'configuration', 'Fixer agent', `The agent kicked to address reviewer findings before re-review. Use the agent ID (the key in the roster, not its display name). Blank falls back to the PR's authoring agent, then scanner.`)}</label>
             <input type="text" value="${esc(rv.fixer_agent || '')}" placeholder="scanner (default)" data-change-action="markDirty" data-arg0="review" data-arg1="fixer_agent" data-arg-types="s,s,w">
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Human decision label ${settingHelpMark('review-swarm', 'configuration', 'Human decision label', `An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.`)}</label>
+            <label>Human decision label ${yamlHint('review.human_decision_label')} ${settingHelpMark('review-swarm', 'configuration', 'Human decision label', `An EXISTING repo label applied when the review swarm holds a PR for a human, so those PRs can be filtered from the list. There is no fleet-wide default and no standard name &mdash; use whatever the governed repos already maintain (this fleet's bluefin spoke uses 3-human-queue). The label is never created: if it is blank, misspelled, or absent from a repo, labeling is skipped there and the review comment's in-body marker still carries the signal.`)}</label>
             <input type="text" value="${esc(rv.human_decision_label || '')}" placeholder="(none) — must already exist in the repo" data-change-action="markDirty" data-arg0="review" data-arg1="human_decision_label" data-arg-types="s,s,w">
+          </div>
+          <div class="config-field-row mt-4">
+            <div class="config-field"><label>Max reviews per head ${yamlHint('review.max_reviews_per_head')} ${settingHelpMark('review-swarm', 'configuration', 'Max reviews per head', `Caps how many top-level hive reviews one PR head may receive before the relay refuses more (revisions and thread replies excepted). 0 or empty derives the cap: 1 with combined perspectives, one per perspective otherwise. A negative value disables the backstop.`)}</label><input type="number" step="1" value="${esc(String(rv.max_reviews_per_head || ''))}" placeholder="0 — derived" data-change-action="markDirty" data-arg0="review" data-arg1="max_reviews_per_head" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Re-review verdicts before ${yamlHint('review.revise_verdicts_before')} ${settingHelpMark('review-swarm', 'configuration', 'Re-review verdicts before', `RFC 3339 instant, e.g. 2026-09-19T14:00:00Z. PRs in the revise repos whose verdict was recorded before it are reviewed once more even though the head has not moved, for when the reviewer itself was wrong. Each PR is revisited at most once per bump. The revise repo list (review.revise_repos) is yaml-only. Empty clears it.`)}</label><input type="text" value="${esc(rv.revise_verdicts_before || '')}" placeholder="not set" spellcheck="false" data-change-action="markDirty" data-arg0="review" data-arg1="revise_verdicts_before" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-subgroup">Dispatch</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Webhook-triggered dispatch ${yamlHint('review.event_driven')} ${settingHelpMark('review-swarm', 'configuration', 'Webhook-triggered dispatch', `Lets pull_request webhooks start a review early instead of waiting for the next governor cycle. auto (the default) is on exactly when this hive receives signed GitHub webhooks. Always off while the review swarm itself is off (require approval and fan-out).`)}</label><select data-change-action="markDirty" data-arg0="review" data-arg1="event_driven_mode" data-arg-types="s,s,v">${['auto', 'on', 'off'].map(v => `<option value="${v}"${(rv.event_driven === true ? 'on' : rv.event_driven === false ? 'off' : 'auto') === v ? ' selected' : ''}>${v}</option>`).join('')}</select></div>
+            <div class="config-field"><label>Webhook debounce (s) ${yamlHint('review.event_debounce_s')} ${settingHelpMark('review-swarm', 'configuration', 'Webhook debounce', `Per-PR quiet period before a webhook-triggered review fires, so a burst of pushes yields one review (default 90 seconds, at most 3600). 0 uses the default.`)}</label><input type="number" min="0" max="3600" step="1" value="${esc(String(rv.event_debounce_s || ''))}" placeholder="90" data-change-action="markDirty" data-arg0="review" data-arg1="event_debounce_s" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Pending review TTL ${yamlHint('review.pending_ttl')} ${settingHelpMark('review-swarm', 'configuration', 'Pending review TTL', `How long a dispatched review may go without a verdict before it expires and its perspectives are asked again (default 45m). A reviewer turn that dies posts no verdict; without expiry the PR would look covered until the next push. Go duration; empty or 0 uses the default and a negative value disables expiry.`)}</label><input type="text" value="${esc(rv.pending_ttl || '')}" placeholder="45m0s" spellcheck="false" data-change-action="markDirty" data-arg0="review" data-arg1="pending_ttl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Max re-dispatches ${yamlHint('review.max_redispatch')} ${settingHelpMark('review-swarm', 'configuration', 'Max re-dispatches', `How many times one PR head's pending reviews may expire before the planner stops re-kicking and holds the PR for a human (default 3). 0 uses the default.`)}</label><input type="number" min="0" step="1" value="${esc(String(rv.max_redispatch || ''))}" placeholder="3" data-change-action="markDirty" data-arg0="review" data-arg1="max_redispatch" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-subgroup">Out-of-scope findings</div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${rv.out_of_scope_backlog_disabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="review" data-key="out_of_scope_backlog_disabled"></div>
+            <span class="config-toggle-label">Do not file out-of-scope findings as issues ${yamlHint('review.out_of_scope_backlog_disabled')} ${settingHelpMark('review-swarm', 'configuration', 'Do not file out-of-scope findings as issues', `OFF by default, so cited findings outside a PR's scope are filed as follow-up issues and the review can stay narrow without losing real adjacent defects. Turn this on to opt out.`)}</span>
+          </div>
+          <div class="config-field mt-4">
+            <label>Max out-of-scope issues per review ${yamlHint('review.max_out_of_scope_backlog_issues')} ${settingHelpMark('review-swarm', 'configuration', 'Max out-of-scope issues per review', `Caps how many follow-up issues one PR review may file (default 3). 0 or empty uses the default.`)}</label>
+            <input type="number" min="0" step="1" value="${esc(String(rv.max_out_of_scope_backlog_issues || ''))}" placeholder="3" data-change-action="markDirty" data-arg0="review" data-arg1="max_out_of_scope_backlog_issues" data-arg-types="s,s,N">
           </div>
           ${renderReviewSeverityBacklog(rv)}
           <div class="config-subgroup">External review bots ${settingHelpMark('review-bot-threads', '', 'External review bots', `Effective classification.review_bots settings from hive.yaml, falling back to hive-project.yaml. Listed logins grant agents the right to address and resolve those accounts&apos; threads; changing this trust boundary requires a config-file edit. This is separate from the review swarm gate.`)}</div>
@@ -44479,14 +44662,14 @@ function burnAreaChart() {
           <div class="settings-subsection-title">Merge Recommendations ${settingHelpMark('settings', 'features', 'Merge Recommendations', `A digest of what is worth merging next, written into one issue per repository and rewritten in place each cycle. It is separate from the review gate above: the gate decides whether a PR may merge, while this only reports what already can. It never merges, approves, closes or labels anything.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rvRec.enabled ? 'on' : ''}" id="rec-enabled-switch" data-action="gh82"></div>
-            <span class="config-toggle-label">Open a &quot;what to merge next&quot; issue ${settingHelpMark('settings', 'features', 'Open a "what to merge next" issue', `For a queue nobody can read top to bottom. The hive reads every open PR it already tracks, works out which ones are genuinely mergeable right now, and writes the answer into ONE issue per repository titled &quot;🐝 Hive recommendations&quot;. That issue is rewritten in place on each cycle, so it stays current without ever sending a second notification. It recommends only &mdash; nothing is merged, approved, closed or labelled, and PRs a maintainer put on hold are left out entirely. Off by default: opening an issue in someone&apos;s repository is not something to do uninvited.`)}</span>
+            <span class="config-toggle-label">Open a &quot;what to merge next&quot; issue ${yamlHint('review.recommendations.enabled')} ${settingHelpMark('settings', 'features', 'Open a "what to merge next" issue', `For a queue nobody can read top to bottom. The hive reads every open PR it already tracks, works out which ones are genuinely mergeable right now, and writes the answer into ONE issue per repository titled &quot;🐝 Hive recommendations&quot;. That issue is rewritten in place on each cycle, so it stays current without ever sending a second notification. It recommends only &mdash; nothing is merged, approved, closed or labelled, and PRs a maintainer put on hold are left out entirely. Off by default: opening an issue in someone&apos;s repository is not something to do uninvited.`)}</span>
           </div>
           <div class="config-field" style="margin-top:10px">
             <label>Recommendations repos ${settingHelpMark('settings', 'features', 'Recommendations repos', `Comma-separated owner/repo names that get an issue, e.g. projectbluefin/common. Leave blank for every watched repository with open PRs &mdash; start with one repo to see what the issue looks like before widening it.`)}</label>
             <input type="text" id="rec-repos-input" value="${esc(rvRecRepos.join(', '))}" placeholder="(blank) — every watched repo" data-change-action="gh83">
           </div>
           <div class="config-field" style="margin-top:10px">
-            <label>Min mergeable PRs to open ${settingHelpMark('settings', 'features', 'Min mergeable PRs to open', `How many ready-to-merge PRs must exist before the issue is opened the FIRST time &mdash; an issue that opens saying &quot;nothing is ready&quot; is noise. Once it exists it is kept current regardless, including when the answer becomes &quot;nothing right now&quot;, which is itself worth being able to read. 0 or empty uses the default of 1.`)}</label>
+            <label>Min mergeable PRs to open ${yamlHint('review.recommendations.min_ready_to_open')} ${settingHelpMark('settings', 'features', 'Min mergeable PRs to open', `How many ready-to-merge PRs must exist before the issue is opened the FIRST time &mdash; an issue that opens saying &quot;nothing is ready&quot; is noise. Once it exists it is kept current regardless, including when the answer becomes &quot;nothing right now&quot;, which is itself worth being able to read. 0 or empty uses the default of 1.`)}</label>
             <input type="number" min="0" step="1" id="rec-minready-input" value="${rvRec.min_ready_to_open || ''}" placeholder="1" data-change-action="gh84">
           </div>
         </div>
@@ -44568,6 +44751,19 @@ function burnAreaChart() {
             <span class="config-toggle-label">Issue claims ${settingHelpMark('settings', 'features', 'Issue claims', `OFF by default. When on, the hub recognises a claim on an issue itself (a hive:claim marker comment, or an assignee) and withholds the issue from contributors and kick prompts while the claim is live; claims expire on their own after the TTL (default 4h). Relay agents post a claim comment when they take a lease, at tiers that may write issue comments; below that the claim is recorded on the lease only. Covers the window before a PR exists that the PR claim ledger cannot see; see src/docs/contributor-relay.md.`)}</span>
           </div>
           ${renderClaimsTTLFields(f)}
+          <div class="config-toggle mt-3">
+            <div class="config-toggle-switch ${f.claimsComment !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsComment"></div>
+            <span class="config-toggle-label">Post claim comments ${yamlHint('governor.claims.comment')} ${settingHelpMark('settings', 'features', 'Post claim comments', `On by default when claims are enabled. Posts the claim, takeover and release comments on the GitHub issue. Off keeps claims in the ledger only.`)} <span class="text-muted">— requires restart.</span></span>
+          </div>
+          <div class="config-toggle mt-3">
+            <div class="config-toggle-switch ${f.claimsLabel !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="claimsLabel"></div>
+            <span class="config-toggle-label">Apply claim labels ${yamlHint('governor.claims.label')} ${settingHelpMark('settings', 'features', 'Apply claim labels', `On by default when claims are enabled. Adds and removes the claimed and preempted labels on the GitHub issue as claims change hands.`)} <span class="text-muted">— requires restart.</span></span>
+          </div>
+          <div class="config-field mt-3">
+            <label>Escalate after claims ${yamlHint('governor.claims.escalate_after_claims')} ${settingHelpMark('settings', 'features', 'Escalate after claims', `How many claims one agent may make on an issue with nothing moving in between (no linked PR, referencing commit, label or assignee change, or close/reopen) before the next is refused and the issue is labelled needs-human with one summary comment. 0 uses the default; a negative number turns the gate off.`)}</label>
+            <input type="number" step="1" value="${f.claimsEscalateAfterClaims ? esc(String(f.claimsEscalateAfterClaims)) : ''}" placeholder="${esc(String(f.claimsEscalateAfterDefault || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="claimsEscalateAfterClaims" data-arg-types="s,s,N">
+            <div class="config-help">0 uses the default (${esc(String(f.claimsEscalateAfterDefault || 2))}); -1 turns the gate off. Requires restart.</div>
+          </div>
         </div>
         <div class="settings-subsection">
           <div class="settings-subsection-title">Issue lifecycle ${settingHelpMark('settings', 'features', 'Issue lifecycle', `When a PR that fixes an issue merges, Hive posts a close marker and closes the fixed issue as completed itself, because GitHub only auto-closes keyword-linked PRs that target the repository default branch.`)}</div>
@@ -44614,7 +44810,17 @@ function burnAreaChart() {
             <div class="config-field"><label>Minimum issue age ${yamlHint('good_first_issue.min_age')} ${settingHelpMark('settings', 'features', 'Good first issue minimum age', `How old an issue must be before hive advertises it, so it never races a reporter who is still editing or about to fix it. Empty uses the default (${esc(gfiDefaults.goodFirstIssueMinAge || '24h0m0s')}).`)}</label><input type="text" value="${esc(f.goodFirstIssueMinAge || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueMinAge || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMinAge" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Sweep interval ${yamlHint('good_first_issue.interval')} ${settingHelpMark('settings', 'features', 'Good first issue sweep interval', `How often the curation pass runs over the last enumeration. Empty uses the default (${esc(gfiDefaults.goodFirstIssueInterval || '1h0m0s')}).`)}</label><input type="text" value="${esc(f.goodFirstIssueInterval || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueInterval || '1h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueInterval" data-arg-types="s,s,w"></div>
           </div>
-          <div class="config-help">${gfiStats ? `Since start: ${esc(String(gfiStats.selected || 0))} selected · ${esc(String(gfiStats.released || 0))} released to hive · ${esc(String(gfiStats.converted || 0))} claimed by contributors. ` : ''}Scoring knobs, exclude labels, repos and the comment template stay yaml-only.</div>
+          <div class="config-subgroup">Scorer tuning</div>
+          <div class="config-field-row settings-subsection-row">
+            <div class="config-field"><label>Minimum body length ${yamlHint('good_first_issue.min_body_chars')} ${settingHelpMark('settings', 'features', 'Good first issue minimum body length', `Shortest issue body, in characters, the scorer accepts: a one-line issue rarely says enough for a newcomer to start. 0 uses the default (${esc(String(gfiDefaults.goodFirstIssueMinBodyChars || 80))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.goodFirstIssueMinBodyChars || ''))}" placeholder="${esc(String(gfiDefaults.goodFirstIssueMinBodyChars || 80))}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMinBodyChars" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Maximum body length ${yamlHint('good_first_issue.max_body_chars')} ${settingHelpMark('settings', 'features', 'Good first issue maximum body length', `Longest issue body, in characters, the scorer accepts: a very long issue is usually a design discussion rather than a first task. Must not be below the minimum. 0 uses the default (${esc(String(gfiDefaults.goodFirstIssueMaxBodyChars || 4000))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.goodFirstIssueMaxBodyChars || ''))}" placeholder="${esc(String(gfiDefaults.goodFirstIssueMaxBodyChars || 4000))}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMaxBodyChars" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Maximum packages mentioned ${yamlHint('good_first_issue.max_packages')} ${settingHelpMark('settings', 'features', 'Good first issue maximum packages', `How many source directories an issue may mention before it counts as too wide for a first contribution. 0 uses the default (${esc(String(gfiDefaults.goodFirstIssueMaxPackages || 2))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.goodFirstIssueMaxPackages || ''))}" placeholder="${esc(String(gfiDefaults.goodFirstIssueMaxPackages || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMaxPackages" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Minimum score ${yamlHint('good_first_issue.min_score')} ${settingHelpMark('settings', 'features', 'Good first issue minimum score', `How many positive signals (size labels, kind/bug, help wanted, clear steps or acceptance criteria) an issue needs before it is advertised. 0 uses the default (${esc(String(gfiDefaults.goodFirstIssueMinScore || 2))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.goodFirstIssueMinScore || ''))}" placeholder="${esc(String(gfiDefaults.goodFirstIssueMinScore || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMinScore" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Reselect cooldown ${yamlHint('good_first_issue.reselect_cooldown')} ${settingHelpMark('settings', 'features', 'Good first issue reselect cooldown', `How long an issue hive released (because one of its own agents started it) stays out of the pool before it may be advertised again. Go duration; empty uses the default (${esc(gfiDefaults.goodFirstIssueReselectCooldown || '168h0m0s')}).`)}</label><input type="text" value="${esc(f.goodFirstIssueReselectCooldown || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueReselectCooldown || '168h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueReselectCooldown" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field"><label>Contributor docs URL ${yamlHint('good_first_issue.docs_url')} ${settingHelpMark('settings', 'features', 'Good first issue docs URL', `Base URL the welcome comment links contributor docs under. Absolute http(s) URL; empty uses the default (${esc(gfiDefaults.goodFirstIssueDocsUrl || '')}).`)}</label><input type="url" value="${esc(f.goodFirstIssueDocsUrl || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueDocsUrl || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueDocsUrl" data-arg-types="s,s,w"></div>
+          <div class="config-field"><label>Welcome comment template ${yamlHint('good_first_issue.comment_template')} ${settingHelpMark('settings', 'features', 'Good first issue comment template', `Overrides the welcome comment. Go text/template over the issue, repo, claim URL and docs variables; it must contain {{ .Marker }} so hive can find and supersede its own comment later. A template that does not parse is rejected on save. Empty uses the built-in comment.`)}</label><textarea rows="5" placeholder="Empty uses the built-in welcome comment" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueCommentTemplate" data-arg-types="s,s,v">${esc(f.goodFirstIssueCommentTemplate || '')}</textarea></div>
+          <div class="config-help">${gfiStats ? `Since start: ${esc(String(gfiStats.selected || 0))} selected · ${esc(String(gfiStats.released || 0))} released to hive · ${esc(String(gfiStats.converted || 0))} claimed by contributors. ` : ''}0 or empty = default. Exclude labels and the repo list stay yaml-only.</div>
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
         ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}
@@ -44716,6 +44922,13 @@ function burnAreaChart() {
             <div class="config-field-row" style="margin-top:10px">
               <div class="config-field"><label>Threshold percent ${yamlHint('governor.rotation.threshold_pct')} ${settingHelpMark('settings', 'features', 'Threshold percent', `Usage percentage from 1 to 100 at which a subscription provider is considered exhausted. Defaults to 85.`)}</label><input type="number" min="1" max="100" step="1" value="${f.rotationThresholdPct || 85}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationThresholdPct" data-arg-types="s,s,N"></div>
               <div class="config-field"><label>High-volume cadence seconds ${yamlHint('governor.rotation.high_volume_cadence_s')} ${settingHelpMark('settings', 'features', 'High-volume cadence seconds', `Agents with a cadence at or below this value never rotate onto subscription providers. Defaults to 1800 seconds.`)}</label><input type="number" min="1" step="1" value="${f.rotationHighVolumeCadenceS || 1800}" data-change-action="markDirty" data-arg0="features" data-arg1="rotationHighVolumeCadenceS" data-arg-types="s,s,N"></div>
+            </div>
+            <div class="config-field mt-3">
+              <label>Headroom source ${yamlHint('governor.rotation.headroom_source')} ${settingHelpMark('settings', 'features', 'Headroom source', `Selects the provider headroom implementation. builtin (default) keeps the in-tree probers; ccleft opts in to ccleft-backed probers where available.`)}</label>
+              <select data-change-action="markDirty" data-arg0="features" data-arg1="rotationHeadroomSource" data-arg-types="s,s,v">
+                ${(f.rotationHeadroomSourceValues || ['builtin', 'ccleft']).map(v => `<option value="${esc(v)}" ${(f.rotationHeadroomSource || 'builtin') === v ? 'selected' : ''}>${esc(v === 'builtin' ? 'builtin (default)' : v)}</option>`).join('')}
+              </select>
+              <div class="config-help">Requires restart.</div>
             </div>
             <div class="config-field" style="margin-top:10px">
               <label>Providers ${settingHelpMark('settings', 'features', 'Providers', `Map provider names to their class, backing Hive backend IDs from /api/config/backends, and an optional monthly allowance for plans that report consumption but not entitlement.`)}</label>

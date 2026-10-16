@@ -150,7 +150,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// TrustedBotAuthors is the FULL desired list; an empty (non-nil) list
 		// disables the trusted-bot lane, absent leaves it untouched.
 		TrustedBotAuthors []string `json:"trusted_bot_authors"`
-		TrustedAuthors    *struct {
+		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
+		// dialog's plain toggle can stage it.
+		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
+		TrustedAuthors     *struct {
 			Enabled                 *bool    `json:"enabled"`
 			Repos                   []string `json:"repos"`
 			RequireRole             *string  `json:"require_role"`
@@ -271,6 +274,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.TrustedBotAuthors != nil {
 		cfg.AutoMerge.TrustedBotAuthors = normalizeBotLoginList(body.TrustedBotAuthors)
 	}
+	if body.BotTakeoverEnabled != nil {
+		v := *body.BotTakeoverEnabled
+		cfg.AutoMerge.BotTakeover.Enabled = &v
+	}
 	if body.TrustedAuthors != nil {
 		if body.TrustedAuthors.Enabled != nil {
 			cfg.AutoMerge.TrustedAuthors.Enabled = *body.TrustedAuthors.Enabled
@@ -380,6 +387,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"no_ci_ok":                noCIOK,
 		"trusted_bot_authors":     trustedBots,
 		"trusted_bot_authors_set": am.TrustedBotAuthors != nil,
+		"bot_takeover_enabled":    am.BotTakeover.IsEnabled(),
 		"trusted_authors": map[string]interface{}{
 			"enabled":                   ta.Enabled,
 			"repos":                     trustedAuthorRepos,

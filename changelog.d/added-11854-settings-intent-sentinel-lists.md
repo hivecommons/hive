@@ -1,1 +1,0 @@
-- Settings → Security now edits the `intent.*` path-pattern and feature-signal lists (empty restores the built-in defaults, shown as placeholders) and shows YAML-key hints for the `sentinel.*` list settings.

@@ -45,6 +45,7 @@
       "required": ["captured_at"],
       "additionalProperties": false,
       "properties": {
+        "status": {"type": "string", "enum": ["success", "failure", "pending"]},
         "checks": {"type": "array", "items": {"$ref": "#/$defs/check"}},
         "captured_at": {"type": "string", "format": "date-time"}
       }

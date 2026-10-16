@@ -269,6 +269,13 @@ func (c *Client) latestHoldLabelEventWasByApp(ctx context.Context, owner, repo s
 // so a caller can pair it with the notice the App posted alongside it. A
 // blank bot login fails closed.
 func (c *Client) latestHoldLabelEventByApp(ctx context.Context, owner, repo string, number int) (bool, gh.Timestamp, error) {
+	return c.latestLabelEventByApp(ctx, owner, repo, number, "hold")
+}
+
+// latestLabelEventByApp is latestHoldLabelEventByApp for any label name: it
+// reports whether the newest labeled/unlabeled event for label is a
+// `labeled` by the App bot, and when it happened.
+func (c *Client) latestLabelEventByApp(ctx context.Context, owner, repo string, number int, label string) (bool, gh.Timestamp, error) {
 	if c == nil || strings.TrimSpace(c.appBotLogin) == "" {
 		return false, gh.Timestamp{}, nil
 	}
@@ -283,7 +290,7 @@ func (c *Client) latestHoldLabelEventByApp(ctx context.Context, owner, repo stri
 			return false, gh.Timestamp{}, fmt.Errorf("listing issue events for %s/%s#%d: %w", owner, repo, number, err)
 		}
 		for _, event := range events {
-			if event == nil || !strings.EqualFold(event.GetLabel().GetName(), "hold") {
+			if event == nil || !strings.EqualFold(event.GetLabel().GetName(), label) {
 				continue
 			}
 			kind := event.GetEvent()

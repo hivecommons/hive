@@ -1,1 +1,0 @@
-- Added `intent.shadow` (default false): while `intent.enforce` is off, both merge lanes (merge-eligible.json and the App self-merge sweep) evaluate intent verification as if enforced and record `shadow.intent.would_have_blocked` (+ reason, tier, confidence) on the PR evidence bundle and in the audit log. It never blocks a merge; `enforce: true` is unchanged. Fixes #12105.

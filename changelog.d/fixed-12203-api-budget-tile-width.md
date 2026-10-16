@@ -1,1 +1,0 @@
-- Dashboard: the Diagnostics "GitHub API budget (1h)" tile now spans two grid cells so its per-caller table (Caller, Endpoint, Charged, Req, 304, 429) is fully visible; endpoint and caller cells ellipsise with a full-path tooltip and the table scrolls horizontally as a fallback instead of silently cutting columns (#12203).

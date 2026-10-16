@@ -20,6 +20,8 @@ func TestIOSWidgetScriptEmbeddedAndWired(t *testing.T) {
 		// widgetToken=, and it is only ever sent in its dedicated header to the
 		// one endpoint it can read.
 		"q.widgetToken", `"` + widgetTokenHeader + `"`, `"` + widgetSummaryPath + `"`, `"` + widgetTokenPrefix + `"`,
+		// Hub fleet mode (#12148) reads the hub's widget endpoint.
+		"hubModeURL", `"/api/hub/widget"`,
 	} {
 		if !strings.Contains(string(script), want) {
 			t.Errorf("widget script missing %q (dashboard deep link relies on it)", want)

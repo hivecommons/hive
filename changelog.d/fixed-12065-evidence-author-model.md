@@ -1,1 +1,0 @@
-- Evidence bundles for agent-authored PRs now record the author's `agent`, `backend` and `model` (from the `agent_pr_created` audit entry the attribution trailer is rendered from), so author family can be paired with reviewer family; read-only, never affects a merge. Fixes #12065.

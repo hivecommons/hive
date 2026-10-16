@@ -64,6 +64,20 @@ type BeadSynthesizerConfig struct {
 	MaxFactsPerCycle int              `yaml:"max_facts_per_cycle"`
 	VaultPath        string           `yaml:"vault_path"`
 	RetentionPolicy  *RetentionPolicy `yaml:"retention_policy"`
+	// MaxAPICallsPerCycle caps charged GitHub PR GETs per synthesis cycle.
+	// 0/unset defaults to 40; HIVE_BEAD_SYNTH_MAX_API_CALLS still overrides.
+	MaxAPICallsPerCycle int `yaml:"max_api_calls_per_cycle"`
+}
+
+// DefaultBeadSynthMaxAPICallsPerCycle is the default per-cycle PR GET cap.
+const DefaultBeadSynthMaxAPICallsPerCycle = 40
+
+// EffectiveMaxAPICallsPerCycle returns the configured cap or the default.
+func (b BeadSynthesizerConfig) EffectiveMaxAPICallsPerCycle() int {
+	if b.MaxAPICallsPerCycle <= 0 {
+		return DefaultBeadSynthMaxAPICallsPerCycle
+	}
+	return b.MaxAPICallsPerCycle
 }
 
 // RetentionPolicy controls intelligent bead lifecycle management.

@@ -108,6 +108,113 @@ type githubConfigUpdate struct {
 	KeyFile               string
 	PrivateKey            string
 	SelfAuthorizationHold *bool
+	githubAPISettings
+}
+
+// githubAPISettings are the github.* quota, scan and authorship knobs the
+// Forge App tab edits. Absent fields leave the config untouched.
+type githubAPISettings struct {
+	AgentReserveFloor      *int  `json:"agent_reserve_floor"`
+	APIReserve             *int  `json:"api_reserve"`
+	APICritical            *int  `json:"api_critical"`
+	PRDetailTTLS           *int  `json:"pr_detail_ttl_s"`
+	GraphQLPRBatch         *bool `json:"graphql_pr_batch"`
+	GraphQLPRBatchPageSize *int  `json:"graphql_pr_batch_page_size"`
+	AppAuthoredPRs         *bool `json:"app_authored_prs"`
+	AppSignedCommits       *bool `json:"app_signed_commits"`
+}
+
+func (b githubAPISettings) empty() bool {
+	return b.AgentReserveFloor == nil && b.APIReserve == nil && b.APICritical == nil && b.PRDetailTTLS == nil &&
+		b.GraphQLPRBatch == nil && b.GraphQLPRBatchPageSize == nil && b.AppAuthoredPRs == nil && b.AppSignedCommits == nil
+}
+
+// validate checks the request against the current github block with the
+// same bounds config.Validate enforces at boot, so the dialog cannot save a
+// value the next start would reject.
+func (b githubAPISettings) validate(cur config.GitHubConfig) error {
+	for _, f := range []struct {
+		v    *int
+		name string
+	}{
+		{b.AgentReserveFloor, "agent_reserve_floor"},
+		{b.PRDetailTTLS, "pr_detail_ttl_s"},
+		{b.GraphQLPRBatchPageSize, "graphql_pr_batch_page_size"},
+	} {
+		if f.v != nil && *f.v < 0 {
+			return fmt.Errorf("%s must be 0 (default) or greater", f.name)
+		}
+	}
+	if b.GraphQLPRBatchPageSize != nil && *b.GraphQLPRBatchPageSize > 100 {
+		return fmt.Errorf("graphql_pr_batch_page_size must be between 1 and 100, or 0 for the default")
+	}
+	for _, f := range []struct {
+		v    *int
+		name string
+	}{
+		{b.APIReserve, "api_reserve"},
+		{b.APICritical, "api_critical"},
+	} {
+		if f.v != nil && *f.v < 0 {
+			return fmt.Errorf("%s must be 0 (default) or greater", f.name)
+		}
+	}
+	// Same bound config.Validate applies at boot: a zero on either side means
+	// the default, so the comparison never silently passes on an unset field.
+	reserve, critical := cur.APIReserve, cur.APICritical
+	if b.APIReserve != nil {
+		reserve = *b.APIReserve
+	}
+	if b.APICritical != nil {
+		critical = *b.APICritical
+	}
+	if reserve == 0 {
+		reserve = config.DefaultGitHubAPIReserve
+	}
+	if critical == 0 {
+		critical = config.DefaultGitHubAPICritical
+	}
+	if (b.APIReserve != nil || b.APICritical != nil) && critical >= reserve {
+		return fmt.Errorf("api_critical must be less than api_reserve")
+	}
+	return nil
+}
+
+func (b githubAPISettings) apply(g *config.GitHubConfig) {
+	if b.AgentReserveFloor != nil {
+		g.AgentReserveFloor = *b.AgentReserveFloor
+	}
+	// A cleared field restores the default, as applyDefaults does at Load.
+	if b.APIReserve != nil {
+		g.APIReserve = *b.APIReserve
+		if g.APIReserve == 0 {
+			g.APIReserve = config.DefaultGitHubAPIReserve
+		}
+	}
+	if b.APICritical != nil {
+		g.APICritical = *b.APICritical
+		if g.APICritical == 0 {
+			g.APICritical = config.DefaultGitHubAPICritical
+		}
+	}
+	if b.PRDetailTTLS != nil {
+		g.PRDetailTTLS = *b.PRDetailTTLS
+	}
+	if b.GraphQLPRBatch != nil {
+		v := *b.GraphQLPRBatch
+		g.GraphQLPRBatch = &v
+	}
+	if b.GraphQLPRBatchPageSize != nil {
+		g.GraphQLPRBatchPageSize = *b.GraphQLPRBatchPageSize
+	}
+	if b.AppAuthoredPRs != nil {
+		v := *b.AppAuthoredPRs
+		g.AppAuthoredPRs = &v
+	}
+	if b.AppSignedCommits != nil {
+		v := *b.AppSignedCommits
+		g.AppSignedCommits = &v
+	}
 }
 
 type githubConfigUpdateError struct {
@@ -132,14 +239,15 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		KeyFile               string `json:"key_file"`
 		PrivateKey            string `json:"private_key"`
 		SelfAuthorizationHold *bool  `json:"self_authorization_hold"`
+		githubAPISettings
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	if body.AppID == nil && body.InstallationID == nil && body.KeyFile == "" && body.PrivateKey == "" && body.SelfAuthorizationHold == nil {
-		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key, self_authorization_hold", http.StatusBadRequest)
+	if body.AppID == nil && body.InstallationID == nil && body.KeyFile == "" && body.PrivateKey == "" && body.SelfAuthorizationHold == nil && body.githubAPISettings.empty() {
+		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key, self_authorization_hold, agent_reserve_floor, api_reserve, api_critical, pr_detail_ttl_s, graphql_pr_batch, graphql_pr_batch_page_size, app_authored_prs, app_signed_commits", http.StatusBadRequest)
 		return
 	}
 
@@ -149,6 +257,7 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		KeyFile:               body.KeyFile,
 		PrivateKey:            body.PrivateKey,
 		SelfAuthorizationHold: body.SelfAuthorizationHold,
+		githubAPISettings:     body.githubAPISettings,
 	})
 	if err != nil {
 		code := http.StatusInternalServerError
@@ -179,6 +288,9 @@ func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdat
 		s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
 		return nil, newGitHubConfigUpdateError("config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
 	}
+	if err := body.githubAPISettings.validate(cfg.GitHub); err != nil {
+		return nil, newGitHubConfigUpdateError(err.Error(), http.StatusBadRequest)
+	}
 
 	if body.PrivateKey != "" {
 		keyPath := body.KeyFile
@@ -205,10 +317,15 @@ func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdat
 	if body.InstallationID != nil {
 		cfg.GitHub.InstallationID = *body.InstallationID
 	}
-	if body.SelfAuthorizationHold != nil {
-		v := *body.SelfAuthorizationHold
-		cfg.GitHub.SelfAuthorizationHold = &v
-	}
+	// GitHub client hooks read these settings live on their own goroutines,
+	// so they are written under the config package's github lock (#12279).
+	cfg.UpdateGitHubLive(func(g *config.GitHubConfig) {
+		if body.SelfAuthorizationHold != nil {
+			v := *body.SelfAuthorizationHold
+			g.SelfAuthorizationHold = &v
+		}
+		body.githubAPISettings.apply(g)
+	})
 
 	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r), "")
 	if err != nil {

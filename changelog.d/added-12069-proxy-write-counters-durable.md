@@ -1,1 +1,0 @@
-- Durable attempted vs blocked agent GitHub write counters by intent tier and block reason, with a weekly series, persisted to `/var/run/hive-metrics/write-counters.json` and served read-only at `GET /api/evidence/write-counters`; no change to gating or auto-merge. Part of #12069.

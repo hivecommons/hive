@@ -438,10 +438,10 @@ var geminiStaticModels = []string{
 }
 
 // claudePinnedCLIModels is the closed model set accepted by the Claude Code
-// version pinned in src/Dockerfile (2.1.284 as of #9805). The Anthropic
-// account catalog can list models that the installed CLI refuses with "version
-// X or newer is required"; intersecting live and fallback lists with this set
-// keeps the dashboard from offering a value this image cannot launch (#8418).
+// version pinned in src/Dockerfile. The Anthropic account catalog can list
+// models that the installed CLI refuses with "version X or newer is required";
+// intersecting live and fallback lists with this set keeps the dashboard from
+// offering a value this image cannot launch (#8418).
 var claudePinnedCLIModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",

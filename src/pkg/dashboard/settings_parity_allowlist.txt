@@ -135,7 +135,6 @@ agents.<key>.variables.<key>.url # TODO #11854
 agents.<key>.variables.<key>.value # TODO #11854
 agents.github_api_hourly_cap # TODO #11854
 auto_merge.allow_unprotected_base[] # TODO #11854
-auto_merge.bot_takeover.enabled # TODO #11854
 auto_merge.human_merge_paths.<key> # TODO #11854
 auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.repos.<key>.required_checks[] # TODO #11854
@@ -149,30 +148,8 @@ classification.review_bots.resolve_after_fix # TODO #11854
 compliance.frameworks[] # TODO #11854
 duplicate_sweep.bot_authors[] # TODO #11854
 github.additional_bot_logins[] # TODO #11854
-github.agent_reserve_floor # TODO #11854
-github.api_critical # TODO #11854
-github.api_reserve # TODO #11854
-github.api_url # TODO #11854
-github.app_authored_prs # TODO #11854
-github.app_signed_commits # TODO #11854
-github.docs_installation_id # TODO #11854
-github.forge # TODO #11854
-github.graphql_pr_batch # TODO #11854
-github.graphql_pr_batch_page_size # TODO #11854
-github.key_file # TODO #11854
-github.oauth_client_id # TODO #11854
-github.pr_detail_ttl_s # TODO #11854
-github.reporter_trust_hold # TODO #11854
-github.token # TODO #11854
-good_first_issue.comment_template # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.docs_url # advanced scorer tuning; yaml-only (#12185)
 good_first_issue.exclude_labels[] # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.max_body_chars # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.max_packages # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.min_body_chars # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.min_score # advanced scorer tuning; yaml-only (#12185)
 good_first_issue.repos[] # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.reselect_cooldown # advanced scorer tuning; yaml-only (#12185)
 governor.backup.key_env # TODO #11854
 governor.backup.key_file # TODO #11854
 governor.backup.key_name # TODO #11854
@@ -182,17 +159,7 @@ governor.budget.coins.<key>.budget # TODO #11854
 governor.budget.coins.<key>.label # TODO #11854
 governor.budget.coins.<key>.tokens_per_coin # TODO #11854
 governor.budget.coins.<key>.usd_per_coin # TODO #11854
-governor.budget.usd # TODO #11854
 governor.cadence_owners.<key> # TODO #11854
-governor.cadence_scope # TODO #11854
-governor.claims.comment # TODO #11854
-governor.claims.escalate_after_claims # TODO #11854
-governor.claims.label # TODO #11854
-governor.conserve_interval_multiplier # TODO #11854
-governor.eval_interval_max_s # TODO #11854
-governor.eval_interval_s # TODO #11854
-governor.eval_interval_webhook_s # TODO #11854
-governor.explain_mode # TODO #11854
 governor.gateways[].api_key_env # TODO #11854
 governor.gateways[].api_key_file # TODO #11854
 governor.gateways[].ca_bundle # TODO #11854
@@ -204,8 +171,6 @@ governor.gateways[].name # TODO #11854
 governor.gateways[].project_id # TODO #11854
 governor.gateways[].region # TODO #11854
 governor.health.healthcheck_interval # TODO #11854
-governor.health.model_lock # TODO #11854
-governor.labels.automerge # TODO #11854
 governor.labels.exempt[] # TODO #11854
 governor.litellm.api_key_env # TODO #11854
 governor.litellm.api_key_file # TODO #11854
@@ -217,19 +182,13 @@ governor.llm-d.api_key_header # TODO #11854
 governor.llm-d.endpoint # TODO #11854
 governor.modes.<key>.cadences.<key> # TODO #11854
 governor.modes.<key>.threshold # TODO #11854
-governor.optional_sweep_every_n_cycles # TODO #11854
-governor.provider_budget.probe_interval_s # TODO #11854
 governor.rotation.agents.<key> # TODO #11854
-governor.rotation.headroom_source # TODO #11854
 governor.rotation.providers.<key>.backends[] # TODO #11854
 governor.rotation.providers.<key>.class # TODO #11854
 governor.rotation.providers.<key>.monthly_allowance # TODO #11854
 governor.sensing.cli_exclude_patterns[] # TODO #11854
 governor.sensing.gh_rate_patterns[] # TODO #11854
 governor.sensing.login_patterns[] # TODO #11854
-governor.sensing.pullback_seconds # TODO #11854
-governor.sensing.ttl_seconds # TODO #11854
-governor.thresholds_source # TODO #11854
 governor.trajectory.api_key_file # TODO #11854
 governor.trajectory.exempt_agents[] # TODO #11854
 governor.vllm.api_key_env # TODO #11854
@@ -319,12 +278,16 @@ hub.tier_limits.<key>.max_concurrent # TODO #11854
 hub.tier_limits.<key>.max_per_day # TODO #11854
 hub.tier_limits.<key>.max_per_hour # TODO #11854
 hub.upgrade_drain_timeout_s # TODO #11854
+issues.hard_suppress_reconcile_interval # TODO #11854
+issues.lift_hive_hard_suppress # TODO #11854
+issues.sha_hold_trusted_label # TODO #11854
 knowledge.agent_scopes.<key>.include_states[] # TODO #11854
 knowledge.agent_scopes.<key>.layers[] # TODO #11854
 knowledge.agent_scopes.<key>.repos[] # TODO #11854
 knowledge.agent_scopes.<key>.tags[] # TODO #11854
 knowledge.agent_scopes.<key>.types[] # TODO #11854
 knowledge.bead_synthesizer.enabled # TODO #11854
+knowledge.bead_synthesizer.max_api_calls_per_cycle # TODO #12005
 knowledge.bead_synthesizer.max_facts_per_cycle # TODO #11854
 knowledge.bead_synthesizer.min_confidence # TODO #11854
 knowledge.bead_synthesizer.retention_policy.archive_after_synth_days # TODO #11854
@@ -432,34 +395,13 @@ project.repo_policies[].reporter_trust_hold # TODO #11854
 project.repo_policies[].self_authorization_hold # TODO #11854
 project.repos[] # TODO #11854
 removed_agents[] # TODO #11854
-review.acknowledge_no_findings # TODO #11854
-review.all_authors # TODO #11854
 review.backlog.labels[] # TODO #11854
-review.combined_perspectives # TODO #11854
-review.confidence_score # TODO #11854
-review.event_driven # TODO #11854
-review.fan_out # TODO #11854
-review.fix_human_prs # TODO #11854
-review.fixer_agent # TODO #11854
-review.human_decision_label # TODO #11854
-review.max_out_of_scope_backlog_issues # TODO #11854
-review.max_parallel_reviews # TODO #11854
-review.max_perspectives_per_pr # TODO #11854
-review.max_redispatch # TODO #11854
-review.max_reviews_per_head # TODO #11854
-review.out_of_scope_backlog_disabled # TODO #11854
-review.pending_ttl # TODO #11854
 review.perspective_prompts.<key> # TODO #11854
 review.perspectives[] # TODO #11854
-review.post_comments # TODO #11854
-review.priority_labels # TODO #11854
-review.recommendations.enabled # TODO #11854
 review.recommendations.labels[] # TODO #11854
-review.recommendations.min_ready_to_open # TODO #11854
 review.recommendations.repos[] # TODO #11854
 review.reviewer_agents[] # TODO #11854
 review.revise_repos[] # TODO #11854
-review.revise_verdicts_before # TODO #11854
 runs.spektacular.recheck.discovery.sources[].allow_prerelease # TODO #11854
 runs.spektacular.recheck.discovery.sources[].kind # TODO #11854
 runs.spektacular.recheck.discovery.sources[].max_items # TODO #11854
@@ -471,6 +413,7 @@ runs.spektacular.recheck.sources[].name # TODO #11854
 runs.spektacular.recheck.sources[].url # TODO #11854
 runs.triage.fix_labels[] # TODO #11854
 runs.triage.spec_labels[] # TODO #11854
+shared_ci_rerun.enabled # TODO #11854
 swarm.themes.<key>.call_to_arms # TODO #11854
 swarm.themes.<key>.event_name # TODO #11854
 swarm.themes.<key>.leaderboard_title # TODO #11854

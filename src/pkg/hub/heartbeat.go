@@ -139,6 +139,8 @@ type GovernorSummary struct {
 	Issues     int    `json:"issues"`
 	PRs        int    `json:"prs"`
 	WorkSource string `json:"work_source,omitempty"`
+	OpenIssues int    `json:"open_issues,omitempty"`
+	OpenPRs    int    `json:"open_prs,omitempty"`
 }
 
 type ContributorSummary struct {
@@ -334,6 +336,7 @@ type HeartbeatPayload struct {
 	StatsStale                   bool                            `json:"stats_stale,omitempty"`
 	FreshAgentStats              bool                            `json:"fresh_agent_stats,omitempty"`
 	Compliance                   *HeartbeatCompliance            `json:"compliance,omitempty"`
+	Evidence                     *HeartbeatEvidence              `json:"evidence,omitempty"`
 }
 
 const (

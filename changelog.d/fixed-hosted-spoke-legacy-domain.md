@@ -1,1 +1,0 @@
-- Keep hosted-spoke vanity ingress TLS on the existing wildcard domain path instead of minting certificates for legacy domains.

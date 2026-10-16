@@ -512,6 +512,11 @@ type GovernorSummary struct {
 	// "linear", "jira"). Empty for the default GitHub Issues source; the hub
 	// dashboard only badges non-default sources.
 	WorkSource string `json:"work_source,omitempty"`
+	// OpenIssues and OpenPRs are all open issues and PRs across the hive's
+	// repos (Issues/PRs above are only the actionable ones). The hub's fleet
+	// widget shows them.
+	OpenIssues int `json:"open_issues,omitempty"`
+	OpenPRs    int `json:"open_prs,omitempty"`
 }
 
 type ContributorSummary struct {
@@ -1077,6 +1082,13 @@ type HeartbeatPayload struct {
 	// configured and clears what the hub stored; nil (old spoke, minimal
 	// beat) leaves the hub's stored profile untouched.
 	Compliance *HeartbeatCompliance `json:"compliance,omitempty"`
+	// Evidence is the spoke's evidence-pipeline summary over the last 90
+	// days (#12114, part of #12080), built from the same review-evidence
+	// bundles as GET /api/evidence/summary. The hub sanitizes and bounds it
+	// (sanitizeEvidence) and stores it with the other per-hive quadrant
+	// inputs. nil (old spoke, minimal beat, or bundles unreadable this cycle)
+	// leaves the hub's stored summary untouched.
+	Evidence *HeartbeatEvidence `json:"evidence,omitempty"`
 	// StatsStale is true when this beat carries CACHED collected stats rather
 	// than fresh ones, because collect() timed out this cycle (see
 	// sendHeartbeat / collectWithTimeout). The beat is still a genuine liveness
@@ -1142,6 +1154,37 @@ type HeartbeatCompliancePosture struct {
 	Pass    int    `json:"pass"`
 	Fail    int    `json:"fail"`
 	LastRun string `json:"lastRun,omitempty"`
+}
+
+// HeartbeatEvidenceCalibrationBuckets is the number of confidence buckets in
+// HeartbeatEvidence.Calibration; bucket i covers confidence [i/6, (i+1)/6),
+// the last bucket also including 1.0.
+const HeartbeatEvidenceCalibrationBuckets = 6
+
+// HeartbeatEvidence is the evidence block of a heartbeat: 90-day counts over
+// the newest review-evidence bundle per PR. FalseApprove90d counts approve
+// verdicts on PRs later reverted or followed up within 14 days of merge;
+// FalseBlock90d counts blocking verdicts on PRs that were merged anyway;
+// Reverted14d90d counts merged PRs reverted or followed up within 14 days.
+// AutomergeSelfAuthored is AutoMerge.SelfAuthoredAutoMergeAllowed(ACMMLevel),
+// nil when the spoke has no config. The JSON shape matches hub.HeartbeatEvidence.
+type HeartbeatEvidence struct {
+	Verdicts90d           int                                                          `json:"verdicts_90d"`
+	FalseApprove90d       int                                                          `json:"false_approve_90d"`
+	FalseBlock90d         int                                                          `json:"false_block_90d"`
+	Merged90d             int                                                          `json:"merged_90d"`
+	Reverted14d90d        int                                                          `json:"reverted_14d_90d"`
+	AutomergeSelfAuthored *bool                                                        `json:"automerge_self_authored,omitempty"`
+	ReviewerFamilies      []string                                                     `json:"reviewer_families,omitempty"`
+	AuthorFamilies        []string                                                     `json:"author_families,omitempty"`
+	Calibration           [HeartbeatEvidenceCalibrationBuckets]HeartbeatEvidenceBucket `json:"calibration"`
+}
+
+// HeartbeatEvidenceBucket is one calibration bucket: N verdicts, Bad of
+// which disagreed with the outcome (a false approve or a false block).
+type HeartbeatEvidenceBucket struct {
+	N   int `json:"n"`
+	Bad int `json:"bad"`
 }
 
 type StatusCollector func() *HeartbeatPayload

@@ -13,26 +13,15 @@ type evalBudgetDecision struct {
 	Cycle        uint64
 	RunOptional  bool
 	SkipOptional bool
+	// SkipUnstick covers the steps that unstick stuck items (sha_hold,
+	// supersession sweep, shared-CI rerun, escalation). They are shed only in critical mode.
+	SkipUnstick  bool
 	SkippedSteps []string
 }
 
-var optionalEvalSteps = []string{
-	"advisory_ensure",
-	"recommendations",
-	"duplicate_guard",
-	"escalation",
-	"review_enrichment",
-	"review_threads",
-	"sha_hold",
-	"supersession_sweep",
-	"closing_keyword_post_check",
-	"reporter_trust",
-	"attribution_collectors",
-	"cost_collectors",
-	"pr_issue_counts_collectors",
-	"bead_synth",
-}
-
+// decideEvalBudgetWork tiers the optional steps: enrichment steps are skipped
+// off-cadence or whenever the mode is not normal; unstick steps keep running
+// through conserve and are skipped only in critical (#12005).
 func decideEvalBudgetWork(mode github.APIBudgetMode, optionalEvery int, cycle uint64) evalBudgetDecision {
 	if optionalEvery < 1 {
 		optionalEvery = 1
@@ -41,7 +30,11 @@ func decideEvalBudgetWork(mode github.APIBudgetMode, optionalEvery int, cycle ui
 	d := evalBudgetDecision{Mode: mode, Cycle: cycle, RunOptional: runOptional}
 	if mode != github.APIBudgetNormal || !runOptional {
 		d.SkipOptional = true
-		d.SkippedSteps = append(d.SkippedSteps, optionalEvalSteps...)
+		d.SkippedSteps = append(d.SkippedSteps, github.APIBudgetEnrichmentSteps...)
+	}
+	if mode == github.APIBudgetCritical {
+		d.SkipUnstick = true
+		d.SkippedSteps = append(d.SkippedSteps, github.APIBudgetUnstickSteps...)
 	}
 	return d
 }

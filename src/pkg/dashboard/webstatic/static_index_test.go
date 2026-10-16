@@ -567,6 +567,31 @@ func TestStaticExperimentLabTypeStatusChips(t *testing.T) {
 	}
 }
 
+// TestStaticExperimentLabDialogShell pins the padded card recipe for the ⚙️
+// dialog (v6 #12033 backport): a .nous-lab-dialog shell with header, single
+// scrolling body and footer, and sections rendered as cards rather than
+// content flush against the dialog edges.
+func TestStaticExperimentLabDialogShell(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`function nousLabShell(bodyHtml, footerHtml)`,
+		`<div class="nous-config-dialog nous-lab-dialog" role="dialog" aria-modal="true" aria-labelledby="nous-lab-title">`,
+		`<span class="nous-lab-title">⚙️ Experiment Lab Configuration</span>`,
+		`.nous-config-dialog.nous-lab-dialog > .nous-config-body {`,
+		`.nous-lab-dialog .nous-config-section {`,
+		`.nous-lab-dialog .nous-trust-ladder {`,
+		`overlay.innerHTML = nousLabShell(h, footer);`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard Experiment Lab dialog shell missing %q", want)
+		}
+	}
+}
+
 // TestStaticPlanReviewWiring pins the plan-review view the governor PLANNING
 // tile promises (#7537).
 //

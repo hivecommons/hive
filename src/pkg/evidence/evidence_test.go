@@ -43,7 +43,7 @@ func sample() *Bundle {
 			RecordedAt:  t0,
 		}},
 		PostedReviews: []PostedReview{{URL: "https://example.com/r/1", Head: "headsha", At: t0}},
-		CI:            CI{Checks: []Check{{Name: "build", Conclusion: "success", URL: "https://example.com/c"}}, CapturedAt: t0},
+		CI:            CI{Status: "success", Checks: []Check{{Name: "build", Conclusion: "success", URL: "https://example.com/c"}}, CapturedAt: t0},
 		Sentinel:      []SentinelFinding{{Rule: "r1", Summary: "s", Paths: []string{"x"}}},
 		HumanActions:  []Action{{Actor: "alice", Kind: "approve", Detail: "ok", At: t0}},
 		Merge:         &MergeEvent{Actor: "hive", Method: "squash", At: t0, SHA: "mergesha"},

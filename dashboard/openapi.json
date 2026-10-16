@@ -7322,6 +7322,22 @@
                   },
                   "planFromLabel": {
                     "type": "boolean"
+                  },
+                  "claimsComment": {
+                    "type": "boolean",
+                    "description": "governor.claims.comment; requires restart"
+                  },
+                  "claimsLabel": {
+                    "type": "boolean",
+                    "description": "governor.claims.label; requires restart"
+                  },
+                  "claimsEscalateAfterClaims": {
+                    "type": "integer",
+                    "description": "governor.claims.escalate_after_claims; 0 = default, negative turns the gate off; requires restart"
+                  },
+                  "rotationHeadroomSource": {
+                    "type": "string",
+                    "description": "governor.rotation.headroom_source: builtin or ccleft; requires restart"
                   }
                 }
               }
@@ -8925,7 +8941,7 @@
           "Governor"
         ],
         "summary": "General-tab advanced settings",
-        "description": "Returns the governor eval interval, attribution-trailer resolved state, and explain-mode configured/effective/source values. Requires owner role.",
+        "description": "Returns the governor eval interval and loop pacing (max/webhook interval, conserve multiplier, optional-sweep cadence, provider spend-limit probe interval, read-only thresholds_source), attribution-trailer resolved state, and explain-mode configured/effective/source values. Requires owner role.",
         "responses": {
           "200": {
             "description": "General advanced config",
@@ -8949,6 +8965,34 @@
                     },
                     "explain_mode_source": {
                       "type": "string"
+                    },
+                    "eval_interval_max_s": {
+                      "type": "integer",
+                      "description": "0 restores the default (1800); must be >= eval_interval_s"
+                    },
+                    "eval_interval_webhook_s": {
+                      "type": "integer",
+                      "description": "0 restores the default (900)"
+                    },
+                    "conserve_interval_multiplier": {
+                      "type": "integer",
+                      "description": "0 restores the default (2)"
+                    },
+                    "optional_sweep_every_n_cycles": {
+                      "type": "integer",
+                      "description": "0 restores the default (1)"
+                    },
+                    "provider_budget_probe_interval_s": {
+                      "type": "integer",
+                      "description": "governor.provider_budget.probe_interval_s; 0 uses the default (1800)"
+                    },
+                    "thresholds_source": {
+                      "type": "string",
+                      "description": "Read-only: \"pack\" when an ACMM pack seeded the thresholds, empty when operator-owned"
+                    },
+                    "loop_defaults": {
+                      "type": "object",
+                      "description": "Defaults a zero loop field restores"
                     }
                   }
                 }
@@ -8965,7 +9009,7 @@
           "Governor"
         ],
         "summary": "Update general-tab advanced settings",
-        "description": "Updates the governor eval interval, attribution-trailer toggle, and hive-wide explain-mode default. Fields are pointer-typed; absent fields are left unchanged. An explicit empty explain_mode clears the hive default. Requires owner role.",
+        "description": "Updates the governor eval interval and loop pacing, attribution-trailer toggle, and hive-wide explain-mode default. Loop pacing is validated with the boot bounds (0 restores the default; max must be >= eval_interval_s) and applies from the next eval cycle. Fields are pointer-typed; absent fields are left unchanged. An explicit empty explain_mode clears the hive default. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -8987,6 +9031,26 @@
                       "full",
                       ""
                     ]
+                  },
+                  "eval_interval_max_s": {
+                    "type": "integer",
+                    "description": "0 restores the default (1800); must be >= eval_interval_s"
+                  },
+                  "eval_interval_webhook_s": {
+                    "type": "integer",
+                    "description": "0 restores the default (900)"
+                  },
+                  "conserve_interval_multiplier": {
+                    "type": "integer",
+                    "description": "0 restores the default (2)"
+                  },
+                  "optional_sweep_every_n_cycles": {
+                    "type": "integer",
+                    "description": "0 restores the default (1)"
+                  },
+                  "provider_budget_probe_interval_s": {
+                    "type": "integer",
+                    "description": "governor.provider_budget.probe_interval_s; 0 uses the default (1800)"
                   }
                 }
               }
@@ -9005,7 +9069,7 @@
             }
           },
           "400": {
-            "description": "Out-of-range eval_interval_s or invalid explain_mode"
+            "description": "Out-of-range eval_interval_s or loop pacing field, or invalid explain_mode"
           },
           "403": {
             "description": "Requires owner role"
@@ -9347,7 +9411,7 @@
           "Governor"
         ],
         "summary": "Update exempt and required issue labels",
-        "description": "Updates the exempt-labels list (governor.labels) and/or the require-labels gate (project.issue_filter.require_labels). Pointer-typed fields: an absent key leaves that list unchanged. Permanent hold/exempt labels cannot be removed via the exempt list. Requires owner role.",
+        "description": "Updates the exempt-labels list (governor.labels) and/or the require-labels gate (project.issue_filter.require_labels), and the auto-merge queue label (governor.labels.automerge). Pointer-typed fields: an absent key leaves that list unchanged. Permanent hold/exempt labels cannot be removed via the exempt list. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -9366,6 +9430,10 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "automerge": {
+                    "type": "string",
+                    "description": "governor.labels.automerge: the merger queue label; empty restores the default (lgtm). Requires restart."
                   }
                 }
               }
@@ -23424,6 +23492,57 @@
                         }
                       }
                     },
+                    "settings": {
+                      "type": "object",
+                      "description": "The rest of the github block. Identity fields are display-only; the token is never returned, only token_set.",
+                      "properties": {
+                        "forge": {
+                          "type": "string"
+                        },
+                        "api_url": {
+                          "type": "string"
+                        },
+                        "docs_installation_id": {
+                          "type": "integer"
+                        },
+                        "oauth_client_id": {
+                          "type": "string"
+                        },
+                        "token_set": {
+                          "type": "boolean"
+                        },
+                        "hub_managed": {
+                          "type": "boolean"
+                        },
+                        "agent_reserve_floor": {
+                          "type": "integer"
+                        },
+                        "api_reserve": {
+                          "type": "integer"
+                        },
+                        "api_critical": {
+                          "type": "integer"
+                        },
+                        "pr_detail_ttl_s": {
+                          "type": "integer"
+                        },
+                        "graphql_pr_batch": {
+                          "type": "boolean"
+                        },
+                        "graphql_pr_batch_page_size": {
+                          "type": "integer"
+                        },
+                        "app_authored_prs": {
+                          "type": "boolean"
+                        },
+                        "app_signed_commits": {
+                          "type": "boolean"
+                        },
+                        "defaults": {
+                          "type": "object"
+                        }
+                      }
+                    },
                     "repos_forge": {
                       "type": "string"
                     },
@@ -23461,7 +23580,7 @@
           "System"
         ],
         "summary": "Update GitHub App config",
-        "description": "Updates app_id/installation_id/key_file, or writes a new private key (to key_file or the default path) and re-resolves App auth. Requires owner role; requires at least one field and a persistable config source path.",
+        "description": "Updates app_id/installation_id/key_file, or writes a new private key (to key_file or the default path) and re-resolves App auth; also updates the github API quota floors, PR scan cache/batch settings and App authorship toggles. Requires owner role; requires at least one field and a persistable config source path.",
         "requestBody": {
           "required": true,
           "content": {
@@ -23482,6 +23601,42 @@
                   },
                   "private_key": {
                     "type": "string"
+                  },
+                  "self_authorization_hold": {
+                    "type": "boolean",
+                    "nullable": true
+                  },
+                  "agent_reserve_floor": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "api_reserve": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "api_critical": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "pr_detail_ttl_s": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "graphql_pr_batch": {
+                    "type": "boolean",
+                    "nullable": true
+                  },
+                  "graphql_pr_batch_page_size": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "app_authored_prs": {
+                    "type": "boolean",
+                    "nullable": true
+                  },
+                  "app_signed_commits": {
+                    "type": "boolean",
+                    "nullable": true
                   }
                 }
               }
@@ -24237,6 +24392,238 @@
           },
           "500": {
             "description": "Counters file unreadable or corrupt"
+          }
+        }
+      }
+    },
+    "/api/evidence/summary": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Read-only evidence summary over stored review evidence bundles",
+        "description": "Any dashboard session. Aggregates the schema-v1 review evidence bundles under /data/evidence (latest bundle per PR) for the window: PR outcomes by author kind, reviewer confidence calibration per perspective, reviewer accuracy by model, sentinel hits per ISO week, the shadow-gate would_have_held count, and the reviewer-accuracy summary for the same window. `missing` reports what could not be computed (verdicts without a model, bundles with empty CI, unreadable records). Observation only (#12063): nothing here is consulted by any merge decision.",
+        "parameters": [
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Window in hours; default 24, capped like /api/pr-throughput; 0 means all time."
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Restrict to one repository as owner/name."
+          },
+          {
+            "name": "author_kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "human",
+                "agent",
+                "bot"
+              ]
+            },
+            "description": "Restrict to PRs by one author kind."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence summary for the window",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hours": {
+                      "type": "integer"
+                    },
+                    "all_time": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "author_kind": {
+                      "type": "string"
+                    },
+                    "n": {
+                      "type": "integer",
+                      "description": "PRs (latest bundle per PR) in the window."
+                    },
+                    "outcomes_by_author_kind": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "n": {
+                            "type": "integer"
+                          },
+                          "merged": {
+                            "type": "integer"
+                          },
+                          "closed": {
+                            "type": "integer"
+                          },
+                          "open": {
+                            "type": "integer"
+                          },
+                          "reverted_14d": {
+                            "type": "integer",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "reviewer_calibration": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "perspective": {
+                            "type": "string"
+                          },
+                          "n": {
+                            "type": "integer"
+                          },
+                          "buckets": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "bucket": {
+                                  "type": "string"
+                                },
+                                "n": {
+                                  "type": "integer"
+                                },
+                                "approvals": {
+                                  "type": "integer"
+                                },
+                                "blocks": {
+                                  "type": "integer"
+                                },
+                                "merged": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "reviewer_accuracy_by_model": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "model": {
+                            "type": "string"
+                          },
+                          "n": {
+                            "type": "integer"
+                          },
+                          "by_author_kind": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "n": {
+                                  "type": "integer"
+                                },
+                                "approvals": {
+                                  "type": "integer"
+                                },
+                                "blocks": {
+                                  "type": "integer"
+                                },
+                                "merged_after_block": {
+                                  "type": "integer"
+                                },
+                                "approved_not_merged": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "sentinel_hits_per_week": {
+                      "type": "object",
+                      "properties": {
+                        "n": {
+                          "type": "integer"
+                        },
+                        "weeks": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "week": {
+                                "type": "string"
+                              },
+                              "hits": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "shadow_gate": {
+                      "type": "object",
+                      "properties": {
+                        "n": {
+                          "type": "integer"
+                        },
+                        "would_have_held": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "reviewer_accuracy": {
+                      "type": "object",
+                      "description": "Reviewer accuracy summary for the same window; omitted when unavailable."
+                    },
+                    "missing": {
+                      "type": "object",
+                      "properties": {
+                        "verdicts_model_unknown": {
+                          "type": "integer"
+                        },
+                        "records_empty_ci": {
+                          "type": "integer"
+                        },
+                        "records_unreadable": {
+                          "type": "integer"
+                        },
+                        "reviewer_accuracy_unavailable": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad hours, repo or author_kind"
+          },
+          "500": {
+            "description": "Evidence directory unreadable"
           }
         }
       }

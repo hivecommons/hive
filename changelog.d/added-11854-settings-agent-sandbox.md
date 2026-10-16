@@ -1,1 +1,0 @@
-- Settings → Security now edits the global `agent_sandbox.*` scalar settings (image, runtime, network mode, timeout, workspace dir, env allowlist) and the Kubernetes Job service account, TTL and workspace claim/mount.

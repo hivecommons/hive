@@ -219,13 +219,14 @@ type boot struct {
 	retroLane  *retro.Lane
 
 	// runLoop
-	lastAutoMergeSweep    time.Time
-	lastTaskListSweep     time.Time
-	lastDuplicateSweep    time.Time
-	lastSupersessionSweep time.Time
-	lastIssueUnparkSweep  time.Time
-	lastSentinelSweep     time.Time
-	lastGFISweep          time.Time
+	lastAutoMergeSweep     time.Time
+	lastTaskListSweep      time.Time
+	lastDuplicateSweep     time.Time
+	lastSupersessionSweep  time.Time
+	lastSharedCIRerunSweep time.Time
+	lastIssueUnparkSweep   time.Time
+	lastSentinelSweep      time.Time
+	lastGFISweep           time.Time
 	// gfi is good-first-issue curation state (good_first_issue.*).
 	gfi *gfiState
 

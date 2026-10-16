@@ -443,6 +443,7 @@ knowledge:
     min_confidence: 0.0             # drop facts classified below this
     target_layer: personal          # primer layer for the synth vault
     max_facts_per_cycle: 0          # 0 = unlimited
+    max_api_calls_per_cycle: 40     # cap on charged PR GETs per cycle
     vault_path: /data/vaults/bead-synth-wiki
     retention_policy:
       max_beads: 5000
@@ -457,6 +458,7 @@ knowledge:
 | `min_confidence` | Facts whose heuristic classification confidence (`ClassifyBead`, `bead_synthesizer.go:254`, emits 0.5–0.8) falls below this are skipped. Default `0.0` — everything classifiable is ingested. |
 | `target_layer` | Layer the synth vault is registered at with the primer; empty defaults to `personal` (`main.go:2525-2528`). |
 | `max_facts_per_cycle` | Cap per synthesis cycle after dedup; `0` means unlimited (`bead_synthesizer.go:223-226`). |
+| `max_api_calls_per_cycle` | Cap on charged `GET /pulls/{n}` calls per synthesis cycle; default `40`. PR GETs are conditional (`If-None-Match`, ETag and body kept across cycles), so a `304` reuses the cached PR. The `HIVE_BEAD_SYNTH_MAX_API_CALLS` env var overrides this (`0` = unlimited). |
 | `vault_path` | Defaults to `/data/vaults/bead-synth-wiki`; the directory is created and auto-connected as vault `bead-synth-wiki` (`main.go:2510-2522`). |
 
 `retention_policy` drives a bead lifecycle manager that archives old beads —

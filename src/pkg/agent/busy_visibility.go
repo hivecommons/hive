@@ -60,16 +60,23 @@ func newestCopilotTranscriptActivity(home string) (time.Time, bool) {
 }
 
 // markKickUndeliverableLocked records that a kick attempt found the pane busy
-// or otherwise unsafe for input. Caller holds m.mu.
-func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time) {
+// or otherwise unsafe for input. reason says why delivery failed and is carried
+// in the self-report. Caller holds m.mu.
+func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time, reason string) {
 	if agent.KicksUndeliverable == 0 {
 		agent.BusySince = now
 	}
 	agent.KicksUndeliverable++
 	m.refreshBusyVisibilityLocked(agent, now)
+	if agent.BusyCondition != "" {
+		reason = agent.BusyCondition
+	}
+	if reason == "" {
+		reason = "unknown"
+	}
 	// Self-report (#11868): the tracker applies the ≥3-consecutive threshold.
 	fleetreport.Observe(fleetreport.ClassKickFailedRepeatedly, agent.Name,
-		fmt.Sprintf("kick undeliverable %d times in a row (%s)", agent.KicksUndeliverable, agent.BusyCondition), "")
+		fmt.Sprintf("kick undeliverable %d times in a row (%s)", agent.KicksUndeliverable, reason), "")
 }
 
 // markCopilotQuestionFormLocked surfaces a question-form dismissal through the

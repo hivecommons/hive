@@ -95,6 +95,8 @@ type BeadSynthesizerConfig struct {
 	Org              string           `yaml:"org"                  json:"org"`
 	Repos            []string         `yaml:"repos"                json:"repos"`
 	RetentionPolicy  *RetentionPolicy `yaml:"retention_policy"     json:"retention_policy,omitempty"`
+	// MaxAPICallsPerCycle caps charged PR GETs per cycle; 0 uses the default.
+	MaxAPICallsPerCycle int `yaml:"max_api_calls_per_cycle" json:"max_api_calls_per_cycle"`
 }
 
 // RetentionPolicy controls intelligent bead lifecycle management.

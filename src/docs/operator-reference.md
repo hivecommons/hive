@@ -133,6 +133,9 @@ Top-level YAML keys accepted by `config.Config`:
 | `issues.close_on_merge_interval` | `10m`. | How often the close-on-merge **ledger sweep** walks every merged-PR claim in the duplicate-PR claim ledger. Passes in between (every governor eval cycle and manual rescan) only look at claims whose PR merged since the last full walk, so a fresh merge still closes its issue on the next pass without re-reading the whole ledger ([#11778](https://github.com/hivecommons/hive/issues/11778)). Both the ledger sweep and the backfill pause while the GitHub API budget mode is not `normal`; Hive logs one line on each pause and resume. Env override: `HIVE_CLOSE_ON_MERGE_INTERVAL` (Go duration). |
 | `issues.close_on_merge_recheck` | `24h`. | How long a merged-PR claim keeps its settled close-on-merge verdict before the ledger sweep re-verifies it against the API. Once a sweep reaches a final verdict for a claim — issue closed, already closed, Hive marker present, awaiting confirmation, untrusted author, reopened by a person, or PR not merged — it stamps `close_on_merge_settled_at` on the claim and later sweeps skip the claim with no API call until this window elapses. Transient failures (issue, timeline or comment reads/writes that errored) never settle and retry on the next sweep as before. The marker follows the claim while the same PR claims the issue and resets when a different PR takes it over. Env override: `HIVE_CLOSE_ON_MERGE_RECHECK` (Go duration). |
 | `issues.reporter_confirmation` | `false`. | Legacy opt-in switch for hives that want every human-filed bug-family issue to wait for reporter verification before close. Leave false for the default close-on-merge policy; add `hive: needs-confirmation` to an individual issue when only that issue needs the gate. `hive: reporter-confirmed` and `hive: close-on-merge` remain accepted legacy bypasses. |
+| `issues.sha_hold_trusted_label` | `needs-sha`. | Soft label the SHA-hold sweep applies to a `kind/bug` without a commit SHA when the reporter's author association is in `project.issue_filter.reporter_trust.trusted_associations` (default OWNER/MEMBER/COLLABORATOR), instead of the hard `hold` (#12002). The notice is the same; the issue stays actionable. A SHA-hold `hold` already on such an issue is swapped for this label. Set to `hold` to restore the hard hold for every reporter. |
+| `issues.lift_hive_hard_suppress` | `true`. | Runs the hard-suppress reconcile (#12002): a `hold` or `blocked` label on an open issue is lifted when Hive provably applied it (newest label event is a `labeled` by the App bot; for `hold`, paired with the `<!-- hive:sha-hold -->` notice) and a PR cross-referencing the issue merged after it. Hive posts one note carrying `<!-- hive:hard-suppress-lifted -->`. Human-applied labels are never lifted. Skipped with the other unstick steps when the API budget is critical. |
+| `issues.hard_suppress_reconcile_interval` | `30m`. | Minimum time between hard-suppress reconcile passes. |
 | `contribute.help_links` | Defaults to Hive contributor docs and the Hive issue tracker. | Up to 5 `{label, url}` links shown on `/contribute` Onboarding, Operations, and printed once by relays on connect. URLs must be absolute `http://` or `https://`; labels are plain text and length-capped. Prefer the Hive Commons Discord redirect (`https://hivecommons.dev/discord`) over channel URLs for contributors who may not already be server members. |
 | `variables` | Trusted variable resolver definitions. | Env-only substitution works without this block. |
 | `classification` | Go-consumed subset of `hive-project.yaml`'s `classification:` block — today only `review_bots`, the external review-bot logins whose inline threads on hive-authored PRs the hive addresses and resolves itself. | Off unless `review_bots.logins` names a bot. The same key in `hive-project.yaml` is read when `hive.yaml` has none. See [review-bot-threads.md](review-bot-threads.md). |
@@ -184,7 +187,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `notifications.discord.allowed_users` / `notifications.slack.allowed_users` | Empty means chat commands are disabled for that surface. | Entries can be `id` or `id:role`; roles are `read`, `read-write`, `merger`, `owner`. For backwards compatibility, entry #0 without a suffix is `owner`; later bare entries are `read`. IDs match the way `dashboard.authorized_users` does — case-insensitively, with a `github:` prefix optional on either side — and the first entry for an ID wins. |
 | `github.mentions.*` | Disabled unless `github.mentions.enabled: true`. | Polls GitHub issue/PR comments for `@<app bot>` summons. Summoners must hold `read-write` (or `min_role`) in `dashboard.authorized_users` or be listed in `summoners`; agents opt in with both `kick` and `mention` channels plus `converse: true` so #5591's dormant-channel guard still fails fast. |
 | `dashboard.public_url` | Empty means OAuth redirect URIs (Linear agent install, OpenRouter funding) fall back to `hub.dashboard_url`, then the request's forwarded/`Host` origin. | Set to this dashboard's externally reachable origin (`https://hive.example.com`, no path/query) on a standalone hive whose callback is published on a different hostname or whose ingress rewrites `Host`. Must be an absolute `http(s)://` origin; a trailing slash is trimmed and anything else fails config load. See [linear-agent.md](linear-agent.md#setup). |
-| `dashboard.experiment_lab` | Off by default. | Hides the Experiment Lab while that surface is being reworked. Set `dashboard.experiment_lab: true` to show the Experiment Lab section, sidebar nav entry, and Nous status controls. |
+| `dashboard.experiment_lab` | Off by default. | Hides the Experiment Lab (formerly Strategy Lab) while that surface is being reworked. Set `dashboard.experiment_lab: true` to show the Experiment Lab section, sidebar nav entry, and Nous status controls. |
 | `dashboard.strategy_lab` | Off by default. **Deprecated** alias of `dashboard.experiment_lab`, kept for one release (#11695). | `true` still enables the Experiment Lab and logs a one-line deprecation at config load; the value is folded into `dashboard.experiment_lab` so the next config save writes the documented key. |
 | `hub.contribute_announcement` | Empty/off by default. | Operator notice for contributors. Set from Governor → Hub or `/contribute` Management (owner/read-write): `text` is server-sanitised plain text capped at 500 characters and rendered only through text-safe sinks (empty clears), `level` is `info`/`warning`, `expires_at` is optional RFC3339, and the server rotates `id` whenever text changes so dismissed Operations/Profile banners reappear. Active notices show on `/contribute` Operations/Profile, above the Onboarding command block, and in connected relay terminals. |
 | `hub.contribute_repo_filters` | Empty map means repos inherit the hive-wide contributor title, author, and label filters exactly as before. | Optional full `owner/repo` keys that narrow one repository's `/contribute` queue without widening the hive. Hive-wide skip labels and hive-wide filters always run first; a repo filter can only add deny matches or require an allow-mode title/author/label match for that repo. Edit from `/contribute` → Management → Repos for Contribute → Filters or Governor → Hub. Operations lists configured overrides and withheld diagnostics name repo matches, e.g. `Repo filter label "2-discussing" denied for projectbluefin/common`. |
@@ -626,6 +629,35 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
 | `supersession_sweep.close_contributor_prs` | `false` | Allows closing superseded human-authored PRs after the grace window. Off: they only get the notice. |
 | `supersession_sweep.grace_period` | `24h` (`DefaultSupersessionGracePeriod`) when 0/unset | How long a human-authored PR stays open after the grace-window notice. Changing it rewrites the notice and restarts the window. |
 
+## Shared-CI rerun sweep (`shared_ci_rerun`)
+
+When a fix lane defers a red PR to a `[shared-ci] <check> failing across
+<owner/repo>` incident it stamps `<!-- hive-shared-ci-<n> -->` on the PR
+(see [labels and control signals](labels-and-control-signals.md)). Nothing on
+the PR changes when the incident's fix lands, so the PR stays red until
+someone re-runs it. The shared-CI rerun sweep
+(`src/pkg/github/shared_ci_rerun.go`) closes that gap every ~15 minutes:
+
+- It lists `[shared-ci]` issues closed in the last 72h in each watched repo,
+  ignoring ones closed as "not planned". With none, it makes no other calls.
+- For each open PR whose newest shared-CI marker names one of those incidents,
+  it re-runs the failed jobs (`POST .../actions/runs/{id}/rerun-failed-jobs`)
+  of the newest run per workflow on the PR head when that run concluded
+  `failure` or `timed_out`, using the hive's App/daemon credential. It pushes
+  nothing to the branch, so it applies to every author; PRs with a hold or
+  `do-not-merge` label are skipped.
+- It then posts one comment carrying `<!-- hive-shared-ci-rerun-<n> -->`,
+  which keeps the PR to one re-run per incident. A PR with nothing red on its
+  head gets no comment. At most 10 PRs are re-run per pass; each re-run is
+  logged as `shared-ci rerun repo=… pr=… incident=#…` and audited as
+  `shared-ci-rerun`.
+- It is an unstick step (`shared_ci_rerun` in `api_budget.unstick_steps`): it
+  keeps running in `conserve` and is shed only in `critical`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel sweep runs every ~15 minutes alongside the other run-loop sweeps
@@ -806,10 +838,10 @@ Spoke GitHub App installations share one core REST bucket across the scan loop a
 | Mode | Condition | Default behavior |
 | --- | --- | --- |
 | `normal` | `remaining >= github.api_reserve` | Full eval fan-out. Optional sweeps run every `governor.optional_sweep_every_n_cycles` cycles (default `1`). |
-| `conserve` | `remaining < github.api_reserve` (default `800`) | Critical paths continue; optional advisory/recommendation/duplicate/escalation/review-thread/SHA/supersession/collector sweeps are skipped. Eval interval is multiplied by `governor.conserve_interval_multiplier` (default `2`). |
-| `critical` | `remaining < github.api_critical` (default `250`) | Same shedding as conserve, with the eval interval stretched by `4x`. |
+| `conserve` | `remaining < github.api_reserve` (default `800`) | Critical paths and unstick steps (escalation, SHA hold, supersession sweep, shared-CI rerun) continue; optional advisory/recommendation/duplicate/review-thread/collector enrichment sweeps are skipped. Eval interval is multiplied by `governor.conserve_interval_multiplier` (default `2`). |
+| `critical` | `remaining < github.api_critical` (default `250`) | Same shedding as conserve plus the unstick steps, with the eval interval stretched by `4x`. |
 
-Mode exits use hysteresis: Hive leaves conserve/critical only after quota rises above the threshold plus 100 calls or after the reset time passes. The effective interval is capped by `governor.eval_interval_max_s` (default `1800`). `/api/status` and `/api/gh-rate-limits` expose `api_budget` with the mode, remaining/limit/reset, mode `since`, and `skipped_steps`; the dashboard shows an API budget pill beside the GitHub rate-limit display.
+Mode exits use hysteresis: Hive leaves conserve/critical only after quota rises above the threshold plus 100 calls or after the reset time passes. The effective interval is capped by `governor.eval_interval_max_s` (default `1800`). `/api/status` and `/api/gh-rate-limits` expose `api_budget` with the mode, remaining/limit/reset, mode `since`, `skipped_steps`, `unstick_steps` and `enrichment_steps`; the dashboard shows an API budget pill beside the GitHub rate-limit display.
 
 - Recovery from a provider spending limit is automatic, via a probe. Withholding kicks also withholds the inference calls that would reveal the provider is serving again, so the hive suppresses only while the last refusal is recent and then lets a single kick through to test the gateway; the probe re-arms suppression the moment it is released, so at most one probe run flies per interval. A still-clipped key refuses the probe and suppression resumes for another interval; once the provider's window resets the probe succeeds, normal kicking resumes with no operator action, and a one-time recovery notification is sent (the entering notification is likewise sent once per clip, not once per cycle). Tune with `governor.provider_budget.probe_interval_s` (default 1800 — 30 minutes):
 
@@ -947,7 +979,11 @@ loops, so the proxy enforces two safeguards:
   When the latest rate-limit reading shows `core.remaining` below the floor,
   agent read requests receive the same proxy `429` even if the agent has not
   reached its personal cap. This keeps daemon merge/scan work from being
-  starved by agent polling.
+  starved by agent polling. Only readings from the hive's own bucket update
+  that snapshot: responses whose `X-RateLimit-Limit` is 60 (GitHub's per-IP
+  unauthenticated bucket, e.g. an agent's `gh` call without a token) or whose
+  limit differs from the daemon's are ignored, so they cannot trip the floor
+  or the API budget mode.
 
 The proxy returns JSON shaped for the GitHub CLI:
 

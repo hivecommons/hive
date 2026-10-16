@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -65,8 +66,59 @@ type forgeAppsResponse struct {
 	Active forgeActiveApp `json:"active"`
 	// ReposForge is the forge host the spoke's configured repos live on,
 	// derived from the configured base/api URL host (empty = github.com).
-	ReposForge string        `json:"repos_forge"`
-	HeldKeys   []ForgeAppKey `json:"held_keys"`
+	ReposForge string              `json:"repos_forge"`
+	HeldKeys   []ForgeAppKey       `json:"held_keys"`
+	Settings   forgeGitHubSettings `json:"settings"`
+}
+
+// forgeGitHubSettings is the rest of the github: block for the Forge App
+// tab. Identity fields are display-only and are reported as configured (not
+// resolved), so an empty value reads as "derived". The token is never
+// returned; TokenSet only says whether one is configured. Tri-state booleans
+// are reported as their effective value.
+type forgeGitHubSettings struct {
+	Forge              string `json:"forge"`
+	APIURL             string `json:"api_url"`
+	DocsInstallationID int64  `json:"docs_installation_id"`
+	OAuthClientID      string `json:"oauth_client_id"`
+	TokenSet           bool   `json:"token_set"`
+	HubManaged         bool   `json:"hub_managed"`
+
+	AgentReserveFloor      int  `json:"agent_reserve_floor"`
+	APIReserve             int  `json:"api_reserve"`
+	APICritical            int  `json:"api_critical"`
+	PRDetailTTLS           int  `json:"pr_detail_ttl_s"`
+	GraphQLPRBatch         bool `json:"graphql_pr_batch"`
+	GraphQLPRBatchPageSize int  `json:"graphql_pr_batch_page_size"`
+	AppAuthoredPRs         bool `json:"app_authored_prs"`
+	AppSignedCommits       bool `json:"app_signed_commits"`
+
+	Defaults map[string]int `json:"defaults"`
+}
+
+func forgeGitHubSettingsFor(cfg *config.Config, hubManaged bool) forgeGitHubSettings {
+	g := cfg.GitHub
+	return forgeGitHubSettings{
+		Forge:                  strings.TrimSpace(g.Forge_),
+		APIURL:                 strings.TrimSpace(g.APIURL),
+		DocsInstallationID:     g.DocsInstallationID,
+		OAuthClientID:          g.OAuthClientID,
+		TokenSet:               strings.TrimSpace(g.Token) != "",
+		HubManaged:             hubManaged,
+		AgentReserveFloor:      cfg.GitHubAgentReserveFloor(),
+		APIReserve:             g.APIReserve,
+		APICritical:            g.APICritical,
+		PRDetailTTLS:           g.PRDetailTTLS,
+		GraphQLPRBatch:         g.GraphQLPRBatchEnabled(),
+		GraphQLPRBatchPageSize: g.GraphQLPRBatchPageSize,
+		AppAuthoredPRs:         g.AppAuthoredPRsEnabled(),
+		AppSignedCommits:       g.AppSignedCommitsEnabled(),
+		Defaults: map[string]int{
+			"agent_reserve_floor":        config.DefaultGitHubAgentReserveFloor,
+			"pr_detail_ttl_s":            int(config.DefaultGitHubPRDetailTTL / time.Second),
+			"graphql_pr_batch_page_size": config.DefaultGraphQLPRBatchPageSize,
+		},
+	}
 }
 
 // normalizeForgeAppHost canonicalizes a forge host for comparison: trimmed,
@@ -140,6 +192,7 @@ func (s *Server) handleConfigGitHubForgeApps(w http.ResponseWriter, r *http.Requ
 		},
 		ReposForge: reposForge,
 		HeldKeys:   held,
+		Settings:   forgeGitHubSettingsFor(s.deps.Config, s.FleetReportHubManaged()),
 	}
 	jsonResponse(w, resp)
 }

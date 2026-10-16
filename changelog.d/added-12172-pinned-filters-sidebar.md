@@ -1,1 +1,0 @@
-- Saved label filters and presets can be pinned to the dashboard sidebar: a **Filters** nav group shows each pinned filter with a live count across all projects and opens a cross-repo view of the matching issues and PRs grouped by repository, with the facet bar on top; **Needs human** is pinned by default (#12172).

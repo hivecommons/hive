@@ -79,6 +79,11 @@ var taskListCheckboxRE = regexp.MustCompile(`^[ \t]*[-*+] \[( |[xX])\](?:\s|$)`)
 
 const issueNeedsHumanLabel = "needs-human"
 
+// issueHandoffLabel is the soft label for remainders that prose hands to
+// another lane or a human. Unlike needs-human it is not hard-suppress, so the
+// next lane can still claim the issue.
+const issueHandoffLabel = "hive/handoff"
+
 // fenceOpenRE recognises fenced code blocks. A run of THREE OR MORE backticks
 // (or tildes) at the start of a line opens a fence; the same character with
 // at least the same count closes it. Boxes inside a fenced block are code
@@ -310,6 +315,7 @@ type mergedPRRef struct {
 	Reference  bool
 	Remainder  string
 	NeedsHuman bool
+	Handoff    bool
 }
 
 // collectMergedReferencingPRs walks the repo's closed-PR list once per tick
@@ -370,6 +376,7 @@ func (c *Client) collectMergedReferencingPRs(ctx context.Context, displayRepo, o
 					Reference:  meta.Reference,
 					Remainder:  meta.Remainder,
 					NeedsHuman: meta.NeedsHuman,
+					Handoff:    meta.Handoff,
 				})
 			}
 		}
@@ -385,6 +392,7 @@ type refsRemainderMeta struct {
 	Reference          bool
 	Remainder          string
 	NeedsHuman         bool
+	Handoff            bool
 	ExplicitNeedsHuman bool
 }
 
@@ -392,7 +400,7 @@ var explicitNeedsHumanRefRE = regexp.MustCompile(`(?i)\b(?:refs|ref|references|r
 
 // refsRemainderMetadata extracts the auditable remainder text for non-closing
 // Refs lines. The explicit needs-human marker is authoritative; prose only
-// counts when it appears in a deliberately named remainder section.
+// only yields the soft hand-off signal, never the hard needs-human label.
 func refsRemainderMetadata(body, defaultRepo string) map[string]refsRemainderMeta {
 	out := map[string]refsRemainderMeta{}
 	refsByKey := map[string]ClaimedRef{}
@@ -444,7 +452,7 @@ func refsRemainderMetadata(body, defaultRepo string) map[string]refsRemainderMet
 			}
 			if sectionForRef != "" {
 				meta.Remainder = sectionForRef
-				meta.NeedsHuman = meta.NeedsHuman || remainderSectionNeedsHuman(sectionForRef)
+				meta.Handoff = meta.Handoff || remainderSectionHandoff(sectionForRef)
 			}
 			out[key] = meta
 		}
@@ -565,7 +573,7 @@ func extractRemainderSection(body string) string {
 	return strings.TrimSpace(strings.Join(lines[start:end], "\n"))
 }
 
-func remainderSectionNeedsHuman(section string) bool {
+func remainderSectionHandoff(section string) bool {
 	lower := strings.ToLower(section)
 	for _, phrase := range []string{
 		"needs a human",
@@ -576,6 +584,9 @@ func remainderSectionNeedsHuman(section string) bool {
 		"must be applied by hand",
 		"must be done by a human",
 		"must be made by a human",
+		"fix lane",
+		"quality lane",
+		"production change",
 	} {
 		if containsAffirmativeHumanOnlyPhrase(lower, phrase) {
 			return true
@@ -608,25 +619,25 @@ func directlyNegatesHumanPhrase(prefix string) bool {
 	return false
 }
 
+func hasIssueHandoffLabel(labels []string) bool {
+	return labelPresent(labels, issueHandoffLabel)
+}
+
 func hasIssueNeedsHumanLabel(labels []string) bool {
-	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), issueNeedsHumanLabel) {
-			return true
-		}
-	}
-	return false
+	return labelPresent(labels, issueNeedsHumanLabel)
 }
 
 func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo string, number int, labels []string, mergedRefs []mergedPRRef, untouched []string) error {
 	partial := labelPresent(labels, PartiallyAddressedLabel)
 	refs := make([]mergedPRRef, 0, len(mergedRefs))
-	needsHuman := false
+	needsHuman, handoff := false, false
 	for _, ref := range mergedRefs {
 		if !ref.Reference && !partial {
 			continue
 		}
 		refs = append(refs, ref)
 		needsHuman = needsHuman || ref.NeedsHuman
+		handoff = handoff || ref.Handoff
 	}
 	if len(refs) == 0 {
 		return nil
@@ -638,6 +649,12 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 		_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{issueNeedsHumanLabel})
 		if err != nil {
 			return fmt.Errorf("adding %s label to %s/%s#%d: %w", issueNeedsHumanLabel, owner, repo, number, err)
+		}
+	}
+	if handoff && !needsHuman && !hasIssueHandoffLabel(labels) {
+		_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{issueHandoffLabel})
+		if err != nil {
+			return fmt.Errorf("adding %s label to %s/%s#%d: %w", issueHandoffLabel, owner, repo, number, err)
 		}
 	}
 	return nil
@@ -777,6 +794,8 @@ func renderRefsRemainderComment(merged []mergedPRRef, partial bool, untouched []
 		}
 		if ref.NeedsHuman {
 			fmt.Fprint(&b, " — needs human")
+		} else if ref.Handoff {
+			fmt.Fprint(&b, " — handed off to the next lane")
 		}
 		fmt.Fprintln(&b)
 		if strings.TrimSpace(ref.Remainder) != "" {

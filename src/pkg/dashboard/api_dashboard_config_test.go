@@ -20,7 +20,7 @@ func TestDashboardSettingsAPIRoundTripAndMasksToken(t *testing.T) {
 	put := doPut(s, "/api/config/dashboard", map[string]any{
 		"port":                  8080,
 		"agent_poll_interval_s": 7,
-		"strategy_lab":          true,
+		"experiment_lab":        true,
 		"auth_token":            "new-token",
 		"authorized_users":      []string{"alice:owner", "bob:read"},
 		"authorized_user_names": map[string]string{"alice": "Alice A."},
@@ -35,7 +35,7 @@ func TestDashboardSettingsAPIRoundTripAndMasksToken(t *testing.T) {
 		t.Fatalf("PUT = %d: %s", put.Code, put.Body.String())
 	}
 	d := s.deps.Config.Dashboard
-	if d.Port != 8080 || d.AgentPollIntervalS != 7 || !d.StrategyLab || d.AuthToken != "new-token" || !d.HubProxied {
+	if d.Port != 8080 || d.AgentPollIntervalS != 7 || !d.ExperimentLab || d.AuthToken != "new-token" || !d.HubProxied {
 		t.Fatalf("dashboard scalar config not updated: %+v", d)
 	}
 	if len(d.AuthorizedUsers) != 2 || d.AuthorizedUserNames["alice"] != "Alice A." {

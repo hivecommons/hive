@@ -146,6 +146,10 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"repoCount":           repoCount,
 		"labels":              cfg.Governor.Labels.Exempt,
 		"holdLabels":          github.HoldLabels,
+		// automergeLabel is the configured governor.labels.automerge ("" =
+		// default); automergeLabelDefault is the label used when it is empty.
+		"automergeLabel":        cfg.Governor.Labels.AutoMerge,
+		"automergeLabelDefault": config.DefaultAutoMergeLabel,
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -654,6 +658,10 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			NeedsSpec      *[]string `json:"needs_spec"`
 		} `json:"hard_suppress_labels"`
 		WritingGuide *string `json:"writing_guide"`
+		// Automerge is governor.labels.automerge, the label the merger queue
+		// action applies. Empty restores the default. The GitHub client reads it
+		// at boot, so a change applies after a restart.
+		Automerge *string `json:"automerge"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -729,6 +737,18 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var automerge string
+	if body.Automerge != nil {
+		automerge = strings.TrimSpace(*body.Automerge)
+		if err := validateGovernorLabels([]string{automerge}); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if strings.ContainsAny(automerge, ",\n") {
+			jsonError(w, "automerge must be a single label", http.StatusBadRequest)
+			return
+		}
+	}
 	if body.WritingGuide != nil {
 		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
@@ -796,6 +816,9 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.WritingGuide != nil {
 		s.deps.Config.Project.WritingGuide = *body.WritingGuide
+	}
+	if body.Automerge != nil {
+		s.deps.Config.Governor.Labels.AutoMerge = automerge
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)
@@ -2779,7 +2802,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 			s.deps.Config.Project.PrimaryRepo = prevPrimary
 			s.deps.Config.GitHub.BaseURL = prevBaseURL
 			s.deps.Config.GitHub.APIURL = prevAPIURL
-			s.deps.Config.GitHub.SelfAuthorizationHold = prevSelfAuthHold
+			s.deps.Config.UpdateGitHubLive(func(g *config.GitHubConfig) { g.SelfAuthorizationHold = prevSelfAuthHold })
 			s.deps.Config.GitHub.ReporterTrustHold = prevReporterTrustHold
 			s.deps.Config.Project.RepoPolicies = prevRepoPolicies
 			if s.deps.GHClient != nil {
@@ -2801,7 +2824,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.SelfAuthorizationHold != nil {
 		v := *body.SelfAuthorizationHold
-		s.deps.Config.GitHub.SelfAuthorizationHold = &v
+		s.deps.Config.UpdateGitHubLive(func(g *config.GitHubConfig) { g.SelfAuthorizationHold = &v })
 	}
 	if body.RepoSelfAuthorizationHold != nil {
 		s.deps.Config.SetSelfAuthorizationHoldForRepos(body.RepoSelfAuthorizationHold)

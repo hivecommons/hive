@@ -20,6 +20,27 @@ func TestDecideEvalBudgetWorkSkipsOptionalByModeAndCadence(t *testing.T) {
 	}
 }
 
+func TestDecideEvalBudgetWorkKeepsUnstickStepsUntilCritical(t *testing.T) {
+	d := decideEvalBudgetWork(github.APIBudgetConserve, 1, 1)
+	if d.SkipUnstick {
+		t.Fatalf("conserve must keep unstick steps: %+v", d)
+	}
+	for _, s := range d.SkippedSteps {
+		for _, u := range github.APIBudgetUnstickSteps {
+			if s == u {
+				t.Fatalf("conserve skipped unstick step %q", s)
+			}
+		}
+	}
+	if d := decideEvalBudgetWork(github.APIBudgetNormal, 3, 2); d.SkipUnstick {
+		t.Fatalf("off-cadence normal must keep unstick steps: %+v", d)
+	}
+	d = decideEvalBudgetWork(github.APIBudgetCritical, 1, 1)
+	if !d.SkipUnstick || len(d.SkippedSteps) != len(github.APIBudgetEnrichmentSteps)+len(github.APIBudgetUnstickSteps) {
+		t.Fatalf("critical should skip everything: %+v", d)
+	}
+}
+
 func TestAPIBudgetEffectiveEvalInterval(t *testing.T) {
 	if got := apiBudgetEffectiveEvalInterval(300, 1800, 2, github.APIBudgetNormal); got != 300*time.Second {
 		t.Fatalf("normal interval = %v", got)

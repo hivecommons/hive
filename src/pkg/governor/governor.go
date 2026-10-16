@@ -1628,6 +1628,25 @@ func (g *Governor) AttachRepoSnapshots(repos map[string]RepoSnapshot) {
 	g.evalHistory[len(g.evalHistory)-1].Repos = repos
 }
 
+// LatestRepoTotals sums the open issue and PR counts across repos in the most
+// recent eval snapshot that carries per-repo counts.
+func (g *Governor) LatestRepoTotals() (issues, prs int) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	for i := len(g.evalHistory) - 1; i >= 0; i-- {
+		repos := g.evalHistory[i].Repos
+		if len(repos) == 0 {
+			continue
+		}
+		for _, r := range repos {
+			issues += r.Issues
+			prs += r.PRs
+		}
+		return issues, prs
+	}
+	return 0, 0
+}
+
 // SeedEvalHistory loads previously persisted eval snapshots so sparkline
 // history survives container restarts.
 func (g *Governor) SeedEvalHistory(snapshots []EvalSnapshot) {

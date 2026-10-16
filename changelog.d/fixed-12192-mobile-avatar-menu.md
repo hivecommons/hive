@@ -1,1 +1,0 @@
-- Fixed the dashboard account menu not opening from the mobile navbar (#12192): the avatar is now a real `<button>` (iOS Safari never synthesised a click from a tap on the bare `<img>`), and on phone layouts the dropdown is pinned under the navbar with `position: fixed` instead of being clipped by the scrolling `overflow: hidden` chip strip.

@@ -123,6 +123,11 @@ project:
 #   close_on_merge: true
 #   close_on_merge_backfill_interval: 1h
 #   reporter_confirmation: false
+#   # Trusted reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   sha_hold_trusted_label: needs-sha
+#   # Lift hive-applied hold/blocked once a referencing PR merges (#12002).
+#   lift_hive_hard_suppress: true
+#   hard_suppress_reconcile_interval: 30m
 #
 # Optional per-repo override for the same policy. Omit a repo entry (or omit
 # self_authorization_hold in it) to inherit github.self_authorization_hold, then
@@ -1026,7 +1031,7 @@ dashboard:
 
 # Experiment Lab (Nous) — repo-only controlled experiment framework for
 # your repositories' code (tests, CI config, automation scripts).
-# The dashboard section is hidden by default; show
+# Formerly the Strategy Lab. The dashboard section is hidden by default; show
 # it with `dashboard.experiment_lab: true` (the old `dashboard.strategy_lab`
 # key is a deprecated alias for one release).
 # There is intentionally NO `nous:` block here: Nous has no YAML config
@@ -1142,6 +1147,8 @@ knowledge:
                                              # (heuristic classifier emits 0.5–0.8)
     target_layer: personal                   # Layer facts are primed at (default: personal)
     max_facts_per_cycle: 0                   # 0 = unlimited
+    max_api_calls_per_cycle: 40              # Cap on charged GitHub PR GETs per cycle (default 40);
+                                             # HIVE_BEAD_SYNTH_MAX_API_CALLS overrides. 304s are not charged.
     vault_path: /data/vaults/bead-synth-wiki # Auto-created and auto-connected
     retention_policy:                        # Bead lifecycle management (always active)
       max_beads: 5000                        # Archive down to 80% of this when exceeded

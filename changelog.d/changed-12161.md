@@ -1,1 +1,0 @@
-- docs: point admin MCP links at the v6 reference so the v5 link check passes (#12161)

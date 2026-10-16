@@ -1,1 +1,0 @@
-- Fix lifecycle timeline endpoint markers so they render as fixed-size circles instead of stretched ovals.

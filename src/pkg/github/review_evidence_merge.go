@@ -165,6 +165,75 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 	return b
 }
 
+// recordReviewEvidenceCI stores the CI conclusion on the head's existing
+// bundle when merge eligibility is evaluated, so a bundle carries a captured
+// verdict even when the merge-time capture fails. It never starts a bundle,
+// never touches a merged one, writes only when the checks or status changed
+// (the capture time of an unchanged verdict stays put, so no hash churn), and
+// logs and swallows every failure: it must not affect a merge decision.
+func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status string, runs []*gh.CheckRun) {
+	if c == nil || head == "" || number <= 0 || len(runs) == 0 {
+		return
+	}
+	settings, ok := c.reviewEvidenceSettings(repo)
+	if !ok {
+		return
+	}
+	ci := evidenceCIFromRuns(runs, time.Now())
+	if status != "" {
+		ci.Status = status
+	}
+
+	reviewEvidenceMu.Lock()
+	defer reviewEvidenceMu.Unlock()
+	path := ReviewEvidencePath("", repo, number, head)
+	b, err := LoadReviewEvidence(path)
+	if err != nil || b.Merge != nil {
+		return
+	}
+	if !b.CI.CapturedAt.IsZero() && b.CI.Status == ci.Status && sameEvidenceChecks(b.CI.Checks, ci.Checks) {
+		return
+	}
+	b.CI = ci
+	b.UpdatedAt = ci.CapturedAt
+	if err := b.Validate(); err != nil {
+		c.logger.Warn("review evidence: CI snapshot invalid, not written",
+			slog.String("path", path), slog.String("error", err.Error()))
+		return
+	}
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, writing CI snapshot unsigned",
+			slog.String("path", path), slog.String("error", err.Error()))
+		key = nil
+	}
+	if err := evidence.Seal(b, key); err != nil {
+		c.logger.Warn("review evidence: could not seal CI snapshot",
+			slog.String("path", path), slog.String("error", err.Error()))
+		return
+	}
+	if err := writeReviewEvidence(path, b); err != nil {
+		c.logger.Warn("review evidence: could not write CI snapshot",
+			slog.String("path", path), slog.String("error", err.Error()))
+	}
+}
+
+// sameEvidenceChecks reports whether two check lists carry the same verdicts.
+// URLs are ignored: the GraphQL batch path fills details_url and the REST
+// fallback html_url, so comparing them would reseal the bundle with a new hash
+// every time the batch cache flips, with nothing about CI having changed.
+func sameEvidenceChecks(a, b []evidence.Check) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Conclusion != b[i].Conclusion {
+			return false
+		}
+	}
+	return true
+}
+
 // Human action kinds recorded in Bundle.HumanActions.
 const (
 	ReviewEvidenceActionApproval     = "approval"
@@ -186,6 +255,12 @@ func (c *Client) captureReviewEvidenceMergeContext(ctx context.Context, owner, n
 		c.logger.Warn("review evidence: could not capture CI for merged head",
 			slog.String("id", b.ID), slog.String("error", err.Error()))
 	} else {
+		// The gate's verdict at merge-eligibility time (recordReviewEvidenceCI)
+		// is the one that let the PR merge; keep it over one re-derived after
+		// the fact, which may have moved on.
+		if prior := b.CI.Status; prior != "" {
+			ci.Status = prior
+		}
 		b.CI = ci
 	}
 	actions, err := reviewEvidenceHumanActions(ctx, c.client, owner, name, b.Number, b.HeadSHA, b.CreatedAt)
@@ -225,8 +300,15 @@ func reviewEvidenceCI(ctx context.Context, client *gh.Client, owner, name, head 
 		}
 		opts.Page = resp.NextPage
 	}
-	ci := evidence.CI{CapturedAt: now.UTC()}
-	for _, cr := range latestCheckRunsByNameAndApp(runs) {
+	return evidenceCIFromRuns(runs, now), nil
+}
+
+// evidenceCIFromRuns summarizes the latest run of each check, sorted by name,
+// with the verdict those runs give under the merge gate's rules.
+func evidenceCIFromRuns(runs []*gh.CheckRun, now time.Time) evidence.CI {
+	latest := latestCheckRunsByNameAndApp(runs)
+	ci := evidence.CI{Status: evidenceCIVerdict(latest), CapturedAt: now.UTC()}
+	for _, cr := range latest {
 		checkName := strings.TrimSpace(cr.GetName())
 		if checkName == "" {
 			continue
@@ -240,7 +322,33 @@ func reviewEvidenceCI(ctx context.Context, client *gh.Client, owner, name, head 
 		}
 		ci.Checks = append(ci.Checks, evidence.Check{Name: checkName, Conclusion: conclusion, URL: cr.GetHTMLURL()})
 	}
-	return ci, nil
+	return ci
+}
+
+// evidenceCIVerdict is the merge gate's reading of the latest check runs
+// (same rules as enrichPRCI): "failure" when any real check failed or needs
+// action, "success" when every real check completed clean, otherwise
+// "pending". Meta checks, and DCO once it has passed, do not count.
+func evidenceCIVerdict(latest []*gh.CheckRun) string {
+	dcoSatisfied := dcoContextSucceeded(nil, latest)
+	real, allDone := 0, true
+	for _, cr := range latest {
+		if isMetaCheck(cr.GetName()) || (isDCOContext(cr.GetName()) && dcoSatisfied) {
+			continue
+		}
+		real++
+		if cr.GetStatus() != "completed" {
+			allDone = false
+			continue
+		}
+		if conclusion := cr.GetConclusion(); conclusion == "failure" || conclusion == "action_required" {
+			return "failure"
+		}
+	}
+	if real == 0 || !allDone {
+		return "pending"
+	}
+	return "success"
 }
 
 // reviewEvidenceHumanActions lists the human actions on the PR that the bundle

@@ -26,6 +26,7 @@ github.com/hivecommons/hive/pkg/defsrc
 # applied-at) and reviewer-passed label; already a transitive dependency via
 # pkg/review and pkg/retro (hivecommons/hive#11565).
 github.com/hivecommons/hive/pkg/escalation
+github.com/hivecommons/hive/pkg/evidence
 github.com/hivecommons/hive/pkg/fleetreport
 github.com/hivecommons/hive/pkg/github
 github.com/hivecommons/hive/pkg/governor

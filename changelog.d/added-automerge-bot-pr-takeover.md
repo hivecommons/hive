@@ -1,1 +1,0 @@
-- Added a github-actions[bot] PR takeover to automerge: when a trusted `github-actions[bot]` PR is stuck at `required-check-missing` because its `pull_request` workflows can never run, the hive App re-authors it as a signed-off `hive/takeover-<n>` PR and closes the original (`auto_merge.bot_takeover.enabled`, default on) (#12003).

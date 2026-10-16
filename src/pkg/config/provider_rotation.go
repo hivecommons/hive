@@ -31,7 +31,11 @@ type ProviderBudgetConfig struct {
 
 // defaultProviderBudgetProbeIntervalS is the spend-rebuff probe interval when
 // unset: 30 minutes.
-const defaultProviderBudgetProbeIntervalS = 1800
+const defaultProviderBudgetProbeIntervalS = DefaultProviderBudgetProbeIntervalS
+
+// DefaultProviderBudgetProbeIntervalS is the exported spend-rebuff probe
+// interval default, for editors that show it as a placeholder.
+const DefaultProviderBudgetProbeIntervalS = 1800
 
 // EffectiveProbeInterval returns the spend-rebuff probe interval, applying the
 // default when unset. A negative or zero value means "unset" rather than

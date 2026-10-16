@@ -384,15 +384,46 @@ until the first run. A spoke with no framework selected sends an empty block,
 which clears whatever the hub stored; a beat with no block at all (an older
 spoke, or a minimal upgrade beat) keeps the last stored profile.
 
-The hub Fleet table shows this as a **Compliance** column: a pass-rate pill
-(`pass / (pass + fail)`; skipped and errored checks are not counted) with the
-framework IDs beneath it. The pill links to the spoke's Settings → Compliance
-tab when the hub knows the spoke's dashboard URL.
+The hub Fleet table (`my-hives`) does not yet render this data: there is no
+Compliance column in the hub UI. The stored profile is exposed only through the
+API below.
 
 `GET /api/hub/compliance` (hub admin only) exports the fleet-wide aggregate:
 spoke counts, per-framework spoke counts, total pass/fail with the overall
 pass rate, and one row per spoke with a framework selected. Pass rates are
 rounded to whole percent and are `null`/absent when no check has been decided.
+
+## Evidence summary heartbeat (#12114)
+
+Every spoke adds an `evidence` block to its hub heartbeat: a 90-day summary of
+its [review evidence](review-evidence.md) bundles (newest bundle per PR, the
+same store behind `GET /api/evidence/summary`):
+
+```json
+{"evidence": {"verdicts_90d": 30, "false_approve_90d": 2, "false_block_90d": 3,
+  "merged_90d": 12, "reverted_14d_90d": 1, "automerge_self_authored": false,
+  "reviewer_families": ["claude", "gpt"], "author_families": ["gpt"],
+  "calibration": [{"n": 4, "bad": 1}, {"n": 0, "bad": 0}, {"n": 0, "bad": 0},
+                  {"n": 0, "bad": 0}, {"n": 6, "bad": 0}, {"n": 20, "bad": 4}]}}
+```
+
+- `false_approve_90d` — approve verdicts on PRs later reverted or followed up
+  within 14 days of merge; `false_block_90d` — blocking verdicts on PRs that
+  were merged anyway; `reverted_14d_90d` — merged PRs reverted or followed up
+  within 14 days.
+- `calibration` — six reviewer-confidence buckets (bucket `i` covers
+  `[i/6, (i+1)/6)`); `bad` counts verdicts that were a false approve or false
+  block.
+- `automerge_self_authored` — `auto_merge.self_authored` at the hive's ACMM
+  level (`AutoMerge.SelfAuthoredAutoMergeAllowed`).
+- `reviewer_families` / `author_families` — model families (`claude`, `gpt`,
+  …) seen on verdicts and agent-authored PRs; unknown models are omitted.
+
+The hub clamps every count (subset counts never exceed their total), caps and
+de-duplicates the family lists, and stores the result with the other per-hive
+quadrant inputs. A beat without the block (an older spoke, a minimal upgrade
+beat, or a spoke whose evidence directory was unreadable that cycle) keeps the
+last stored summary. Reporting only: nothing here gates a merge.
 
 ## Troubleshooting: symptom → hint → fix
 

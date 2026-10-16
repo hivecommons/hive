@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -13,8 +14,9 @@ import (
 )
 
 // featuresOpsBody is the part of the Features PUT that covers the operational
-// hive.yaml blocks issues.*, jev.*, duplicate_sweep.*, policies.* and the
-// turn.pr_follow_up / turn.reentrant knobs. Every field is a pointer so an
+// hive.yaml blocks issues.*, jev.*, duplicate_sweep.*, policies.*, the
+// turn.pr_follow_up / turn.reentrant knobs, good_first_issue.*, and the
+// governor claim-mirroring and rotation headroom-source keys. Every field is a pointer so an
 // absent key leaves the config untouched. Durations travel as Go duration
 // strings ("10m", "24h"); an empty string means the built-in default.
 type featuresOpsBody struct {
@@ -53,6 +55,24 @@ type featuresOpsBody struct {
 	GoodFirstIssueMaxPerRepo  *int    `json:"goodFirstIssueMaxPerRepo"`
 	GoodFirstIssueMaxPerSweep *int    `json:"goodFirstIssueMaxPerSweep"`
 	GoodFirstIssueMinAge      *string `json:"goodFirstIssueMinAge"`
+	// The scorer tuning knobs: 0 or empty means the gfi package default.
+	GoodFirstIssueMinBodyChars     *int    `json:"goodFirstIssueMinBodyChars"`
+	GoodFirstIssueMaxBodyChars     *int    `json:"goodFirstIssueMaxBodyChars"`
+	GoodFirstIssueMaxPackages      *int    `json:"goodFirstIssueMaxPackages"`
+	GoodFirstIssueMinScore         *int    `json:"goodFirstIssueMinScore"`
+	GoodFirstIssueReselectCooldown *string `json:"goodFirstIssueReselectCooldown"`
+	GoodFirstIssueDocsURL          *string `json:"goodFirstIssueDocsUrl"`
+	GoodFirstIssueCommentTemplate  *string `json:"goodFirstIssueCommentTemplate"`
+
+	// governor.claims GitHub mirroring and the stall gate. The claim hooks
+	// and the escalation gate are wired at boot, so these apply after a
+	// restart. Escalate: 0 means the default, negative turns the gate off.
+	ClaimsComment             *bool `json:"claimsComment"`
+	ClaimsLabel               *bool `json:"claimsLabel"`
+	ClaimsEscalateAfterClaims *int  `json:"claimsEscalateAfterClaims"`
+	// governor.rotation.headroom_source: builtin (default) or ccleft. The
+	// rotation manager builds its probers at boot, so this needs a restart.
+	RotationHeadroomSource *string `json:"rotationHeadroomSource"`
 }
 
 // envVarNamePattern is the shape of a POSIX environment variable name.
@@ -235,7 +255,9 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 	}
 
 	if b.GoodFirstIssueEnabled != nil || b.GoodFirstIssueInterval != nil || b.GoodFirstIssueMaxPerRepo != nil ||
-		b.GoodFirstIssueMaxPerSweep != nil || b.GoodFirstIssueMinAge != nil {
+		b.GoodFirstIssueMaxPerSweep != nil || b.GoodFirstIssueMinAge != nil || b.GoodFirstIssueMinBodyChars != nil ||
+		b.GoodFirstIssueMaxBodyChars != nil || b.GoodFirstIssueMaxPackages != nil || b.GoodFirstIssueMinScore != nil ||
+		b.GoodFirstIssueReselectCooldown != nil || b.GoodFirstIssueDocsURL != nil || b.GoodFirstIssueCommentTemplate != nil {
 		g := cur.GoodFirstIssue
 		if b.GoodFirstIssueEnabled != nil {
 			g.Enabled = *b.GoodFirstIssueEnabled
@@ -260,10 +282,75 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 		if b.GoodFirstIssueMaxPerSweep != nil {
 			g.MaxPerSweep = *b.GoodFirstIssueMaxPerSweep
 		}
+		if b.GoodFirstIssueMinBodyChars != nil {
+			g.MinBodyChars = *b.GoodFirstIssueMinBodyChars
+		}
+		if b.GoodFirstIssueMaxBodyChars != nil {
+			g.MaxBodyChars = *b.GoodFirstIssueMaxBodyChars
+		}
+		if b.GoodFirstIssueMaxPackages != nil {
+			g.MaxPackages = *b.GoodFirstIssueMaxPackages
+		}
+		if b.GoodFirstIssueMinScore != nil {
+			g.MinScore = *b.GoodFirstIssueMinScore
+		}
+		if b.GoodFirstIssueReselectCooldown != nil {
+			d, err := parseSettingsDuration("good_first_issue reselect_cooldown", *b.GoodFirstIssueReselectCooldown)
+			if err != nil {
+				return nil, err
+			}
+			g.ReselectCooldown = d
+		}
+		if b.GoodFirstIssueDocsURL != nil {
+			v := strings.TrimSpace(*b.GoodFirstIssueDocsURL)
+			if v != "" {
+				u, err := url.Parse(v)
+				if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+					return nil, fmt.Errorf("good_first_issue docs_url must be empty (default) or an absolute http(s) URL")
+				}
+			}
+			g.DocsURL = v
+		}
+		if b.GoodFirstIssueCommentTemplate != nil {
+			// Whitespace-only means the built-in template; otherwise the text is
+			// kept verbatim because Markdown is whitespace-sensitive.
+			v := *b.GoodFirstIssueCommentTemplate
+			if strings.TrimSpace(v) == "" {
+				v = ""
+			}
+			g.CommentTemplate = v
+		}
 		if err := config.ValidateGoodFirstIssue(g); err != nil {
 			return nil, err
 		}
 		steps = append(steps, func(c *config.Config) { c.GoodFirstIssue = g })
+	}
+
+	if b.ClaimsComment != nil {
+		v := *b.ClaimsComment
+		steps = append(steps, func(c *config.Config) { c.Governor.Claims.Comment = &v })
+	}
+	if b.ClaimsLabel != nil {
+		v := *b.ClaimsLabel
+		steps = append(steps, func(c *config.Config) { c.Governor.Claims.Label = &v })
+	}
+	if b.ClaimsEscalateAfterClaims != nil {
+		v := *b.ClaimsEscalateAfterClaims
+		if v < 0 {
+			v = -1
+		}
+		steps = append(steps, func(c *config.Config) { c.Governor.Claims.EscalateAfterClaims = v })
+	}
+	if b.RotationHeadroomSource != nil {
+		v := strings.ToLower(strings.TrimSpace(*b.RotationHeadroomSource))
+		switch v {
+		case "", config.RotationHeadroomSourceBuiltin:
+			v = ""
+		case config.RotationHeadroomSourceCCLeft:
+		default:
+			return nil, fmt.Errorf("rotation headroom_source must be %s or %s", config.RotationHeadroomSourceBuiltin, config.RotationHeadroomSourceCCLeft)
+		}
+		steps = append(steps, func(c *config.Config) { c.Governor.Rotation.HeadroomSource = v })
 	}
 
 	return func(c *config.Config) {
@@ -290,6 +377,13 @@ func containsDotDotSegment(p string) bool {
 func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 	jevDefaults := config.JevConfig{Provider: cfg.Jev.Provider}
 	return map[string]interface{}{
+		"claimsComment":                cfg.Governor.Claims.CommentEnabled(),
+		"claimsLabel":                  cfg.Governor.Claims.LabelEnabled(),
+		"claimsEscalateAfterClaims":    cfg.Governor.Claims.EscalateAfterClaims,
+		"claimsEscalateAfterDefault":   config.DefaultClaimEscalateAfter,
+		"rotationHeadroomSource":       cfg.Governor.Rotation.EffectiveHeadroomSource(),
+		"rotationHeadroomSourceValues": []string{config.RotationHeadroomSourceBuiltin, config.RotationHeadroomSourceCCLeft},
+
 		"issuesCloseOnMerge":                 cfg.Issues.CloseOnMergeEnabled(),
 		"issuesCloseOnMergeInterval":         settingsDurationString(cfg.Issues.CloseOnMergeInterval),
 		"issuesCloseOnMergeBackfillInterval": settingsDurationString(cfg.Issues.CloseOnMergeBackfillInterval),
@@ -347,11 +441,25 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 		"goodFirstIssueMaxPerRepo":  cfg.GoodFirstIssue.MaxPerRepo,
 		"goodFirstIssueMaxPerSweep": cfg.GoodFirstIssue.MaxPerSweep,
 		"goodFirstIssueMinAge":      settingsDurationString(cfg.GoodFirstIssue.MinAge),
+
+		"goodFirstIssueMinBodyChars":     cfg.GoodFirstIssue.MinBodyChars,
+		"goodFirstIssueMaxBodyChars":     cfg.GoodFirstIssue.MaxBodyChars,
+		"goodFirstIssueMaxPackages":      cfg.GoodFirstIssue.MaxPackages,
+		"goodFirstIssueMinScore":         cfg.GoodFirstIssue.MinScore,
+		"goodFirstIssueReselectCooldown": settingsDurationString(cfg.GoodFirstIssue.ReselectCooldown),
+		"goodFirstIssueDocsUrl":          cfg.GoodFirstIssue.DocsURL,
+		"goodFirstIssueCommentTemplate":  cfg.GoodFirstIssue.CommentTemplate,
 		"goodFirstIssueDefaults": map[string]string{
-			"goodFirstIssueInterval":    config.DefaultGoodFirstIssueInterval.String(),
-			"goodFirstIssueMaxPerRepo":  strconv.Itoa(config.DefaultGoodFirstIssueMaxPerRepo),
-			"goodFirstIssueMaxPerSweep": strconv.Itoa(config.DefaultGoodFirstIssueMaxPerSweep),
-			"goodFirstIssueMinAge":      config.DefaultGoodFirstIssueMinAge.String(),
+			"goodFirstIssueInterval":         config.DefaultGoodFirstIssueInterval.String(),
+			"goodFirstIssueMaxPerRepo":       strconv.Itoa(config.DefaultGoodFirstIssueMaxPerRepo),
+			"goodFirstIssueMaxPerSweep":      strconv.Itoa(config.DefaultGoodFirstIssueMaxPerSweep),
+			"goodFirstIssueMinAge":           config.DefaultGoodFirstIssueMinAge.String(),
+			"goodFirstIssueMinBodyChars":     strconv.Itoa(config.DefaultGoodFirstIssueMinBodyChars),
+			"goodFirstIssueMaxBodyChars":     strconv.Itoa(config.DefaultGoodFirstIssueMaxBodyChars),
+			"goodFirstIssueMaxPackages":      strconv.Itoa(config.DefaultGoodFirstIssueMaxPackages),
+			"goodFirstIssueMinScore":         strconv.Itoa(config.DefaultGoodFirstIssueMinScore),
+			"goodFirstIssueReselectCooldown": config.DefaultGoodFirstIssueReselectCooldown.String(),
+			"goodFirstIssueDocsUrl":          config.DefaultGoodFirstIssueDocsBase,
 		},
 	}
 }

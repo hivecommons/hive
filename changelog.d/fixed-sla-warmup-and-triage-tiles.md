@@ -1,1 +1,0 @@
-- **Delivery SLA: empty tiles now say what they are waiting for, and the Open → triage and Triage → start spans are rendered.** Previously `n=0` tiles showed a bare `—` and the two spans that already had data were hidden (#11998).

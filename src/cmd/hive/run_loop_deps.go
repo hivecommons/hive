@@ -60,12 +60,17 @@ func defaultRunLoopDeps() runLoopDeps {
 		runSweeps: func(b *boot) {
 			runAutoMergeSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastAutoMergeSweep, b.logger)
 			decision := decideEvalBudgetWork(apiBudgetModeForClient(b.ghClient), b.cfg.Governor.OptionalSweepEveryNCycles, b.evalCycles)
-			if decision.SkipOptional {
+			if len(decision.SkippedSteps) > 0 {
 				b.ghClient.RecordAPIBudgetSkippedSteps(decision.SkippedSteps)
+			}
+			if !decision.SkipUnstick {
+				runSupersessionSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSupersessionSweep, b.logger)
+				runSharedCIRerunSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSharedCIRerunSweep, b.logger)
+			}
+			if decision.SkipOptional {
 				return
 			}
 			runTaskListSweepIfDue(b.ctx, b.ghClient, b.dashSrv, &b.lastTaskListSweep, b.logger)
-			runSupersessionSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSupersessionSweep, b.logger)
 			runDuplicateSweepIfDue(b.ctx, b.cfg, b.ghClient, b.dashSrv, &b.lastDuplicateSweep, b.logger)
 			runIssueUnparkSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastIssueUnparkSweep, b.logger)
 			runSentinelSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSentinelSweep, b.logger)

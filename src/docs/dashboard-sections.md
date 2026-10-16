@@ -438,7 +438,7 @@ Every open PR across the governed repos in one deterministic rank order (GET /ap
 
 An experimental planner that tries out code changes in your repositories and records what it learned.
 
-**What it tells you.** The Experiment Lab runs small experiments on your repositories' code (tests, CI config, automation scripts). It shows its goal, its plan and a ledger of results. The header shows the research question you set in the gear dialog, if there is one; otherwise nothing appears beside the title. Mode (Observe, Suggest, Evolve) is shown by the buttons inside the card, not in the header. The lab is repo-only: there is no scope selector.
+**What it tells you.** The Experiment Lab (formerly the Strategy Lab) runs small experiments on your repositories' code (tests, CI config, automation scripts). It shows its goal, its plan and a ledger of results. The header shows the research question you set in the gear dialog, if there is one; otherwise nothing appears beside the title. Mode (Observe, Suggest, Evolve) is shown by the buttons inside the card, not in the header. The lab is repo-only: there is no scope selector.
 
 **How the numbers are worked out.** The ledger lists each experiment and its result. The section has no other numbers.
 

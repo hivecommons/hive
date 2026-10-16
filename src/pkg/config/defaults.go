@@ -11,18 +11,39 @@ import (
 	"github.com/hivecommons/hive/pkg/nousstore"
 )
 
+// DefaultGitHubAPIReserve and DefaultGitHubAPICritical are the values a zero
+// github.api_reserve / github.api_critical means, both at Load (applyDefaults)
+// and in Validate; runtime editors substitute the same values so a cleared
+// field restores the default instead of failing the boot-time bound.
+const (
+	DefaultGitHubAPIReserve  = 800
+	DefaultGitHubAPICritical = 250
+)
+
+// DefaultEvalIntervalMaxS, DefaultEvalIntervalWebhookS,
+// DefaultConserveIntervalMultiplier and DefaultOptionalSweepEveryNCycles are
+// what a zero governor eval-loop knob becomes at Load (applyDefaults);
+// runtime editors substitute the same values so a cleared field restores the
+// default.
+const (
+	DefaultEvalIntervalMaxS           = 1800
+	DefaultEvalIntervalWebhookS       = 900
+	DefaultConserveIntervalMultiplier = 2
+	DefaultOptionalSweepEveryNCycles  = 1
+)
+
 const (
 	MaxAgentReplicas = 5
 
 	defaultDashboardPort          = 3002
 	defaultAgentPollIntervalS     = 10
 	defaultEvalIntervalS          = 300
-	defaultEvalIntervalMaxS       = 1800
-	defaultEvalIntervalWebhookS   = 900
-	defaultConserveIntervalMult   = 2
-	defaultOptionalSweepEveryN    = 1
-	defaultGitHubAPIReserve       = 800
-	defaultGitHubAPICritical      = 250
+	defaultEvalIntervalMaxS       = DefaultEvalIntervalMaxS
+	defaultEvalIntervalWebhookS   = DefaultEvalIntervalWebhookS
+	defaultConserveIntervalMult   = DefaultConserveIntervalMultiplier
+	defaultOptionalSweepEveryN    = DefaultOptionalSweepEveryNCycles
+	defaultGitHubAPIReserve       = DefaultGitHubAPIReserve
+	defaultGitHubAPICritical      = DefaultGitHubAPICritical
 	defaultPollIntervalMins       = 5
 	defaultKnowledgeMaxFacts      = 25
 	defaultKnowledgeMaxBytes      = 4096
@@ -486,6 +507,9 @@ func (c *Config) applyDefaults() {
 		}
 		if c.Knowledge.BeadSynthesizer.MaxFactsPerCycle == 0 {
 			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = 20
+		}
+		if c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle == 0 {
+			c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle = DefaultBeadSynthMaxAPICallsPerCycle
 		}
 		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
 			c.Knowledge.BeadSynthesizer.VaultPath = "/data/vaults/bead-synth-wiki"
