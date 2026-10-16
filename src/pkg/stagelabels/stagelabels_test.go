@@ -301,7 +301,8 @@ func TestStoreMarksForgetsAndSharedLoad(t *testing.T) {
 	t.Cleanup(func() { StatePath = saved })
 	StatePath = filepath.Join(t.TempDir(), "shared.json")
 	sharedOnce = sync.Once{}
-	if Shared() == nil || Shared() != Shared() {
+	first := Shared()
+	if first == nil || Shared() != first {
 		t.Fatal("Shared() must return one store")
 	}
 }
