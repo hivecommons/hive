@@ -9,8 +9,8 @@ import (
 // TestEvidenceCardInThroughputSection pins the Evidence sub-panel (#12064): it
 // sits inside the Throughput section below the throughput card, reuses the
 // prt-card chrome, follows the Throughput window/repo selector, and reads
-// /api/evidence/summary for the calibration, accuracy × model and shadow-gate
-// (#12068) panels.
+// /api/evidence/summary for the outcome-by-author-kind (#12364), calibration,
+// accuracy × model and shadow-gate (#12068) panels.
 func TestEvidenceCardInThroughputSection(t *testing.T) {
 	html := indexHTML(t)
 	section := strings.Index(html, `<div id="pr-throughput-section"`)
@@ -49,10 +49,28 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"no shadow-gate observations in this window",
 		"[['held', `would have ${verb}`], ['passed', 'would have passed']]",
 		".ev-svg .ev-bar.sr",
+		// Panel 1 (#12364): outcome by author kind.
+		"dto.outcomes_by_author_kind || {}",
+		"evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),",
+		"const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];",
+		"reverted: Number(o.reverted_14d) || 0",
+		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}",
+		"no PRs with an evidence bundle in this window",
+		"Schema v1 bundles record a merge but not a close-without-merge, so closed may read 0.",
+		"Reverted means a reverted_by link to a revert PR within 14 d of merge",
+		"Open PRs are excluded from the merged and reverted rates.",
+		".ev-svg .ev-bar.or",
+		".ev-legend i.om",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("Evidence card missing snippet %q", snippet)
 		}
+	}
+	// Panel order follows the RFC numbering: 1 (outcome) renders first.
+	p1 := strings.Index(html, "evPanel('outcome-by-author'")
+	p2 := strings.Index(html, "evPanel('calibration'")
+	if p1 < 0 || p2 < 0 || p1 > p2 {
+		t.Errorf("outcome-by-author panel must render before calibration (p1=%d p2=%d)", p1, p2)
 	}
 }
 
@@ -65,6 +83,7 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"renderEvidenceSummary",
 		"evPanel",
 		"evRate",
+		"evOutcomesSvg",
 		"evCalibrationSvg",
 		"evAccuracySvg",
 		"evShadowGateSvg",

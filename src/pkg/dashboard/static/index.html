@@ -1585,6 +1585,13 @@
     .ev-legend i.sr { background:var(--red); }
     .ev-legend i.so { background:var(--muted); opacity:.5; }
     .ev-legend i.unknown { background:var(--muted); opacity:.5; }
+    .ev-svg .ev-bar.om { fill:var(--green); }
+    .ev-svg .ev-bar.oc { fill:var(--muted); opacity:.6; }
+    .ev-svg .ev-bar.or { fill:var(--red); }
+    .ev-legend i.om { background:var(--green); }
+    .ev-legend i.oc { background:var(--muted); opacity:.6; }
+    .ev-legend i.or { background:var(--red); }
+    .ev-svg text.ev-sub { opacity:.7; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
     .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
@@ -22021,8 +22028,9 @@ function burnAreaChart() {
 
     // Evidence sub-panel (#12064, RFC #12062): read-only reporting from
     // /api/evidence/summary for the Throughput window and repo selector.
-    // Panels 2 (reviewer calibration), 3 (reviewer accuracy × model) and 8
-    // (shadow gates). UI only; nothing here changes merge behaviour.
+    // Panels 1 (outcome by author kind), 2 (reviewer calibration), 3 (reviewer
+    // accuracy × model) and 8 (shadow gates). UI only; nothing here changes
+    // merge behaviour.
     const EV_PALETTE_SIZE = 6;
     let evLast = null;
 
@@ -22036,6 +22044,37 @@ function burnAreaChart() {
       const prev = card && card.querySelector(`details[data-ev-panel="${key}"]`);
       const open = prev ? prev.open : true;
       return `<details class="ev-panel" data-ev-panel="${key}"${open ? ' open' : ''}><summary>${escapeHtml(title)}<span class="ev-n" title="Samples behind this panel">n=${Number(n) || 0}</span></summary>${bodyHtml}<div class="ev-note"><b>What this does not show:</b> ${escapeHtml(note)}</div></details>`;
+    }
+
+    // Panel 1 (#12364): PR outcome by author kind. One row per kind with a
+    // grouped bar for merged / closed / reverted within 14 d of merge, each
+    // scaled against the largest kind so rows are comparable. Rates in the
+    // tooltip exclude still-open PRs.
+    const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];
+    function evOutcomesSvg(outcomes) {
+      outcomes = outcomes || {};
+      const kinds = EV_AUTHOR_KINDS.concat(Object.keys(outcomes).filter((k) => !EV_AUTHOR_KINDS.includes(k)).sort());
+      const rows = kinds.map((kind) => {
+        const o = outcomes[kind] || {};
+        return { kind, n: Number(o.n) || 0, merged: Number(o.merged) || 0, closed: Number(o.closed) || 0, open: Number(o.open) || 0, reverted: Number(o.reverted_14d) || 0 };
+      }).filter((r) => r.n > 0);
+      if (!rows.length) return '<div class="ev-empty">— no PRs with an evidence bundle in this window</div>';
+      const w = 320, label = 70, valW = 40, barH = 7, gap = 2, rowH = 3 * (barH + gap) + 8, t = 4;
+      const barW = w - label - valW;
+      const h = t + rows.length * rowH;
+      const maxN = Math.max(1, ...rows.map((r) => r.n));
+      const pct = (num, den) => { const v = evRate(num, den); return v == null ? '—' : Math.round(v * 100) + '%'; };
+      const body = rows.map((row, i) => {
+        const y0 = t + i * rowH;
+        const decided = row.merged + row.closed;
+        const tip = escapeHtml(`${row.kind} authors: merged ${row.merged} (${pct(row.merged, decided)} of decided) · closed ${row.closed} · reverted within 14 d ${row.reverted} (${pct(row.reverted, row.merged)} of merged) · open ${row.open} · n=${row.n}`);
+        const bar = (cls, v, k) => {
+          const yy = y0 + k * (barH + gap);
+          return `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${((v / maxN) * barW).toFixed(1)}" height="${barH}"><title>${tip}</title></rect><text x="${w - 2}" y="${yy + barH}" text-anchor="end">${v}</text>`;
+        };
+        return `<g><text x="0" y="${y0 + 13}">${escapeHtml(row.kind)}<title>${tip}</title></text><text class="ev-sub" x="0" y="${y0 + 24}">n=${row.n}</text>${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}</g>`;
+      }).join('');
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="PR outcome by author kind: merged, closed and reverted within 14 days for human, agent and bot authors">${body}</svg><div class="ev-legend"><span><i class="om"></i>merged</span><span><i class="oc"></i>closed without merge</span><span><i class="or"></i>reverted within 14 d of merge</span></div>`;
     }
 
     function evCalibrationSvg(calib) {
@@ -22143,9 +22182,13 @@ function burnAreaChart() {
       const modelN = models.reduce((sum, m) => sum + (Number(m && m.n) || 0), 0);
       const unknown = Number((dto.missing || {}).verdicts_model_unknown) || 0;
       const shadow = dto.shadow_gate || {};
+      const outcomes = dto.outcomes_by_author_kind || {};
+      const outcomeN = Object.keys(outcomes).reduce((sum, k) => sum + (Number(outcomes[k] && outcomes[k].n) || 0), 0);
       const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
       const scope = (dto.all_time ? 'all time' : `last ${windowName ? windowName[1] : (Number(dto.hours) || 0) + 'h'}`) + (dto.repo ? ` · ${dto.repo}` : '');
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}</div><span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>`
+        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
+          'Reverted means a reverted_by link to a revert PR within 14 d of merge; reverts without a linked PR are missed. Schema v1 bundles record a merge but not a close-without-merge, so closed may read 0. Open PRs are excluded from the merged and reverted rates. Merged is not the same as correct.')
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
           'Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. Merged is not the same as correct, and a PR that is still open counts as not merged.')
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
