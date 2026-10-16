@@ -261,7 +261,7 @@ func Derive(in Inputs) Card {
 		Reasons:      []string{},
 	}
 
-	current, stale := headVerdict(in.Verdicts, pr)
+	current, stale := HeadVerdict(in.Verdicts, pr)
 	pendingReviews := pendingReviewsFor(in.Dispatch, pr)
 	pendingFix := pendingFixFor(in.Dispatch, pr)
 	link := headLink(in.ReviewLink, pr.HeadSHA)
@@ -413,7 +413,7 @@ func holdReasons(in Inputs, current *review.Aggregate, hold *review.HumanReviewH
 		case current.Verdict == review.VerdictReject:
 			reasons = append(reasons, "review verdict rejects the current head")
 			since = current.RecordedAt
-		case current.RequiresHuman || current.Verdict == review.VerdictRequiresHuman:
+		case RequiresHuman(current):
 			reasons = append(reasons, "review verdict requires a human")
 			since = current.RecordedAt
 		}
@@ -431,6 +431,12 @@ func holdReasons(in Inputs, current *review.Aggregate, hold *review.HumanReviewH
 		}
 	}
 	return reasons, since
+}
+
+// RequiresHuman reports whether a verdict asks for a human decision; on the
+// current head it places the PR in human_hold.
+func RequiresHuman(a *review.Aggregate) bool {
+	return a != nil && (a.RequiresHuman || a.Verdict == review.VerdictRequiresHuman)
 }
 
 func approvalReasons(in Inputs, current *review.Aggregate, link *ghpkg.ReviewLink) ([]string, time.Time) {
@@ -516,9 +522,10 @@ func samePR(repo string, number int, pr ghpkg.ReviewQueueEntry) bool {
 	return number == pr.Number && SameRepo(repo, pr.Repo)
 }
 
-// headVerdict returns the most recent verdict on the PR's head, or (when
-// there is none) the most recent verdict on an older head.
-func headVerdict(items []review.Aggregate, pr ghpkg.ReviewQueueEntry) (current, stale *review.Aggregate) {
+// HeadVerdict returns the most recent verdict on the PR's head, or (when
+// there is none) the most recent verdict on an older head. The dashboard's
+// your-turn decision reads the current head the same way (#12329).
+func HeadVerdict(items []review.Aggregate, pr ghpkg.ReviewQueueEntry) (current, stale *review.Aggregate) {
 	for i := range items {
 		a := &items[i]
 		if !samePR(a.Repo, a.Number, pr) {

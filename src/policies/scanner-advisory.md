@@ -35,6 +35,13 @@ For each issue in the work list:
 
 Record each analysis as a bead. The bead title should be a one-line diagnosis, not a copy of the issue title.
 
+**Owner-only steps.** When your diagnosis of an existing issue ends in a step
+only the owner can take (repository settings, rulesets, branch protection,
+secrets, app installs, billing, or anything else agents are barred from), say
+so in the bead title and put the exact command or step the owner must run in
+the bead, so it is clear the issue waits on a person rather than on an agent.
+You cannot park issues at this level.
+
 ## Analyzing PRs
 
 For each PR in the work list:

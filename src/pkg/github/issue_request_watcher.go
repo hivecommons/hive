@@ -110,13 +110,17 @@ type IssueRequest struct {
 	// read it instead of only in prose. A failed link does not fail the
 	// create; linked and failed blockers are both reported in the result.
 	BlockedBy []int `json:"blocked_by,omitempty"` // issue only
-	// NeedsDecision parks the new issue on a maintainer decision
+	// NeedsDecision parks the issue on a maintainer decision
 	// (hivecommons/hive#11215). On an "issue" request the watcher adds the
 	// hive's configured needs-decision label (hard_suppress_labels.
 	// needs_decision) to the create itself, so an issue that asks the
 	// maintainer to choose gets the "What to reply" notice and stays out of
-	// the actionable queue whatever labels the agent named.
-	NeedsDecision bool `json:"needs_decision,omitempty"` // issue only
+	// the actionable queue whatever labels the agent named. On a "comment"
+	// request it adds the same label to the existing item before posting the
+	// comment, so a diagnosis that ends in an owner-only action reaches the
+	// owner's inbox (hivecommons/hive#12329). The label relay still refuses
+	// the label itself: this flag is the only way an agent applies it.
+	NeedsDecision bool `json:"needs_decision,omitempty"` // issue and comment
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
@@ -468,7 +472,14 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			c.markInProgressStarted(ctx, req.Repo, req.Number, req.Agent, nowFn())
 		}
 	case "comment":
-		err = c.CreateIssueComment(ctx, req.Repo, req.Number, body)
+		// Park first: a retry after a failed comment re-adds the label (a
+		// no-op), while the reverse order would post the comment twice.
+		if req.NeedsDecision {
+			err = c.AddLabels(ctx, req.Repo, req.Number, []string{c.needsDecisionLabel()})
+		}
+		if err == nil {
+			err = c.CreateIssueComment(ctx, req.Repo, req.Number, body)
+		}
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
@@ -631,6 +642,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		"reused", strconv.FormatBool(resp.AlreadyExisted),
 		"consolidated", strconv.FormatBool(resp.Consolidated),
 		"override_reason", req.OverrideReason,
+	}
+	if kind == "comment" && req.NeedsDecision {
+		extra = append(extra, "parked", c.needsDecisionLabel())
 	}
 	if kind == "label" {
 		extra = []string{

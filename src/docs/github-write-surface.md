@@ -85,6 +85,11 @@ as fact (`issue_request_label.go`):
   `approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
   `blocked`.
 
+An agent parks an issue for the owner with the `--needs-decision` flag
+instead: on a create, or on `comment` for an existing issue whose remaining
+step only the owner can take, the relay applies the configured needs-decision
+label itself ([#12329](https://github.com/hivecommons/hive/issues/12329)).
+
 One reserved label refuses the whole request — nothing in it is applied — so a
 batch can never partially land. When the only refused part is removing
 `hive/likely-done` or `hive/covered-by-pr` alongside an add of

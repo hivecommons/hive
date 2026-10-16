@@ -526,6 +526,7 @@ so the reason text can change without breaking them.
 | `adjudicator_recommended_close` | `CLOSE` |
 | `adjudicator_reescalated` | `REVIEW` |
 | `person_pr_needs_human` | `REVIEW` |
+| `review_requires_human` | `REVIEW` |
 | `stale_safety_net` | `REVIEW` |
 
 **Ownership by level.** "Parked" means an issue in one of the four hard-suppress
@@ -548,6 +549,7 @@ means the situation cannot occur at that level.
 | Hive PR with `needs-human`, adjudicator recommended close, PR still open | — | — (no adjudicator lane below L5) | Yours — `CLOSE` | same |
 | Hive PR re-escalated with `needs-human` after an adjudicator pass | — | — | Yours — `REVIEW` | same |
 | Person's PR with `needs-human` | Yours — `REVIEW` | same | same | same |
+| PR not written by Hive, no `needs-human` label, whose review verdict on the current head is `requires_human` (`review_requires_human`; a newer head with no verdict yet clears it) | Yours — `REVIEW` | same | same | same |
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
 | Issue Hive verified as done but could not close | Yours — `CLOSE` | same | same | same |
 | Issue covered by an open PR | Not yours — the PR closes it on merge | same | same | same |

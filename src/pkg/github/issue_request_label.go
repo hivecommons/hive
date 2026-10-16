@@ -163,7 +163,8 @@ func (c *Client) reservedLabelRefusal(add, remove []string) (string, bool) {
 	}
 	return "label request names hive-controlled label(s) " + strings.Join(bad, ", ") +
 		": these drive hive automation or record a human decision and cannot be set by an agent. " +
-		"Use the claim relay for ownership, and ask a maintainer for merge, hold and decision labels.", true
+		"Use the claim relay for ownership, and ask a maintainer for merge, hold and decision labels. " +
+		"To park an issue for the owner, comment the step with `hive-open-issue comment --needs-decision`.", true
 }
 
 // verifiedOpenResendHint returns a usable next step when the only refused part

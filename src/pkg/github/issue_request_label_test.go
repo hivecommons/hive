@@ -135,6 +135,10 @@ func TestIssueRequestWatcher_LabelRefusesHiveControlledLabels(t *testing.T) {
 			if resp.OK || !strings.Contains(resp.Error, label) {
 				t.Errorf("result does not explain the refusal: %+v", resp)
 			}
+			// The refusal names the sanctioned way to park an issue (#12329).
+			if !strings.Contains(resp.Error, "hive-open-issue comment --needs-decision") {
+				t.Errorf("refusal does not name the park command: %q", resp.Error)
+			}
 		})
 	}
 }

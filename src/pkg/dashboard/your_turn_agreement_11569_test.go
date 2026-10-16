@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
+	"github.com/hivecommons/hive/pkg/review"
 )
 
 // Part D2 of the "your turn" spec (hivecommons/hive#11507, sub-issue #11569):
@@ -137,6 +138,7 @@ func agreementTableRepo(repo string) FrontendRepo {
 			pr(36, true, func(p *github.PullRequest) { p.Draft = true }),                                                 // draft
 			pr(37, false, func(p *github.PullRequest) { p.CIStatus = "failing"; p.FailingChecks = []string{"ci/test"} }), // failing CI
 			pr(38, false, nil), // ordinary
+			pr(39, false, func(p *github.PullRequest) { p.HeadSHA = "head-39" }), // review requires a human on the current head (#12329)
 		},
 		HeldPrs: []any{
 			held(40, true, github.HoldSourceLevelGate),
@@ -187,6 +189,9 @@ func agreementServer11569(t *testing.T, fx agreementFixture) (*Server, *StatusPa
 	repos := fx.repos()
 	env := ownershipEnv11565(fx.hiveLevel)
 	env.repoLevel = func(repo string) int { return fx.levels[repo] }
+	for _, repo := range repos {
+		env.reviewVerdicts = append(env.reviewVerdicts, review.Aggregate{Repo: repo.Full, Number: 39, HeadSHA: "head-39", Verdict: review.VerdictRequiresHuman, RequiresHuman: true})
+	}
 	decideRepoOwnership(repos, config.DashboardIssueBandsConfig{}, env)
 	status := &StatusPayload{HiveID: "h", ACMMLevel: fx.hiveLevel, AdmissionLabels: []string{"triage-ok"}, Repos: repos}
 	s.statusMu.Lock()
@@ -569,6 +574,7 @@ func TestYourTurnAgreementFixturesCoverTheNamedSituations11569(t *testing.T) {
 		"pr#43":    {"pr", OwnershipVerbReview, OwnershipReasonHoldSourceUnknown, true},      // unknown source
 		"pr#44":    {"pr", "", "", false},                                                    // paused from the dashboard
 		"issue#3":  {"issue", OwnershipVerbClose, OwnershipReasonVerifiedDone, true},         // to close
+		"pr#39":    {"pr", OwnershipVerbReview, OwnershipReasonReviewRequiresHuman, true},    // review requires a human (#12329)
 	}
 	for key, w := range want {
 		kind, num, _ := strings.Cut(key, "#")

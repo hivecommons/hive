@@ -17,7 +17,7 @@
 #
 # Usage (drop-in for the common gh shapes):
 #   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision]
-#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
+#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision]
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #   hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -49,7 +49,9 @@
 # issue gets the "What to reply" notice and stays out of the actionable queue
 # until the maintainer answers with /hive approve or /hive decision. Use it
 # whenever the body asks the maintainer to choose or approve before work can
-# start; do not name the label yourself. Only meaningful for a create.
+# start; do not name the label yourself. On `comment` it parks the EXISTING
+# issue the same way (hivecommons/hive#12329): use it when your diagnosis ends
+# in a step only the owner can take, and say the exact step in the body.
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is
@@ -187,8 +189,8 @@ if [ "$CLOSE_ON_MERGE" -eq 1 ] && [ "$KIND" != "issue" ]; then
   exit 2
 fi
 
-if [ "$NEEDS_DECISION" -eq 1 ] && [ "$KIND" != "issue" ]; then
-  echo "hive-open-issue: --needs-decision only applies when creating an issue; nothing was written." >&2
+if [ "$NEEDS_DECISION" -eq 1 ] && [ "$KIND" != "issue" ] && [ "$KIND" != "comment" ]; then
+  echo "hive-open-issue: --needs-decision only applies when creating an issue or commenting on one; nothing was written." >&2
   exit 2
 fi
 
@@ -283,6 +285,10 @@ req = {"kind": kind, "repo": repo, "agent": agent}
 if kind == "comment":
     req["number"] = int(number)
     req["body"] = body
+    # --needs-decision on a comment parks the existing issue: the watcher adds
+    # the configured needs-decision label before posting (hivecommons/hive#12329).
+    if needs_decision == "1":
+        req["needs_decision"] = True
 elif kind == "claim":
     # The watcher applies the hive/claimed-by-<agent> label; number is all it
     # needs. No body/title/labels.
@@ -352,6 +358,9 @@ fi
 
 if [ "$KIND" = "comment" ]; then
   echo "hive-open-issue: requested comment on $REPO#$NUMBER as the App bot"
+  if [ "$NEEDS_DECISION" -eq 1 ]; then
+    echo "hive-open-issue: will park $REPO#$NUMBER on a maintainer decision (needs-decision label)"
+  fi
 elif [ "$KIND" = "claim" ]; then
   echo "hive-open-issue: requested claim of $REPO#$NUMBER (hive/claimed-by-$AGENT label)"
 elif [ "$KIND" = "close" ]; then

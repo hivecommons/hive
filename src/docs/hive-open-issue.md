@@ -43,7 +43,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision]
-hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>"
+hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--needs-decision]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
@@ -61,7 +61,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
 | `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated) |
-| `--needs-decision` | — | issue | park the new issue on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
+| `--needs-decision` | — | issue, comment | park the new issue, or the existing issue being commented on, on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
 
@@ -135,8 +135,17 @@ maintainer answers with `/hive approve` or `/hive decision` (see
 [maintainer-commands.md](maintainer-commands.md)). Every lane policy that files
 issues tells the agent to pass the flag rather than name the label, so parking
 no longer depends on which lane filed the issue or on the label's name in this
-hive. The flag only applies to a create; on any other kind the script exits
-`2` and writes nothing.
+hive.
+
+On `comment` the same flag parks an **existing** issue
+([#12329](https://github.com/hivecommons/hive/issues/12329)). Use it when a
+diagnosis ends in a step only the owner can take (repository settings,
+rulesets, secrets, app installs, billing, anything agents are barred from):
+the comment names the exact command or step, and the watcher adds the
+configured needs-decision label before posting it, so the issue leaves the
+agent queue and reaches the owner's "Your turn" inbox instead of falling back
+to `Unclaimed` when the claim expires. The flag applies only to `issue` and
+`comment`; on any other kind the script exits `2` and writes nothing.
 
 ### `comment`
 
@@ -175,7 +184,8 @@ Hive-controlled labels are refused in both directions: the merge-queue label
 verdict, so an agent may not set them through this operation; one reserved
 label refuses the whole request. Use `hive-open-issue claim` to record
 ownership. This refusal applies only to the `label` operation on an existing
-item: to park an issue you are filing, pass `--needs-decision` to the create
+item: to park an issue you are filing, pass `--needs-decision` to the create,
+and to park an existing issue pass it to `comment`
 (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)).
 See [github-write-surface.md](github-write-surface.md).
 

@@ -306,12 +306,27 @@ fi
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# --needs-decision on a comment parks the existing issue (#12329).
+run_script "needsdecisioncommentbot" comment --repo "org/repo" 5 --body "owner runs: gh api ..." --needs-decision >/dev/null
+
+REQ_FILE="$(find_req needsdecisioncommentbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_ND="$(python3 -c "import json,sys; r=json.load(open(sys.argv[1])); print(r['kind'], r['number'], r.get('needs_decision'))" "$REQ_FILE")"
+  check "comment --needs-decision sets needs_decision on the comment request" "comment 5 True" "$GOT_ND"
+else
+  echo "  FAIL: request file not created for comment --needs-decision test"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 set +e
-run_script "needsdecisioncommentbot" comment --repo "org/repo" 5 --body "x" --needs-decision >/dev/null 2>&1
+run_script "needsdecisionclaimbot" claim --repo "org/repo" 5 --needs-decision >/dev/null 2>&1
 BAD_RC=$?
 set -e
-check "--needs-decision on a non-create is refused (exit 2)" "2" "$BAD_RC"
-check "--needs-decision refusal writes no request" "" "$(find_req needsdecisioncommentbot)"
+check "--needs-decision on a claim is refused (exit 2)" "2" "$BAD_RC"
+check "--needs-decision refusal writes no request" "" "$(find_req needsdecisionclaimbot)"
 
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
