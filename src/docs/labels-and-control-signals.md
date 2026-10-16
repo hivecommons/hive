@@ -272,7 +272,24 @@ used to admit the PR:
 When several lanes see the same PR the self-authored lane outranks the
 trusted-author lane, which outranks the contributor lane; the trusted-author
 lane's bare `untrusted-author-role` is a weak opinion the contributor lane
-refines.
+refines. A weak opinion (any admission reason — "this lane cannot vouch for
+the author") is only written once every lane enabled for the repository has
+reported on the PR in the same reconcile pass. Two drivers run the lanes
+against one process-wide tracker (the engine's own ticker and the main loop's
+queued sweep), so one pass can drain a maintainer PR's trusted-author
+observation and the next hold only the contributor lane's `no-claim`; an
+incomplete pass is treated as no opinion rather than written as 090 and
+flipped back (with `stage/regressed`) a minute later.
+
+A maintainer's own PR is therefore not a 090 case at all: with
+`auto_merge.trusted_authors` on (the hive's default spoke config —
+`require_role: merger`, `require_github_permission: true`), the
+trusted-author lane admits an `authorized_users` owner/merger with
+write/maintain/admin permission and merges the PR itself once CI is green,
+no `CHANGES_REQUESTED` review is outstanding and no `hold`/`do-not-merge`/
+`needs-human` label is present. Only the lane's own reasons (CI pending or
+red, `conflicting`, `label:needs-rebase`) hold it at 050/072; a human
+`/lgtm`+`/approve` is never required.
 
 ### `author/*` — would the hive auto-merge this?
 

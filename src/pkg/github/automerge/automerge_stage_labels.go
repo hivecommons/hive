@@ -609,6 +609,40 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Author, st
 	return best, author, bestObs
 }
 
+// missingStageLanes names the lanes that evaluate every PR of displayRepo
+// under the live policies but have no observation in list. A weak opinion
+// (an admission reason: "this lane cannot vouch for the author") is only
+// actionable once every such lane has spoken — the lane that can vouch may
+// simply not be in this drain.
+//
+// Two drivers run the lanes against one process-wide tracker: the engine's
+// own ticker (StartSelfAuthoredAutoMergeSweep) and the main loop's queued
+// sweep (cmd/hive runAutoMergeSweepIfDue). When one driver's
+// ApplyStageLabels lands while the other is mid-sweep, a PR's observations
+// are split across two drains, and the second drain holds only the
+// contributor lane's `no-claim` for a maintainer the trusted-author lane
+// admitted a minute earlier: the PR was written to 090 and flipped back
+// (with `stage/regressed`) on the next pass. Seen on the hive spoke for
+// every maintainer PR; the fix is to treat an incomplete drain as no
+// opinion rather than to trust the weak one.
+func (c *Engine) missingStageLanes(displayRepo string, list []stageObservation) []string {
+	if c == nil || !c.repoAutoMergeAllowed(displayRepo) {
+		return nil
+	}
+	seen := make(map[string]bool, len(list))
+	for _, o := range list {
+		seen[o.Lane] = true
+	}
+	var missing []string
+	if c.currentTrustedAuthorPolicy().repoAllowed(displayRepo) && !seen[stageLaneTrusted] {
+		missing = append(missing, stageLaneTrusted)
+	}
+	if c.currentContributorLanePolicy().repoAllowed(displayRepo) && !seen[stageLaneContributor] {
+		missing = append(missing, stageLaneContributor)
+	}
+	return missing
+}
+
 // StageLabelResult summarises one ApplyStageLabels pass.
 type StageLabelResult struct {
 	Items    int
@@ -647,6 +681,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		if verdict.Rank == stageRankNone {
 			result.Skipped++
 			continue
+		}
+		if verdict.Rank < stageRankOwned && !verdict.Terminal {
+			if missing := c.missingStageLanes(obs.Display, list); len(missing) > 0 {
+				c.debug("stage labels: weak opinion deferred until every lane reports", "repo", obs.Display, "pr", obs.Number, "stage", verdict.Stage.String(), "lane", obs.Lane, "missing", missing)
+				result.Skipped++
+				continue
+			}
 		}
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason

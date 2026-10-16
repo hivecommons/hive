@@ -388,6 +388,78 @@ func TestStageAuthorTierSurvivesContributorLane(t *testing.T) {
 	}
 }
 
+// TestApplyStageLabelsWeakOpinionWaitsForEveryLane reproduces the split
+// drain seen on the hive spoke: two drivers share one tracker, so a
+// maintainer PR's trusted-author observation (050, author trusted) is
+// drained by one pass and the contributor lane's `no-claim` for the same
+// PR lands alone in the next. The weak admission opinion must not be
+// written while a lane that is enabled for the repo has not reported;
+// once the trusted-author lane's observation is in the same drain, the
+// owned stage wins as before.
+func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
+	api := &stageAPI{}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} }
+	e.contributorLanePolicy = func() ContributorLanePolicy { return ContributorLanePolicy{Enabled: true} }
+	ctx := context.Background()
+	const number = 12561
+	pr := func() *gh.PullRequest { return stagePR(number, "author/trusted", "stage/050-review-pending") }
+
+	// Drain 1: only the contributor lane's weak opinion → nothing written,
+	// nothing recorded; the labels the trusted-author lane wrote stand.
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr(), contributorLaneReasonNoClaim, false, nil)
+	e.noteStageAuthor("acme", "widget", number, stagelabels.AuthorUntrusted)
+	res, err := e.ApplyStageLabels(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skipped != 1 || res.Writes != 0 || api.writes() != 0 {
+		t.Fatalf("contributor-only drain: res=%+v writes=%d added=%v removed=%v", res, api.writes(), api.added, api.removed)
+	}
+	if _, ok := store.Get(stageKey("acme", "widget", number)); ok {
+		t.Fatal("weak opinion from an incomplete drain must not be recorded")
+	}
+
+	// Drain 2: only the trusted-author lane, with an owned stage → written.
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(number, "author/trusted"), "required-check-pending:build-and-test", false, nil)
+	e.noteStageAuthor("acme", "widget", number, stagelabels.AuthorTrusted)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/050-review-pending"}}) || len(api.removed) != 0 {
+		t.Fatalf("trusted-only drain: added=%v removed=%v", api.added, api.removed)
+	}
+
+	// Drain 3: both lanes present, both weak (outside author) → 090 is
+	// written as before; completeness, not weakness, is the gate.
+	api.reset()
+	setStagePRTruth(77, "author/untrusted")
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(77), "untrusted-author-role", false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(77), contributorLaneReasonNoClaim, false, nil)
+	e.noteStageAuthor("acme", "widget", 77, stagelabels.AuthorUntrusted)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/090-needs-human"}}) {
+		t.Fatalf("complete drain: added=%v", api.added)
+	}
+
+	// A lane disabled for the repo is not waited for.
+	api.reset()
+	e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{} }
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(78), contributorLaneReasonNoClaim, false, nil)
+	e.noteStageAuthor("acme", "widget", 78, stagelabels.AuthorUntrusted)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/090-needs-human"}}) {
+		t.Fatalf("trusted lane disabled: added=%v", api.added)
+	}
+}
+
 func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{"stage/050-review-pending": "0000ff", "bug": "ff0000"}}
 	srv := newStageAPI(t, api)
