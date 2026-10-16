@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
 
@@ -219,6 +220,7 @@ type HeartbeatGPUSummary struct {
 }
 
 type HeartbeatPayload struct {
+	SelfExperimentsOptIn         bool                            `json:"self_experiments_opt_in,omitempty"`
 	HiveID                       string                          `json:"hive_id"`
 	Org                          string                          `json:"org"`
 	Repos                        []string                        `json:"repos"`
@@ -401,6 +403,7 @@ type HeartbeatGatewayConfig struct {
 }
 
 type HeartbeatResponse struct {
+	SelfExperimentFlag  *nous.SelfFlagAssignment  `json:"self_experiment_flag,omitempty"`
 	OK                  bool                      `json:"ok"`
 	UpgradeTo           string                    `json:"upgrade_to,omitempty"`
 	HubGitHash          string                    `json:"hub_git_hash,omitempty"`

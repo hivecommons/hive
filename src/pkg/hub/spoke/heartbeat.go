@@ -25,6 +25,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/nous"
 	spokesig "github.com/hivecommons/hive/pkg/spoke"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -608,10 +609,11 @@ type HeartbeatGPUSummary struct {
 }
 
 type HeartbeatPayload struct {
-	HiveID      string   `json:"hive_id"`
-	Org         string   `json:"org"`
-	Repos       []string `json:"repos"`
-	PrimaryRepo string   `json:"primary_repo"`
+	SelfExperimentsOptIn bool     `json:"self_experiments_opt_in,omitempty"`
+	HiveID               string   `json:"hive_id"`
+	Org                  string   `json:"org"`
+	Repos                []string `json:"repos"`
+	PrimaryRepo          string   `json:"primary_repo"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as. Reported
 	// so the hub can echo it back in HeartbeatProjectConfig rather than
 	// blanking it, and so the registry knows each hive's author without any
@@ -1267,6 +1269,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		if resp == nil {
 			return
 		}
+		// Missing assignments are authoritative withdrawal, including old hubs.
+		// Only verified, decoded heartbeat responses reach this dispatch.
+		nous.SelfExperiments.Apply(selfExperimentsOptedIn(), resp.SelfExperimentFlag)
 		if resp.SwitchToTag != "" && onSwitchBranch != nil {
 			// Branch switch takes precedence over a plain SHA upgrade — it
 			// changes the image tag, which a same-tag re-pull can't do.
@@ -1593,7 +1598,16 @@ func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollec
 // handling — including hub-instructed upgrades. A separate ad-hoc POST would
 // drift from this one over time and silently lose those behaviours.
 func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPayload, logger *slog.Logger) *HeartbeatResponse {
-	payload = redactHeartbeat(payload)
+	// Collector/cache ownership stays with the caller. Overlay consent on a
+	// private copy, including when no redaction classes are configured.
+	owned := *payload
+	payload = redactHeartbeat(&owned)
+	// Read local consent even for cached/minimal/upgrading heartbeats; never
+	// trust an old collector's value. This does not modify governor config.
+	payload.SelfExperimentsOptIn = selfExperimentsOptedIn()
+	if !payload.SelfExperimentsOptIn {
+		nous.SelfExperiments.Apply(false, nil)
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
@@ -2513,11 +2527,12 @@ type GatewayConfigCallback func(cfg *HeartbeatGatewayConfig)
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
 type HeartbeatResponse struct {
-	OK         bool   `json:"ok"`
-	UpgradeTo  string `json:"upgrade_to,omitempty"`
-	HubGitHash string `json:"hub_git_hash,omitempty"`
-	LatestSHA  string `json:"latest_sha,omitempty"`
-	LatestTag  string `json:"latest_tag,omitempty"`
+	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
+	OK                 bool                     `json:"ok"`
+	UpgradeTo          string                   `json:"upgrade_to,omitempty"`
+	HubGitHash         string                   `json:"hub_git_hash,omitempty"`
+	LatestSHA          string                   `json:"latest_sha,omitempty"`
+	LatestTag          string                   `json:"latest_tag,omitempty"`
 	// SwitchToTag instructs the spoke to change its own deployment image to
 	// ghcr.io/hivecommons/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has
