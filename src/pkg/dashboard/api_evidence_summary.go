@@ -161,9 +161,11 @@ func loadEvidenceComplexity(root string) []EvidenceComplexityRepo {
 }
 
 // EvidenceWriteCount is one tier's attempted and proxy-blocked write counts.
+// BlockedByReason is keyed by the proxy's DenyReason* code (#12368).
 type EvidenceWriteCount struct {
-	Attempted int64 `json:"attempted"`
-	Blocked   int64 `json:"blocked"`
+	Attempted       int64            `json:"attempted"`
+	Blocked         int64            `json:"blocked"`
+	BlockedByReason map[string]int64 `json:"blocked_by_reason,omitempty"`
 }
 
 // loadEvidenceWriteCounters reads the durable counter file; any failure yields nil.
