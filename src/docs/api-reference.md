@@ -597,7 +597,7 @@ always resolved server-side from the validated token.
 | `GET` | `/api/saas/hives/{id}/digest-pin` | Hub auth (owner) | Digest Pin - the pin with provenance and whether the spoke reports running it | `pkg/hub/digest_pin.go` |
 | `GET` | `/api/saas/hives/{id}/open` | Hub handler-specific | Open Hive | `pkg/hub/saas.go:400` |
 | `DELETE` | `/api/saas/hives/{id}` | Hub auth | Delete Hive | `pkg/hub/saas.go:401` |
-| `POST` | `/api/saas/hives/{id}/upgrade` | Hub auth | Upgrade Hive | `pkg/hub/saas.go:402` |
+| `POST` | `/api/saas/hives/{id}/upgrade` | Hub auth | Upgrade Hive - arms heartbeat delivery (`200 {"status":"upgrading"}`); a spoke already at its reachable target is a no-op `200 {"status":"current","current","target","channel","message"}`, not an error | `pkg/hub/saas.go:402` |
 | `POST` | `/api/saas/hives/{id}/switch-branch` | Hub auth | Switch Branch | `pkg/hub/saas.go:403` |
 | `PUT` | `/api/saas/hives/{id}/visibility` | Hub auth | Toggle Visibility | `pkg/hub/saas.go:410` |
 | `PUT` | `/api/saas/hives/{id}/auto-upgrade` | Hub auth | Toggle Auto Upgrade | `pkg/hub/saas.go:411` |

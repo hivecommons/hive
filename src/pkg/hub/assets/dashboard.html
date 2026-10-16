@@ -9811,6 +9811,15 @@
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/upgrade', {method: 'POST'});
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Upgrade failed', 'error'); delete _upgradingHives[id]; loadHives(); return; }
+        if (data.status === 'current') {
+          /* Already at the reachable target: the hub armed nothing. This is
+             the normal shape of a click on a row rendered before the daily
+             auto-upgrade landed — say so plainly, never "failed" (#12494). */
+          hiveToast(data.message || ('Already up to date at ' + (data.current || toSHA)), 'info');
+          delete _upgradingHives[id];
+          loadHives();
+          return;
+        }
         _upgradingHives[id] = currentSHA;
         hiveToast('Upgrade started for ' + id + ' — waiting for rollout', 'success');
         loadHives();

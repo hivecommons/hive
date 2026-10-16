@@ -33569,6 +33569,15 @@ function burnAreaChart() {
           fetchGitVersion();
           return;
         }
+        var okBody = await resp.json().catch(function() { return {}; });
+        if (okBody && okBody.status === 'current') {
+          /* The hub armed nothing: this spoke is already at its reachable
+             target. Plain "up to date", never "failed" (#12494). */
+          showToast(okBody.message || ('Already up to date at ' + (okBody.current || versionShortSHA(currentHash) || 'the current build')), 'info');
+          versionClearUpgradeProgress();
+          fetchGitVersion();
+          return;
+        }
         _upgradeInProgress = true;
         _upgradeTargetHash = displayHash || null;
         showToast('Upgrade started — waiting for rollout to complete', 'success');
