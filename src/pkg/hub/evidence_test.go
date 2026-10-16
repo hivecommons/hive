@@ -1,6 +1,13 @@
 package hub
 
-import "testing"
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestSanitizeEvidenceBounds(t *testing.T) {
 	if sanitizeEvidence(nil) != nil {
@@ -46,5 +53,52 @@ func TestEvidenceCriteria(t *testing.T) {
 	findCriterion(t, satisfactionCriteria(in), "human_override_rate")
 	if got := satisfactionCriteria(quadrantInputs{evidence: &HeartbeatEvidence{Verdicts90d: 9}}); len(got) != 0 {
 		t.Fatalf("<10 verdicts must be unscored: %v", got)
+	}
+}
+
+func TestSanitizeEvidenceFamiliesBounds(t *testing.T) {
+	in := []string{" copilot ", "copilot", "", strings.Repeat("x", maxEvidenceFamilyRunes+5)}
+	for i := 0; i < maxEvidenceFamilies+3; i++ {
+		in = append(in, fmt.Sprintf("fam-%d", i))
+	}
+	got := sanitizeEvidenceFamilies(in)
+	if len(got) != maxEvidenceFamilies {
+		t.Fatalf("len = %d, want %d: %v", len(got), maxEvidenceFamilies, got)
+	}
+	if got[0] != "copilot" || len([]rune(got[1])) != maxEvidenceFamilyRunes {
+		t.Fatalf("trim/dedupe/truncate wrong: %q %d", got[0], len([]rune(got[1])))
+	}
+	if sanitizeEvidenceFamilies(nil) != nil {
+		t.Fatal("nil must stay nil")
+	}
+}
+
+func TestEvidenceEndpoint(t *testing.T) {
+	srv := newHubServerForTest(t)
+	srv.registry.Hives = []RegistryEntry{
+		{ID: "b"},
+		{ID: "a", Evidence: &HeartbeatEvidence{Verdicts90d: 20, FalseBlock90d: 5, Merged90d: 10, Reverted14d90d: 1}},
+	}
+
+	handler := srv.requireAdmin(srv.handleEvidence)
+	req := httptest.NewRequest("GET", evidencePath, nil)
+	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "regularuser"})
+	w := httptest.NewRecorder()
+	handler(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("non-admin status = %d, want 403", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	srv.handleEvidence(w, httptest.NewRequest("GET", evidencePath, nil))
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("status = %d content-type = %q", w.Code, w.Header().Get("Content-Type"))
+	}
+	var got EvidenceView
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Spokes != 2 || got.Reporting != 1 || len(got.Hives) != 2 || got.Hives[0].ID != "a" || !got.Hives[0].Reported {
+		t.Fatalf("view = %+v", got)
 	}
 }
