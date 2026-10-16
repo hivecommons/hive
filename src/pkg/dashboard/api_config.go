@@ -317,11 +317,15 @@ func (s *Server) applyGitHubConfigUpdate(r *http.Request, body githubConfigUpdat
 	if body.InstallationID != nil {
 		cfg.GitHub.InstallationID = *body.InstallationID
 	}
-	if body.SelfAuthorizationHold != nil {
-		v := *body.SelfAuthorizationHold
-		cfg.GitHub.SelfAuthorizationHold = &v
-	}
-	body.githubAPISettings.apply(&cfg.GitHub)
+	// GitHub client hooks read these settings live on their own goroutines,
+	// so they are written under the config package's github lock (#12279).
+	cfg.UpdateGitHubLive(func(g *config.GitHubConfig) {
+		if body.SelfAuthorizationHold != nil {
+			v := *body.SelfAuthorizationHold
+			g.SelfAuthorizationHold = &v
+		}
+		body.githubAPISettings.apply(g)
+	})
 
 	result, err := s.finishGitHubConfigUpdateLocked(requestAuditUser(r), "")
 	if err != nil {

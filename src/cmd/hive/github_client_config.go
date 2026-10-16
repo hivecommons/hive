@@ -100,10 +100,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Per-lane mention sanitizing for relay-posted bodies (#9587), same
 	// live-config contract.
 	client.SetMentionNeutralizeFunc(b.cfg.WriteSurfaceNeutralizesMentions)
-	client.SetPRDetailTTLFunc(func() time.Duration { return b.cfg.GitHub.PRDetailTTL() })
+	client.SetPRDetailTTLFunc(b.cfg.GitHubPRDetailTTL)
 	client.SetGraphQLPRBatchConfig(
-		func() bool { return b.cfg.GitHub.GraphQLPRBatchEnabled() },
-		func() int { return b.cfg.GitHub.EffectiveGraphQLPRBatchPageSize() },
+		b.cfg.GitHubGraphQLPRBatchEnabled,
+		b.cfg.GitHubGraphQLPRBatchPageSize,
 	)
 	if len(b.cfg.Governor.Labels.Exempt) > 0 {
 		client.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
@@ -153,7 +153,7 @@ func (b *boot) applyGitHubClientAppPolicyHooks(client *github.Client) {
 	// createCommitOnBranch before the PR opens, so its commit is
 	// GitHub-signed and authored by the App bot. Read through a func so a
 	// config reload takes effect on the next request.
-	client.SetSignedCommits(func() bool { return b.cfg.GitHub.AppSignedCommitsEnabled() })
+	client.SetSignedCommits(b.cfg.GitHubAppSignedCommitsEnabled)
 }
 
 // prRepoPolicyGate refuses a PR request when the repo's effective ACMM level

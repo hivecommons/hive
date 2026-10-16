@@ -268,7 +268,7 @@ func (c *Config) SelfAuthorizationHoldEnabledForRepoAtLevel(repo string, acmmLev
 	if rp, ok := c.RepoPolicyFor(repo); ok && rp.SelfAuthorizationHold != nil {
 		return *rp.SelfAuthorizationHold
 	}
-	return c.GitHub.SelfAuthorizationHoldEnabledAtLevel(acmmLevel)
+	return c.GitHubSelfAuthorizationHoldEnabledAtLevel(acmmLevel)
 }
 
 // SetSelfAuthorizationHoldForRepoAndSave records, clears, and persists one

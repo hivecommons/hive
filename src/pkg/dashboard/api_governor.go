@@ -2782,7 +2782,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 			s.deps.Config.Project.PrimaryRepo = prevPrimary
 			s.deps.Config.GitHub.BaseURL = prevBaseURL
 			s.deps.Config.GitHub.APIURL = prevAPIURL
-			s.deps.Config.GitHub.SelfAuthorizationHold = prevSelfAuthHold
+			s.deps.Config.UpdateGitHubLive(func(g *config.GitHubConfig) { g.SelfAuthorizationHold = prevSelfAuthHold })
 			s.deps.Config.GitHub.ReporterTrustHold = prevReporterTrustHold
 			s.deps.Config.Project.RepoPolicies = prevRepoPolicies
 			if s.deps.GHClient != nil {
@@ -2804,7 +2804,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.SelfAuthorizationHold != nil {
 		v := *body.SelfAuthorizationHold
-		s.deps.Config.GitHub.SelfAuthorizationHold = &v
+		s.deps.Config.UpdateGitHubLive(func(g *config.GitHubConfig) { g.SelfAuthorizationHold = &v })
 	}
 	if body.RepoSelfAuthorizationHold != nil {
 		s.deps.Config.SetSelfAuthorizationHoldForRepos(body.RepoSelfAuthorizationHold)
