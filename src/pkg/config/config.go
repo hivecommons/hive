@@ -5859,6 +5859,13 @@ func ValidateSnapshotURL(raw string) (string, error) {
 	return validateSnapshotURL(raw, false)
 }
 
+// legacySnapshotURLWarned records raw legacy URLs already warned about, so
+// repeated Validate calls (dashboard saves, reloads) do not re-log the warning.
+var (
+	legacySnapshotURLWarnedMu sync.Mutex
+	legacySnapshotURLWarned   = map[string]struct{}{}
+)
+
 // Loading tolerates legacy query/fragment values accepted by hub registration,
 // while dashboard writes continue to enforce the stricter URL shape.
 func validateSnapshotURL(raw string, allowLegacyQueryFragment bool) (string, error) {
@@ -5891,7 +5898,13 @@ func validateSnapshotURL(raw string, allowLegacyQueryFragment bool) (string, err
 			return "", fmt.Errorf("hub.snapshot_url %q: query and fragment are not allowed", shown)
 		}
 		// Do not log the URL: legacy query strings may contain credentials.
-		log.Printf("[config] warning: hub.snapshot_url contains a legacy query or fragment; remove it before updating this field through the dashboard")
+		legacySnapshotURLWarnedMu.Lock()
+		_, seen := legacySnapshotURLWarned[v]
+		legacySnapshotURLWarned[v] = struct{}{}
+		legacySnapshotURLWarnedMu.Unlock()
+		if !seen {
+			log.Printf("[config] warning: hub.snapshot_url contains a legacy query or fragment; remove it before updating this field through the dashboard")
+		}
 		// Preserve path and suffix semantics rather than normalizing a legacy URL.
 		return u.String(), nil
 	}

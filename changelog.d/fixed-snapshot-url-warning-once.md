@@ -1,0 +1,1 @@
+- Validating a hub `snapshot_url` that still carries a legacy query or fragment now logs the warning once per distinct URL per process, instead of on every config validation, reload and dashboard hub save (#12445).

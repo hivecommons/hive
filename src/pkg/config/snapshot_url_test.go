@@ -56,7 +56,41 @@ func TestValidateSnapshotURL(t *testing.T) {
 	}
 }
 
+func resetLegacySnapshotURLWarned(t *testing.T) {
+	t.Helper()
+	legacySnapshotURLWarnedMu.Lock()
+	legacySnapshotURLWarned = map[string]struct{}{}
+	legacySnapshotURLWarnedMu.Unlock()
+}
+
+func TestValidateSnapshotURL_LegacyWarningOncePerURL(t *testing.T) {
+	resetLegacySnapshotURLWarned(t)
+	const marker = "warning: hub.snapshot_url contains a legacy query or fragment"
+	urlA := "https://snap.example.com/a?token=one"
+	urlB := "https://snap.example.com/b#frag"
+	logs := captureLog(t, func() {
+		for i := 0; i < 2; i++ {
+			got, err := validateSnapshotURL(urlA, true)
+			if err != nil || got != urlA {
+				t.Fatalf("validateSnapshotURL(%q) = %q, %v", urlA, got, err)
+			}
+		}
+	})
+	if n := strings.Count(logs, marker); n != 1 {
+		t.Fatalf("same URL warned %d times, want 1: %s", n, logs)
+	}
+	logs = captureLog(t, func() {
+		if _, err := validateSnapshotURL(urlB, true); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if n := strings.Count(logs, marker); n != 1 {
+		t.Fatalf("different URL warned %d times, want 1: %s", n, logs)
+	}
+}
+
 func TestLoad_HubSnapshotURLLegacyWarning(t *testing.T) {
+	resetLegacySnapshotURLWarned(t)
 	legacyURL := "https://snap.example.com/snapshot?token=private-snapshot-token#top"
 	path := writeTempConfig(t, minimalValidYAML("acme", "ghp_tok")+"\nhub:\n  snapshot_url: "+legacyURL+"\n")
 	logs := captureLog(t, func() {
