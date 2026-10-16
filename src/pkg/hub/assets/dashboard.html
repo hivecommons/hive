@@ -1098,8 +1098,9 @@
        Renders nothing when nothing scored, rather than an empty chart: at that
        point there is no finding to show, and a collapsed aggregate would read
        as a fleet failing on every axis. Admins still get a one-line link into
-       the evidence view (#12117), since the card is otherwise its only entry
-       point and evidence can exist before any quadrant axis is scored. */
+       the evidence view (#12117) via fleetQuadrantFallbackHTML, mounted right
+       after this header, since the card is otherwise its only entry point and
+       evidence can exist before any quadrant axis is scored. */
     function fleetQuadrantHeaderHTML() {
       var q = _fleetQuadrant;
       if (!q || !q.scored_axes) return '';
@@ -1144,6 +1145,15 @@
       if (!_isAdmin) return '';
       return '<div class="evidence-fallback">Fleet quadrant: not enough data · ' +
         '<button type="button" class="evidence-fallback-link" aria-haspopup="dialog" aria-controls="evidence-modal" onclick="openEvidenceModal()">Open the fleet evidence details</button></div>';
+    }
+
+    /* fleetQuadrantFallbackHTML applies the one rule that ties the two
+       together: the fallback link appears exactly when fleetQuadrantHeaderHTML
+       suppresses itself, so the page never shows both or neither to an admin. */
+    function fleetQuadrantFallbackHTML() {
+      var q = _fleetQuadrant;
+      if (q && q.scored_axes) return '';
+      return evidenceFallbackLinkHTML();
     }
 
     /* ---- Evidence details view (#12117) --------------------------------
@@ -7983,8 +7993,7 @@
         rows = hives.map(function(h, i) { return buildRow(h, i, 'all'); }).join('');
       }
       document.getElementById('hives-container').innerHTML =
-        fleetQuadrantHeaderHTML() +
-        ((_fleetQuadrant && _fleetQuadrant.scored_axes) ? '' : evidenceFallbackLinkHTML()) +
+        fleetQuadrantHeaderHTML() + fleetQuadrantFallbackHTML() +
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */

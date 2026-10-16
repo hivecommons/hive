@@ -101,18 +101,26 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 
 // TestFleetQuadrantFallbackLinkWhenNothingScored: the card is the only entry
 // point to the evidence view, and it is not drawn until an axis is scored, so
-// admins get a one-line link in its place; members still get nothing.
+// admins get a one-line link in its place; members still get nothing. The
+// header keeps returning '' on its own (TestFleetQuadrantHeaderWiring pins
+// that), so the link is mounted beside it and the pair is rendered here the
+// way the hives container does.
 func TestFleetQuadrantFallbackLinkWhenNothingScored(t *testing.T) {
+	if !strings.Contains(dashboardHTML, "fleetQuadrantHeaderHTML() + fleetQuadrantFallbackHTML() +") {
+		t.Fatal("fleetQuadrantFallbackHTML is not mounted right after the fleet quadrant header")
+	}
 	src := strings.Join([]string{
 		"function esc(s) { return String(s == null ? '' : s); }",
 		"var _fleetQuadrant = {scored_axes: 0};",
 		"var _isAdmin = true;",
 		jsFunc(t, "fleetQuadrantDrillAttrs"),
 		jsFunc(t, "evidenceFallbackLinkHTML"),
+		jsFunc(t, "fleetQuadrantFallbackHTML"),
 		jsFunc(t, "fleetQuadrantHeaderHTML"),
-		"var admin = fleetQuadrantHeaderHTML();",
-		"_fleetQuadrant = null; var adminNull = fleetQuadrantHeaderHTML();",
-		"_isAdmin = false; var member = fleetQuadrantHeaderHTML();",
+		"function block() { return fleetQuadrantHeaderHTML() + fleetQuadrantFallbackHTML(); }",
+		"var admin = block();",
+		"_fleetQuadrant = null; var adminNull = block();",
+		"_isAdmin = false; var member = block();",
 		"result = {admin: admin, adminNull: adminNull, member: member};",
 	}, "\n")
 	var got struct{ Admin, AdminNull, Member string }
