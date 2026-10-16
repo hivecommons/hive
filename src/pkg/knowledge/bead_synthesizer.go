@@ -245,6 +245,7 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 			SourcePR:   fmt.Sprintf("bead:%s/%s", c.agent, c.bead.ID),
 			SourceDate: c.bead.UpdatedAt.Time,
 		}
+		fact.Sensitive = IsSensitiveFact(fact)
 
 		classified = append(classified, classifiedFact{fact: fact, candidate: c})
 	}

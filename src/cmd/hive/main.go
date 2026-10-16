@@ -3209,6 +3209,8 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			MaxAPICallsPerCycle: b.cfg.Knowledge.BeadSynthesizer.EffectiveMaxAPICallsPerCycle(),
 		}, b.logger, rawGH)
 
+		b.installBeadSynthPublisher()
+
 		if cleaned, err := b.beadSynth.CleanupVault(); err != nil {
 			b.logger.Warn("vault cleanup failed", "error", err)
 		} else if cleaned > 0 {
