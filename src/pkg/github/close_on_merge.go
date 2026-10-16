@@ -486,6 +486,12 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	if pr != nil && pr.GetBase() != nil && pr.GetBase().GetRepo() != nil && pr.GetBase().GetRepo().GetFullName() != "" {
 		prRepo = pr.GetBase().GetRepo().GetFullName()
 	}
+	// Configured repos may be bare names; PR-text comparisons need owner/name.
+	issueFull := issueRepo
+	if !strings.Contains(issueFull, "/") {
+		o, n := c.splitRepo(issueFull)
+		issueFull = o + "/" + n
+	}
 	res := CloseOnMergeResult{Repo: issueRepo, Issue: issueNumber}
 	if pr != nil {
 		res.PR = pr.GetNumber()
@@ -504,11 +510,11 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		res.Action, res.Reason = CloseOnMergeSkipped, "untrusted_author"
 		return res
 	}
-	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) {
+	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueFull, issueNumber) {
 		res.Action, res.Reason = CloseOnMergeSkipped, "no_closing_or_claim_metadata"
 		return res
 	}
-	if claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) && closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issueNumber) {
+	if claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueFull, issueNumber) && closeOnMergePRRefsIssue(pr, prRepo, issueFull, issueNumber) {
 		res.WrongRefs = true
 		if opts.Logger != nil {
 			opts.Logger.Warn("close-on-merge: PR used non-closing Refs for its claimed issue",
@@ -556,7 +562,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		return res
 	}
 	if c.reporterConfirmationCloseGateReason(issue) != "" || closeOnMergeNeedsConfirmation(issue) {
-		if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partial() {
+		if cov := c.closeOnMergeCoverage(ctx, prRepo, issueFull, issueNumber, pr, issue, opts); cov.partial() {
 			c.markPartiallyAddressed(ctx, issueRepo, issueNumber, pr.GetNumber(), issue, cov, opts)
 			res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
 			return res
@@ -579,7 +585,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		res.Action, res.Reason = CloseOnMergeAwaiting, "needs_confirmation_or_human"
 		return res
 	}
-	if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partialForDirectClose(closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issueNumber)) {
+	if cov := c.closeOnMergeCoverage(ctx, prRepo, issueFull, issueNumber, pr, issue, opts); cov.partialForDirectClose(closeOnMergePRRefsIssue(pr, prRepo, issueFull, issueNumber)) {
 		c.markPartiallyAddressed(ctx, issueRepo, issueNumber, pr.GetNumber(), issue, cov, opts)
 		res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
 		return res

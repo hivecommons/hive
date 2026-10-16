@@ -429,12 +429,14 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 		wantAction     CloseOnMergeAction
 		wantReason     string
 		wantWrongRefs  bool
+		bareRepo       bool
 	}
 	cases := []tc{
 		{name: "untrusted author skipped", author: "stranger", body: "Fixes #7", claimMetadata: true, wantAction: CloseOnMergeSkipped, wantReason: "untrusted_author"},
 		{name: "trusted author func admits external author", author: "friend", trusted: func(repo, login string) bool { return repo == "o/r" && login == "friend" }, body: "Fixes #7", claimMetadata: true, wantAction: CloseOnMergeClosed, wantReason: "closed_completed"},
 		{name: "no claim metadata without closing keyword skipped", author: "hive[bot]", body: "unrelated", head: "scanner/other", claimMetadata: false, wantAction: CloseOnMergeSkipped, wantReason: "no_closing_or_claim_metadata"},
 		{name: "refs-only claim flagged wrong refs and is not closed", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, wantAction: CloseOnMergeSkipped, wantReason: "partially_addressed", wantWrongRefs: true},
+		{name: "refs-only claim with bare configured repo name flagged wrong refs", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, bareRepo: true, wantAction: CloseOnMergeSkipped, wantReason: "partially_addressed", wantWrongRefs: true},
 		{name: "closing keyword with remainder paragraph is not closed", author: "hive[bot]", body: "Fixes #7\n\nRecommendation 2 is deliberately left open; what remains needs a maintainer.", claimMetadata: true, wantAction: CloseOnMergeSkipped, wantReason: "partially_addressed"},
 		{name: "issue read failure noops", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueGetStatus: http.StatusInternalServerError, wantAction: CloseOnMergeNoop, wantReason: "issue_read_failed"},
 		{name: "closed issue already done", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueState: "closed", wantAction: CloseOnMergeAlreadyDone, wantReason: "issue_not_open"},
@@ -497,7 +499,11 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 				head = "scanner/other"
 			}
 			pr := mergedTestPR(42, tc.author, head, tc.body)
-			res := c.closeIssueForMergedPRClaim(context.Background(), "o/r", 7, pr, tc.claimMetadata, CloseOnMergeOptions{
+			issueRepo := "o/r"
+			if tc.bareRepo {
+				issueRepo = "r"
+			}
+			res := c.closeIssueForMergedPRClaim(context.Background(), issueRepo, 7, pr, tc.claimMetadata, CloseOnMergeOptions{
 				Identity:      HiveIdentity{AppLogin: "hive[bot]"},
 				TrustedAuthor: tc.trusted,
 				Logger:        logger,
