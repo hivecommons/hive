@@ -277,6 +277,9 @@ any external contributor's PR and is never merge-eligible on its own.
   namespace, separated by per-UID isolation, not process/kernel isolation.
   This is a documented gap (issue #2804; see
   `security-threat-model.md` "Residual risks and known gaps").
+  A separate, opt-in contributor-side krun microVM option exists
+  (`HIVE_CONTAINER_OCI_RUNTIME=krun`, see `contributor-relay.md` "Hardened
+  mode"); it does not change the isolation of the hive's own agents.
 - Hive does not provide a general-purpose network content firewall. The MITM
   proxy inspects `api.github.com` (and, per `src/pkg/proxy/rules.go:78-80`,
   `api.linear.app`) traffic; other destinations are tunneled without
@@ -767,7 +770,10 @@ because a self-assessment that only lists strengths is not credible:
    agent sandbox entirely (*"current agents can still need live credentials
    to push/open PRs"*). Until that gap is closed, a compromised agent process that
    evades the network/token controls still executes inside the same
-   container as every other agent on that spoke.
+   container as every other agent on that spoke. A separate, opt-in
+   contributor-side krun microVM option exists
+   (`HIVE_CONTAINER_OCI_RUNTIME=krun`, see `contributor-relay.md` "Hardened
+   mode"); it does not change the isolation of the hive's own agents.
 
 3. **Unenforced code ownership on security-sensitive paths — the
    single-maintainer half of this risk has been mitigated; the

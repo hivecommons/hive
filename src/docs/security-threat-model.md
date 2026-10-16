@@ -87,7 +87,10 @@ the threats they reduce.
   sessions inside one Hive container (§2). Per-UID isolation reduces cross-agent
   access, but it is not equivalent to per-run containers or microVMs. Open issue
   [#2804](https://github.com/hivecommons/hive/issues/2804) tracks credential-free
-  sandboxed execution.
+  sandboxed execution. A separate, opt-in contributor-side krun microVM option
+  exists (`HIVE_CONTAINER_OCI_RUNTIME=krun`, see
+  [contributor-relay.md](contributor-relay.md) "Hardened mode"); it does not
+  change the isolation of the hive's own agents.
 - **Live tokens may still exist in-session.** Scoped, short-lived App tokens and
   owner-only caches reduce impact, but current agents can still need live
   credentials to push/open PRs. #2804 proposes moving GitHub writes to a trusted

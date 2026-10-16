@@ -87,6 +87,10 @@ Hive now resolves the value instead of fixing it, on two independent checks made
 
 Only "container, and no user namespaces" falls back to `danger-full-access`, and it says so in one line on stderr. This is not a weakening: the container is the boundary on that path, and it is the same boundary that was already load-bearing. **Local mode is never downgraded** — there is no outer boundary there, so a blocked probe leaves `workspace-write` in place rather than widening access to the operator's host. An operator who would rather have the nested sandbox can relax the runtime (`--security-opt seccomp=unconfined`) and the probe restores `workspace-write` on its own; the contributor image now ships a real `bubblewrap`, so that path uses a distro-maintained binary instead of Codex's bundled fallback. `HIVE_CODEX_SANDBOX_MODE` pins a value and skips the probe entirely.
 
+### Optional krun microVM for the contributor container (#12199)
+
+Contributors can opt in, with `HIVE_CONTAINER_OCI_RUNTIME=krun`, to running the contributor container inside a libkrun microVM under rootless podman, headless only. It adds a guest kernel between the agent and the contributor's host kernel; it does not change what the agent can reach — credentials in the guest, network egress and the read-write mounts are the same as a plain container — and libkrun's guest and VMM share one security context, so container hardening flags apply to the VMM rather than the guest. Once requested, the launch refuses every unsupported combination (docker, rootful podman, local or interactive mode, `pi` and non-headless backends, macOS) and checks `/dev/kvm` and a krun smoke run before starting; it never falls back to a plain container. It does not change the isolation of the hive's own agents. Details: "Hardened mode" in [contributor-relay.md](contributor-relay.md).
+
 ## Current wiring
 
 Sandbox execution is opt-in and the tmux path remains unchanged for all agents unless **both** gates are set — the global one and a per-agent one:

@@ -116,6 +116,111 @@ declaration and acknowledges it, but nothing dispatches. Closing the socket
 releases standby implicitly; `standby_release` can release lanes without closing
 the ordinary contributor connection.
 
+## Hardened mode: the contributor container in a krun microVM
+
+Container mode can optionally run the contributor container inside a
+[libkrun](https://github.com/libkrun/libkrun) microVM, so the agent gets its
+own guest kernel instead of sharing yours. It is **opt-in only**; without it
+nothing changes, and a plain container remains a fully supported way to
+contribute.
+
+```bash
+export HIVE_CONTAINER_OCI_RUNTIME=krun   # or put it in ~/.config/hive/contributor.env
+CONTRIBUTOR_MODE=headless just contribute-hive claude
+```
+
+`HIVE_CONTAINER_OCI_RUNTIME` is honoured from the environment or from
+`contributor.env`. Once it is set, the launch never falls back to a plain
+container, to docker or to local mode: it either starts the contributor under
+krun or refuses with the reason. `krun` is the only accepted value; Kata
+Containers is not supported here because it does not run under podman.
+
+**What it protects, and what it does not.** The microVM puts a second kernel
+between the agent and your **host kernel**, so a kernel or container-escape
+bug inside the guest no longer lands directly on your machine. It does **not**
+protect:
+
+- **credentials** — `GH_TOKEN`, the read-only `~/.config/gh` mount,
+  `contributor.env`, provider logins and the staged CLI config are inside the
+  guest, and an injected prompt can still read them;
+- **network egress** — the guest still reaches the hub, GitHub, model backends
+  and your LAN;
+- **mounted paths** — `~/.config/hive` and the staging directory are still
+  mounted read-write.
+
+libkrun's own security model is that the guest and the VMM *"pertain to the
+same security context"*: host resources the VMM can reach can potentially be
+reached by the guest through it. Container hardening flags (seccomp,
+capabilities, SELinux labels) therefore apply to the **VMM process**, not to
+the workload inside the guest (libkrun#913). Known open upstream issues
+include a virtio-fs escape report (libkrun#329), stop signals not reaching
+the guest (crun#2158, libkrun#10) and `claude` hanging as non-root
+(libkrun#804); keep crun current (CVE-2025-24965 was fixed in crun 1.20).
+Rootless-only mode avoids CVE-2026-84042, which affects rootful krun with
+`krun.use_passt`.
+
+**Requirements and refusals.** The launch refuses, before anything starts:
+
+- any engine other than **rootless podman** — `HIVE_CONTAINER_RUNTIME=docker`,
+  no podman installed, or podman running rootful. With
+  `HIVE_CONTAINER_RUNTIME` unset, krun mode uses podman even when docker is
+  installed (the docker-first detection is unchanged for everyone else);
+- **local mode** — krun mode is container mode;
+- **interactive mode** — krun mode needs `CONTRIBUTOR_MODE=headless`: the krun
+  handler refuses `podman exec`, so there is nothing to attach to yet
+  (interactive krun mode is tracked in #12202). The recipe prints no attach
+  command in krun mode;
+- the **`pi`** backend, which needs host networking to find a local model
+  server, and any backend with no headless entry in the relay (for example
+  `omp`);
+- **macOS**, where podman's containers already run inside a Linux VM. Other
+  hosts without usable hardware virtualisation (such as WSL2 without nested
+  virtualisation) fail the preflight below.
+
+**Preflight.** Before the contributor starts, the recipe checks that
+`podman --runtime=krun info` resolves the runtime, that you can open
+`/dev/kvm` for reading and writing (group membership alone is not always
+enough, crun#1894), and that a throwaway run of the contributor image under
+krun (1 GiB memory, 1 vCPU, 768 MiB guest RAM) reports a kernel release
+different from the host's and has the krun marker `/.krun_config.json`. Any
+failure names the check and exits without starting the contributor.
+
+**Install.** On Fedora: `sudo dnf install crun-krun` (it pulls in `libkrun`
+and registers the `krun` runtime). On Fedora Atomic / bootc hosts, layer it:
+`sudo rpm-ostree install crun-krun` (or add it to your bootc image) and
+reboot. Then make sure your user can open `/dev/kvm`, typically by joining
+the `kvm` group and logging in again: `sudo usermod -aG kvm "$USER"`.
+
+**Sizing.** `HIVE_CONTAINER_MEMORY` stays the container's memory limit and
+the guest gets 75% of it, rounded down to whole MiB (3072 MiB at the `4g`
+default); the rest is headroom for the VMM, because a guest given the whole
+limit was OOM-killed by the host once its page cache filled.
+`HIVE_CONTAINER_CPUS` also sets the vCPU count, rounded up and kept between 1
+and 16. With `none`/`0`, krun's defaults apply (1 GiB guest; vCPUs follow the
+host's CPU count, at most 16) and the banner says so. A CPU value that is not
+`none`, `0` or a positive number is refused.
+
+**What you see.** The startup banner adds an `Isolation: microVM (krun)` line
+with the guest kernel, memory and vCPUs. On a host that is itself a virtual
+machine the banner warns that **nested krun is untested and may be
+unstable**. An exit the runtime reports as OOM-killed names the VM memory as
+the cause; an exit 137 without that report is a stop (every krun stop ends
+in SIGKILL, because the stop signal does not reach the guest).
+`just contribute-stop` removes contributor containers that podman reports
+ran under krun, which also ends the VMM and deletes the relay's token cache
+with the container, and deletes the relay PID record. `hivectl`'s relay
+controls report that they are not supported under krun.
+
+**Costs and caveats.**
+
+- Small-file I/O is slower through virtio-fs: a `git clone` plus one test
+  suite measured about **1.8×** a plain container.
+- Listeners on port 0 inside the guest fail (libkrun#818).
+- `bwrap` and the codex sandbox work in the guest, unlike in a plain rootless
+  container.
+- `podman compose` with the docker-compose provider silently ignores
+  `runtime: krun`; use `just contribute-hive` for krun mode.
+
 ## Docker Compose workflow
 
 The containerized path is `src/compose-contributor.yaml` plus `src/Dockerfile.contributor`; the `just contribute-hive` recipe wraps it. From the repository root you can also run Compose directly after `just contribute-setup` has written `${HOME}/.config/hive/contributor.env`:

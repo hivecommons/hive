@@ -210,7 +210,7 @@ Security documentation that only lists strengths is marketing. The current, deli
 - **The L5 `hold` label is applied by agent policy;** the hard guarantee at L5 is the withheld merge permission (token tier + proxy rules), not the label itself.
 - **Cloud CLI credentials are shared with the CLI.** Claude/Copilot/Gemini/Goose agents necessarily run with the provider credential you connected. The placeholder-key isolation applies to inference-gateway keys.
 - **DCO is policy-driven** inside hive; enforce it repo-side (DCO check) for a hard guarantee.
-- **Shared-container execution remains a material risk.** Per-UID isolation reduces cross-agent access but is not equivalent to per-run containers or microVMs; see the residual-risks discussion in [security-threat-model.md](security-threat-model.md).
+- **Shared-container execution remains a material risk.** Per-UID isolation reduces cross-agent access but is not equivalent to per-run containers or microVMs; see the residual-risks discussion in [security-threat-model.md](security-threat-model.md). A separate, opt-in contributor-side krun microVM option exists (`HIVE_CONTAINER_OCI_RUNTIME=krun`, see [contributor-relay.md](contributor-relay.md) "Hardened mode"); it does not change the isolation of the hive's own agents.
 
 Review evidence: the per-PR [review evidence bundle](review-evidence.md) is a hashed, optionally Ed25519-signed record of what Hive reviewed and why it merged. It is evidence, not certification; see the [SOC 2 control mapping](soc2-control-mapping.md) for what it does and does not show.
 
