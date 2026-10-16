@@ -48,7 +48,7 @@ func TestIsStageLabel(t *testing.T) {
 	for label, want := range map[string]bool{
 		"stage/010-actionable": true, "stage/999-unknown": true, Actionable.Label(): true,
 		StalledLabel: false, RegressedLabel: false, "stage/": false, "stage/01-x": false,
-		"author/trusted": false, "claimed": false, "stage/0a0-x": false,
+		"role/trusted": false, "claimed": false, "stage/0a0-x": false,
 	} {
 		if got := IsStageLabel(label); got != want {
 			t.Errorf("IsStageLabel(%q) = %v, want %v", label, got, want)
@@ -102,7 +102,7 @@ func TestEnforce_RemoveFailureContinues(t *testing.T) {
 // The claim hooks know only the stage: author tier, health and the human's
 // labels survive; every other stage and the retired labels come off.
 func TestEnforceStage_KeepsAuthorAndHealth(t *testing.T) {
-	f := &fakeLabeler{truth: []string{"bug", "claimed", Actionable.Label(), StalledLabel, AuthorContributor.Label(), "hive/claimed-by-ann"}}
+	f := &fakeLabeler{truth: []string{"bug", "claimed", Actionable.Label(), StalledLabel, RoleContributor.Label(), "hive/claimed-by-ann"}}
 	out, err := EnforceStage(context.Background(), f, "acme", "widgets", 7, Claimed)
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestEnforceStage_KeepsAuthorAndHealth(t *testing.T) {
 		t.Fatalf("removed %v added %v (out %+v)", f.removed, f.added, out)
 	}
 	sort.Strings(f.truth)
-	if !reflect.DeepEqual(f.truth, []string{AuthorContributor.Label(), "bug", "hive/claimed-by-ann", Claimed.Label(), StalledLabel}) {
+	if !reflect.DeepEqual(f.truth, []string{"bug", "hive/claimed-by-ann", RoleContributor.Label(), Claimed.Label(), StalledLabel}) {
 		t.Fatalf("item carries %v", f.truth)
 	}
 	// Already right: no writes.
@@ -123,7 +123,24 @@ func TestEnforceStage_KeepsAuthorAndHealth(t *testing.T) {
 	if _, err := EnforceStage(context.Background(), f, "acme", "widgets", 7, None); err != nil {
 		t.Fatal(err)
 	}
-	if got := StageLabels(f.truth); len(got) != 0 || AuthorOf(f.truth) != AuthorContributor {
+	if got := StageLabels(f.truth); len(got) != 0 || RoleOf(f.truth) != RoleContributor {
 		t.Fatalf("after None: %v", f.truth)
+	}
+}
+
+// A claim hook that re-writes an item still carrying the pre-#12581
+// author/<tier> spelling carries the tier over as role/<tier> and leaves the
+// author/<kind> label it has no opinion about.
+func TestEnforceStage_MigratesLegacyRoleKeepsKind(t *testing.T) {
+	f := &fakeLabeler{truth: []string{"author/trusted", "author/clanker", Actionable.Label()}}
+	if _, err := EnforceStage(context.Background(), f, "acme", "widgets", 7, Claimed); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(f.truth)
+	if !reflect.DeepEqual(f.truth, []string{"author/clanker", "role/trusted", Claimed.Label()}) {
+		t.Fatalf("item carries %v", f.truth)
+	}
+	if RoleOf([]string{"author/contributor"}) != RoleContributor || RoleOf([]string{"author/contributor", "role/trusted"}) != RoleTrusted {
+		t.Fatal("RoleOf must read the legacy spelling only when no role/* is present")
 	}
 }

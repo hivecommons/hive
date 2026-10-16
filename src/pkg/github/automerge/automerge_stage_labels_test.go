@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -252,19 +253,19 @@ func TestResolveStageLanePrecedence(t *testing.T) {
 	// Trusted-author lane says "not trusted"; contributor lane refines it.
 	v, author, _ := resolveStage([]stageObservation{
 		{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
-		{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{Author: stagelabels.AuthorContributor}},
+		{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: stageDetail{Role: stagelabels.RoleContributor}},
 	})
-	if v.Stage != stagelabels.ReviewPending || author != stagelabels.AuthorContributor {
+	if v.Stage != stagelabels.ReviewPending || author != stagelabels.RoleContributor {
 		t.Fatalf("got %v/%v", v.Stage, author)
 	}
-	// Only the weak opinion: needs-human + author/untrusted.
+	// Only the weak opinion: needs-human + role/untrusted.
 	v, author, _ = resolveStage([]stageObservation{{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}})
-	if v.Stage != stagelabels.NeedsHuman || author != stagelabels.AuthorUntrusted {
+	if v.Stage != stagelabels.NeedsHuman || author != stagelabels.RoleUntrusted {
 		t.Fatalf("weak-only got %v/%v", v.Stage, author)
 	}
 	// Self lane outranks the contributor lane's hand-off.
 	v, _, _ = resolveStage([]stageObservation{
-		{Lane: stageLaneSelf, Reason: "check-failing:unit", Detail: stageDetail{Author: stagelabels.AuthorTrusted}},
+		{Lane: stageLaneSelf, Reason: "check-failing:unit", Detail: stageDetail{Role: stagelabels.RoleTrusted}},
 		{Lane: stageLaneContributor, Reason: contributorLaneReasonAppAuthored},
 	})
 	if v.Stage != stagelabels.Fixing {
@@ -276,13 +277,13 @@ func TestResolveStageLanePrecedence(t *testing.T) {
 // author" opinions (hivecommons/hive#12403, #12497): a lane that does not
 // admit the author only says needs-human when no lane admits them.
 func TestResolveStageAdmissionOpinions(t *testing.T) {
-	trusted := stageDetail{Author: stagelabels.AuthorTrusted}
+	trusted := stageDetail{Role: stagelabels.RoleTrusted}
 	cases := []struct {
 		name   string
 		list   []stageObservation
 		stage  stagelabels.Stage
 		rank   int
-		author stagelabels.Author
+		author stagelabels.Role
 		lane   string
 	}{
 		{
@@ -294,7 +295,7 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
 				{Lane: stageLaneContributor, Reason: "something-new", Detail: trusted},
 			},
-			rank: stageRankNone, author: stagelabels.AuthorTrusted, lane: stageLaneTrusted,
+			rank: stageRankNone, author: stagelabels.RoleTrusted, lane: stageLaneTrusted,
 		},
 		{
 			// #12497: maintainer PR; the trusted-author lane owns it, the
@@ -302,9 +303,9 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 			name: "maintainer with trusted lane error and contributor no-claim",
 			list: []stageObservation{
 				{Lane: stageLaneTrusted, Reason: "fetch-pr", Err: true, Detail: trusted},
-				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Author: stagelabels.AuthorUntrusted}},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Role: stagelabels.RoleUntrusted}},
 			},
-			rank: stageRankNone, author: stagelabels.AuthorTrusted, lane: stageLaneTrusted,
+			rank: stageRankNone, author: stagelabels.RoleTrusted, lane: stageLaneTrusted,
 		},
 		{
 			name: "maintainer ci pending beats contributor no-claim",
@@ -312,7 +313,7 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 				{Lane: stageLaneTrusted, Reason: "required-check-pending:golangci-lint", Detail: trusted},
 				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: trusted},
 			},
-			stage: stagelabels.ReviewPending, rank: stageRankOwned, author: stagelabels.AuthorTrusted, lane: stageLaneTrusted,
+			stage: stagelabels.ReviewPending, rank: stageRankOwned, author: stagelabels.RoleTrusted, lane: stageLaneTrusted,
 		},
 		{
 			// Contributor tier below require_tiers: nobody admits, 090 is right
@@ -320,17 +321,17 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 			name: "contributor tier is needs-human from the contributor lane",
 			list: []stageObservation{
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
-				{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier, Detail: stageDetail{Author: stagelabels.AuthorContributor}},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier, Detail: stageDetail{Role: stagelabels.RoleContributor}},
 			},
-			stage: stagelabels.NeedsHuman, rank: stageRankAdmission, author: stagelabels.AuthorContributor, lane: stageLaneContributor,
+			stage: stagelabels.NeedsHuman, rank: stageRankAdmission, author: stagelabels.RoleContributor, lane: stageLaneContributor,
 		},
 		{
 			name: "unknown author with no claim is needs-human untrusted",
 			list: []stageObservation{
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
-				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Author: stagelabels.AuthorUntrusted}},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Role: stagelabels.RoleUntrusted}},
 			},
-			stage: stagelabels.NeedsHuman, rank: stageRankAdmission, author: stagelabels.AuthorUntrusted, lane: stageLaneContributor,
+			stage: stagelabels.NeedsHuman, rank: stageRankAdmission, author: stagelabels.RoleUntrusted, lane: stageLaneContributor,
 		},
 		{
 			// A hold-class reason applies whoever the author is.
@@ -339,7 +340,7 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
 				{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked, Detail: trusted},
 			},
-			stage: stagelabels.NeedsHuman, rank: stageRankOwned, author: stagelabels.AuthorTrusted, lane: stageLaneContributor,
+			stage: stagelabels.NeedsHuman, rank: stageRankOwned, author: stagelabels.RoleTrusted, lane: stageLaneContributor,
 		},
 	}
 	for _, tc := range cases {
@@ -364,11 +365,11 @@ func TestStageAuthorTierSurvivesContributorLane(t *testing.T) {
 
 		trusted := func() {
 			e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(12484), "required-check-pending:build-and-test", false, nil)
-			e.noteStageAuthor("acme", "widget", 12484, stagelabels.AuthorTrusted)
+			e.noteStageRole("acme", "widget", 12484, stagelabels.RoleTrusted)
 		}
 		contributor := func() {
 			e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12484), contributorLaneReasonNoLinkedIssue, false, nil)
-			e.noteStageAuthor("acme", "widget", 12484, stagelabels.AuthorFromTier("", map[string]bool{"trusted": true}))
+			e.noteStageRole("acme", "widget", 12484, stagelabels.RoleFromTier("", map[string]bool{"trusted": true}))
 		}
 		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(12484), "not-app-authored", false, nil)
 		if trustedFirst {
@@ -381,7 +382,7 @@ func TestStageAuthorTierSurvivesContributorLane(t *testing.T) {
 		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/trusted", "stage/050-review-pending"}) {
+		if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/human", "role/trusted", "stage/050-review-pending"}) {
 			t.Fatalf("trustedFirst=%v added %v", trustedFirst, api.added)
 		}
 		srv.Close()
@@ -397,7 +398,7 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	ctx := context.Background()
 
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "claimed", "🐝 covered by PR"), contributorLaneReasonNoVerdict, false, nil)
-	e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
 	res, err := e.ApplyStageLabels(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -405,7 +406,7 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	if res.Items != 1 || res.Writes != 3 {
 		t.Fatalf("result %+v", res)
 	}
-	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/contributor", "stage/050-review-pending"}) {
+	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/human", "role/contributor", "stage/050-review-pending"}) {
 		t.Fatalf("added %v", api.added)
 	}
 	sort.Strings(api.removed)
@@ -423,8 +424,8 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 
 	// Same state next cycle (labels now as written): no writes, no re-list.
 	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
-	e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "role/contributor", "author/human", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
 	if res, err = e.ApplyStageLabels(ctx); err != nil || res.Writes != 0 || api.writes() != 0 || api.lists != 1 {
 		t.Fatalf("idempotent pass: res=%+v err=%v writes=%d lists=%d", res, err, api.writes(), api.lists)
 	}
@@ -432,8 +433,8 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	// Hold applied by a human → needs-human replaces review-pending; the
 	// human's hold label is left alone.
 	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "author/contributor", "stage/050-review-pending"), "excluded-label:hold", false, nil)
-	e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "role/contributor", "author/human", "stage/050-review-pending"), "excluded-label:hold", false, nil)
+	e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
 	if _, err = e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -441,14 +442,16 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 		t.Fatalf("hold transition added=%v removed=%v", api.added, api.removed)
 	}
 
-	// Merged → every owned label removed, record forgotten.
+	// Merged → every pipeline label removed, record forgotten. The
+	// author/<kind> label stays: who wrote the PR is a fact about it, not
+	// pipeline state, and the hub's revert-rate-by-author-kind reads it.
 	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "author/contributor", "stage/090-needs-human", "stage/stalled"), "", true, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "role/contributor", "author/human", "stage/090-needs-human", "stage/stalled"), "", true, nil)
 	if _, err = e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
 	sort.Strings(api.removed)
-	if len(api.added) != 0 || !reflect.DeepEqual(api.removed, []string{"author/contributor", "stage/090-needs-human", "stage/stalled"}) {
+	if len(api.added) != 0 || !reflect.DeepEqual(api.removed, []string{"role/contributor", "stage/090-needs-human", "stage/stalled"}) {
 		t.Fatalf("terminal added=%v removed=%v", api.added, api.removed)
 	}
 	if _, ok := store.Get(stageKey("acme", "widget", 7)); ok {
@@ -468,7 +471,7 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 	ctx := context.Background()
 	observe := func(labels []string, reason string) {
 		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(9, labels...), reason, false, nil)
-		e.noteStageAuthor("acme", "widget", 9, stagelabels.AuthorTrusted)
+		e.noteStageRole("acme", "widget", 9, stagelabels.RoleTrusted)
 		if _, err := e.ApplyStageLabels(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -478,19 +481,19 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 	api.reset()
 	// Dwell for merge-queue is 3h: nothing at 2h59, stalled at 3h.
 	clock.advance(3*time.Hour - time.Minute)
-	observe([]string{"stage/100-merge-queue", "author/trusted"}, "head-changed-since-eval")
+	observe([]string{"stage/100-merge-queue", "role/trusted", "author/human"}, "head-changed-since-eval")
 	if api.writes() != 0 {
 		t.Fatalf("stalled too early: added=%v", api.added)
 	}
 	clock.advance(time.Minute)
-	observe([]string{"stage/100-merge-queue", "author/trusted"}, "head-changed-since-eval")
+	observe([]string{"stage/100-merge-queue", "role/trusted", "author/human"}, "head-changed-since-eval")
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
 		t.Fatalf("stalled not set: %v", api.added)
 	}
 
 	// New head goes red: 80 → 70, regressed replaces stalled, one comment.
 	api.reset()
-	observe([]string{"stage/100-merge-queue", "stage/stalled", "author/trusted"}, "check-failing:unit")
+	observe([]string{"stage/100-merge-queue", "stage/stalled", "role/trusted", "author/human"}, "check-failing:unit")
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/070-fixing", "stage/regressed"}}) {
 		t.Fatalf("regressed added=%v", api.added)
 	}
@@ -503,18 +506,18 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 	}
 	// Repeat observation: no second comment, no writes.
 	api.reset()
-	observe([]string{"stage/070-fixing", "stage/regressed", "author/trusted"}, "check-failing:unit")
+	observe([]string{"stage/070-fixing", "stage/regressed", "role/trusted", "author/human"}, "check-failing:unit")
 	if api.writes() != 0 {
 		t.Fatalf("regression re-posted: comments=%v added=%v", api.comments, api.added)
 	}
 	// Partial recovery (70 → 60) keeps regressed; full recovery clears it.
 	api.reset()
-	observe([]string{"stage/070-fixing", "stage/regressed", "author/trusted"}, "required-check-missing:unit")
+	observe([]string{"stage/070-fixing", "stage/regressed", "role/trusted", "author/human"}, "required-check-missing:unit")
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/050-review-pending"}}) || len(api.comments) != 0 {
 		t.Fatalf("partial recovery added=%v comments=%v", api.added, api.comments)
 	}
 	api.reset()
-	observe([]string{"stage/050-review-pending", "stage/regressed", "author/trusted"}, "head-changed-since-eval")
+	observe([]string{"stage/050-review-pending", "stage/regressed", "role/trusted", "author/human"}, "head-changed-since-eval")
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending", "stage/regressed"}) {
 		t.Fatalf("recovery added=%v removed=%v", api.added, api.removed)
 	}
@@ -536,18 +539,18 @@ func TestApplyStageLabelsAwaitingAdmissionStallNote(t *testing.T) {
 	observe := func(labels []string, reason string, err error) {
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(11, labels...), reason, false, err)
 		e.noteStageVerdict("acme", "widget", 11, approve)
-		e.noteStageAuthor("acme", "widget", 11, stagelabels.AuthorTrusted)
+		e.noteStageRole("acme", "widget", 11, stagelabels.RoleTrusted)
 		if _, err := e.ApplyStageLabels(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
 	observe(nil, "review-state-check", errors.New("boom"))
-	if !reflect.DeepEqual(api.added, [][]string{{"author/trusted", "stage/080-awaiting-merge-admission"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"author/human", "role/trusted", "stage/080-awaiting-merge-admission"}}) {
 		t.Fatalf("added=%v", api.added)
 	}
 	api.reset()
 	clock.advance(30 * time.Minute)
-	observe([]string{"stage/080-awaiting-merge-admission", "author/trusted"}, "review-state-check", errors.New("boom"))
+	observe([]string{"stage/080-awaiting-merge-admission", "role/trusted", "author/human"}, "review-state-check", errors.New("boom"))
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
 		t.Fatalf("stalled added=%v", api.added)
 	}
@@ -556,13 +559,13 @@ func TestApplyStageLabelsAwaitingAdmissionStallNote(t *testing.T) {
 	}
 	api.reset()
 	clock.advance(time.Hour)
-	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "author/trusted"}, "review-state-check", errors.New("boom"))
+	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "role/trusted", "author/human"}, "review-state-check", errors.New("boom"))
 	if api.writes() != 0 || len(api.comments) != 0 {
 		t.Fatalf("stall note must be posted once: added=%v comments=%v", api.added, api.comments)
 	}
 	// Lane admits the PR: forward to the merge queue, stalled cleared, no note.
 	api.reset()
-	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "author/trusted"}, contributorLaneReasonSoaking+"(10m)", nil)
+	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "role/trusted", "author/human"}, contributorLaneReasonSoaking+"(10m)", nil)
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || len(api.comments) != 0 {
 		t.Fatalf("admission added=%v comments=%v", api.added, api.comments)
 	}
@@ -597,14 +600,14 @@ func TestApplyStageLabelsRecordsVerdictReason(t *testing.T) {
 	reject := ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}
 
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12403), "head-changed-since-eval", false, nil)
-	e.noteStageAuthor("acme", "widget", 12403, stagelabels.AuthorTrusted)
+	e.noteStageRole("acme", "widget", 12403, stagelabels.RoleTrusted)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
 	api.reset()
-	e.recordStage(stageLaneTrusted, "acme", "acme", "widget", stagePR(12403, "stage/100-merge-queue", "author/trusted"), "untrusted-author-role", false, nil)
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12403, "stage/100-merge-queue", "author/trusted"), "pending: head pushed 1m0s ago (< min_head_age)", false, nil)
-	e.noteStageAuthor("acme", "widget", 12403, stagelabels.AuthorTrusted)
+	e.recordStage(stageLaneTrusted, "acme", "acme", "widget", stagePR(12403, "stage/100-merge-queue", "role/trusted", "author/human"), "untrusted-author-role", false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12403, "stage/100-merge-queue", "role/trusted", "author/human"), "pending: head pushed 1m0s ago (< min_head_age)", false, nil)
+	e.noteStageRole("acme", "widget", 12403, stagelabels.RoleTrusted)
 	e.noteStageVerdict("acme", "widget", 12403, reject)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
@@ -694,7 +697,7 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 		t.Helper()
 		api.reset()
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
-		e.noteStageAuthor("acme", "widget", 12457, stagelabels.AuthorTrusted)
+		e.noteStageRole("acme", "widget", 12457, stagelabels.RoleTrusted)
 		e.noteStageVerdict("acme", "widget", 12457, approve)
 		e.noteStageRedChecks("acme", "widget", 12457, "sha", red)
 		if _, err := e.ApplyStageLabels(ctx); err != nil {
@@ -703,13 +706,13 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 	}
 
 	// Earlier cycle: all green, soaking → 100 (already on the PR).
-	cycle(stagePR(12457, "stage/100-merge-queue", "author/trusted"), soaking, nil)
+	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), soaking, nil)
 	if len(api.added) != 0 || len(api.removed) != 0 {
 		t.Fatalf("green soak changed labels: added=%v removed=%v", api.added, api.removed)
 	}
 
 	// An optional check on the same head went red: 100 → 072, named.
-	cycle(stagePR(12457, "stage/100-merge-queue", "author/trusted"), soaking, []string{redName})
+	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), soaking, []string{redName})
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor", "stage/regressed"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
@@ -722,25 +725,25 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 	}
 
 	// Same head, check re-run green: the lane's soaking reason is 100 again.
-	cycle(stagePR(12457, "stage/072-returned-to-contributor", "stage/regressed", "author/trusted"), soaking, nil)
+	cycle(stagePR(12457, "stage/072-returned-to-contributor", "stage/regressed", "role/trusted", "author/human"), soaking, nil)
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
 
 	// Red again while the lane stops on a reason no stage claims (would be
 	// 080): still 072.
-	cycle(stagePR(12457, "stage/100-merge-queue", "author/trusted"), "review-state-check", []string{redName})
+	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), "review-state-check", []string{redName})
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor", "stage/regressed"}}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
-	cycle(stagePR(12457, "stage/080-awaiting-merge-admission", "author/trusted"), "review-state-check", []string{redName})
+	cycle(stagePR(12457, "stage/080-awaiting-merge-admission", "role/trusted", "author/human"), "review-state-check", []string{redName})
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor", "stage/regressed"}}) || !reflect.DeepEqual(api.removed, []string{"stage/080-awaiting-merge-admission"}) {
 		t.Fatalf("080 with red CI: added=%v removed=%v", api.added, api.removed)
 	}
 
 	// New head pushed: a note recorded for the old head does not bind it.
-	cycle(stagePR(12457, "stage/072-returned-to-contributor", "stage/regressed", "author/trusted"), soaking, nil)
-	pr := stagePR(12457, "stage/100-merge-queue", "author/trusted")
+	cycle(stagePR(12457, "stage/072-returned-to-contributor", "stage/regressed", "role/trusted", "author/human"), soaking, nil)
+	pr := stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human")
 	pr.Head.SHA = gh.Ptr("sha2")
 	cycle(pr, soaking, []string{redName})
 	if len(api.added) != 0 || len(api.removed) != 0 {
@@ -784,9 +787,9 @@ func TestApplyStageLabels_HealsDuplicateStage(t *testing.T) {
 	e, _, _ := newStageEngine(t, srv.URL, clock)
 
 	// Snapshot: 050 + contributor. Truth drifted: 020 landed as well.
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
-	e.noteStageAuthor("acme", "widget", 21, stagelabels.AuthorContributor)
-	setStagePRTruth(21, "author/contributor", "stage/050-review-pending", "stage/020-claimed")
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "role/contributor", "author/human", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 21, stagelabels.RoleContributor)
+	setStagePRTruth(21, "role/contributor", "author/human", "stage/050-review-pending", "stage/020-claimed")
 	// Snapshot says nothing changes for 050/contributor, so without a
 	// reason to write there is no read: the duplicate waits for a write.
 	res, err := e.ApplyStageLabels(context.Background())
@@ -798,9 +801,9 @@ func TestApplyStageLabels_HealsDuplicateStage(t *testing.T) {
 	}
 
 	// Now the lane moves it to 072: the write re-reads and strips 020 too.
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "author/contributor", "stage/050-review-pending"), "changes-requested", false, nil)
-	e.noteStageAuthor("acme", "widget", 21, stagelabels.AuthorContributor)
-	setStagePRTruth(21, "author/contributor", "stage/050-review-pending", "stage/020-claimed")
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "role/contributor", "author/human", "stage/050-review-pending"), "changes-requested", false, nil)
+	e.noteStageRole("acme", "widget", 21, stagelabels.RoleContributor)
+	setStagePRTruth(21, "role/contributor", "author/human", "stage/050-review-pending", "stage/020-claimed")
 	api.reset()
 	res, err = e.ApplyStageLabels(context.Background())
 	if err != nil {
@@ -825,7 +828,7 @@ func TestApplyStageLabels_HealsDuplicateStage(t *testing.T) {
 // --body` on a contributor's PR stamped both onto it; the reconciler strips
 // them from any PR the App did not author, and leaves self-authored PRs alone.
 func TestStrayOwnershipLabels(t *testing.T) {
-	labels := []string{"agent/scanner", "hive/oke-11", "stage/050-review-pending", "author/trusted", "hive/other-hive"}
+	labels := []string{"agent/scanner", "hive/oke-11", "stage/050-review-pending", "role/trusted", "hive/other-hive"}
 	got := strayOwnershipLabels(labels, "mendezr", "kubestellar-hive[bot]", "oke-11")
 	if !reflect.DeepEqual(got, []string{"agent/scanner", "hive/oke-11"}) {
 		t.Fatalf("contributor PR: stray = %v", got)
@@ -855,10 +858,10 @@ func TestApplyStageLabels_StripsStrayOwnershipLabelsFromContributorPR(t *testing
 	e, _, _ := newStageEngine(t, srv.URL, clock)
 	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, HiveID: "oke-11"} }
 
-	pr := stagePR(12495, "author/trusted", "stage/050-review-pending", "agent/scanner", "hive/oke-11")
+	pr := stagePR(12495, "role/trusted", "stage/050-review-pending", "agent/scanner", "hive/oke-11")
 	pr.User = &gh.User{Login: gh.Ptr("mendezr")}
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
-	e.noteStageAuthor("acme", "widget", 12495, stagelabels.AuthorTrusted)
+	e.noteStageRole("acme", "widget", 12495, stagelabels.RoleTrusted)
 	res, err := e.ApplyStageLabels(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -906,13 +909,13 @@ func TestApplyStageLabelsRegressionFlapOnSameHeadCommentsOnce(t *testing.T) {
 	ctx := context.Background()
 	observe := func(labels []string, reason string) {
 		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(12423, labels...), reason, false, nil)
-		e.noteStageAuthor("acme", "widget", 12423, stagelabels.AuthorTrusted)
+		e.noteStageRole("acme", "widget", 12423, stagelabels.RoleTrusted)
 		if _, err := e.ApplyStageLabels(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
-	queued := []string{"stage/100-merge-queue", "author/trusted"}
-	held := []string{"stage/050-review-pending", "stage/regressed", "author/trusted"}
+	queued := []string{"stage/100-merge-queue", "role/trusted", "author/human"}
+	held := []string{"stage/050-review-pending", "stage/regressed", "role/trusted", "author/human"}
 
 	observe(nil, "head-changed-since-eval")
 	api.reset()
@@ -929,5 +932,103 @@ func TestApplyStageLabelsRegressionFlapOnSameHeadCommentsOnce(t *testing.T) {
 	}
 	if comments != 1 {
 		t.Fatalf("regression comments across 4 flaps on one head = %d, want 1", comments)
+	}
+}
+
+// hivecommons/hive#12581: the trust axis is role/<tier>; author/<kind> says
+// who wrote the PR. A relay-trailered PR under a trusted login carries both
+// role/trusted and author/clanker; the App's own PR is author/hive; a
+// hand-pushed PR is author/human. The pre-rename author/<tier> spelling is
+// migrated in the same write, and a mis-stamped agent/<lane> on a human PR
+// (a stray, #12545) never reads as author/hive.
+func TestApplyStageLabelsAuthorKind(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	e.stageLabelPolicy = func() StageLabelPolicy {
+		return StageLabelPolicy{Enabled: true, HiveID: "oke-11", RelayKnown: func(login string) bool { return login == "registered" }}
+	}
+	ctx := context.Background()
+	run := func(number int, login, body string, labels ...string) {
+		t.Helper()
+		pr := stagePR(number, labels...)
+		pr.User = &gh.User{Login: gh.Ptr(login)}
+		pr.Body = gh.Ptr(body)
+		api.reset()
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	added := func() []string {
+		var out []string
+		for _, a := range api.added {
+			out = append(out, a...)
+		}
+		sort.Strings(out)
+		return out
+	}
+	removed := func() []string { out := append([]string(nil), api.removed...); sort.Strings(out); return out }
+
+	run(31, "mendezr", "Adds x.\n\n— hive: backend=pi model=gpt-6\n", "author/trusted")
+	if !reflect.DeepEqual(added(), []string{"author/clanker", "role/trusted", "stage/050-review-pending"}) || !reflect.DeepEqual(removed(), []string{"author/trusted"}) {
+		t.Fatalf("clanker: added=%v removed=%v", api.added, api.removed)
+	}
+	run(32, testHiveAppBotLogin, "Adds y.\n\n— hive: agent=scanner backend=copilot\n")
+	if !reflect.DeepEqual(added(), []string{"author/hive", "role/trusted", "stage/050-review-pending"}) {
+		t.Fatalf("hive: added=%v", api.added)
+	}
+	run(33, "clubanderson", "Adds z by hand.\n", "agent/scanner", "hive/oke-11")
+	if !reflect.DeepEqual(added(), []string{"author/human", "role/trusted", "stage/050-review-pending"}) || !reflect.DeepEqual(removed(), []string{"agent/scanner", "hive/oke-11"}) {
+		t.Fatalf("human with stray stamps: added=%v removed=%v", api.added, api.removed)
+	}
+	run(34, "registered", "No marker at all.\n")
+	if !reflect.DeepEqual(added(), []string{"author/clanker", "role/trusted", "stage/050-review-pending"}) {
+		t.Fatalf("registry fallback: added=%v", api.added)
+	}
+	run(35, "mendezr", "<!-- hive:origin hive=oke-11 -->\n")
+	if !reflect.DeepEqual(added(), []string{"author/hive", "role/trusted", "stage/050-review-pending"}) {
+		t.Fatalf("local origin marker: added=%v", api.added)
+	}
+	// Steady state under the labels just written: nothing to do.
+	run(31, "mendezr", "Adds x.\n\n— hive: backend=pi model=gpt-6\n", "author/clanker", "role/trusted", "stage/050-review-pending")
+	if api.writes() != 0 {
+		t.Fatalf("steady state wrote added=%v removed=%v", api.added, api.removed)
+	}
+}
+
+// Configured author/<kind> names are written and provisioned instead of
+// the defaults, and a default-named label left from before the rename is
+// swapped out.
+func TestApplyStageLabelsConfiguredKindNames(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	names := authorkind.Names{Clanker: "author/relay"}
+	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, AuthorKindLabels: names} }
+	pr := stagePR(41, "author/clanker")
+	pr.User = &gh.User{Login: gh.Ptr("mendezr")}
+	pr.Body = gh.Ptr("— hive: backend=pi\n")
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 41, stagelabels.RoleContributor)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/relay", "role/contributor", "stage/050-review-pending"}}) || !reflect.DeepEqual(api.removed, []string{"author/clanker"}) {
+		t.Fatalf("added=%v removed=%v", api.added, api.removed)
+	}
+	if _, ok := api.labels["author/relay"]; !ok {
+		t.Fatalf("configured name not provisioned: %v", api.labels)
+	}
+	if _, ok := api.labels["author/clanker"]; ok {
+		t.Fatal("default clanker name provisioned despite override")
 	}
 }

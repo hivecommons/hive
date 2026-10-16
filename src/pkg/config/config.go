@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"gopkg.in/yaml.v3"
@@ -3989,6 +3990,51 @@ type LabelsConfig struct {
 	// Stage configures the hive-owned stage/NN-* pipeline labels
 	// (hivecommons/hive#12429; docs/labels-and-control-signals.md).
 	Stage StageLabelsConfig `yaml:"stage"`
+	// Author names the hive-owned `author/<kind>` authorship labels
+	// (hivecommons/hive#12581). The trust axis (`role/<tier>`) is not
+	// renameable.
+	Author AuthorLabelsConfig `yaml:"author"`
+}
+
+// AuthorLabelsConfig is governor.labels.author: the label names for the
+// three authorship kinds pkg/authorkind detects. Each defaults to
+// `author/<kind>`; a configured name must keep the `author/` prefix so the
+// stage reconciler still owns it, and the three must differ.
+type AuthorLabelsConfig struct {
+	// Human is the label for a PR a person pushed themselves (default author/human).
+	Human string `yaml:"human,omitempty"`
+	// Clanker is the label for a PR a contributor's own hive authored under
+	// that contributor's login (default author/clanker).
+	Clanker string `yaml:"clanker,omitempty"`
+	// Hive is the label for a PR this repo's own hive authored (default author/hive).
+	Hive string `yaml:"hive,omitempty"`
+}
+
+// Names returns the effective label names (defaults filled in).
+func (c AuthorLabelsConfig) Names() authorkind.Names {
+	return authorkind.Names{Human: c.Human, Clanker: c.Clanker, Hive: c.Hive}.Normalize()
+}
+
+// Validate rejects names outside the author/ family, duplicates, and names
+// that collide with the retired `author/<tier>` role spellings the
+// reconciler removes.
+func (c AuthorLabelsConfig) Validate() error {
+	n := c.Names()
+	seen := map[string]string{}
+	for key, name := range map[string]string{"human": n.Human, "clanker": n.Clanker, "hive": n.Hive} {
+		if !strings.HasPrefix(name, authorkind.Prefix) || len(name) == len(authorkind.Prefix) {
+			return fmt.Errorf("governor.labels.author.%s %q must start with %q", key, name, authorkind.Prefix)
+		}
+		switch strings.TrimPrefix(name, authorkind.Prefix) {
+		case "trusted", "contributor", "newcomer", "untrusted":
+			return fmt.Errorf("governor.labels.author.%s %q is a retired role spelling; role labels live under role/", key, name)
+		}
+		if other, dup := seen[name]; dup {
+			return fmt.Errorf("governor.labels.author.%s and .%s both use %q", other, key, name)
+		}
+		seen[name] = key
+	}
+	return nil
 }
 
 // StageLabelsConfig is governor.labels.stage: the hive-owned stage/NN-*,

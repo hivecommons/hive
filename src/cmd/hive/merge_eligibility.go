@@ -107,8 +107,18 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			GraceOnline:      stage.EffectiveContributorGraceOnline(),
 			GraceOffline:     stage.EffectiveContributorGraceOffline(),
 			HiveID:           cfg.HiveID,
+			AuthorKindLabels: cfg.Governor.Labels.Author.Names(),
+			RelayKnown:       contributorRelayKnown,
 		}
 	}
+}
+
+// contributorRelayKnown answers authorkind's weakest author/clanker signal:
+// the login has a contributor profile on this hive, i.e. runs a relay that
+// targets it. It only decides a PR whose body carries no hive marker.
+func contributorRelayKnown(login string) bool {
+	_, ok := dashboard.ContributorTrustTierByLogin(login)
+	return ok
 }
 
 // contributorRegistryTierFunc answers the contributor-lane registry

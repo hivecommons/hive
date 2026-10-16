@@ -416,8 +416,10 @@ it evaluated, derived from the same per-lane reason it logs
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
 contributor PR → `stage/072-returned-to-contributor`, hold / untrusted author →
-`stage/090-needs-human`, merged → no stage), plus one `author/*` label saying
-which admission tier the lane actually used and `stage/stalled` /
+`stage/090-needs-human`, merged → no stage), plus one `role/*` label saying
+which admission tier the lane actually used, one `author/*` label saying who
+wrote the PR (`human`, `clanker` = a contributor's hive, `hive` = this repo's
+own; #12581) and `stage/stalled` /
 `stage/regressed` when the progression is disrupted. Writes happen only when
 the planned set differs from the labels already on the PR, under the
 `hive:stage_labels` REST caller, and the whole family is switched by

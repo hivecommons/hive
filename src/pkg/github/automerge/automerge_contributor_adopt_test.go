@@ -111,7 +111,7 @@ func adoptPR(number int, head string, labels ...string) *gh.PullRequest {
 	pr := nudgePR(number, head, labels...)
 	pr.Base = &gh.PullRequestBranch{Ref: gh.Ptr("v5")}
 	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("mallory/widget")}
-	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n")
+	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n\n— hive: backend=pi model=gpt-6\n")
 	return pr
 }
 
@@ -148,7 +148,7 @@ func newAdoptHarness(t *testing.T, outcome ContributorNudgeOutcome, policy Stage
 func (h *adoptHarness) observe(pr *gh.PullRequest, reason string) StageLabelResult {
 	h.t.Helper()
 	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
-	h.e.noteStageAuthor("acme", "widget", pr.GetNumber(), stagelabels.AuthorContributor)
+	h.e.noteStageRole("acme", "widget", pr.GetNumber(), stagelabels.RoleContributor)
 	res, err := h.e.ApplyStageLabels(context.Background())
 	if err != nil {
 		h.t.Fatal(err)
@@ -209,7 +209,7 @@ func TestAdoptionOnlineGraceThenAdopt(t *testing.T) {
 	if len(nudgeComments(h.api)) != 1 || len(adoptionComments(h.api)) != 0 || len(h.adopt.pulls) != 0 {
 		t.Fatalf("first cycle: comments=%v pulls=%d", h.api.comments, len(h.adopt.pulls))
 	}
-	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
 
 	// Just under the online grace: still the contributor's.
 	h.api.reset()
@@ -263,7 +263,7 @@ func TestAdoptionOnlineGraceThenAdopt(t *testing.T) {
 	// Steady state: no churn, one adoption per head, superseder polled at most every 10m.
 	h.api.reset()
 	h.clock.advance(time.Minute)
-	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "author/contributor"), "check-failing:unit")
+	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
 	if h.api.writes() != 0 || len(h.adopt.pulls) != 1 {
 		t.Fatalf("churn after adoption: added=%v removed=%v comments=%v pulls=%d", h.api.added, h.api.removed, h.api.comments, len(h.adopt.pulls))
 	}
@@ -276,7 +276,7 @@ func TestAdoptionOfflineGraceThenSupersederMergedClosesOriginal(t *testing.T) {
 	defer done()
 
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
-	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
 	h.api.reset()
 	h.clock.advance(59 * time.Minute)
 	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
@@ -301,7 +301,7 @@ func TestAdoptionOfflineGraceThenSupersederMergedClosesOriginal(t *testing.T) {
 	h.adopt.setSuperseder(90, "closed", true)
 	h.api.reset()
 	h.clock.advance(adoptCheckInterval)
-	res := h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "author/contributor"), "check-failing:unit")
+	res := h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
 	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
 		t.Fatalf("original not closed: %v", h.adopt.prEdits)
 	}
@@ -316,19 +316,19 @@ func TestAdoptionSupersederClosedUnmergedReturnsTo072(t *testing.T) {
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
 	defer done()
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
-	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
 	h.clock.advance(time.Hour)
 	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
 	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
 	h.adopt.setSuperseder(90, "closed", false)
 	h.api.reset()
 	h.clock.advance(adoptCheckInterval)
-	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "author/contributor"), "check-failing:unit")
+	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
 	if len(h.adopt.prEdits) != 0 {
 		t.Fatalf("original closed although superseder was abandoned: %v", h.adopt.prEdits)
 	}
 	h.api.reset()
-	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "author/contributor"), "check-failing:unit")
+	h.observe(adoptPR(7, "aaa", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
 	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/072-returned-to-contributor" {
 		t.Fatalf("fallback to 072: added=%v removed=%v", h.api.added, h.api.removed)
 	}
@@ -340,7 +340,7 @@ func TestAdoptionNewHeadFromAuthorNotAdopted(t *testing.T) {
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
 	defer done()
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
-	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
 	h.clock.advance(50 * time.Minute)
 	h.api.reset()
 	// Still red at a new head: fresh nudge, grace restarts.
@@ -358,7 +358,7 @@ func TestAdoptionNewHeadFromAuthorNotAdopted(t *testing.T) {
 	h.api.reset()
 	h.clock.advance(3 * time.Hour)
 	h.e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", adoptPR(7, "ccc", labels...), "contributor-lane:no-verdict", false, nil)
-	h.e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+	h.e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
 	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestAdoptionDisabledStaysReturned(t *testing.T) {
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
 	h.api.reset()
 	h.clock.advance(5 * time.Hour)
-	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "author/contributor"), "check-failing:unit")
+	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
 	if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 {
 		t.Fatalf("adopted with adoption off: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
 	}
@@ -400,12 +400,16 @@ func TestAdoptionSkipsSelfAuthored(t *testing.T) {
 	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/070-fixing" {
+	// The App's own PR is author/hive even though its body carries the
+	// relay-style trailer: the App login wins (authorkind rule 1).
+	if added := h.addedLabels(); strings.Join(added, " ") != "author/hive stage/070-fixing" {
 		t.Fatalf("self PR stage: %v", h.api.added)
 	}
 	h.clock.advance(5 * time.Hour)
 	h.api.reset()
-	h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", adoptPR(8, "aaa", "stage/070-fixing"), "check-failing:unit", false, nil)
+	pr = adoptPR(8, "aaa", "stage/070-fixing", "author/hive")
+	pr.User.Login = gh.Ptr(testHiveAppBotLogin)
+	h.e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "check-failing:unit", false, nil)
 	if _, err := h.e.ApplyStageLabels(context.Background()); err != nil {
 		t.Fatal(err)
 	}

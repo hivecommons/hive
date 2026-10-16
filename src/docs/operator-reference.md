@@ -473,8 +473,9 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
 ## Stage labels (`governor.labels.stage`)
 
 The hive owns one ordered `stage/NNN-*` label per open issue/PR
-(`010-actionable` … `100-merge-queue`), an `author/*` admission-tier label on
-PRs, and red `stage/stalled` / `stage/regressed` markers when progress is
+(`010-actionable` … `100-merge-queue`), a `role/*` admission-tier label and
+an `author/*` authorship label (`human` / `clanker` / `hive`; names under
+`governor.labels.author`) on PRs, and red `stage/stalled` / `stage/regressed` markers when progress is
 disrupted; `label:stage/stalled` or `label:stage/regressed` across repos is
 everything off the happy path. Default on; `governor.labels.stage.enabled:
 false` stops the reconciler, `governor.labels.stage.dwell.<slug>` re-times a
