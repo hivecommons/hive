@@ -22828,6 +22828,57 @@
                         }
                       }
                     },
+                    "settings": {
+                      "type": "object",
+                      "description": "The rest of the github block. Identity fields are display-only; the token is never returned, only token_set.",
+                      "properties": {
+                        "forge": {
+                          "type": "string"
+                        },
+                        "api_url": {
+                          "type": "string"
+                        },
+                        "docs_installation_id": {
+                          "type": "integer"
+                        },
+                        "oauth_client_id": {
+                          "type": "string"
+                        },
+                        "token_set": {
+                          "type": "boolean"
+                        },
+                        "hub_managed": {
+                          "type": "boolean"
+                        },
+                        "agent_reserve_floor": {
+                          "type": "integer"
+                        },
+                        "api_reserve": {
+                          "type": "integer"
+                        },
+                        "api_critical": {
+                          "type": "integer"
+                        },
+                        "pr_detail_ttl_s": {
+                          "type": "integer"
+                        },
+                        "graphql_pr_batch": {
+                          "type": "boolean"
+                        },
+                        "graphql_pr_batch_page_size": {
+                          "type": "integer"
+                        },
+                        "app_authored_prs": {
+                          "type": "boolean"
+                        },
+                        "app_signed_commits": {
+                          "type": "boolean"
+                        },
+                        "defaults": {
+                          "type": "object"
+                        }
+                      }
+                    },
                     "repos_forge": {
                       "type": "string"
                     },
@@ -22865,7 +22916,7 @@
           "System"
         ],
         "summary": "Update GitHub App config",
-        "description": "Updates app_id/installation_id/key_file, or writes a new private key (to key_file or the default path) and re-resolves App auth. Requires owner role; requires at least one field and a persistable config source path.",
+        "description": "Updates app_id/installation_id/key_file, or writes a new private key (to key_file or the default path) and re-resolves App auth; also updates the github API quota floors, PR scan cache/batch settings and App authorship toggles. Requires owner role; requires at least one field and a persistable config source path.",
         "requestBody": {
           "required": true,
           "content": {
@@ -22886,6 +22937,42 @@
                   },
                   "private_key": {
                     "type": "string"
+                  },
+                  "self_authorization_hold": {
+                    "type": "boolean",
+                    "nullable": true
+                  },
+                  "agent_reserve_floor": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "api_reserve": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "api_critical": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "pr_detail_ttl_s": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "graphql_pr_batch": {
+                    "type": "boolean",
+                    "nullable": true
+                  },
+                  "graphql_pr_batch_page_size": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "app_authored_prs": {
+                    "type": "boolean",
+                    "nullable": true
+                  },
+                  "app_signed_commits": {
+                    "type": "boolean",
+                    "nullable": true
                   }
                 }
               }

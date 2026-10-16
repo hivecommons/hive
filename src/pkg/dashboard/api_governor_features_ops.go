@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/gfi"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -53,6 +55,14 @@ type featuresOpsBody struct {
 	GoodFirstIssueMaxPerRepo  *int    `json:"goodFirstIssueMaxPerRepo"`
 	GoodFirstIssueMaxPerSweep *int    `json:"goodFirstIssueMaxPerSweep"`
 	GoodFirstIssueMinAge      *string `json:"goodFirstIssueMinAge"`
+	// The scorer tuning knobs: 0 or empty means the gfi package default.
+	GoodFirstIssueMinBodyChars     *int    `json:"goodFirstIssueMinBodyChars"`
+	GoodFirstIssueMaxBodyChars     *int    `json:"goodFirstIssueMaxBodyChars"`
+	GoodFirstIssueMaxPackages      *int    `json:"goodFirstIssueMaxPackages"`
+	GoodFirstIssueMinScore         *int    `json:"goodFirstIssueMinScore"`
+	GoodFirstIssueReselectCooldown *string `json:"goodFirstIssueReselectCooldown"`
+	GoodFirstIssueDocsURL          *string `json:"goodFirstIssueDocsUrl"`
+	GoodFirstIssueCommentTemplate  *string `json:"goodFirstIssueCommentTemplate"`
 }
 
 // envVarNamePattern is the shape of a POSIX environment variable name.
@@ -235,7 +245,9 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 	}
 
 	if b.GoodFirstIssueEnabled != nil || b.GoodFirstIssueInterval != nil || b.GoodFirstIssueMaxPerRepo != nil ||
-		b.GoodFirstIssueMaxPerSweep != nil || b.GoodFirstIssueMinAge != nil {
+		b.GoodFirstIssueMaxPerSweep != nil || b.GoodFirstIssueMinAge != nil || b.GoodFirstIssueMinBodyChars != nil ||
+		b.GoodFirstIssueMaxBodyChars != nil || b.GoodFirstIssueMaxPackages != nil || b.GoodFirstIssueMinScore != nil ||
+		b.GoodFirstIssueReselectCooldown != nil || b.GoodFirstIssueDocsURL != nil || b.GoodFirstIssueCommentTemplate != nil {
 		g := cur.GoodFirstIssue
 		if b.GoodFirstIssueEnabled != nil {
 			g.Enabled = *b.GoodFirstIssueEnabled
@@ -259,6 +271,44 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 		}
 		if b.GoodFirstIssueMaxPerSweep != nil {
 			g.MaxPerSweep = *b.GoodFirstIssueMaxPerSweep
+		}
+		if b.GoodFirstIssueMinBodyChars != nil {
+			g.MinBodyChars = *b.GoodFirstIssueMinBodyChars
+		}
+		if b.GoodFirstIssueMaxBodyChars != nil {
+			g.MaxBodyChars = *b.GoodFirstIssueMaxBodyChars
+		}
+		if b.GoodFirstIssueMaxPackages != nil {
+			g.MaxPackages = *b.GoodFirstIssueMaxPackages
+		}
+		if b.GoodFirstIssueMinScore != nil {
+			g.MinScore = *b.GoodFirstIssueMinScore
+		}
+		if b.GoodFirstIssueReselectCooldown != nil {
+			d, err := parseSettingsDuration("good_first_issue reselect_cooldown", *b.GoodFirstIssueReselectCooldown)
+			if err != nil {
+				return nil, err
+			}
+			g.ReselectCooldown = d
+		}
+		if b.GoodFirstIssueDocsURL != nil {
+			v := strings.TrimSpace(*b.GoodFirstIssueDocsURL)
+			if v != "" {
+				u, err := url.Parse(v)
+				if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+					return nil, fmt.Errorf("good_first_issue docs_url must be empty (default) or an absolute http(s) URL")
+				}
+			}
+			g.DocsURL = v
+		}
+		if b.GoodFirstIssueCommentTemplate != nil {
+			// Whitespace-only means the built-in template; otherwise the text is
+			// kept verbatim because Markdown is whitespace-sensitive.
+			v := *b.GoodFirstIssueCommentTemplate
+			if strings.TrimSpace(v) == "" {
+				v = ""
+			}
+			g.CommentTemplate = v
 		}
 		if err := config.ValidateGoodFirstIssue(g); err != nil {
 			return nil, err
@@ -347,11 +397,25 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 		"goodFirstIssueMaxPerRepo":  cfg.GoodFirstIssue.MaxPerRepo,
 		"goodFirstIssueMaxPerSweep": cfg.GoodFirstIssue.MaxPerSweep,
 		"goodFirstIssueMinAge":      settingsDurationString(cfg.GoodFirstIssue.MinAge),
+
+		"goodFirstIssueMinBodyChars":     cfg.GoodFirstIssue.MinBodyChars,
+		"goodFirstIssueMaxBodyChars":     cfg.GoodFirstIssue.MaxBodyChars,
+		"goodFirstIssueMaxPackages":      cfg.GoodFirstIssue.MaxPackages,
+		"goodFirstIssueMinScore":         cfg.GoodFirstIssue.MinScore,
+		"goodFirstIssueReselectCooldown": settingsDurationString(cfg.GoodFirstIssue.ReselectCooldown),
+		"goodFirstIssueDocsUrl":          cfg.GoodFirstIssue.DocsURL,
+		"goodFirstIssueCommentTemplate":  cfg.GoodFirstIssue.CommentTemplate,
 		"goodFirstIssueDefaults": map[string]string{
-			"goodFirstIssueInterval":    config.DefaultGoodFirstIssueInterval.String(),
-			"goodFirstIssueMaxPerRepo":  strconv.Itoa(config.DefaultGoodFirstIssueMaxPerRepo),
-			"goodFirstIssueMaxPerSweep": strconv.Itoa(config.DefaultGoodFirstIssueMaxPerSweep),
-			"goodFirstIssueMinAge":      config.DefaultGoodFirstIssueMinAge.String(),
+			"goodFirstIssueInterval":         config.DefaultGoodFirstIssueInterval.String(),
+			"goodFirstIssueMaxPerRepo":       strconv.Itoa(config.DefaultGoodFirstIssueMaxPerRepo),
+			"goodFirstIssueMaxPerSweep":      strconv.Itoa(config.DefaultGoodFirstIssueMaxPerSweep),
+			"goodFirstIssueMinAge":           config.DefaultGoodFirstIssueMinAge.String(),
+			"goodFirstIssueMinBodyChars":     strconv.Itoa(gfi.DefaultMinBodyChars),
+			"goodFirstIssueMaxBodyChars":     strconv.Itoa(gfi.DefaultMaxBodyChars),
+			"goodFirstIssueMaxPackages":      strconv.Itoa(gfi.DefaultMaxPackages),
+			"goodFirstIssueMinScore":         strconv.Itoa(gfi.DefaultMinScore),
+			"goodFirstIssueReselectCooldown": gfi.DefaultReselectCooldown.String(),
+			"goodFirstIssueDocsUrl":          gfi.DefaultDocsBase,
 		},
 	}
 }

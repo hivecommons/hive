@@ -164,8 +164,9 @@ the project card listing.
 
 ## Configuration
 
-`good_first_issue:` in `hive.yaml`; the toggle, caps, minimum age and interval
-are also on Settings → Features. Everything else is YAML-only.
+`good_first_issue:` in `hive.yaml`. Every scalar key below is also on
+Settings → Features → Good first issue curation, and a saved change applies on
+the next pass; `exclude_labels` and `repos` are YAML-only.
 
 | Key | Default | Meaning |
 |---|---|---|

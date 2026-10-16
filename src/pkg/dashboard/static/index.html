@@ -32990,7 +32990,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Quality loops & release health', label: 'Retro loop', key: 'retro.enabled', text: 'retro loop quality post-completion analysis model scan interval fix attempts kicks long stall recent closed window retro.enabled retro.analysis_model retro.scan_interval_s retro.max_fix_attempts retro.max_kicks retro.long_stall_days retro.recent_closed_window_s' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Close issues on merge', key: 'issues.close_on_merge', text: 'issues close on merge reporter confirmation sweep backfill recheck interval issues.close_on_merge issues.close_on_merge_interval issues.close_on_merge_backfill_interval issues.close_on_merge_recheck issues.reporter_confirmation' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Duplicate PR sweep', key: 'duplicate_sweep.enabled', text: 'duplicate pr sweep superseded comments budget duplicate_sweep.enabled duplicate_sweep.post_comments duplicate_sweep.max_comments duplicate_sweep.max_prs_per_repo' },
-      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Good first issue curation', key: 'good_first_issue.enabled', text: 'good first issue help wanted gfi curation new contributors coding agent clanker relay advertise welcome comment good_first_issue.enabled good_first_issue.max_per_repo good_first_issue.max_per_sweep good_first_issue.min_age good_first_issue.interval' },
+      { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Good first issue curation', key: 'good_first_issue.enabled', text: 'good first issue help wanted gfi curation new contributors coding agent clanker relay advertise welcome comment good_first_issue.enabled good_first_issue.max_per_repo good_first_issue.max_per_sweep good_first_issue.min_age good_first_issue.interval scorer body length packages score reselect cooldown docs url welcome comment template good_first_issue.min_body_chars good_first_issue.max_body_chars good_first_issue.max_packages good_first_issue.min_score good_first_issue.reselect_cooldown good_first_issue.docs_url good_first_issue.comment_template' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Jev decisions', key: 'jev.provider', text: 'jev typed decisions provider openrouter typesafe model endpoint api key env timeout jev.provider jev.model jev.endpoint jev.api_key_env jev.timeout' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
@@ -33005,7 +33005,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Quality loops & release health', label: 'Compliance posture windows', key: 'compliance.posture_checks.window_days', text: 'compliance posture look-back window history retention compliance.posture_checks.window_days compliance.posture_checks.history_days' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Swarm banner wording', key: 'swarm.event_name', text: 'swarm event name call to arms leaderboard title banner swarm.event_name swarm.call_to_arms swarm.leaderboard_title' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Tool approval inbox path', key: 'tool_approval.inbox_path', text: 'tool approval inbox pending approvals path tool_approval.inbox_path' },
-      { tab: 'Features', section: 'Auto-merge', label: 'Auto-merge sweep limits', key: 'auto_merge.min_head_age', text: 'auto merge max merges per sweep minimum head age required author role auto_merge.max_merges auto_merge.min_head_age auto_merge.trusted_authors.require_role' },
+      { tab: 'Features', section: 'Auto-merge', label: 'Auto-merge sweep limits', key: 'auto_merge.min_head_age', text: 'auto merge max merges per sweep minimum head age required author role auto_merge.max_merges auto_merge.min_head_age auto_merge.trusted_authors.require_role bot takeover github-actions auto_merge.bot_takeover.enabled' },
       { tab: 'Features', section: 'Experimental', label: 'Long-running runs: checkpoints, triage and Spek recheck', key: 'runs.checkpoints.implement', text: 'runs checkpoints spec plan implement hold owner approval wait timeout severity triage clarify comment body length spek spektacular recheck cadence interval delta tasks discovery proxy timeout runs.checkpoints.spec runs.checkpoints.implement runs.wait_timeout_seconds runs.wait_severity runs.triage.min_body_chars runs.triage.clarify_comment runs.spektacular.binary runs.spektacular.recheck.enabled runs.spektacular.recheck.default_interval runs.spektacular.recheck.max_delta_tasks runs.spektacular.recheck.discovery_proxy runs.spektacular.recheck.discovery.enabled runs.spektacular.recheck.discovery.timeout runs.spektacular.recheck.discovery.max_total_items' },
       { tab: 'Features', section: 'Experimental', label: 'External execution: Flue, OMP and vibe-kanban', key: 'runs.external.flue.mode', text: 'external execution flue omp vibe kanban workbench report-only shadow endpoint workflow version project state dir mcp command runs.external.flue.mode runs.external.flue.endpoint runs.external.flue.workflow_version runs.external.omp.mode runs.external.omp.workflow_version runs.external.vibe_kanban.enabled runs.external.vibe_kanban.mode runs.external.vibe_kanban.project_id runs.external.vibe_kanban.state_dir runs.external.vibe_kanban.workflow_version runs.external.vibe_kanban.mcp_command' },
       { tab: 'Features', section: 'Integrations & observability', label: 'OpenTelemetry export', key: 'otel.enabled', text: 'otel opentelemetry export endpoint headers insecure sample ratio service name otel.enabled otel.endpoint otel.headers.<key> otel.insecure otel.sample_ratio otel.service_name' },
@@ -33013,6 +33013,7 @@ function burnAreaChart() {
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
+      { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
 
@@ -35512,7 +35513,106 @@ function burnAreaChart() {
             <div class="mt-1">fingerprint: <code style="font-size:0.72rem">${esc(k.fingerprint)}</code></div>
           </div>`).join('');
       }
+      html += renderForgeGitHubSettings(data.settings || {});
       host.innerHTML = html;
+    }
+
+    // renderForgeGitHubSettings shows the rest of the github: block. Identity
+    // keys and the token are display-only: they decide which forge and
+    // credentials the hive authenticates with, so they come from hub
+    // provisioning (or hive.yaml on a standalone hive). The token is never
+    // sent to the browser, only whether one is set.
+    let _forgeGitHubSettings = {};
+    function renderForgeGitHubSettings(st) {
+      _forgeGitHubSettings = st;
+      const d = st.defaults || {};
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const managedNote = st.hub_managed
+        ? 'managed by the hub — change it from the hub dashboard'
+        : 'set in hive.yaml; requires restart';
+      const roRow = (label, path, valueHtml) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm" style="word-break:break-all">${valueHtml} <span class="text-muted">— ${esc(managedNote)}</span></div></div>`;
+      const shown = v => v ? '<code>' + esc(String(v)) + '</code>' : '<span class="text-muted">unset</span>';
+      const num = (key, label, path, placeholder, help, restart) => `
+          <div class="config-field">
+            <label for="forge-gh-${key}">${esc(label)} ${yamlHint(path)}</label>
+            <input id="forge-gh-${key}" type="number" min="0" step="1" value="${st[key] ? esc(String(st[key])) : ''}" placeholder="${esc(String(placeholder))}" ${owner ? '' : 'disabled'}>
+            <div class="config-help">${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</div>
+          </div>`;
+      const toggle = (key, label, path, help, restart) => `
+          <div class="config-toggle mt-3">
+            <div id="forge-gh-${key}" class="config-toggle-switch ${st[key] ? 'on' : ''} ${owner ? '' : 'disabled'}" data-action="${owner ? 'forgeGitHubToggle' : ''}" data-arg-types="t" role="switch" aria-checked="${st[key] ? 'true' : 'false'}"></div>
+            <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} <span class="text-muted">— ${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</span></span>
+          </div>`;
+      return `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:var(--sp-5);background:var(--surface)">
+          <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)">Connection identity</div>
+          ${roRow('Forge', 'github.forge', shown(st.forge))}
+          ${roRow('API URL', 'github.api_url', shown(st.api_url))}
+          ${roRow('Docs org installation ID', 'github.docs_installation_id', shown(st.docs_installation_id))}
+          ${roRow('Login OAuth client ID', 'github.oauth_client_id', shown(st.oauth_client_id))}
+          ${roRow('Personal access token', 'github.token', st.token_set ? '<span>set (hidden)</span>' : '<span class="text-muted">not set</span>')}
+          <div class="config-help">The App private key path is <code>github.key_file</code>, edited above. An empty forge or API URL is derived from the App config.</div>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:var(--sp-5);background:var(--surface)">
+          <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)">API quota, PR scans and authorship</div>
+          <div class="config-field-row">
+            ${num('api_reserve', 'API reserve', 'github.api_reserve', 800, 'Remaining core REST quota below which Hive skips optional sweeps (conserve mode).', true)}
+            ${num('api_critical', 'API critical floor', 'github.api_critical', 250, 'Lower floor where Hive enters critical mode and stretches the eval interval further. Must be below the reserve.', true)}
+            ${num('agent_reserve_floor', 'Agent reserve floor', 'github.agent_reserve_floor', d.agent_reserve_floor || 400, 'Agent reads through the API proxy get a 429 once the shared core bucket drops below this, so daemon merge and scan work is never starved.', true)}
+          </div>
+          <div class="config-field-row">
+            ${num('pr_detail_ttl_s', 'PR detail cache TTL (seconds)', 'github.pr_detail_ttl_s', d.pr_detail_ttl_s || 1800, 'Reuses a PR detail response while the PR list still reports the same head SHA and updated_at. 0 uses the default.', false)}
+            ${num('graphql_pr_batch_page_size', 'GraphQL PR batch page size', 'github.graphql_pr_batch_page_size', d.graphql_pr_batch_page_size || 50, 'Page size for the batched pullRequests query, 1–100. 0 uses the default.', false)}
+          </div>
+          ${toggle('graphql_pr_batch', 'Batch open-PR scans with GraphQL', 'github.graphql_pr_batch', 'one paginated query per repo instead of per-PR detail and check-run reads.', false)}
+          ${toggle('app_authored_prs', 'Author agent PRs as the App bot', 'github.app_authored_prs', 'agents open PRs and commit as &lt;slug&gt;[bot] with the App installation token when project.ai_author is empty.', true)}
+          ${toggle('app_signed_commits', 'Re-author agent PRs as GitHub-signed commits', 'github.app_signed_commits', 'needed when a base branch requires signed commits; rewrites the agent branch before the PR opens.', false)}
+          ${owner ? '<button class="hv-btn btn-primary mt-4" id="forge-gh-save-btn" data-action="saveForgeGitHubSettings">Save</button>' : '<div class="config-help mt-3">Owner role required to change these settings.</div>'}
+        </div>`;
+    }
+
+    function forgeGitHubToggle(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const on = el.classList.toggle('on');
+      el.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+
+    async function saveForgeGitHubSettings() {
+      const st = _forgeGitHubSettings || {};
+      const body = {};
+      for (const key of ['api_reserve', 'api_critical', 'agent_reserve_floor', 'pr_detail_ttl_s', 'graphql_pr_batch_page_size']) {
+        const el = document.getElementById('forge-gh-' + key);
+        if (!el) continue;
+        const raw = (el.value || '').trim();
+        const v = raw === '' ? 0 : parseInt(raw, 10);
+        if (isNaN(v) || v < 0) { showToast(key + ' must be a non-negative number', 'error'); return; }
+        if (v !== (st[key] || 0)) body[key] = v;
+      }
+      for (const key of ['graphql_pr_batch', 'app_authored_prs', 'app_signed_commits']) {
+        const el = document.getElementById('forge-gh-' + key);
+        if (!el) continue;
+        const on = el.classList.contains('on');
+        if (on !== !!st[key]) body[key] = on;
+      }
+      if (!Object.keys(body).length) { showToast('Nothing to save', 'error'); return; }
+      const btn = document.getElementById('forge-gh-save-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      try {
+        const res = await fetch('/api/config/github', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        const restart = ['api_reserve', 'api_critical', 'agent_reserve_floor', 'app_authored_prs'].some(k => k in body);
+        showToast(restart ? 'GitHub settings saved — restart the hive to apply the quota floors or authorship change' : 'GitHub settings saved', 'success');
+        loadForgeApps();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      }
     }
 
     // forgeAppNeedsInstall: PRIMARY rule, checked FIRST and sufficient BY
@@ -35579,7 +35679,7 @@ function burnAreaChart() {
             <label style="font-size:0.72rem;color:var(--muted)">App ID<input id="forge-app-appid" type="number" value="${esc(String(a.app_id || ''))}" style="${inputStyle}"></label>
             <label style="font-size:0.72rem;color:var(--muted)">Installation ID<input id="forge-app-instid" type="number" value="${esc(String(a.installation_id || ''))}" style="${inputStyle}"></label>
           </div>
-          <label style="font-size:0.72rem;color:var(--muted)">Key file path<input id="forge-app-keyfile" type="text" value="${esc(a.key_file || '')}" style="${inputStyle};margin-bottom:var(--sp-4)"></label>
+          <label style="font-size:0.72rem;color:var(--muted)">Key file path ${yamlHint('github.key_file')}<input id="forge-app-keyfile" type="text" value="${esc(a.key_file || '')}" style="${inputStyle};margin-bottom:var(--sp-4)"></label>
           <label style="font-size:0.72rem;color:var(--muted)">Private key (PEM — write-only, replaces the key file; never displayed back)<textarea id="forge-app-pem" rows="3" placeholder="-----BEGIN RSA PRIVATE KEY----- (leave empty to keep the current key)" style="${inputStyle};font-family:monospace;margin-bottom:var(--sp-4)"></textarea></label>
           <button class="hv-btn btn-primary" id="forge-app-save-btn" data-action="saveForgeApp">Save</button>
         </div>`;
@@ -39489,7 +39589,7 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle rt-toggle-lg">
           <div class="config-toggle-switch ${rtHoldDefault ? 'on' : ''} ${rtHoldEnvLocked ? 'disabled' : ''}" data-action="${rtHoldEnvLocked ? '' : 'toggleReporterTrustHoldDefault'}" data-arg-types="t" title="${rtHoldEnvLocked ? 'HIVE_REPORTER_TRUST_HOLD is set; the environment controls this value.' : 'Hold, at every ACMM level, any PR whose rationale traces to an issue from a reporter this hive does not trust'}"></div>
-          <span class="config-toggle-label">All repos: hold PRs for untrusted reporters at every level (#9665) <span class="rt-sub">— follows the Labels tab's reporter-trust switch${rtGateOn ? '' : ' (currently off)'} unless set here; a human removes the hold, Hive never does</span></span>
+          <span class="config-toggle-label">All repos: hold PRs for untrusted reporters at every level (#9665) ${yamlHint('github.reporter_trust_hold')} <span class="rt-sub">— follows the Labels tab's reporter-trust switch${rtGateOn ? '' : ' (currently off)'} unless set here; a human removes the hold, Hive never does</span></span>
         </div>
         <div class="config-list">
           ${list || '<div class="fs-sm text-muted mb-3">No repos configured</div>'}
@@ -41693,6 +41793,10 @@ function burnAreaChart() {
               <button type="button" class="hv-btn btn-secondary btn-sm btn-small" data-action="gh98">Add bot</button>
             </div>
           </div>
+          <div class="config-toggle mt-4">
+            <div class="config-toggle-switch ${am.bot_takeover_enabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="bot_takeover_enabled"></div>
+            <span class="config-toggle-label">Take over github-actions[bot] PRs whose checks cannot run ${yamlHint('auto_merge.bot_takeover.enabled')} ${settingHelpMark('operator-reference', 'app-self-merge-sweep-auto_merge', 'Take over github-actions[bot] PRs', `On by default. Applies only when github-actions[bot] is a trusted bot author above. A PR that bot opens with a workflow GITHUB_TOKEN never triggers pull_request checks, so it can never go green. Once its head is older than both the minimum head age and 30 minutes with no pull_request run, the App pushes the same change as one signed-off commit to hive/takeover-&lt;n&gt;, opens a PR that supersedes it and closes the bot PR. One attempt per bot head SHA. Applies on the next sweep.`)}</span>
+          </div>
           <div class="config-field" id="am-trusted-authors">
             <label>Trusted-author auto-merge ${settingHelpMark('hive-merge', 'trusted-author-auto-merge', 'Trusted-author auto-merge', `Operator opt-in for human-authored PRs: Hive may merge a green PR only when the author holds the configured hive role and, when required, GitHub says the author has push/maintain/admin permission on that repository. Fork PRs from non-members are blocked, excluded labels and CHANGES_REQUESTED reviews block, and the head SHA is re-checked at merge.`)}</label>
             <div class="config-toggle mt-3">
@@ -42034,6 +42138,16 @@ function burnAreaChart() {
             <div class="config-field"><label>Minimum issue age ${yamlHint('good_first_issue.min_age')} ${settingHelpMark('settings', 'features', 'Good first issue minimum age', `How old an issue must be before hive advertises it, so it never races a reporter who is still editing or about to fix it. Empty uses the default (${esc(gfiDefaults.goodFirstIssueMinAge || '24h0m0s')}).`)}</label><input type="text" value="${esc(f.goodFirstIssueMinAge || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueMinAge || '24h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMinAge" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Sweep interval ${yamlHint('good_first_issue.interval')} ${settingHelpMark('settings', 'features', 'Good first issue sweep interval', `How often the curation pass runs over the last enumeration. Empty uses the default (${esc(gfiDefaults.goodFirstIssueInterval || '1h0m0s')}).`)}</label><input type="text" value="${esc(f.goodFirstIssueInterval || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueInterval || '1h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueInterval" data-arg-types="s,s,w"></div>
           </div>
+          <div class="config-subgroup">Scorer tuning</div>
+          <div class="config-field-row settings-subsection-row">
+            <div class="config-field"><label>Minimum body length ${yamlHint('good_first_issue.min_body_chars')} ${settingHelpMark('settings', 'features', 'Good first issue minimum body length', `Shortest issue body, in characters, the scorer accepts: a one-line issue rarely says enough for a newcomer to start. 0 uses the default (${esc(String(gfiDefaults.goodFirstIssueMinBodyChars || 80))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.goodFirstIssueMinBodyChars || ''))}" placeholder="${esc(String(gfiDefaults.goodFirstIssueMinBodyChars || 80))}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMinBodyChars" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Maximum body length ${yamlHint('good_first_issue.max_body_chars')} ${settingHelpMark('settings', 'features', 'Good first issue maximum body length', `Longest issue body, in characters, the scorer accepts: a very long issue is usually a design discussion rather than a first task. Must not be below the minimum. 0 uses the default (${esc(String(gfiDefaults.goodFirstIssueMaxBodyChars || 4000))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.goodFirstIssueMaxBodyChars || ''))}" placeholder="${esc(String(gfiDefaults.goodFirstIssueMaxBodyChars || 4000))}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMaxBodyChars" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Maximum packages mentioned ${yamlHint('good_first_issue.max_packages')} ${settingHelpMark('settings', 'features', 'Good first issue maximum packages', `How many source directories an issue may mention before it counts as too wide for a first contribution. 0 uses the default (${esc(String(gfiDefaults.goodFirstIssueMaxPackages || 2))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.goodFirstIssueMaxPackages || ''))}" placeholder="${esc(String(gfiDefaults.goodFirstIssueMaxPackages || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMaxPackages" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Minimum score ${yamlHint('good_first_issue.min_score')} ${settingHelpMark('settings', 'features', 'Good first issue minimum score', `How many positive signals (size labels, kind/bug, help wanted, clear steps or acceptance criteria) an issue needs before it is advertised. 0 uses the default (${esc(String(gfiDefaults.goodFirstIssueMinScore || 2))}).`)}</label><input type="number" min="0" step="1" value="${esc(String(f.goodFirstIssueMinScore || ''))}" placeholder="${esc(String(gfiDefaults.goodFirstIssueMinScore || 2))}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueMinScore" data-arg-types="s,s,N"></div>
+            <div class="config-field"><label>Reselect cooldown ${yamlHint('good_first_issue.reselect_cooldown')} ${settingHelpMark('settings', 'features', 'Good first issue reselect cooldown', `How long an issue hive released (because one of its own agents started it) stays out of the pool before it may be advertised again. Go duration; empty uses the default (${esc(gfiDefaults.goodFirstIssueReselectCooldown || '168h0m0s')}).`)}</label><input type="text" value="${esc(f.goodFirstIssueReselectCooldown || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueReselectCooldown || '168h0m0s')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueReselectCooldown" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field"><label>Contributor docs URL ${yamlHint('good_first_issue.docs_url')} ${settingHelpMark('settings', 'features', 'Good first issue docs URL', `Base URL the welcome comment links contributor docs under. Absolute http(s) URL; empty uses the default (${esc(gfiDefaults.goodFirstIssueDocsUrl || '')}).`)}</label><input type="url" value="${esc(f.goodFirstIssueDocsUrl || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueDocsUrl || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueDocsUrl" data-arg-types="s,s,w"></div>
+          <div class="config-field"><label>Welcome comment template ${yamlHint('good_first_issue.comment_template')} ${settingHelpMark('settings', 'features', 'Good first issue comment template', `Overrides the welcome comment. Go text/template over the issue, repo, claim URL and docs variables; it must contain {{ .Marker }} so hive can find and supersede its own comment later. A template that does not parse is rejected on save. Empty uses the built-in comment.`)}</label><textarea rows="5" placeholder="Empty uses the built-in welcome comment" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueCommentTemplate" data-arg-types="s,s,v">${esc(f.goodFirstIssueCommentTemplate || '')}</textarea></div>
           <div class="config-help">${gfiStats ? `Since start: ${esc(String(gfiStats.selected || 0))} selected · ${esc(String(gfiStats.released || 0))} released to hive · ${esc(String(gfiStats.converted || 0))} claimed by contributors. ` : ''}Scoring knobs, exclude labels, repos and the comment template stay yaml-only.</div>
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}

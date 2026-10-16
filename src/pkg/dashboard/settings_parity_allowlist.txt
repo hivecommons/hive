@@ -135,7 +135,6 @@ agents.<key>.variables.<key>.url # TODO #11854
 agents.<key>.variables.<key>.value # TODO #11854
 agents.github_api_hourly_cap # TODO #11854
 auto_merge.allow_unprotected_base[] # TODO #11854
-auto_merge.bot_takeover.enabled # TODO #11854
 auto_merge.human_merge_paths.<key> # TODO #11854
 auto_merge.no_ci_ok[] # TODO #11854
 auto_merge.repos.<key>.required_checks[] # TODO #11854
@@ -149,30 +148,8 @@ classification.review_bots.resolve_after_fix # TODO #11854
 compliance.frameworks[] # TODO #11854
 duplicate_sweep.bot_authors[] # TODO #11854
 github.additional_bot_logins[] # TODO #11854
-github.agent_reserve_floor # TODO #11854
-github.api_critical # TODO #11854
-github.api_reserve # TODO #11854
-github.api_url # TODO #11854
-github.app_authored_prs # TODO #11854
-github.app_signed_commits # TODO #11854
-github.docs_installation_id # TODO #11854
-github.forge # TODO #11854
-github.graphql_pr_batch # TODO #11854
-github.graphql_pr_batch_page_size # TODO #11854
-github.key_file # TODO #11854
-github.oauth_client_id # TODO #11854
-github.pr_detail_ttl_s # TODO #11854
-github.reporter_trust_hold # TODO #11854
-github.token # TODO #11854
-good_first_issue.comment_template # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.docs_url # advanced scorer tuning; yaml-only (#12185)
 good_first_issue.exclude_labels[] # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.max_body_chars # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.max_packages # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.min_body_chars # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.min_score # advanced scorer tuning; yaml-only (#12185)
 good_first_issue.repos[] # advanced scorer tuning; yaml-only (#12185)
-good_first_issue.reselect_cooldown # advanced scorer tuning; yaml-only (#12185)
 governor.backup.key_env # TODO #11854
 governor.backup.key_file # TODO #11854
 governor.backup.key_name # TODO #11854
