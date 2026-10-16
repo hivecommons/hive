@@ -77,6 +77,19 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		".ev-svg text.ev-lbl { fill:var(--text); font-size:var(--fs-xs); }",
 		".evidence-card { margin-top: var(--sp-4); display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr));",
 		".evidence-card > .prt-head { grid-column:1 / -1;",
+		"dto.work_balance",
+		"evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance),",
+		"no audited issue opens or closes in this window",
+		"[['human', 'wb-human', 'opened by humans'], ['agent', 'wb-agent', 'opened by agents'], ['bot', 'wb-bot', 'opened by bots']]",
+		"row.throttled ?",
+		"throttle_windows_unavailable",
+		"Throttle windows not reported by this hive",
+		"Issues only, from this hive's audit log",
+		".ev-svg .ev-bar.wb-throttle",
+		"'work-balance': (dto) => {",
+		"const EV_BALANCE_STRONG = 0.8;",
+		"const EV_BALANCE_FAIR = 0.5;",
+		"evGrade(ratio, openedTotal, EV_BALANCE_STRONG, EV_BALANCE_FAIR, true)",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("Evidence card missing snippet %q", snippet)
@@ -109,6 +122,7 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evAccuracySvg",
 		"evShadowGateSvg",
 		"evClaimVsVerdictSvg",
+		"evWorkBalanceSvg",
 		"escapeHtml",
 		"evWindowControls",
 		"evWindowLabel",

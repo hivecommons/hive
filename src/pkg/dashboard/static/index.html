@@ -1608,6 +1608,14 @@
     .ev-legend i.cv-ci { background:var(--orange); }
     .ev-legend i.cv-swarm { background:var(--purple); }
     .ev-legend i.cv-both { background:var(--red); }
+    .ev-svg .ev-bar.wb-human { fill:var(--green); }
+    .ev-svg .ev-bar.wb-agent { fill:var(--blue); }
+    .ev-svg .ev-bar.wb-bot { fill:var(--muted); opacity:.6; }
+    .ev-svg .ev-bar.wb-throttle { fill:var(--amber); opacity:.15; }
+    .ev-svg .wb-closed, .ev-legend .wb-closed { --ev-c: var(--orange); }
+    .ev-legend i.wb-human { background:var(--green); }
+    .ev-legend i.wb-agent { background:var(--blue); }
+    .ev-legend i.wb-bot { background:var(--muted); opacity:.6; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
     /* Evidence window pills (24h · 7d · 30d · custom) and the inline custom
@@ -22171,6 +22179,8 @@ function burnAreaChart() {
     const EV_REVERT_FAIR = 0.15;            // ≤ → Fair, above → Weak
     const EV_SHADOW_FALSE_ALARM_STRONG = 0.25; // held-but-merged-clean share ≤ → Strong
     const EV_SHADOW_FALSE_ALARM_FAIR = 0.5;    // ≤ → Fair, above → Weak
+    const EV_BALANCE_STRONG = 0.8;          // issues closed ÷ issues opened ≥ → Strong
+    const EV_BALANCE_FAIR = 0.5;            // ≥ → Fair, below → Weak
     const EV_DATA_SINCE = '2026-10-08';     // first evidence bundles were written
     const EV_REVERTS_SINCE = '2026-10-15';  // reverted_by links recorded from this date
     const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };
@@ -22294,6 +22304,29 @@ function burnAreaChart() {
           good: `Few disagreements: CI not green on ${Math.round(EV_ERR_STRONG * 100)}% or less of the PRs with captured checks is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. A non-approve verdict is not proof the agent was wrong, so the swarm column is shown but not graded.`,
           ours: `${claimed} agent PRs claimed done across ${weeks.length} week(s). Of ${ciCaptured} with captured checks, ${ciNotGreen} had CI not green (${evPct(ciRate)}); ${notApprove} got a non-approve verdict (${evPct(swarmRate)} of claimed); ${both} had both.${emptyCI ? ` ${emptyCI} record(s) had empty CI and are left out of the CI column.` : ''} ${evLimitsSentence()}`,
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent PRs with captured checks` : `CI not green on ${evPct(ciRate)} of ${ciCaptured} PRs with checks`,
+        };
+      },
+      'work-balance': (dto) => {
+        const weeks = (Array.isArray(dto.work_balance) ? dto.work_balance : []).filter((w) => w && Number(w.n) > 0);
+        const opened = { human: 0, agent: 0, bot: 0 };
+        let closed = 0;
+        weeks.forEach((w) => {
+          Object.keys(opened).forEach((k) => { opened[k] += Number((w.opened || {})[k]) || 0; });
+          closed += Number(w.closed) || 0;
+        });
+        const openedTotal = opened.human + opened.agent + opened.bot;
+        const ratio = evRate(closed, openedTotal);
+        const grade = evGrade(ratio, openedTotal, EV_BALANCE_STRONG, EV_BALANCE_FAIR, true);
+        const hrs = evWindowHours();
+        const short = hrs <= EV_SHORT_WINDOW_HOURS ? ` Only ${hrs}h of data is in this window, so treat the grade as an early read.` : '';
+        const throttle = (dto.missing || {}).throttle_windows_unavailable === false ? 'Shaded weeks are governor throttle windows.' : 'This hive reports no issue-creation throttle windows, so no weeks are shaded.';
+        return {
+          matters: 'Agents that file issues faster than anyone closes them are amplifying work, not doing it. Watching opened against closed, by who opened them, shows whether the backlog is growing because of the agents.',
+          measured: 'Each week, how many issues were opened — split by whether a human, an AI agent or a bot (the hive\u2019s own automation) opened them — against how many issues were closed in the same week.',
+          how: `We read the hive\u2019s audit log for the selected window and repo, the same entries behind the Throughput card. Issue creates by the issue-request watcher count as agent, issues the hive files itself (advisory, ACMM gaps) count as bot, and audited closes count as closed. Bars are opened stacked by kind; the line is closed. ${throttle}`,
+          good: `Closed keeping pace with opened: closed ÷ opened at or above ${Math.round(EV_BALANCE_STRONG * 100)}% is Strong, ${Math.round(EV_BALANCE_FAIR * 100)}% or more is Fair, below that Weak. Agent-opened issues should not dwarf human-opened ones for long.`,
+          ours: `${openedTotal} issues opened across ${weeks.length} week(s) (human ${opened.human} · agent ${opened.agent} · bot ${opened.bot}) and ${closed} closed (${evPct(ratio)} of opened). Only hive-mediated issue writes are audited: issues humans or other bots open directly on GitHub are not observed, so the human column is a floor, and nothing is weighted by size or by whether an agent-opened issue was acted on.${short}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} audited issue opens` : `${closed} closed for ${openedTotal} opened (${evPct(ratio)})`,
         };
       },
     };
@@ -22503,6 +22536,49 @@ function burnAreaChart() {
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Claim vs verdict: agent-authored PRs per week that claimed done against CI not green and swarm not approve">${grid}${body}</svg><div class="ev-legend">${legend}</div>`;
     }
 
+    // Panel 6 (#12366): work balance. Each ISO week gets one bar of issues
+    // opened, stacked by actor kind (human / agent / bot), and a closed-count
+    // line over the top. Throttle shading is drawn only for weeks the API
+    // flags as throttled; this hive reports none today. Read-only.
+    function evWorkBalanceSvg(weeks) {
+      const rows = (Array.isArray(weeks) ? weeks : []).filter((w) => w && Number(w.n) > 0);
+      if (!rows.length) return '<div class="ev-empty">— no audited issue opens or closes in this window</div>';
+      const kinds = [['human', 'wb-human', 'opened by humans'], ['agent', 'wb-agent', 'opened by agents'], ['bot', 'wb-bot', 'opened by bots']];
+      const w = EV_SVG_W, h = 150, l = 26, r = 6, t = 8, b = 22;
+      const pw = w - l - r, ph = h - t - b;
+      const groupW = pw / rows.length;
+      const barW = Math.max(2, groupW * 0.6);
+      const opened = (row) => kinds.reduce((sum, [k]) => sum + (Number((row.opened || {})[k]) || 0), 0);
+      const maxN = Math.max(1, ...rows.map((row) => Math.max(opened(row), Number(row.closed) || 0)));
+      const y = (v) => t + ph - (v / maxN) * ph;
+      const cx = (i) => l + i * groupW + groupW / 2;
+      let grid = '';
+      [0, 0.5, 1].forEach((f) => {
+        const v = Math.round(maxN * f);
+        grid += `<line class="ev-axis" x1="${l}" x2="${w - r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text x="${l - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`;
+      });
+      const body = rows.map((row, i) => {
+        const o = row.opened || {};
+        const closed = Number(row.closed) || 0;
+        const tip = escapeHtml(`${row.week}: opened ${opened(row)} (human ${Number(o.human) || 0} · agent ${Number(o.agent) || 0} · bot ${Number(o.bot) || 0}) · closed ${closed} · n=${Number(row.n) || 0}`);
+        const shade = row.throttled ? `<rect class="ev-bar wb-throttle" x="${(l + i * groupW).toFixed(1)}" y="${t}" width="${groupW.toFixed(1)}" height="${ph}"><title>${tip}</title></rect>` : '';
+        let acc = 0;
+        const stack = kinds.map(([k, cls]) => {
+          const v = Number(o[k]) || 0;
+          if (!(v > 0)) return '';
+          const top = y(acc + v), bottom = y(acc);
+          acc += v;
+          return `<rect class="ev-bar ${cls}" x="${(cx(i) - barW / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${(bottom - top).toFixed(1)}"><title>${tip}</title></rect>`;
+        }).join('');
+        const label = rows.length > 8 ? String(row.week || '').replace(/^\d{4}-/, '') : String(row.week || '');
+        return `<g>${shade}${stack}<text x="${cx(i).toFixed(1)}" y="${h - 6}" text-anchor="middle">${escapeHtml(label)}<title>${tip}</title></text></g>`;
+      }).join('');
+      const closedPts = rows.map((row, i) => `${cx(i).toFixed(1)},${y(Number(row.closed) || 0).toFixed(1)}`);
+      const closedLine = `<g class="wb-closed">${rows.length > 1 ? `<polyline class="ev-line" points="${closedPts.join(' ')}"/>` : ''}${closedPts.map((pt) => `<circle class="ev-pt" cx="${pt.split(',')[0]}" cy="${pt.split(',')[1]}" r="2.5"/>`).join('')}</g>`;
+      const legend = kinds.map(([, cls, label]) => `<span><i class="${cls}"></i>${label}</span>`).join('') + '<span class="wb-closed"><i class="dot"></i>closed</span>';
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Work balance: issues opened per week stacked by human, agent and bot, against issues closed">${grid}${body}${closedLine}</svg><div class="ev-legend">${legend}</div>`;
+    }
+
     function renderEvidenceSummary(dto) {
       const card = document.getElementById('evidence-card');
       if (!card) return;
@@ -22519,6 +22595,9 @@ function burnAreaChart() {
       const claims = Array.isArray(dto.claim_vs_verdict) ? dto.claim_vs_verdict : [];
       const claimN = claims.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
       const emptyCI = Number((dto.missing || {}).records_empty_ci) || 0;
+      const balance = Array.isArray(dto.work_balance) ? dto.work_balance : [];
+      const balanceN = balance.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
+      const throttleNote = (dto.missing || {}).throttle_windows_unavailable === false ? 'Shaded weeks are governor issue-creation throttle windows.' : 'Throttle windows not reported by this hive, so no weeks are shaded.';
       const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
@@ -22529,6 +22608,8 @@ function burnAreaChart() {
           `Outcome is merged vs not merged, not ground truth: a block that was later fixed and merged counts as a false block, and an approval on a still-open PR counts as a false approve.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
         + evPanel('claim-vs-verdict', 'Claim vs verdict', claimN, evClaimVsVerdictSvg(claims),
           `Only agent-authored PRs; opening or marking a PR ready is taken as the agent claiming done. CI conclusion is as captured at merge-eligibility evaluation, not the final run, and a PR with no captured checks is left out of the CI column rather than counted as agreement${emptyCI ? ` (${emptyCI} record(s) in this window had empty CI)` : ''}. A non-approve verdict is not proof the agent was wrong.`)
+        + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance),
+          `Issues only, from this hive's audit log: issues humans or third-party bots open directly on GitHub are not observed, so the human column only counts hive-mediated opens. Nothing is weighted by size, and an agent-opened issue counts whether or not anyone acted on it. ${throttleNote}`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
           'Shadow mode only records; no merge was held or blocked. Closed-without-merge is not recorded in bundles, so a closed PR counts as still open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
