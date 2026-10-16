@@ -1,9 +1,11 @@
 package stagelabels
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -210,5 +212,96 @@ func TestStorePersistsAndPrunes(t *testing.T) {
 	}
 	if n := st2.Prune(14 * 24 * time.Hour); n != 1 || len(st2.Keys()) != 0 {
 		t.Fatalf("prune = %d keys=%v", n, st2.Keys())
+	}
+}
+
+func TestLookupsAndAuthorStrings(t *testing.T) {
+	if s, ok := StageBySlug(" Merge-Queue "); !ok || s != MergeQueue {
+		t.Fatalf("StageBySlug = %v %v", s, ok)
+	}
+	if _, ok := StageBySlug("nope"); ok {
+		t.Fatal("unknown slug resolved")
+	}
+	if !MergeQueue.Known() || None.Known() || Stage(99).Known() {
+		t.Fatal("Known() wrong")
+	}
+	if Current([]string{"bug", "stage/stalled", "stage/999-old", MergeQueue.Label()}) != MergeQueue || Current([]string{"stage/999-old"}) != None {
+		t.Fatal("Current() wrong")
+	}
+	if AuthorTrusted.String() != "trusted" || AuthorTrusted.Label() != "author/trusted" || AuthorNone.String() != "" || AuthorNone.Label() != "" {
+		t.Fatalf("author strings: %q %q %q %q", AuthorTrusted.String(), AuthorTrusted.Label(), AuthorNone.String(), AuthorNone.Label())
+	}
+	if got := RegressionComment(MergeQueue, Fixing, "  "); !strings.HasSuffix(got, ": state changed") {
+		t.Fatalf("empty reason default: %q", got)
+	}
+	if got := StallComment(AwaitingMergeAdmission, time.Minute, ""); !strings.HasSuffix(got, ": lane has not evaluated this head") {
+		t.Fatalf("empty stall reason default: %q", got)
+	}
+	if Stalled(Record{}, nil, time.Now()) || Stalled(Record{Stage: NeedsHuman, EnteredAt: time.Unix(0, 0)}, nil, time.Now()) {
+		t.Fatal("None / open-ended stages never stall")
+	}
+}
+
+func TestStoreMarksForgetsAndSharedLoad(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "s.json")
+	st := NewStore(path, func() time.Time { return now })
+	key := Key("O/R", 3)
+	if key != "o/r#3" {
+		t.Fatalf("Key = %q", key)
+	}
+	st.MarkStallCommented(key) // unknown key: no-op
+	st.MarkRegressionCommented(key)
+	st.Observe(key, AwaitingMergeAdmission, "x")
+	st.MarkStallCommented(key)
+	st.MarkStallCommented(key)
+	if rec, _ := st.Get(key); !rec.StallCommented {
+		t.Fatal("stall comment not recorded")
+	}
+	st.Observe(key, MergeQueue, "y")
+	if rec, _ := st.Get(key); rec.StallCommented {
+		t.Fatal("stage change must reset the stall note")
+	}
+	st.Forget(key)
+	st.Forget(key)
+	if _, ok := st.Get(key); ok {
+		t.Fatal("Forget left the record")
+	}
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Save(); err != nil { // clean: no-op
+		t.Fatal(err)
+	}
+	if err := NewStore("", nil).Load(); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewStore("", nil).Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewStore(filepath.Join(t.TempDir(), "missing.json"), nil).Load(); err != nil {
+		t.Fatalf("missing file must not error: %v", err)
+	}
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(bad, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewStore(bad, nil).Load(); err == nil {
+		t.Fatal("corrupt file must error")
+	}
+	if err := os.WriteFile(bad, []byte("null"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nullStore := NewStore(bad, nil)
+	if err := nullStore.Load(); err != nil || len(nullStore.Keys()) != 0 {
+		t.Fatalf("null file: %v %v", err, nullStore.Keys())
+	}
+
+	saved := StatePath
+	t.Cleanup(func() { StatePath = saved })
+	StatePath = filepath.Join(t.TempDir(), "shared.json")
+	sharedOnce = sync.Once{}
+	if Shared() == nil || Shared() != Shared() {
+		t.Fatal("Shared() must return one store")
 	}
 }
