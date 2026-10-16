@@ -147,8 +147,8 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 		class := strings.ToLower(strings.TrimSpace(fault.ErrorClass))
 		component := "inference-gateway"
 		if class == "auth" || class == "budget" {
-			// auth is reported as the inference_auth_failed runtime class by
-			// the inferencehealth store itself; budget is the operator's.
+			// auth and budget are operator/upstream conditions, not hive
+			// code defects.
 			continue
 		}
 		errClass := class

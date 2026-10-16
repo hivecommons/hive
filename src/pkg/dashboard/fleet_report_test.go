@@ -22,8 +22,8 @@ func TestFleetReportEvidenceIncludesRuntimeGatewayFaults(t *testing.T) {
 		t.Fatalf("evidence len=%d, want 1: %#v", len(got), got)
 	}
 	// Auth faults are no longer a hive-code-defect symptom here: the
-	// inferencehealth store reports them as the inference_auth_failed
-	// runtime class (#11868), so only the upstream fault remains.
+	// inferencehealth store does not self-report them either (#12284),
+	// so only the upstream fault remains.
 	if got[0].Component != "inference-gateway" || got[0].ErrorClass != "other http 502" || !got[0].Attributable {
 		t.Fatalf("unexpected evidence: %#v", got[0])
 	}
