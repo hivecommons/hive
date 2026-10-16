@@ -37910,7 +37910,7 @@ function burnAreaChart() {
         'daily': 'Daily cadence (surge: 30m, busy: 1h, quiet: 2h, idle: 4h)'
       };
       const desc = templateDescriptions[templateKey] || templateKey;
-      if (!(await hiveConfirm(`Apply global cadence template "${desc}" to all agents across all governor modes?`))) return;
+      if (!(await hiveConfirm(`Apply global cadence template "${desc}" to all configured agents across all governor modes? This replaces existing interval, schedule and on-demand cadences; continuous cadences are kept.`))) return;
       try {
         const res = await fetch('/api/config/governor/cadence-templates', {
           method: 'POST',
@@ -37924,7 +37924,7 @@ function burnAreaChart() {
         }
         noteStatusMutation(data.minStatusSeq);
         showToast(`Applied ${desc} to ${data.agentsUpdated || 0} agents`, 'success');
-        if (typeof fetchStatus === 'function') fetchStatus();
+        if (typeof refreshStatus === 'function') refreshStatus();
       } catch (err) {
         showToast('Network error applying cadence template: ' + err.message, 'error');
       }

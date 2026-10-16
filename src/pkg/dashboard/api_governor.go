@@ -586,13 +586,6 @@ func (s *Server) handleGovernorCadenceTemplates(w http.ResponseWriter, r *http.R
 		for agentName := range s.deps.Config.Agents {
 			agentSet[agentName] = true
 		}
-		if s.deps.Config.Governor.Modes != nil {
-			for _, m := range s.deps.Config.Governor.Modes {
-				for agentName := range m.Cadences {
-					agentSet[agentName] = true
-				}
-			}
-		}
 	}
 
 	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Governor.Modes != nil {
@@ -605,6 +598,10 @@ func (s *Server) handleGovernorCadenceTemplates(w http.ResponseWriter, r *http.R
 				mode.Cadences = make(map[string]config.Cadence)
 			}
 			for agentName := range agentSet {
+				// Keep explicit per-mode continuous opt-ins.
+				if mode.Cadences[agentName].IsContinuous() {
+					continue
+				}
 				mode.Cadences[agentName] = cadVal
 				s.deps.Config.Governor.ClaimCadenceOwnership(modeName, agentName)
 			}
