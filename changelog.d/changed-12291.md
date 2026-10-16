@@ -1,0 +1,1 @@
+- dashboard: refresh cli_models.go CLI-version comment (#12291)
