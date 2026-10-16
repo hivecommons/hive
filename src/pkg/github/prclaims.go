@@ -1749,9 +1749,17 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 	}
 	if claim.MergedPR {
 		issue.Labels = removeCoveredByPRLabel(issue.Labels)
-		if issueHasLabel(issue.Labels, VerifiedOpenLabel) || issueHasLabel(issue.Labels, PartiallyAddressedLabel) {
+		switch {
+		case issueHasLabel(issue.Labels, VerifiedOpenLabel):
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
-		} else {
+		case claim.Reference || issueHasLabel(issue.Labels, PartiallyAddressedLabel):
+			// A merged "Refs #N" / "Part of #N" never asserted it finished
+			// the issue (Settled() and close-on-merge both exclude it), so
+			// it is partially-addressed, not likely-done (#11931 rule: no
+			// closing keyword means the remainder is still actionable).
+			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+			issue.Labels = addIssueLabel(issue.Labels, PartiallyAddressedLabel)
+		default:
 			issue.Labels = addIssueLabel(issue.Labels, LikelyDoneLabel)
 		}
 		issue.ClaimContext = claimContext(claim, "merged_pr_needs_verification")
@@ -1992,7 +2000,14 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 				logger.Warn("ensuring verified-open label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
 		}
-		likelyWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
+		mergedWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen
+		// A merged reference-only claim ("Refs #N", "Part of #N") is
+		// partially-addressed, not likely-done: it never asserted it closed
+		// the issue, close-on-merge skips it, and the kick still offers the
+		// remainder (#11931 rule; hivecommons/hive#12316 sat in "Confirm &
+		// close" with half its work in an open PR).
+		partialWanted := mergedWanted && claim.Reference
+		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
 		if coveredWanted {
 			if err := client.EnsureCoveredByPRLabel(ctx, issue.Repo); err != nil && logger != nil {
 				logger.Warn("ensuring covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
@@ -2013,9 +2028,18 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			}
 			issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		}
+		if partialWanted && !issueHasLabel(originalLabels, PartiallyAddressedLabel) {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, "fbca04", "A merged PR addressed only part of this issue; remainder still actionable"); err != nil && logger != nil {
+				logger.Warn("ensuring partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{PartiallyAddressedLabel}); err != nil && logger != nil {
+				logger.Warn("adding partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+		}
 		if likelyWanted {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && logger != nil {
 				logger.Warn("ensuring likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			} else if issueHasLabel(originalLabels, LikelyDoneLabel) {
+				// Already carried; re-adding every tick only spends a write.
 			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{LikelyDoneLabel}); err != nil && logger != nil {
 				logger.Warn("adding likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
