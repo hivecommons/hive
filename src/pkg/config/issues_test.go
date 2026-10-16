@@ -82,7 +82,7 @@ func TestIssuesCloseOnMergeEnvOverrides(t *testing.T) {
 
 func TestIssuesHardSuppressDefaults(t *testing.T) {
 	var cfg IssuesConfig
-	if got := cfg.EffectiveSHAHoldTrustedLabel(); got != DefaultSHAHoldTrustedLabel || got != "needs-sha" {
+	if got := cfg.EffectiveSHAHoldTrustedLabel(); got != DefaultSHAHoldTrustedLabel || DefaultSHAHoldTrustedLabel != "needs-sha" {
 		t.Fatalf("default trusted SHA label = %q, want needs-sha", got)
 	}
 	if !cfg.LiftHiveHardSuppressEnabled() {

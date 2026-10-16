@@ -320,6 +320,9 @@ hub.tier_limits.<key>.max_concurrent # TODO #11854
 hub.tier_limits.<key>.max_per_day # TODO #11854
 hub.tier_limits.<key>.max_per_hour # TODO #11854
 hub.upgrade_drain_timeout_s # TODO #11854
+issues.hard_suppress_reconcile_interval # TODO #11854
+issues.lift_hive_hard_suppress # TODO #11854
+issues.sha_hold_trusted_label # TODO #11854
 knowledge.agent_scopes.<key>.include_states[] # TODO #11854
 knowledge.agent_scopes.<key>.layers[] # TODO #11854
 knowledge.agent_scopes.<key>.repos[] # TODO #11854

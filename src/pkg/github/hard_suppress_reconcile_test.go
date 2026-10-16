@@ -54,7 +54,7 @@ func runHardSuppressFixture(t *testing.T, appBot string, fx hardSuppressFixture)
 			w.Write([]byte(`[]`))
 			return
 		}
-		w.Write(mustMarshal(t, []wireIssue{{Number: fx.number, Title: "parked", User: wireUser{"maintainer"}, Labels: []wireLabel{{Name: fx.label}}}}))
+		w.Write(mustMarshal(t, []wireIssue{{Number: fx.number, Title: "parked", CreatedAt: "2026-10-14T17:00:00Z", User: wireUser{"maintainer"}, Labels: []wireLabel{{Name: fx.label}}}}))
 	})
 	base := fmt.Sprintf("/repos/%s/%s/issues/%d", org, repo, fx.number)
 	mux.HandleFunc(base+"/events", func(w http.ResponseWriter, r *http.Request) {
