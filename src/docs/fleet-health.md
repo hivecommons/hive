@@ -346,10 +346,9 @@ until the first run. A spoke with no framework selected sends an empty block,
 which clears whatever the hub stored; a beat with no block at all (an older
 spoke, or a minimal upgrade beat) keeps the last stored profile.
 
-The hub Fleet table shows this as a **Compliance** column: a pass-rate pill
-(`pass / (pass + fail)`; skipped and errored checks are not counted) with the
-framework IDs beneath it. The pill links to the spoke's Settings → Compliance
-tab when the hub knows the spoke's dashboard URL.
+The hub Fleet table (`my-hives`) does not yet render this data: there is no
+Compliance column in the hub UI. The stored profile is exposed only through the
+API below.
 
 `GET /api/hub/compliance` (hub admin only) exports the fleet-wide aggregate:
 spoke counts, per-framework spoke counts, total pass/fail with the overall
