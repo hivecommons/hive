@@ -782,7 +782,16 @@ func renderUnparkLabelDrivenReply(parking []string) string {
 	if len(parking) == 0 {
 		parking = []string{issueNeedsHumanLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
 	}
-	return fmt.Sprintf("This repository is label-driven: Hive leaves %s to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision` / `/hive done`. No labels were changed.", quoteLabels(parking))
+	return fmt.Sprintf("This repository is label-driven: Hive leaves %s to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision` / `/hive done`. No labels were changed.", quoteLabelsProse(parking))
+}
+
+// quoteLabelsProse renders labels as "`a`, `b` and `c`" so the reply reads as
+// a sentence rather than a list.
+func quoteLabelsProse(labels []string) string {
+	if len(labels) <= 1 {
+		return quoteLabels(labels)
+	}
+	return quoteLabels(labels[:len(labels)-1]) + " and `" + labels[len(labels)-1] + "`"
 }
 
 // renderUnparkAcceptedReply records an accepted command. It names the labels
