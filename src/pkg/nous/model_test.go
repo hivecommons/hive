@@ -70,7 +70,9 @@ func TestExperimentValidate(t *testing.T) {
 		{"infinite threshold", func(e *Experiment) { e.Metrics[0].Threshold = number(math.Inf(1)) }},
 		{"unknown guardrail", func(e *Experiment) { e.Guardrails[0].MetricID = "unknown" }},
 		{"duplicate guardrail", func(e *Experiment) { e.Guardrails = append(e.Guardrails, e.Guardrails[0]) }},
-		{"conflicting guardrail", func(e *Experiment) { e.Guardrails = append(e.Guardrails, Guardrail{MetricID: "queue", Lower: number(100)}) }},
+		{"conflicting guardrail", func(e *Experiment) {
+			e.Guardrails = append(e.Guardrails, Guardrail{MetricID: "queue", Lower: number(100)})
+		}},
 		{"no bound", func(e *Experiment) { e.Guardrails[0].Upper = nil }},
 		{"inverted bound", func(e *Experiment) { e.Guardrails[0].Lower = number(100) }},
 		{"nan bound", func(e *Experiment) { e.Guardrails[0].Upper = number(math.NaN()) }},

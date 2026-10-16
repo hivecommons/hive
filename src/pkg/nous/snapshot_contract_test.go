@@ -12,9 +12,9 @@ import (
 func TestCatalogSnapshotContract(t *testing.T) {
 	snapshot := reflect.TypeOf(hivestate.Snapshot{})
 	fields := map[string]string{
-		"queue_issues": "QueueIssues",
-		"queue_prs": "QueuePRs",
-		"queue_hold": "QueueHold",
+		"queue_issues":   "QueueIssues",
+		"queue_prs":      "QueuePRs",
+		"queue_hold":     "QueueHold",
 		"sla_violations": "SLAViolations",
 	}
 	for _, definition := range MetricCatalog() {
