@@ -85,6 +85,7 @@ jobs:
   required-context-scope:
     name: required context scope
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       run-go-security: ${{ steps.scope.outputs.run-go-security }}
     steps:
@@ -141,6 +142,7 @@ jobs:
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: govulncheck (known vulnerabilities)
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -172,6 +174,7 @@ jobs:
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: gosec (insecure patterns)
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -226,6 +229,7 @@ jobs:
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     name: golangci-lint
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -255,6 +259,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -272,6 +277,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-go-security == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
     # WHY THIS JOB EXISTS: a CNCF General Technical Review asks how the
     # project ensures third-party attribution stays correct and complete. A
     # generated NOTICE that can silently go stale is worse than no NOTICE at

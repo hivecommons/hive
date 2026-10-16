@@ -121,6 +121,7 @@ jobs:
   # their head SHA receives the required `gate` check-run (#4965).
   gate:
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       push: ${{ steps.decide.outputs.push }}
       sha: ${{ steps.decide.outputs.sha }}
@@ -495,6 +496,7 @@ jobs:
   merge:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build]
     steps:
       - name: Checkout tag publisher
@@ -746,6 +748,7 @@ jobs:
   merge-contributor:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build-contributor]
     steps:
       - name: Checkout tag publisher
@@ -964,6 +967,7 @@ jobs:
   merge-hub:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build-hub]
     steps:
       - name: Checkout tag publisher

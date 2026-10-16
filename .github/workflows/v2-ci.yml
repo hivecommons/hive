@@ -52,6 +52,7 @@ jobs:
   required-context-scope:
     name: required context scope
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       run-ci: ${{ steps.scope.outputs.run-ci }}
     steps:
@@ -107,6 +108,7 @@ jobs:
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 50
     defaults:
       run:
         working-directory: src
@@ -1150,6 +1152,7 @@ jobs:
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     needs: build-and-test
     permissions:
       contents: read
@@ -1216,6 +1219,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -1288,6 +1292,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1412,6 +1417,7 @@ jobs:
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 60
     needs: [build-and-test, docker]
     permissions:
       contents: read

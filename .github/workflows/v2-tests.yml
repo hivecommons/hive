@@ -147,6 +147,7 @@ jobs:
   required-context-scope:
     name: required context scope
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       run-tests: ${{ steps.scope.outputs.run-tests }}
     steps:
@@ -214,6 +215,7 @@ jobs:
       matrix:
         idx: [1, 2, 3, 4]
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: src
@@ -395,6 +397,7 @@ jobs:
       matrix:
         idx: [1, 2, 3, 4, 5]
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: src
@@ -556,6 +559,7 @@ jobs:
     needs: required-context-scope
     if: ${{ (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-tests == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 15
     outputs:
       matrix: ${{ steps.partition.outputs.matrix }}
     defaults:
@@ -716,6 +720,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.list-packages.outputs.matrix) }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: src
@@ -902,6 +907,7 @@ jobs:
       matrix:
         idx: [1, 2]
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: src
@@ -1072,6 +1078,7 @@ jobs:
     # Do not run this aggregate in concurrency-cancelled twin runs (#6293);
     # the surviving run still fail-closes on any non-success shard result.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     needs: [required-context-scope, list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
     steps:
       - name: Check shard results
@@ -1186,6 +1193,7 @@ jobs:
   coverage:
     if: ${{ always() && github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 30
     needs: [required-context-scope, test-hub, test-agent, test-rest]
     steps:
       - name: Report coverage not required for this diff
@@ -1527,6 +1535,7 @@ jobs:
   create-issue-on-failure:
     if: (failure() || cancelled()) && github.event_name == 'schedule'
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     needs: [list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
     permissions:
       contents: read
@@ -1582,6 +1591,7 @@ jobs:
   create-issues-on-flakes:
     if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/v5' || github.ref == 'refs/heads/v6') && needs.test-hub.result == 'success' && needs.test-agent.result == 'success' && needs.test-rest.result == 'success' && needs.test-dashboard-shuffle.result == 'success'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     needs: [test-hub, test-agent, test-rest, test-dashboard-shuffle]
     permissions:
       actions: read
@@ -1730,6 +1740,7 @@ jobs:
   warm-build-cache:
     if: github.event_name != 'pull_request' && !contains(vars.HIVE_RUNNER_LABELS, 'hive-runners')
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: src
