@@ -214,7 +214,7 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 		return h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{ghpkg.CoveredByPRLabel})
 	}
 	label := ghpkg.LikelyDoneLabel
-	if err := h.server.deps.GHClient.EnsureIssueLabel(ctx, repo, label, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil {
+	if err := h.server.deps.GHClient.EnsureIssueLabel(ctx, repo, label, ghpkg.LikelyDoneLabelColor, ghpkg.LikelyDoneLabelDescription); err != nil {
 		return err
 	}
 	return h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{label})

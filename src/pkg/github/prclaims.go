@@ -116,11 +116,19 @@ const (
 	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
 	// that is not yet a resolved/closed issue.
 	LikelyDoneLabel = "hive/likely-done"
+	// LikelyDoneLabelColor is the green label colour used for likely-done.
+	LikelyDoneLabelColor = "0e8a16"
+	// LikelyDoneLabelDescription is the description hive creates LikelyDoneLabel with.
+	LikelyDoneLabelDescription = "Hive verified that a merged PR references or claims this issue; pending confirmation"
 	// PartiallyAddressedLabel marks an open issue whose merged PR covered only
 	// part of it (no closing keyword, a remainder paragraph, or none of the
 	// cited paths changed). It suppresses likely-done and keeps the issue
 	// actionable (#11931).
 	PartiallyAddressedLabel = "hive/partially-addressed"
+	// PartiallyAddressedLabelColor is the amber label colour used for partially-addressed.
+	PartiallyAddressedLabelColor = "fbca04"
+	// PartiallyAddressedLabelDescription is the description hive creates PartiallyAddressedLabel with.
+	PartiallyAddressedLabelDescription = "A merged PR addressed only part of this issue; remainder still actionable"
 	// AlreadyDoneLabel marks an issue that Hive verified is already fixed.
 	AlreadyDoneLabel = "hive/already-done"
 	// VerifiedOpenLabel records that verification found the issue still open/not
@@ -2029,14 +2037,14 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		}
 		if partialWanted && !issueHasLabel(originalLabels, PartiallyAddressedLabel) {
-			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, "fbca04", "A merged PR addressed only part of this issue; remainder still actionable"); err != nil && logger != nil {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, PartiallyAddressedLabelColor, PartiallyAddressedLabelDescription); err != nil && logger != nil {
 				logger.Warn("ensuring partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{PartiallyAddressedLabel}); err != nil && logger != nil {
 				logger.Warn("adding partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
 		}
 		if likelyWanted {
-			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && logger != nil {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, LikelyDoneLabelColor, LikelyDoneLabelDescription); err != nil && logger != nil {
 				logger.Warn("ensuring likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			} else if issueHasLabel(originalLabels, LikelyDoneLabel) {
 				// Already carried; re-adding every tick only spends a write.
