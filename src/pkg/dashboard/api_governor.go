@@ -158,6 +158,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"stageNudgeEnabled":   cfg.Governor.Labels.Stage.ContributorNudge.IsEnabled(),
 		"stageNudgeRenudge":   cfg.Governor.Labels.Stage.ContributorNudge.RenudgeInterval,
 		"stagePresenceWindow": cfg.Governor.Labels.Stage.PresenceWindow,
+		// governor.labels.stage.adoption.enabled / contributor_grace_*: the
+		// stage-074 adoption of red contributor PRs.
+		"stageAdoptionEnabled": cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
+		"stageGraceOnline":     cfg.Governor.Labels.Stage.ContributorGraceOnline,
+		"stageGraceOffline":    cfg.Governor.Labels.Stage.ContributorGraceOffline,
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -690,6 +695,11 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		StageNudgeEnabled   *bool   `json:"stage_nudge_enabled"`
 		StageNudgeRenudge   *string `json:"stage_nudge_renudge_interval"`
 		StagePresenceWindow *string `json:"stage_presence_window"`
+		// Stage-074 adoption: governor.labels.stage.adoption.enabled and
+		// governor.labels.stage.contributor_grace_online / _offline.
+		StageAdoptionEnabled *bool   `json:"stage_adoption_enabled"`
+		StageGraceOnline     *string `json:"stage_grace_online"`
+		StageGraceOffline    *string `json:"stage_grace_offline"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -788,6 +798,8 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	for name, v := range map[string]*string{
 		"stage_nudge_renudge_interval": body.StageNudgeRenudge,
 		"stage_presence_window":        body.StagePresenceWindow,
+		"stage_grace_online":           body.StageGraceOnline,
+		"stage_grace_offline":          body.StageGraceOffline,
 	} {
 		if v == nil || strings.TrimSpace(*v) == "" {
 			continue
@@ -884,6 +896,16 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.StagePresenceWindow != nil {
 		s.deps.Config.Governor.Labels.Stage.PresenceWindow = strings.TrimSpace(*body.StagePresenceWindow)
+	}
+	if body.StageAdoptionEnabled != nil {
+		v := *body.StageAdoptionEnabled
+		s.deps.Config.Governor.Labels.Stage.Adoption.Enabled = &v
+	}
+	if body.StageGraceOnline != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorGraceOnline = strings.TrimSpace(*body.StageGraceOnline)
+	}
+	if body.StageGraceOffline != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorGraceOffline = strings.TrimSpace(*body.StageGraceOffline)
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)

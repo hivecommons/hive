@@ -486,7 +486,13 @@ within `governor.labels.stage.presence_window` (default 15m), pushes a `fix-pr`
 interrupt to their relay session, bounded by the per-contributor fix budget
 (`contribute.max_parallel_fixes` / `contribute.min_focus_window`).
 `governor.labels.stage.contributor_nudge.enabled: false` turns the nudge and
-the relay task off. The retired `🐝 covered by PR`,
+the relay task off. A PR still red `governor.labels.stage.contributor_grace_online`
+(default 2h; `contributor_grace_offline`, default 1h, after a comment-only nudge)
+after the first nudge is adopted (`governor.labels.stage.adoption.enabled`,
+default on): the hive pushes `hive/adopt-<n>` at the contributor head, opens a
+superseding App PR that preserves the author's commits, moves the original to
+`stage/074-adopted-by-hive` and closes it once the superseder merges; the
+scanner's red-PR fix-first kick finishes the superseder. The retired `🐝 covered by PR`,
 `claimed` and `hive/in-progress` labels are removed from open items on the
 first cycle after upgrade. Full table, state diagram and migration note:
 [labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine).

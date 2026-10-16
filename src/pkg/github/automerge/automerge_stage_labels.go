@@ -41,6 +41,16 @@ type StageLabelPolicy struct {
 	// RenudgeInterval is the delay before the single re-nudge; 0 uses the
 	// stage's dwell (the stall threshold).
 	RenudgeInterval time.Duration
+	// Adoption turns the stage-074 adoption on
+	// (governor.labels.stage.adoption.enabled, default true): a contributor
+	// PR still red after the grace is superseded by an App PR that preserves
+	// the author's commits.
+	Adoption bool
+	// GraceOnline / GraceOffline are how long after the first nudge for a
+	// head the hive waits before adopting, depending on whether the author's
+	// relay was online at the nudge (defaults 2h / 1h).
+	GraceOnline  time.Duration
+	GraceOffline time.Duration
 }
 
 // stageRESTCaller tags the label/comment writes for /api/gh-rate-limits.
@@ -84,6 +94,12 @@ type stageObservation struct {
 	Title    string
 	URL      string
 	OpenedAt time.Time
+	// BaseRef and Body feed the stage-074 adoption (superseding PR target
+	// and the Closes lines to carry over); both come from the list payload.
+	BaseRef string
+	Body    string
+	// HeadRepo is the head's owner/repo (differs from Display on a fork).
+	HeadRepo string
 }
 
 // StageTracker accumulates observations across the lanes of one cycle. One
@@ -202,9 +218,16 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	if pr.GetHead() != nil {
 		obs.HeadSHA = pr.GetHead().GetSHA()
 	}
+	if pr.GetHead() != nil && pr.GetHead().GetRepo() != nil {
+		obs.HeadRepo = pr.GetHead().GetRepo().GetFullName()
+	}
+	if pr.GetBase() != nil {
+		obs.BaseRef = pr.GetBase().GetRef()
+	}
 	obs.Author = hgithub.SafeGetLogin(pr.GetUser())
 	obs.Title = pr.GetTitle()
 	obs.URL = pr.GetHTMLURL()
+	obs.Body = pr.GetBody()
 	obs.OpenedAt = pr.GetCreatedAt().Time
 	c.stageTrackerOrShared().record(obs)
 }
@@ -464,6 +487,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			store.Forget(key)
 			c.resolveNudge(ctx, prevRec, hadPrev, obs)
 		} else {
+			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && prevRec.Adopted(obs.HeadSHA) {
+				// Adopted at this head: the lane still sees a red
+				// contributor PR, but the hive owns it now.
+				verdict.Stage = stagelabels.AdoptedByHive
+			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
 			if verdict.Stage != stagelabels.ReturnedToContributor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
@@ -525,6 +553,20 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		if want.Stage == stagelabels.ReturnedToContributor && policy.ContributorNudge {
 			n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		if want.Stage == stagelabels.ReturnedToContributor && policy.Adoption {
+			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		if want.Stage == stagelabels.AdoptedByHive {
+			n, err := c.settleAdoption(ctx, store, key, obs, now)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err

@@ -4007,6 +4007,43 @@ type StageLabelsConfig struct {
 	// contributor to count as online (default 15m). Online contributors get
 	// the fix-pr relay interrupt immediately; offline ones only the comment.
 	PresenceWindow string `yaml:"presence_window,omitempty"`
+	// ContributorGraceOnline is how long after the nudge an ONLINE
+	// contributor (relay heartbeat within presence_window) has to push a new
+	// head before the hive adopts the PR (default 2h).
+	ContributorGraceOnline string `yaml:"contributor_grace_online,omitempty"`
+	// ContributorGraceOffline is the same grace for an offline or external
+	// author who only got the GitHub comment (default 1h).
+	ContributorGraceOffline string `yaml:"contributor_grace_offline,omitempty"`
+	// Adoption configures stage/074-adopted-by-hive: the hive supersedes a
+	// contributor PR that is still red after the grace with an App PR that
+	// preserves the author's commits, and the scanner finishes it.
+	Adoption StageAdoptionConfig `yaml:"adoption"`
+}
+
+// StageAdoptionConfig is governor.labels.stage.adoption.
+type StageAdoptionConfig struct {
+	// Enabled turns adoption on. nil = true. Off, PRs stay in 072 and only
+	// stall.
+	Enabled *bool `yaml:"enabled"`
+}
+
+// IsEnabled reports whether adoption runs (default on).
+func (c StageAdoptionConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
+
+// Default graces before a red contributor PR is adopted (stage 074).
+const (
+	DefaultContributorGraceOnline  = 2 * time.Hour
+	DefaultContributorGraceOffline = time.Hour
+)
+
+// EffectiveContributorGraceOnline parses ContributorGraceOnline (default 2h).
+func (s StageLabelsConfig) EffectiveContributorGraceOnline() time.Duration {
+	return parseDurationOr(s.ContributorGraceOnline, DefaultContributorGraceOnline)
+}
+
+// EffectiveContributorGraceOffline parses ContributorGraceOffline (default 1h).
+func (s StageLabelsConfig) EffectiveContributorGraceOffline() time.Duration {
+	return parseDurationOr(s.ContributorGraceOffline, DefaultContributorGraceOffline)
 }
 
 // ContributorNudgeConfig is governor.labels.stage.contributor_nudge.

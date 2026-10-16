@@ -203,7 +203,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		c.warn("stage labels: contributor nudge failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return 0, err
 	}
-	store.MarkNudged(key, obs.HeadSHA, ordinal, now)
+	store.MarkNudged(key, obs.HeadSHA, ordinal, out.Online || out.Mode == "spawn" || out.Mode == "preempt" || out.Mode == "queued", now)
 	c.info("stage labels: contributor nudged", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "nudge", ordinal, "mode", nonEmpty(out.Mode, "comment"), "online", out.Online, "queue_depth", out.QueueDepth, "reason", obs.Reason)
 	return 1, nil
 }

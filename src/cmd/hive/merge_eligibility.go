@@ -103,6 +103,9 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			Dwell:            stage.DwellOverrides(),
 			ContributorNudge: stage.ContributorNudge.IsEnabled(),
 			RenudgeInterval:  stage.ContributorNudge.EffectiveRenudgeInterval(),
+			Adoption:         stage.Adoption.IsEnabled(),
+			GraceOnline:      stage.EffectiveContributorGraceOnline(),
+			GraceOffline:     stage.EffectiveContributorGraceOffline(),
 		}
 	}
 }

@@ -30,6 +30,9 @@ type stageAPI struct {
 	creates  []string
 	lists    int
 	url      string
+	// extra handles routes beyond labels/comments (returns true when it
+	// served the request); the adoption tests use it for refs and pulls.
+	extra func(w http.ResponseWriter, r *http.Request) bool
 }
 
 func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
@@ -41,6 +44,9 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 		api.mu.Lock()
 		defer api.mu.Unlock()
 		path := r.URL.Path
+		if api.extra != nil && api.extra(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && path == "/repos/acme/widget/labels":
 			api.lists++

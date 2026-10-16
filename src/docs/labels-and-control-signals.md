@@ -151,7 +151,7 @@ written only when the planned set differs from the current one.
 | `stage/060-reviewed` | PR | swarm verdict approve but a gate is still pending (CI running, soak not started) | 30m |
 | `stage/070-fixing` | PR | hive-authored (App/taken-over) PR: CI red, changes requested or needs-rebase; a hive agent is reworking it | 2h |
 | `stage/072-returned-to-contributor` | PR | contributor PR (relay or external): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the author's court | 24h |
-| `stage/074-adopted-by-hive` | PR | the author was unavailable (see below); the hive adopted the PR and is finishing it through the takeover/supersede path | 3h |
+| `stage/074-adopted-by-hive` | PR | the author was unavailable past the grace (see below); the hive pushed `hive/adopt-<n>` at the contributor's head, opened a superseding App PR that keeps the author's commits, and the scanner's red-PR fix kick is finishing it. The original closes automatically when the superseder merges | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green, verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
 | `stage/090-needs-human` | PR | cannot auto-merge; a person must act. Always read with the `author/*` label and any `hold`/`needs-human`/`needs-decision` modifier | none |
 | `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window | 3h |
@@ -191,8 +191,9 @@ stateDiagram-v2
     s100 --> s072: contributor head red (regressed)
     s070 --> s050: fixed head pushed
     s072 --> s050: author pushes a new head
-    s072 --> s074: author offline / grace expired
-    s074 --> s050: superseding PR opened
+    s072 --> s074: grace expired, superseding App PR opened
+    s074 --> [*]: superseder merged (original closed)
+    s074 --> s072: superseder closed unmerged (handed back)
     s050 --> s090: untrusted author, hold, human merge path
     s090 --> s050: hold lifted
     s100 --> [*]: merged (labels removed)
@@ -322,15 +323,38 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
      task waits server-side and the PR carries stage 072 + the comment only.
    Protocol fields and client behaviour:
    [contributor-relay.md § fix-pr tasks](contributor-relay.md#fix-pr-tasks).
-3. If the author stays unavailable past the grace (`contributor_grace_online`
-   2h after an online nudge, `contributor_grace_offline` 1h after an offline
-   one), the PR moves to `stage/074-adopted-by-hive` and is re-laned through
-   the maintainer takeover/supersede path (a branch from the fork head,
-   rebased and fixed, opened as a superseding PR that preserves the original
-   author's commits and sign-off); one comment on the original PR says so.
-4. A new head from the author at any point before adoption returns the PR
-   to the normal `050 → 100` path with no adoption; the hub drops the PR from
-   the contributor's fix queue.
+3. If the author stays unavailable past the grace — counted from the FIRST
+   nudge for the head: `governor.labels.stage.contributor_grace_online`
+   (default 2h) when the nudge reached a relay (`mode=spawn|preempt|queued`),
+   `governor.labels.stage.contributor_grace_offline` (default 1h) after a
+   comment-only nudge (offline relay or external author) — the hive adopts
+   the PR (`governor.labels.stage.adoption.enabled`, default `true`):
+   - pushes `hive/adopt-<n>` in the base repo at the contributor's head SHA
+     (the fork's commits, authorship and `Signed-off-by` preserved byte for
+     byte — "sign-off survives the squash");
+   - opens an App PR from it against the same base, titled like the original,
+     whose body starts `Supersedes #N (adopted after CI went red and the
+     contributor was unavailable; original commits by @author preserved)`,
+     carries the original's `Closes/Fixes/Resolves` lines and instructs the
+     fix agent to rebase on the base and fix CI **on that branch** without
+     opening another PR;
+   - posts ONE `<!-- hive:adopted by=#M head=<sha> -->` comment on the
+     original and moves it to `stage/074-adopted-by-hive` (its linked issue
+     mirrors the stage). The hub drops the PR from the contributor's fix queue.
+   The superseding PR is App-authored and red with the same failures, so the
+   existing machinery takes over: it lands in `ci-failing.json` and the
+   scanner's FIX-BEFORE-NEW kick (the route every red hive-authored PR takes,
+   [hive-merge.md](hive-merge.md#stage-labels)) rebases and fixes it on
+   `hive/adopt-<n>`; it then runs the normal `050 → 100` path. No second
+   takeover mechanism exists. One adoption attempt per contributor head,
+   whatever the outcome. While in 074 the hive polls the superseder at most
+   every 10 minutes: merged → one `<!-- hive:adopted-merged -->` note and the
+   original is closed; closed unmerged (a maintainer declined) → the adoption
+   is forgotten and the original returns to 072 (not a regression).
+4. A new head from the author at any point before adoption re-arms the nudge
+   (grace restarts) or, if green, returns the PR to the normal `050 → 100`
+   path; no adoption. After adoption the author can still push a new head on
+   the original and say so on the superseder.
 5. Backpressure — the per-contributor fix budget. Capacity = the relay's
    advertised `max_parallel_fixes` (fix sub-sessions beside the primary),
    clamped by `contribute.max_parallel_fixes` (default 2); an unadvertised
@@ -362,8 +386,8 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
    (`task_complete`/`task_failed` for the fix's `task_id`) frees a slot that
    is refilled automatically with the next queued `fix-pr`.
 
-Steps 1, 2 and 5–7 ship with the stage engine and the contribute hub; the
-074 adoption kick and grace timers (steps 3–4) are the last part of #12436.
+All seven steps ship with the stage engine and the contribute hub
+(hivecommons/hive#12436).
 
 ### Modifiers, not stages
 

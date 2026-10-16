@@ -426,7 +426,13 @@ thresholds, the mermaid state machine and the off-happy-path flow
 (072 → nudge → 074 → takeover) are in
 [labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine);
 the code is `src/pkg/stagelabels` and
-`src/pkg/github/automerge/automerge_stage_labels.go`. The issues a PR covers
+`src/pkg/github/automerge/automerge_stage_labels.go`. Adoption
+(`stage/074-adopted-by-hive`, `automerge_contributor_adopt.go`) reuses this
+sweep's own red-PR route: the superseding App PR it opens from `hive/adopt-<n>`
+is red with the contributor's failures, lands in `ci-failing.json` like any
+hive-authored red PR, and the scanner's FIX-BEFORE-NEW kick rebases and fixes
+it on that branch (never a replacement PR), after which it follows the normal
+`050 → 100` path. The issues a PR covers
 follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
 writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same

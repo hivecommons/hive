@@ -178,6 +178,9 @@ func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 	if !IsRegression(MergeQueue, Fixing) || IsRegression(Fixing, Reviewed) || !IsRegression(Fixing, Claimed) {
 		t.Fatal("IsRegression repair-route exception wrong")
 	}
+	if IsRegression(AdoptedByHive, ReturnedToContributor) || IsRegression(AdoptedByHive, ReviewPending) || !IsRegression(AdoptedByHive, Claimed) {
+		t.Fatal("IsRegression adoption hand-back exception wrong")
+	}
 	if tr = st.Observe(key, Reviewed, "y"); tr.Recovered {
 		t.Fatal("not yet back to the regressed-from stage")
 	}
@@ -338,24 +341,37 @@ func TestClaimLabelConstantsMatchStages(t *testing.T) {
 func TestStoreMarkNudged(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	s := NewStore("", func() time.Time { return now })
-	s.MarkNudged("missing", "a", 1, now) // unknown key: no-op
+	s.MarkNudged("missing", "a", 1, false, now) // unknown key: no-op
 	if _, ok := s.Get("missing"); ok {
 		t.Fatal("MarkNudged created a record")
 	}
 	key := Key("acme/widget", 7)
 	s.Observe(key, ReturnedToContributor, "check-failing:unit")
-	s.MarkNudged(key, "a", 1, now)
+	s.MarkNudged(key, "a", 1, true, now)
 	r, _ := s.Get(key)
-	if r.NudgeHead != "a" || r.NudgeCount != 1 || !r.LastNudgeAt.Equal(now) {
+	if r.NudgeHead != "a" || r.NudgeCount != 1 || !r.LastNudgeAt.Equal(now) || !r.FirstNudgeAt.Equal(now) || !r.NudgeOnline {
 		t.Fatalf("after first: %+v", r)
 	}
-	s.MarkNudged(key, "a", 0, now.Add(time.Hour)) // n <= count increments
-	if r, _ = s.Get(key); r.NudgeCount != 2 {
+	s.MarkNudged(key, "a", 0, false, now.Add(time.Hour)) // n <= count increments; first-nudge facts kept
+	if r, _ = s.Get(key); r.NudgeCount != 2 || !r.FirstNudgeAt.Equal(now) || !r.NudgeOnline {
 		t.Fatalf("increment: %+v", r)
 	}
-	s.MarkNudged(key, "b", 1, now.Add(2*time.Hour)) // new head restarts
-	if r, _ = s.Get(key); r.NudgeHead != "b" || r.NudgeCount != 1 {
+	s.MarkNudged(key, "b", 1, false, now.Add(2*time.Hour)) // new head restarts
+	if r, _ = s.Get(key); r.NudgeHead != "b" || r.NudgeCount != 1 || !r.FirstNudgeAt.Equal(now.Add(2*time.Hour)) || r.NudgeOnline {
 		t.Fatalf("new head: %+v", r)
+	}
+	// Adoption memory: one head, superseding PR, cleared on request.
+	s.MarkAdopted(key, "b", 42, now.Add(3*time.Hour))
+	if r, _ = s.Get(key); !r.Adopted("b") || r.Adopted("a") || r.AdoptedBy != 42 || !r.AdoptCheckedAt.Equal(now.Add(3*time.Hour)) {
+		t.Fatalf("adopted: %+v", r)
+	}
+	s.MarkAdoptChecked(key, now.Add(4*time.Hour))
+	if r, _ = s.Get(key); !r.AdoptCheckedAt.Equal(now.Add(4 * time.Hour)) {
+		t.Fatalf("adopt checked: %+v", r)
+	}
+	s.ClearAdoption(key)
+	if r, _ = s.Get(key); r.Adopted("b") || r.AdoptedBy != 0 {
+		t.Fatalf("clear adoption: %+v", r)
 	}
 	// A stage change keeps the nudge memory (same head, no re-nudge).
 	s.Observe(key, ReviewPending, "")

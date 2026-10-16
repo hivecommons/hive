@@ -47,6 +47,21 @@ type Record struct {
 	NudgeHead   string    `json:"nudge_head,omitempty"`
 	NudgeCount  int       `json:"nudge_count,omitempty"`
 	LastNudgeAt time.Time `json:"last_nudge_at,omitempty"`
+	// FirstNudgeAt is when the first nudge for NudgeHead went out: the
+	// adoption grace (online 2h / offline 1h) counts from here.
+	FirstNudgeAt time.Time `json:"first_nudge_at,omitempty"`
+	// NudgeOnline records whether the author's relay was online at the first
+	// nudge for NudgeHead (selects the online vs offline grace).
+	NudgeOnline bool `json:"nudge_online,omitempty"`
+	// AdoptedHead / AdoptedBy / AdoptedAt record the stage-074 adoption: the
+	// contributor head the hive adopted, the superseding App PR's number
+	// (0 while the attempt is recorded but no PR exists) and when. One
+	// attempt per head.
+	AdoptedHead string    `json:"adopted_head,omitempty"`
+	AdoptedBy   int       `json:"adopted_by,omitempty"`
+	AdoptedAt   time.Time `json:"adopted_at,omitempty"`
+	// AdoptCheckedAt is the last time the superseding PR's state was polled.
+	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -230,7 +245,14 @@ func IsRegression(from, to Stage) bool {
 		return false
 	}
 	switch from {
-	case Fixing, ReturnedToContributor, AdoptedByHive:
+	case AdoptedByHive:
+		// 074 → 072 is an adoption that was declined (superseder closed
+		// unmerged): the PR is handed back, not knocked back.
+		if to == ReturnedToContributor {
+			return false
+		}
+		return to != ReviewPending && to != Reviewed
+	case Fixing, ReturnedToContributor:
 		return to != ReviewPending && to != Reviewed
 	}
 	return true
@@ -263,8 +285,9 @@ func (s *Store) MarkStallCommented(key string) {
 }
 
 // MarkNudged records that nudge number n for head was posted at now. A new
-// head restarts the count.
-func (s *Store) MarkNudged(key, head string, n int, now time.Time) {
+// head restarts the count and the adoption grace; online says whether the
+// author's relay was reachable (first nudge decides the grace kind).
+func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
@@ -273,6 +296,12 @@ func (s *Store) MarkNudged(key, head string, n int, now time.Time) {
 	}
 	if r.NudgeHead != head {
 		r.NudgeCount = 0
+		r.FirstNudgeAt = now
+		r.NudgeOnline = online
+	}
+	if r.FirstNudgeAt.IsZero() {
+		r.FirstNudgeAt = now
+		r.NudgeOnline = online
 	}
 	r.NudgeHead = head
 	if n > r.NudgeCount {
@@ -281,6 +310,51 @@ func (s *Store) MarkNudged(key, head string, n int, now time.Time) {
 		r.NudgeCount++
 	}
 	r.LastNudgeAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// Adopted reports whether head is the head the hive adopted (stage 074).
+func (r Record) Adopted(head string) bool {
+	return head != "" && r.AdoptedHead == head
+}
+
+// MarkAdopted records the stage-074 adoption of head by superseding PR `by`
+// (0 = attempted, nothing opened).
+func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkAdoptChecked records that the superseding PR was polled at now.
+func (s *Store) MarkAdoptChecked(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptCheckedAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearAdoption forgets the adoption (the superseding PR closed unmerged).
+func (s *Store) ClearAdoption(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
 	s.items[key] = r
 	s.dirty = true
 }

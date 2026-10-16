@@ -466,6 +466,10 @@ governor:
       #   enabled: true
       #   renudge_interval: 24h         # second (and last) nudge; default = the stage dwell
       # presence_window: 15m            # relay heartbeat this fresh = contributor online → relay interrupt, else comment only
+      # contributor_grace_online: 2h    # nudge unanswered this long (online author) → stage/074 adoption
+      # contributor_grace_offline: 1h   # same for offline / external authors (comment-only nudge)
+      # adoption:                       # stage/074-adopted-by-hive: supersede a still-red contributor PR with an App PR
+      #   enabled: true                 # that keeps the author's commits; the scanner's red-PR fix kick finishes it
 
   # Optional: read actionable work from Linear instead of GitHub Issues.
   # Secrets should come from env interpolation, not literal values.
