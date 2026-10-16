@@ -74,7 +74,25 @@ type stageDetail struct {
 	Verdict      ContributorLaneVerdict
 	VerdictKnown bool
 	Author       stagelabels.Author
+	// RedChecks names the completed-red, non-required checks the CI gate
+	// walked past on RedChecksHead (sorted). The lane ignores them by
+	// design; the stage engine must not call the PR merge-queued while the
+	// rollup on its head shows a red check (hivecommons/hive#12457).
+	RedChecks     []string
+	RedChecksHead string
 }
+
+// redCheck returns the first red non-required check on head, or "".
+func (d stageDetail) redCheck(head string) string {
+	if len(d.RedChecks) == 0 || (head != "" && d.RedChecksHead != "" && d.RedChecksHead != head) {
+		return ""
+	}
+	return d.RedChecks[0]
+}
+
+// stageReasonOptionalCheckFailing prefixes the recorded reason when a red
+// non-required check kept the PR out of the merge-queue stage.
+const stageReasonOptionalCheckFailing = "optional-check-failing:"
 
 // stageObservation is one lane's view of one PR in one cycle.
 type stageObservation struct {
@@ -166,6 +184,9 @@ func (t *StageTracker) drain() [][]stageObservation {
 			if detail.Author != stagelabels.AuthorNone {
 				o.Detail.Author = detail.Author
 			}
+			if detail.RedChecksHead == "" || o.HeadSHA == "" || detail.RedChecksHead == o.HeadSHA {
+				o.Detail.RedChecks, o.Detail.RedChecksHead = detail.RedChecks, detail.RedChecksHead
+			}
 			list = append(list, o)
 		}
 		sort.Slice(list, func(i, j int) bool { return stageLanePrecedence[list[i].Lane] > stageLanePrecedence[list[j].Lane] })
@@ -253,6 +274,18 @@ func (c *Engine) noteStageAuthor(owner, repo string, number int, a stagelabels.A
 		return
 	}
 	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) { d.Author = d.Author.Merge(a) })
+}
+
+// noteStageRedChecks records the red non-required checks the CI gate
+// skipped on head, replacing any earlier note (a later evaluation of the
+// same or a newer head is the fresher rollup).
+func (c *Engine) noteStageRedChecks(owner, repo string, number int, head string, names []string) {
+	if !c.stagePolicy().Enabled {
+		return
+	}
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
+		d.RedChecks, d.RedChecksHead = append([]string(nil), names...), head
+	})
 }
 
 // stageVerdict is a lane's opinion about a PR's stage.
@@ -438,6 +471,13 @@ func classifyStage(o stageObservation) stageVerdict {
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
 	}
 	if strings.HasPrefix(reason, contributorLaneReasonSoaking) || stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
+		// The lane gates on required checks only, so it soaks and merges
+		// past a red optional check. 100 reads as "all green, queued" to a
+		// person looking at the rollup: hold the PR at 080 and name the
+		// check in the recorded reason (hence the stall note) instead.
+		if name := o.Detail.redCheck(o.HeadSHA); name != "" {
+			return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
+		}
 		return stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}
 	}
 	if reason == contributorLaneReasonNoVerdict {

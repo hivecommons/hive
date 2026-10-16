@@ -101,6 +101,13 @@ type CommitCIState struct {
 	SkippedByDesign []string
 	// Observed names every status context/check-run name seen on the SHA.
 	Observed map[string]bool
+	// FailingNonRequired names the completed-red statuses/check runs on the
+	// SHA that the required-only gate skipped (RequiredKnown and not in the
+	// required set; meta contexts excepted), sorted. They never block the
+	// merge, but a PR carrying one is not "all green" to a reader of the
+	// check rollup, so the stage engine keeps it out of the merge-queue
+	// stage (hivecommons/hive#12457).
+	FailingNonRequired []string
 	// InFlight counts every pending commit status and every not-yet-completed
 	// check run on the SHA, gating or not. Unlike Reason it includes the
 	// non-required checks skipped when RequiredKnown, so a caller can tell
@@ -397,6 +404,15 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	requiredSuccess := make(map[string]bool)
 	ignoredMeta := make(map[string]bool)
 	st.Observed = seen
+	failingNonRequired := make(map[string]bool)
+	rememberFailingNonRequired := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || failingNonRequired[name] || isMetaCheck(name) {
+			return
+		}
+		failingNonRequired[name] = true
+		st.FailingNonRequired = append(st.FailingNonRequired, name)
+	}
 	rememberIgnoredMeta := func(name string) {
 		name = strings.TrimSpace(name)
 		if name == "" || ignoredMeta[name] {
@@ -463,6 +479,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			// Required-checks-only gating: skip anything not on the
 			// branch's actual required list, no matter its state.
 			if !required[ctxName] {
+				if state := s.GetState(); state == "failure" || state == "error" {
+					rememberFailingNonRequired(ctxName)
+				}
 				continue
 			}
 		} else if shouldIgnoreMetaContextForServerEnforcement(ctxName, ignoreMetaContexts, dcoSatisfied) {
@@ -503,6 +522,9 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		}
 		if requiredKnown {
 			if !required[name] {
+				if cr.GetStatus() == "completed" && checkConclusionIsRed(cr.GetConclusion()) {
+					rememberFailingNonRequired(name)
+				}
 				if opts.FailOnAnyFailedCheck && cr.GetStatus() == "completed" && !isIgnorableCICheck(name) {
 					if c := cr.GetConclusion(); c == "failure" || c == "timed_out" {
 						block("check-failing:" + name)
@@ -582,6 +604,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 		block("ci-unverified")
 	}
 	sort.Strings(st.IgnoredMetaContexts)
+	sort.Strings(st.FailingNonRequired)
 
 	if st.Reason == "" && opts.MinHeadAge > 0 && !opts.HeadPushedAt.IsZero() {
 		now := opts.Now
@@ -599,6 +622,16 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 	}
 	st.Green = st.Reason == ""
 	return st, nil
+}
+
+// checkConclusionIsRed reports whether a completed check-run conclusion
+// renders as a red ✗ in GitHub's check rollup.
+func checkConclusionIsRed(conclusion string) bool {
+	switch conclusion {
+	case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
+		return true
+	}
+	return false
 }
 
 func dcoContextSucceeded(statuses []*gh.RepoStatus, checkRuns []*gh.CheckRun) bool {

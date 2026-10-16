@@ -2260,6 +2260,9 @@ func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, bran
 	if prNumber > 0 && len(st.IgnoredMetaContexts) > 0 {
 		c.info("automerge ignoring meta contexts on unprotected base", "pr", prNumber, "contexts", st.IgnoredMetaContexts)
 	}
+	if prNumber > 0 {
+		c.noteStageRedChecks(owner, repo, prNumber, sha, st.FailingNonRequired)
+	}
 	if configKnown && actualKnown {
 		c.warnRequiredChecksMismatch(owner, repo, configRequired, actualRequired, st.Observed)
 	}

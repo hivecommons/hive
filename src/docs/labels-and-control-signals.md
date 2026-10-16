@@ -171,7 +171,7 @@ the label (hivecommons/hive#12443).
 | `stage/074-adopted-by-hive` | PR | the author was unavailable past the grace (see below); the hive pushed `hive/adopt-<n>` at the contributor's head, opened a superseding App PR that keeps the author's commits, and the scanner's red-PR fix kick is finishing it. The original closes automatically when the superseder merges | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green, verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
 | `stage/090-needs-human` | PR | cannot auto-merge; a person must act. Always read with the `author/*` label and any `hold`/`needs-human`/`needs-decision` modifier | none |
-| `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window | 3h |
+| `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window — and every check on the head is green (tide excluded). A red optional check holds the PR at 080 instead | 3h |
 
 Dwell thresholds are overridable per slug under `governor.labels.stage.dwell`
 (`review-pending: 1h`, `0` = never). The whole family is switched by
@@ -264,7 +264,8 @@ used to admit the PR:
 | CI pending, verdict approve | `060-reviewed` |
 | CI green, verdict approve, no modifier, yet the lane stopped on a reason no stage claims or tripped on a transient error (`review-state-check`, …) | `080-awaiting-merge-admission` (weak opinion: any lane's definite stage wins) |
 | CI red (`check-failing:*`, `required-check-failing:*`, `status-*`), `conflicting`, `not-mergeable`, `changes-requested`, verdict changes_requested/reject, `needs-rebase` present | `070-fixing` (self-authored lane) / `072-returned-to-contributor` (trusted-author or contributor lane) |
-| `contributor-lane:soaking(...)`, `head-changed-since-eval`, `merge-failed`, `required-checks-expected`, `behind`, `updated-branch`, `release-hold*` | `100-merge-queue` |
+| `contributor-lane:soaking(...)`, `head-changed-since-eval`, `merge-failed`, `required-checks-expected`, `behind`, `updated-branch`, `release-hold*` — and no red check on the head | `100-merge-queue` |
+| any of the above while a **non-required** check on the current head is red (the lane gates on required checks only, so it still soaks and merges; a reader of the rollup sees ✗) | `080-awaiting-merge-admission`, reason `optional-check-failing:<check>` (so the stall note names the check); a red *required* check is the lane's `required-check-failing:*` → 072 ([#12457](https://github.com/hivecommons/hive/pull/12457)) |
 | `label:hold`, `held`, `label:needs-human`, `exempt-label`, `excluded-label:*`, `sentinel`, `human-merge-path*`, `intent-*`, `contributor-lane:no-claim` / `claim-*` / `author-association` / `no-linked-issue` / `workflow-path` / `tests-removed` / `no-reviewer`, `untrusted-author-role`, `author-permission-missing` | `090-needs-human` |
 | hand-offs (`not-app-authored`, `trusted-bot-lane`, `contributor-lane:app-authored`), transient fetch errors | no opinion — the owning lane decides; nothing is written |
 

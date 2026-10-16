@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
@@ -340,5 +341,59 @@ func TestEvaluateCommitCIFailOnAnyFailedCheck(t *testing.T) {
 	}
 	if st.Green || st.Reason != "check-failing:syntax-check" {
 		t.Fatalf("with option = (%v,%q), want red check-failing:syntax-check", st.Green, st.Reason)
+	}
+}
+
+// hivecommons/hive#12457: the required-only gate walks past red optional
+// checks, but reports them so the stage engine can keep the PR out of the
+// merge-queue stage. Meta contexts (tide) are not red checks; a red REQUIRED
+// check is the blocker, not an optional one.
+func TestEvaluateCommitCIReportsFailingNonRequired(t *testing.T) {
+	checks := []map[string]string{
+		{"name": "build-gate", "status": "completed", "conclusion": "success"},
+		{"name": "relative links and anchors resolve", "status": "completed", "conclusion": "failure"},
+		{"name": "Playwright", "status": "completed", "conclusion": "cancelled"},
+		{"name": "lint", "status": "in_progress"},
+		{"name": "docs", "status": "completed", "conclusion": "skipped"},
+	}
+	statuses := []map[string]string{
+		{"context": "tide", "state": "failure"},
+		{"context": "ci/legacy", "state": "error"},
+	}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/widget/commits/sha/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "failure", "total_count": len(statuses), "statuses": statuses})
+		case "/repos/acme/widget/commits/sha/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": len(checks), "check_runs": checks})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	client := gh.NewClient(nil)
+	base, err := url.Parse(api.URL + "/")
+	if err != nil {
+		t.Fatalf("ParseURL: %v", err)
+	}
+	client.BaseURL = base
+
+	opts := CommitCIOptions{Required: map[string]bool{"build-gate": true}, RequiredKnown: true}
+	st, err := EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", opts)
+	if err != nil || !st.Green {
+		t.Fatalf("required-only = (%v,%q,%v), want green", st.Green, st.Reason, err)
+	}
+	want := []string{"Playwright", "ci/legacy", "relative links and anchors resolve"}
+	if !reflect.DeepEqual(st.FailingNonRequired, want) {
+		t.Fatalf("FailingNonRequired=%v want %v", st.FailingNonRequired, want)
+	}
+
+	opts.Required = map[string]bool{"build-gate": true, "relative links and anchors resolve": true}
+	st, err = EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", opts)
+	if err != nil || st.Green || st.Reason != "required-check-failing:relative links and anchors resolve" {
+		t.Fatalf("required red = (%v,%q,%v)", st.Green, st.Reason, err)
+	}
+	if want := []string{"Playwright", "ci/legacy"}; !reflect.DeepEqual(st.FailingNonRequired, want) {
+		t.Fatalf("FailingNonRequired=%v want %v", st.FailingNonRequired, want)
 	}
 }
