@@ -724,6 +724,8 @@ governor:
 # merge-eligible.json requires an aggregate approve in review-verdicts.json.
 # review:
 #   require_approval: false
+#   shadow: false       # evaluate the approval gate without enforcing it; records
+#                       # shadow.review_gate.would_have_held on the evidence bundle (#12104)
 #   fan_out: false
 #   max_parallel_reviews: 5
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
