@@ -2701,6 +2701,10 @@ func CanonicalHiveHoldLabel(hiveID string) string {
 	return "hive-pause/" + hiveID
 }
 
+// HiveProvenanceLabel is the retired hive/<hive-id> label
+// (hivecommons/hive#12539). Nothing writes it any more; it is kept so the
+// hold migration can recognise it and RetireHiveIDLabels can strip it.
+// OriginHive reads the body marker that replaced it.
 func HiveProvenanceLabel(hiveID string) string {
 	hiveID = strings.TrimSpace(hiveID)
 	if hiveID == "" {

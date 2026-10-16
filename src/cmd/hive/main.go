@@ -5864,10 +5864,11 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			Logger: b.logger,
 		}); err != nil {
 			// No fail-closed fallback is possible here: the legacy hold label
-			// hive/<id> IS the provenance label on every claimed item, and
-			// github.HasHoldLabelWith never treats provenance labels as holds
-			// (#9371 - treating it as one parked every claimed item). Items
-			// still carrying only the legacy label are therefore NOT held.
+			// hive/<id> was the provenance label on every claimed item (now
+			// retired, #12539), and github.HasHoldLabelWith never treats
+			// provenance labels as holds (#9371 - treating it as one parked
+			// every claimed item). Items still carrying only the legacy
+			// label are therefore NOT held.
 			// Say so loudly, in the log and on the dashboard, instead of
 			// pretending to fail closed (#9614).
 			reportPath := ""
@@ -5887,6 +5888,14 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		// open items; the marker is not written and the next boot retries.
 		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
 			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyFromReviewLabel, "error", err)
+		}
+		// The hive/<hive-id> provenance label is retired (#12539): the origin
+		// marker in every agent-written body carries the same fact. Runs
+		// after the hold migration so that migration still sees the label
+		// on an upgrade straight from a pre-#9371 hive. Provenance only, so
+		// a failure leaves stale labels and retries next boot.
+		if _, err := b.ghClient.RetireHiveIDLabels(b.ctx, github.HiveIDLabelRetireOptions{HiveID: b.cfg.HiveID, Logger: b.logger}); err != nil {
+			b.logger.Warn("hive/<hive-id> label retire sweep incomplete; open items may still carry "+github.HiveProvenanceLabel(b.cfg.HiveID), "error", err)
 		}
 	}
 	b.evalCycles++

@@ -918,7 +918,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	}
 
 	// Ensure labels exist. Retryable failures keep the whole request queued
-	// because provenance labels (agent/*, hive/*) drive hive filtering and
+	// because provenance labels (agent/*) drive hive filtering and
 	// duplicate guards. Terminal label failures still degrade to unlabeled.
 	var usable []string
 	for _, l := range labels {

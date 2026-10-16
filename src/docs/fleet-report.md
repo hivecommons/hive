@@ -168,7 +168,7 @@ hive adds itself to that issue instead of opening a new one:
 - one comment `Also seen on **<hive>** (v<version>, <cluster>) at <time>`
   carrying a `<!-- hive:selfreport-seen hive=<slug> fp=… -->` marker and its
   diagnostics excerpt — at most once per hive per 24h;
-- its `hive/<slug>` label (created if missing) and `hive/selfreport`;
+- the `hive/selfreport` label (the per-hive `hive/<slug>` label is retired, #12539);
 - a bump to the `Affected hives (N): …` block in the issue body, edited
   idempotently between `<!-- hive:selfreport-affected -->` markers, with the
   joining hive's repos merged into the block's `Affected repos (N)` /

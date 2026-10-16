@@ -816,8 +816,8 @@ auth failures or advisory post failures — it files an issue on
 `hivecommons/hive` titled `[selfreport] <class>: <short message>`, or adds
 itself to an open issue that already describes the problem (fingerprint
 match, `hive/selfreport` + class match, or keyword match on a human-filed
-issue). Joining posts one "Also seen on **<hive>**" comment per 24h, adds
-the `hive/<slug>` label and bumps the `Affected hives (N)` block in the body.
+issue). Joining posts one "Also seen on **<hive>**" comment per 24h and
+bumps the `Affected hives (N)` block in the body.
 Each report also names the repositories the hive watches (`project.repos`)
 and their owners, and the body block keeps an `Affected repos (N)` /
 `Affected owners (N)` union across reporting hives (hivecommons/hive#12338).

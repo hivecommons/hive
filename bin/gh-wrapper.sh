@@ -1128,11 +1128,18 @@ HIVE_INSTANCE_ID="${HIVE_ID:-}"
 HIVE_SHA="${HIVE_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')}"
 
 # Build identity footer for injection into issue/comment bodies.
+#
+# The trailing `<!-- hive:origin hive=<id> at=<ts> -->` marker is the
+# machine-readable "which hive wrote this" record that replaced the
+# hive/<id> label (hivecommons/hive#12539); pkg/github.OriginHive reads it.
+# It stays last so pkg/github's attributionIdentityFooter regex keeps
+# matching the whole block.
 _identity_footer() {
   local parts="---\n🐝 **Hive Agent**:"
   [[ -n "$AGENT_DISPLAY_NAME" ]] && parts="${parts} \`${AGENT_DISPLAY_NAME}\`"
   [[ -n "$HIVE_INSTANCE_ID" ]] && parts="${parts} | **Instance:** \`${HIVE_INSTANCE_ID}\`"
   parts="${parts} | **SHA:** \`${HIVE_SHA}\`"
+  [[ -n "$HIVE_INSTANCE_ID" ]] && parts="${parts}\n<!-- hive:origin hive=${HIVE_INSTANCE_ID} at=$(date -u +%Y-%m-%dT%H:%M:%SZ) -->"
   echo -e "$parts"
 }
 
@@ -1300,9 +1307,10 @@ if [[ -n "$AGENT_NAME" ]]; then
   # produce a label no consumer recognises (#8927). The display name is
   # human-facing only — it goes in the label description and the footer.
   LABELS_CSV="agent/${AGENT_NAME}"
-  # Provenance only. The dashboard hold label is hive-pause/<id>; keeping this
-  # as hive/<id> preserves hub activity attribution without parking work.
-  [[ -n "$HIVE_INSTANCE_ID" ]] && LABELS_CSV="${LABELS_CSV},hive/${HIVE_INSTANCE_ID}"
+  # No hive/<id> label (hivecommons/hive#12539): the origin marker in the
+  # identity footer says which hive wrote the item, and the hive strips the
+  # retired label from open items at boot. The dashboard hold label is
+  # hive-pause/<id>.
   # Contributor labels
   if _contributor_mode; then
     [[ -n "${HIVE_CONTRIBUTOR_USERNAME:-}" ]] && LABELS_CSV="${LABELS_CSV},contributor/${HIVE_CONTRIBUTOR_USERNAME}"
@@ -1314,9 +1322,9 @@ if [[ -n "$AGENT_NAME" ]]; then
   # The cache MUST be keyed per target repo (#4043): a single global flag meant
   # whichever repo an agent touched first got the labels created, and every
   # other repo was skipped for the life of the pod — leaving the injected
-  # hive/<id> label missing there, which made every `gh pr edit`/`gh issue edit`
-  # on those repos fail with "'hive/<id>' not found". Verified live on a fleet
-  # owner's hive: only the first-touched repos carried the current label.
+  # agent/<lane> label missing there, which made every `gh pr edit`/`gh issue
+  # edit` on those repos fail with "'<label>' not found". Verified live on a
+  # fleet owner's hive: only the first-touched repos carried the current label.
   LABEL_CACHE_BASE="/tmp/.hive-labels-ensured"
   _ensure_labels() {
     local repo_flag=""
@@ -1336,9 +1344,6 @@ if [[ -n "$AGENT_NAME" ]]; then
     local rf=""
     [[ -n "$repo_flag" ]] && rf="--repo $repo_flag"
     "$REAL_GH" label create "agent/${AGENT_NAME}" --description "Work by the ${AGENT_DISPLAY_NAME} agent" --color 6f42c1 $rf 2>/dev/null || true
-    if [[ -n "$HIVE_INSTANCE_ID" ]]; then
-      "$REAL_GH" label create "hive/${HIVE_INSTANCE_ID}" --description "Hive instance provenance ${HIVE_INSTANCE_ID}" --color 1d76db $rf 2>/dev/null || true
-    fi
     touch "$cache"
   }
 
@@ -1510,9 +1515,8 @@ if [[ -n "$AGENT_NAME" ]]; then
             esac
           fi
           if [ -n "$_re_repo" ]; then
-            # Deliberately NOT the provenance LABELS_CSV: hive/<id> sits in a
-            # namespace the label relay refuses, and the relay's audit entry
-            # already attributes the write to this agent.
+            # Deliberately NOT the provenance LABELS_CSV: the relay's audit
+            # entry already attributes the write to this agent.
             _re_rc=0
             if [ -n "$_re_add" ] || [ -n "$_re_remove" ]; then
               _re_label_args=()

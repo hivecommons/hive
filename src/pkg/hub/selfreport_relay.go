@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -31,8 +30,6 @@ const (
 // feedbackHubMaxPerHivePerWindow creates) as its own instance so relayed
 // self-reports never eat the feedback budget or vice versa.
 var selfReportRate feedbackRateLimiter
-
-var selfReportHiveSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // selfReportRelayRequest mirrors cmd/hive's wire struct; Evidence is kept
 // opaque so pkg/hub does not import pkg/fleetreport.
@@ -159,9 +156,9 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 			npsJSONError(w, "failed to update issue", http.StatusBadGateway)
 			return
 		}
-		if slug := "hive/" + req.HiveID; selfReportHiveSlugPattern.MatchString(req.HiveID) {
-			_ = postHubGitHubIssueLabels(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, []string{slug, selfReportRelayLabel})
-		}
+		// hive/selfreport only: the hive/<id> provenance label is retired
+		// (hivecommons/hive#12539); the seen marker above names the hive.
+		_ = postHubGitHubIssueLabels(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, []string{selfReportRelayLabel})
 		if s.logger != nil {
 			s.logger.Info("selfreport relay: joined existing issue", "hive", req.HiveID, "issue", existing.Number, "class", req.Class)
 		}

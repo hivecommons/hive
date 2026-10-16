@@ -219,12 +219,12 @@ who owns the hive, owns the repository, or has GitHub `write`, `maintain`, or
 or the `▶ Release` chip to remove one. The server always re-checks that
 permission before mutating labels. Adding
 a hold applies the hive's canonical `hive-pause/<hive-id>` label. The name
-deliberately avoids the substring `hold` so it is matched exactly and cannot
-collide with the agent provenance label `hive/<hive-id>`. Removing a hold only
-removes the label(s) that are actually causing the hold (`hive-pause/<hive-id>`
-and/or the generic hold labels such as `hold`, `on-hold`, or `hold/review`) and
-never removes `hive/<hive-id>` provenance. The hive-specific canonical hold is
-`hive-pause/<hive-id>`; `hive/<hive-id>` is provenance only. On upgrade, Hive writes
+deliberately avoids the substring `hold` so it is matched exactly. Removing a
+hold only removes the label(s) that are actually causing the hold
+(`hive-pause/<hive-id>` and/or the generic hold labels such as `hold`,
+`on-hold`, or `hold/review`). The hive-specific canonical hold is
+`hive-pause/<hive-id>`; the former `hive/<hive-id>` provenance label is retired
+(#12539) and the boot sweep removes it from open items. On upgrade, Hive writes
 `/data/hive-hold-migration-<hive-id>.json`: audit-backed dashboard holds are
 copied to the new label, agent-provenance-only items become actionable, and
 ambiguous legacy labels stay held under `hive-pause/<hive-id>` for operator

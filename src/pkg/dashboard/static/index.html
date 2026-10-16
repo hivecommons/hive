@@ -44358,7 +44358,7 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${reposOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="fleet-report" data-key="include_repos"></div>
             <span class="config-toggle-label">Name the watched repositories in self-reports ${yamlHint('governor.fleet_report.include_repos')} ${settingHelpMark('settings', 'features', 'Name the watched repositories in self-reports', `When on (default), a self-report lists the owner/repo names this hive watches and the owners derived from them, and the fleet issue merges them into its Affected repos / Affected owners lines, so a maintainer can see which projects an error touches. The report repo is public: turn this off if the watched repos include private repositories — the fields then render as "—" and nothing about the repos leaves the hive.`)}</span>
           </div>
-          <div class="qa-schedule">${fr.hive_slug ? `<span class="qa-note">Identified upstream as <code>hive/${esc(fr.hive_slug)}</code>. </span>` : ''}${openHtml}</div>
+          <div class="qa-schedule">${fr.hive_slug ? `<span class="qa-note">Identified upstream as <code>${esc(fr.hive_slug)}</code>. </span>` : ''}${openHtml}</div>
         </div>`;
     }
 
