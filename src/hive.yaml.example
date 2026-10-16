@@ -123,6 +123,11 @@ project:
 #   close_on_merge: true
 #   close_on_merge_backfill_interval: 1h
 #   reporter_confirmation: false
+#   # Trusted reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   sha_hold_trusted_label: needs-sha
+#   # Lift hive-applied hold/blocked once a referencing PR merges (#12002).
+#   lift_hive_hard_suppress: true
+#   hard_suppress_reconcile_interval: 30m
 #
 # Optional per-repo override for the same policy. Omit a repo entry (or omit
 # self_authorization_hold in it) to inherit github.self_authorization_hold, then

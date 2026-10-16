@@ -6748,6 +6748,10 @@ func runEvalCycle(
 			PrimaryRepo:     cfg.Project.PrimaryRepo,
 			AIAuthor:        cfg.Project.AIAuthor,
 			InternalAuthors: []string{"hivecommons-hive[bot]", "kubestellar-hive[bot]", "hivecommons-hive-ghe[bot]", "kubestellar-hive-ghe[bot]", "github-actions[bot]", "dependabot[bot]", "copilot-swe-agent[bot]"},
+			// Trusted reporters get the soft needs-sha label, not the hard
+			// hold (hivecommons/hive#12002).
+			TrustedAssociations: cfg.Project.IssueFilter.ReporterTrust.EffectiveTrustedAssociations(),
+			TrustedLabel:        cfg.Issues.EffectiveSHAHoldTrustedLabel(),
 		})
 		if shaErr != nil {
 			logger.Warn("SHA hold enforcement failed", "error", shaErr)
@@ -6755,9 +6759,11 @@ func runEvalCycle(
 			logger.Info("SHA hold enforcement complete",
 				"held", shaResult.Held,
 				"unheld", shaResult.Unheld,
+				"softened", shaResult.Softened,
 				"skipped", shaResult.Skipped,
 			)
 		}
+		runHardSuppressReconcile(ctx, cfg, ghClient, logger)
 	}
 
 	// Refresh budget spend from lifetime token totals before Evaluate so
