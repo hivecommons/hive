@@ -109,7 +109,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				}
 				if label {
 					run("claimed label", c, func(ctx context.Context, gh *github.Client) error {
-						_, err := gh.SetStageLabel(ctx, c.Repo, c.Issue, claimStageFor(c))
+						_, err := gh.ApplyStageLabel(ctx, c.Repo, c.Issue, claimStageFor(c))
 						return err
 					})
 				}
@@ -124,7 +124,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				}
 				if label {
 					run("preempted label", now, func(ctx context.Context, gh *github.Client) error {
-						if _, err := gh.SetStageLabel(ctx, now.Repo, now.Issue, claimStageFor(now)); err != nil {
+						if _, err := gh.ApplyStageLabel(ctx, now.Repo, now.Issue, claimStageFor(now)); err != nil {
 							return err
 						}
 						return gh.AddLabels(ctx, now.Repo, now.Issue, []string{claims.PreemptedLabel(previous.Holder)})
@@ -168,7 +168,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 // (hivecommons/hive#12436): stage/030-pr-in-progress for a hive agent's own
 // claim — recorded on its start signal (#10527), which is exactly the "an
 // agent began a PR for this" instant — and stage/020-claimed for every other
-// kind. The hooks write it through Client.SetStageLabel, which re-reads the
+// kind. The hooks write it through Client.ApplyStageLabel, which re-reads the
 // issue and removes any other `stage/*` label, so a claim landing seconds
 // after the reconciler staged the issue 010 replaces that label rather than
 // joining it (hivecommons/hive#12512). The ledger, not the label, is what

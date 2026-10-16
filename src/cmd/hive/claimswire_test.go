@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -181,7 +182,7 @@ func TestClaimStageFor(t *testing.T) {
 	}
 }
 
-// The claim hooks write the stage through SetStageLabel: an issue the
+// The claim hooks write the stage through ApplyStageLabel: an issue the
 // reconciler had just staged 010 that takes a contributor claim ends up with
 // exactly stage/020-claimed, not both (hivecommons/hive#12512).
 func TestClaimHooks_ClaimReplacesStageLabel(t *testing.T) {
@@ -213,16 +214,11 @@ func TestClaimHooks_ClaimReplacesStageLabel(t *testing.T) {
 	cfg.Governor.Claims.Comment = boolPtr(false)
 	hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
 	hooks.OnClaimed(claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "ann", Kind: claims.KindContributor}, claims.OutcomeClaimed)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	testutil.Eventually(t, 5*time.Second, func() bool {
 		mu.Lock()
-		done := len(added) > 0
-		mu.Unlock()
-		if done || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		defer mu.Unlock()
+		return len(added) > 0
+	}, "claim hook never added a stage label")
 	mu.Lock()
 	defer mu.Unlock()
 	if len(added) != 1 || added[0] != "stage/020-claimed" {

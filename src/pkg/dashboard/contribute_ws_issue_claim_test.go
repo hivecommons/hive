@@ -111,7 +111,7 @@ func (r *claimRecorder) CreateIssueComment(_ context.Context, repo string, numbe
 	return nil
 }
 
-func (r *claimRecorder) SetStageLabel(_ context.Context, repo string, number int, stage stagelabels.Stage) (stagelabels.Outcome, error) {
+func (r *claimRecorder) ApplyStageLabel(_ context.Context, repo string, number int, stage stagelabels.Stage) (stagelabels.Outcome, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.labels = append(r.labels, claimLabelPost{repo: repo, number: number, labels: []string{stage.Label()}})

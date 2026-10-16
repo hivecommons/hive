@@ -55,7 +55,7 @@ func TestStageLabeler_RemoveAgainAfterExternalReadd(t *testing.T) {
 	c.SetMutationBoundary(replayTestBoundary(t))
 	ctx := context.Background()
 
-	if _, err := c.SetStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil {
+	if _, err := c.ApplyStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil {
 		t.Fatal(err)
 	}
 	// Another writer puts 010 back; GitHub bumps updated_at.
@@ -63,11 +63,11 @@ func TestStageLabeler_RemoveAgainAfterExternalReadd(t *testing.T) {
 	labels = append(labels, "stage/010-actionable")
 	updated = updated.Add(time.Minute)
 	mu.Unlock()
-	if _, err := c.SetStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil {
+	if _, err := c.ApplyStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil {
 		t.Fatal(err)
 	}
 	// Same state again: nothing to do, so no third delete either way.
-	if out, err := c.SetStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil || out.Changed() {
+	if out, err := c.ApplyStageLabel(ctx, "acme/widgets", 7, stagelabels.Claimed); err != nil || out.Changed() {
 		t.Fatalf("idempotent pass: out=%+v err=%v", out, err)
 	}
 	mu.Lock()

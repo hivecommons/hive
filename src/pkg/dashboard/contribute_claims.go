@@ -30,11 +30,11 @@ import (
 // task_assign is what the relay is waiting for. Same bound as the plan mirror.
 const claimCommentTimeout = 15 * time.Second
 
-// claimLabeler is the stage-label seam: SetStageLabel re-reads the issue
+// claimLabeler is the stage-label seam: ApplyStageLabel re-reads the issue
 // and leaves exactly one `stage/*` label (hivecommons/hive#12512), so a claim
 // landing after the reconciler staged the issue replaces that stage.
 type claimLabeler interface {
-	SetStageLabel(ctx context.Context, repo string, number int, stage stagelabels.Stage) (stagelabels.Outcome, error)
+	ApplyStageLabel(ctx context.Context, repo string, number int, stage stagelabels.Stage) (stagelabels.Outcome, error)
 }
 
 type claimLabelRemover interface {
@@ -172,7 +172,7 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 			posted = true
 			claim.Source = ghpkg.IssueClaimSourceMarker
 			if labeler, ok := commenter.(claimLabeler); ok && h.claimLabelsEnabled() {
-				if _, err := labeler.SetStageLabel(postCtx, repoFull, number, stagelabels.Claimed); err != nil {
+				if _, err := labeler.ApplyStageLabel(postCtx, repoFull, number, stagelabels.Claimed); err != nil {
 					h.logger.Warn("[contribute-ws] issue claim label failed; comment remains authoritative",
 						"username", identityOf(c), "task", taskID, "repo", repoFull, "number", number, "error", err)
 				}

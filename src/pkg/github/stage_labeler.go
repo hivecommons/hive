@@ -54,12 +54,12 @@ func (c *Client) StageLabeler() stagelabels.Labeler {
 	return &stageLabeler{c: c, observed: map[int]string{}}
 }
 
-// SetStageLabel puts exactly stage on an issue or PR, keeping whatever
+// ApplyStageLabel puts exactly stage on an issue or PR, keeping whatever
 // author/health labels it carries (hivecommons/hive#12512). It is the entry
 // point for writers that learn of a stage change outside the enumeration
 // cycle — the claim-ledger hooks — and re-reads the item so a stage another
 // writer placed since is replaced, never joined.
-func (c *Client) SetStageLabel(ctx context.Context, repo string, number int, stage stagelabels.Stage) (stagelabels.Outcome, error) {
+func (c *Client) ApplyStageLabel(ctx context.Context, repo string, number int, stage stagelabels.Stage) (stagelabels.Outcome, error) {
 	if c == nil {
 		return stagelabels.Outcome{}, ErrNoGitHubClient
 	}
