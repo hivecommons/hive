@@ -22,7 +22,7 @@ func TestTabbedModalShellsStayFixedSize11268(t *testing.T) {
 			shell:    ".config-modal",
 			body:     ".config-body",
 			strip:    ".config-tabs",
-			wants:    []string{"height: min(84vh, 760px)", "display: flex", "flex-direction: column", "overflow: hidden"},
+			wants:    []string{"height: min(calc(100vh - var(--modal-gap) - var(--modal-gap)), var(--config-modal-max-h))", "display: flex", "flex-direction: column", "overflow: hidden"},
 			bodyWant: []string{"flex: 1 1 auto", "min-height: 0", "overflow: auto"},
 		},
 		{
