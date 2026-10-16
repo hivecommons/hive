@@ -75,6 +75,20 @@
         "intent": {"$ref": "#/$defs/shadow_intent"}
       }
     },
+    "backfilled": {"type": "boolean"},
+    "backfill": {
+      "type": "object",
+      "required": ["source", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "at": {"type": "string", "format": "date-time"},
+        "state": {"type": "string", "enum": ["open", "closed", "merged"]},
+        "closed_at": {"type": "string", "format": "date-time"},
+        "author_kind_rule": {"type": "string"},
+        "flags": {"type": "array", "items": {"type": "string", "enum": ["placeholder_hive", "hive_on_hive", "under_min_merged"]}}
+      }
+    },
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"},
     "signed": {"type": "boolean"},

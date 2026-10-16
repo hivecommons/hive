@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -79,6 +80,9 @@ type Observation struct {
 	Repos []string
 	// Now is the evaluation clock; zero means time.Now().
 	Now time.Time
+	// HiveState is the 24 h / 7 d hive state trends (#12339), copied onto
+	// every report; nil when the hive has no recent snapshot.
+	HiveState *hivestate.Trends
 }
 
 type State struct {
@@ -132,6 +136,9 @@ type Report struct {
 	// the operator's include_repos policy. Joining merges them into the
 	// issue's affected block.
 	Repos []string `json:"repos,omitempty"`
+	// HiveState is Observation.HiveState. It is kept out of Body so trends
+	// moving do not count as a changed report.
+	HiveState *hivestate.Trends `json:"hive_state,omitempty"`
 }
 
 type Result struct {
@@ -365,7 +372,7 @@ A spoke reports that a hive-attributable condition is preventing it from satisfy
 | detected periodicity | %s |
 | self-recovered | no |
 `, fingerprint, instance, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, criterionName, criterionKey, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, countWindow(ev.Count, ev.Window), emptyDash(ev.Periodicity))
-	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Criterion: criterionKey, Trigger: TriggerACMMShortfall, Evidence: []Evidence{ev}}
+	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Criterion: criterionKey, Trigger: TriggerACMMShortfall, Evidence: []Evidence{ev}, HiveState: obs.HiveState}
 }
 
 func BuildDefectReport(obs Observation, ev Evidence, fingerprint, instance, version, commit string) Report {
@@ -399,7 +406,7 @@ A spoke reports a symptom attributable to hive's own code paths. No ACMM shortfa
 | detected periodicity | %s |
 | self-recovered | no |
 `, fingerprint, instance, TriggerHiveDefect, instance, version, commit, safeToken(obs.Mode), obs.ACMMLevel, ev.Component, emptyDash(ev.Agent), emptyDash(ev.Lane), ev.ErrorClass, countWindow(ev.Count, ev.Window), emptyDash(ev.Periodicity))
-	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Trigger: TriggerHiveDefect, Evidence: []Evidence{ev}}
+	return Report{Fingerprint: fingerprint, InstanceID: instance, Title: safeText(title), Body: safeText(body), Labels: labels, Trigger: TriggerHiveDefect, Evidence: []Evidence{ev}, HiveState: obs.HiveState}
 }
 
 func RecoveryReport(open OpenIssue, report Report) Report {

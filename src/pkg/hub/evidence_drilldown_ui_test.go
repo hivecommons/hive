@@ -21,6 +21,54 @@ func evidenceHarness(t *testing.T) string {
 		"function escAttr(s) { return esc(s).replace(/\"/g, '&quot;').replace(/'/g, '&#39;'); }",
 		countryJSDecl(t, "EVIDENCE_NULL"),
 		countryJSDecl(t, "EVIDENCE_FAMILY_MIXES"),
+		countryJSDecl(t, "EVIDENCE_MIN_N"),
+		countryJSDecl(t, "EVIDENCE_AUTHOR_KINDS"),
+		countryJSDecl(t, "EVIDENCE_SHADOW_GATES"),
+		countryJSDecl(t, "_evidenceLast"),
+		countryJSDecl(t, "_evidenceFilter"),
+		countryJSDecl(t, "EVIDENCE_COVERAGE_STRONG"),
+		countryJSDecl(t, "EVIDENCE_COVERAGE_FAIR"),
+		countryJSDecl(t, "EVIDENCE_ERR_STRONG"),
+		countryJSDecl(t, "EVIDENCE_ERR_FAIR"),
+		countryJSDecl(t, "EVIDENCE_REVERT_STRONG"),
+		countryJSDecl(t, "EVIDENCE_REVERT_FAIR"),
+		countryJSDecl(t, "EVIDENCE_SHADOW_FALSE_ALARM_STRONG"),
+		countryJSDecl(t, "EVIDENCE_SHADOW_FALSE_ALARM_FAIR"),
+		countryJSDecl(t, "EVIDENCE_REPORTING_STRONG"),
+		countryJSDecl(t, "EVIDENCE_REPORTING_FAIR"),
+		countryJSDecl(t, "EVIDENCE_DATA_SINCE"),
+		countryJSDecl(t, "EVIDENCE_REVERTS_SINCE"),
+		countryJSDecl(t, "EVIDENCE_GRADE_LABELS"),
+		countryJSDecl(t, "EVIDENCE_CI_NOTE"),
+		countryJSDecl(t, "EVIDENCE_WINDOWS"),
+		countryJSDecl(t, "EVIDENCE_WINDOW_DEFAULT"),
+		countryJSDecl(t, "EVIDENCE_WINDOW_STORAGE_KEY"),
+		countryJSDecl(t, "EVIDENCE_WINDOW_MAX_DAYS"),
+		countryJSDecl(t, "EVIDENCE_MONTHS"),
+		countryJSDecl(t, "_evidenceWindow"),
+		countryJSDecl(t, "_evidenceCustomOpen"),
+		jsFunc(t, "evidenceSectionHead"),
+		jsFunc(t, "evidenceGradeHTML"),
+		jsFunc(t, "evidenceGradeLow"),
+		jsFunc(t, "evidenceGradeHigh"),
+		jsFunc(t, "evidenceRateText"),
+		jsFunc(t, "evidenceWinShort"),
+		jsFunc(t, "evidenceExplainer"),
+		jsFunc(t, "evidenceExplainerHTML"),
+		jsFunc(t, "evidenceCloseExplainers"),
+		jsFunc(t, "evidenceToggleExplainer"),
+		jsFunc(t, "evidenceWindowValid"),
+		jsFunc(t, "evidenceLoadWindow"),
+		jsFunc(t, "evidenceSaveWindow"),
+		jsFunc(t, "evidenceWindowQuery"),
+		jsFunc(t, "evidenceDateLabel"),
+		jsFunc(t, "evidenceWindowLabel"),
+		jsFunc(t, "evidenceWindowChip"),
+		jsFunc(t, "evidenceWindowControlsHTML"),
+		jsFunc(t, "evidenceSetWindow"),
+		jsFunc(t, "evidenceValidateRange"),
+		jsFunc(t, "evidenceApplyCustomRange"),
+		jsFunc(t, "evidenceSetTitle"),
 		jsFunc(t, "evidencePct"),
 		jsFunc(t, "evidenceInterval"),
 		jsFunc(t, "evidenceCount"),
@@ -28,6 +76,25 @@ func evidenceHarness(t *testing.T) string {
 		jsFunc(t, "evidenceRateHeads"),
 		jsFunc(t, "evidenceTable"),
 		jsFunc(t, "evidenceHiveLabel"),
+		jsFunc(t, "evidenceWilson"),
+		jsFunc(t, "evidenceRateOf"),
+		jsFunc(t, "evidenceFilterActive"),
+		jsFunc(t, "evidenceFilterHives"),
+		jsFunc(t, "evidenceOutcomeAdd"),
+		jsFunc(t, "evidenceOutcomeZero"),
+		jsFunc(t, "evidenceRepool"),
+		jsFunc(t, "evidenceChip"),
+		jsFunc(t, "evidenceChipsHTML"),
+		jsFunc(t, "evidenceToggleHive"),
+		jsFunc(t, "evidenceClearHives"),
+		jsFunc(t, "evidenceSetLevel"),
+		jsFunc(t, "evidenceRerender"),
+		jsFunc(t, "evidenceSvgLabel"),
+		jsFunc(t, "evidenceOutcomeBarsSvg"),
+		jsFunc(t, "evidenceOutcomesPanel"),
+		jsFunc(t, "evidenceWriteCountersSvg"),
+		jsFunc(t, "evidenceWriteCountersPanel"),
+		jsFunc(t, "evidenceShadowPanel"),
 		jsFunc(t, "evidenceViewHTML"),
 		jsFunc(t, "evidencePanelHTML"),
 	}, "\n")
@@ -68,6 +135,8 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		"var _fleetQuadrant = {scored_axes: 4};",
 		"var _isAdmin = false;",
 		jsFunc(t, "fleetQuadrantDrillAttrs"),
+		jsFunc(t, "fleetQuadrantEvidenceButtonHTML"),
+		jsFunc(t, "fleetQuadrantHintHTML"),
 		jsFunc(t, "fleetQuadrantHeaderHTML"),
 		"_isAdmin = true; var admin = fleetQuadrantHeaderHTML();",
 		"_isAdmin = false; var member = fleetQuadrantHeaderHTML();",
@@ -84,12 +153,20 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		`onclick="openEvidenceModal()"`,
 		"event.key==='Enter'",
 		`class="fleet-quadrant-drill"`,
+		// Explicit affordance beside the title (user feedback: the clickable
+		// chart alone was not discoverable), plus a hint line under the axes.
+		`<button type="button" class="fleet-quadrant-evidence-btn" aria-haspopup="dialog" aria-controls="evidence-modal"`,
+		`onclick="event.stopPropagation();openEvidenceModal()">🔬 Evidence</button>`,
+		`<div class="fleet-quadrant-hint">Click the chart or Evidence to open the fleet evidence details</div>`,
 	} {
 		if !strings.Contains(got.Admin, want) {
 			t.Errorf("admin fleet card is missing %q:\n%s", want, got.Admin)
 		}
 	}
-	for _, forbidden := range []string{"openEvidenceModal", `role="button"`, "tabindex", "fleet-quadrant-drill", "onkeydown"} {
+	if strings.Count(got.Admin, "openEvidenceModal()") != 3 {
+		t.Errorf("admin fleet card should wire the drill click, its keydown and the button, got:\n%s", got.Admin)
+	}
+	for _, forbidden := range []string{"openEvidenceModal", `role="button"`, "tabindex", "fleet-quadrant-drill", "onkeydown", "fleet-quadrant-evidence-btn", "fleet-quadrant-hint"} {
 		if strings.Contains(got.Member, forbidden) {
 			t.Errorf("member fleet card must stay unchanged but contains %q:\n%s", forbidden, got.Member)
 		}
@@ -102,7 +179,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 // TestFleetQuadrantFallbackLinkWhenNothingScored: the card is the only entry
 // point to the evidence view, and it is not drawn until an axis is scored, so
 // admins get a one-line link in its place; members still get nothing. The
-// header keeps returning '' on its own (TestFleetQuadrantHeaderWiring pins
+// header keeps returning ” on its own (TestFleetQuadrantHeaderWiring pins
 // that), so the link is mounted beside it and the pair is rendered here the
 // way the hives container does.
 func TestFleetQuadrantFallbackLinkWhenNothingScored(t *testing.T) {
@@ -215,8 +292,33 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 	if strings.Contains(html, "Alpha <b>") {
 		t.Error("hive names are not escaped in the evidence panel")
 	}
-	if strings.Contains(html, "Shadow gate") {
-		t.Error("shadow-gate table rendered although the API did not return it")
+	// Fleet panels (#12370) disclose their absence when no spoke reports them.
+	for _, want := range []string{
+		"Outcome by author kind is not reported by any selected hive yet",
+		"Write counters are not reported by any selected hive yet",
+		"Shadow-gate observations are not reported by any selected hive yet",
+		"Claim-vs-verdict totals are not reported by spokes yet.",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("evidence panel is missing %q", want)
+		}
+	}
+	if strings.Contains(html, "<svg") {
+		t.Error("fleet panel SVG rendered although the API returned no panel data")
+	}
+	// Filter chips: hive multi-select and ACMM level, all selected by default.
+	for _, want := range []string{
+		`<div class="evidence-chips" role="group" aria-label="Filter by hive">`,
+		`<button type="button" class="evidence-chip on" aria-pressed="true" onclick="evidenceClearHives()">All</button>`,
+		`data-hive="alpha" onclick="evidenceToggleHive(this.dataset.hive)">Alpha &lt;b&gt;</button>`,
+		`class="evidence-chip evidence-chip-dim" aria-pressed="false" data-hive="gamma"`,
+		`<div class="evidence-chips" role="group" aria-label="Filter by ACMM level">`,
+		`data-level="2" onclick="evidenceSetLevel(this.dataset.level)">L2</button>`,
+		`data-level="4" onclick="evidenceSetLevel(this.dataset.level)">L4</button>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("evidence panel is missing %q", want)
+		}
 	}
 	if strings.Contains(html, "NaN") || strings.Contains(html, "undefined") {
 		t.Errorf("evidence panel leaked NaN/undefined:\n%s", html)
@@ -238,6 +340,7 @@ var fetched = [];
 global.fetch = ` + fetchJS + `;
 ` + extractHubJSFunction(t, dashboardHTML, "hiveHubRememberModalOpen") +
 		"async " + extractHubJSFunction(t, dashboardHTML, "openEvidenceModal") +
+		"async " + extractHubJSFunction(t, dashboardHTML, "evidenceFetch") +
 		extractHubJSFunction(t, dashboardHTML, "closeEvidenceModal")
 }
 
@@ -312,7 +415,7 @@ func TestEvidenceModalMarkup(t *testing.T) {
 		`.evidence-modal { display: none;`,
 		`<div id="evidence-body">`,
 		`onclick="closeEvidenceModal()"`,
-		"fetch('/api/hub/evidence')",
+		"fetch('/api/hub/evidence' + evidenceWindowQuery())",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("dashboardHTML is missing %q", want)
@@ -320,5 +423,437 @@ func TestEvidenceModalMarkup(t *testing.T) {
 	}
 	if !strings.Contains(extractHubJSFunction(t, html, "hiveHubDismissTopModal"), "evidence-modal") {
 		t.Error("Escape does not close the evidence modal")
+	}
+}
+
+// evidenceFleetFixtureJSON is a real GET /api/hub/evidence body built by the
+// server's pooling, so the client-side re-pool (#12370) is checked against
+// the same code that renders the unfiltered view.
+func evidenceFleetFixtureJSON(t *testing.T) (string, EvidenceView) {
+	t.Helper()
+	merged := func(v int) *int { return &v }
+	view := buildEvidenceView([]RegistryEntry{
+		{ID: "alpha", Name: "Alpha <b>", ACMMLevel: 4, PRsMerged90d: merged(40), Evidence: &HeartbeatEvidence{
+			Verdicts90d: 25, FalseApprove90d: 3, FalseBlock90d: 1, Merged90d: 30, Reverted14d90d: 3,
+			ReviewerFamilies: []string{"claude"}, AuthorFamilies: []string{"claude"},
+			Calibration: [EvidenceCalibrationBuckets]EvidenceBucket{{N: 12, Bad: 2}, {}, {}, {}, {}, {N: 13, Bad: 1}},
+			OutcomesByAuthorKind: map[string]EvidenceOutcome{
+				"agent": {N: 20, Merged: 16, Reverted: 2}, "human": {N: 12, Merged: 10, Reverted: 1},
+			},
+			WriteCounters: map[string]EvidenceWriteCount{"guarded": {Attempted: 40, Blocked: 4}, "sandbox": {Attempted: 3}},
+			ShadowGate: &EvidenceShadow{ReviewGate: EvidenceShadowGate{
+				Held: EvidenceOutcome{N: 10, Merged: 8, Reverted: 2}, Passed: EvidenceOutcome{N: 15, Merged: 12}}},
+		}},
+		{ID: "beta", ACMMLevel: 3, PRsMerged90d: merged(10), Evidence: &HeartbeatEvidence{
+			Verdicts90d: 12, FalseApprove90d: 1, Merged90d: 9, Reverted14d90d: 1,
+			ReviewerFamilies: []string{"gpt"}, AuthorFamilies: []string{"claude"},
+			Calibration:          [EvidenceCalibrationBuckets]EvidenceBucket{{N: 12, Bad: 3}},
+			OutcomesByAuthorKind: map[string]EvidenceOutcome{"agent": {N: 12, Merged: 9, Reverted: 1}},
+			WriteCounters:        map[string]EvidenceWriteCount{"guarded": {Attempted: 10, Blocked: 1}},
+		}},
+		{ID: "old", ACMMLevel: 3, Evidence: &HeartbeatEvidence{Verdicts90d: 4, Merged90d: 2}},
+		{ID: "gamma", ACMMLevel: 2},
+	})
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw), view
+}
+
+// evidencePooledJS extracts the pooled sections of a view body so the server
+// result and the client re-pool can be compared as one JSON value.
+const evidencePooledJS = `function pooled(v) { return {spokes: v.spokes, reporting: v.reporting, record_coverage: v.record_coverage, calibration: v.calibration,
+  by_acmm_level: (v.by_acmm_level || []).map(function(a) { return {level: a.level, hives: a.hives, merged_90d: a.merged_90d, revert_rate: a.revert_rate}; }),
+  family_false_approve_rate: v.family_false_approve_rate, outcomes_by_author_kind: v.outcomes_by_author_kind || null,
+  write_counters: v.write_counters || null, shadow_gate: v.shadow_gate || null}; }`
+
+// TestEvidenceRepoolMatchesServer: re-pooling every hive client-side must
+// reproduce the server's pooled numbers exactly, so a filtered selection is
+// computed by the same rules as the unfiltered fleet view.
+func TestEvidenceRepoolMatchesServer(t *testing.T) {
+	fixture, _ := evidenceFleetFixtureJSON(t)
+	var got struct {
+		Server, Client json.RawMessage
+	}
+	runEvidenceJS(t, evidenceHarness(t)+"\n"+evidencePooledJS+"\nvar data = "+fixture+";\n"+
+		"result = {Server: pooled(data), Client: pooled(evidenceRepool(data, data.hives))};", &got)
+	var server, client interface{}
+	if err := json.Unmarshal(got.Server, &server); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(got.Client, &client); err != nil {
+		t.Fatal(err)
+	}
+	// Floats are compared after a JSON round trip on both sides, so the only
+	// tolerance is the renderer's own 0.1% rounding.
+	normalize := func(raw json.RawMessage) string {
+		var v interface{}
+		if err := json.Unmarshal(raw, &v); err != nil {
+			t.Fatal(err)
+		}
+		out, _ := json.Marshal(roundFloats(v))
+		return string(out)
+	}
+	if s, c := normalize(got.Server), normalize(got.Client); s != c {
+		t.Fatalf("client re-pool differs from server pooling\nserver: %s\nclient: %s", s, c)
+	}
+}
+
+func roundFloats(v interface{}) interface{} {
+	switch x := v.(type) {
+	case float64:
+		return float64(int64(x*1e6+0.5)) / 1e6
+	case []interface{}:
+		for i := range x {
+			x[i] = roundFloats(x[i])
+		}
+	case map[string]interface{}:
+		for k := range x {
+			x[k] = roundFloats(x[k])
+		}
+	}
+	return v
+}
+
+// TestEvidenceFleetPanelsRender: with reporting spokes the three fleet panels
+// draw inline SVG plus a rate table, and the server-provided totals appear.
+func TestEvidenceFleetPanelsRender(t *testing.T) {
+	fixture, _ := evidenceFleetFixtureJSON(t)
+	var html string
+	runEvidenceJS(t, evidenceHarness(t)+"\nresult = evidencePanelHTML(200, "+fixture+");", &html)
+	for _, want := range []string{
+		"Outcome by author kind", `aria-label="Outcome by author kind: merged, reverted and open PRs for human, agent and bot authors"`,
+		// agent: 32 PRs over two hives, 25 merged (78.1%), 3 reverted of 25 (12.0%).
+		"<tr><td>agent</td><td>2</td><td>32</td><td>32</td><td>78.1%</td>",
+		"<td>25</td><td>12.0%</td>",
+		// bot: zero row, never a missing kind.
+		"<tr><td>bot</td><td>0</td><td>0</td><td>0</td><td>—</td>",
+		"Boundary enforcement", `aria-label="Boundary enforcement: attempted and proxy-blocked agent writes per intent tier"`,
+		"<tr><td>guarded</td><td>2</td><td>50</td><td>5</td><td>50</td><td>10.0%</td>",
+		"<tr><td>sandbox</td><td>1</td><td>3</td><td>0</td><td>3</td><td>—</td>",
+		`class="evidence-bar blocked"`, `class="evidence-bar attempted"`,
+		"Shadow gates × outcome", "1 hive(s) report shadow gates",
+		"<tr><td>Review gate</td><td>would have held</td><td>10</td><td>8</td><td>2</td>",
+		"<tr><td>Review gate</td><td>would have passed</td><td>15</td><td>12</td><td>3</td><td>12</td><td>0.0%</td>",
+		`class="evidence-bar merged"`, `class="evidence-bar reverted"`, `class="evidence-bar open"`,
+		"no merge was held or blocked anywhere in the fleet",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("fleet panels are missing %q", want)
+		}
+	}
+	if strings.Contains(html, "Intent verification") {
+		t.Error("intent gate rendered although no spoke evaluated it")
+	}
+	if strings.Contains(html, "NaN") || strings.Contains(html, "undefined") {
+		t.Errorf("fleet panels leaked NaN/undefined:\n%s", html)
+	}
+	if strings.Contains(html, "Alpha <b>") {
+		t.Error("hive names are not escaped in the chips")
+	}
+}
+
+// TestEvidenceFilterChips: a hive selection and an ACMM level re-pool every
+// panel from the selected hives only, the chips reflect the state, and the
+// handlers mutate the shared filter and re-render the body.
+func TestEvidenceFilterChips(t *testing.T) {
+	fixture, _ := evidenceFleetFixtureJSON(t)
+	var got struct{ Beta, Level4, Both, Cleared string }
+	runEvidenceJS(t, evidenceHarness(t)+"\nvar data = "+fixture+";\n"+
+		"var body = {innerHTML: ''}; global.document = {getElementById: function(id) { return id === 'evidence-body' ? body : null; }};\n"+
+		"_evidenceLast = data;\n"+
+		"evidenceToggleHive('beta'); var beta = body.innerHTML;\n"+
+		"evidenceClearHives(); evidenceSetLevel('4'); var level4 = body.innerHTML;\n"+
+		"evidenceToggleHive('beta'); var both = body.innerHTML;\n"+
+		"evidenceClearHives(); evidenceSetLevel(null); var cleared = body.innerHTML;\n"+
+		"result = {Beta: beta, Level4: level4, Both: both, Cleared: cleared};", &got)
+
+	// beta alone: one reporting hive of one selected; only beta's numbers.
+	for _, want := range []string{
+		"1 of 1 hives report evidence in this selection (3 of 4 fleet-wide)",
+		`class="evidence-chip on" aria-pressed="true" data-hive="beta"`,
+		`class="evidence-chip" aria-pressed="false" onclick="evidenceClearHives()">All</button>`,
+		"<tr><td>Selection</td><td>10</td><td>90.0%</td>",
+		"<tr><td>agent</td><td>1</td><td>12</td><td>12</td><td>75.0%</td>",
+		"<tr><td>guarded</td><td>1</td><td>10</td><td>1</td><td>10</td><td>10.0%</td>",
+		"Shadow-gate observations are not reported by any selected hive yet",
+		"<tr><td>L3</td><td>1</td><td>9</td>",
+	} {
+		if !strings.Contains(got.Beta, want) {
+			t.Errorf("beta selection is missing %q", want)
+		}
+	}
+	for _, reject := range []string{"<td>sandbox</td>", "<tr><td>L4</td>", "Alpha &lt;b&gt;</td>", "<td>old</td>"} {
+		if strings.Contains(got.Beta, reject) {
+			t.Errorf("beta selection still shows %q", reject)
+		}
+	}
+	// ACMM L4 alone is alpha.
+	for _, want := range []string{
+		"1 of 1 hives report evidence in this selection",
+		`class="evidence-chip on" aria-pressed="true" data-level="4"`,
+		"<tr><td>Selection</td><td>40</td><td>75.0%</td>",
+		"<tr><td>human</td><td>1</td><td>12</td><td>12</td><td>83.3%</td>",
+		"<tr><td>Review gate</td><td>would have held</td><td>10</td>",
+	} {
+		if !strings.Contains(got.Level4, want) {
+			t.Errorf("L4 selection is missing %q", want)
+		}
+	}
+	// beta ∩ L4 is empty: the panels disclose, never NaN.
+	for _, want := range []string{"0 of 0 hives report evidence in this selection", "Outcome by author kind is not reported by any selected hive yet"} {
+		if !strings.Contains(got.Both, want) {
+			t.Errorf("empty selection is missing %q", want)
+		}
+	}
+	if strings.Contains(got.Both, "NaN") || strings.Contains(got.Both, "undefined") {
+		t.Errorf("empty selection leaked NaN/undefined:\n%s", got.Both)
+	}
+	// Clearing both filters returns to the server's fleet view.
+	if !strings.Contains(got.Cleared, "3 of 4 hives report evidence for last 90d. Rates show") || !strings.Contains(got.Cleared, "<tr><td>Fleet</td><td>50</td>") {
+		t.Errorf("cleared filter did not restore the fleet view:\n%s", got.Cleared[:400])
+	}
+}
+
+// TestEvidenceWindowSelector: the modal offers 24h / 7d / 30d / 90d / custom
+// (RFC #12062), persists the choice, builds the matching query and labels the
+// header; a custom range is validated client-side with the server's rules.
+func TestEvidenceWindowSelector(t *testing.T) {
+	src := evidenceModalHarness(t, `function(url) { fetched.push(url); return Promise.resolve({ok: true, status: 200, json: function() { return Promise.resolve(`+evidenceFixtureJS+`); }}); }`) + `
+var store = {};
+global.window = { localStorage: { getItem: function(k) { return store[k] === undefined ? null : store[k]; }, setItem: function(k, v) { store[k] = v; } } };
+els['evidence-modal-title'] = makeEl('evidence-modal-title');
+els['evidence-modal-title'].textContent = '';
+els['evidence-from'] = makeEl('evidence-from'); els['evidence-to'] = makeEl('evidence-to'); els['evidence-range-err'] = makeEl('evidence-range-err');
+var out = {};
+done = openEvidenceModal().then(function() {
+  out.defaultBody = els['evidence-body'].innerHTML;
+  out.defaultTitle = els['evidence-modal-title'].textContent;
+  out.defaultQuery = evidenceWindowQuery();
+  return evidenceSetWindow('7d');
+}).then(function() {
+  out.weekQuery = evidenceWindowQuery(); out.weekTitle = els['evidence-modal-title'].textContent; out.weekStored = store[EVIDENCE_WINDOW_STORAGE_KEY];
+  out.weekBody = els['evidence-body'].innerHTML;
+  evidenceSetWindow('custom');
+  out.customBody = els['evidence-body'].innerHTML;
+  els['evidence-from'].value = '2026-10-15'; els['evidence-to'].value = '2026-10-01';
+  evidenceApplyCustomRange(); out.errInverted = els['evidence-range-err'].textContent;
+  els['evidence-from'].value = '2025-01-01'; els['evidence-to'].value = '2026-10-01';
+  evidenceApplyCustomRange(); out.errSpan = els['evidence-range-err'].textContent;
+  els['evidence-from'].value = '2026-10-01'; els['evidence-to'].value = '2026-10-15';
+  return evidenceApplyCustomRange();
+}).then(function() {
+  out.customQuery = evidenceWindowQuery(); out.customTitle = els['evidence-modal-title'].textContent; out.customLabel = evidenceWindowLabel();
+  out.fetched = fetched;
+  out.reloaded = JSON.stringify(evidenceLoadWindow());
+  out.validate = [evidenceValidateRange('', '2026-01-01'), evidenceValidateRange('2026-01-01', ''), evidenceValidateRange('2026-01-01', '2026-01-01')];
+  result = out;
+});`
+	var got struct {
+		DefaultBody, DefaultTitle, DefaultQuery, WeekQuery, WeekTitle, WeekStored, WeekBody, CustomBody string
+		ErrInverted, ErrSpan, CustomQuery, CustomTitle, CustomLabel, Reloaded                           string
+		Fetched, Validate                                                                               []string
+	}
+	runEvidenceJS(t, src, &got)
+	for _, want := range []string{
+		`<div class="evidence-chips" role="group" aria-label="Time window"><span class="evidence-chips-label">Window</span>`,
+		`data-window="24h" onclick="evidenceSetWindow(this.dataset.window)">24h</button>`,
+		`data-window="7d" onclick="evidenceSetWindow(this.dataset.window)">7d</button>`,
+		`data-window="30d" onclick="evidenceSetWindow(this.dataset.window)">30d</button>`,
+		`class="evidence-chip on" aria-pressed="true" data-window="90d"`,
+		`data-window="custom" onclick="evidenceSetWindow(this.dataset.window)">custom</button>`,
+		"hives report evidence for last 90d",
+	} {
+		if !strings.Contains(got.DefaultBody, want) {
+			t.Errorf("default body is missing %q", want)
+		}
+	}
+	if got.DefaultQuery != "" || got.DefaultTitle != "Fleet evidence · last 90d" {
+		t.Errorf("default query=%q title=%q", got.DefaultQuery, got.DefaultTitle)
+	}
+	if got.WeekQuery != "?hours=168" || got.WeekTitle != "Fleet evidence · last 7d" || got.WeekStored != `{"key":"7d"}` {
+		t.Errorf("7d query=%q title=%q stored=%q", got.WeekQuery, got.WeekTitle, got.WeekStored)
+	}
+	if !strings.Contains(got.WeekBody, `class="evidence-chip on" aria-pressed="true" data-window="7d"`) {
+		t.Error("7d pill is not marked selected after the switch")
+	}
+	for _, want := range []string{`<input type="date" id="evidence-from"`, `<input type="date" id="evidence-to"`, `onclick="evidenceApplyCustomRange()">Apply</button>`, `id="evidence-range-err" role="alert"`} {
+		if !strings.Contains(got.CustomBody, want) {
+			t.Errorf("custom pill did not reveal %q", want)
+		}
+	}
+	if got.ErrInverted != "The end date must not be before the start date." || got.ErrSpan != "The range must not exceed 366 days." {
+		t.Errorf("range errors = %q / %q", got.ErrInverted, got.ErrSpan)
+	}
+	if got.CustomQuery != "?from=2026-10-01&to=2026-10-15" || got.CustomLabel != "Oct 1 – Oct 15" || got.CustomTitle != "Fleet evidence · Oct 1 – Oct 15" {
+		t.Errorf("custom query=%q label=%q title=%q", got.CustomQuery, got.CustomLabel, got.CustomTitle)
+	}
+	if got.Reloaded != `{"key":"custom","from":"2026-10-01","to":"2026-10-15"}` {
+		t.Errorf("custom range not persisted: %s", got.Reloaded)
+	}
+	wantFetched := []string{"/api/hub/evidence", "/api/hub/evidence?hours=168", "/api/hub/evidence?from=2026-10-01&to=2026-10-15"}
+	if strings.Join(got.Fetched, " ") != strings.Join(wantFetched, " ") {
+		t.Errorf("fetched %v, want %v", got.Fetched, wantFetched)
+	}
+	if got.Validate[0] == "" || got.Validate[1] == "" || got.Validate[2] != "" {
+		t.Errorf("validate = %v", got.Validate)
+	}
+}
+
+// TestEvidenceWindowApproximateDisclosure: when the server maps a custom
+// range onto a reported window it says so, and record coverage (a 90-day
+// ratio) is withheld with an explanation rather than shown as 0%.
+func TestEvidenceWindowApproximateDisclosure(t *testing.T) {
+	src := evidenceHarness(t) + `
+_evidenceWindow = {key: 'custom', from: '2026-10-01', to: '2026-10-15'};
+var data = ` + evidenceFixtureJS + `;
+data.window = {hours: 720, key: '30d', label: 'last 30d', from: '2026-10-01T00:00:00Z', to: '2026-10-16T00:00:00Z', approximate: true, coverage_available: false};
+data.window_unreported = 1;
+data.hives[2].window_unreported = true;
+result = evidencePanelHTML(200, data);`
+	var html string
+	runEvidenceJS(t, src, &html)
+	for _, want := range []string{
+		"so Oct 1 – Oct 15 is served from the smallest window that covers it: last 30d.",
+		"Record coverage is only computed for the 90-day window",
+		"(1 report only the 90-day block)",
+		"Not reported for this window (spoke predates per-window reporting)",
+		"<th>Merged (range)</th>", "<th>Verdicts (range)</th>",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("approximate view is missing %q", want)
+		}
+	}
+	if strings.Contains(html, "<tr><td>Fleet</td><td>50</td>") {
+		t.Error("record coverage row rendered although coverage_available is false")
+	}
+}
+
+// TestEvidenceExplainers: every section carries an accessible ⓘ button and a
+// popover with the four hub headings; the last section is computed from the
+// data on screen and graded with the named thresholds; Escape closes it.
+func TestEvidenceExplainers(t *testing.T) {
+	src := evidenceHarness(t) + `
+var html = evidencePanelHTML(200, ` + evidenceFixtureJS + `);
+var keys = ['coverage', 'calibration', 'outcomes', 'acmm', 'writes', 'family', 'perhive', 'shadow'];
+var exp = {};
+keys.forEach(function(k) { exp[k] = evidenceExplainer(k, ` + evidenceFixtureJS + `); });
+// Fake DOM for the toggle: two explainers, one button each.
+function fakeEl(id) { return {id: id, hidden: true, attrs: {}, setAttribute: function(k, v) { this.attrs[k] = v; }, getAttribute: function(k) { return this.attrs[k]; }}; }
+var a = fakeEl('evidence-exp-coverage'), b = fakeEl('evidence-exp-shadow'), ba = fakeEl('btn-a'), bb = fakeEl('btn-b');
+ba.attrs['aria-expanded'] = 'false'; bb.attrs['aria-expanded'] = 'false';
+var body = { querySelectorAll: function(sel) {
+  if (sel.indexOf('.evidence-explainer') === 0) return [a, b].filter(function(e) { return !e.hidden; });
+  return [ba, bb].filter(function(e) { return e.attrs['aria-expanded'] === 'true'; });
+} };
+global.document = { getElementById: function(id) { return ({'evidence-body': body, 'evidence-exp-coverage': a, 'evidence-exp-shadow': b})[id] || null; } };
+evidenceToggleExplainer(ba, 'evidence-exp-coverage');
+var afterOpen = {a: a.hidden, b: b.hidden, ba: ba.attrs['aria-expanded']};
+evidenceToggleExplainer(bb, 'evidence-exp-shadow');
+var afterSecond = {a: a.hidden, b: b.hidden, ba: ba.attrs['aria-expanded'], bb: bb.attrs['aria-expanded']};
+var closed = evidenceCloseExplainers();
+var afterEsc = {a: a.hidden, b: b.hidden, bb: bb.attrs['aria-expanded'], closed: closed, again: evidenceCloseExplainers()};
+result = {html: html, exp: exp, afterOpen: afterOpen, afterSecond: afterSecond, afterEsc: afterEsc,
+  grades: [evidenceGradeLow({n: 20, rate: 0.05}, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR), evidenceGradeLow({n: 20, rate: 0.2}, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR),
+    evidenceGradeLow({n: 20, rate: 0.5}, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR), evidenceGradeLow({n: 5, rate: 0}, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR),
+    evidenceGradeHigh({n: 50, rate: 0.8}, EVIDENCE_COVERAGE_STRONG, EVIDENCE_COVERAGE_FAIR), evidenceGradeHigh({n: 50, rate: 0.3}, EVIDENCE_COVERAGE_STRONG, EVIDENCE_COVERAGE_FAIR)]};`
+	var got struct {
+		HTML string
+		Exp  map[string]struct {
+			Measured, Why, How, Ours, Grade string
+		}
+		AfterOpen struct {
+			A, B bool
+			Ba   string
+		}
+		AfterSecond struct {
+			A, B   bool
+			Ba, Bb string
+		}
+		AfterEsc struct {
+			A, B, Closed, Again bool
+			Bb                  string
+		}
+		Grades []string
+	}
+	runEvidenceJS(t, src, &got)
+
+	keys := []string{"coverage", "calibration", "outcomes", "acmm", "writes", "family", "perhive", "shadow"}
+	for _, k := range keys {
+		id := "evidence-exp-" + k
+		btn := `aria-expanded="false" aria-controls="` + id + `"`
+		if !strings.Contains(got.HTML, btn) || !strings.Contains(got.HTML, `onclick="evidenceToggleExplainer(this, '`+id+`')">ⓘ</button>`) {
+			t.Errorf("section %s lacks an accessible info button", k)
+		}
+		if !strings.Contains(got.HTML, `<div id="`+id+`" class="evidence-explainer" role="region" aria-label="About `) {
+			t.Errorf("section %s lacks its explainer region", k)
+		}
+		ex, ok := got.Exp[k]
+		if !ok || ex.Measured == "" || ex.Why == "" || ex.How == "" || ex.Ours == "" || ex.Grade == "" {
+			t.Errorf("explainer %s incomplete: %+v", k, ex)
+		}
+	}
+	for _, want := range []string{
+		"<h4>What is measured</h4>", "<h4>Why it matters</h4>", "<h4>How it is measured</h4>", "<h4>How to read our numbers</h4>",
+		// Sticky head markup: title, ⓘ, one-line note, explainer, then the table.
+		`<div class="evidence-head"><h3 class="evidence-title"><span>Evidence coverage</span><button type="button" class="evidence-info"`,
+		// Live text from the fixture: fleet coverage 80.0% of 50, 2 of 3 hives.
+		"Fleet: 80.0% of 50 (95% CI 67.0% – 89.0%) merged PRs (90d) have an evidence record. 2 of 3 hives report today.",
+		`<span class="evidence-grade evidence-grade-strong">Strong</span>`,
+		// Plain-language definitions on first use.
+		"95% confidence interval (CI)", "minimum sample (10)", "“Calibration” means", "A “bad outcome” is a false approve",
+		// Honest limits.
+		"Merged is not the same as correct", "reverts are only recorded since 2026-10-15", "evidence records only exist since 2026-10-08",
+	} {
+		if strings.Count(got.HTML, want) == 0 {
+			t.Errorf("explainers are missing %q", want)
+		}
+	}
+	if n := strings.Count(got.HTML, "<h4>How to read our numbers</h4>"); n != len(keys) {
+		t.Errorf("%d explainers rendered, want %d", n, len(keys))
+	}
+	if strings.Contains(got.HTML, "NaN") || strings.Contains(got.HTML, "undefined") {
+		t.Error("explainers leaked NaN/undefined")
+	}
+	// Only bucket 0 is measurable in the fixture: nothing to compare, so no grade.
+	if got.Exp["coverage"].Grade != "strong" || got.Exp["writes"].Grade != "na" || got.Exp["calibration"].Grade != "na" || got.Exp["perhive"].Grade != "fair" {
+		t.Errorf("grades: coverage=%s writes=%s calibration=%s perhive=%s", got.Exp["coverage"].Grade, got.Exp["writes"].Grade, got.Exp["calibration"].Grade, got.Exp["perhive"].Grade)
+	}
+	if want := []string{"strong", "fair", "weak", "na", "strong", "weak"}; strings.Join(got.Grades, ",") != strings.Join(want, ",") {
+		t.Errorf("grade thresholds = %v, want %v", got.Grades, want)
+	}
+	if got.AfterOpen.A || !got.AfterOpen.B || got.AfterOpen.Ba != "true" {
+		t.Errorf("open: %+v", got.AfterOpen)
+	}
+	if !got.AfterSecond.A || got.AfterSecond.B || got.AfterSecond.Ba != "false" || got.AfterSecond.Bb != "true" {
+		t.Errorf("second toggle must close the first: %+v", got.AfterSecond)
+	}
+	if !got.AfterEsc.A || !got.AfterEsc.B || got.AfterEsc.Bb != "false" || !got.AfterEsc.Closed || got.AfterEsc.Again {
+		t.Errorf("escape: %+v", got.AfterEsc)
+	}
+	if !strings.Contains(dashboardHTML, "if (typeof evidenceCloseExplainers === 'function' && evidenceCloseExplainers())") {
+		t.Error("document Escape handler does not close an open explainer first")
+	}
+}
+
+// TestEvidenceStickyHeadings guards the CSS that keeps a section's title and
+// column heads visible while its rows scroll inside the modal body.
+func TestEvidenceStickyHeadings(t *testing.T) {
+	html := dashScript(t)
+	for _, want := range []string{
+		// The scroll container is the modal body, an ancestor of every section.
+		`.evidence-modal-scroll { flex: 1; overflow: auto;`,
+		`<div class="evidence-modal-scroll">`,
+		`.evidence-section { --evidence-head-h: 2.9rem; position: relative; }`,
+		// table-wrap must not become its own scroll container or sticky breaks.
+		`.evidence-section .table-wrap { overflow: visible; }`,
+		`.evidence-head { position: sticky; top: 0; z-index: 3; background: var(--surface); height: var(--evidence-head-h);`,
+		`.evidence-section thead th { position: sticky; top: calc(var(--evidence-head-h) - 1px); z-index: 2; background: var(--surface); }`,
+		`.evidence-explainer[hidden] { display: none; }`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboardHTML is missing %q", want)
+		}
 	}
 }

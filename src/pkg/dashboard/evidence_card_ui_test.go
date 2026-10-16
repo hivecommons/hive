@@ -30,9 +30,9 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 	}
 
 	for _, snippet := range []string{
-		"/api/evidence/summary?hours=${encodeURIComponent(hours)}",
+		"/api/evidence/summary?${query}",
 		"if (repo) url += `&repo=${encodeURIComponent(repo)}`;",
-		"if (hours !== prtHours || repo !== prtRepo) return;",
+		"if (query !== evWindowQuery() || repo !== prtRepo) return;",
 		"async function fetchPRThroughput() {\n      fetchEvidenceSummary();",
 		"dto.reviewer_calibration",
 		"dto.reviewer_accuracy_by_model",
@@ -74,10 +74,24 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"records_empty_ci",
 		"Only agent-authored PRs",
 		".ev-svg .ev-bar.cv-both",
+		// Typography / sizing (#evidence-card font bug): the chart is pinned to
+		// its viewBox width so SVG text renders 1:1 at the dashboard's font
+		// tokens, and panels tile in a grid instead of each spanning the card.
+		"const EV_SVG_W = 320;",
+		".ev-svg { display:block; width:320px; max-width:100%; height:auto;",
+		".ev-svg text { fill:var(--muted); font-family:var(--font-ui); font-size:var(--fs-2xs); }",
+		".ev-svg text.ev-lbl { fill:var(--text); font-size:var(--fs-xs); }",
+		".evidence-card { margin-top: var(--sp-4); display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr));",
+		".evidence-card > .prt-head { grid-column:1 / -1;",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("Evidence card missing snippet %q", snippet)
 		}
+	}
+	// Every SVG helper must draw at the shared width; a hard-coded 320 would
+	// silently drift from the CSS pin if the constant ever changes.
+	if m := regexp.MustCompile(`const w = 320\b`).FindString(html); m != "" {
+		t.Errorf("ev*Svg helpers must size from EV_SVG_W, found %q", m)
 	}
 	// Panel order follows the RFC numbering: 1 (outcome) renders first.
 	p1 := strings.Index(html, "evPanel('outcome-by-author'")
@@ -173,10 +187,102 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evMaintainabilitySvg",
 		"evClaimVsVerdictSvg",
 		"escapeHtml",
+		"evWindowControls",
+		"evWindowLabel",
+		"evWindowQuery",
+		"evExplainerHtml",
+		"toggleEvidenceExplainer",
+		"evGrade",
+		"evLimitsSentence",
 	} {
 		decl := regexp.MustCompile(`(?m)^\s*(async\s+)?function\s+` + fn + `\s*\(`)
 		if !jsDeclaredNear(html, fn, decl) {
 			t.Errorf("Evidence card calls %q but it is never declared", fn)
+		}
+	}
+}
+
+// TestEvidenceCardWindowSelector pins the Evidence card's own window pills
+// (24h · 7d · 30d · custom from/to), their localStorage persistence and the
+// header scope text that follows the selection (RFC #12062).
+func TestEvidenceCardWindowSelector(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		"const EV_WINDOWS = [[24, '24h'], [168, '7d'], [720, '30d']];",
+		"const EV_WINDOW_STORAGE_KEY = 'hive.evidence.window';",
+		"const EV_CUSTOM_MAX_DAYS = 366;",
+		"localStorage.setItem(EV_WINDOW_STORAGE_KEY, JSON.stringify(evWindow))",
+		"return evWindow.from ? `from=${encodeURIComponent(evWindow.from)}&to=${encodeURIComponent(evWindow.to)}` : `hours=${encodeURIComponent(evWindow.hours)}`;",
+		`data-action="setEvidenceWindow" data-arg0="${h}" data-stop="1"`,
+		`data-action="toggleEvidenceCustomRange" data-stop="1" aria-expanded="${evCustomOpen ? 'true' : 'false'}" aria-controls="ev-custom-range"`,
+		`<div id="ev-custom-range" class="ev-custom-range" role="group"`,
+		`<input type="date" name="from"`,
+		`<input type="date" name="to"`,
+		`data-action="applyEvidenceCustomRange" data-arg-types="t" data-stop="1">Apply</button>`,
+		`'"To" must not be before "from".'`,
+		"if (evWindow.from) return `${evShortDate(evWindow.from)} – ${evShortDate(evWindow.to)}`;",
+		"return `last ${w ? w[1] : evWindow.hours + 'h'}`;",
+		"🔬 Evidence · ${escapeHtml(scope)}",
+		`class="gov-pr-models-toggle window-pills-toolbar ev-window-controls"`,
+		".ev-custom-range input[type=\"date\"]",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("Evidence window selector missing snippet %q", snippet)
+		}
+	}
+	// The card no longer follows the throughput pills.
+	if strings.Contains(html, "const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);\n      const scope = (dto.all_time") {
+		t.Error("Evidence card scope must come from evWindowLabel(), not the throughput window")
+	}
+}
+
+// TestEvidenceCardExplainers pins the plain-language ⓘ explainer per panel:
+// keyboard-accessible toggle (aria-expanded/aria-controls, Esc closes), the
+// four fixed headings plus "Why it matters", a live "What ours shows" section
+// and the named grade thresholds documented in docs/review-evidence.md.
+func TestEvidenceCardExplainers(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		"const EV_GRADE_MIN_N = 20;",
+		"const EV_SHORT_WINDOW_HOURS = 48;",
+		"const EV_CALIB_STRONG = 0.8;",
+		"const EV_CALIB_FAIR = 0.6;",
+		"const EV_ERR_STRONG = 0.10;",
+		"const EV_ERR_FAIR = 0.25;",
+		"const EV_REVERT_STRONG = 0.05;",
+		"const EV_REVERT_FAIR = 0.15;",
+		"const EV_SHADOW_FALSE_ALARM_STRONG = 0.25;",
+		"const EV_SHADOW_FALSE_ALARM_FAIR = 0.5;",
+		"const EV_DATA_SINCE = '2026-10-08';",
+		"const EV_REVERTS_SINCE = '2026-10-15';",
+		"const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };",
+		"'outcome-by-author': (dto) => {",
+		"calibration: (dto) => {",
+		"'accuracy-by-model': (dto) => {",
+		"'shadow-gates': (dto) => {",
+		`<button type="button" class="ev-info" data-action="toggleEvidenceExplainer" data-arg0="${key}" data-stop="1" data-prevent="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${id}" aria-label="Explain ${escapeHtml(title)}">ⓘ</button>`,
+		`class="ev-explainer" role="region"`,
+		"section('What is measured', x.measured)",
+		"section('Why it matters', x.matters)",
+		"section('How it is measured', x.how)",
+		"section('What good looks like', x.good)",
+		"section('What ours shows', x.ours)",
+		"evGradeLine(x.grade, x.reason)",
+		"if (e.key !== 'Escape' || !evExplainOpen.size) return;",
+		"Merged is not the same as correct, and a PR that is still open counts as not merged. Evidence has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}.",
+		"A well-calibrated reviewer would be near 90–100% in the top bucket.",
+		".ev-explainer[hidden] { display:none; }",
+		".ev-grade.weak",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("Evidence explainer missing snippet %q", snippet)
+		}
+	}
+	// Every panel rendered by renderEvidenceSummary has an explainer entry.
+	for _, m := range regexp.MustCompile(`evPanel\('([a-z0-9-]+)'`).FindAllStringSubmatch(html, -1) {
+		key := m[1]
+		if !strings.Contains(html, "'"+key+"': (dto) => {") && !strings.Contains(html, "\n      "+key+": (dto) => {") {
+			t.Errorf("panel %q has no EV_EXPLAINERS entry", key)
 		}
 	}
 }

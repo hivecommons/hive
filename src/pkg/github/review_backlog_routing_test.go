@@ -74,14 +74,14 @@ func TestReviewFindingBelowLine(t *testing.T) {
 	}
 }
 
-func TestReviewBacklogTargetFallsBackToGitHubWithFromReviewLabel(t *testing.T) {
+func TestReviewBacklogTargetFallsBackToGitHubWithOriginReviewLabel(t *testing.T) {
 	c := &Client{}
 	sink, labels := c.reviewBacklogTarget(ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: "jira", Labels: []string{"nit"}}})
 	if sink.Destination() != config.ReviewBacklogGitHubIssue {
 		t.Fatalf("destination = %q, want the GitHub issue fallback", sink.Destination())
 	}
-	if strings.Join(labels, ",") != "nit,from-review" {
-		t.Fatalf("labels = %v, want [nit from-review]", labels)
+	if strings.Join(labels, ",") != "nit,origin/review" {
+		t.Fatalf("labels = %v, want [nit origin/review]", labels)
 	}
 	fake := &fakeBacklogSink{dest: config.ReviewBacklogJira}
 	sink, labels = c.reviewBacklogTarget(ReviewBacklogRouting{Backlog: config.ReviewBacklogConfig{Destination: "jira", Labels: []string{"nit"}}, Sink: fake})
@@ -89,8 +89,8 @@ func TestReviewBacklogTargetFallsBackToGitHubWithFromReviewLabel(t *testing.T) {
 		t.Fatalf("configured sink: got %v %v, want the jira sink with [nit]", sink.Destination(), labels)
 	}
 	_, labels = c.reviewBacklogTarget(ReviewBacklogRouting{})
-	if strings.Join(labels, ",") != "from-review" {
-		t.Fatalf("default labels = %v, want [from-review]", labels)
+	if strings.Join(labels, ",") != "origin/review" {
+		t.Fatalf("default labels = %v, want [origin/review]", labels)
 	}
 }
 
@@ -444,8 +444,8 @@ func TestReviewBacklogGitHubIssueDestinationOverHTTP(t *testing.T) {
 	if len(issueBodies) != 1 {
 		t.Fatalf("issues = %d, want 1 (the P3 nit only)", len(issueBodies))
 	}
-	if strings.Join(issueLabels[0], ",") != "nit,from-review" {
-		t.Fatalf("labels = %v, want nit plus the from-review fallback label", issueLabels[0])
+	if strings.Join(issueLabels[0], ",") != "nit,origin/review" {
+		t.Fatalf("labels = %v, want nit plus the origin/review fallback label", issueLabels[0])
 	}
 	if !strings.Contains(issueBodies[0], "https://github.com/o/r/blob/abc/pkg/a.go#L3") || !strings.Contains(issueBodies[0], "filed by Hive review backlog") {
 		t.Fatalf("issue body = %q", issueBodies[0])

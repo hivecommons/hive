@@ -20,7 +20,7 @@ import (
 const (
 	DefaultReviewBacklogIssueCap = 3
 	reviewBacklogFile            = "review-backlog-issues.json"
-	reviewBacklogLabel           = "from-review"
+	reviewBacklogLabel           = OriginReviewLabel
 	reviewBacklogSummaryMarker   = "<!-- hive:review-backlog-summary v1 -->"
 	reviewBacklogLinkMarker      = "<!-- hive:review-backlog-link "
 )
