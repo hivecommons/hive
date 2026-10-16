@@ -514,6 +514,8 @@ type StageLabelResult struct {
 	Writes   int
 	Comments int
 	Skipped  int
+	// Healed counts PRs found carrying more than one stage label.
+	Healed int
 }
 
 // ApplyStageLabels reconciles the stage/author/health labels for every PR
@@ -585,28 +587,28 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				continue
 			}
 		}
-		for _, l := range remove {
-			if _, err := c.gh.Issues.RemoveLabelForIssue(ctx, obs.Owner, obs.Repo, obs.Number, url.PathEscape(l)); err != nil && !isGitHubStatus(err, http.StatusNotFound) {
-				c.warn("stage labels: remove failed", "repo", obs.Display, "pr", obs.Number, "label", l, "error", err)
+		var out stagelabels.Outcome
+		if len(add)+len(remove) > 0 {
+			// Enforce re-reads the PR so a stage another writer placed since
+			// the lane's snapshot is replaced, never joined (hivecommons/hive#12512).
+			var err error
+			out, err = stagelabels.Enforce(ctx, engineStageLabeler{c.gh}, obs.Owner, obs.Repo, obs.Number, obs.Labels, want)
+			if err != nil {
+				c.warn("stage labels: write failed", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "error", err)
 				if firstErr == nil {
 					firstErr = err
 				}
-				continue
 			}
-			result.Writes++
-		}
-		if len(add) > 0 {
-			if _, _, err := c.gh.Issues.AddLabelsToIssue(ctx, obs.Owner, obs.Repo, obs.Number, add); err != nil {
-				c.warn("stage labels: add failed", "repo", obs.Display, "pr", obs.Number, "labels", add, "error", err)
-				if firstErr == nil {
-					firstErr = err
-				}
-			} else {
+			result.Writes += len(out.Removed)
+			if len(out.Added) > 0 {
 				result.Writes++
 			}
+			if out.Healed {
+				result.Healed++
+			}
 		}
-		if len(add)+len(remove) > 0 {
-			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "author", author.String(), "added", add, "removed", remove, "reason", obs.Reason, "lane", obs.Lane)
+		if out.Changed() {
+			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "author", author.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "reason", obs.Reason, "lane", obs.Lane)
 		}
 		if want.Stalled && want.Stage.StallNote() {
 			if rec, ok := store.Get(key); ok && !rec.StallCommented {
@@ -722,4 +724,35 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 // lanes' own one-shot engines earlier in the cycle are what it applies.
 func ApplyStageLabels(ctx context.Context, transport Transport, opts Options) (StageLabelResult, error) {
 	return New(transport, opts).ApplyStageLabels(ctx)
+}
+
+// engineStageLabeler adapts the engine's go-github client to
+// stagelabels.Labeler.
+type engineStageLabeler struct{ gh *gh.Client }
+
+func (l engineStageLabeler) Labels(ctx context.Context, owner, repo string, number int) ([]string, error) {
+	issue, _, err := l.gh.Issues.Get(ctx, owner, repo, number)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(issue.Labels))
+	for _, lab := range issue.Labels {
+		if lab != nil && lab.GetName() != "" {
+			out = append(out, lab.GetName())
+		}
+	}
+	return out, nil
+}
+
+func (l engineStageLabeler) AddLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
+	_, _, err := l.gh.Issues.AddLabelsToIssue(ctx, owner, repo, number, labels)
+	return err
+}
+
+func (l engineStageLabeler) RemoveLabel(ctx context.Context, owner, repo string, number int, label string) error {
+	_, err := l.gh.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label))
+	if isGitHubStatus(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
 }

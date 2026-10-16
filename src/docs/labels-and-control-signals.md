@@ -116,8 +116,20 @@ The engine lives in `src/pkg/stagelabels` (the table, the reconciler plan, the
 persisted stage timing) and `src/pkg/github/automerge/automerge_stage_labels.go`
 (the mapping from each automerge lane's per-PR reason to a stage, applied once
 per sweep cycle under the `hive:stage_labels` REST caller). Labels come from
-the PR list payload the sweep already fetched — no per-item GETs — and are
-written only when the planned set differs from the current one.
+the PR list payload the sweep already fetched and are written only when the
+planned set differs from the current one, so an unchanged item costs nothing.
+
+**One writer.** Every stage write — the PR lanes, the issue reconciler
+(`src/pkg/github/issue_stage_labels.go`) and the claim-ledger hooks that
+mirror a new claim onto the issue — goes through `stagelabels.Enforce` /
+`EnforceStage` ([#12512](https://github.com/hivecommons/hive/issues/12512)).
+When a write is due, Enforce re-reads the item first and plans from that
+fresh label set, so a stage another writer placed since the cycle's snapshot
+(a contributor claim landing seconds after the reconciler staged the issue
+`010`) is replaced rather than joined, and any item found carrying two
+`stage/NNN-*` labels is healed on the spot (`healed` in the reconcile log
+lines). The claim hooks always re-read: they know the stage a claim implies
+but not what the lanes think of the author tier or health, which they keep.
 
 ### Numbering rules
 

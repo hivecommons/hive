@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func testClaimsLedger(t *testing.T) *claims.Ledger {
@@ -164,22 +170,66 @@ func TestLedgerHasContributor(t *testing.T) {
 // A hive agent's claim mirrors stage/030-pr-in-progress; a human or
 // contributor claim mirrors stage/020-claimed — one stage label per issue,
 // never the retired `claimed` / `hive/in-progress` pair (hivecommons/hive#12436).
-func TestClaimLabelsFor(t *testing.T) {
-	agent := claimLabelsFor(claims.Claim{Kind: claims.KindAgent})
-	if len(agent) != 1 || agent[0] != github.InProgressLabel || github.InProgressLabel != "stage/030-pr-in-progress" {
-		t.Fatalf("agent labels = %v", agent)
+func TestClaimStageFor(t *testing.T) {
+	if got := claimStageFor(claims.Claim{Kind: claims.KindAgent}); got != stagelabels.PRInProgress || got.Label() != github.InProgressLabel || github.InProgressLabel != "stage/030-pr-in-progress" {
+		t.Fatalf("agent stage = %s", got)
 	}
 	for _, kind := range []claims.Kind{claims.KindHuman, claims.KindContributor, claims.KindExternal} {
-		if got := claimLabelsFor(claims.Claim{Kind: kind}); len(got) != 1 || got[0] != claims.LabelClaimed || claims.LabelClaimed != "stage/020-claimed" {
-			t.Fatalf("%s labels = %v, want only stage/020-claimed", kind, got)
+		if got := claimStageFor(claims.Claim{Kind: kind}); got != stagelabels.Claimed || got.Label() != claims.LabelClaimed || claims.LabelClaimed != "stage/020-claimed" {
+			t.Fatalf("%s stage = %s, want stage/020-claimed", kind, got)
 		}
 	}
-	for _, labels := range [][]string{agent, claimLabelsFor(claims.Claim{Kind: claims.KindHuman})} {
-		for _, l := range labels {
-			if l == claims.LegacyLabelClaimed || l == claims.LegacyLabelInProgress {
-				t.Fatalf("retired label %q must not be written", l)
-			}
+}
+
+// The claim hooks write the stage through SetStageLabel: an issue the
+// reconciler had just staged 010 that takes a contributor claim ends up with
+// exactly stage/020-claimed, not both (hivecommons/hive#12512).
+func TestClaimHooks_ClaimReplacesStageLabel(t *testing.T) {
+	var mu sync.Mutex
+	var added, removed []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/issues/7", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"number":7,"labels":[{"name":"bug"},{"name":"stage/010-actionable"},{"name":"hive/claimed-by-ann"}]}`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/7/labels", func(w http.ResponseWriter, r *http.Request) {
+		var body []string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		added = append(added, body...)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/7/labels/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		removed = append(removed, strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/7/labels/"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := &config.Config{}
+	cfg.Governor.Claims.Label = boolPtr(true)
+	cfg.Governor.Claims.Comment = boolPtr(false)
+	hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
+	hooks.OnClaimed(claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "ann", Kind: claims.KindContributor}, claims.OutcomeClaimed)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		done := len(added) > 0
+		mu.Unlock()
+		if done || time.Now().After(deadline) {
+			break
 		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(added) != 1 || added[0] != "stage/020-claimed" {
+		t.Fatalf("added %v, want only stage/020-claimed", added)
+	}
+	if len(removed) != 1 || removed[0] != "stage%2F010-actionable" && removed[0] != "stage/010-actionable" {
+		t.Fatalf("removed %v, want stage/010-actionable", removed)
 	}
 }
 

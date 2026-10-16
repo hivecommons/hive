@@ -1,0 +1,1 @@
+- stagelabels: every stage write (PR lanes, issue reconciler, claim-ledger hooks) now goes through one enforcer that re-reads the item before writing and leaves exactly one `stage/NNN-*` label, healing items found with two; a contributor claim landing after the reconciler staged an issue `010` no longer leaves `010` and `020` side by side (hivecommons/hive#12512)

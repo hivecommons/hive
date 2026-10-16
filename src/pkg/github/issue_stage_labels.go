@@ -16,7 +16,9 @@ package github
 //     filtered out of the pipeline by an exempt label → no stage.
 //
 // The reconciler plans against the labels the list payload already carries
-// and writes only the difference, so an unchanged issue costs nothing. It
+// and writes only the difference, so an unchanged issue costs nothing; when
+// a write is due it goes through stagelabels.Enforce, which re-reads the
+// issue so exactly one stage label survives (hivecommons/hive#12512). It
 // also strips the retired `claimed`, `hive/in-progress` and `🐝 covered by
 // PR` labels: one cycle after upgrade every open issue carries its stage
 // label instead. Health (`stage/stalled`, `stage/regressed`) is tracked for
@@ -65,6 +67,8 @@ type IssueStageResult struct {
 	Items    int
 	Writes   int
 	Comments int
+	// Healed counts issues found carrying more than one stage label.
+	Healed int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -203,26 +207,22 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 			}
 			continue
 		}
-		for _, l := range remove {
-			if err := client.RemoveLabel(ctx, in.Repo, in.Number, l); err != nil {
-				if logger != nil {
-					logger.Warn("issue stage labels: remove failed", "repo", in.Repo, "issue", in.Number, "label", l, "error", err)
-				}
-				continue
-			}
+		// Enforce re-reads the issue before writing so a stage a claim hook
+		// placed since the list payload was fetched is replaced, not joined
+		// (hivecommons/hive#12512), and any duplicate it finds is healed.
+		out, err := stagelabels.Enforce(ctx, client.StageLabeler(), owner, name, in.Number, in.Labels, want)
+		if err != nil && logger != nil {
+			logger.Warn("issue stage labels: write failed", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "error", err)
+		}
+		res.Writes += len(out.Removed)
+		if len(out.Added) > 0 {
 			res.Writes++
 		}
-		if len(add) > 0 {
-			if err := client.AddLabels(ctx, in.Repo, in.Number, add); err != nil {
-				if logger != nil {
-					logger.Warn("issue stage labels: add failed", "repo", in.Repo, "issue", in.Number, "labels", add, "error", err)
-				}
-			} else {
-				res.Writes++
-			}
+		if out.Healed {
+			res.Healed++
 		}
-		if logger != nil {
-			logger.Info("issue stage labels reconciled", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "added", add, "removed", remove, "reason", reason, "bucket", in.Bucket)
+		if logger != nil && (out.Changed() || err != nil) {
+			logger.Info("issue stage labels reconciled", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "reason", reason, "bucket", in.Bucket)
 		}
 		// A regression between the issue's OWN stages (a claim or kick that
 		// lapsed without a PR) is the hive's failure and gets the one-line

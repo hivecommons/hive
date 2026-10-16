@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -29,6 +30,7 @@ type stageAPI struct {
 	edits    []string
 	creates  []string
 	lists    int
+	gets     int
 	url      string
 	// extra handles routes beyond labels/comments (returns true when it
 	// served the request); the adoption tests use it for refs and pulls.
@@ -68,6 +70,16 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 			api.labels[body["name"]] = body["color"]
 			api.edits = append(api.edits, body["name"]+"="+body["color"])
 			_ = json.NewEncoder(w).Encode(body)
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/issues/") && !strings.Contains(strings.TrimPrefix(path, "/repos/acme/widget/issues/"), "/"):
+			n, _ := strconv.Atoi(strings.TrimPrefix(path, "/repos/acme/widget/issues/"))
+			api.gets++
+			stagePRTruthMu.Lock()
+			labels := make([]map[string]string, 0)
+			for _, l := range stagePRTruth[n] {
+				labels = append(labels, map[string]string{"name": l})
+			}
+			stagePRTruthMu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels})
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/labels"):
 			var body []string
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -97,10 +109,31 @@ func (a *stageAPI) writes() int {
 	return len(a.added) + len(a.removed) + len(a.comments)
 }
 
+func (a *stageAPI) getCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.gets
+}
+
 func (a *stageAPI) reset() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.added, a.removed, a.comments, a.edits, a.creates = nil, nil, nil, nil, nil
+}
+
+// stagePRTruth is what GET /issues/N answers: the fresh read Enforce takes
+// before writing (hivecommons/hive#12512). stagePR seeds it with the labels
+// the fixture carries so the read agrees with the observation unless a test
+// drifts it on purpose (see TestApplyStageLabels_HealsDuplicateStage).
+var (
+	stagePRTruthMu sync.Mutex
+	stagePRTruth   = map[int][]string{}
+)
+
+func setStagePRTruth(number int, labels ...string) {
+	stagePRTruthMu.Lock()
+	defer stagePRTruthMu.Unlock()
+	stagePRTruth[number] = append([]string(nil), labels...)
 }
 
 func stagePR(number int, labels ...string) *gh.PullRequest {
@@ -108,6 +141,7 @@ func stagePR(number int, labels ...string) *gh.PullRequest {
 	for _, l := range labels {
 		pr.Labels = append(pr.Labels, &gh.Label{Name: gh.Ptr(l)})
 	}
+	setStagePRTruth(number, labels...)
 	return pr
 }
 
@@ -608,5 +642,53 @@ func TestApplyStageLabelsRecordsAuthor(t *testing.T) {
 	}
 	if got := store.ByAuthor("alice", stagelabels.ReturnedToContributor); len(got) != 1 {
 		t.Fatalf("ByAuthor = %+v", got)
+	}
+}
+
+// hivecommons/hive#12512: the lane's snapshot of the PR is from the start of
+// the cycle; by the time the labels are written another writer may have put
+// a second stage on it. Enforce plans from a fresh read, so the write
+// leaves exactly one stage and the result counts the heal.
+func TestApplyStageLabels_HealsDuplicateStage(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 19, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+
+	// Snapshot: 050 + contributor. Truth drifted: 020 landed as well.
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageAuthor("acme", "widget", 21, stagelabels.AuthorContributor)
+	setStagePRTruth(21, "author/contributor", "stage/050-review-pending", "stage/020-claimed")
+	// Snapshot says nothing changes for 050/contributor, so without a
+	// reason to write there is no read: the duplicate waits for a write.
+	res, err := e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gets := api.getCount(); gets != 0 || res.Healed != 0 {
+		t.Fatalf("no planned write must mean no read; gets=%d res=%+v", gets, res)
+	}
+
+	// Now the lane moves it to 072: the write re-reads and strips 020 too.
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(21, "author/contributor", "stage/050-review-pending"), "changes-requested", false, nil)
+	e.noteStageAuthor("acme", "widget", 21, stagelabels.AuthorContributor)
+	setStagePRTruth(21, "author/contributor", "stage/050-review-pending", "stage/020-claimed")
+	api.reset()
+	res, err = e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gets := api.getCount(); res.Healed != 1 || gets != 1 {
+		t.Fatalf("healed=%d gets=%d, want one heal from one fresh read (%+v)", res.Healed, gets, res)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	sort.Strings(api.removed)
+	if !reflect.DeepEqual(api.removed, []string{"stage/020-claimed", "stage/050-review-pending"}) {
+		t.Fatalf("removed %v, want both 020 and 050", api.removed)
+	}
+	if len(api.added) != 1 || strings.Join(api.added[0], ",") != "stage/072-returned-to-contributor" {
+		t.Fatalf("added %v, want only 072", api.added)
 	}
 }

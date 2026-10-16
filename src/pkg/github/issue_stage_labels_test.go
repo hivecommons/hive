@@ -24,11 +24,16 @@ type issueStageServer struct {
 	removed  map[int][]string
 	comments map[int]int
 	lists    int
+	// truth is what GET /issues/N reports — the fresh read Enforce takes
+	// before writing. Tests seed it from the enumeration payload (seed) or
+	// set it to a different label set to simulate another writer.
+	truth map[int][]string
+	gets  map[int]int
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
 	t.Helper()
-	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}}
+	s := &issueStageServer{added: map[int][]string{}, removed: map[int][]string{}, comments: map[int]int{}, truth: map[int][]string{}, gets: map[int]int{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		path, _ := url.PathUnescape(r.URL.Path)
@@ -49,6 +54,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 				out = append(out, map[string]string{"name": d.Name, "color": d.Color})
 			}
 			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && strings.HasPrefix(rest, "issues/") && !strings.Contains(strings.TrimPrefix(rest, "issues/"), "/"):
+			var n int
+			_, _ = sscanIssue(rest, &n)
+			s.gets[n]++
+			labels := make([]map[string]string, 0, len(s.truth[n]))
+			for _, l := range s.truth[n] {
+				labels = append(labels, map[string]string{"name": l})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels})
 		case r.Method == http.MethodPost && strings.HasSuffix(rest, "/labels"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
@@ -90,6 +104,15 @@ func sscanIssue(rest string, n *int) (string, bool) {
 	return tail, true
 }
 
+// seed makes the fresh read agree with the enumeration payload.
+func (s *issueStageServer) seed(result *ActionableResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, in := range IssueStageInputs(result) {
+		s.truth[in.Number] = append([]string(nil), in.Labels...)
+	}
+}
+
 func (s *issueStageServer) writes() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -103,6 +126,12 @@ func (s *issueStageServer) writes() int {
 		n += len(r)
 	}
 	return n
+}
+
+// syncSeeded runs the reconciler against a payload the fresh read agrees with.
+func syncSeeded(fake *issueStageServer, c *Client, result *ActionableResult, store *stagelabels.Store, now time.Time) IssueStageResult {
+	fake.seed(result)
+	return SyncIssueStageLabels(context.Background(), c, result, store, now, testLogger())
 }
 
 func issueStageTestClient(t *testing.T, srv *httptest.Server, enabled bool) *Client {
@@ -167,7 +196,7 @@ func TestSyncIssueStageLabels_MapsBucketsAndRetiresLegacy(t *testing.T) {
 	store := stagelabels.NewStore("", stageNow)
 	store.Observe(stagelabels.Key("acme/widgets", 40), stagelabels.ReviewPending, "contributor-lane:no-verdict")
 
-	res := SyncIssueStageLabels(context.Background(), c, issueStageResult(), store, stageNow(), testLogger())
+	res := syncSeeded(fake, c, issueStageResult(), store, stageNow())
 	if res.Items != 5 {
 		t.Fatalf("items = %d, want 5", res.Items)
 	}
@@ -205,7 +234,7 @@ func TestSyncIssueStageLabels_IdempotentAndDisabled(t *testing.T) {
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.CoveredByPR.Label()}, ClaimContext: &IssueClaimContext{PRNumber: 40}}, workBucketClaimedByPR, "open PR")
 
 	c := issueStageTestClient(t, fake.srv, true)
-	res := SyncIssueStageLabels(context.Background(), c, result, store, stageNow(), testLogger())
+	res := syncSeeded(fake, c, result, store, stageNow())
 	if res.Writes != 0 || fake.writes() != 0 {
 		t.Fatalf("unchanged state produced %d writes (%v / %v)", fake.writes(), fake.added, fake.removed)
 	}
@@ -230,7 +259,7 @@ func TestSyncIssueStageLabels_ExclusiveAndFollowsPR(t *testing.T) {
 	result := &ActionableResult{}
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.ReviewPending.Label(), stagelabels.CoveredByPR.Label(), stagelabels.StalledLabel}, ClaimContext: &IssueClaimContext{PRNumber: 40}}, workBucketClaimedByPR, "open PR")
 
-	SyncIssueStageLabels(context.Background(), c, result, store, stageNow(), testLogger())
+	syncSeeded(fake, c, result, store, stageNow())
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if got := fake.added[4]; len(got) != 1 || got[0] != stagelabels.MergeQueue.Label() {
@@ -252,7 +281,7 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	// Cycle 1: an agent claim → 030.
 	result := &ActionableResult{}
 	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 7, ClaimKind: string(claims.KindAgent)}, workBucketClaimed, "live claim")
-	SyncIssueStageLabels(context.Background(), c, result, store, clock, testLogger())
+	syncSeeded(fake, c, result, store, clock)
 	if rec, ok := store.Get(key); !ok || rec.Stage != stagelabels.PRInProgress {
 		t.Fatalf("record after cycle 1 = %+v", rec)
 	}
@@ -262,7 +291,7 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	clock = now.Add(2 * time.Hour)
 	result = &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.PRInProgress.Label()}}})
-	SyncIssueStageLabels(context.Background(), c, result, store, clock, testLogger())
+	syncSeeded(fake, c, result, store, clock)
 	fake.mu.Lock()
 	if got := fake.added[7]; strings.Join(got, ",") != stagelabels.PRInProgress.Label()+","+stagelabels.Actionable.Label()+","+stagelabels.RegressedLabel {
 		t.Fatalf("adds = %v", got)
@@ -277,7 +306,7 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	clock = now.Add(2*time.Hour + 25*time.Hour)
 	result = &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.Actionable.Label(), stagelabels.RegressedLabel}}})
-	SyncIssueStageLabels(context.Background(), c, result, store, clock, testLogger())
+	syncSeeded(fake, c, result, store, clock)
 	fake.mu.Lock()
 	if fake.comments[7] != 1 {
 		t.Fatalf("regression comment must not repeat, got %d", fake.comments[7])
@@ -291,7 +320,7 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	// every owned label off, record forgotten.
 	result = &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.Actionable.Label(), stagelabels.RegressedLabel, LikelyDoneLabel}, ClaimContext: &IssueClaimContext{PRNumber: 70, MergedPR: true}}})
-	SyncIssueStageLabels(context.Background(), c, result, store, clock, testLogger())
+	syncSeeded(fake, c, result, store, clock)
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if got := strings.Join(fake.removed[7], ","); got != stagelabels.PRInProgress.Label()+","+stagelabels.Actionable.Label()+","+stagelabels.RegressedLabel {
@@ -334,5 +363,57 @@ func TestSweepInProgressIssues_TriggersOnStageLabels(t *testing.T) {
 				t.Fatalf("labels after sweep = %v", got)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#12512: the list payload said stage/010 and the reconciler
+// still wants 010, but between the list and the write a claim hook put
+// stage/020 on the issue. Planning from the payload alone would see nothing
+// to do; Enforce re-reads only when a write is due, so the pass that does
+// write (here: the legacy label coming off) finds both stages and leaves
+// exactly the wanted one, counting the heal.
+func TestSyncIssueStageLabels_HealsDuplicateStageLabels(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+
+	// Payload: 010 + 020 both present (the duplicate was visible to the
+	// enumeration), ledger says claimed → want 020 only.
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 12, Labels: []string{"bug", stagelabels.Actionable.Label(), stagelabels.Claimed.Label(), "hive/claimed-by-ann"}, ClaimKind: "contributor"}, workBucketClaimed, "live claim")
+	fake.seed(result)
+	// Truth drifted further: a third stage landed since the list.
+	fake.mu.Lock()
+	fake.truth[12] = append(fake.truth[12], stagelabels.PRInProgress.Label())
+	fake.mu.Unlock()
+	res := SyncIssueStageLabels(context.Background(), c, result, store, stageNow(), testLogger())
+	fake.mu.Lock()
+	if got := strings.Join(fake.removed[12], ","); got != stagelabels.Actionable.Label()+","+stagelabels.PRInProgress.Label() {
+		t.Fatalf("removed %v, want 010 and 030 (planned from the fresh read, not the payload)", fake.removed[12])
+	}
+	if len(fake.added[12]) != 0 {
+		t.Fatalf("020 already present, nothing to add; added %v", fake.added[12])
+	}
+	if fake.gets[12] != 1 {
+		t.Fatalf("fresh reads = %d, want exactly one", fake.gets[12])
+	}
+	fake.mu.Unlock()
+	if res.Healed != 1 || res.Writes != 2 {
+		t.Fatalf("result = %+v, want Healed=1 Writes=2", res)
+	}
+
+	// Payload says 010 only and the issue is actionable: no write is due, so
+	// no read either — an unchanged issue stays free.
+	result = &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 13, Labels: []string{stagelabels.Actionable.Label()}}})
+	fake.seed(result)
+	fake.mu.Lock()
+	fake.truth[13] = append(fake.truth[13], stagelabels.Claimed.Label())
+	fake.mu.Unlock()
+	SyncIssueStageLabels(context.Background(), c, result, store, stageNow(), testLogger())
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.gets[13] != 0 || len(fake.removed[13]) != 0 {
+		t.Fatalf("unchanged payload must not read or write (gets=%d removed=%v); the next cycle's payload carries the duplicate", fake.gets[13], fake.removed[13])
 	}
 }

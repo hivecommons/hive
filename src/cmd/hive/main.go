@@ -8708,7 +8708,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	if stageResult, stageErr := automerge.ApplyStageLabels(ctx, ghClient, opts); stageErr != nil {
 		logger.Warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
 	} else if stageResult.Writes+stageResult.Comments > 0 {
-		logger.Info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments)
+		logger.Info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments, "healed", stageResult.Healed)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -9158,7 +9158,7 @@ func applyDuplicatePRGuard(
 	// decision about each open issue onto its stage/NNN label (and strip the
 	// retired claimed / hive/in-progress / 🐝 covered by PR labels).
 	if res := github.SyncIssueStageLabels(ctx, ghClient, actionable, nil, time.Now(), logger); res.Writes+res.Comments > 0 {
-		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments)
+		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments, "healed", res.Healed)
 	}
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
 }
