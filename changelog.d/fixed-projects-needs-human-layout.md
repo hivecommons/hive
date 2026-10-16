@@ -1,0 +1,1 @@
+- Dashboard Projects: the cross-repo "Needs human" filtered list now actually replaces the repo cards (`.repo-grid` display:flex was beating `hidden`), the 🐝 Swarm header sits directly above the cards it describes and hides with them, the list gets its own persisted collapse chevron, and the header hint says how to collapse/close it and where to reopen it.

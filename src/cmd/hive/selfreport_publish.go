@@ -220,7 +220,7 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 			}
 		})
 		state = dashSrv.FleetReportState()
-		logger.Info("fleet report: upstream report recorded", "fingerprint", report.Fingerprint, "class", report.Class, "issue", write.Number, "created", created, "joined", write.Joined, "commented", write.Commented, "label_added", write.LabelAdded, "body_updated", write.BodyUpdated)
+		logger.Info("fleet report: upstream report recorded", "fingerprint", report.Fingerprint, "class", report.Class, "issue", write.Number, "created", created, "joined", write.Joined, "commented", write.Commented, "body_updated", write.BodyUpdated)
 	}
 
 	for _, report := range res.Recoveries {

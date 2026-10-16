@@ -468,16 +468,6 @@ func SeenMarker(fp, hive string) string {
 	return fmt.Sprintf("%shive=%s fp=%s -->", SelfReportSeenMarkerPrefix, labelValue(hive), safeToken(fp))
 }
 
-// HiveLabel is the hive/<slug> provenance label for hive, or "" when the
-// hive is anonymous.
-func HiveLabel(hive string) string {
-	v := labelValue(hive)
-	if v == "" {
-		return ""
-	}
-	return "hive/" + v
-}
-
 // BuildRuntimeReport renders a runtime-error report. hive is the display
 // identity (hub slug for hosted spokes, anonymous instance otherwise).
 func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, version, commit string, now time.Time) Report {
@@ -485,9 +475,6 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 		hive = instance
 	}
 	labels := []string{LabelFleetReport, LabelSelfReport, LabelKindBug, LabelNeedsTriage, "severity:" + labelValue(ev.Severity), "trigger:" + TriggerRuntimeError, "class:" + labelValue(ev.Class)}
-	if hl := HiveLabel(hive); hl != "" && hive != instance {
-		labels = append(labels, hl)
-	}
 	sort.Strings(labels)
 	title := fmt.Sprintf("[selfreport] %s: %s", ev.Class, ShortMessage(ev.Message))
 	var b strings.Builder

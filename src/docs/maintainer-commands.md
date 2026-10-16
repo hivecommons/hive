@@ -76,10 +76,9 @@ repeat comments can repeat their documented action.
 
 Issues labelled `hive/selfreport` were filed by a hive about itself
 (`[selfreport] <class>: …`, see [fleet-report.md](fleet-report.md)). Each
-affected hive is listed in the `Affected hives (N)` block of the body and
-carries its `hive/<slug>` label; hives that hit the same condition add
-themselves rather than filing duplicates, so the label and the body block are
-the fleet-wide tally. Hives post a "cleared on <hive>" comment when the
+affected hive is listed in the `Affected hives (N)` block of the body; hives
+that hit the same condition add themselves rather than filing duplicates, so
+the body block is the fleet-wide tally. Hives post a "cleared on <hive>" comment when the
 condition stops but never close these issues — close them when the fix has
 rolled out. A fingerprint closed within the last 7 days is not re-filed; a
 recurrence after that reopens the search and a new issue may appear, so

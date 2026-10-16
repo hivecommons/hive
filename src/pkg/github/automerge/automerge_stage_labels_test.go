@@ -803,3 +803,115 @@ func TestApplyStageLabels_HealsDuplicateStage(t *testing.T) {
 		t.Fatalf("added %v, want only 072", api.added)
 	}
 }
+
+// hivecommons/hive#12545: agent/<lane> (routing) and hive/<id> (provenance)
+// mean "the hive owns / authored this PR". A review-fix kick's `gh pr edit
+// --body` on a contributor's PR stamped both onto it; the reconciler strips
+// them from any PR the App did not author, and leaves self-authored PRs alone.
+func TestStrayOwnershipLabels(t *testing.T) {
+	labels := []string{"agent/scanner", "hive/oke-11", "stage/050-review-pending", "author/trusted", "hive/other-hive"}
+	got := strayOwnershipLabels(labels, "mendezr", "kubestellar-hive[bot]", "oke-11")
+	if !reflect.DeepEqual(got, []string{"agent/scanner", "hive/oke-11"}) {
+		t.Fatalf("contributor PR: stray = %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "kubestellar-hive[bot]", "kubestellar-hive[bot]", "oke-11"); got != nil {
+		t.Fatalf("self-authored PR must keep its labels, got %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "kubestellar-hive", "kubestellar-hive[bot]", "oke-11"); got != nil {
+		t.Fatalf("[bot] suffix must be tolerated, got %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "", "kubestellar-hive[bot]", "oke-11"); got != nil {
+		t.Fatalf("unknown author must fail closed, got %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "mendezr", "", "oke-11"); got != nil {
+		t.Fatalf("unknown App login must fail closed, got %v", got)
+	}
+	if got := strayOwnershipLabels(labels, "mendezr", "kubestellar-hive[bot]", ""); !reflect.DeepEqual(got, []string{"agent/scanner"}) {
+		t.Fatalf("no hive id: only agent/* is stray, got %v", got)
+	}
+}
+
+func TestApplyStageLabels_StripsStrayOwnershipLabelsFromContributorPR(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 20, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, HiveID: "oke-11"} }
+
+	pr := stagePR(12495, "author/trusted", "stage/050-review-pending", "agent/scanner", "hive/oke-11")
+	pr.User = &gh.User{Login: gh.Ptr("mendezr")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageAuthor("acme", "widget", 12495, stagelabels.AuthorTrusted)
+	res, err := e.ApplyStageLabels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	removed := append([]string(nil), api.removed...)
+	api.mu.Unlock()
+	sort.Strings(removed)
+	if !reflect.DeepEqual(removed, []string{"agent/scanner", "hive/oke-11"}) {
+		t.Fatalf("removed %v, want the two stray ownership labels (res %+v)", removed, res)
+	}
+	if res.Writes < 2 {
+		t.Fatalf("writes = %d, want the removals counted (%+v)", res.Writes, res)
+	}
+
+	// Self-authored PR with the same labels: nothing is stripped.
+	api.reset()
+	pr = stagePR(7, "stage/050-review-pending", "agent/scanner", "hive/oke-11")
+	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "check-pending", false, nil)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	for _, l := range api.removed {
+		if strings.HasPrefix(l, "agent/") || strings.HasPrefix(l, "hive/") {
+			t.Fatalf("self-authored PR lost %q", l)
+		}
+	}
+}
+
+// hivecommons/hive#12557: a gate flapping between merge-queue and a pending
+// stage on one unchanged head used to post a stage-regressed comment every
+// sweep, because each recover re-armed the dedupe. One comment per head.
+func TestApplyStageLabelsRegressionFlapOnSameHeadCommentsOnce(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 17, 15, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	observe := func(labels []string, reason string) {
+		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(12423, labels...), reason, false, nil)
+		e.noteStageAuthor("acme", "widget", 12423, stagelabels.AuthorTrusted)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued := []string{"stage/100-merge-queue", "author/trusted"}
+	held := []string{"stage/050-review-pending", "stage/regressed", "author/trusted"}
+
+	observe(nil, "head-changed-since-eval")
+	api.reset()
+	comments := 0
+	for i := 0; i < 4; i++ {
+		clock.advance(6 * time.Minute)
+		observe(queued, "pending: head pushed 54s ago (< min_head_age)")
+		comments += len(api.comments)
+		api.reset()
+		clock.advance(6 * time.Minute)
+		observe(held, "head-changed-since-eval")
+		comments += len(api.comments)
+		api.reset()
+	}
+	if comments != 1 {
+		t.Fatalf("regression comments across 4 flaps on one head = %d, want 1", comments)
+	}
+}

@@ -132,6 +132,7 @@ writes no entry.
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
 | Origin-label migration (one-time, `from-review` → `origin/review`) | `origin_labels.go` | yes (`origin_label_migrated`, one per item swapped, with `from`, `to`; report file `/data/origin-label-migration.json`) | yes |
+| `hive/<hive-id>` label retire sweep (every boot until clean, #12539) | `hive_id_label_retire.go` | yes (`hive_id_label_retired`, one per open item stripped, with `label`, `origin_source`; report file `/data/hive-id-label-retire-<hive-id>.json`) | yes |
 | Signed-commit reconcile: branch rewrite | `pr_signed_reconcile.go` | yes (`signed_commit_reauthored`, with `branch`, `base`, `commit`, `replaced_commits`) | yes / PR number |
 | Signed-commit reconcile: "cannot sign" comment | `pr_signed_reconcile.go` | yes (`signed_commit_skip_noted`, with `reason`) | yes / PR number |
 | Review backlog issues | `review_backlog.go` | yes (`review_backlog_issue_filed`, one per GitHub issue, with `pr`, `perspective`, `reused`, `destination`) | yes / backlog issue number |

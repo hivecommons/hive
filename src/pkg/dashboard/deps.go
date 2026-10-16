@@ -251,6 +251,10 @@ type NousState struct {
 	GatePending  map[string]interface{}   `json:"gate_pending,omitempty"`
 	GateResponse map[string]interface{}   `json:"gate_response,omitempty"`
 	SnapshotDir  string                   `json:"-"`
+	// GovernorDir is where the external experiment loop writes ledger.json,
+	// principles.json and its state (/var/run/nous/governor). Empty means
+	// the loop's activity cannot be observed (#12541).
+	GovernorDir string `json:"-"`
 	// CampaignFile is the per-campaign baseline store (pkg/nous). Empty
 	// means "<dir of SnapshotDir>/campaigns.json"; with no SnapshotDir
 	// either, campaigns are disabled and the baseline is global.
@@ -308,6 +312,39 @@ const (
 // mode: it flips the trust-ladder mode to suggest so the experiment loop
 // may design proposals for review.
 const NousActionGenerateProposals = "generate_proposals"
+
+// NousLoopIdleCycles is how many governor evaluation cycles may pass without
+// any file write under NousState.GovernorDir before the Experiment Lab says
+// the external experiment loop is not running on this hive (#12541). The
+// hive designs no proposals itself, so a ready card in suggest/evolve mode
+// would otherwise wait forever. 24 cycles is 2 h at the default 300 s
+// interval.
+const NousLoopIdleCycles = 24
+
+// ExperimentLoopLastWrite returns the newest modification time of the files
+// directly under GovernorDir — the directory the hive reads the external
+// experiment loop's output from — or the zero time when nothing was ever
+// written there.
+func (ns *NousState) ExperimentLoopLastWrite() time.Time {
+	var last time.Time
+	if ns == nil || ns.GovernorDir == "" {
+		return last
+	}
+	entries, err := os.ReadDir(ns.GovernorDir)
+	if err != nil {
+		return last
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if mt := info.ModTime(); mt.After(last) {
+			last = mt
+		}
+	}
+	return last.UTC()
+}
 
 // NousBaselinePct reports baseline-collection progress as a percentage,
 // capped at 100 once count reaches NousBaselineTarget. count keeps growing

@@ -106,6 +106,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			Adoption:         stage.Adoption.IsEnabled(),
 			GraceOnline:      stage.EffectiveContributorGraceOnline(),
 			GraceOffline:     stage.EffectiveContributorGraceOffline(),
+			HiveID:           cfg.HiveID,
 		}
 	}
 }

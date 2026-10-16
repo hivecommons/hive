@@ -155,7 +155,7 @@ func TestHubSelfReportIngestJoinsExistingFingerprint(t *testing.T) {
 	}
 	var labels map[string][]string
 	_ = json.Unmarshal(gh.bodies[2], &labels)
-	if strings.Join(labels["labels"], ",") != "hive/h1,hive/selfreport" {
+	if strings.Join(labels["labels"], ",") != "hive/selfreport" {
 		t.Fatalf("labels = %v", labels)
 	}
 }

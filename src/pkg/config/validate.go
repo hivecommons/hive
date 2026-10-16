@@ -181,7 +181,7 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	} else {
 		c.Dashboard.PublicURL = normalized
 	}
-	if normalized, err := ValidateSnapshotURL(c.Hub.SnapshotURL); err != nil {
+	if normalized, err := validateSnapshotURL(c.Hub.SnapshotURL, true); err != nil {
 		return err
 	} else {
 		c.Hub.SnapshotURL = normalized

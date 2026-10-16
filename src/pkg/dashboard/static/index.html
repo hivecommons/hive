@@ -1755,6 +1755,8 @@
        `min-width: 0` lets a card the operator dragged wider than the
        viewport shrink back to fit instead of overflowing the page. */
     .repo-grid { --repo-cols: 4; --repo-gap: var(--sp-4); display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--repo-gap); }
+    /* The cross-repo filtered view swaps the grid out; display:flex above would otherwise beat the hidden attribute. */
+    .repo-grid[hidden], .swarm-panel[hidden] { display: none; }
     @media (max-width: 1400px) { .repo-grid { --repo-cols: 3; } }
     @media (max-width: 1000px) { .repo-grid { --repo-cols: 2; } }
     @media (max-width: 640px) { .repo-grid { --repo-cols: 1; } }
@@ -2041,6 +2043,10 @@
     .hf-editor-close { margin-left:auto; font-size:var(--fs-sm); }
     .hf-crossrepo { display:flex; flex-direction:column; gap:var(--sp-3); margin-top:var(--sp-3); }
     .hf-crossrepo-head { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; }
+    .hf-crossrepo-all { margin-top:var(--sp-0); border-top:0; padding-top:var(--sp-0); }
+    .hf-crossrepo-head.hf-header { text-transform:none; letter-spacing:normal; font-size:var(--fs-sm); color:var(--fg); }
+    .hf-crossrepo-body { gap:var(--sp-3); margin-top:var(--sp-3); }
+    .hf-crossrepo-body.collapsed { margin-top:0; }
     .hf-crossrepo-title { font-weight:700; }
     .hf-crossrepo-group { border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2) var(--sp-4); background:var(--card); }
     .hf-crossrepo-group .hf-section { margin-top:var(--sp-0); border-top:0; padding-top:var(--sp-0); }
@@ -3782,6 +3788,7 @@
     .nous-exp-stage { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .nous-exp-stage .nous-exp-stage-label { font-weight: 600; }
     .nous-exp-stage[data-stage="ready"] .nous-exp-stage-label { color: var(--green); }
+    .nous-exp-stage[data-loop-idle="1"] .nous-exp-stage-label { color: var(--yellow); }
     .nous-exp-stage[data-stage="proposed"] .nous-exp-stage-label { color: var(--yellow); }
     .nous-exp-stage[data-stage="running"] .nous-exp-stage-label { color: var(--accent); }
     .nous-exp-stage-detail { color: var(--muted); }
@@ -6175,10 +6182,12 @@
            populated from /api/config at boot. Enforcement lives server-side
            at enumeration — this note only surfaces the active policy. -->
       <div id="repos-issue-filter" style="display:none;font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)"></div>
-      <div id="swarm-panel" class="swarm-panel"></div>
       <!-- Cross-repo filtered view (#12172): opened from a pinned sidebar
            filter; replaces the card grid with one list grouped by repo. -->
       <div id="hf-crossrepo" class="hf-crossrepo" hidden aria-label="Cross-repo filtered view"></div>
+      <!-- Swarm header sits directly above the repo cards it refers to
+           ("start a swarm from any repository card"), below the filtered list. -->
+      <div id="swarm-panel" class="swarm-panel"></div>
       <div class="repo-grid" id="repos"></div>
     </div>
   </div>
@@ -18151,13 +18160,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     /** Sidebar navigation elsewhere (including back to Projects) leaves the cross-repo view. */
     function hfOnNavigate() { if (_hfUI.crossRepo) { _hfUI.crossRepo = false; hfRenderCrossRepo(); hfRenderPinned(); } }
+    const HF_CROSSREPO_SECTION_ID = 'hf-crossrepo-all';
     function hfCrossSectionId(repoFull) { return 'hf-x-' + String(repoFull || '').toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
     function hfRenderCrossRepo() {
       const panel = document.getElementById('hf-crossrepo');
       const grid = document.getElementById('repos');
+      const swarm = document.getElementById('swarm-panel');
       if (!panel) return;
       panel.hidden = !_hfUI.crossRepo;
       if (grid) grid.hidden = !!_hfUI.crossRepo;
+      if (swarm) swarm.hidden = !!_hfUI.crossRepo;
       if (!_hfUI.crossRepo) return;
       const cur = hfCurrent();
       const filter = hfEffectiveFilter(cur.filter);
@@ -18175,9 +18187,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           + `<div class="hf-body${collapsed ? ' collapsed' : ''}" id="${id}-body">${entries.map(e => hfRowHtml(e, filter)).join('')}</div></div></div>`;
       }).join('');
       const name = cur.name + (cur.modified ? ' *' : '');
-      const head = `<div class="hf-crossrepo-head"><span class="hf-crossrepo-title">🔎 ${esc(name)}</span><span class="badge-count"${total === 0 ? ' data-zero' : ''}>${total}</span><span class="hf-muted">across ${repos.length} project${repos.length === 1 ? '' : 's'} — refine with the facet bar above and save to keep the change</span><button type="button" class="hv-btn btn-secondary btn-sm hf-editor-close" data-action="hfCloseCrossRepo" title="Back to the project cards">← Project cards</button></div>`;
+      // The whole list collapses like its per-repo groups do, keyed with the same section-collapse store so it survives reload.
+      const allId = HF_CROSSREPO_SECTION_ID;
+      const allCollapsed = hfSectionCollapsed(allId, total);
+      const head = `<div class="hf-crossrepo-head hf-header" role="button" tabindex="0" aria-expanded="${allCollapsed ? 'false' : 'true'}" aria-controls="${allId}-body" data-action="hfToggleSection" data-keydown-action="hfToggleSection" data-keys="Enter, " data-arg0="${allId}" data-arg-types="s" title="${allCollapsed ? 'Expand' : 'Collapse'} the filtered list"><span class="section-chevron${allCollapsed ? ' collapsed' : ''}">▼</span><span class="hf-crossrepo-title">🔎 ${esc(name)}</span><span class="badge-count"${total === 0 ? ' data-zero' : ''}>${total}</span><span class="hf-muted">across ${repos.length} project${repos.length === 1 ? '' : 's'} — refine with the facet bar above and save to keep the change · collapse with the chevron, or ← Project cards to close (reopen from 📌 ${esc(cur.name)} in the sidebar)</span><button type="button" class="hv-btn btn-secondary btn-sm hf-editor-close" data-action="hfCloseCrossRepo" data-stop="1" title="Close this list and show the project cards again">← Project cards</button></div>`;
       const empty = total === 0 ? `<div class="hf-empty">${hfFilterIsEmpty(filter) ? 'No filter — pick labels, facets or text above' : 'Nothing matches this filter in any project'}</div>` : '';
-      setIfChanged(panel, head + empty + groups);
+      setIfChanged(panel, `<div class="hf-section hf-crossrepo-all${allCollapsed ? ' collapsed' : ''}" id="${allId}" data-hf-count="${total}">${head}<div class="hf-body hf-crossrepo-body${allCollapsed ? ' collapsed' : ''}" id="${allId}-body">${empty}${groups}</div></div>`);
     }
     function hfToggleFacetKinds(value) { hfToggleFacet('kinds', value); }
     function hfToggleFacetStates(value) { hfToggleFacet('states', value); }
@@ -23499,7 +23514,12 @@ function burnAreaChart() {
         else { stage = 'baseline'; label = `collecting baseline ${n} / ${target}`; }
       }
       const detail = c.stageDetail ? `<span class="nous-exp-stage-detail">${escapeHtml(c.stageDetail)}</span>` : '';
-      return `<div class="nous-exp-stage" data-stage="${escapeHtml(stage)}"><span class="nous-exp-stage-label">${escapeHtml(label)}</span>${detail}</div>`;
+      // The hive designs no proposals itself: when the server reports the
+      // external experiment loop idle, point at how to run it (#12541).
+      const loopDocs = c.experimentLoopIdle
+        ? '<a class="nous-exp-stage-docs" href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">How to run the experiment loop</a>'
+        : '';
+      return `<div class="nous-exp-stage" data-stage="${escapeHtml(stage)}"${c.experimentLoopIdle ? ' data-loop-idle="1"' : ''}><span class="nous-exp-stage-label">${escapeHtml(label)}</span>${detail}${loopDocs}</div>`;
     }
 
     const NOUS_PRINCIPLES_EXPLAINER = 'Principles are durable lessons the lab distils from judged experiments (principles.json). A new lab starts at 0 and the count grows as experiments conclude; none are needed to start an experiment.';
@@ -44678,7 +44698,7 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${reposOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="fleet-report" data-key="include_repos"></div>
             <span class="config-toggle-label">Name the watched repositories in self-reports ${yamlHint('governor.fleet_report.include_repos')} ${settingHelpMark('settings', 'features', 'Name the watched repositories in self-reports', `When on (default), a self-report lists the owner/repo names this hive watches and the owners derived from them, and the fleet issue merges them into its Affected repos / Affected owners lines, so a maintainer can see which projects an error touches. The report repo is public: turn this off if the watched repos include private repositories — the fields then render as "—" and nothing about the repos leaves the hive.`)}</span>
           </div>
-          <div class="qa-schedule">${fr.hive_slug ? `<span class="qa-note">Identified upstream as <code>hive/${esc(fr.hive_slug)}</code>. </span>` : ''}${openHtml}</div>
+          <div class="qa-schedule">${fr.hive_slug ? `<span class="qa-note">Identified upstream as <code>${esc(fr.hive_slug)}</code>. </span>` : ''}${openHtml}</div>
         </div>`;
     }
 
