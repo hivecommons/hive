@@ -109,7 +109,7 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	html := indexHTML(t)
 	var source strings.Builder
 	source.WriteString("const EV_PALETTE_SIZE = 6;\n")
-	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "renderEvidenceSummary"} {
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
