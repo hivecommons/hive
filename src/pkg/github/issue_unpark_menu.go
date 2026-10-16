@@ -8,13 +8,23 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
-// unparkOwnerStepMarker tags a comment the hive posted with
-// `hive-open-issue comment --needs-decision`: the remaining step is one only
-// the owner can do (hivecommons/hive#12334). The "What to reply" notice offers
-// `/hive done` while the newest such comment is unanswered.
+// unparkOwnerStepMarker tags a body the hive posted with `hive-open-issue
+// comment --needs-decision` or `hive-open-issue issue --needs-decision`: the
+// remaining step is one only the owner can do (hivecommons/hive#12334). The
+// "What to reply" notice offers `/hive done` while the newest such text is
+// unanswered and lists no lettered options.
 const unparkOwnerStepMarker = "<!-- hive:owner-step -->"
 
-// unparkDoneDecision is the recorded decision for `/hive done`.
+// unparkAcceptedMarker tags the hive's reply to an accepted un-park command
+// (`/hive approve`, `/hive decision`, `/hive done`). Only such a reply answers
+// an owner step; `/hive help`, the prose hint and the ai_author refusal leave
+// the step open.
+const unparkAcceptedMarker = "<!-- hive:unpark-accepted -->"
+
+// unparkDoneDecision is the recorded decision for `/hive done`. The reply
+// comment that carries it is the whole hand-off: the lane that next picks up
+// the issue reads it, re-checks the owner's step and closes the issue once
+// the fix is verified. No label or queue state encodes the decision.
 const unparkDoneDecision = "the owner-only step is done; Hive re-checks it and closes the issue once the fix is verified"
 
 // unparkMenu is what the "What to reply" notice and `/hive help` offer on one
@@ -31,54 +41,68 @@ type unparkMenu struct {
 	ownerStep bool
 }
 
-// unparkMenuFromBody reads the menu from the issue body alone.
+// unparkMenuFromBody reads the menu from the issue body alone. An issue
+// filed with `hive-open-issue issue --needs-decision` carries the owner-step
+// marker in its body; it is an owner step when it lists no options.
 func unparkMenuFromBody(issueBody string) unparkMenu {
 	m := unparkMenu{options: unparkOptionLabels(issueBody)}
 	m.hasRecommendation = unparkMentionsRecommendation(issueBody)
 	if m.hasRecommendation {
 		m.recommended = unparkRecommendedOption(issueBody, m.options)
 	}
+	m.ownerStep = isUnparkOwnerStepText(issueBody)
 	return m
+}
+
+// isUnparkOwnerStepText reports whether text parks the issue on a step only
+// the owner can do: it carries the marker and lists no lettered options (a
+// comment parked with --needs-decision that lists options is a choice, not a
+// manual step).
+func isUnparkOwnerStepText(text string) bool {
+	return strings.Contains(text, unparkOwnerStepMarker) && len(unparkOptionLabels(text)) == 0
 }
 
 // unparkMenuFor reads the menu from the issue body and from the hive's own
 // comments. The newest hive comment that lists options wins over the body,
-// because agents often post the options in a comment after filing.
+// because agents often post the options in a comment after filing, and the
+// recommended option is read from the newest text that states a
+// recommendation, so a body-level recommendation is never pinned onto
+// options a later comment listed.
 func (c *Client) unparkMenuFor(issueBody string, comments []*gh.IssueComment) unparkMenu {
 	m := unparkMenuFromBody(issueBody)
-	source := issueBody
-	var ownerStepBody string
-	ownerStep := false
+	recommendationSource := ""
+	if m.hasRecommendation {
+		recommendationSource = issueBody
+	}
+	ownerStep := m.ownerStep
 	for _, cm := range comments {
 		if cm == nil || !c.isHiveAccount(cm.GetUser()) {
 			continue
 		}
 		body := cm.GetBody()
 		if strings.Contains(body, unparkReplyMarkerPrefix) {
-			// A /hive command was answered after any earlier owner step.
-			ownerStep = false
+			// Only an accepted command answers an owner step; `/hive help`,
+			// the prose hint and the ai_author refusal leave it open.
+			if strings.Contains(body, unparkAcceptedMarker) {
+				ownerStep = false
+			}
 			continue
 		}
 		if strings.Contains(body, unparkNoticeMarker) {
 			continue
 		}
 		if strings.Contains(body, unparkOwnerStepMarker) {
-			ownerStep, ownerStepBody = true, body
+			ownerStep = isUnparkOwnerStepText(body)
 		}
 		if opts := unparkOptionLabels(body); len(opts) > 0 {
-			m.options, source = opts, body
+			m.options = opts
 		}
 		if unparkMentionsRecommendation(body) {
-			m.hasRecommendation = true
+			m.hasRecommendation, recommendationSource = true, body
 		}
 	}
-	m.recommended = ""
-	if unparkMentionsRecommendation(source) {
-		m.recommended = unparkRecommendedOption(source, m.options)
-	}
-	// A comment parked with --needs-decision that lists options is a choice,
-	// not a manual step.
-	m.ownerStep = ownerStep && len(unparkOptionLabels(ownerStepBody)) == 0
+	m.recommended = unparkRecommendedOption(recommendationSource, m.options)
+	m.ownerStep = ownerStep
 	return m
 }
 
@@ -89,20 +113,26 @@ func (m unparkMenu) bullets() string {
 		fmt.Fprintln(&b, "- `/hive done`: you did the step only you can do; Hive re-checks it and closes the issue once it is verified")
 	}
 	switch {
-	case len(m.options) > 0:
-		first := m.recommended
-		if first == "" {
-			first = m.options[0]
-		}
-		if m.recommended != "" || m.hasRecommendation {
-			fmt.Fprintf(&b, "- `/hive approve`: go with the recommendation (option %s)\n", first)
-		} else {
-			fmt.Fprintf(&b, "- `/hive approve`: go with option %s\n", first)
-		}
+	case len(m.options) > 0 && m.recommended != "":
+		fmt.Fprintf(&b, "- `/hive approve`: go with the recommendation (option %s)\n", m.recommended)
 		for _, opt := range m.options {
-			if opt == first {
+			if opt == m.recommended {
 				continue
 			}
+			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s\n", opt, opt)
+		}
+	case len(m.options) > 0 && m.hasRecommendation:
+		// A recommendation is stated but names none of the listed options,
+		// so no option is attributed to it; every option stays an explicit
+		// decision.
+		fmt.Fprintln(&b, "- `/hive approve`: go with the recommendation")
+		for _, opt := range m.options {
+			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s\n", opt, opt)
+		}
+	case len(m.options) > 0:
+		first := m.options[0]
+		fmt.Fprintf(&b, "- `/hive approve`: go with option %s\n", first)
+		for _, opt := range m.options[1:] {
 			fmt.Fprintf(&b, "- `/hive decision %s`: go with option %s\n", opt, opt)
 		}
 	case m.hasRecommendation:
@@ -182,8 +212,9 @@ func unparkBoldOptionLetter(line string) string {
 	return ""
 }
 
-// ownerStepCommentBody tags a comment that parks its issue with
-// --needs-decision, so the "What to reply" notice can offer `/hive done`.
+// ownerStepCommentBody tags a body that parks its issue with
+// --needs-decision (a new issue or a comment on an existing one), so the
+// "What to reply" notice can offer `/hive done`.
 func ownerStepCommentBody(body string, needsDecision bool) string {
 	if !needsDecision || strings.Contains(body, unparkOwnerStepMarker) {
 		return body

@@ -158,4 +158,11 @@ Hive applies its configured needs-decision label itself, so the issue leaves
 the work queue and reaches the owner's "Your turn" inbox. The label relay
 refuses `needs-human` and `needs-decision` from agents, so use this flag
 rather than `gh issue edit --add-label`. Park only when a person must act; if
-another lane could do the work, leave the issue for that lane.
+another lane could do the work, leave the issue for that lane. When the
+owner replies `/hive done`, Hive un-parks the issue and its reply records
+the decision "the owner-only step is done; Hive re-checks it and closes the
+issue once the fix is verified". That reply is the hand-off: when you pick
+up a parked-then-released issue whose newest Hive reply records it, re-check
+the owner's step and, if the fix holds, say so on the issue and close it
+(`hive-open-issue close --repo <owner/repo> <number>`) instead of re-parking
+or re-filing it.

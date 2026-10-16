@@ -562,7 +562,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if req.NeedsDecision {
 			createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
 		}
-		res, err = c.createIssue(ctx, req.Repo, req.Title, body, createLabels, true)
+		res, err = c.createIssue(ctx, req.Repo, req.Title, ownerStepCommentBody(body, req.NeedsDecision), createLabels, true)
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict

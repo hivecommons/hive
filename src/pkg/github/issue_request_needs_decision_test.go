@@ -18,9 +18,15 @@ type needsDecisionFilter struct{ label string }
 func (needsDecisionFilter) Admits([]string) bool         { return true }
 func (f needsDecisionFilter) NeedsDecisionLabel() string { return f.label }
 
-// newIssueCreateLabelServer mocks the create path and records the labels sent
-// with each POST /issues.
-func newIssueCreateLabelServer(t *testing.T, mu *sync.Mutex, got *[][]string) *httptest.Server {
+// issueCreatePayload is what one POST /issues carried.
+type issueCreatePayload struct {
+	Labels []string `json:"labels"`
+	Body   string   `json:"body"`
+}
+
+// newIssueCreateLabelServer mocks the create path and records the labels and
+// body sent with each POST /issues.
+func newIssueCreateLabelServer(t *testing.T, mu *sync.Mutex, got *[]issueCreatePayload) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -32,12 +38,10 @@ func newIssueCreateLabelServer(t *testing.T, mu *sync.Mutex, got *[][]string) *h
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
-			var body struct {
-				Labels []string `json:"labels"`
-			}
+			var body issueCreatePayload
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			mu.Lock()
-			*got = append(*got, body.Labels)
+			*got = append(*got, body)
 			mu.Unlock()
 			_, _ = io.WriteString(w, `{"id":990099,"number":99,"html_url":"https://github.example/o/r/issues/99"}`)
 		default:
@@ -48,8 +52,13 @@ func newIssueCreateLabelServer(t *testing.T, mu *sync.Mutex, got *[][]string) *h
 
 func runNeedsDecisionCreate(t *testing.T, filter IssueAdmitter, req IssueRequest) []string {
 	t.Helper()
+	return runNeedsDecisionCreatePayload(t, filter, req).Labels
+}
+
+func runNeedsDecisionCreatePayload(t *testing.T, filter IssueAdmitter, req IssueRequest) issueCreatePayload {
+	t.Helper()
 	var mu sync.Mutex
-	var got [][]string
+	var got []issueCreatePayload
 	srv := newIssueCreateLabelServer(t, &mu, &got)
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
@@ -109,12 +118,32 @@ func TestIssueRequestWatcher_NeedsDecisionDefaultsLabel(t *testing.T) {
 
 // Without needs_decision the relay passes the agent's labels through as given.
 func TestIssueRequestWatcher_NoNeedsDecisionLeavesLabels(t *testing.T) {
-	labels := runNeedsDecisionCreate(t, needsDecisionFilter{label: "owner-call"}, IssueRequest{
+	got := runNeedsDecisionCreatePayload(t, needsDecisionFilter{label: "owner-call"}, IssueRequest{
 		Repo: "o/r", Title: "[architect] Refactor X", Body: "plain finding",
 		Labels: []string{"agent/architect"}, Agent: "architect",
 	})
+	labels := got.Labels
 	if hasLabelFold(labels, "owner-call") || hasLabelFold(labels, issueNeedsDecisionLabel) {
 		t.Errorf("needs-decision label applied without the flag; create labels = %v", labels)
+	}
+	if strings.Contains(got.Body, unparkOwnerStepMarker) {
+		t.Errorf("owner-step marker added without the flag; body = %q", got.Body)
+	}
+}
+
+// A new issue filed with needs_decision carries the owner-step marker, so
+// the "What to reply" notice offers `/hive done` on the issue path as well
+// as the comment path (hivecommons/hive#12372).
+func TestIssueRequestWatcher_NeedsDecisionIssueCarriesOwnerStepMarker(t *testing.T) {
+	got := runNeedsDecisionCreatePayload(t, nil, IssueRequest{
+		Repo: "o/r", Title: "[scanner] Enable the ruleset", Body: "Remaining step is yours: enable the ruleset in Settings.",
+		Agent: "scanner", NeedsDecision: true,
+	})
+	if !strings.Contains(got.Body, unparkOwnerStepMarker) {
+		t.Fatalf("issue filed with needs_decision must carry the owner-step marker; body = %q", got.Body)
+	}
+	if m := unparkMenuFromBody(got.Body); !m.ownerStep || !strings.Contains(m.bullets(), "`/hive done`") {
+		t.Fatalf("the body-level marker must offer /hive done:\n%s", m.bullets())
 	}
 }
 
