@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -63,6 +64,8 @@ type Bundle struct {
 	RevertedBy       []string          `json:"reverted_by,omitempty"`
 	FollowedUpBy     []string          `json:"followed_up_by,omitempty"`
 	Shadow           *Shadow           `json:"shadow,omitempty"`
+	Backfilled       bool              `json:"backfilled,omitempty"`
+	Backfill         *Backfill         `json:"backfill,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 	Signed           bool              `json:"signed"`
@@ -175,6 +178,47 @@ type ShadowGate struct {
 	EvaluatedAt      time.Time `json:"evaluated_at"`
 }
 
+// Backfill states, as reconstructed from forge history.
+const (
+	BackfillStateOpen   = "open"
+	BackfillStateClosed = "closed"
+	BackfillStateMerged = "merged"
+)
+
+// Backfill exclusion flags (hivecommons/hive#12371). They mirror the
+// pre-registration's population rules: a flagged bundle is kept on disk and
+// every reader decides whether to exclude or annotate it. Nothing is dropped
+// silently.
+const (
+	BackfillFlagPlaceholderHive = "placeholder_hive"
+	BackfillFlagHiveOnHive      = "hive_on_hive"
+	BackfillFlagUnderMinMerged  = "under_min_merged"
+)
+
+// BackfillFlags is every valid Backfill.Flags value.
+var BackfillFlags = []string{BackfillFlagPlaceholderHive, BackfillFlagHiveOnHive, BackfillFlagUnderMinMerged}
+
+// Backfill describes a bundle reconstructed after the fact from forge
+// history rather than recorded live (hivecommons/hive#12371). Such a bundle
+// has Backfilled set and carries only what the forge still knows: author,
+// outcome, timestamps and change links. Verdicts, CI, sentinel and shadow
+// observations are absent, never fabricated; policy.acmm_level is 0 unless
+// the operator stamped a known level for the window.
+type Backfill struct {
+	// Source names the history the bundle was built from, e.g. "github-api".
+	Source string `json:"source"`
+	// At is when the backfill ran.
+	At time.Time `json:"at"`
+	// State is the PR's outcome at At: open, closed (without merge) or merged.
+	State string `json:"state,omitempty"`
+	// ClosedAt is when a closed PR was closed; zero when open or merged.
+	ClosedAt time.Time `json:"closed_at,omitzero"`
+	// AuthorKindRule names the heuristic that decided author.kind.
+	AuthorKindRule string `json:"author_kind_rule,omitempty"`
+	// Flags are the pre-registration exclusion flags that apply to the repo.
+	Flags []string `json:"flags,omitempty"`
+}
+
 // BundleID returns the canonical bundle identifier owner/repo#number@head.
 func BundleID(repo string, number int, head string) string {
 	return fmt.Sprintf("%s#%d@%s", repo, number, head)
@@ -273,6 +317,27 @@ func (b *Bundle) Validate() error {
 				bad("shadow.intent: exactly would_have_blocked is required")
 			}
 			validateShadowGate("shadow.intent", g, bad)
+		}
+	}
+	if bf := b.Backfill; bf != nil {
+		if !b.Backfilled {
+			bad("backfill: present but backfilled is false")
+		}
+		if bf.Source == "" {
+			bad("backfill.source is required")
+		}
+		if bf.At.IsZero() {
+			bad("backfill.at is required")
+		}
+		switch bf.State {
+		case "", BackfillStateOpen, BackfillStateClosed, BackfillStateMerged:
+		default:
+			bad("backfill.state %q must be open, closed or merged", bf.State)
+		}
+		for i, f := range bf.Flags {
+			if !slices.Contains(BackfillFlags, f) {
+				bad("backfill.flags[%d]: unknown flag %q", i, f)
+			}
 		}
 	}
 	for _, l := range []struct {

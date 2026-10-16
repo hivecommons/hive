@@ -95,11 +95,12 @@ var evidenceExportColumns = []string{
 func newEvidenceCommand(env *commandEnv) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "evidence",
-		Short:   "Per-PR review evidence: export bundles stored on this spoke",
-		Long:    "Work with the review evidence bundles Hive stores under the evidence root (default /data/evidence).\nThe commands read the local filesystem only; they never contact a hive and never influence a merge.",
-		Example: "  hivectl evidence export --since 168h --format csv --out evidence.csv\n  hivectl evidence export --since 2026-10-01T00:00:00Z --repo hivecommons/hive",
+		Short:   "Per-PR review evidence: export stored bundles or backfill them from forge history",
+		Long:    "Work with the review evidence bundles Hive stores under the evidence root (default /data/evidence).\nexport reads the local filesystem only; backfill talks to the GitHub API. Neither contacts a hive and nothing here\ninfluences a merge.",
+		Example: "  hivectl evidence export --since 168h --format csv --out evidence.csv\n  hivectl evidence export --since 2026-10-01T00:00:00Z --repo hivecommons/hive\n  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run",
 	}
 	cmd.AddCommand(newEvidenceExportCommand(env))
+	cmd.AddCommand(newEvidenceBackfillCommand(env))
 	return cmd
 }
 

@@ -2594,6 +2594,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.preShutdownHooks.add("close-contribute-hub", func() {
 		b.dashSrv.CloseContributeHub()
 	})
+	// Monthly per-repo complexity/static-analysis snapshot (RFC #12062,
+	// #12363). Report-only: it writes evidence files and never touches merge
+	// eligibility.
+	b.startComplexityRunner(newComplexityRunner(b.cfg, b.currentGitHubClient, b.logger))
 
 	// Wire ioscan input enforcement (opt-in via ioscan.enabled) to the dashboard
 	// audit log so a blocked/redacted issue title surfaces in the existing
@@ -5873,6 +5877,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			if b.dashSrv != nil {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
+		}
+		// Provenance-only rename (from-review → origin/review). Nothing reads
+		// either label as a gate, so a failure here only leaves old names on
+		// open items; the marker is not written and the next boot retries.
+		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
+			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyFromReviewLabel, "error", err)
 		}
 	}
 	b.evalCycles++

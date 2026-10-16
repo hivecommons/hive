@@ -1610,6 +1610,26 @@
     .ev-legend i.cv-both { background:var(--red); }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
+    /* Evidence window pills (24h · 7d · 30d · custom) and the inline custom
+       from/to row that opens under the head when "custom" is active. */
+    .ev-window-controls { margin-left:auto; }
+    .ev-custom-range { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); width:100%; font-size:var(--fs-2xs); color:var(--muted); }
+    .ev-custom-range input[type="date"] { border:1px solid var(--border); border-radius:var(--r-sm); background:var(--bg); color:var(--text); font:inherit; font-size:var(--fs-2xs); padding:var(--sp-1) var(--sp-2); }
+    .ev-custom-range button { border:1px solid var(--amber); border-radius:var(--r-pill); background:color-mix(in srgb, var(--amber) 14%, transparent); color:var(--text); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); cursor:pointer; }
+    .ev-custom-range .ev-range-err { color:var(--red); }
+    .ev-custom-range[hidden] { display:none; }
+    /* Plain-language panel explainer: ⓘ toggle in the summary row, popover below. */
+    .ev-info { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:var(--sp-2); padding:0; border-radius:var(--r-pill); background:color-mix(in srgb, var(--blue) 18%, var(--panel)); border:1px solid color-mix(in srgb, var(--blue) 60%, transparent); color:var(--blue); font-size:var(--fs-2xs); line-height:1; font-weight:700; cursor:pointer; vertical-align:middle; }
+    .ev-info:hover, .ev-info:focus-visible, .ev-info[aria-expanded="true"] { background:var(--blue); border-color:var(--blue); color:var(--bg); outline:none; }
+    .ev-explainer { margin-top:var(--sp-2); padding:var(--sp-3); border:1px solid var(--border); border-left:3px solid var(--blue); border-radius:var(--r-sm); background:var(--panel); font-size:var(--fs-2xs); font-weight:400; color:var(--text); line-height:1.45; }
+    .ev-explainer[hidden] { display:none; }
+    .ev-explainer h4 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+    .ev-explainer h4:first-child { margin-top:0; }
+    .ev-explainer p { margin:2px 0 0; }
+    .ev-grade { display:inline-block; margin-top:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); font-weight:600; color:var(--muted); }
+    .ev-grade.strong { color:var(--green); border-color:var(--green); }
+    .ev-grade.fair { color:var(--amber); border-color:var(--amber); }
+    .ev-grade.weak { color:var(--red); border-color:var(--red); }
     .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
     .prt-role-select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
     .prt-legend { display:flex; gap:var(--sp-3); font-size:var(--fs-2xs); color:var(--muted); align-items:center; margin-top:var(--sp-1); }
@@ -22050,16 +22070,274 @@ function burnAreaChart() {
     const EV_PALETTE_SIZE = 6;
     let evLast = null;
 
+    // Evidence window (#12062): 24h · 7d · 30d · custom from/to, independent of
+    // the throughput pills and remembered per browser. The repo filter is
+    // still shared with the throughput card.
+    const EV_WINDOWS = [[24, '24h'], [168, '7d'], [720, '30d']];
+    const EV_WINDOW_STORAGE_KEY = 'hive.evidence.window';
+    const EV_WINDOW_DEFAULT_HOURS = 24;
+    const EV_CUSTOM_MAX_DAYS = 366; // mirrors evidenceSummaryMaxRangeDays server-side
+    const EV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    let evWindow = (() => {
+      try {
+        const raw = JSON.parse(localStorage.getItem(EV_WINDOW_STORAGE_KEY) || 'null');
+        if (raw && EV_DATE_RE.test(raw.from || '') && EV_DATE_RE.test(raw.to || '')) return { from: raw.from, to: raw.to };
+        if (raw && EV_WINDOWS.some(([h]) => h === Number(raw.hours))) return { hours: Number(raw.hours) };
+      } catch {}
+      return { hours: EV_WINDOW_DEFAULT_HOURS };
+    })();
+    let evCustomOpen = !!evWindow.from;
+    let evCustomError = '';
+    const evExplainOpen = new Set();
+
+    function evWindowQuery() {
+      return evWindow.from ? `from=${encodeURIComponent(evWindow.from)}&to=${encodeURIComponent(evWindow.to)}` : `hours=${encodeURIComponent(evWindow.hours)}`;
+    }
+    // Hours the current window spans; a date-only `to` is inclusive.
+    function evWindowHours() {
+      if (!evWindow.from) return evWindow.hours;
+      const ms = Date.parse(evWindow.to + 'T00:00:00Z') + 86400000 - Date.parse(evWindow.from + 'T00:00:00Z');
+      return Math.max(1, Math.round(ms / 3600000));
+    }
+    function evShortDate(iso) {
+      return formatDashboardDate(iso + 'T00:00:00Z', { month: 'short', day: 'numeric', timeZone: 'UTC' }, iso);
+    }
+    function evWindowLabel() {
+      if (evWindow.from) return `${evShortDate(evWindow.from)} – ${evShortDate(evWindow.to)}`;
+      const w = EV_WINDOWS.find(([h]) => h === evWindow.hours);
+      return `last ${w ? w[1] : evWindow.hours + 'h'}`;
+    }
+    function evSaveWindow() {
+      try { localStorage.setItem(EV_WINDOW_STORAGE_KEY, JSON.stringify(evWindow)); } catch {}
+    }
+    function setEvidenceWindow(hours) {
+      const h = Number(hours);
+      evWindow = { hours: EV_WINDOWS.some(([v]) => v === h) ? h : EV_WINDOW_DEFAULT_HOURS };
+      evCustomOpen = false;
+      evCustomError = '';
+      evSaveWindow();
+      renderEvidenceSummary(evLast);
+      return fetchEvidenceSummary();
+    }
+    function toggleEvidenceCustomRange() {
+      evCustomOpen = !evCustomOpen;
+      evCustomError = '';
+      renderEvidenceSummary(evLast);
+      const input = document.querySelector('#evidence-card .ev-custom-range input[name="from"]');
+      if (evCustomOpen && input) input.focus();
+    }
+    function applyEvidenceCustomRange(btn) {
+      const form = btn && btn.closest ? btn.closest('.ev-custom-range') : null;
+      const from = form ? String((form.querySelector('input[name="from"]') || {}).value || '') : '';
+      const to = form ? String((form.querySelector('input[name="to"]') || {}).value || '') : '';
+      if (!EV_DATE_RE.test(from) || !EV_DATE_RE.test(to)) evCustomError = 'Pick both a from and a to date.';
+      else if (to < from) evCustomError = '"To" must not be before "from".';
+      else if ((Date.parse(to) - Date.parse(from)) / 86400000 > EV_CUSTOM_MAX_DAYS) evCustomError = `Range must be ${EV_CUSTOM_MAX_DAYS} days or less.`;
+      else evCustomError = '';
+      if (evCustomError) { renderEvidenceSummary(evLast); return; }
+      evWindow = { from, to };
+      evSaveWindow();
+      renderEvidenceSummary(evLast);
+      return fetchEvidenceSummary();
+    }
+    function evWindowControls() {
+      const pills = EV_WINDOWS.map(([h, label]) => `<button type="button" class="${!evWindow.from && evWindow.hours === h ? 'active' : ''}" data-action="setEvidenceWindow" data-arg0="${h}" data-stop="1" title="Last ${label}">${label}</button>`).join('')
+        + `<button type="button" class="${evWindow.from || evCustomOpen ? 'active' : ''}" data-action="toggleEvidenceCustomRange" data-stop="1" aria-expanded="${evCustomOpen ? 'true' : 'false'}" aria-controls="ev-custom-range" title="Pick a from/to date range">custom</button>`;
+      const today = new Date().toISOString().slice(0, 10);
+      const range = `<div id="ev-custom-range" class="ev-custom-range" role="group" aria-label="Custom evidence date range" data-stop="1"${evCustomOpen ? '' : ' hidden'}><label>from <input type="date" name="from" value="${escapeHtml(evWindow.from || '')}" max="${today}"></label><label>to <input type="date" name="to" value="${escapeHtml(evWindow.to || '')}" max="${today}"></label><button type="button" data-action="applyEvidenceCustomRange" data-arg-types="t" data-stop="1">Apply</button>${evCustomError ? `<span class="ev-range-err" role="alert">${escapeHtml(evCustomError)}</span>` : ''}</div>`;
+      return `<div class="gov-pr-models-toggle window-pills-toolbar ev-window-controls" data-stop="1">${pills}</div>${range}`;
+    }
+    window.setEvidenceWindow = setEvidenceWindow;
+    window.toggleEvidenceCustomRange = toggleEvidenceCustomRange;
+    window.applyEvidenceCustomRange = applyEvidenceCustomRange;
+
     function evRate(num, den) {
       const d = Number(den) || 0;
       return d > 0 ? (Number(num) || 0) / d : null;
     }
+    function evPct(v) { return v == null ? '—' : Math.round(v * 100) + '%'; }
+
+    // ---- Plain-language explainers ("How to read the Evidence card" in
+    // docs/review-evidence.md). Every threshold below is documented there;
+    // change both together. Grades describe the data in the window, never a
+    // merge decision.
+    const EV_GRADE_MIN_N = 20;              // fewer samples than this → "Not enough data"
+    const EV_SHORT_WINDOW_HOURS = 48;       // windows this short get a "too early to judge" caveat
+    const EV_CALIB_STRONG = 0.8;            // top-confidence bucket merge rate ≥ → Strong
+    const EV_CALIB_FAIR = 0.6;              // ≥ → Fair, below → Weak
+    const EV_ERR_STRONG = 0.10;             // worst of false-approve / false-block ≤ → Strong
+    const EV_ERR_FAIR = 0.25;               // ≤ → Fair, above → Weak
+    const EV_REVERT_STRONG = 0.05;          // reverts within 14 d / merged ≤ → Strong
+    const EV_REVERT_FAIR = 0.15;            // ≤ → Fair, above → Weak
+    const EV_SHADOW_FALSE_ALARM_STRONG = 0.25; // held-but-merged-clean share ≤ → Strong
+    const EV_SHADOW_FALSE_ALARM_FAIR = 0.5;    // ≤ → Fair, above → Weak
+    const EV_DATA_SINCE = '2026-10-08';     // first evidence bundles were written
+    const EV_REVERTS_SINCE = '2026-10-15';  // reverted_by links recorded from this date
+    const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };
+
+    // evGrade: lower is better unless higherIsBetter. value null or n below the
+    // minimum → "none".
+    function evGrade(value, n, strongCut, fairCut, higherIsBetter) {
+      if (value == null || !(Number(n) >= EV_GRADE_MIN_N)) return 'none';
+      if (higherIsBetter) return value >= strongCut ? 'strong' : value >= fairCut ? 'fair' : 'weak';
+      return value <= strongCut ? 'strong' : value <= fairCut ? 'fair' : 'weak';
+    }
+    function evLimitsSentence() {
+      const hrs = evWindowHours();
+      const short = hrs <= EV_SHORT_WINDOW_HOURS ? ` Only ${hrs}h of data is in this window, so treat the grade as an early read.` : '';
+      return `Merged is not the same as correct, and a PR that is still open counts as not merged. Evidence has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}.${short}`;
+    }
+    function evGradeLine(grade, why) {
+      return `<span class="ev-grade ${grade}">Rated: ${EV_GRADES[grade]}</span>${why ? ` <span class="ev-grade-why">${escapeHtml(why)}</span>` : ''}`;
+    }
+
+    // Each explainer returns the four sections plus a grade. Text is written
+    // for a reader with no statistics background.
+    const EV_EXPLAINERS = {
+      'outcome-by-author': (dto) => {
+        const o = dto.outcomes_by_author_kind || {};
+        const kinds = Object.keys(o).filter((k) => Number(o[k] && o[k].n) > 0);
+        let merged = 0, decided = 0, reverted = 0;
+        const parts = kinds.map((k) => {
+          const x = o[k]; const d = (Number(x.merged) || 0) + (Number(x.closed) || 0);
+          merged += Number(x.merged) || 0; decided += d; reverted += Number(x.reverted_14d) || 0;
+          return `${k}: ${Number(x.merged) || 0} of ${Number(x.n) || 0} merged (${evPct(evRate(x.merged, x.n))}), ${Number(x.open) || 0} still open`;
+        });
+        const rr = evRate(reverted, merged);
+        const grade = evGrade(rr, merged, EV_REVERT_STRONG, EV_REVERT_FAIR, false);
+        return {
+          matters: 'If agent-written PRs merge far less often, or get reverted far more often, than human ones, the agents are making work rather than saving it.',
+          measured: 'For every pull request (PR) that has an evidence record, who wrote it — a human, an AI agent, or a bot — and what happened to it: merged, closed without merging, still open, or merged and then undone ("reverted") within 14 days.',
+          how: 'We take the newest evidence record per PR in the chosen window and count outcomes per author kind. Bars are plain counts scaled to the biggest group. The revert share is reverts within 14 days ÷ merged. Closed-without-merge is not recorded yet, so a closed PR still shows as open.',
+          good: `Similar merged shares across author kinds, and a revert share at or below ${Math.round(EV_REVERT_STRONG * 100)}% (Strong). ${Math.round(EV_REVERT_FAIR * 100)}% or less is Fair; above that is Weak. A big gap between agent and human merged shares is worth a look either way.`,
+          ours: `${parts.length ? parts.join(' · ') + '. ' : 'No PRs in this window. '}${merged} merged in total, ${reverted} reverted within 14 d (${evPct(rr)}). ${evLimitsSentence()}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} merged PRs` : `revert share ${evPct(rr)} of ${merged} merged`,
+        };
+      },
+      calibration: (dto) => {
+        const calib = Array.isArray(dto.reviewer_calibration) ? dto.reviewer_calibration : [];
+        let topN = 0, topMerged = 0, lowN = 0, lowMerged = 0, topName = '';
+        calib.forEach((p) => (p && p.buckets || []).forEach((b, i, arr) => {
+          if (!b) return;
+          if (i === arr.length - 1) { topName = String(b.bucket || ''); topN += Number(b.n) || 0; topMerged += Number(b.merged) || 0; }
+          else if (i === 0) { lowN += Number(b.n) || 0; lowMerged += Number(b.merged) || 0; }
+        }));
+        const topRate = evRate(topMerged, topN), lowRate = evRate(lowMerged, lowN);
+        const grade = evGrade(topRate, topN, EV_CALIB_STRONG, EV_CALIB_FAIR, true);
+        return {
+          matters: 'Humans decide how much to trust a review by its confidence. If 90%-sure verdicts are wrong as often as 50%-sure ones, the number is noise and should not be shown to people.',
+          measured: 'Whether the AI reviewers\u2019 confidence means anything. Each review verdict comes with a confidence number from 0 to 1. "Calibration" asks: when a reviewer says it is 90% sure, is it right about 90% of the time?',
+          how: 'Verdicts are grouped into confidence buckets (0.0–0.5, 0.5–0.7, 0.7–0.9, 0.9–1.0). For each bucket we plot how often the PR ended up merged (filled dot) and how often the verdict was a block (hollow circle). Dot size shows how many verdicts are in the bucket; one line per reviewer perspective.',
+          good: `Merged rate rising from left to right: low-confidence verdicts should merge less often, and the ${topName || '0.9–1.0'} bucket should be near 90–100% merged. ${Math.round(EV_CALIB_STRONG * 100)}% or more in the top bucket is Strong, ${Math.round(EV_CALIB_FAIR * 100)}% or more is Fair, below that Weak.`,
+          ours: `At ${topName || 'top'} confidence, ${evPct(topRate)} of ${topN} PRs merged${lowN ? `; at the lowest bucket, ${evPct(lowRate)} of ${lowN} merged` : ''}. A well-calibrated reviewer would be near 90–100% in the top bucket. ${evLimitsSentence()}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} verdicts in the top bucket` : `${evPct(topRate)} merged at ${topName} confidence`,
+        };
+      },
+      'accuracy-by-model': (dto) => {
+        const models = Array.isArray(dto.reviewer_accuracy_by_model) ? dto.reviewer_accuracy_by_model : [];
+        let approvals = 0, fa = 0, blocks = 0, fb = 0;
+        const perModel = [];
+        models.forEach((m) => {
+          if (!m) return;
+          let a = 0, f = 0, bl = 0, mb = 0;
+          Object.values(m.by_author_kind || {}).forEach((st) => { a += Number(st.approvals) || 0; f += Number(st.approved_not_merged) || 0; bl += Number(st.blocks) || 0; mb += Number(st.merged_after_block) || 0; });
+          approvals += a; fa += f; blocks += bl; fb += mb;
+          perModel.push({ model: String(m.model || 'unknown'), fa: evRate(f, a), a });
+        });
+        const faRate = evRate(fa, approvals), fbRate = evRate(fb, blocks);
+        const worst = Math.max(faRate == null ? -1 : faRate, fbRate == null ? -1 : fbRate);
+        const grade = evGrade(worst < 0 ? null : worst, approvals + blocks, EV_ERR_STRONG, EV_ERR_FAIR, false);
+        const best = perModel.filter((m) => m.fa != null && m.a >= EV_GRADE_MIN_N).sort((x, y) => x.fa - y.fa)[0];
+        return {
+          matters: 'A reviewer that approves things that never merge wastes human time; one that blocks things that merge anyway teaches people to ignore it. This shows which models earn trust, and whether they treat agent and human authors alike.',
+          measured: 'How often each AI reviewer model gets it wrong, split by who wrote the PR. A "false approve" is an approval on a PR that did not merge. A "false block" is a block (changes requested or reject) on a PR that merged anyway.',
+          how: 'For each reviewer model and author kind we count approvals and blocks, then compare each verdict with the PR\u2019s outcome in the window: false-approve rate = approvals on unmerged PRs ÷ all approvals; false-block rate = blocks on merged PRs ÷ all blocks.',
+          good: `Both bars short. ${Math.round(EV_ERR_STRONG * 100)}% or less on the worse of the two rates is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. Models should also look alike for human and agent authors; a model that only blocks agents is a bias, not accuracy.`,
+          ours: `Across all models: false-approve ${evPct(faRate)} of ${approvals} approvals, false-block ${evPct(fbRate)} of ${blocks} blocks.${best ? ` Lowest false-approve rate: ${best.model} at ${evPct(best.fa)}.` : ''} ${evLimitsSentence()}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} verdicts` : `worse rate ${evPct(worst)}`,
+        };
+      },
+      'shadow-gates': (dto) => {
+        const sg = dto.shadow_gate || {};
+        let heldN = 0, heldReverted = 0, heldMerged = 0, passedN = 0, passedReverted = 0;
+        ['review_gate', 'intent'].forEach((k) => {
+          const g = sg[k] || {}; const h = g.held || {}, p = g.passed || {};
+          heldN += Number(h.n) || 0; heldReverted += Number(h.reverted) || 0; heldMerged += Number(h.merged) || 0;
+          passedN += Number(p.n) || 0; passedReverted += Number(p.reverted) || 0;
+        });
+        const falseAlarm = evRate(heldMerged - heldReverted, heldMerged);
+        const grade = evGrade(falseAlarm, heldMerged, EV_SHADOW_FALSE_ALARM_STRONG, EV_SHADOW_FALSE_ALARM_FAIR, false);
+        return {
+          matters: 'Before a gate is allowed to hold real PRs, we want proof it would have caught problems without stopping good work. Shadow mode gives that proof without touching merges.',
+          measured: 'What would have happened if two safety gates were switched on. In "shadow mode" the review gate and intent verification only write down whether they would have stopped a PR; nothing is actually held or blocked.',
+          how: 'For each gate, PRs are split into "would have stopped" and "would have passed". Each bar shows how those PRs really turned out: merged, merged then reverted, or still open. A gate is useful when the PRs it would have stopped are the ones that later caused trouble.',
+          good: `Reverts sitting mostly in the "would have stopped" bar and few in "would have passed". Of the stopped PRs that merged, ${Math.round(EV_SHADOW_FALSE_ALARM_STRONG * 100)}% or fewer merging cleanly (a false alarm) is Strong, ${Math.round(EV_SHADOW_FALSE_ALARM_FAIR * 100)}% or fewer is Fair, above that Weak.`,
+          ours: `${Number(sg.n) || 0} PRs have a shadow observation. Would have stopped: ${heldN} (${heldMerged} merged, ${heldReverted} later reverted). Would have passed: ${passedN} (${passedReverted} later reverted). ${evLimitsSentence()}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} stopped-and-merged PRs` : `false alarms ${evPct(falseAlarm)} of ${heldMerged} stopped PRs that merged`,
+        };
+      },
+      'claim-vs-verdict': (dto) => {
+        const weeks = (Array.isArray(dto.claim_vs_verdict) ? dto.claim_vs_verdict : []).filter((w) => w && Number(w.n) > 0);
+        let claimed = 0, ciCaptured = 0, ciNotGreen = 0, notApprove = 0, both = 0;
+        weeks.forEach((w) => {
+          claimed += Number(w.claimed) || 0; ciCaptured += Number(w.ci_captured) || 0; ciNotGreen += Number(w.ci_not_green) || 0;
+          notApprove += Number(w.verdict_not_approve) || 0; both += Number(w.both) || 0;
+        });
+        const emptyCI = Number((dto.missing || {}).records_empty_ci) || 0;
+        const ciRate = evRate(ciNotGreen, ciCaptured);
+        const swarmRate = evRate(notApprove, claimed);
+        const grade = evGrade(ciRate, ciCaptured, EV_ERR_STRONG, EV_ERR_FAIR, false);
+        return {
+          matters: 'An agent that says "done" while the tests fail, or while the reviewers object, is creating work for humans instead of finishing it. This panel shows how often the claim and the checks disagree.',
+          measured: 'For agent-written PRs only: each week, how many PRs the agent claimed were done (it opened the PR or marked it ready), how many of those had CI (the automated test run) not green, how many got a reviewer verdict other than approve, and how many had both.',
+          how: 'We take the newest evidence record per agent-authored PR in the window and group by the week it was created. CI is read as captured when Hive checked merge eligibility, not the final run; a PR with no captured checks is left out of the CI count rather than counted as agreement. "Swarm not approve" is any verdict that is not an approve.',
+          good: `Few disagreements: CI not green on ${Math.round(EV_ERR_STRONG * 100)}% or less of the PRs with captured checks is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. A non-approve verdict is not proof the agent was wrong, so the swarm column is shown but not graded.`,
+          ours: `${claimed} agent PRs claimed done across ${weeks.length} week(s). Of ${ciCaptured} with captured checks, ${ciNotGreen} had CI not green (${evPct(ciRate)}); ${notApprove} got a non-approve verdict (${evPct(swarmRate)} of claimed); ${both} had both.${emptyCI ? ` ${emptyCI} record(s) had empty CI and are left out of the CI column.` : ''} ${evLimitsSentence()}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent PRs with captured checks` : `CI not green on ${evPct(ciRate)} of ${ciCaptured} PRs with checks`,
+        };
+      },
+    };
+
+    function evExplainerHtml(key, title, dto) {
+      const fn = EV_EXPLAINERS[key];
+      if (!fn) return { button: '', body: '' };
+      const x = fn(dto || {});
+      const id = `ev-explain-${key}`;
+      const open = evExplainOpen.has(key);
+      const section = (h, body) => `<h4>${h}</h4><p>${escapeHtml(body)}</p>`;
+      const button = `<button type="button" class="ev-info" data-action="toggleEvidenceExplainer" data-arg0="${key}" data-stop="1" data-prevent="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${id}" aria-label="Explain ${escapeHtml(title)}">ⓘ</button>`;
+      const body = `<div id="${id}" class="ev-explainer" role="region" aria-label="${escapeHtml(title)} explained"${open ? '' : ' hidden'}>${section('What is measured', x.measured)}${section('Why it matters', x.matters)}${section('How it is measured', x.how)}${section('What good looks like', x.good)}${section('What ours shows', x.ours)}${evGradeLine(x.grade, x.reason)}</div>`;
+      return { button, body };
+    }
+    function toggleEvidenceExplainer(key) {
+      if (evExplainOpen.has(key)) evExplainOpen.delete(key); else evExplainOpen.add(key);
+      const card = document.getElementById('evidence-card');
+      const pop = card && card.querySelector(`#ev-explain-${CSS.escape(key)}`);
+      const btn = card && card.querySelector(`.ev-info[data-arg0="${CSS.escape(key)}"]`);
+      const open = evExplainOpen.has(key);
+      if (pop) pop.hidden = !open;
+      if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      const details = pop && pop.closest('details');
+      if (open && details && !details.open) details.open = true;
+    }
+    window.toggleEvidenceExplainer = toggleEvidenceExplainer;
+    // Esc closes any open explainer and returns focus to its ⓘ button.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !evExplainOpen.size) return;
+      const card = document.getElementById('evidence-card');
+      if (!card) return;
+      const keys = Array.from(evExplainOpen);
+      keys.forEach(toggleEvidenceExplainer);
+      const btn = card.querySelector(`.ev-info[data-arg0="${CSS.escape(keys[keys.length - 1])}"]`);
+      if (btn) btn.focus();
+    });
 
     function evPanel(key, title, n, bodyHtml, note) {
       const card = document.getElementById('evidence-card');
       const prev = card && card.querySelector(`details[data-ev-panel="${key}"]`);
       const open = prev ? prev.open : true;
-      return `<details class="ev-panel" data-ev-panel="${key}"${open ? ' open' : ''}><summary>${escapeHtml(title)}<span class="ev-n" title="Samples behind this panel">n=${Number(n) || 0}</span></summary>${bodyHtml}<div class="ev-note"><b>What this does not show:</b> ${escapeHtml(note)}</div></details>`;
+      const ex = evExplainerHtml(key, title, evLast);
+      return `<details class="ev-panel" data-ev-panel="${key}"${open ? ' open' : ''}><summary>${escapeHtml(title)}${ex.button}<span class="ev-n" title="Samples behind this panel">n=${Number(n) || 0}</span></summary>${ex.body}${bodyHtml}<div class="ev-note"><b>What this does not show:</b> ${escapeHtml(note)}</div></details>`;
     }
 
     // Panel 1 (#12364): PR outcome by author kind. One row per kind with a
@@ -22229,6 +22507,7 @@ function burnAreaChart() {
       const card = document.getElementById('evidence-card');
       if (!card) return;
       dto = dto || {};
+      evLast = dto;
       const calib = Array.isArray(dto.reviewer_calibration) ? dto.reviewer_calibration : [];
       const models = Array.isArray(dto.reviewer_accuracy_by_model) ? dto.reviewer_accuracy_by_model : [];
       const calibN = calib.reduce((sum, p) => sum + (Number(p && p.n) || 0), 0);
@@ -22240,9 +22519,8 @@ function burnAreaChart() {
       const claims = Array.isArray(dto.claim_vs_verdict) ? dto.claim_vs_verdict : [];
       const claimN = claims.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
       const emptyCI = Number((dto.missing || {}).records_empty_ci) || 0;
-      const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
-      const scope = (dto.all_time ? 'all time' : `last ${windowName ? windowName[1] : (Number(dto.hours) || 0) + 'h'}`) + (dto.repo ? ` · ${dto.repo}` : '');
-      card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}</div><span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>`
+      const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
+      card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
           'Reverted means a reverted_by link to a revert PR within 14 d of merge; reverts without a linked PR are missed. Schema v1 bundles record a merge but not a close-without-merge, so closed may read 0. Open PRs are excluded from the merged and reverted rates. Merged is not the same as correct.')
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
@@ -22256,16 +22534,16 @@ function burnAreaChart() {
     }
 
     async function fetchEvidenceSummary() {
-      const hours = prtHours;
+      const query = evWindowQuery();
       const repo = prtRepo;
       try {
-        let url = `/api/evidence/summary?hours=${encodeURIComponent(hours)}`;
+        let url = `/api/evidence/summary?${query}`;
         if (repo) url += `&repo=${encodeURIComponent(repo)}`;
         const r = await fetch(url);
-        if (hours !== prtHours || repo !== prtRepo) return; // a newer selection is in flight
+        if (query !== evWindowQuery() || repo !== prtRepo) return; // a newer selection is in flight
         if (!r.ok) { evLast = null; renderEvidenceSummary(null); return; } // 403/5xx: show n=0, never throw
         const dto = await r.json();
-        if (hours !== prtHours || repo !== prtRepo) return;
+        if (query !== evWindowQuery() || repo !== prtRepo) return;
         evLast = dto;
         renderEvidenceSummary(dto);
       } catch (e) { if (!evLast) renderEvidenceSummary(null); }

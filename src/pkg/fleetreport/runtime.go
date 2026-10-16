@@ -521,7 +521,7 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	if ev.Diagnostics != "" {
 		fmt.Fprintf(&b, "\n\n<details><summary>Diagnostics (scrubbed)</summary>\n\n```\n%s\n```\n</details>\n", ev.Diagnostics)
 	}
-	return Report{Fingerprint: fp, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Trigger: TriggerRuntimeError, Class: ev.Class, Hive: hive, Evidence: []Evidence{ev}, Repos: repos}
+	return Report{Fingerprint: fp, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Trigger: TriggerRuntimeError, Class: ev.Class, Hive: hive, Evidence: []Evidence{ev}, Repos: repos, HiveState: obs.HiveState}
 }
 
 // maxReposInTable bounds the repos / owners cells of the evidence table; the

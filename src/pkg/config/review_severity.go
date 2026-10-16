@@ -76,8 +76,43 @@ const (
 var ValidReviewBacklogDestinations = []string{ReviewBacklogGitHubIssue, ReviewBacklogGitHubProject, ReviewBacklogLinear, ReviewBacklogJira}
 
 // DefaultReviewBacklogLabel is the label applied when review.backlog.labels
-// is unset; it matches the out-of-scope backlog filer's label.
-const DefaultReviewBacklogLabel = "from-review"
+// is unset; it matches the out-of-scope backlog filer's label. It is the
+// review member of the origin/* provenance family: origin/<source> records
+// where a hive-authored issue came from, as opposed to agent/<lane>, which
+// says which agent works it.
+const DefaultReviewBacklogLabel = OriginReviewLabel
+
+// Origin provenance labels. Every hive-authored issue that carries a
+// provenance marker uses one origin/<source> label so operators can tell
+// "where did this come from" apart from "who works it" (agent/<lane>) and
+// "where is it in the pipeline" (stage/*).
+const (
+	OriginLabelPrefix = "origin/"
+	// OriginReviewLabel marks issues filed from review-swarm backlog findings.
+	OriginReviewLabel = OriginLabelPrefix + "review"
+	// LegacyReviewBacklogLabel is the pre-origin/* name of OriginReviewLabel.
+	// Config still accepts it; the hive maps it to OriginReviewLabel when
+	// filing and migrates open items once at startup.
+	LegacyReviewBacklogLabel = "from-review"
+)
+
+// OriginLabelRenames maps retired provenance label names to their origin/*
+// replacement. Readers use CanonicalOriginLabel; the startup reconciler swaps
+// the old name for the new one on open items.
+var OriginLabelRenames = map[string]string{
+	LegacyReviewBacklogLabel: OriginReviewLabel,
+}
+
+// CanonicalOriginLabel returns the origin/* replacement for a retired
+// provenance label, or the trimmed input unchanged when it is not renamed.
+// renamed reports whether a mapping applied.
+func CanonicalOriginLabel(name string) (canonical string, renamed bool) {
+	name = strings.TrimSpace(name)
+	if to, ok := OriginLabelRenames[strings.ToLower(name)]; ok {
+		return to, true
+	}
+	return name, false
+}
 
 // DefaultReviewBacklogMaxPerPRPerDay caps backlog items filed per PR per day
 // when review.backlog.max_per_pr_per_day is unset.
@@ -101,7 +136,8 @@ type ReviewBacklogConfig struct {
 	// JiraStatus is the Jira status new items are transitioned to; empty
 	// leaves the project's initial status.
 	JiraStatus string `yaml:"jira_status,omitempty" json:"jira_status,omitempty"`
-	// Labels are applied to every backlog item. nil means [from-review].
+	// Labels are applied to every backlog item. nil means [origin/review];
+	// the retired from-review name is accepted and mapped to origin/review.
 	Labels []string `yaml:"labels,omitempty" json:"labels,omitempty"`
 	// MaxPerPRPerDay caps backlog items filed per PR per day. 0 means
 	// DefaultReviewBacklogMaxPerPRPerDay.
@@ -153,12 +189,26 @@ func (b ReviewBacklogConfig) EffectiveDestination(workSourceType string) string 
 	return d
 }
 
-// EffectiveLabels returns labels with the default applied.
+// EffectiveLabels returns labels with the default applied. Retired
+// provenance names (from-review) are mapped to their origin/* replacement and
+// the result is de-duplicated case-insensitively, so a config that still lists
+// the old name never double-labels an item.
 func (b ReviewBacklogConfig) EffectiveLabels() []string {
 	if b.Labels == nil {
 		return []string{DefaultReviewBacklogLabel}
 	}
-	return b.Labels
+	out := make([]string, 0, len(b.Labels))
+	seen := map[string]bool{}
+	for _, l := range b.Labels {
+		l, _ = CanonicalOriginLabel(l)
+		key := strings.ToLower(l)
+		if l == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, l)
+	}
+	return out
 }
 
 // EffectiveMaxPerPRPerDay returns max_per_pr_per_day with the default applied.

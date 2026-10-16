@@ -2,14 +2,19 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/evidence/complexity"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 func evSummaryBundle(repo string, n int, kind string, created time.Time, merged bool, verdicts []evidence.Verdict, sentinel int, ci bool) *evidence.Bundle {
@@ -91,7 +96,8 @@ func TestBuildEvidenceSummary(t *testing.T) {
 
 func TestHandleEvidenceSummaryValidation(t *testing.T) {
 	s := &Server{}
-	for _, q := range []string{"hours=-1", "hours=x", "repo=nope", "author_kind=robot"} {
+	for _, q := range []string{"hours=-1", "hours=x", "repo=nope", "author_kind=robot",
+		"to=2026-10-15", "from=yesterday", "from=2026-10-15&to=2026-10-01", "from=2025-01-01&to=2026-10-15", "from=2026-10-01&to=bogus"} {
 		w := httptest.NewRecorder()
 		s.handleEvidenceSummary(w, httptest.NewRequest(http.MethodGet, "/api/evidence/summary?"+q, nil))
 		if w.Code != http.StatusBadRequest {
@@ -280,5 +286,131 @@ func TestBuildEvidenceSummaryClaimVsVerdict(t *testing.T) {
 	}
 	if e := buildEvidenceSummary(nil, now, 24, "", "").ClaimVsVerdict; e == nil || len(e) != 0 {
 		t.Errorf("empty input must yield an empty (non-null) slice, got %#v", e)
+	}
+}
+
+// TestParseEvidenceWindow pins the 24h/7d/30d/custom window contract
+// (#12062): hours up to the throughput cap, and from/to as RFC3339 or
+// YYYY-MM-DD with an inclusive date-only `to`.
+func TestParseEvidenceWindow(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	q := func(s string) map[string][]string {
+		u, err := url.ParseQuery(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	win, err := parseEvidenceWindow(q("hours=720"), now)
+	if err != nil || win.Hours != 720 || win.Custom || !win.From.Equal(now.Add(-720*time.Hour)) {
+		t.Fatalf("hours=720: %+v %v", win, err)
+	}
+	win, err = parseEvidenceWindow(q("from=2026-10-01&to=2026-10-15"), now)
+	if err != nil || !win.Custom || win.Hours != 15*24 ||
+		!win.From.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) ||
+		!win.To.Equal(time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("date range: %+v %v", win, err)
+	}
+	win, err = parseEvidenceWindow(q("from=2026-10-15T06:00:00Z"), now)
+	if err != nil || !win.Custom || !win.To.Equal(now) || win.Hours != 30 {
+		t.Fatalf("rfc3339 open-ended: %+v %v", win, err)
+	}
+	if _, err := parseEvidenceWindow(q("from=2025-10-01&to=2026-10-15"), now); err == nil {
+		t.Error("range over 366 days must be rejected")
+	}
+	if _, err := parseEvidenceWindow(q("from=2026-10-15&to=2026-10-01"), now); err == nil {
+		t.Error("to before from must be rejected")
+	}
+}
+
+func TestBuildEvidenceSummaryCustomRange(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	bundles := []*evidence.Bundle{
+		evSummaryBundle("a/b", 1, evidence.AuthorAgent, time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC), true, nil, 0, true),
+		evSummaryBundle("a/b", 2, evidence.AuthorHuman, time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC), false, nil, 0, true),
+		evSummaryBundle("a/b", 3, evidence.AuthorHuman, time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC), false, nil, 0, true),
+	}
+	win := evidenceWindow{Custom: true, Hours: 7 * 24,
+		From: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)}
+	got := buildEvidenceSummaryWindow(bundles, win, "", "")
+	if got.N != 1 || got.Outcomes["human"].N != 1 || got.AllTime {
+		t.Fatalf("custom range: %+v", got)
+	}
+	if got.From != "2026-10-05T00:00:00Z" || got.To != "2026-10-12T00:00:00Z" {
+		t.Errorf("from/to echo = %q %q", got.From, got.To)
+	}
+	// All-time still has no bounds.
+	if all := buildEvidenceSummary(bundles, now, 0, "", ""); all.N != 3 || !all.AllTime || all.From != "" {
+		t.Errorf("all time: %+v", all)
+	}
+}
+
+func TestHandleEvidenceSummaryComplexityByRepo(t *testing.T) {
+	reviewEvidenceTestEnv(t)
+	root := ghpkg.ReviewEvidenceRoot
+	// A bundle plus two monthly snapshots; the snapshots must neither count
+	// as unreadable bundles nor be dropped from the summary.
+	seedReviewEvidenceBundle(t, "abc1234", "", time.Now().UTC(), true)
+	for i, m := range []string{"2026-03", "2026-04"} {
+		snap := complexity.Snapshot{
+			SchemaVersion: complexity.SchemaVersion, Repo: "acme/widget", Month: m, Ref: "main",
+			Functions: 10 + i, MeanCyclo: 2.5, MedianCyclo: 2, P90Cyclo: 7 + i, MaxCyclo: 12,
+			OverThreshold: i, Threshold: complexity.DefaultThreshold,
+			Warnings: 3, WarningsByTool: map[string]int{"go vet": 3},
+			Hotspots: []complexity.Function{{File: "a.go", Name: "F", Cyclo: 12}},
+		}
+		if _, err := complexity.Write(root, snap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Server{}
+	w := httptest.NewRecorder()
+	s.handleEvidenceSummary(w, httptest.NewRequest(http.MethodGet, "/api/evidence/summary", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var resp EvidenceSummary
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.N != 1 || resp.Missing.RecordsUnreadable != 0 {
+		t.Errorf("snapshots must not be counted as bundles: n=%d unreadable=%d", resp.N, resp.Missing.RecordsUnreadable)
+	}
+	if len(resp.ComplexityByRepo) != 1 || resp.ComplexityByRepo[0].Repo != "acme/widget" {
+		t.Fatalf("complexity_by_repo = %+v", resp.ComplexityByRepo)
+	}
+	months := resp.ComplexityByRepo[0].Months
+	if len(months) != 2 || months[0].Month != "2026-03" || months[1].Month != "2026-04" {
+		t.Fatalf("months = %+v", months)
+	}
+	last := months[1]
+	if last.Functions != 11 || last.P90Cyclomatic != 8 || last.FunctionsOverThreshold != 1 || last.StaticWarningsByTool["go vet"] != 3 || last.Ref != "main" {
+		t.Errorf("month = %+v", last)
+	}
+	if strings.Contains(w.Body.String(), `"hotspots"`) {
+		t.Error("summary must not carry hotspot lists")
+	}
+}
+
+func TestLoadEvidenceComplexityCapsMonths(t *testing.T) {
+	root := t.TempDir()
+	for i := 1; i <= evidenceComplexityMonths+2; i++ {
+		snap := complexity.Snapshot{SchemaVersion: complexity.SchemaVersion, Repo: "o/r", Month: fmt.Sprintf("2024-%02d", i%12+1), Functions: i}
+		if i > 12 {
+			snap.Month = fmt.Sprintf("2025-%02d", i-12)
+		}
+		if _, err := complexity.Write(root, snap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := loadEvidenceComplexity(root)
+	if len(got) != 1 || len(got[0].Months) != evidenceComplexityMonths {
+		t.Fatalf("got %+v", got)
+	}
+	if got[0].Months[evidenceComplexityMonths-1].Month != "2025-02" {
+		t.Errorf("latest month = %s", got[0].Months[evidenceComplexityMonths-1].Month)
+	}
+	if loadEvidenceComplexity(filepath.Join(root, "absent")) != nil {
+		t.Error("missing root must yield nil")
 	}
 }

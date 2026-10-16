@@ -15,6 +15,29 @@ type EvidenceConfig struct {
 	// 64-byte key, hex or base64). Empty or absent means bundles are written
 	// unsigned with "signed": false.
 	SigningKeyFile string `yaml:"signing_key_file,omitempty" json:"signing_key_file,omitempty"`
+	// Complexity controls the monthly, report-only complexity snapshot of
+	// each managed repo's default branch (RFC #12062, hivecommons/hive#12363).
+	Complexity ComplexityConfig `yaml:"complexity,omitempty" json:"complexity,omitempty"`
+}
+
+// ComplexityConfig (`evidence.complexity:`) gates the monthly complexity
+// snapshot runner (pkg/evidence/complexity). Measuring is an AST pass over a
+// tarball of the default branch, once a month per repo, so it is on by
+// default. Static analysis (go vet, staticcheck) compiles the repo and
+// downloads its modules, so it is opt-in. Nothing here gates a merge.
+type ComplexityConfig struct {
+	// Enabled turns the monthly snapshot off when explicitly false. nil
+	// means on.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// StaticAnalysis also runs go vet and, when installed, staticcheck over
+	// the checkout and records their finding counts. Off by default: it
+	// compiles the repo and downloads modules on the spoke.
+	StaticAnalysis bool `yaml:"static_analysis,omitempty" json:"static_analysis,omitempty"`
+}
+
+// IsEnabled reports whether the monthly complexity snapshot runs (default on).
+func (c ComplexityConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // IsEnabled reports whether bundles are written (default on).
