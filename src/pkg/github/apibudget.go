@@ -148,9 +148,7 @@ func (c *Client) APIBudgetMode() (APIBudgetMode, APIBudgetSnapshot) {
 var (
 	APIBudgetUnstickSteps = []string{
 		"sha_hold",
-		"closing_keyword_post_check",
 		"supersession_sweep",
-		"reporter_trust",
 		"escalation",
 	}
 	APIBudgetEnrichmentSteps = []string{
