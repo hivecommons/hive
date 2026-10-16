@@ -136,3 +136,53 @@ func TestLoadEvidenceWriteCounters(t *testing.T) {
 		t.Error("unreadable or absent file must yield nil")
 	}
 }
+
+func TestBuildEvidenceSummaryShadowGate(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-2 * time.Hour)
+	yes, no := true, false
+	withShadow := func(b *evidence.Bundle, held, blocked *bool) *evidence.Bundle {
+		b.Shadow = &evidence.Shadow{}
+		if held != nil {
+			b.Shadow.ReviewGate = &evidence.ShadowGate{WouldHaveHeld: held, Reason: "r", EvaluatedAt: recent}
+		}
+		if blocked != nil {
+			b.Shadow.Intent = &evidence.ShadowGate{WouldHaveBlocked: blocked, Tier: "observe", EvaluatedAt: recent}
+		}
+		return b
+	}
+	reverted := withShadow(evSummaryBundle("a/b", 1, evidence.AuthorAgent, recent, true, nil, 0, true), &yes, &yes)
+	reverted.RevertedBy = []string{"a/b#9@def"}
+	bundles := []*evidence.Bundle{
+		reverted,
+		withShadow(evSummaryBundle("a/b", 2, evidence.AuthorAgent, recent, false, nil, 0, true), &yes, nil),
+		withShadow(evSummaryBundle("a/b", 3, evidence.AuthorHuman, recent, true, nil, 0, true), &no, &no),
+		// no shadow observation at all
+		evSummaryBundle("a/b", 4, evidence.AuthorHuman, recent, true, nil, 0, true),
+		// outside the 24h window
+		withShadow(evSummaryBundle("a/b", 5, evidence.AuthorAgent, now.Add(-48*time.Hour), true, nil, 0, true), &yes, &yes),
+		// another repo
+		withShadow(evSummaryBundle("c/d", 6, evidence.AuthorAgent, recent, true, nil, 0, true), &yes, nil),
+	}
+
+	sg := buildEvidenceSummary(bundles, now, 24, "a/b", "").ShadowGate
+	if sg.N != 3 || sg.WouldHaveHeld != 2 || sg.WouldHaveBlocked != 1 {
+		t.Fatalf("shadow gate = %+v", sg)
+	}
+	if want := (EvidenceShadowOutcome{N: 2, Merged: 1, Open: 1, Reverted: 1}); sg.ReviewGate.Held != want || sg.ReviewGate.N != 3 {
+		t.Errorf("review gate = %+v", sg.ReviewGate)
+	}
+	if want := (EvidenceShadowOutcome{N: 1, Merged: 1}); sg.ReviewGate.Passed != want {
+		t.Errorf("review gate passed = %+v", sg.ReviewGate.Passed)
+	}
+	if want := (EvidenceShadowOutcome{N: 1, Merged: 1, Reverted: 1}); sg.Intent.Held != want || sg.Intent.N != 2 || sg.Intent.Passed.N != 1 {
+		t.Errorf("intent = %+v", sg.Intent)
+	}
+
+	if k := buildEvidenceSummary(bundles, now, 24, "a/b", "human").ShadowGate; k.N != 1 || k.WouldHaveHeld != 0 || k.ReviewGate.Passed.N != 1 {
+		t.Errorf("author_kind filter: %+v", k)
+	}
+	if z := buildEvidenceSummary(bundles[3:4], now, 24, "", "").ShadowGate; z != (EvidenceShadowGate{}) {
+		t.Errorf("no shadow bundles must yield zero shadow gate, got %+v", z)
+	}
+}

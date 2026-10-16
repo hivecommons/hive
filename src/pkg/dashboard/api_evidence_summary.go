@@ -119,10 +119,60 @@ type EvidenceSentinelWeek struct {
 	Hits int    `json:"hits"`
 }
 
-// EvidenceShadowGate stays zero until the shadow gate records bundles.
+// EvidenceShadowGate summarises shadow-mode gate observations (#12068). N is
+// the PRs whose latest bundle carries any shadow observation; WouldHaveHeld
+// (review gate) and WouldHaveBlocked (intent) count the PRs the gate would
+// have stopped. ReviewGate and Intent compare those PRs' recorded outcomes
+// with the PRs the gate would have let through.
 type EvidenceShadowGate struct {
-	N             int `json:"n"`
-	WouldHaveHeld int `json:"would_have_held"`
+	N                int                    `json:"n"`
+	WouldHaveHeld    int                    `json:"would_have_held"`
+	WouldHaveBlocked int                    `json:"would_have_blocked"`
+	ReviewGate       EvidenceShadowGateSide `json:"review_gate"`
+	Intent           EvidenceShadowGateSide `json:"intent"`
+}
+
+// EvidenceShadowGateSide is one shadow gate: N PRs evaluated, split into the
+// ones it would have stopped (Held) and the ones it would have passed.
+type EvidenceShadowGateSide struct {
+	N      int                   `json:"n"`
+	Held   EvidenceShadowOutcome `json:"held"`
+	Passed EvidenceShadowOutcome `json:"passed"`
+}
+
+// EvidenceShadowOutcome is how a set of PRs actually turned out. Reverted is
+// a subset of Merged (the bundle has reverted_by links). Closed is always 0
+// today because a v1 bundle does not record a close-without-merge.
+type EvidenceShadowOutcome struct {
+	N        int `json:"n"`
+	Merged   int `json:"merged"`
+	Closed   int `json:"closed"`
+	Open     int `json:"open"`
+	Reverted int `json:"reverted"`
+}
+
+func (o *EvidenceShadowOutcome) add(b *evidence.Bundle) {
+	o.N++
+	if b.Merge == nil {
+		o.Open++
+		return
+	}
+	o.Merged++
+	if len(b.RevertedBy) > 0 {
+		o.Reverted++
+	}
+}
+
+func (s *EvidenceShadowGateSide) add(b *evidence.Bundle, flag *bool) {
+	if flag == nil {
+		return
+	}
+	s.N++
+	if *flag {
+		s.Held.add(b)
+	} else {
+		s.Passed.add(b)
+	}
 }
 
 type EvidenceMissing struct {
@@ -280,6 +330,21 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 			resp.Missing.RecordsEmptyCI++
 		}
 
+		if sh := b.Shadow; sh != nil {
+			var held, blocked *bool
+			if sh.ReviewGate != nil {
+				held = sh.ReviewGate.WouldHaveHeld
+			}
+			if sh.Intent != nil {
+				blocked = sh.Intent.WouldHaveBlocked
+			}
+			if held != nil || blocked != nil {
+				resp.ShadowGate.N++
+			}
+			resp.ShadowGate.ReviewGate.add(b, held)
+			resp.ShadowGate.Intent.add(b, blocked)
+		}
+
 		for range b.Sentinel {
 			y, w := b.CreatedAt.UTC().ISOWeek()
 			weeks[fmt.Sprintf("%04d-W%02d", y, w)]++
@@ -369,5 +434,7 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 	for _, w := range wk {
 		resp.SentinelPerWeek.Weeks = append(resp.SentinelPerWeek.Weeks, EvidenceSentinelWeek{Week: w, Hits: weeks[w]})
 	}
+	resp.ShadowGate.WouldHaveHeld = resp.ShadowGate.ReviewGate.Held.N
+	resp.ShadowGate.WouldHaveBlocked = resp.ShadowGate.Intent.Held.N
 	return resp
 }

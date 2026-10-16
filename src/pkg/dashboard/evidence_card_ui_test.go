@@ -9,7 +9,8 @@ import (
 // TestEvidenceCardInThroughputSection pins the Evidence sub-panel (#12064): it
 // sits inside the Throughput section below the throughput card, reuses the
 // prt-card chrome, follows the Throughput window/repo selector, and reads
-// /api/evidence/summary for the calibration and accuracy × model panels.
+// /api/evidence/summary for the calibration, accuracy × model and shadow-gate
+// (#12068) panels.
 func TestEvidenceCardInThroughputSection(t *testing.T) {
 	html := indexHTML(t)
 	section := strings.Index(html, `<div id="pr-throughput-section"`)
@@ -43,6 +44,11 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"row.model === 'unknown' ? 'ev-unknown' : ''",
 		`<svg class="ev-svg"`,
 		".ev-svg .ev-unknown .ev-bar",
+		"dto.shadow_gate || {}",
+		"evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),",
+		"no shadow-gate observations in this window",
+		"[['held', `would have ${verb}`], ['passed', 'would have passed']]",
+		".ev-svg .ev-bar.sr",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("Evidence card missing snippet %q", snippet)
@@ -61,6 +67,7 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evRate",
 		"evCalibrationSvg",
 		"evAccuracySvg",
+		"evShadowGateSvg",
 		"escapeHtml",
 	} {
 		decl := regexp.MustCompile(`(?m)^\s*(async\s+)?function\s+` + fn + `\s*\(`)

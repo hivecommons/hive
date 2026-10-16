@@ -1578,6 +1578,12 @@
     .ev-legend i.dot { border-radius:var(--r-pill); }
     .ev-legend i.fa { background:var(--orange); }
     .ev-legend i.fb { background:var(--purple); }
+    .ev-svg .ev-bar.sm { fill:var(--green); }
+    .ev-svg .ev-bar.sr { fill:var(--red); }
+    .ev-svg .ev-bar.so { fill:var(--muted); opacity:.5; }
+    .ev-legend i.sm { background:var(--green); }
+    .ev-legend i.sr { background:var(--red); }
+    .ev-legend i.so { background:var(--muted); opacity:.5; }
     .ev-legend i.unknown { background:var(--muted); opacity:.5; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
@@ -22015,8 +22021,8 @@ function burnAreaChart() {
 
     // Evidence sub-panel (#12064, RFC #12062): read-only reporting from
     // /api/evidence/summary for the Throughput window and repo selector.
-    // Panels 2 (reviewer calibration) and 3 (reviewer accuracy × model) land
-    // first. UI only; nothing here changes merge behaviour.
+    // Panels 2 (reviewer calibration), 3 (reviewer accuracy × model) and 8
+    // (shadow gates). UI only; nothing here changes merge behaviour.
     const EV_PALETTE_SIZE = 6;
     let evLast = null;
 
@@ -22090,6 +22096,43 @@ function burnAreaChart() {
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer accuracy by reviewer model and author kind: false-approve and false-block rates">${body}</svg><div class="ev-legend"><span><i class="fa"></i>false-approve (approved, not merged)</span><span><i class="fb"></i>false-block (blocked, merged anyway)</span><span><i class="unknown"></i>model unknown</span></div>`;
     }
 
+    // Panel 8 (#12068): what the shadow review gate / intent verification
+    // would have stopped, and how those PRs actually turned out. Each gate gets
+    // a "would stop" and a "would pass" bar split into merged / reverted / open.
+    function evShadowGateSvg(sg) {
+      sg = sg || {};
+      const gates = [['review_gate', 'Review gate', 'held'], ['intent', 'Intent verification', 'blocked']];
+      const rows = [];
+      gates.forEach(([key, label, verb]) => {
+        const g = sg[key] || {};
+        if (!(Number(g.n) > 0)) return;
+        [['held', `would have ${verb}`], ['passed', 'would have passed']].forEach(([side, sideLabel]) => {
+          const o = g[side] || {};
+          const n = Number(o.n) || 0;
+          const reverted = Number(o.reverted) || 0;
+          rows.push({ label: `${label} · ${sideLabel}`, n, merged: Math.max(0, (Number(o.merged) || 0) - reverted), reverted, open: Number(o.open) || 0 });
+        });
+      });
+      if (!rows.length) return '<div class="ev-empty">— no shadow-gate observations in this window (review.shadow / intent shadow mode is off, or no PR was evaluated)</div>';
+      const w = 320, label = 150, valW = 30, rowH = 18, t = 4;
+      const barW = w - label - valW;
+      const h = t + rows.length * rowH;
+      const maxN = Math.max(1, ...rows.map((r) => r.n));
+      const body = rows.map((row, i) => {
+        const y0 = t + i * rowH;
+        const tip = escapeHtml(`${row.label}: merged ${row.merged + row.reverted} (reverted ${row.reverted}) · open ${row.open} · n=${row.n}`);
+        let x0 = label;
+        const seg = (cls, v) => {
+          const sw = (v / maxN) * barW;
+          const out = v > 0 ? `<rect class="ev-bar ${cls}" x="${x0.toFixed(1)}" y="${y0 + 2}" width="${sw.toFixed(1)}" height="10"><title>${tip}</title></rect>` : '';
+          x0 += sw;
+          return out;
+        };
+        return `<g><text x="0" y="${y0 + 11}">${escapeHtml(row.label.slice(0, 34))}<title>${tip}</title></text>${seg('sm', row.merged)}${seg('sr', row.reverted)}${seg('so', row.open)}<text x="${w - 2}" y="${y0 + 11}" text-anchor="end">${row.n}</text></g>`;
+      }).join('');
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Shadow gates: PRs the review gate or intent verification would have stopped or passed, by actual outcome">${body}</svg><div class="ev-legend"><span><i class="sm"></i>merged</span><span><i class="sr"></i>merged, later reverted</span><span><i class="so"></i>still open</span></div>`;
+    }
+
     function renderEvidenceSummary(dto) {
       const card = document.getElementById('evidence-card');
       if (!card) return;
@@ -22099,13 +22142,16 @@ function burnAreaChart() {
       const calibN = calib.reduce((sum, p) => sum + (Number(p && p.n) || 0), 0);
       const modelN = models.reduce((sum, m) => sum + (Number(m && m.n) || 0), 0);
       const unknown = Number((dto.missing || {}).verdicts_model_unknown) || 0;
+      const shadow = dto.shadow_gate || {};
       const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
       const scope = (dto.all_time ? 'all time' : `last ${windowName ? windowName[1] : (Number(dto.hours) || 0) + 'h'}`) + (dto.repo ? ` · ${dto.repo}` : '');
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}</div><span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>`
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
           'Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. Merged is not the same as correct, and a PR that is still open counts as not merged.')
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
-          `Outcome is merged vs not merged, not ground truth: a block that was later fixed and merged counts as a false block, and an approval on a still-open PR counts as a false approve.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`);
+          `Outcome is merged vs not merged, not ground truth: a block that was later fixed and merged counts as a false block, and an approval on a still-open PR counts as a false approve.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
+        + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
+          'Shadow mode only records; no merge was held or blocked. Closed-without-merge is not recorded in bundles, so a closed PR counts as still open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
 
     async function fetchEvidenceSummary() {
