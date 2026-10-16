@@ -22736,7 +22736,7 @@ function burnAreaChart() {
       const months = [...new Set(rows.flatMap((r) => r.months.map((m) => m.month)))].sort();
       const ordinal = (m) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1;
       const first = ordinal(months[0]), last = ordinal(months[months.length - 1]);
-      const w = 420, left = 38, right = 10, laneH = 110;
+      const w = EV_SVG_W, left = 38, right = 10, laneH = 110;
       const x = (month) => left + (last > first ? (ordinal(month) - first) / (last - first) : 0.5) * (w - left - right);
       const tools = [...new Set(rows.flatMap((r) => r.months.flatMap((m) => Object.keys(m.static_warnings_by_tool || {}))))].sort();
       const metrics = [

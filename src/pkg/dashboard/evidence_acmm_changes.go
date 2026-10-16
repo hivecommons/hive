@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/evidence"
 )
 
@@ -25,7 +26,7 @@ func evidenceACMMChanges(bundles []*evidence.Bundle, repo string) []EvidenceACMM
 	}
 	first := map[key]time.Time{}
 	for _, b := range bundles {
-		if b == nil || b.CreatedAt.IsZero() || b.Policy.ACMMLevel < 1 || b.Policy.ACMMLevel > 6 {
+		if b == nil || b.CreatedAt.IsZero() || b.Policy.ACMMLevel < 1 || b.Policy.ACMMLevel > acmmadvisor.MaxLevel {
 			continue
 		}
 		if repo != "" && !strings.EqualFold(repo, b.Repo) {
