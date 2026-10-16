@@ -132,14 +132,13 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	if labels := labelNames(pr.Labels); c.isHeld(labels) || c.isExempt(labels) {
 		return SupersessionSweepEvent{}, "", nil
 	}
-	claims := claimsFromPR(pr, prRepo, identity, now)
+	claims := supersessionCandidateClaims(claimsFromPR(pr, prRepo, identity, now))
 	if len(claims) == 0 {
 		return SupersessionSweepEvent{}, "", nil
 	}
 
 	var candidate IssueClaim
 	var closer supersessionCloser
-	hasOpenClaim := false
 	for _, claim := range claims {
 		issueOwner, issueRepoName := c.splitRepo(claim.Repo)
 		issue, _, err := c.client.Issues.Get(ctx, issueOwner, issueRepoName, claim.Issue)
@@ -147,8 +146,12 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 			return SupersessionSweepEvent{}, "", fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
 		}
 		if !strings.EqualFold(issue.GetState(), "closed") {
-			hasOpenClaim = true
-			continue
+			// An issue this PR claims to close is still open, so the PR is
+			// still live work whatever happened to its other claims. Before
+			// hivecommons/hive#12349 this escalated to needs-human as "also
+			// claims another issue that is still open", which flagged #12322
+			// (Fixes open #12117, Part of closed #12080) as superseded.
+			return SupersessionSweepEvent{}, "", nil
 		}
 		resolved, ok, err := c.resolveIssueClosingPR(ctx, claim.Repo, issueOwner, issueRepoName, claim.Issue, pr.GetNumber())
 		if err != nil {
@@ -173,16 +176,12 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 
 	reason := ""
-	if hasOpenClaim {
-		reason = "this PR also claims another issue that is still open"
-	} else {
-		subset, err := c.prFilesSubset(ctx, prOwner, prRepoName, pr.GetNumber(), closer)
-		if err != nil {
-			return SupersessionSweepEvent{}, "", err
-		}
-		if !subset {
-			reason = "this PR touches files the merged PR did not"
-		}
+	subset, err := c.prFilesSubset(ctx, prOwner, prRepoName, pr.GetNumber(), closer)
+	if err != nil {
+		return SupersessionSweepEvent{}, "", err
+	}
+	if !subset {
+		reason = "this PR touches files the merged PR did not"
 	}
 
 	level := 0
@@ -196,8 +195,12 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 		}
 		event.Action = "commented-contributor"
 		body := renderSupersessionComment(event, closer, "A different merged PR closed the claimed issue. Leaving this contributor PR open for a human to review.")
-		if err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body); err != nil {
+		changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
+		if err != nil {
 			return event, "", err
+		}
+		if !changed {
+			return event, "", nil
 		}
 		return event, "commented", nil
 	}
@@ -205,7 +208,7 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	if reason == "" && level >= acmmLevelFullyAutonomous {
 		event.Action = "closed"
 		body := renderSupersessionComment(event, closer, "Closing this hive-authored PR because the claimed issue was already closed by the merged PR below.")
-		if err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body); err != nil {
+		if _, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body); err != nil {
 			return event, "", err
 		}
 		if err := c.labelAndCloseSupersededPR(ctx, prOwner, prRepoName, pr.GetNumber()); err != nil {
@@ -219,13 +222,42 @@ func (c *Client) trySweepSupersededPR(ctx context.Context, prRepo, prOwner, prRe
 	}
 	event.Action = "commented-needs-human"
 	body := renderSupersessionComment(event, closer, reason+". A human should decide whether to close this PR.")
-	if err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body); err != nil {
+	changed, err := c.ensureSupersessionComment(ctx, prOwner, prRepoName, pr.GetNumber(), body)
+	if err != nil {
 		return event, "", err
+	}
+	if !changed {
+		// The identical escalation is already on the PR, so this cycle adds
+		// nothing: a human or hive that cleared needs-human for this reason
+		// must not see it re-applied every tick (hivecommons/hive#12349). A
+		// different closer or reason renders a different body and escalates
+		// afresh.
+		return event, "", nil
 	}
 	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, prOwner, prRepoName, pr.GetNumber(), []string{issueNeedsHumanLabel}); err != nil {
 		return event, "", fmt.Errorf("labeling superseded PR %s#%d: %w", prRepo, pr.GetNumber(), err)
 	}
 	return event, "commented", nil
+}
+
+// supersessionCandidateClaims picks the claims whose closure can supersede
+// the PR. A closing-keyword claim (`Fixes #N`) is the PR's statement of what
+// it delivers, so when any exist only they count: a bare `Part of #N` /
+// `Refs #N` reference is context, and a closed parent must not mark a PR
+// superseded while the issue it actually fixes is open (#12322 vs #12080).
+// With no closing claim at all the weaker tiers (branch-name heuristic,
+// bare references) stand in as before.
+func supersessionCandidateClaims(claims []IssueClaim) []IssueClaim {
+	var closing []IssueClaim
+	for _, claim := range claims {
+		if claim.Closing {
+			closing = append(closing, claim)
+		}
+	}
+	if len(closing) > 0 {
+		return closing
+	}
+	return claims
 }
 
 func (c *Client) resolveIssueClosingPR(ctx context.Context, issueDisplayRepo, owner, repo string, issue, currentPR int) (supersessionCloser, bool, error) {
@@ -371,27 +403,31 @@ func renderSupersessionComment(event SupersessionSweepEvent, closer supersession
 	return b.String()
 }
 
-func (c *Client) ensureSupersessionComment(ctx context.Context, owner, repo string, number int, desiredBody string) error {
+// ensureSupersessionComment posts the sweep's marker comment or edits the
+// existing one in place. changed is false when an identical comment was
+// already there, which tells the caller this escalation was delivered on an
+// earlier cycle.
+func (c *Client) ensureSupersessionComment(ctx context.Context, owner, repo string, number int, desiredBody string) (changed bool, err error) {
 	comments, _, err := c.client.Issues.ListComments(ctx, owner, repo, number, &gh.IssueListCommentsOptions{
 		ListOptions: gh.ListOptions{PerPage: 100},
 	})
 	if err != nil {
-		return fmt.Errorf("listing supersession comments on %s/%s#%d: %w", owner, repo, number, err)
+		return false, fmt.Errorf("listing supersession comments on %s/%s#%d: %w", owner, repo, number, err)
 	}
 	for _, cm := range comments {
 		if cm == nil || !strings.Contains(cm.GetBody(), supersessionSweepMarker) {
 			continue
 		}
 		if cm.GetBody() == desiredBody {
-			return nil
+			return false, nil
 		}
 		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: &desiredBody}); err != nil {
-			return fmt.Errorf("editing supersession comment on %s/%s#%d: %w", owner, repo, number, err)
+			return false, fmt.Errorf("editing supersession comment on %s/%s#%d: %w", owner, repo, number, err)
 		}
-		return nil
+		return true, nil
 	}
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: &desiredBody}); err != nil {
-		return fmt.Errorf("creating supersession comment on %s/%s#%d: %w", owner, repo, number, err)
+		return false, fmt.Errorf("creating supersession comment on %s/%s#%d: %w", owner, repo, number, err)
 	}
-	return nil
+	return true, nil
 }

@@ -427,14 +427,24 @@ The supersession sweep (`src/pkg/github/pr_supersession_sweep.go`) looks for
 open PRs whose claimed issue is already closed by a *different* merged PR. It
 keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
 
+- **Which issues count.** When the PR closes issues with a closing keyword
+  (`Fixes`/`Closes`/`Resolves #N`), only those are candidates; a bare
+  `Part of #N` / `Refs #N` reference is context and a closed parent reached
+  that way never supersedes a PR. Only a PR with no closing keyword at all
+  falls back to its branch-name issue and bare references. If **any**
+  candidate issue is still open the PR is live work and the sweep leaves it
+  alone — no notice, no label, no close (#12349: #12322, `Fixes` open
+  #12117 and `Part of` closed #12080, was escalated to `needs-human`).
 - **Hive-authored PRs** are closed immediately at ACMM L6 when every file they
-  touch was also touched by the merged PR and they claim no other open issue;
-  below L6 they get `needs-human`.
+  touch was also touched by the merged PR; below L6 they get `needs-human`.
+  Once the notice is on the PR, the sweep re-applies `needs-human` only when
+  the notice changes (a different merged PR or reason); clearing the label
+  for an unchanged notice sticks.
 - **Human-authored PRs** only get the notice unless
   `supersession_sweep.close_contributor_prs` is set (and the repo is at L6).
   With it set, the sweep closes the PR only when **all** of these hold: every
-  file it touches was also touched by the merged PR; it claims no other open
-  issue; it is `size/XS`–`size/M` (or under 100 changed lines when unlabeled);
+  file it touches was also touched by the merged PR; it is
+  `size/XS`–`size/M` (or under 100 changed lines when unlabeled);
   the author has no unresolved review threads; review threads could be read;
   and `grace_period` has passed since the notice announced the window with no
   human (author or maintainer) comment or review comment after the notice. Any

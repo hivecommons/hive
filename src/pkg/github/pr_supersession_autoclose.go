@@ -378,14 +378,14 @@ func (c *Client) trySupersessionAutoCloseContributorPR(ctx context.Context, owne
 		return event, "closed", nil
 	case SupersessionWaitGrace:
 		event.Action = "commented-grace"
-		if err := c.ensureSupersessionComment(ctx, owner, repo, number, graceBody); err != nil {
+		if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, graceBody); err != nil {
 			return event, "", err
 		}
 		return event, "commented", nil
 	default:
 		event.Action = "commented-contributor"
 		body := renderSupersessionComment(event, closer, "A different merged PR closed the claimed issue. Leaving this contributor PR open for a human to review: "+decision.Reason+".")
-		if err := c.ensureSupersessionComment(ctx, owner, repo, number, body); err != nil {
+		if _, err := c.ensureSupersessionComment(ctx, owner, repo, number, body); err != nil {
 			return event, "", err
 		}
 		return event, "commented", nil
