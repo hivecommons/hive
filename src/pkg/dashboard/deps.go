@@ -271,7 +271,20 @@ type NousPrinciple struct {
 	Source     string  `json:"source"`
 }
 
-const NousBaselineTarget = 672
+// NousBaselineTarget is how many hive-state snapshots a campaign's baseline
+// needs: one every governor evaluation cycle (NousBaselinePerHour at the
+// default 15-minute interval) for NousBaselineDays — 4 × 24 × 7 = 672, about
+// one week of observations, so the baseline sees every weekday and weekend
+// regime once.
+const (
+	NousBaselinePerHour = 4
+	NousBaselineDays    = 7
+	NousBaselineTarget  = NousBaselinePerHour * 24 * NousBaselineDays
+)
+
+// NousBaselineTargetExplainer is the plain-language meaning of
+// NousBaselineTarget shown next to every "N / 672" in the Experiment Lab.
+const NousBaselineTargetExplainer = "≈ 7 days of observations (4/hour)"
 
 // NousBaselinePct reports baseline-collection progress as a percentage,
 // capped at 100 once count reaches NousBaselineTarget. count keeps growing

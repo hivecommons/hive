@@ -125,11 +125,13 @@ func TestNousNewResearchQuestionRestartsBaseline(t *testing.T) {
 	if exps, _ := st["experiments"].([]interface{}); len(exps) != 0 {
 		t.Fatalf("campaign 2 experiments = %v, want none", exps)
 	}
-	archived, _ := st["campaigns"].([]interface{})
-	if len(archived) != 1 {
-		t.Fatalf("archived campaigns = %v", st["campaigns"])
+	// status.campaigns lists every campaign in ID order (#12532): the
+	// archived #1 and the running #2.
+	all, _ := st["campaigns"].([]interface{})
+	if len(all) != 2 || all[1].(map[string]interface{})["status"] != "active" {
+		t.Fatalf("campaigns = %v", st["campaigns"])
 	}
-	prev := archived[0].(map[string]interface{})
+	prev := all[0].(map[string]interface{})
 	if prev["id"] != float64(1) || prev["status"] != "archived" || prev["snapshots"] != float64(history) || prev["experiments"] != float64(1) || prev["endedAt"] == "" {
 		t.Fatalf("archived campaign 1 = %v", prev)
 	}
@@ -168,8 +170,8 @@ func TestNousNewResearchQuestionRestartsBaseline(t *testing.T) {
 	if camp["id"] != float64(3) || camp["question"] != "can we cut CI time by 20%?" || camp["snapshots"] != float64(0) {
 		t.Fatalf("campaign after explicit start = %v", camp)
 	}
-	if archived, _ = st["campaigns"].([]interface{}); len(archived) != 2 || archived[0].(map[string]interface{})["id"] != float64(2) {
-		t.Fatalf("archived after explicit start = %v", st["campaigns"])
+	if all, _ = st["campaigns"].([]interface{}); len(all) != 3 || all[1].(map[string]interface{})["status"] != "archived" || all[2].(map[string]interface{})["id"] != float64(3) {
+		t.Fatalf("campaigns after explicit start = %v", st["campaigns"])
 	}
 
 	// Config GET exposes the active campaign and the persisted question.
