@@ -99,14 +99,15 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 		}
 		stage := cfg.Governor.Labels.Stage
 		return automerge.StageLabelPolicy{
-			Enabled:          stage.IsEnabled(),
-			Dwell:            stage.DwellOverrides(),
-			ContributorNudge: stage.ContributorNudge.IsEnabled(),
-			RenudgeInterval:  stage.ContributorNudge.EffectiveRenudgeInterval(),
-			Adoption:         stage.Adoption.IsEnabled(),
-			GraceOnline:      stage.EffectiveContributorGraceOnline(),
-			GraceOffline:     stage.EffectiveContributorGraceOffline(),
-			HiveID:           cfg.HiveID,
+			Enabled:             stage.IsEnabled(),
+			Dwell:               stage.DwellOverrides(),
+			StalledRequireQuiet: stage.Stalled.IsRequireQuiet(),
+			ContributorNudge:    stage.ContributorNudge.IsEnabled(),
+			RenudgeInterval:     stage.ContributorNudge.EffectiveRenudgeInterval(),
+			Adoption:            stage.Adoption.IsEnabled(),
+			GraceOnline:         stage.EffectiveContributorGraceOnline(),
+			GraceOffline:        stage.EffectiveContributorGraceOffline(),
+			HiveID:              cfg.HiveID,
 		}
 	}
 }

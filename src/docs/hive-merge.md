@@ -417,8 +417,10 @@ green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
 contributor PR → `stage/072-returned-to-contributor`, hold / untrusted author →
 `stage/090-needs-human`, merged → no stage), plus one `author/*` label saying
-which admission tier the lane actually used and `stage/stalled` /
-`stage/regressed` when the progression is disrupted. Writes happen only when
+which admission tier the lane actually used and `stage/stalled` when nobody
+but the hive has touched the PR for the stage's dwell (never while checks run
+or the reviewer verdict is pending). Backward moves are a one-line stage
+comment and dashboard history, not a label. Writes happen only when
 the planned set differs from the labels already on the PR, under the
 `hive:stage_labels` REST caller, and the whole family is switched by
 `governor.labels.stage.enabled`. The mapping table, numbering rules, dwell
@@ -533,7 +535,7 @@ A malformed request file (invalid JSON) is renamed `.bad`.
 | `/var/run/hive-metrics/merge-requests` | request files the watcher consumes |
 | `/var/run/hive-metrics/gh-app-token.cache` | cached App token, used to auto-resolve `--expect-sha` |
 | `/var/run/hive/uid-map.json` | UID → agent-name map, used for a nicer log line |
-| `/data/stage-labels.json` | persisted stage timing for `stage/stalled` / `stage/regressed` |
+| `/data/stage-labels.json` | persisted stage timing, last-activity clock and transition history for `stage/stalled` and the review-queue stage history |
 
 The UID map is **informational only** here. The watcher re-derives ownership
 from the file's UID regardless.

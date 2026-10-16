@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -24,8 +25,9 @@ const StateFile = "stage-labels.json"
 var StatePath = filepath.Join(DefaultStateDir, StateFile)
 
 // Record is what the hive remembers about one item's stage: when it entered
-// the stage (for stalled detection, kept locally so no GitHub timeline GET is
-// needed) and any unresolved regression.
+// the stage and when it last saw activity (for stalled detection, kept
+// locally so no GitHub timeline GET is needed), its recent transitions and
+// any unresolved regression (narrated in a comment, no longer a label).
 type Record struct {
 	Stage     Stage     `json:"stage"`
 	EnteredAt time.Time `json:"entered_at"`
@@ -70,6 +72,85 @@ type Record struct {
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
+	// LastActivityAt is when somebody other than the hive last touched the
+	// item as far as the reconciler can tell (hivecommons/hive#12534): a new
+	// head, a comment, a review/verdict, a CI state change or a non-hive
+	// label change. Stalled measures quiet time from here, never from the
+	// PR's updated_at (which the hive's own writes bump).
+	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
+	// ActivityHead, ActivityComments and ActivityDigest are the last
+	// observed activity inputs; a change in any of them is activity.
+	// ActivityComments counts the hive's own comments too, so the reconciler
+	// adds the ones it posts (CountOwnComments) and they never read as
+	// someone else acting.
+	ActivityHead     string `json:"activity_head,omitempty"`
+	ActivityComments int    `json:"activity_comments,omitempty"`
+	ActivityDigest   string `json:"activity_digest,omitempty"`
+	// WaitingOnHive records that, at the last observation, the item was
+	// waiting on the hive (required checks running, reviewer verdict
+	// pending for the head): it cannot stall, whatever the quiet time.
+	WaitingOnHive bool `json:"waiting_on_hive,omitempty"`
+	// HiveHeldWarned is set once the hive-side alert for an item held by
+	// the hive past its dwell has been logged; activity resets it.
+	HiveHeldWarned bool `json:"hive_held_warned,omitempty"`
+	// History is the item's recent stage transitions, newest last, capped
+	// at HistoryCap. It is the record of backward moves now that the
+	// stage/regressed label is retired.
+	History []Hop `json:"history,omitempty"`
+}
+
+// Hop is one stage transition kept in Record.History.
+type Hop struct {
+	From   Stage     `json:"from"`
+	To     Stage     `json:"to"`
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason,omitempty"`
+	// Regressed marks a backward hop (IsRegression); it replaces the
+	// retired stage/regressed label as the record of the move.
+	Regressed bool `json:"regressed,omitempty"`
+}
+
+// HistoryCap bounds Record.History.
+const HistoryCap = 12
+
+// Activity is what the reconciler observed this cycle that a person (or
+// CI) could have changed; see Store.NoteActivity.
+type Activity struct {
+	// Head is the current head SHA ("" for an issue).
+	Head string
+	// Comments is the issue + review comment count, or -1 when unknown
+	// (the lane did not fetch the PR this cycle).
+	Comments int
+	// Digest summarises the verdict, CI state and non-hive labels; any
+	// change is activity.
+	Digest string
+	// At, when non-zero, is the real timestamp of the activity (e.g. the
+	// head commit date); zero means "now".
+	At time.Time
+	// WaitingOnHive says the item is waiting on the hive (checks running,
+	// verdict pending): it must not stall.
+	WaitingOnHive bool
+	// HiveHeldWarned is set once the hive-side alert for a hive-held item
+	// past its dwell has been logged; activity resets it.
+	HiveHeldWarned bool
+}
+
+// QuietSince is when the item's current quiet period began: the later of
+// entering the stage and the last activity.
+func (r Record) QuietSince() time.Time {
+	if r.LastActivityAt.After(r.EnteredAt) {
+		return r.LastActivityAt
+	}
+	return r.EnteredAt
+}
+
+// QuietFor is how long the item has been quiet at now (0 if unknown).
+func (r Record) QuietFor(now time.Time) time.Duration {
+	since := r.QuietSince()
+	if since.IsZero() || !now.After(since) {
+		return 0
+	}
+	return now.Sub(since)
 }
 
 // Regressed reports whether the item carries an unresolved regression.
@@ -237,11 +318,102 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 		next.RegressionCommented = false
 		tr.Recovered = true
 	}
-	if !had || next != prev {
+	if tr.Changed {
+		next.History = appendHop(prev.History, Hop{From: prev.Stage, To: stage, At: now, Reason: reason, Regressed: tr.Regressed})
+	}
+	if !had || !next.equal(prev) {
 		s.dirty = true
 	}
 	s.items[key] = next
 	return tr
+}
+
+// equal compares two records including the History slice (Record is not
+// comparable with == once it carries a slice).
+func (r Record) equal(o Record) bool {
+	if len(r.History) != len(o.History) {
+		return false
+	}
+	for i := range r.History {
+		if r.History[i] != o.History[i] {
+			return false
+		}
+	}
+	r.History, o.History = nil, nil
+	return reflect.DeepEqual(r, o)
+}
+
+func appendHop(h []Hop, hop Hop) []Hop {
+	out := make([]Hop, 0, len(h)+1)
+	out = append(out, h...)
+	out = append(out, hop)
+	if len(out) > HistoryCap {
+		out = out[len(out)-HistoryCap:]
+	}
+	return out
+}
+
+// NoteActivity folds this cycle's activity inputs into key's record and
+// reports whether anything a person could have done changed since the last
+// observation. The first observation of a record seeds LastActivityAt
+// (with a.At when known, else now) so the quiet clock starts at upgrade
+// rather than reading a long-idle item as stalled on the first pass.
+func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return false
+	}
+	now := s.now()
+	at := a.At
+	if at.IsZero() || at.After(now) {
+		at = now
+	}
+	switch {
+	case r.LastActivityAt.IsZero():
+		changed = true
+	case a.Head != "" && a.Head != r.ActivityHead:
+		changed = true
+	case a.Comments >= 0 && a.Comments > r.ActivityComments:
+		changed = true
+	case a.Digest != r.ActivityDigest:
+		changed = true
+	}
+	if changed && at.After(r.LastActivityAt) {
+		r.LastActivityAt = at
+	}
+	if changed {
+		r.HiveHeldWarned = false
+	}
+	if a.Head != "" {
+		r.ActivityHead = a.Head
+	}
+	if a.Comments >= 0 {
+		r.ActivityComments = a.Comments
+	}
+	r.ActivityDigest = a.Digest
+	r.WaitingOnHive = a.WaitingOnHive
+	s.items[key] = r
+	s.dirty = true
+	return changed
+}
+
+// CountOwnComments records that the hive itself posted n comments on key,
+// so the next observed comment count does not read as outside activity.
+func (s *Store) CountOwnComments(key string, n int) {
+	if n <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.ActivityComments += n
+	s.items[key] = r
+	s.dirty = true
 }
 
 // IsRegression reports whether moving from → to is a backward transition
@@ -469,16 +641,56 @@ func Dwell(stage Stage, overrides map[string]time.Duration) time.Duration {
 	return stage.Dwell()
 }
 
-// Stalled reports whether r has sat in its stage past the dwell threshold.
+// Stalled reports whether nobody has worked r for its stage's dwell: the
+// quiet time (since the later of entering the stage and the last observed
+// activity) reached the threshold and the item is not waiting on the hive.
+// requireQuiet=false (governor.labels.stage.stalled.require_quiet) measures
+// from stage entry alone, the pre-#12534 rule; waiting on the hive still
+// never stalls.
 func Stalled(r Record, overrides map[string]time.Duration, now time.Time) bool {
-	if r.Stage == None || r.EnteredAt.IsZero() {
+	return StalledWith(r, overrides, now, true)
+}
+
+// StalledWith is Stalled with the require_quiet policy explicit.
+func StalledWith(r Record, overrides map[string]time.Duration, now time.Time, requireQuiet bool) bool {
+	if r.Stage == None || r.EnteredAt.IsZero() || r.WaitingOnHive {
 		return false
 	}
 	d := Dwell(r.Stage, overrides)
 	if d <= 0 {
 		return false
 	}
-	return now.Sub(r.EnteredAt) >= d
+	since := r.EnteredAt
+	if requireQuiet {
+		since = r.QuietSince()
+	}
+	return now.Sub(since) >= d
+}
+
+// HiveHeld reports whether the item has been quiet past its stage's dwell
+// while waiting on the hive. The author is not the holder, so this is not
+// a stage/stalled case: it is the hive's own lane (reviewer, CI) that
+// needs attention, and the engine surfaces it as a log warning and a
+// dashboard count rather than a label on the PR (hivecommons/hive#12534).
+func HiveHeld(r Record, overrides map[string]time.Duration, now time.Time) bool {
+	if r.Stage == None || r.EnteredAt.IsZero() || !r.WaitingOnHive {
+		return false
+	}
+	d := Dwell(r.Stage, overrides)
+	return d > 0 && r.QuietFor(now) >= d
+}
+
+// MarkHiveHeldWarned records that the hive-held alert was logged for key.
+func (s *Store) MarkHiveHeldWarned(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.HiveHeldWarned {
+		return
+	}
+	r.HiveHeldWarned = true
+	s.items[key] = r
+	s.dirty = true
 }
 
 // RegressionComment is the one-line, idempotent comment posted on a
@@ -492,14 +704,14 @@ func RegressionComment(from, to Stage, reason string) string {
 }
 
 // StallComment is the one-line, idempotent note posted when an item stalls
-// in a StallNote stage: `stage 080-awaiting-merge-admission stalled after
-// 30m: <lane's last skip reason>`.
+// in a StallNote stage: `stage 080-awaiting-merge-admission: no activity
+// for 30m0s: <lane's last skip reason>`.
 func StallComment(stage Stage, dwell time.Duration, reason string) string {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "lane has not evaluated this head"
 	}
-	return StallCommentMarker + "\nstage " + stage.String() + " stalled after " + dwell.String() + ": " + reason
+	return StallCommentMarker + "\nstage " + stage.String() + ": no activity for " + dwell.String() + ": " + reason
 }
 
 // StallCommentMarker tags the stall note.

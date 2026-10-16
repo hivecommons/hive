@@ -287,22 +287,28 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	}
 
 	// Cycle 2, two hours on and no PR: the claim lapsed, the issue is
-	// actionable again → 010 + regressed, one explanatory comment.
+	// actionable again → 010 and one explanatory comment. The backward
+	// move is recorded in the store's history, not as a label
+	// (stage/regressed is retired, hivecommons/hive#12534).
 	clock = now.Add(2 * time.Hour)
 	result = &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.PRInProgress.Label()}}})
 	syncSeeded(fake, c, result, store, clock)
 	fake.mu.Lock()
-	if got := fake.added[7]; strings.Join(got, ",") != stagelabels.PRInProgress.Label()+","+stagelabels.Actionable.Label()+","+stagelabels.RegressedLabel {
+	if got := fake.added[7]; strings.Join(got, ",") != stagelabels.PRInProgress.Label()+","+stagelabels.Actionable.Label() {
 		t.Fatalf("adds = %v", got)
 	}
 	if fake.comments[7] != 1 {
 		t.Fatalf("regression comments = %d, want 1", fake.comments[7])
 	}
 	fake.mu.Unlock()
+	if rec, _ := store.Get(key); len(rec.History) != 2 || !rec.History[1].Regressed || rec.History[1].From != stagelabels.PRInProgress {
+		t.Fatalf("history = %+v", rec.History)
+	}
 
-	// Cycle 3, a day later still actionable: regressed clears only on
-	// recovery, and the actionable dwell (24h) is now exceeded → stalled.
+	// Cycle 3, a day later still actionable: the actionable dwell (24h) is
+	// exceeded → stalled; a stale stage/regressed left by an older hive is
+	// stripped by the sweep.
 	clock = now.Add(2*time.Hour + 25*time.Hour)
 	result = &ActionableResult{}
 	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.Actionable.Label(), stagelabels.RegressedLabel}}})
@@ -311,19 +317,22 @@ func TestSyncIssueStageLabels_LikelyDoneAndHealth(t *testing.T) {
 	if fake.comments[7] != 1 {
 		t.Fatalf("regression comment must not repeat, got %d", fake.comments[7])
 	}
-	if added := fake.added[7]; added[len(added)-1] != stagelabels.RegressedLabel || len(added) != 3 {
-		t.Fatalf("stalled must not displace an unresolved regression: adds = %v", added)
+	if added := fake.added[7]; added[len(added)-1] != stagelabels.StalledLabel || len(added) != 3 {
+		t.Fatalf("stalled expected after the dwell: adds = %v", added)
+	}
+	if removed := fake.removed[7]; removed[len(removed)-1] != stagelabels.RegressedLabel {
+		t.Fatalf("retired stage/regressed must be stripped: removed = %v", removed)
 	}
 	fake.mu.Unlock()
 
 	// Cycle 4: a PR merged; the issue stays open as likely-done → no stage,
 	// every owned label off, record forgotten.
 	result = &ActionableResult{}
-	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.Actionable.Label(), stagelabels.RegressedLabel, LikelyDoneLabel}, ClaimContext: &IssueClaimContext{PRNumber: 70, MergedPR: true}}})
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "acme/widgets", Number: 7, Labels: []string{stagelabels.Actionable.Label(), stagelabels.StalledLabel, LikelyDoneLabel}, ClaimContext: &IssueClaimContext{PRNumber: 70, MergedPR: true}}})
 	syncSeeded(fake, c, result, store, clock)
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if got := strings.Join(fake.removed[7], ","); got != stagelabels.PRInProgress.Label()+","+stagelabels.Actionable.Label()+","+stagelabels.RegressedLabel {
+	if got := strings.Join(fake.removed[7], ","); got != stagelabels.PRInProgress.Label()+","+stagelabels.RegressedLabel+","+stagelabels.Actionable.Label()+","+stagelabels.StalledLabel {
 		t.Fatalf("removed = %v", fake.removed[7])
 	}
 	if _, ok := store.Get(key); ok {

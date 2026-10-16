@@ -1302,6 +1302,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if !strings.EqualFold(pr.GetState(), "open") {
 		return AutoMergeSweepEvent{}, "closed", nil
 	}
@@ -1690,6 +1691,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
@@ -1943,6 +1945,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if !strings.EqualFold(pr.GetState(), "open") {
 		return AutoMergeSweepEvent{}, "closed", nil
 	}

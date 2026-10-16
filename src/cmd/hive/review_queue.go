@@ -9,6 +9,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // stampReviewQueue ranks this cycle's enumerated PRs into the PR review
@@ -41,6 +42,7 @@ func stampReviewQueue(cfg *config.Config, actionable *github.ActionableResult, l
 		Verdicts:     artifact,
 		Dispatch:     dispatch,
 		ChangedPaths: github.CachedPRChangedPaths,
+		StageStore:   stagelabels.Shared(),
 		Now:          time.Now(),
 	})
 }

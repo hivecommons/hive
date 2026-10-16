@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,13 @@ type StageLabelPolicy struct {
 	Enabled bool
 	// Dwell overrides the stage table's expected dwell per stage slug.
 	Dwell map[string]time.Duration
+	// StalledRequireQuiet (governor.labels.stage.stalled.require_quiet,
+	// default true) measures the dwell from the last outside activity
+	// (head push, comment, review, CI change, label change) rather than
+	// from entering the stage, so stage/stalled means "nobody is working
+	// this" (hivecommons/hive#12534). Either way it is never applied while
+	// the item waits on the hive (checks running, verdict pending).
+	StalledRequireQuiet bool
 	// ContributorNudge turns the stage-072 nudge comment + relay interrupt
 	// on (governor.labels.stage.contributor_nudge.enabled, default true).
 	ContributorNudge bool
@@ -135,6 +143,13 @@ type stageDetail struct {
 	// rollup on its head shows a red check (hivecommons/hive#12457).
 	RedChecks     []string
 	RedChecksHead string
+	// Comments is the PR's issue + review comment count from the deep
+	// fetch (the list payload has none); CommentsKnown says it was seen.
+	Comments      int
+	CommentsKnown bool
+	// HeadCommittedAt is the head commit's committer date when the deep
+	// fetch carried it; it is the real timestamp of a push.
+	HeadCommittedAt time.Time
 }
 
 // redCheck returns the first red non-required check on head, or "".
@@ -242,6 +257,12 @@ func (t *StageTracker) drain() [][]stageObservation {
 			if detail.RedChecksHead == "" || o.HeadSHA == "" || detail.RedChecksHead == o.HeadSHA {
 				o.Detail.RedChecks, o.Detail.RedChecksHead = detail.RedChecks, detail.RedChecksHead
 			}
+			if detail.CommentsKnown {
+				o.Detail.Comments, o.Detail.CommentsKnown = detail.Comments, true
+			}
+			if !detail.HeadCommittedAt.IsZero() {
+				o.Detail.HeadCommittedAt = detail.HeadCommittedAt
+			}
 			list = append(list, o)
 		}
 		sort.Slice(list, func(i, j int) bool { return stageLanePrecedence[list[i].Lane] > stageLanePrecedence[list[j].Lane] })
@@ -341,6 +362,47 @@ func (c *Engine) noteStageRedChecks(owner, repo string, number int, head string,
 	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
 		d.RedChecks, d.RedChecksHead = append([]string(nil), names...), head
 	})
+}
+
+// noteStagePR records what a lane's deep PullRequests.Get learned that the
+// list payload lacks: the comment count (outside activity) and, when the
+// payload carries it, the head commit date. Both feed the quiet clock
+// behind stage/stalled.
+func (c *Engine) noteStagePR(owner, repo string, number int, pr *gh.PullRequest) {
+	if !c.stagePolicy().Enabled || pr == nil {
+		return
+	}
+	comments := pr.GetComments() + pr.GetReviewComments()
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
+		d.Comments, d.CommentsKnown = comments, true
+	})
+}
+
+// stageActivity derives this cycle's outside-activity view of a PR.
+func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Activity {
+	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1, At: obs.Detail.HeadCommittedAt}
+	if obs.Detail.CommentsKnown {
+		a.Comments = obs.Detail.Comments
+	}
+	verdict := "verdict:?"
+	if obs.Detail.VerdictKnown {
+		verdict = "verdict:" + obs.Detail.Verdict.Verdict
+	}
+	ci := classifyCIReason(obs.Reason)
+	labels := make([]string, 0, len(obs.Labels))
+	for _, l := range obs.Labels {
+		if stagelabels.Owned(l) || strings.HasPrefix(strings.ToLower(l), "hive/") || strings.HasPrefix(strings.ToLower(l), "review-priority/") {
+			continue
+		}
+		labels = append(labels, strings.ToLower(l))
+	}
+	sort.Strings(labels)
+	a.Digest = verdict + "|ci:" + strconv.Itoa(int(ci)) + "|" + strings.Join(labels, ",")
+	// Checks still running, or a review-pending head with no reviewer
+	// verdict yet, is waiting on the hive, not on a person.
+	a.WaitingOnHive = ci == ciReasonPending ||
+		(stage == stagelabels.ReviewPending && !(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
+	return a
 }
 
 // stageVerdict is a lane's opinion about a PR's stage.
@@ -611,6 +673,12 @@ type StageLabelResult struct {
 	Skipped  int
 	// Healed counts PRs found carrying more than one stage label.
 	Healed int
+	// HiveHeld counts PRs past their stage's dwell while waiting on the
+	// hive (checks running, reviewer verdict pending). They never get
+	// stage/stalled — the author is not the holder — so the signal is this
+	// count and a warn log per PR, for the reviewer lane to act on
+	// (hivecommons/hive#12534, specimen #12417).
+	HiveHeld int
 }
 
 // ApplyStageLabels reconciles the stage/author/health labels for every PR
@@ -664,12 +732,19 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if verdict.Stage != stagelabels.ReturnedToContributor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
 			}
+			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{
-				Stage:     verdict.Stage,
-				Author:    author,
-				Stalled:   stagelabels.Stalled(rec, policy.Dwell, now),
-				Regressed: rec.Regressed(),
+				Stage:   verdict.Stage,
+				Author:  author,
+				Stalled: stagelabels.StalledWith(rec, policy.Dwell, now, policy.StalledRequireQuiet),
+			}
+			if stagelabels.HiveHeld(rec, policy.Dwell, now) {
+				result.HiveHeld++
+				if !rec.HiveHeldWarned {
+					c.warn("stage labels: PR waits on the hive past the stage dwell — reviewer lane needs attention", "repo", obs.Display, "pr", obs.Number, "stage", verdict.Stage.String(), "quiet_for", rec.QuietFor(now).Truncate(time.Minute).String(), "reason", obs.Reason, "lane", obs.Lane)
+					store.MarkHiveHeldWarned(key)
+				}
 			}
 		}
 		if !verdict.Terminal {
@@ -679,6 +754,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
+		commentsBefore := result.Comments
 		add, remove := stagelabels.Plan(obs.Labels, want)
 		if len(add)+len(remove) > 0 {
 			if err := c.ensureStageLabels(ctx, obs.Owner, obs.Repo, tracker); err != nil {
@@ -761,6 +837,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 		}
+		// The hive's own comments are not outside activity.
+		store.CountOwnComments(key, result.Comments-commentsBefore)
 	}
 	store.Prune(stageStorePruneAge)
 	if err := store.Save(); err != nil {

@@ -153,7 +153,7 @@ func newStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock) (*
 	store := stagelabels.NewStore(filepath.Join(t.TempDir(), "stage.json"), clock.now)
 	e := New(client, Options{
 		Now:              clock.now,
-		StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
+		StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, StalledRequireQuiet: true} },
 		StageTracker:     tracker,
 		StageStore:       store,
 	})
@@ -456,7 +456,7 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	}
 }
 
-func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
+func TestApplyStageLabelsStalledAndRegressionHistory(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{}}
 	for _, d := range stagelabels.AllLabelDefs() {
 		api.labels[d.Name] = d.Color
@@ -464,8 +464,9 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 	srv := newStageAPI(t, api)
 	defer srv.Close()
 	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
-	e, _, _ := newStageEngine(t, srv.URL, clock)
+	e, _, store := newStageEngine(t, srv.URL, clock)
 	ctx := context.Background()
+	key := stageKey("acme", "widget", 9)
 	observe := func(labels []string, reason string) {
 		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(9, labels...), reason, false, nil)
 		e.noteStageAuthor("acme", "widget", 9, stagelabels.AuthorTrusted)
@@ -476,7 +477,7 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 
 	observe(nil, "head-changed-since-eval") // → merge-queue
 	api.reset()
-	// Dwell for merge-queue is 3h: nothing at 2h59, stalled at 3h.
+	// Dwell for merge-queue is 3h: nothing at 2h59, stalled at 3h of quiet.
 	clock.advance(3*time.Hour - time.Minute)
 	observe([]string{"stage/100-merge-queue", "author/trusted"}, "head-changed-since-eval")
 	if api.writes() != 0 {
@@ -488,35 +489,152 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 		t.Fatalf("stalled not set: %v", api.added)
 	}
 
-	// New head goes red: 80 → 70, regressed replaces stalled, one comment.
+	// New head goes red: 100 → 070. The backward move is one comment and a
+	// history hop, not a label (stage/regressed is retired, #12534); the CI
+	// change is activity, so stalled clears.
 	api.reset()
 	observe([]string{"stage/100-merge-queue", "stage/stalled", "author/trusted"}, "check-failing:unit")
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/070-fixing", "stage/regressed"}}) {
-		t.Fatalf("regressed added=%v", api.added)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/070-fixing"}}) {
+		t.Fatalf("regression added=%v", api.added)
 	}
 	sort.Strings(api.removed)
 	if !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue", "stage/stalled"}) {
-		t.Fatalf("regressed removed=%v", api.removed)
+		t.Fatalf("regression removed=%v", api.removed)
 	}
 	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 070-fixing: check-failing:unit") {
 		t.Fatalf("comments=%v", api.comments)
 	}
-	// Repeat observation: no second comment, no writes.
+	rec, _ := store.Get(key)
+	if n := len(rec.History); n == 0 || !rec.History[n-1].Regressed || rec.History[n-1].From != stagelabels.MergeQueue {
+		t.Fatalf("history = %+v", rec.History)
+	}
+	if !rec.LastActivityAt.Equal(clock.at) {
+		t.Fatalf("CI change must count as activity: last=%v now=%v", rec.LastActivityAt, clock.at)
+	}
+	// Repeat observation: no second comment, no writes; the hive's own
+	// comment did not read as outside activity.
 	api.reset()
-	observe([]string{"stage/070-fixing", "stage/regressed", "author/trusted"}, "check-failing:unit")
+	observe([]string{"stage/070-fixing", "author/trusted"}, "check-failing:unit")
 	if api.writes() != 0 {
 		t.Fatalf("regression re-posted: comments=%v added=%v", api.comments, api.added)
 	}
-	// Partial recovery (70 → 60) keeps regressed; full recovery clears it.
+	if rec2, _ := store.Get(key); !rec2.LastActivityAt.Equal(rec.LastActivityAt) {
+		t.Fatal("hive's own regression comment moved the quiet clock")
+	}
+	// A stale stage/regressed left by an older hive is stripped on sight.
 	api.reset()
 	observe([]string{"stage/070-fixing", "stage/regressed", "author/trusted"}, "required-check-missing:unit")
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/050-review-pending"}}) || len(api.comments) != 0 {
 		t.Fatalf("partial recovery added=%v comments=%v", api.added, api.comments)
 	}
+	sort.Strings(api.removed)
+	if !reflect.DeepEqual(api.removed, []string{"stage/070-fixing", "stage/regressed"}) {
+		t.Fatalf("retired label not stripped: removed=%v", api.removed)
+	}
 	api.reset()
-	observe([]string{"stage/050-review-pending", "stage/regressed", "author/trusted"}, "head-changed-since-eval")
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending", "stage/regressed"}) {
+	observe([]string{"stage/050-review-pending", "author/trusted"}, "head-changed-since-eval")
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending"}) {
 		t.Fatalf("recovery added=%v removed=%v", api.added, api.removed)
+	}
+}
+
+// hivecommons/hive#12417: a trusted-author PR sat at 050-review-pending for
+// 6h with CI green and no reviewer verdict, and the engine marked it
+// stalled. The wait was on the hive's reviewer, not on a person, so
+// stage/stalled must never be applied there; once the verdict exists and
+// nobody acts for the dwell it may, and any activity clears it.
+func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 13, 33, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	key := stageKey("acme", "widget", 12417)
+	observe := func(labels []string, reason string, verdict *ContributorLaneVerdict, comments int) {
+		pr := stagePR(12417, labels...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, reason, false, nil)
+		e.noteStageAuthor("acme", "widget", 12417, stagelabels.AuthorTrusted)
+		pr.Comments = gh.Ptr(comments)
+		e.noteStagePR("acme", "widget", 12417, pr)
+		if verdict != nil {
+			e.noteStageVerdict("acme", "widget", 12417, *verdict)
+		}
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at050 := []string{"stage/050-review-pending", "author/trusted"}
+
+	observe(nil, contributorLaneReasonNoVerdict, nil, 0)
+	if !reflect.DeepEqual(api.added, [][]string{{"author/trusted", "stage/050-review-pending"}}) {
+		t.Fatalf("added=%v", api.added)
+	}
+	// Six hours, CI green, still no verdict: not stalled, not a comment.
+	// Past the 1h dwell the hive-side alert fires instead (HiveHeld count,
+	// one warn log), because the holder is the hive's reviewer lane.
+	var hiveHeld int
+	for i := 0; i < 6; i++ {
+		api.reset()
+		clock.advance(time.Hour)
+		pr := stagePR(12417, at050...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageAuthor("acme", "widget", 12417, stagelabels.AuthorTrusted)
+		e.noteStagePR("acme", "widget", 12417, pr)
+		res, err := e.ApplyStageLabels(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if api.writes() != 0 {
+			t.Fatalf("hour %d: review-pending without a verdict must never stall: added=%v comments=%v", i+1, api.added, api.comments)
+		}
+		hiveHeld += res.HiveHeld
+	}
+	if hiveHeld != 6 {
+		t.Fatalf("hive-held alert count = %d, want one per cycle past the dwell", hiveHeld)
+	}
+	rec, _ := store.Get(key)
+	if !rec.WaitingOnHive || !rec.HiveHeldWarned {
+		t.Fatalf("record should be waiting on the hive with the alert logged once: %+v", rec)
+	}
+	if stagelabels.Stalled(rec, nil, clock.at) || !stagelabels.HiveHeld(rec, nil, clock.at) {
+		t.Fatal("rule inverted: hive-held, not stalled")
+	}
+	// Checks running is likewise waiting on the hive.
+	api.reset()
+	clock.advance(2 * time.Hour)
+	observe(at050, "required-check-pending:unit", nil, 0)
+	if api.writes() != 0 {
+		t.Fatalf("checks pending must not stall: added=%v", api.added)
+	}
+	// The verdict lands as requires_human (as on #12417: four approves,
+	// intent-alignment requires_human): now a person must act. Quiet for
+	// the 1h dwell → stalled; not a minute before.
+	human := ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	api.reset()
+	observe(at050, contributorLaneReasonNoVerdict, &human, 0)
+	if api.writes() != 0 {
+		t.Fatalf("verdict arrival is activity, not a stall: added=%v", api.added)
+	}
+	clock.advance(59 * time.Minute)
+	observe(at050, contributorLaneReasonNoVerdict, &human, 0)
+	if api.writes() != 0 {
+		t.Fatalf("stalled before the quiet dwell: added=%v", api.added)
+	}
+	clock.advance(time.Minute)
+	observe(at050, contributorLaneReasonNoVerdict, &human, 0)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
+		t.Fatalf("stalled expected after a quiet dwell with the verdict present: added=%v", api.added)
+	}
+	// A human comment is activity: stalled clears immediately.
+	api.reset()
+	clock.advance(time.Minute)
+	observe([]string{"stage/050-review-pending", "stage/stalled", "author/trusted"}, contributorLaneReasonNoVerdict, &human, 1)
+	if !reflect.DeepEqual(api.removed, []string{"stage/stalled"}) || len(api.added) != 0 {
+		t.Fatalf("comment must clear stalled: added=%v removed=%v", api.added, api.removed)
 	}
 }
 
@@ -551,7 +669,7 @@ func TestApplyStageLabelsAwaitingAdmissionStallNote(t *testing.T) {
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
 		t.Fatalf("stalled added=%v", api.added)
 	}
-	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 080-awaiting-merge-admission stalled after 30m0s: review-state-check") {
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 080-awaiting-merge-admission: no activity for 30m0s: review-state-check") {
 		t.Fatalf("stall note=%v", api.comments)
 	}
 	api.reset()
@@ -609,7 +727,7 @@ func TestApplyStageLabelsRecordsVerdictReason(t *testing.T) {
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor", "stage/regressed"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) {
 		t.Fatalf("added=%v", api.added)
 	}
 	rec, _ := store.Get(stageKey("acme", "widget", 12403))
