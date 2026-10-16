@@ -1,0 +1,1 @@
+- `hivectl evidence backfill` no longer skips PRs that already have a live evidence bundle without a merge event. It writes the GitHub outcome beside it as `<head>.backfill.json` and reports these separately as `supplemented`, so hive-reviewed PRs gain an outcome (#12515).

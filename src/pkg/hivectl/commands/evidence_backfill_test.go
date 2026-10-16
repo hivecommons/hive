@@ -252,6 +252,63 @@ func TestEvidenceBackfillBacklinksExistingBundle(t *testing.T) {
 	}
 }
 
+func TestEvidenceBackfillSupplementsLiveBundleWithoutMerge(t *testing.T) {
+	api, _ := backfillAPI(t)
+	root := t.TempDir()
+	// A live bundle for #104 (closed on GitHub) was written at review start
+	// and never got a merge event or a close.
+	live := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion,
+		ID:            evidence.BundleID("acme/widgets", 104, "h104"),
+		Repo:          "acme/widgets",
+		Number:        104,
+		Author:        evidence.Author{Login: "alice", Kind: evidence.AuthorHuman},
+		BaseSHA:       "b104",
+		HeadSHA:       "h104",
+		CreatedAt:     time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 2, 4, 10, 0, 0, 0, time.UTC),
+	}
+	livePath := ghpkg.ReviewEvidencePath(root, "acme/widgets", 104, "h104")
+	if err := writeBackfillBundle(livePath, live, nil); err != nil {
+		t.Fatal(err)
+	}
+	liveBefore, err := os.ReadFile(livePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, stderr, err := runBackfill(t, api, "--since", "2026-01-01", "--root", root, "--skip-mergers")
+	if err != nil {
+		t.Fatalf("backfill: %v\n%s", err, stderr)
+	}
+	if summary["supplemented"].(float64) != 1 || summary["skipped"].(float64) != 0 || summary["written"].(float64) != 7 {
+		t.Errorf("summary = %v", summary)
+	}
+	supPath := backfillSupplementPath(livePath)
+	sup, err := ghpkg.LoadReviewEvidence(supPath)
+	if err != nil {
+		t.Fatalf("supplement not written: %v", err)
+	}
+	if !sup.Backfilled || sup.Backfill == nil || sup.Backfill.State != evidence.BackfillStateClosed {
+		t.Errorf("supplement = %+v", sup.Backfill)
+	}
+	if liveAfter, _ := os.ReadFile(livePath); !bytes.Equal(liveAfter, liveBefore) {
+		t.Errorf("live bundle was rewritten")
+	}
+	entries, err := ghpkg.ListReviewEvidence(root, "acme/widgets", 104)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("PR dir entries = %d, %v; want live + backfilled", len(entries), err)
+	}
+
+	// Second run: the backfilled record for that head already exists.
+	summary, stderr, err = runBackfill(t, api, "--since", "2026-01-01", "--root", root, "--skip-mergers")
+	if err != nil {
+		t.Fatalf("second run: %v\n%s", err, stderr)
+	}
+	if summary["supplemented"].(float64) != 0 || summary["skipped"].(float64) != 7 || summary["written"].(float64) != 0 {
+		t.Errorf("second run summary = %v", summary)
+	}
+}
+
 func TestEvidenceBackfillDryRunWritesNothing(t *testing.T) {
 	api, calls := backfillAPI(t)
 	root := t.TempDir()
