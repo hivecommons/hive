@@ -145,7 +145,7 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	html := indexHTML(t)
 	var source strings.Builder
 	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\n")
-	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteCountersSvg", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "renderEvidenceSummary"} {
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteCountersSvg", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -195,6 +195,13 @@ assert.match(contiguous, /stroke-dasharray="3 3"/);
 const missingTools = evMaintainabilitySvg([{repo: 'o/r', months: [snap('2020-01', 1, 0)]}], []);
 assert.match(missingTools, /No tool measurements/);
 assert.doesNotMatch(missingTools, /NaN|undefined/);
+// Report-only panels end in a "Not graded" badge, never "Rated: Not enough data".
+const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };
+const ungraded = evGradeLine('ungraded', 'report-only; no threshold to grade against');
+assert.match(ungraded, /<span class="ev-grade ungraded">Not graded<\/span> <span class="ev-grade-why">report-only; no threshold to grade against<\/span>/);
+assert.doesNotMatch(ungraded, /Rated:|Not enough data/);
+assert.match(evGradeLine('none', 'needs more'), /<span class="ev-grade none">Rated: Not enough data<\/span>/);
+assert.match(evGradeLine('strong'), /Rated: Strong<\/span>$/);
 const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];
 const PRT_WINDOWS = [], prtHours = 0;
 const card = {innerHTML: '', querySelector() { return null; }};
@@ -302,7 +309,9 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"const EV_BLOCKED_FAIR = 0.15;",
 		"const EV_DATA_SINCE = '2026-10-08';",
 		"const EV_REVERTS_SINCE = '2026-10-15';",
-		"const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };",
+		"const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };",
+		"const label = grade === 'ungraded' ? EV_GRADES.ungraded : `Rated: ${EV_GRADES[grade]}`;",
+		"grade: 'ungraded', reason: 'report-only; no threshold to grade against',",
 		"'outcome-by-author': (dto) => {",
 		"calibration: (dto) => {",
 		"'accuracy-by-model': (dto) => {",

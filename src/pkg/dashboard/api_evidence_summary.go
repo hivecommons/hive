@@ -49,7 +49,11 @@ type EvidenceSummary struct {
 	// WriteCounters is the proxy's attempted-vs-blocked agent write totals per
 	// intent tier (#12069); omitted when the counter file is absent or unreadable.
 	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
-	// ACMMChanges records the first observed month of each policy level per repo.
+	// ACMMChanges is the month each policy.acmm_level was first observed per
+	// repo (#12369), computed over all stored bundles for the repo rather than
+	// the latest bundle per PR, the author kind or the window (policy maturity
+	// is a repo property; see evidenceACMMChanges). Omitted when no bundle
+	// carries a valid level. Report-only; it never feeds back into eligibility.
 	ACMMChanges []EvidenceACMMChange `json:"acmm_changes,omitempty"`
 	// ClaimVsVerdict is panel 5 (#12365): per ISO week, agent-authored PRs
 	// whose author said "done" versus what CI and the swarm said.

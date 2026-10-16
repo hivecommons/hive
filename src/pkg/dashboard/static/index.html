@@ -6446,7 +6446,7 @@
 
         <details class="faq-q" id="faq-evidence-card">
           <summary>What is the Evidence card, and what do its charts prove?</summary>
-          <p>The Evidence card in the Throughput section summarises <em>review evidence bundles</em>: one JSON record per PR head commit of what Hive reviewed, what CI said, who acted and how it merged. Its panels (outcomes by author kind, reviewer calibration, accuracy by model family, shadow gates) follow the 24h / 7d / 30d / custom window pills, and every panel's ⓘ button opens a plain-language explainer ending in a grade of Strong, Fair, Weak or Not enough data. The charts show what was recorded; they do not prove a merge was correct ("merged" is not "correct", an open PR counts as not merged, and evidence only exists since the feature shipped), and nothing in them is read by anything that decides a merge. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-evidence.md#how-to-read-the-evidence-card" target="_blank" rel="noopener noreferrer">How to read the Evidence card</a>.</p>
+          <p>The Evidence card in the Throughput section summarises <em>review evidence bundles</em>: one JSON record per PR head commit of what Hive reviewed, what CI said, who acted and how it merged. Its panels (outcomes by author kind, reviewer calibration, accuracy by model family, maintainability trend, boundary enforcement, claim vs verdict, work balance, shadow gates) follow the 24h / 7d / 30d / custom window pills, and every panel's ⓘ button opens a plain-language explainer ending in a grade of Strong, Fair, Weak or Not enough data — except Maintainability trend, which is report-only and ends in a "Not graded" badge instead. The charts show what was recorded; they do not prove a merge was correct ("merged" is not "correct", an open PR counts as not merged, and evidence only exists since the feature shipped), and nothing in them is read by anything that decides a merge. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-evidence.md#how-to-read-the-evidence-card" target="_blank" rel="noopener noreferrer">How to read the Evidence card</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-behind">
@@ -22356,7 +22356,9 @@ function burnAreaChart() {
     const EV_BLOCKED_FAIR = 0.15;           // ≤ → Fair, above → Weak
     const EV_DATA_SINCE = '2026-10-08';     // first evidence bundles were written
     const EV_REVERTS_SINCE = '2026-10-15';  // reverted_by links recorded from this date
-    const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };
+    // `ungraded` is for report-only panels that have no threshold to hold
+    // them to; unlike `none`, more data would not produce a grade.
+    const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };
 
     // evGrade: lower is better unless higherIsBetter. value null or n below the
     // minimum → "none".
@@ -22371,7 +22373,8 @@ function burnAreaChart() {
       return `Merged is not the same as correct, and a PR that is still open counts as not merged. Evidence has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}.${short}`;
     }
     function evGradeLine(grade, why) {
-      return `<span class="ev-grade ${grade}">Rated: ${EV_GRADES[grade]}</span>${why ? ` <span class="ev-grade-why">${escapeHtml(why)}</span>` : ''}`;
+      const label = grade === 'ungraded' ? EV_GRADES.ungraded : `Rated: ${EV_GRADES[grade]}`;
+      return `<span class="ev-grade ${grade}">${label}</span>${why ? ` <span class="ev-grade-why">${escapeHtml(why)}</span>` : ''}`;
     }
 
     // Each explainer returns the four sections plus a grade. Text is written
@@ -22449,8 +22452,8 @@ function burnAreaChart() {
           measured: 'Monthly Go cyclomatic complexity snapshots per repo: median, functions over threshold, and warnings by tool. ACMM markers show when each level was first observed.',
           how: 'Snapshots within the window include boundary months. Missing months and tool measurements stay gaps. n counts repos with at least two snapshots; single snapshots remain visible as points.',
           good: 'A flat or falling median and fewer functions over threshold. Complexity alone does not say whether a change was good.',
-          ours: `${rows.length} repo(s) with snapshots; ${over} function(s) over threshold in their latest months. ${evLimitsSentence()}`,
-          grade: 'none', reason: 'report-only; not graded',
+          ours: `${rows.length} repo(s) with snapshots; ${over} function(s) over threshold in their latest months. Snapshots are monthly, so a short window can hold one month or none. ACMM markers come from evidence bundles, which have only been recorded since ${EV_DATA_SINCE}.`,
+          grade: 'ungraded', reason: 'report-only; no threshold to grade against',
         };
       },
       'shadow-gates': (dto) => {
