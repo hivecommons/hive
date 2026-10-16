@@ -9,9 +9,36 @@ import (
 	"time"
 )
 
+// Subject kinds: a Hive change is a PR, a feature flag, or a release channel.
+const (
+	SubjectPR      = "pr"
+	SubjectFlag    = "flag"
+	SubjectChannel = "channel"
+)
+
+// Cohort roles.
+const (
+	RoleControl   = "control"
+	RoleTreatment = "treatment"
+)
+
+// Metric directions for the pre-registered delta.
+const (
+	DirectionIncrease = "increase"
+	DirectionDecrease = "decrease"
+)
+
+// Result verdicts.
+const (
+	VerdictImproved     = "improved"
+	VerdictRegressed    = "regressed"
+	VerdictInconclusive = "inconclusive"
+	VerdictFastFailed   = "fast_failed"
+)
+
 // Subject is a change to Hive, never a user's repository or governor config.
 type Subject struct {
-	Kind      string `json:"kind"` // pr, flag, or channel
+	Kind      string `json:"kind"` // SubjectPR, SubjectFlag, or SubjectChannel
 	Reference string `json:"reference"`
 }
 
@@ -19,7 +46,7 @@ type Subject struct {
 // A hive may belong to only one cohort in an experiment.
 type Cohort struct {
 	ID         string   `json:"id"`
-	Role       string   `json:"role"` // control or treatment
+	Role       string   `json:"role"` // RoleControl or RoleTreatment
 	HiveIDs    []string `json:"hive_ids"`
 	OptIn      bool     `json:"opt_in"`
 	ACMMLevel  int      `json:"acmm_level"`
@@ -47,8 +74,11 @@ type MetricDefinition struct {
 }
 
 // MetricCatalog maps to the snapshot-series JSON fields in pkg/hivestate (#12354).
-// Missing outcome instrumentation is explicit: snapshots do not contain PR
-// outcomes, resolution times, or a link from kicks to accepted output.
+// SourceFields are the hivestate.Snapshot JSON tags spelled as literals because
+// hivestate exports no name constants; TestCatalogSnapshotContract fails if a
+// tag is renamed there, so update both together. Missing outcome
+// instrumentation is explicit: snapshots do not contain PR outcomes,
+// resolution times, or a link from kicks to accepted output.
 func MetricCatalog() []MetricDefinition {
 	return []MetricDefinition{
 		{ID: "queue_depth_p90", Unit: "items", SourceFields: []string{"queue_issues", "queue_prs", "queue_hold"}, Aggregation: "nearest-rank p90 per queue (not the sum of p90s)"},
@@ -87,7 +117,7 @@ type Metric struct {
 	QuestionID   string   `json:"question_id"`
 	DefinitionID string   `json:"definition_id"`
 	SourceField  string   `json:"source_field,omitempty"`
-	Direction    string   `json:"direction"`               // increase or decrease
+	Direction    string   `json:"direction"`               // DirectionIncrease or DirectionDecrease
 	MinimumDelta *float64 `json:"minimum_delta,omitempty"` // nonnegative magnitude
 	Threshold    *float64 `json:"threshold,omitempty"`
 }
@@ -113,7 +143,7 @@ type Measurement struct {
 
 type Result struct {
 	RecordedAt   time.Time     `json:"recorded_at"`
-	Verdict      string        `json:"verdict"` // improved, regressed, inconclusive, fast_failed
+	Verdict      string        `json:"verdict"` // one of the Verdict* constants
 	Measurements []Measurement `json:"measurements"`
 	Summary      string        `json:"summary"`
 }
@@ -133,34 +163,59 @@ type Experiment struct {
 func finite(v *float64) bool { return v == nil || (!math.IsNaN(*v) && !math.IsInf(*v, 0)) }
 func nonempty(s string) bool { return strings.TrimSpace(s) != "" }
 
+func oneOf(v string, allowed ...string) bool {
+	for _, a := range allowed {
+		if v == a {
+			return true
+		}
+	}
+	return false
+}
+
 // Validate checks persisted records on both load and save. It does not judge
 // outcomes or activate an experiment; unavailable metrics may be registered but
 // cannot carry numerical results until their instrumentation is implemented.
+// Each condition reports its own reason so a rejected ledger can be repaired.
 func (e Experiment) Validate() error {
-	if !nonempty(e.ID) || !nonempty(e.Hypothesis) || e.CreatedAt.IsZero() {
-		return fmt.Errorf("id, hypothesis and created_at are required")
-	}
-	if (e.Subject.Kind != "pr" && e.Subject.Kind != "flag" && e.Subject.Kind != "channel") || !nonempty(e.Subject.Reference) {
-		return fmt.Errorf("invalid Hive subject")
-	}
-	if e.Window.BaselineHours <= 0 || e.Window.ExperimentDurationHours <= 0 || e.Window.CooldownHours < 0 {
-		return fmt.Errorf("invalid window")
+	switch {
+	case !nonempty(e.ID):
+		return fmt.Errorf("id is required")
+	case !nonempty(e.Hypothesis):
+		return fmt.Errorf("hypothesis is required")
+	case e.CreatedAt.IsZero():
+		return fmt.Errorf("created_at is required")
+	case !oneOf(e.Subject.Kind, SubjectPR, SubjectFlag, SubjectChannel):
+		return fmt.Errorf("subject kind %q must be %s, %s or %s", e.Subject.Kind, SubjectPR, SubjectFlag, SubjectChannel)
+	case !nonempty(e.Subject.Reference):
+		return fmt.Errorf("subject reference is required")
+	case e.Window.BaselineHours <= 0:
+		return fmt.Errorf("window baseline_hours must be positive")
+	case e.Window.ExperimentDurationHours <= 0:
+		return fmt.Errorf("window experiment_duration_hours must be positive")
+	case e.Window.CooldownHours < 0:
+		return fmt.Errorf("window cooldown_hours must not be negative")
 	}
 	cohorts, hives := map[string]bool{}, map[string]bool{}
 	roles := map[string]bool{}
 	for _, c := range e.Cohorts {
-		if !nonempty(c.ID) || cohorts[c.ID] || !c.OptIn || len(c.HiveIDs) == 0 || (c.Role != "control" && c.Role != "treatment") || c.ACMMLevel < 0 || c.RepoCount < 0 || c.AgentCount < 0 || !nonempty(c.Backend) || !nonempty(c.Model) {
-			return fmt.Errorf("invalid or duplicate cohort %q", c.ID)
+		if err := c.validate(); err != nil {
+			return fmt.Errorf("cohort %q: %w", c.ID, err)
+		}
+		if cohorts[c.ID] {
+			return fmt.Errorf("cohort %q: duplicate id", c.ID)
 		}
 		cohorts[c.ID], roles[c.Role] = true, true
 		for _, id := range c.HiveIDs {
-			if !nonempty(id) || hives[id] {
-				return fmt.Errorf("invalid or overlapping hive %q", id)
+			if !nonempty(id) {
+				return fmt.Errorf("cohort %q: hive id is required", c.ID)
+			}
+			if hives[id] {
+				return fmt.Errorf("cohort %q: hive %q belongs to another cohort", c.ID, id)
 			}
 			hives[id] = true
 		}
 	}
-	if !roles["control"] || !roles["treatment"] {
+	if !roles[RoleControl] || !roles[RoleTreatment] {
 		return fmt.Errorf("control and treatment cohorts are required")
 	}
 	definitions := map[string]MetricDefinition{}
@@ -173,22 +228,11 @@ func (e Experiment) Validate() error {
 	}
 	metrics := map[string]Metric{}
 	for _, m := range e.Metrics {
-		d, ok := definitions[m.DefinitionID]
-		if !nonempty(m.ID) || metrics[m.ID].ID != "" || !ok || !questions[m.QuestionID] || (m.Direction != "increase" && m.Direction != "decrease") || (m.MinimumDelta == nil && m.Threshold == nil) || !finite(m.MinimumDelta) || !finite(m.Threshold) || (m.MinimumDelta != nil && *m.MinimumDelta < 0) {
-			return fmt.Errorf("invalid metric %q", m.ID)
+		if err := m.validate(definitions, questions); err != nil {
+			return fmt.Errorf("metric %q: %w", m.ID, err)
 		}
-		if len(d.SourceFields) > 0 {
-			found := false
-			for _, field := range d.SourceFields {
-				if field == m.SourceField {
-					found = true
-				}
-			}
-			if !found {
-				return fmt.Errorf("metric %q requires a catalog source field", m.ID)
-			}
-		} else if m.SourceField != "" {
-			return fmt.Errorf("metric %q has no snapshot source field", m.ID)
+		if _, dup := metrics[m.ID]; dup {
+			return fmt.Errorf("metric %q: duplicate id", m.ID)
 		}
 		metrics[m.ID] = m
 	}
@@ -197,43 +241,131 @@ func (e Experiment) Validate() error {
 	}
 	guardrails := map[string]bool{}
 	for _, g := range e.Guardrails {
-		if guardrails[g.MetricID] || metrics[g.MetricID].ID == "" || (g.Lower == nil && g.Upper == nil) || !finite(g.Lower) || !finite(g.Upper) || (g.Lower != nil && g.Upper != nil && *g.Lower > *g.Upper) {
-			return fmt.Errorf("invalid guardrail for %q", g.MetricID)
+		if err := g.validate(metrics); err != nil {
+			return fmt.Errorf("guardrail for %q: %w", g.MetricID, err)
+		}
+		if guardrails[g.MetricID] {
+			return fmt.Errorf("guardrail for %q: duplicate metric", g.MetricID)
 		}
 		guardrails[g.MetricID] = true
 	}
 	if e.Result == nil {
 		return nil
 	}
-	r := e.Result
-	if r.RecordedAt.Before(e.CreatedAt) || (r.Verdict != "improved" && r.Verdict != "regressed" && r.Verdict != "inconclusive" && r.Verdict != "fast_failed") || len(r.Measurements) == 0 {
-		return fmt.Errorf("invalid result")
+	return e.Result.validate(e.CreatedAt, cohorts, metrics, definitions)
+}
+
+func (c Cohort) validate() error {
+	switch {
+	case !nonempty(c.ID):
+		return fmt.Errorf("id is required")
+	case !oneOf(c.Role, RoleControl, RoleTreatment):
+		return fmt.Errorf("role %q must be %s or %s", c.Role, RoleControl, RoleTreatment)
+	case !c.OptIn:
+		return fmt.Errorf("population must opt in")
+	case len(c.HiveIDs) == 0:
+		return fmt.Errorf("at least one hive id is required")
+	case c.ACMMLevel < 0:
+		return fmt.Errorf("acmm_level must not be negative")
+	case c.RepoCount < 0:
+		return fmt.Errorf("repo_count must not be negative")
+	case c.AgentCount < 0:
+		return fmt.Errorf("agent_count must not be negative")
+	case !nonempty(c.Backend):
+		return fmt.Errorf("backend is required")
+	case !nonempty(c.Model):
+		return fmt.Errorf("model is required")
+	}
+	return nil
+}
+
+func (m Metric) validate(definitions map[string]MetricDefinition, questions map[string]bool) error {
+	d, ok := definitions[m.DefinitionID]
+	switch {
+	case !nonempty(m.ID):
+		return fmt.Errorf("id is required")
+	case !ok:
+		return fmt.Errorf("definition %q is not in the metric catalog", m.DefinitionID)
+	case !questions[m.QuestionID]:
+		return fmt.Errorf("question %q is not in the outcome catalog", m.QuestionID)
+	case !oneOf(m.Direction, DirectionIncrease, DirectionDecrease):
+		return fmt.Errorf("direction %q must be %s or %s", m.Direction, DirectionIncrease, DirectionDecrease)
+	case m.MinimumDelta == nil && m.Threshold == nil:
+		return fmt.Errorf("minimum_delta or threshold is required")
+	case !finite(m.MinimumDelta):
+		return fmt.Errorf("minimum_delta must be finite")
+	case !finite(m.Threshold):
+		return fmt.Errorf("threshold must be finite")
+	case m.MinimumDelta != nil && *m.MinimumDelta < 0:
+		return fmt.Errorf("minimum_delta must not be negative")
+	}
+	if len(d.SourceFields) > 0 {
+		if !oneOf(m.SourceField, d.SourceFields...) {
+			return fmt.Errorf("source_field %q must be one of %s", m.SourceField, strings.Join(d.SourceFields, ", "))
+		}
+	} else if m.SourceField != "" {
+		return fmt.Errorf("definition %q has no snapshot source field", m.DefinitionID)
+	}
+	return nil
+}
+
+func (g Guardrail) validate(metrics map[string]Metric) error {
+	switch {
+	case metrics[g.MetricID].ID == "":
+		return fmt.Errorf("metric is not pre-registered")
+	case g.Lower == nil && g.Upper == nil:
+		return fmt.Errorf("lower or upper bound is required")
+	case !finite(g.Lower) || !finite(g.Upper):
+		return fmt.Errorf("bounds must be finite")
+	case g.Lower != nil && g.Upper != nil && *g.Lower > *g.Upper:
+		return fmt.Errorf("lower bound exceeds upper bound")
+	}
+	return nil
+}
+
+func (r Result) validate(createdAt time.Time, cohorts map[string]bool, metrics map[string]Metric, definitions map[string]MetricDefinition) error {
+	switch {
+	case r.RecordedAt.Before(createdAt):
+		return fmt.Errorf("result recorded_at precedes experiment created_at")
+	case !oneOf(r.Verdict, VerdictImproved, VerdictRegressed, VerdictInconclusive, VerdictFastFailed):
+		return fmt.Errorf("result verdict %q must be %s, %s, %s or %s", r.Verdict, VerdictImproved, VerdictRegressed, VerdictInconclusive, VerdictFastFailed)
+	case len(r.Measurements) == 0:
+		return fmt.Errorf("result requires at least one measurement")
 	}
 	seen := map[[3]string]bool{}
 	complete := false
 	for _, v := range r.Measurements {
 		m, ok := metrics[v.MetricID]
 		key := [3]string{v.MetricID, v.CohortID, v.Agent}
-		if !ok || !cohorts[v.CohortID] || seen[key] || v.Samples < 0 || !finite(v.Baseline) || !finite(v.Observed) {
-			return fmt.Errorf("invalid measurement for %q", v.MetricID)
+		switch {
+		case !ok:
+			return fmt.Errorf("measurement for %q: metric is not pre-registered", v.MetricID)
+		case !cohorts[v.CohortID]:
+			return fmt.Errorf("measurement for %q: cohort %q is not registered", v.MetricID, v.CohortID)
+		case seen[key]:
+			return fmt.Errorf("measurement for %q: duplicate cohort %q agent %q", v.MetricID, v.CohortID, v.Agent)
+		case v.Samples < 0:
+			return fmt.Errorf("measurement for %q: samples must not be negative", v.MetricID)
+		case !finite(v.Baseline) || !finite(v.Observed):
+			return fmt.Errorf("measurement for %q: baseline and observed must be finite", v.MetricID)
 		}
 		seen[key] = true
 		missing := v.Baseline == nil || v.Observed == nil
 		if missing && !nonempty(v.MissingReason) {
-			return fmt.Errorf("missing evidence requires a reason")
+			return fmt.Errorf("measurement for %q: missing evidence requires a reason", v.MetricID)
 		}
 		if !missing && (v.Samples == 0 || nonempty(v.MissingReason)) {
-			return fmt.Errorf("numerical evidence requires samples and no missing reason")
+			return fmt.Errorf("measurement for %q: numerical evidence requires samples and no missing reason", v.MetricID)
 		}
 		if !missing {
 			complete = true
 		}
 		if definitions[m.DefinitionID].UnavailableReason != "" && (v.Baseline != nil || v.Observed != nil) {
-			return fmt.Errorf("metric %q has no snapshot instrumentation", m.ID)
+			return fmt.Errorf("measurement for %q: definition %q has no snapshot instrumentation", m.ID, m.DefinitionID)
 		}
 	}
-	if !complete && r.Verdict != "inconclusive" {
-		return fmt.Errorf("a conclusive verdict requires numerical evidence")
+	if !complete && r.Verdict != VerdictInconclusive {
+		return fmt.Errorf("verdict %q requires numerical evidence", r.Verdict)
 	}
 	return nil
 }
