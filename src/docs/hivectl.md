@@ -277,6 +277,29 @@ Columns: `repo`, `pr`, `head_sha`, `bundle_id`, `author_login`, `author_kind`, `
 Reporting only: nothing here reads into or alters merge eligibility. See
 [Review evidence bundle](review-evidence.md#exporting).
 
+### evidence — backfill bundles from GitHub history
+
+```bash
+hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run          # counts only, writes nothing
+hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --root ./evidence   # write schema v1 bundles
+hivectl evidence backfill --repo kubestellar/console --since 2026-03-01 --until 2026-05-01 --acmm-level 3
+hivectl evidence backfill --repo hivecommons/hive --since 2026-06-01 --flag hive_on_hive
+```
+
+`evidence backfill` reconstructs evidence bundles from GitHub pull-request history for PRs created in
+`[--since, --until)` and writes them under `--root` (default: the hive's `/data/evidence`) at
+`<owner>/<repo>/<pr>/<head_sha>.json`. It talks to the GitHub API directly (token from `$GITHUB_TOKEN`,
+`$GH_TOKEN` or `gh auth token`; `--github-api` for GHES), not to a hive. Only what history records is written —
+author with a documented kind heuristic (`--agent-login` names logins to count as agents), merged / closed / open
+with timestamps, merger, and revert / follow-up links under the live recorder's rules — and every bundle is marked
+`backfilled: true`; verdicts, CI, sentinel and shadow fields are left absent, never fabricated. Pre-registration
+exclusions are stamped as `backfill.flags` (`--flag placeholder_hive|hive_on_hive|under_min_merged`; `hive_on_hive`
+and `under_min_merged` are added automatically), never applied by dropping PRs. Bundles that already exist are
+skipped, so re-running is safe; `--skip-mergers` saves one request per merged PR; `--signing-key-file` signs the
+output. Record-only: nothing here reads into or alters merge eligibility. See
+[Review evidence bundle, Backfilled bundles](review-evidence.md#backfilled-bundles) and the run plan in
+[`research/backfill.md`](research/backfill.md).
+
 ### observe — read-only metrics
 
 ```bash

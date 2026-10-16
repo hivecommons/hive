@@ -4,13 +4,21 @@ The spoke dashboard is the operator UI served from
 `src/pkg/dashboard/static/index.html`. For the behavior behind the labels the repository cards show or mutate, see [Hive Labels and Control Signals](labels-and-control-signals.md). Its FAQ panel (`#faq-section` /
 `#faq-panel`) is intentionally static HTML: it is not ACMM-gated, does not
 fetch data, and is visible to confused L1/L2 users before they understand the
-rest of the UI.
+rest of the UI. Its only script is a client-side filter box (`faqFilter`) that
+hides non-matching questions.
 
-The FAQ is a summary surface for the current v5 hive. It groups answers by
-getting started (L1/L2), the L3-L6 trust ladder, runs and inception,
-contributors and relays, issue claims and GitHub footprint, cost/cadence/models,
-and where to get help. Each answer links back to the relevant `src/docs/*.md`
-source of truth rather than becoming a second spec.
+The FAQ is a summary surface for the current v5 hive. Each question is a
+collapsible `<details class="faq-q">` with a `<summary>`, grouped under
+getting started (L1/L2), the L3-L6 trust ladder (including `hold` labels and
+shadow mode), evidence/releases/upgrades, runs/inception/Experiment Lab,
+contributors/relays/models, issue claims/attribution/audit log,
+cost/cadence/pausing, and where to get help. Each answer links back to the
+relevant `src/docs/*.md` source of truth rather than becoming a second spec,
+and a footer points to Discord, the in-dashboard feedback form and the issue
+tracker when an answer is missing. `pkg/dashboard/faq_ui_test.go` guards the
+structure: section ids, one `<summary>` per question, at least one link per
+answer, the filter input, and no inline `style=` inside the panel (styling is
+the token-based `.faq-*` class set).
 
 Contributor cards use a client-side “album cover” tint: the dashboard samples each GitHub avatar in a tiny canvas, ignores low-saturation/near-black/near-white pixels, picks dominant and secondary accent colours, and applies them only as subtle background, border, avatar-ring, and role-pill washes. When avatar sampling fails, a deterministic hue derived from the login keeps the card distinct; results are cached in browser storage for seven days.
 

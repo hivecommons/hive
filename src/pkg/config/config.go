@@ -3985,6 +3985,65 @@ type LabelsConfig struct {
 	// every managed repo to grow a second label meaning the same thing.
 	// Defaults to DefaultAutoMergeLabel.
 	AutoMerge string `yaml:"automerge"`
+	// Stage configures the hive-owned stage/NN-* pipeline labels
+	// (hivecommons/hive#12429; docs/labels-and-control-signals.md).
+	Stage StageLabelsConfig `yaml:"stage"`
+}
+
+// StageLabelsConfig is governor.labels.stage: the hive-owned stage/NN-*,
+// author/* and stage/stalled|regressed label families.
+type StageLabelsConfig struct {
+	// Enabled turns the stage reconciler on. nil = true.
+	Enabled *bool `yaml:"enabled"`
+	// Dwell overrides the expected time an item may sit in a stage before
+	// it is marked stage/stalled, keyed by stage slug (e.g. "review-pending":
+	// "1h"). Unset slugs keep the built-in table default; "0" means never.
+	Dwell map[string]string `yaml:"dwell,omitempty"`
+}
+
+// IsEnabled reports whether the stage reconciler runs (default on).
+func (s StageLabelsConfig) IsEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
+// stageSlugs is registered by pkg/stagelabels at init so config validation
+// can reject unknown dwell keys without pkg/dashboard importing the table.
+var stageSlugs []string
+
+// RegisterStageSlugs records the known stage slugs (called from pkg/stagelabels).
+func RegisterStageSlugs(slugs []string) { stageSlugs = append([]string(nil), slugs...) }
+
+// KnownStageSlugs returns the registered stage slugs (nil if none registered).
+func KnownStageSlugs() []string { return append([]string(nil), stageSlugs...) }
+
+// KnownStageSlug reports whether slug is a registered stage slug. When no
+// table has been registered (stagelabels not linked) every slug is accepted.
+func KnownStageSlug(slug string) bool {
+	if len(stageSlugs) == 0 {
+		return true
+	}
+	for _, s := range stageSlugs {
+		if s == slug {
+			return true
+		}
+	}
+	return false
+}
+
+// DwellOverrides parses Dwell into durations, skipping unparsable entries.
+func (s StageLabelsConfig) DwellOverrides() map[string]time.Duration {
+	if len(s.Dwell) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Duration, len(s.Dwell))
+	for slug, raw := range s.Dwell {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil || d < 0 {
+			continue
+		}
+		out[strings.ToLower(strings.TrimSpace(slug))] = d
+	}
+	return out
 }
 
 type SensingConfig struct {
@@ -5674,6 +5733,39 @@ func ValidateDashboardPublicURL(raw string) (string, error) {
 		return "", fmt.Errorf("dashboard.public_url %q: must be an origin only (scheme://host[:port]) with no path, query or fragment", raw)
 	}
 	return u.Scheme + "://" + u.Host, nil
+}
+
+// ValidateSnapshotURL validates and normalizes hub.snapshot_url:
+// an absolute http(s) URL with an optional path, returning the URL with any
+// trailing slash trimmed when the path is otherwise root/empty. Query,
+// fragment and credentials are not allowed. Empty is valid and means "unset".
+func ValidateSnapshotURL(raw string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", nil
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return "", fmt.Errorf("hub.snapshot_url %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("hub.snapshot_url %q: must be an absolute http:// or https:// URL", raw)
+	}
+	if u.Hostname() == "" {
+		return "", fmt.Errorf("hub.snapshot_url %q: missing host", raw)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("hub.snapshot_url %q: credentials are not allowed", raw)
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+		return "", fmt.Errorf("hub.snapshot_url %q: query and fragment are not allowed", raw)
+	}
+	if u.Path == "" || u.Path == "/" {
+		return u.Scheme + "://" + u.Host, nil
+	}
+	// Rebuild from parsed parts so a bare trailing "#" (which url.Parse
+	// reports as an empty fragment) and an uppercase scheme do not survive.
+	return u.Scheme + "://" + u.Host + strings.TrimRight(u.EscapedPath(), "/"), nil
 }
 
 var snapshotFrameAncestorHostPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$`)

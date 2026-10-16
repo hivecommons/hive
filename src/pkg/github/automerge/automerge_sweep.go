@@ -17,6 +17,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Transport is the small surface the sweep needs from the GitHub transport
@@ -103,6 +104,15 @@ type Options struct {
 	// the required-check set is not config-declared and fully green.
 	MinHeadAge time.Duration
 	Now        func() time.Time
+	// StageLabelPolicy returns the live governor.labels.stage policy
+	// (hivecommons/hive#12429). nil disables stage labelling entirely.
+	StageLabelPolicy func() StageLabelPolicy
+	// StageTracker collects per-PR lane observations for ApplyStageLabels;
+	// nil shares the package default so one-shot lane engines feed one pass.
+	StageTracker *StageTracker
+	// StageStore persists stage timing (stalled/regressed); nil shares the
+	// package default at stagelabels.StatePath.
+	StageStore *stagelabels.Store
 }
 
 // Engine owns the automerge sweep policy state.
@@ -152,6 +162,10 @@ type Engine struct {
 	// terminalHoldsLogged remembers PR head+reason pairs already reported as a
 	// terminal held/never-started hold so later ticks only count them.
 	terminalHoldsLogged map[string]bool
+
+	stageLabelPolicy func() StageLabelPolicy
+	stageTracker     *StageTracker
+	stageStore       *stagelabels.Store
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -185,6 +199,9 @@ func New(transport Transport, opts Options) *Engine {
 		sentinelLabel:                     opts.SentinelLabel,
 		minHeadAge:                        opts.MinHeadAge,
 		now:                               opts.Now,
+		stageLabelPolicy:                  opts.StageLabelPolicy,
+		stageTracker:                      opts.StageTracker,
+		stageStore:                        opts.StageStore,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}
@@ -820,6 +837,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			result.Seen++
 			repoSeen++
+			stage := func(reason string, merged bool, err error) {
+				c.recordStage(stageLaneSelf, repo, owner, repoName, pr, reason, merged, err)
+			}
 			// #5117 hold release must run before the prefilter: the
 			// prefilter skips held PRs outright, and an eligible
 			// self-authorization hold has to be released, not skipped.
@@ -830,6 +850,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 					result.Skipped++
 					repoSkipped++
 					repoSkipReasons["self-authorization-release-error"]++
+					stage("self-authorization-release-error", false, err)
 					continue
 				}
 				if released {
@@ -837,6 +858,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 					result.Skipped++
 					repoSkipped++
 					repoSkipReasons["self-authorization-hold-released"]++
+					stage("self-authorization-hold-released", false, nil)
 					continue
 				}
 			}
@@ -854,6 +876,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 						reason = "level-hold-release-error"
 					}
 					repoSkipReasons[reason]++
+					stage(reason, false, err)
 					continue
 				} else if reason != "" {
 					if reason == "hold" {
@@ -862,6 +885,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 					result.Skipped++
 					repoSkipped++
 					repoSkipReasons[reason]++
+					stage(reason, false, nil)
 					continue
 				}
 			}
@@ -870,6 +894,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
+				stage(reason, false, nil)
 				continue
 			}
 			result.Candidates++
@@ -883,6 +908,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
+				stage(reason, false, err)
 				continue
 			}
 			if event.BranchUpdated || reason == "updated-branch" {
@@ -899,8 +925,10 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 				result.Skipped++
 				repoSkipped++
 				repoSkipReasons[reason]++
+				stage(reason, false, nil)
 				continue
 			}
+			stage("", true, nil)
 			result.Merged = append(result.Merged, event)
 			if opts.Audit != nil {
 				opts.Audit(event)
@@ -976,6 +1004,9 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				number = pr.GetNumber()
 			}
 			result.Seen++
+			stage := func(reason string, merged bool, err error) {
+				c.recordStage(stageLaneTrusted, displayRepo, owner, repoName, pr, reason, merged, err)
+			}
 			if opts.SelfAuthoredLaneActive && c.isTrustedBotLaneAuthor(hgithub.SafeGetLogin(pr.GetUser())) {
 				// The self-authored sweep owns trusted-bot PRs and records
 				// their eligibility verdict; the tier hand-off is logged here
@@ -983,11 +1014,13 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				// consistent, without a misleading untrusted-author-role.
 				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", trustedBotLaneSkipReason, "tier", "trusted-author")
 				result.Skipped++
+				stage(trustedBotLaneSkipReason, false, nil)
 				continue
 			}
 			if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
 				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", reason, "tier", "trusted-author")
 				result.Skipped++
+				stage(reason, false, nil)
 				continue
 			}
 			result.Candidates++
@@ -995,13 +1028,16 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			if err != nil {
 				c.warn("trusted-author automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason, "error", err)
 				result.Skipped++
+				stage(reason, false, err)
 				continue
 			}
 			if reason != "" {
 				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", reason, "tier", "trusted-author")
 				result.Skipped++
+				stage(reason, false, nil)
 				continue
 			}
+			stage("", true, nil)
 			result.Merged = append(result.Merged, event)
 			if opts.Audit != nil {
 				opts.Audit(event)
@@ -1158,6 +1194,11 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 						result.Merged = append(result.Merged, laneResult.Merged...)
 					}
 				}
+				if stageResult, stageErr := c.ApplyStageLabels(ctx); stageErr != nil {
+					c.warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
+				} else if stageResult.Writes+stageResult.Comments > 0 {
+					c.info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments)
+				}
 				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
 					t.Reset(next)
 					c.info("self-authored automerge sweep interval adjusted",
@@ -1280,6 +1321,8 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if evaluatedHeadSHA == "" {
 		return AutoMergeSweepEvent{}, "missing-head-sha", nil
 	}
+	c.noteStageAuthor(owner, repo, number, stagelabels.AuthorTrusted)
+	c.noteStageVerdict(owner, repo, number, c.contributorLaneVerdictFor(owner+"/"+repo, number, evaluatedHeadSHA))
 	method := mergeMethodFor(pr)
 	mergeClaim := effects.Claim{
 		Repo:   owner + "/" + repo,
@@ -1645,6 +1688,8 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	if !decision.Allowed {
 		return AutoMergeSweepEvent{}, "untrusted-author-role", nil
 	}
+	c.noteStageAuthor(owner, repo, number, stagelabels.AuthorTrusted)
+	c.noteStageVerdict(owner, repo, number, c.contributorLaneVerdictFor(owner+"/"+repo, number, pr.GetHead().GetSHA()))
 	permission := trustedAuthorPermission{Allowed: true, Level: "not-required"}
 	if policy.RequireGitHubPermission {
 		var err error

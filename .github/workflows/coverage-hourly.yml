@@ -486,6 +486,7 @@ jobs:
     # every contributor's red PR.
     if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success' && needs.coverage.result != 'skipped'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     needs: coverage
     permissions:
       contents: read

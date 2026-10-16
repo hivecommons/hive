@@ -1,0 +1,1 @@
+- Pull contributor Docker base images from mirror.gcr.io to avoid anonymous ECR Public rate limits.

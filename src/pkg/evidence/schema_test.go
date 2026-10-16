@@ -157,6 +157,7 @@ func TestBundleMatchesSchema(t *testing.T) {
 	linked.FollowupOf = []string{BundleID("hivecommons/hive", 41, "b")}
 	linked.RevertedBy = []string{BundleID("hivecommons/hive", 43, "c")}
 	linked.FollowedUpBy = []string{BundleID("hivecommons/hive", 44, "d")}
+	linked.Merge.OpenedAt = t0.Add(-26 * time.Hour)
 	if err := Seal(linked, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +209,7 @@ func TestSchemaRejectsInvalidBundles(t *testing.T) {
 			m["shadow"] = map[string]any{"review_gate": map[string]any{"would_have_blocked": true, "confidence": 0.5, "evaluated_at": "2026-10-08T12:00:00Z"}}
 		}},
 		{"reverted_by empty id", func(m map[string]any) { m["reverted_by"] = []any{""} }},
+		{"merge opened_at not a timestamp", func(m map[string]any) { m["merge"].(map[string]any)["opened_at"] = "last week" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

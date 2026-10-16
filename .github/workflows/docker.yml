@@ -66,7 +66,7 @@ on:
 # during a merge burst or regressing when queued runs execute out of order.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -120,7 +120,10 @@ jobs:
   # commit status. Ordinary pull requests still need this job unchanged so
   # their head SHA receives the required `gate` check-run (#4965).
   gate:
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       push: ${{ steps.decide.outputs.push }}
       sha: ${{ steps.decide.outputs.sha }}
@@ -495,6 +498,7 @@ jobs:
   merge:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build]
     steps:
       - name: Checkout tag publisher
@@ -688,6 +692,26 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
+      - name: Resolve contributor base manifests with retry
+        shell: bash
+        env:
+          CONTRIBUTOR_BASE_IMAGES: |
+            mirror.gcr.io/library/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
+            mirror.gcr.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+        run: |
+          set -euo pipefail
+          for image in $CONTRIBUTOR_BASE_IMAGES; do
+            for attempt in 1 2 3; do
+              if docker buildx imagetools inspect "$image" >/dev/null; then
+                continue 2
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep 90
+              fi
+            done
+            docker buildx imagetools inspect "$image" >/dev/null
+          done
+
       - name: Build and push contributor image by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -726,6 +750,7 @@ jobs:
   merge-contributor:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build-contributor]
     steps:
       - name: Checkout tag publisher
@@ -944,6 +969,7 @@ jobs:
   merge-hub:
     if: needs.gate.outputs.push == 'true'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 20
     needs: [gate, build-hub]
     steps:
       - name: Checkout tag publisher

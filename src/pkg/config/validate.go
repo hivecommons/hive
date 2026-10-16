@@ -181,6 +181,11 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	} else {
 		c.Dashboard.PublicURL = normalized
 	}
+	if normalized, err := ValidateSnapshotURL(c.Hub.SnapshotURL); err != nil {
+		return err
+	} else {
+		c.Hub.SnapshotURL = normalized
+	}
 	if err := dashboardtheme.ValidateSelection(c.Dashboard.Theme, c.Dashboard.ThemeOverrides); err != nil {
 		return err
 	}

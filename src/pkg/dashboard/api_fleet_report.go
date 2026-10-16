@@ -78,6 +78,7 @@ func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string
 		Cluster:    os.Getenv("HIVE_CLUSTER_ID"),
 		Repos:      s.FleetReportRepos(),
 		Now:        time.Now(),
+		HiveState:  s.hiveStateTrends(),
 	}
 	res := fleetreport.Evaluate(obs, state, dryRun)
 	s.persistFleetReportState(res.State)

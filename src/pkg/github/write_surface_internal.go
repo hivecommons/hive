@@ -47,6 +47,10 @@ const (
 	// one-time hold-label migration puts under the new hold label
 	// (hive_hold_migration.go).
 	AuditActionHoldMigrationLabelAdded = "hold_migration_label_added"
+	// AuditActionOriginLabelMigrated is recorded for each open item the
+	// one-time provenance-label reconciler moves from a retired name
+	// (from-review) to its origin/* replacement (origin_labels.go).
+	AuditActionOriginLabelMigrated = "origin_label_migrated"
 	// AuditActionReporterTrustWaitNoticed is recorded when the core poller
 	// posts the one-shot reporter-trust wait explanation comment.
 	AuditActionReporterTrustWaitNoticed = "reporter_trust_wait_noticed"
@@ -82,6 +86,7 @@ func InternalWriteAuditActions() []string {
 		AuditActionFleetReportPosted,
 		AuditActionFleetReportRecovered,
 		AuditActionHoldMigrationLabelAdded,
+		AuditActionOriginLabelMigrated,
 		AuditActionReporterTrustWaitNoticed,
 		AuditActionReporterTrustWaitCleared,
 	}

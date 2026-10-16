@@ -48,6 +48,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inference"
+	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -2290,6 +2291,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
+		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
@@ -2593,6 +2595,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.preShutdownHooks.add("close-contribute-hub", func() {
 		b.dashSrv.CloseContributeHub()
 	})
+	// Monthly per-repo complexity/static-analysis snapshot (RFC #12062,
+	// #12363). Report-only: it writes evidence files and never touches merge
+	// eligibility.
+	b.startComplexityRunner(newComplexityRunner(b.cfg, b.currentGitHubClient, b.logger))
 
 	// Wire ioscan input enforcement (opt-in via ioscan.enabled) to the dashboard
 	// audit log so a blocked/redacted issue title surfaces in the existing
@@ -2678,6 +2684,14 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			b.logger.Warn("sla history flush on shutdown failed", "error", err)
 		}
 	})
+
+	// Intent evaluation counters (#12362): one audit-log line per evaluation
+	// and a durable weekly file beside write-counters.json. Record-only;
+	// nothing reads these back into merge eligibility.
+	intent.SetEvaluationAuditSink(func(o intent.Observation) {
+		b.dashSrv.AuditLogRecord("system", intentEvaluatedAuditAction, intentEvaluatedAuditDetail(o), "", o.Repo, o.Number)
+	})
+	b.preShutdownHooks.add("flush-intent-counters", intent.StartEvaluationCounterPersistence(intent.CountersPath, b.logger))
 
 	// The scheduler's classifier pass records KindClassified journeys the
 	// moment lane routing decides an issue's lane — same store, no extra work.
@@ -5865,6 +5879,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
 		}
+		// Provenance-only rename (from-review → origin/review). Nothing reads
+		// either label as a gate, so a failure here only leaves old names on
+		// open items; the marker is not written and the next boot retries.
+		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
+			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyFromReviewLabel, "error", err)
+		}
 	}
 	b.evalCycles++
 	deps.runEval(b, nil)
@@ -8607,6 +8627,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
+		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
@@ -8672,6 +8693,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 				logger.Info("contributor-lane automerge sweep complete", "seen", laneResult.Seen, "merged", len(laneResult.Merged), "skipped", laneResult.Skipped)
 			}
 		}
+	}
+	// Stage labels (#12429): the lanes above each recorded their per-PR
+	// reason into the process-shared tracker; one pass writes the labels.
+	if stageResult, stageErr := automerge.ApplyStageLabels(ctx, ghClient, opts); stageErr != nil {
+		logger.Warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
+	} else if stageResult.Writes+stageResult.Comments > 0 {
+		logger.Info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,

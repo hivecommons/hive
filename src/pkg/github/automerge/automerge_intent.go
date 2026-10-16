@@ -22,6 +22,10 @@ const (
 	autoMergeReasonIntentEvidence = "intent-evidence"
 )
 
+// intentLaneSelfMerge is the lane recorded on intent evaluation counters by
+// the self-authored sweep (#12362).
+const intentLaneSelfMerge = "self-merge"
+
 // IntentGate is the intent-tier authorization policy the self-authored sweep
 // enforces before the App merges its own PR (#6258).
 //
@@ -156,6 +160,8 @@ func (c *Engine) selfMergeIntentGate(ctx context.Context, displayRepo, owner, re
 	// path does not depend on it. Never widen evidence here.
 	evidence := intent.BuildEvidenceForRepo(pr.GetBody(), fullRepo, gate.BeadStores, false)
 	verdict := intent.EvaluateForAppSelfMerge(class, evidence, true)
+	// Record-only evaluation counter (#12362); never consulted below.
+	intent.RecordEvaluation(intentLaneSelfMerge, fullRepo, number, verdict, enforce)
 	if !verdict.Authorized {
 		c.info("self-authored automerge sweep intent authorization denied", "repo", displayRepo, "pr", number, "tier", verdict.Tier, "reason", verdict.Reason, "enforce", enforce)
 	}

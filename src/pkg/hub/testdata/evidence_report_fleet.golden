@@ -1,0 +1,156 @@
+# Hive evidence report — whole fleet
+
+- Scope: whole fleet
+- Window: the last 90d (2026-07-18 to 2026-10-16)
+- Generated: 2026-10-16 15:04 UTC
+
+## Summary
+
+What the numbers below say, in plain words. Every figure comes from the hives' own reports; nothing is estimated.
+
+- 3 of 4 selected hives report evidence for the last 90d.
+- Of the 50 merged PRs in the last 90 days across the selected hives, 39 (78.0%) have an evidence record — recording began 2026-10-08, so this will rise.
+- At autonomy level L4, 1 hive merged 30 PRs and 3 (10.0%) were reverted or needed a follow-up fix within 14 days.
+- The reviewer's confidence tracks reality: when very confident (0.83–1.0, 13 verdicts) 7.7% went wrong; when not confident (0.0–0.5, 24 verdicts) 20.8% did.
+- AI agents wrote 32 PRs: 25 merged (78.1%) and 3 of those were reverted within 14 days. Humans wrote 12 PRs: 10 merged (83.3%) and 1 of those was reverted within 14 days.
+- The review gate would have held 10 PRs; 6 of those merged and stuck (false alarms). It would have passed 15, of which 0 were reverted (misses).
+
+## What we measured and why
+
+Evidence coverage — of all pull requests GitHub says were merged in the last 90 days, how many have an evidence record: a saved file of the AI reviews, their verdicts and what happened to the PR afterwards. Every other number only counts PRs that have a record, so low coverage means the rest describes a small slice of the work.
+
+Reviewer confidence — when the AI reviewer says it is very sure, is it right more often than when it is unsure? Each verdict is filed under a confidence range and we count how often that range's calls went wrong. A "wrong call" is a false approve (approved, but the PR was never merged or was reverted) or a false block (blocked, but merged anyway after a human override).
+
+Outcome by author kind — for PRs written by humans, by AI agents and by bots: how many merged, how many were reverted after merging, and how many are still open. This is the basic question behind letting agents write code.
+
+Autonomy level × outcome — the revert rate grouped by the autonomy level a hive runs at, from L1 (advice only) to L6 (merges on green CI without a human). If more autonomy came with more reverts, that would be the signal to slow down.
+
+Boundary enforcement — every write (push, comment, label, merge…) an agent tried to make through the guardrail proxy, and how many the proxy refused. A blocked write never reached GitHub.
+
+Same- vs cross-family review — the false-approve rate split by whether the reviewing AI comes from the same model family as the author's AI. A reviewer from the same family may share the author's blind spots.
+
+Per-hive evidence — each hive on its own, so a single hive going wrong is not hidden by the totals.
+
+Shadow gates — what the review gate and intent verification would have done (hold or pass a PR) if they were enforcing, set against what actually happened. Shadow mode only records; nothing was held or blocked anywhere.
+
+## The numbers
+
+### Evidence coverage
+
+Of the 50 merged PRs in the last 90 days across the selected hives, 39 (78.0%) have an evidence record — recording began 2026-10-08, so this will rise.
+
+| Scope | Merged PRs | With an evidence record |
+|---|---|---|
+| All selected hives | 50 | 78.0% of 50 (margin 64.8% – 87.2%) |
+| Alpha \<b> | 40 | 75.0% of 40 (margin 59.8% – 85.8%) |
+| beta | 10 | 90.0% of 10 (margin 59.6% – 98.2%) |
+| gamma | 0 | — (0, below the minimum of 10) |
+| old | 0 | — (0, below the minimum of 10) |
+
+### Reviewer confidence
+
+The reviewer's confidence tracks reality: when very confident (0.83–1.0, 13 verdicts) 7.7% went wrong; when not confident (0.0–0.5, 24 verdicts) 20.8% did.
+
+| Reviewer confidence | Verdicts | Went wrong |
+|---|---|---|
+| Not confident (0.0–0.5) | 24 | 20.8% of 24 (margin 9.2% – 40.5%) |
+| Somewhat confident (0.5–0.67) | 0 | — (0, below the minimum of 10) |
+| Confident (0.67–0.83) | 0 | — (0, below the minimum of 10) |
+| Very confident (0.83–1.0) | 13 | 7.7% of 13 (margin 1.4% – 33.3%) |
+
+### Outcome by author kind
+
+AI agents wrote 32 PRs: 25 merged (78.1%) and 3 of those were reverted within 14 days. Humans wrote 12 PRs: 10 merged (83.3%) and 1 of those was reverted within 14 days.
+
+| Author kind | Hives | PRs | Merged | Reverted within 14 days |
+|---|---|---|---|---|
+| human | 1 | 12 | 83.3% of 12 (margin 55.2% – 95.3%) | 10.0% of 10 (margin 1.8% – 40.4%) |
+| agent | 2 | 32 | 78.1% of 32 (margin 61.2% – 89.0%) | 12.0% of 25 (margin 4.2% – 30.0%) |
+| bot | 0 | 0 | — (0, below the minimum of 10) | — (0, below the minimum of 10) |
+
+### Autonomy level × outcome
+
+At autonomy level L4, 1 hive merged 30 PRs and 3 (10.0%) were reverted or needed a follow-up fix within 14 days.
+
+| Autonomy level | Hives | Merged PRs | Reverted within 14 days |
+|---|---|---|---|
+| L3 | 2 | 11 | 9.1% of 11 (margin 1.6% – 37.7%) |
+| L4 | 1 | 30 | 10.0% of 30 (margin 3.5% – 25.6%) |
+
+### Boundary enforcement
+
+Agents attempted 53 writes to GitHub through the guardrail proxy and 5 (9.4%) were blocked; a blocked write never reached GitHub.
+
+Totals run since each hive's proxy started, not over the window.
+
+| Intent tier | Hives | Attempted | Blocked |
+|---|---|---|---|
+| guarded | 2 | 50 | 10.0% of 50 (margin 4.3% – 21.4%) |
+| sandbox | 1 | 3 | — (3, below the minimum of 10) |
+
+### Same- vs cross-family review
+
+When reviewer and author come from the same AI family the false-approve rate is 12.0% (25 verdicts); across different families it is 8.3% (12 verdicts).
+
+| Family mix | Verdicts | False approve |
+|---|---|---|
+| same family | 25 | 12.0% of 25 (margin 4.2% – 30.0%) |
+| different families | 12 | 8.3% of 12 (margin 1.5% – 35.4%) |
+| mix of both | 0 | — (0, below the minimum of 10) |
+
+### Per-hive evidence
+
+3 of 4 selected hives report evidence for the last 90d.
+
+| Hive | Autonomy | Family mix | Verdicts | False approve | False block | Merged PRs | Reverted within 14 days |
+|---|---|---|---|---|---|---|---|
+| Alpha \<b> | L4 | same | 25 | 12.0% of 25 (margin 4.2% – 30.0%) | 4.0% of 25 (margin 0.7% – 19.5%) | 30 | 10.0% of 30 (margin 3.5% – 25.6%) |
+| beta | L3 | cross | 12 | 8.3% of 12 (margin 1.5% – 35.4%) | 0.0% of 12 (margin 0.0% – 24.3%) | 9 | — (9, below the minimum of 10) |
+| gamma | L2 | no evidence reported |  |  |  |  |  |
+| old | L3 | unknown | 4 | — (4, below the minimum of 10) | — (4, below the minimum of 10) | 2 | — (2, below the minimum of 10) |
+
+### Shadow gates
+
+The review gate would have held 10 PRs; 6 of those merged and stuck (false alarms). It would have passed 15, of which 0 were reverted (misses).
+
+1 hive reports shadow gates. Shadow mode only records; no merge was held or blocked anywhere.
+
+| Gate | Decision | PRs | Merged | Not merged | Reverted within 14 days |
+|---|---|---|---|---|---|
+| Review gate | would have held | 10 | 8 | 2 | — (8, below the minimum of 10) |
+| Review gate | would have passed | 15 | 12 | 3 | 0.0% of 12 (margin 0.0% – 24.3%) |
+
+## How to read these
+
+- Margin (95%) — the range after a percentage. With this many cases, the true value is very likely inside that range; fewer cases mean a wider range. Below 10 cases we print "—" instead of a percentage, because a rate from so few cases is mostly luck.
+- Merged is not the same as correct. A merged PR may still have been a bad change that nobody caught.
+- Open PRs are not failures; they count as "not merged" until they merge. Closed-without-merge is not recorded, so it also counts as not merged.
+- Evidence records only exist since 2026-10-08, and reverts have only been linked to their PR since 2026-10-15. Older PRs are simply not in the data.
+- Backfilled records (created for PRs that merged before recording began) carry no AI verdicts, so they add to coverage but not to the reviewer-confidence numbers.
+- Nothing in this report is read by anything that decides whether a PR may merge. It records; it does not gate.
+
+## What is not reported yet and why
+
+- Per-axis criteria table — not reported by any hive build yet.
+- Claim-vs-verdict totals — not reported by any hive build yet.
+- Median time-to-merge per autonomy level — not reported by any hive build yet.
+- Revert rate by author kind per hive — not reported by any hive build yet.
+
+## Grade per section
+
+"Not enough data" means the graded rate is below the minimum sample; "Not graded" means there is no good or bad value for that section.
+
+| Section | Grade | How the grade is decided |
+|---|---|---|
+| Evidence coverage | Fair | Share of merged PRs (90 days) that have an evidence record; Strong at or above 80%, Fair at or above 40%, otherwise Weak. |
+| Reviewer confidence | Strong | Share of verdicts that went wrong in the most-confident range with enough verdicts (needs two measurable ranges); Strong at or below 10%, Fair at or below 25%, otherwise Weak. |
+| Outcome by author kind | Fair | Revert rate of PRs written by AI agents (humans if no agent PRs); Strong at or below 5%, Fair at or below 15%, otherwise Weak. |
+| Autonomy level × outcome | Fair | Revert rate at the highest autonomy level with enough merged PRs; Strong at or below 5%, Fair at or below 15%, otherwise Weak. |
+| Boundary enforcement | Not graded | There is no "good" block rate: zero blocks with many attempts means agents stayed inside their lane, many blocks means the guardrail did its job. |
+| Same- vs cross-family review | Fair | False-approve rate of the family mix with the most verdicts; Strong at or below 10%, Fair at or below 25%, otherwise Weak. |
+| Per-hive evidence | Fair | Share of selected hives reporting for the window (no minimum sample); Strong at or above 80%, Fair at or above 40%, otherwise Weak. |
+| Shadow gates | Weak | False-alarm rate (PRs a gate would have held that merged and stuck) of the gate with the most held PRs; Strong at or below 25%, Fair at or below 50%, otherwise Weak. |
+
+---
+
+How to read the hub evidence view: https://github.com/hivecommons/hive/blob/v5/src/docs/review-evidence.md#how-to-read-the-hub-evidence-view

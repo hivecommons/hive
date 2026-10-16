@@ -1,0 +1,1 @@
+- hub: drop the em dash from the trust hero headline (#12414)

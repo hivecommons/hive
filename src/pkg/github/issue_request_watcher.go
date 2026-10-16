@@ -1419,6 +1419,9 @@ func foldedComponentFindingComment(title, body, path string, openSiblings, close
 }
 
 func (c *Client) ensureCreateIssueLabel(ctx context.Context, owner, repo, name string) error {
+	if IsOriginLabel(name) {
+		return c.ensureOriginLabel(ctx, owner, repo, name)
+	}
 	if _, _, err := c.client.Issues.GetLabel(ctx, owner, repo, name); err == nil {
 		return nil
 	} else if ghErr, ok := err.(*gh.ErrorResponse); !ok || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusNotFound {

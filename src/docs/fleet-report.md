@@ -118,6 +118,17 @@ Each report carries:
 | repo, ref | `runtime-error` only: the item the error was scoped to, when the class carries one (today `advisory_post_failed` → the digest's repo); `—` otherwise |
 | self-recovered | `no` on a report, `yes` on a recovery |
 
+Alongside the rendered body, each report — and the hub relay request to
+`POST /api/selfreport/ingest` — carries a structured `hive_state` block: the
+hive's 24 h / 7 d state trends from `pkg/hivestate` (median/p90 queue depth
+for issues, PRs and held items, SLA-violation rate, agent idle ratio,
+kicks/day, tokens/day; see
+[Hive state time series](strategy-lab.md#hive-state-time-series)). It contains
+only aggregate counts and rates — no agent names, issue numbers, or repository
+content — and is kept out of the body, so moving trends never make an open
+report look changed. It is omitted when the hive has no snapshot in the last
+7 days.
+
 The same fields appear as issue labels (`fleet-report`, `component:…`,
 `severity:…`, `version:…`, `instance:…`, `trigger:…`, and `criterion:…` for
 shortfalls).
