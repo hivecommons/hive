@@ -104,12 +104,71 @@ func TestAgentStartHook_SetAndClear(t *testing.T) {
 	}
 }
 
+// #12387: a successful deferral comment must still be posted, but must not
+// create or renew the two-hour claim that parks the issue after its blocker
+// lands. A later, independent work-start request must still signal normally.
+func TestAgentStartHook_DeferralCommentIsNotStart(t *testing.T) {
+	commented := 0
+	srv := newIssueMockServer(t, "", nil, nil, &commented)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	calls := recordStarts(c)
+	dir := withIssueDir(t)
+	body := "**Deferred this cycle**: #12322 is open and edits the same files; implementing here now would conflict with it. **Picks up once #12322 merges.**"
+	if _, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 41, Body: body, Agent: "scanner"}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if commented != 1 || len(*calls) != 0 {
+		t.Fatalf("deferral: comments = %d, starts = %+v; want one comment and no start", commented, *calls)
+	}
+
+	if _, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 41, Body: "Starting the fix now that #12322 merged.", Agent: "scanner"}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if commented != 2 || len(*calls) != 1 || (*calls)[0].signal != AgentStartSignalComment {
+		t.Fatalf("work start: comments = %d, starts = %+v; want two comments and one start", commented, *calls)
+	}
+}
+
+func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
+	for _, body := range []string{
+		"Deferred this cycle: conflicts with #12322.",
+		"Deferring implementation until #12322 merges.",
+		"Picks up once #12322 merges.",
+		"Will pick up after #12322 merges.",
+		"BLOCKED BY #12322",
+		"Waiting on #12322 to land.",
+		"Waiting for #12322 to merge.",
+	} {
+		t.Run(body, func(t *testing.T) {
+			if got := issueRequestStartSignal("comment", body); got != "" {
+				t.Fatalf("deferral comment reported %q", got)
+			}
+			for kind, want := range map[string]string{"label": AgentStartSignalLabel, "claim": AgentStartSignalClaim} {
+				if got := issueRequestStartSignal(kind, body); got != want {
+					t.Errorf("explicit %s with deferral body reported %q, want %q", kind, got, want)
+				}
+			}
+		})
+	}
+	for _, body := range []string{
+		"Starting work on this issue.",
+		"verified on v5",
+	} {
+		if got := issueRequestStartSignal("comment", body); got != AgentStartSignalComment {
+			t.Errorf("work comment %q reported %q", body, got)
+		}
+	}
+}
+
 func TestIssueRequestStartSignal(t *testing.T) {
 	for kind, want := range map[string]string{
 		"comment": AgentStartSignalComment, "label": AgentStartSignalLabel, "claim": AgentStartSignalClaim,
 		"issue": "", "close": "", "request_review": "",
 	} {
-		if got := issueRequestStartSignal(kind); got != want {
+		if got := issueRequestStartSignal(kind, ""); got != want {
 			t.Errorf("issueRequestStartSignal(%q) = %q, want %q", kind, got, want)
 		}
 	}

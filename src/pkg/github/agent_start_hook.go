@@ -1,5 +1,7 @@
 package github
 
+import "regexp"
+
 // Agent start signals (hivecommons/hive#10527).
 //
 // A governor kick lists many issues and the agent starts on few of them, so
@@ -46,13 +48,21 @@ func (c *Client) notifyAgentStart(agent, repo string, number int, signal string)
 	}
 }
 
-// issueRequestStartSignal maps a successful issue-request kind to the start
-// signal it is, or "" for kinds that are not one: creating an issue, closing
-// one, and asking for a review do not show the agent working an existing
-// issue.
-func issueRequestStartSignal(kind string) string {
+// commentDeferral matches explicit statements that work is being postponed.
+// Such a comment is not evidence of work starting, even when it names the
+// issue or its blocker. Explicit label, claim and PR requests remain start
+// signals independently of any accompanying deferral comment (#12387).
+var commentDeferral = regexp.MustCompile(`(?i)\b(?:deferred|deferring|picks?\s+up\s+(?:once|after)|blocked\s+by\s+#\d+|waiting\s+(?:on|for)\s+#\d+)\b`)
+
+// issueRequestStartSignal maps a successful issue request to its start
+// signal, or "" when it does not show work starting. Creating an issue,
+// closing one, asking for a review, and deferral comments are not starts.
+func issueRequestStartSignal(kind, body string) string {
 	switch kind {
 	case "comment":
+		if commentDeferral.MatchString(body) {
+			return ""
+		}
 		return AgentStartSignalComment
 	case "label":
 		return AgentStartSignalLabel
