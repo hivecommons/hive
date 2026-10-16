@@ -3611,14 +3611,23 @@
         'inference auth</span>';
     }
 
+    /* The 24h restart count behind a storm badge. Prefer the verdict's ledger;
+       fall back to the count the hub already wrote into restartProblem
+       ("agent restarts: guide ×23/24h (...)") so a hub that omits the ledger
+       can never render ×0 beside a storm (#12466). */
+    function restartStormCount(a) {
+      var n = Number(((a && a.restarts) || {}).last_24h);
+      if (n > 0) return n;
+      var m = /×(\d+)\/24h/.exec((a && a.restartProblem) || '');
+      return m ? Number(m[1]) : 0;
+    }
     function restartStormSummary(h) {
       var agents = (h && h.agentVerdicts) || [];
       var bad = agents.filter(function(a) { return a && a.restartProblem; });
       if (!bad.length) return '';
       var first = bad[0];
       var title = bad.map(function(a) { return a.restartProblem; }).join('\n');
-      var count = ((first.restarts || {}).last_24h) || 0;
-      var label = 'agent restarts: ' + first.name + ' ×' + count + '/24h';
+      var label = 'agent restarts: ' + first.name + ' ×' + restartStormCount(first) + '/24h';
       if (bad.length > 1) label = bad.length + ' restart storms';
       var reset = roleAtLeast(h.role, 'owner')
         /* Inline text action, not a full hv-btn: a padded button nested inside
