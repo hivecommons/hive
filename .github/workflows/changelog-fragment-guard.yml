@@ -91,7 +91,7 @@ jobs:
     # re-attributes every src/ change and every release-time CHANGELOG.md
     # compilation edit to the sync PR, so it can never satisfy the guard —
     # each carried change already passed it on its own PR (#7783).
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Detect forward-merge sync branch
