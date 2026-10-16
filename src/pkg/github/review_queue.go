@@ -235,7 +235,7 @@ type ReviewQueueStageHop struct {
 // reviewQueueStage projects the stage store's record for a PR, deciding
 // stalled/past_dwell with the same dwell overrides and require_quiet
 // policy the engine labels with (ReviewQueueOptions.StageDwell /
-// StageStalledFromEntry) so the pill never disagrees with the label.
+// StageStalledRequireQuiet) so the pill never disagrees with the label.
 func reviewQueueStage(store *stagelabels.Store, full string, number int, opts ReviewQueueOptions, now time.Time) *ReviewQueueStage {
 	if store == nil {
 		return nil
@@ -249,7 +249,7 @@ func reviewQueueStage(store *stagelabels.Store, full string, number int, opts Re
 		EnteredAt:      rec.EnteredAt,
 		LastActivityAt: rec.LastActivityAt,
 		WaitingOnHive:  rec.WaitingOnHive,
-		Stalled:        stagelabels.StalledWith(rec, opts.StageDwell, now, !opts.StageStalledFromEntry),
+		Stalled:        stagelabels.StalledWith(rec, opts.StageDwell, now, opts.stalledRequireQuiet()),
 	}
 	if q := rec.QuietFor(now); q > 0 {
 		out.QuietFor = q.Truncate(time.Minute).String()
@@ -302,14 +302,21 @@ type ReviewQueueOptions struct {
 	// record). nil leaves Stage unset.
 	StageStore *stagelabels.Store
 	// StageDwell is governor.labels.stage.dwell (per-slug overrides) and
-	// StageStalledFromEntry is governor.labels.stage.stalled.require_quiet
-	// == false: the policy the engine labels stage/stalled with. The zero
-	// values are the engine's defaults (table dwell, quiet required), so a
-	// caller without config still agrees with a default-configured engine.
-	StageDwell            map[string]time.Duration
-	StageStalledFromEntry bool
+	// StageStalledRequireQuiet is governor.labels.stage.stalled.require_quiet
+	// as configured (nil when unset): the policy the engine labels
+	// stage/stalled with. The zero values are the engine's defaults (table
+	// dwell, quiet required), so a caller without config still agrees with
+	// a default-configured engine.
+	StageDwell               map[string]time.Duration
+	StageStalledRequireQuiet *bool
 	// Now is the reference time for ages. Zero means time.Now().
 	Now time.Time
+}
+
+// stalledRequireQuiet resolves StageStalledRequireQuiet with the engine's
+// default (config.StageStalledConfig.IsRequireQuiet): unset means required.
+func (o ReviewQueueOptions) stalledRequireQuiet() bool {
+	return o.StageStalledRequireQuiet == nil || *o.StageStalledRequireQuiet
 }
 
 // ReviewQueueKey is the case-insensitive identity of a PR in the queue.

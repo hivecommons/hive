@@ -315,14 +315,19 @@ does not bump itself.
   green and no verdict, wrongly marked stalled). At 050 the label is possible
   only once the verdict exists and nobody acted on it for the dwell.
 - **Cleared at once on any activity.** The next cycle that sees a new head,
-  a new comment, a changed verdict/CI/label set removes it. The automerge
-  engine's own comments (stage notes, nudges, regression lines, rebase
-  requests, stale-approval and hold-release notes) do not count; a comment
-  from another hive process (the reviewer swarm's review comment, a merge
-  note) is indistinguishable from a person's in the comment counter and
-  does — so a stall can only come later than the rule says, never earlier.
+  a new comment, a new review submission (an Approve / Request changes with
+  only a body counts: the comment counters miss it) or a changed
+  verdict/CI/label set removes it. The automerge engine's own comments
+  (stage notes, nudges, regression lines, rebase requests, stale-approval
+  and hold-release notes) and the hive app's own reviews do not count,
+  whether posted before or after the cycle's reconcile; a comment from
+  another hive process (the reviewer swarm's review comment, a merge note)
+  is indistinguishable from a person's in the comment counter and does —
+  so a stall can only come later than the rule says, never earlier.
 - **No `updated_at`.** "Last activity" is derived from the head SHA, the
-  PR's comment counters and the verdict/CI/label digest the lanes already
+  PR's comment counters, the review submissions the lanes list (not every
+  lane path lists them; a review seen by none is caught by the next cycle
+  that does) and the verdict/CI/label digest the lanes already
   fetched — never `updated_at`, which GitHub bumps for the hive's own writes
   ([#12491](https://github.com/hivecommons/hive/issues/12491)). A change is
   dated by the cycle that first observes it (at most one sweep interval

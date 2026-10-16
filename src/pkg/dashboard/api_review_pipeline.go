@@ -88,7 +88,7 @@ func (s *Server) handleReviewPipeline(w http.ResponseWriter, r *http.Request) {
 		opts.Org = s.deps.Config.Project.Org
 		opts.AIAuthor = s.deps.Config.EffectiveAIAuthor()
 		opts.StageDwell = s.deps.Config.Governor.Labels.Stage.DwellOverrides()
-		opts.StageStalledFromEntry = !s.deps.Config.Governor.Labels.Stage.Stalled.IsRequireQuiet()
+		opts.StageStalledRequireQuiet = s.deps.Config.Governor.Labels.Stage.Stalled.RequireQuiet
 	}
 	actionable := s.lastActionableForPRModels()
 	queue := ghpkg.ReviewQueueFromActionable(actionable, opts)

@@ -144,8 +144,16 @@ type stageDetail struct {
 	RedChecksHead string
 	// Comments is the PR's issue + review comment count from the deep
 	// fetch (the list payload has none); CommentsKnown says it was seen.
+	// OwnComments counts the comments this engine posted after that fetch
+	// (creditOwnComment); a later fetch resets it.
 	Comments      int
 	CommentsKnown bool
+	OwnComments   int
+	// Reviews is the number of review submissions by people (the hive
+	// app's excluded) from a lane's ListReviews walk; ReviewsKnown says it
+	// was seen this cycle.
+	Reviews      int
+	ReviewsKnown bool
 }
 
 // redCheck returns the first red non-required check on head, or "".
@@ -215,6 +223,23 @@ func (t *StageTracker) note(key string, fn func(*stageDetail)) {
 	t.details[key] = d
 }
 
+// creditOwnComment records one hive comment posted after the comment count
+// a lane fetched for key this cycle, and reports whether there was such a
+// fetch. The fetch preceded the comment, so without the credit
+// ApplyStageLabels would store the pre-comment count and the next cycle's
+// fetch would read the hive's own comment as a person acting.
+func (t *StageTracker) creditOwnComment(key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	d, ok := t.details[key]
+	if !ok || !d.CommentsKnown {
+		return false
+	}
+	d.OwnComments++
+	t.details[key] = d
+	return true
+}
+
 func (t *StageTracker) record(obs stageObservation) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -254,7 +279,10 @@ func (t *StageTracker) drain() [][]stageObservation {
 				o.Detail.RedChecks, o.Detail.RedChecksHead = detail.RedChecks, detail.RedChecksHead
 			}
 			if detail.CommentsKnown {
-				o.Detail.Comments, o.Detail.CommentsKnown = detail.Comments, true
+				o.Detail.Comments, o.Detail.CommentsKnown, o.Detail.OwnComments = detail.Comments, true, detail.OwnComments
+			}
+			if detail.ReviewsKnown {
+				o.Detail.Reviews, o.Detail.ReviewsKnown = detail.Reviews, true
 			}
 			list = append(list, o)
 		}
@@ -367,28 +395,58 @@ func (c *Engine) noteStagePR(owner, repo string, number int, pr *gh.PullRequest)
 	}
 	comments := pr.GetComments() + pr.GetReviewComments()
 	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
-		d.Comments, d.CommentsKnown = comments, true
+		// A fresh fetch already includes any comment credited before it.
+		d.Comments, d.CommentsKnown, d.OwnComments = comments, true, 0
+	})
+}
+
+// noteStageReviews records the review submissions a lane's ListReviews walk
+// saw on the PR, minus the hive app's own (queue approvals, reviewer
+// verdicts). A body-only Approve or Request-changes from a maintainer adds
+// nothing to the comment counts, so this is how it reaches the quiet clock.
+func (c *Engine) noteStageReviews(owner, repo string, number int, reviews []*gh.PullRequestReview) {
+	if !c.stagePolicy().Enabled {
+		return
+	}
+	n := 0
+	for _, r := range reviews {
+		if r != nil && !c.isHiveAppReviewAuthor(r) {
+			n++
+		}
+	}
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
+		d.Reviews, d.ReviewsKnown = n, true
 	})
 }
 
 // noteOwnStageComment records that this engine posted a comment on the PR
 // outside ApplyStageLabels (takeover notice, rebase request, stale-approval
 // or hold-release note), so the next observed comment count does not read
-// as outside activity and restart the quiet clock. Comments from other hive
-// processes (the reviewer swarm's review comments) are not visible here and
-// still count as activity: the stall is then later, never earlier.
+// as outside activity and restart the quiet clock. When a lane already
+// fetched the PR this cycle the credit goes on that observation (the fetch
+// preceded the comment, and ApplyStageLabels stores the observed count as
+// is); otherwise it goes on the store's last count. Comments from other
+// hive processes (the reviewer swarm's review comments) are not visible
+// here and still count as activity: the stall is then later, never earlier.
 func (c *Engine) noteOwnStageComment(owner, repo string, number int) {
 	if !c.stagePolicy().Enabled {
 		return
 	}
-	c.stageStoreOrShared().CountOwnComments(stageKey(owner, repo, number), 1)
+	key := stageKey(owner, repo, number)
+	if c.stageTrackerOrShared().creditOwnComment(key) {
+		return
+	}
+	c.stageStoreOrShared().CountOwnComments(key, 1)
 }
 
 // stageActivity derives this cycle's outside-activity view of a PR.
 func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Activity {
-	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1}
+	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1, Reviews: -1}
 	if obs.Detail.CommentsKnown {
-		a.Comments = obs.Detail.Comments
+		a.Comments, a.OwnComments = obs.Detail.Comments, obs.Detail.OwnComments
+	}
+	if obs.Detail.ReviewsKnown {
+		a.Reviews = obs.Detail.Reviews
 	}
 	verdict := "verdict:?"
 	if obs.Detail.VerdictKnown {

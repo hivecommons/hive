@@ -545,6 +545,16 @@ func TestStoreStalledRequiresQuiet(t *testing.T) {
 	if st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 2, Digest: "verdict:approve|ci:1|"}) {
 		t.Fatal("hive's own comment counted as outside activity")
 	}
+	// … a body-only review submission counts (Reviews -1 = not listed) …
+	if st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 2, Reviews: -1, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("unknown review count must not read as activity")
+	}
+	if !st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 2, Reviews: 1, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("new review submission must count as activity")
+	}
+	if st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 2, Reviews: 1, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("re-observed review counted again")
+	}
 	// … and a head push, dated by the commit, not by observation.
 	pushed := now.Add(45 * time.Minute)
 	now = now.Add(time.Hour)

@@ -638,6 +638,148 @@ func TestApplyStageLabelsReviewPendingNeverStallsWithoutVerdict(t *testing.T) {
 	}
 }
 
+// The sweep's own comments (Dependabot rebase request, stale-approval note,
+// hold release) land after the lane's deep fetch and before
+// ApplyStageLabels, so the credit must go on this cycle's observation, not
+// on the store's last count (which ApplyStageLabels overwrites with the
+// pre-comment fetch). Otherwise the next cycle reads N+1 > N as a person
+// acting and stage/stalled slips by a dwell after every hive comment.
+func TestApplyStageLabelsOwnSweepCommentDoesNotRestartQuietClock(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, tracker, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	key := stageKey("acme", "widget", 42)
+	human := ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	cycle := func(labels []string, comments int, ownComment bool) {
+		pr := stagePR(42, labels...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageAuthor("acme", "widget", 42, stagelabels.AuthorTrusted)
+		pr.Comments = gh.Ptr(comments)
+		e.noteStagePR("acme", "widget", 42, pr)
+		e.noteStageVerdict("acme", "widget", 42, human)
+		if ownComment {
+			e.noteOwnStageComment("acme", "widget", 42)
+		}
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at050 := []string{"stage/050-review-pending", "author/trusted"}
+	cycle(nil, 3, false)
+	quiet0, _ := store.Get(key)
+
+	// Cycle 2: the fetch saw 3 comments, then the sweep posted one.
+	clock.advance(10 * time.Minute)
+	cycle(at050, 3, true)
+	rec, _ := store.Get(key)
+	if rec.ActivityComments != 4 {
+		t.Fatalf("stored count = %d, want the fetched 3 plus the hive's own comment", rec.ActivityComments)
+	}
+	if !rec.LastActivityAt.Equal(quiet0.LastActivityAt) {
+		t.Fatalf("hive's own comment moved the quiet clock: %v → %v", quiet0.LastActivityAt, rec.LastActivityAt)
+	}
+	// Cycle 3: the fetch now includes the hive's comment: not activity.
+	clock.advance(10 * time.Minute)
+	cycle(at050, 4, false)
+	rec, _ = store.Get(key)
+	if !rec.LastActivityAt.Equal(quiet0.LastActivityAt) {
+		t.Fatalf("hive's own comment read as outside activity on the next fetch: %v → %v", quiet0.LastActivityAt, rec.LastActivityAt)
+	}
+	// Quiet for the dwell from the original activity: stalled on time.
+	api.reset()
+	clock.advance(41 * time.Minute)
+	cycle(at050, 4, false)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
+		t.Fatalf("stalled must not slip by a dwell after the hive's own comment: added=%v", api.added)
+	}
+	// Without a fetch this cycle the credit has nowhere to go but the store.
+	e.noteOwnStageComment("acme", "widget", 42)
+	rec, _ = store.Get(key)
+	if rec.ActivityComments != 5 {
+		t.Fatalf("store credit = %d, want 5", rec.ActivityComments)
+	}
+	if tracker.creditOwnComment(key) {
+		t.Fatal("no observation this cycle: tracker must decline the credit")
+	}
+	// A person's comment on top of it is still activity.
+	api.reset()
+	clock.advance(time.Minute)
+	cycle([]string{"stage/050-review-pending", "stage/stalled", "author/trusted"}, 6, false)
+	if !reflect.DeepEqual(api.removed, []string{"stage/stalled"}) {
+		t.Fatalf("outside comment must clear stalled: removed=%v", api.removed)
+	}
+}
+
+// A maintainer's body-only Approve / Request-changes adds nothing to the
+// comment counts (review_comments is inline only), so the review walk's
+// count is what clears stage/stalled; the hive app's own reviews do not.
+func TestApplyStageLabelsBodyOnlyReviewIsActivity(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	key := stageKey("acme", "widget", 43)
+	human := ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	review := func(login, state string) *gh.PullRequestReview {
+		return &gh.PullRequestReview{User: &gh.User{Login: gh.Ptr(login)}, State: gh.Ptr(state), Body: gh.Ptr("looks fine")}
+	}
+	cycle := func(labels []string, reviews ...*gh.PullRequestReview) {
+		pr := stagePR(43, labels...)
+		e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageAuthor("acme", "widget", 43, stagelabels.AuthorTrusted)
+		pr.Comments = gh.Ptr(0)
+		e.noteStagePR("acme", "widget", 43, pr)
+		e.noteStageVerdict("acme", "widget", 43, human)
+		e.noteStageReviews("acme", "widget", 43, reviews)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hiveReview := review(testHiveAppBotLogin, "APPROVED")
+	cycle(nil, hiveReview)
+	rec, _ := store.Get(key)
+	if rec.ActivityReviews != 0 {
+		t.Fatalf("hive app review counted as a person's: %d", rec.ActivityReviews)
+	}
+	at050 := []string{"stage/050-review-pending", "author/trusted"}
+	clock.advance(time.Hour)
+	api.reset()
+	cycle(at050, hiveReview)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
+		t.Fatalf("quiet dwell must stall: added=%v", api.added)
+	}
+	stalledAt := clock.at
+	// A body-only approve from a maintainer: activity, stalled clears.
+	api.reset()
+	clock.advance(time.Minute)
+	cycle([]string{"stage/050-review-pending", "stage/stalled", "author/trusted"}, hiveReview, review("maintainer", "APPROVED"))
+	if !reflect.DeepEqual(api.removed, []string{"stage/stalled"}) {
+		t.Fatalf("body-only review must clear stalled: removed=%v added=%v", api.removed, api.added)
+	}
+	rec, _ = store.Get(key)
+	if rec.ActivityReviews != 1 || !rec.LastActivityAt.After(stalledAt) {
+		t.Fatalf("review not recorded as activity: %+v", rec)
+	}
+	// The same review seen again is not new activity.
+	clock.advance(time.Minute)
+	cycle(at050, hiveReview, review("maintainer", "APPROVED"))
+	rec2, _ := store.Get(key)
+	if !rec2.LastActivityAt.Equal(rec.LastActivityAt) {
+		t.Fatal("re-observing the same review moved the quiet clock")
+	}
+}
+
 // A stall in awaiting-merge-admission points at the lane, so it earns one
 // comment carrying the lane's last skip reason; other stalls do not.
 func TestApplyStageLabelsAwaitingAdmissionStallNote(t *testing.T) {

@@ -37,15 +37,15 @@ func stampReviewQueue(cfg *config.Config, actionable *github.ActionableResult, l
 		dispatch = review.DispatchState{}
 	}
 	return github.StampReviewQueue(actionable, github.ReviewQueueOptions{
-		Org:                   cfg.Project.Org,
-		AIAuthor:              cfg.EffectiveAIAuthor(),
-		Verdicts:              artifact,
-		Dispatch:              dispatch,
-		ChangedPaths:          github.CachedPRChangedPaths,
-		StageStore:            stagelabels.Shared(),
-		StageDwell:            cfg.Governor.Labels.Stage.DwellOverrides(),
-		StageStalledFromEntry: !cfg.Governor.Labels.Stage.Stalled.IsRequireQuiet(),
-		Now:                   time.Now(),
+		Org:                      cfg.Project.Org,
+		AIAuthor:                 cfg.EffectiveAIAuthor(),
+		Verdicts:                 artifact,
+		Dispatch:                 dispatch,
+		ChangedPaths:             github.CachedPRChangedPaths,
+		StageStore:               stagelabels.Shared(),
+		StageDwell:               cfg.Governor.Labels.Stage.DwellOverrides(),
+		StageStalledRequireQuiet: cfg.Governor.Labels.Stage.Stalled.RequireQuiet,
+		Now:                      time.Now(),
 	})
 }
 

@@ -78,13 +78,16 @@ type Record struct {
 	// label change. Stalled measures quiet time from here, never from the
 	// PR's updated_at (which the hive's own writes bump).
 	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
-	// ActivityHead, ActivityComments and ActivityDigest are the last
-	// observed activity inputs; a change in any of them is activity.
-	// ActivityComments counts the hive's own comments too, so the reconciler
-	// adds the ones it posts (CountOwnComments) and they never read as
-	// someone else acting.
+	// ActivityHead, ActivityComments, ActivityReviews and ActivityDigest are
+	// the last observed activity inputs; a change in any of them is
+	// activity. ActivityComments counts the hive's own comments too, so the
+	// reconciler adds the ones it posts (CountOwnComments) and they never
+	// read as someone else acting. ActivityReviews counts review
+	// submissions by people (not the hive app), with or without inline
+	// comments: a body-only Approve / Request-changes is activity too.
 	ActivityHead     string `json:"activity_head,omitempty"`
 	ActivityComments int    `json:"activity_comments,omitempty"`
+	ActivityReviews  int    `json:"activity_reviews,omitempty"`
 	ActivityDigest   string `json:"activity_digest,omitempty"`
 	// WaitingOnHive records that, at the last observation, the item was
 	// waiting on the hive (required checks running, reviewer verdict
@@ -121,6 +124,16 @@ type Activity struct {
 	// Comments is the issue + review comment count, or -1 when unknown
 	// (the lane did not fetch the PR this cycle).
 	Comments int
+	// OwnComments is how many comments the hive posted on the item after
+	// Comments was fetched this cycle. They are added to the stored count
+	// but never compared, so the next fetch (which includes them) does not
+	// read them as a person acting.
+	OwnComments int
+	// Reviews is the number of review submissions by people (the hive
+	// app's own reviews excluded), or -1 when unknown (the lane did not
+	// list reviews this cycle). It catches a body-only Approve or
+	// Request-changes, which Comments (inline comments only) misses.
+	Reviews int
 	// Digest summarises the verdict, CI state and non-hive labels; any
 	// change is activity.
 	Digest string
@@ -376,6 +389,8 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 		changed = true
 	case a.Comments >= 0 && a.Comments > r.ActivityComments:
 		changed = true
+	case a.Reviews >= 0 && a.Reviews > r.ActivityReviews:
+		changed = true
 	case a.Digest != r.ActivityDigest:
 		changed = true
 	}
@@ -389,7 +404,10 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 		r.ActivityHead = a.Head
 	}
 	if a.Comments >= 0 {
-		r.ActivityComments = a.Comments
+		r.ActivityComments = a.Comments + a.OwnComments
+	}
+	if a.Reviews >= 0 {
+		r.ActivityReviews = a.Reviews
 	}
 	r.ActivityDigest = a.Digest
 	r.WaitingOnHive = a.WaitingOnHive
@@ -400,6 +418,11 @@ func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
 
 // CountOwnComments records that the hive itself posted n comments on key,
 // so the next observed comment count does not read as outside activity.
+// The credit sits on top of the last count NoteActivity stored, so it must
+// be applied after this cycle's NoteActivity (or in a cycle that observes
+// no count at all): a NoteActivity that follows it overwrites the credit
+// with the pre-comment count and the next fetch reads the hive's own
+// comment as a person acting.
 func (s *Store) CountOwnComments(key string, n int) {
 	if n <= 0 {
 		return

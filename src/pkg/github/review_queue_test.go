@@ -686,7 +686,7 @@ func TestReviewQueueStageFollowsStagePolicy(t *testing.T) {
 	if st := stage(ReviewQueueOptions{StageDwell: map[string]time.Duration{"fixing": 10 * time.Minute}}); !st.Stalled || !st.PastDwell {
 		t.Fatalf("dwell override 10m: want stalled and past_dwell, got stalled=%v past_dwell=%v", st.Stalled, st.PastDwell)
 	}
-	if st := stage(ReviewQueueOptions{StageStalledFromEntry: true}); !st.Stalled || st.PastDwell {
+	if st := stage(ReviewQueueOptions{StageStalledRequireQuiet: new(false)}); !st.Stalled || st.PastDwell {
 		t.Fatalf("require_quiet=false: 2h since entry stalls, quiet 30m is not past dwell; got stalled=%v past_dwell=%v", st.Stalled, st.PastDwell)
 	}
 }
