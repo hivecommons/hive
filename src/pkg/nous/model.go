@@ -46,7 +46,7 @@ type MetricDefinition struct {
 	UnavailableReason string   `json:"unavailable_reason,omitempty"`
 }
 
-// MetricCatalog maps to the snapshot-series JSON fields proposed in #12354.
+// MetricCatalog maps to the snapshot-series JSON fields in pkg/hivestate (#12354).
 // Missing outcome instrumentation is explicit: snapshots do not contain PR
 // outcomes, resolution times, or a link from kicks to accepted output.
 func MetricCatalog() []MetricDefinition {
@@ -195,10 +195,12 @@ func (e Experiment) Validate() error {
 	if len(metrics) == 0 {
 		return fmt.Errorf("at least one pre-registered metric is required")
 	}
+	guardrails := map[string]bool{}
 	for _, g := range e.Guardrails {
-		if metrics[g.MetricID].ID == "" || (g.Lower == nil && g.Upper == nil) || !finite(g.Lower) || !finite(g.Upper) || (g.Lower != nil && g.Upper != nil && *g.Lower > *g.Upper) {
+		if guardrails[g.MetricID] || metrics[g.MetricID].ID == "" || (g.Lower == nil && g.Upper == nil) || !finite(g.Lower) || !finite(g.Upper) || (g.Lower != nil && g.Upper != nil && *g.Lower > *g.Upper) {
 			return fmt.Errorf("invalid guardrail for %q", g.MetricID)
 		}
+		guardrails[g.MetricID] = true
 	}
 	if e.Result == nil {
 		return nil
