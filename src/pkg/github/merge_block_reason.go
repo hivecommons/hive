@@ -109,6 +109,24 @@ func (p PullRequest) BranchProtectionBlockReason() (string, bool) {
 	return "", false
 }
 
+// HumanReviewBlocksMerge reports whether a person's review decision keeps the
+// PR from merging: GitHub's reviewDecision is CHANGES_REQUESTED or
+// REVIEW_REQUIRED and the protection facts name the rule. reason is that
+// rule. The merge-eligibility classifier skips such a PR and the dashboard's
+// your-turn decision hands it to a person; both read this one predicate so the
+// merge verdict and the marker agree (hivecommons/hive#12378).
+func (p PullRequest) HumanReviewBlocksMerge() (reason string, blocks bool) {
+	if p.Protection == nil {
+		return "", false
+	}
+	switch p.Protection.ReviewDecision {
+	case ReviewDecisionChangesRequested, ReviewDecisionReviewRequired:
+	default:
+		return "", false
+	}
+	return p.BranchProtectionBlockReason()
+}
+
 // mentionList renders logins as "@a, @b", skipping blanks and duplicates.
 func mentionList(logins []string) string {
 	seen := make(map[string]bool, len(logins))

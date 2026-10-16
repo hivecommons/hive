@@ -333,7 +333,11 @@ func BuildAgentOnlyStatus(
 	}
 }
 
-type statusOptions struct{ hub *ContributeWSHub }
+type statusOptions struct {
+	hub                  *ContributeWSHub
+	mergeVerdicts        map[string]github.MergeVerdict
+	mergeLaneTakesAuthor func(repo, author string) bool
+}
 
 // StatusOption adjusts BuildFrontendStatus.
 type StatusOption func(*statusOptions)
@@ -342,6 +346,24 @@ type StatusOption func(*statusOptions)
 // leases.
 func WithContributeHub(hub *ContributeWSHub) StatusOption {
 	return func(o *statusOptions) { o.hub = hub }
+}
+
+// WithMergeVerdicts attaches the merge classifier's per-PR verdicts before the
+// your-turn decision runs, so it reads the same verdict the PR pill paints.
+func WithMergeVerdicts(verdicts map[string]github.MergeVerdict) StatusOption {
+	return func(o *statusOptions) { o.mergeVerdicts = verdicts }
+}
+
+// WithMergeLaneTakesAuthor lets the your-turn decision ask whether a Hive merge
+// lane admits a PR's author (automerge.Engine.MergeLaneTakesAuthor).
+func WithMergeLaneTakesAuthor(takes func(repo, author string) bool) StatusOption {
+	return func(o *statusOptions) { o.mergeLaneTakesAuthor = takes }
+}
+
+// ownershipEnvAdjust hands the options the your-turn decision reads to its
+// environment.
+func (o statusOptions) ownershipEnvAdjust(env *ownershipEnv) {
+	env.mergeLaneTakesAuthor = o.mergeLaneTakesAuthor
 }
 
 func BuildFrontendStatus(
@@ -377,7 +399,8 @@ func BuildFrontendStatus(
 
 	repos := buildRepos(cfg, actionable, govState)
 	generatedAt := time.Now().UTC()
-	applyOwnershipDecisions(cfg, repos, agentStatuses, strings.ToLower(string(govState.Mode)), generatedAt, options.hub)
+	attachRepoMergeVerdicts(repos, options.mergeVerdicts)
+	applyOwnershipDecisions(cfg, repos, agentStatuses, strings.ToLower(string(govState.Mode)), generatedAt, options.hub, options.ownershipEnvAdjust)
 	payload := &StatusPayload{
 		Timestamp:             generatedAt.Format(time.RFC3339),
 		TimeZone:              dashboardTimeZoneName(),
@@ -1653,11 +1676,18 @@ type FrontendPR struct {
 // mergeable verdict, painted amber — never green — because "the sweep would
 // merge this" is exactly what such a PR has not been shown to satisfy.
 func AttachMergeVerdicts(payload *StatusPayload, verdicts map[string]github.MergeVerdict) {
-	if payload == nil || len(verdicts) == 0 {
+	if payload == nil {
 		return
 	}
-	for ri := range payload.Repos {
-		for pi, entry := range payload.Repos[ri].OpenPrs {
+	attachRepoMergeVerdicts(payload.Repos, verdicts)
+}
+
+func attachRepoMergeVerdicts(repos []FrontendRepo, verdicts map[string]github.MergeVerdict) {
+	if len(verdicts) == 0 {
+		return
+	}
+	for ri := range repos {
+		for pi, entry := range repos[ri].OpenPrs {
 			fp, ok := entry.(FrontendPR)
 			if !ok {
 				continue
@@ -1665,7 +1695,7 @@ func AttachMergeVerdicts(payload *StatusPayload, verdicts map[string]github.Merg
 			if v, ok := verdicts[github.MergeVerdictKey(fp.PullRequest)]; ok {
 				v := v
 				fp.MergeVerdict = &v
-				payload.Repos[ri].OpenPrs[pi] = fp
+				repos[ri].OpenPrs[pi] = fp
 			}
 		}
 	}

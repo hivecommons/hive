@@ -530,6 +530,10 @@ so the reason text can change without breaking them.
 | `stale_safety_net` | `REVIEW` |
 | `run_checkpoint`, `run_stale_plan`, `run_stage_exhausted` | `REVIEW` |
 | `approval_pending` | `REVIEW` |
+| `blocked_unexplained` | `REVIEW` |
+| `review_decision_required` | `REVIEW` |
+| `pr_gate_label` | `REVIEW` |
+| `hand_merge_required` | `REVIEW` |
 
 **Ownership by level.** "Parked" means an issue in one of the four hard-suppress
 buckets the scanner records (`needs_human`, `needs_direction`,
@@ -555,7 +559,12 @@ means the situation cannot occur at that level.
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
 | Issue Hive verified as done but could not close | Yours — `CLOSE` | same | same | same |
 | Issue covered by an open PR | Not yours — the PR closes it on merge | same | same | same |
-| `blocked` · `Epic` · `2-discussing` · `needs-triage` | As the unclaimed row — still in the agent queue | same | same | same |
+| `blocked` with an open GitHub blocked-by link | Not yours — waiting on the linked item | same | same | same |
+| `blocked` with no blocked-by link recorded | As the unclaimed row until it has had no activity for the stale period, then Yours — `REVIEW` (`blocked_unexplained`: name the blocker or lift the label) | same | same | same |
+| `Epic` · `2-discussing` · `needs-triage` on an issue | As the unclaimed row — still in the agent queue | same | same | same |
+| PR with a label that puts it in the Gated band (`needs-decision`, `2-discussing`, `needs-direction`, `needs-spec`, a renamed parking label, or a configured waiting label), no `needs-human`, unheld | Yours — `DECIDE` (`needs-decision`, `2-discussing`) / `STEER` / `SPEC` with the parking reason codes; any other gate label `REVIEW` (`pr_gate_label`) | same | same | same |
+| Non-draft, unheld PR whose GitHub review decision is `REVIEW_REQUIRED` or `CHANGES_REQUESTED` with a named branch-protection rule — the merge classifier's skip | Yours — `REVIEW` (`review_decision_required`, with the rule as the reason) | same | same | same |
+| Non-draft, unheld PR the merge classifier calls eligible whose author no Hive merge lane admits (self-authored, trusted bot, trusted author, contributor lane) | Yours — `REVIEW` (`hand_merge_required`) | same | same | same |
 | `needs-reporter-confirmation` | Not yours — the reporter's turn; after the stale period with no activity, Yours — `CLOSE` | same | same | same |
 
 **Precedence.** When an item matches more than one row, the first matching rule
@@ -570,7 +579,12 @@ but not closed → `CLOSE`; (8) agent-filed and unacknowledged where
 acknowledgment is required → `TRIAGE`; (9) for a pull request with a hold, the
 hold sources decide and no later row applies; for any other pull request, the
 PR rows of the table; (10) otherwise Not yours. The safety net then applies
-only to items that came out Not yours. `hive/verified-open` (the agent found
+only to items that came out Not yours. Last, the gate rules apply to items
+that came out Not yours or only through the safety net (never to a held PR or
+an item waiting elsewhere): an issue labelled `blocked` is waiting elsewhere
+with an open blocked-by link and `blocked_unexplained` without one once stale;
+a pull request takes, in order, its gate label, its review decision, then the
+hand-merge rule. `hive/verified-open` (the agent found
 the work unfinished) cancels `hive/likely-done` for rules (6) and (7) and for
 the safety net, so an issue carrying both is neither awaiting the reporter nor
 verified done; `hive/already-done` and `hive/covered-by-pr` are unaffected.

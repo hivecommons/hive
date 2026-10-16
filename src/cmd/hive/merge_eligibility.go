@@ -70,6 +70,22 @@ func trustedAuthorPolicyFunc(cfg *config.Config) func() automerge.TrustedAuthorP
 	}
 }
 
+// mergeLaneTakesAuthorFunc answers, for the dashboard's your-turn decision,
+// whether a Hive merge lane admits PRs by an author, through the same author
+// gates and policies the merge sweeps are built with. Nil without a client.
+func mergeLaneTakesAuthorFunc(cfg *config.Config, ghClient *github.Client) func(repo, author string) bool {
+	if cfg == nil || ghClient == nil {
+		return nil
+	}
+	engine := automerge.New(ghClient, automerge.Options{
+		TrustedAuthorizer:     trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:   trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy: contributorLanePolicyFunc(cfg),
+		TrustedBotAuthors:     func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() },
+	})
+	return engine.MergeLaneTakesAuthor
+}
+
 // contributorLanePolicyFunc reads auto_merge.contributor_lane.* through cfg
 // on every call so a config reload takes effect without a restart.
 func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorLanePolicy {
@@ -492,10 +508,8 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 			return mergeBucketSkip, blockedOrOutstanding("awaiting review approval"), ""
 		}
 	}
-	if pr.Protection != nil {
-		if rule, known := pr.BranchProtectionBlockReason(); known && (pr.Protection.ReviewDecision == github.ReviewDecisionChangesRequested || pr.Protection.ReviewDecision == github.ReviewDecisionReviewRequired) {
-			return mergeBucketSkip, blockedOrOutstanding(rule), ""
-		}
+	if rule, blocks := pr.HumanReviewBlocksMerge(); blocks {
+		return mergeBucketSkip, blockedOrOutstanding(rule), ""
 	}
 	if pr.Protection != nil && pr.Protection.RequiredChecksKnown {
 		if len(pr.Protection.FailingRequiredChecks) > 0 {

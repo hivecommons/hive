@@ -7537,6 +7537,8 @@ func runEvalCycle(
 		ctx,
 		metricsCollector,
 		dashboard.WithContributeHub(dashSrv.ContributeHub()),
+		dashboard.WithMergeVerdicts(mergeVerdicts),
+		dashboard.WithMergeLaneTakesAuthor(mergeLaneTakesAuthorFunc(cfg, ghClient)),
 	)
 	// Green on a PR pill means "the sweep would merge this now" — the
 	// verdict writeMergeEligible reached for this same actionable set a

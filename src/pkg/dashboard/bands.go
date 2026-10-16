@@ -235,6 +235,13 @@ func issueDoneLabel(labels map[string]bool, doneLabels []string) bool {
 
 func issueLinkedPRState(github.Issue) linkedPRState { return linkedPRState{} }
 
+// prGateLabels are the labels that put a pull request in the waiting
+// ("Gated") band: the human-gate labels plus the configured waiting labels.
+// The your-turn decision reads the same set (hivecommons/hive#12378).
+func prGateLabels(norm normalizedIssueBandConfig) []string {
+	return append(append([]string{}, prHumanGateLabels...), norm.WaitingLabels...)
+}
+
 func PRBand(pr github.PullRequest, held bool, cfg config.DashboardIssueBandsConfig, now time.Time) PRBandInfo {
 	return prBand(pr, nil, held, cfg, now, github.AutoMergeQueuedLabel, "")
 }
@@ -244,7 +251,7 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 	labels := labelSet(pr.Labels)
 	role := prAgentRole(pr)
 	review := prGitHubReview(pr)
-	waiting := held || hasAnyLabel(labels, append(append([]string{}, prHumanGateLabels...), norm.WaitingLabels...)) || len(holdLabels(pr.Labels, hiveID)) > 0
+	waiting := held || hasAnyLabel(labels, prGateLabels(norm)) || len(holdLabels(pr.Labels, hiveID)) > 0
 	eligible, blocked, inReview := prBandFlags(pr, verdict, labels, autoMergeLabel, review)
 
 	band := prMergeStateBand(pr, eligible, blocked, inReview)
