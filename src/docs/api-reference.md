@@ -719,6 +719,7 @@ always resolved server-side from the validated token.
 | `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1678` |
 | `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1679` |
 | `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1680` |
+| `GET` | `/api/hub/evidence` | Hub admin | Read-only cross-hive evidence drill-down from each spoke's stored heartbeat `evidence` summary ([#12116](https://github.com/hivecommons/hive/issues/12116)); non-admins get `403`. Returns `spokes`, `reporting`, pooled `calibration` (bucket 0–5 → bad-outcome rate), `by_acmm_level` (`level`, `hives`, `merged_90d`, `revert_rate`), `family_false_approve_rate` (`same`/`cross`/`mixed`, hives classed by their reviewer vs author family sets), fleet `record_coverage` (merged PRs with an evidence record over `prs_merged_90d`), and per hive `hives[]` with `acmm_level`, `prs_merged_90d`, `record_coverage`, `family_mix`, false-approve / false-block / revert rates, families and a calibration series. Every rate is `{n, rate, lo, hi}` with a 95% Wilson interval; `rate`/`lo`/`hi` are null when `n` < 10. Never consulted by merge decisions | `pkg/hub/evidence.go` |
 | `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1684` |
 | `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1694` |
 | `POST` | `/api/contribute/register` | Hub handler-specific | Contribute Proxy | `pkg/hub/server.go:1695` |
