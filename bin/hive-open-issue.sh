@@ -113,12 +113,13 @@ PARENT=""
 BLOCKED_BY=()
 CLOSE_ON_MERGE=0
 NEEDS_DECISION=0
+STEP_KIND=""; RELEASE_TAG=""; RELEASE_TARGET=""; STEP_REQUESTED=0
 DRY_RUN=0
 LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --step-kind, --release-tag, --release-target, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -147,6 +148,21 @@ while [ $# -gt 0 ]; do
     --override-reason=*) OVERRIDE_REASON="${1#*=}"; shift;;
     --close-on-merge) CLOSE_ON_MERGE=1; shift;;
     --needs-decision) NEEDS_DECISION=1; shift;;
+    --step-kind|--release-tag|--release-target)
+      STEP_REQUESTED=1
+      if [ $# -lt 2 ] || [ -z "$2" ] || [[ "$2" == --* ]]; then
+        echo "hive-open-issue: $1 requires a value; nothing was written." >&2
+        exit 2
+      fi
+      case "$1" in
+        --step-kind) STEP_KIND="$2";;
+        --release-tag) RELEASE_TAG="$2";;
+        --release-target) RELEASE_TARGET="$2";;
+      esac
+      shift 2;;
+    --step-kind=*) STEP_KIND="${1#*=}"; STEP_REQUESTED=1; shift;;
+    --release-tag=*) RELEASE_TAG="${1#*=}"; STEP_REQUESTED=1; shift;;
+    --release-target=*) RELEASE_TARGET="${1#*=}"; STEP_REQUESTED=1; shift;;
     --dry-run|-n) DRY_RUN=1; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
     # that take one, so a bare flag can't swallow the next real argument.
@@ -273,8 +289,8 @@ REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" <<'PY'
-import json, os, sys
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "$STEP_KIND" "$RELEASE_TAG" "$RELEASE_TARGET" "$STEP_REQUESTED" <<'PY'
+import json, os, re, sys
 temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision = sys.argv[1:17]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
@@ -285,6 +301,26 @@ reviewers = [part.strip() for value in json.loads(reviewers)
 team_reviewers = [part.strip() for value in json.loads(team_reviewers)
                   for part in value.split(",") if part.strip()]
 req = {"kind": kind, "repo": repo, "agent": agent}
+step_kind, release_tag, release_target = sys.argv[17:20]
+if sys.argv[20] == "1":
+    error = ""
+    if needs_decision != "1" or kind not in ("issue", "comment"):
+        error = "release step metadata requires --needs-decision on an issue or comment"
+    elif step_kind != "release":
+        error = "--step-kind must be release"
+    elif not re.fullmatch(r"[0-9a-f]{40}", release_target):
+        error = "--release-target must be a full lowercase 40-character commit SHA"
+    elif (not release_tag or release_tag == "@" or release_tag.startswith("/") or release_tag.endswith("/")
+          or any(x in release_tag for x in ("..", "@{", "//"))
+          or any(ord(c) <= 32 or ord(c) >= 127 or c in '~^:?*[\\<>`' for c in release_tag)
+          or any(p.startswith(".") or p.endswith((".", ".lock")) for p in release_tag.split("/"))):
+        error = "--release-tag must be a valid release tag"
+    elif re.search(r"<!-- hive:owner-step(?: [^>]*)? -->", body):
+        error = "supply the owner step via flags, not also as a body marker"
+    if error:
+        sys.stderr.write("hive-open-issue: " + error + "; nothing was written.\n")
+        sys.exit(2)
+    req["owner_step"] = {"kind": step_kind, "tag": release_tag, "target": release_target}
 if kind == "comment":
     req["number"] = int(number)
     req["body"] = body

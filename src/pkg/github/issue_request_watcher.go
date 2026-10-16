@@ -123,6 +123,8 @@ type IssueRequest struct {
 	// target (hivecommons/hive#12334). The label relay still refuses the
 	// label itself: this flag is the only way an agent applies it.
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue and comment
+	// OwnerStep records a typed proposal; it does not authorize execution.
+	OwnerStep *IssueOwnerStep `json:"owner_step,omitempty"` // requires NeedsDecision
 }
 
 // claimLabelPrefix is the label namespace applied for a "claim" request. The
@@ -388,6 +390,9 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	default:
 		shapeErr = "unknown kind " + strconv.Quote(kind)
 	}
+	if shapeErr == "" {
+		shapeErr = issueOwnerStepShapeError(req, kind)
+	}
 	if shapeErr != "" {
 		c.writeIssueResult(path, IssueResponse{OK: false, Error: shapeErr, At: nowFn().UTC().Format(time.RFC3339)})
 		_ = os.Rename(path, path+".bad")
@@ -502,7 +507,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			err = c.AddLabels(ctx, req.Repo, req.Number, []string{c.needsDecisionLabel()})
 		}
 		if err == nil {
-			err = c.CreateIssueComment(ctx, req.Repo, req.Number, ownerStepCommentBody(body, req.NeedsDecision))
+			err = c.CreateIssueComment(ctx, req.Repo, req.Number, issueOwnerStepBody(body, req.NeedsDecision, req.OwnerStep))
 		}
 		if err == nil {
 			resp.OK = true
@@ -562,7 +567,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if req.NeedsDecision {
 			createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
 		}
-		res, err = c.createIssue(ctx, req.Repo, req.Title, ownerStepCommentBody(body, req.NeedsDecision), createLabels, true)
+		res, err = c.createIssue(ctx, req.Repo, req.Title, issueOwnerStepBody(body, req.NeedsDecision, req.OwnerStep), createLabels, true)
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict

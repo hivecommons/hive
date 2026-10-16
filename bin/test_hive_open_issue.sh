@@ -331,6 +331,44 @@ check "--needs-decision refusal writes no request" "" "$(find_req needsdecisionc
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# Typed release steps record metadata, never a release write (#12483).
+RELEASE_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+run_script "releasestepbot" comment --repo org/repo 5 --body "Cut the release." --needs-decision \
+  --step-kind release --release-tag v0.12.0 --release-target "$RELEASE_SHA" >/dev/null
+REQ_FILE="$(find_req releasestepbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_STEP="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); s=r["owner_step"]; print(r["kind"], r["number"], r["needs_decision"], s["kind"], s["tag"], s["target"])' "$REQ_FILE")"
+  check "release step is structured comment metadata" "comment 5 True release v0.12.0 $RELEASE_SHA" "$GOT_STEP"
+else
+  check "release comment request exists" "yes" "no"
+fi
+run_script "releaseissuebot" --repo org/repo --title "Release needed" --body "Cut it." --needs-decision \
+  --step-kind=release --release-tag=v0.12.0 --release-target="$RELEASE_SHA" >/dev/null
+REQ_FILE="$(find_req releaseissuebot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT_STEP="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["kind"], r["owner_step"]["kind"], r["needs_decision"])' "$REQ_FILE")"
+  check "release metadata supports issue creates and equals flags" "issue release True" "$GOT_STEP"
+else
+  check "release issue request exists" "yes" "no"
+fi
+for bad_case in no-park no-kind no-tag no-target mutable-target marker-injection unknown-kind missing-value body-marker empty-metadata; do
+  args=(comment --repo org/repo 5 --body "Cut it." --needs-decision --step-kind release --release-tag v0.12.0 --release-target "$RELEASE_SHA")
+  case "$bad_case" in
+    no-park) args=(comment --repo org/repo 5 --body "Cut it." --step-kind release --release-tag v0.12.0 --release-target "$RELEASE_SHA");;
+    no-kind) args+=(--step-kind=);;
+    no-tag) args+=(--release-tag=);;
+    no-target) args+=(--release-target=);;
+    mutable-target) args+=(--release-target=main);;
+    marker-injection) args+=(--release-tag="v1 -->");;
+    unknown-kind) args+=(--step-kind=settings);;
+    missing-value) args+=(--release-target);;
+    body-marker) args+=(--body="Cut it. <!-- hive:owner-step -->");;
+    empty-metadata) args=(comment --repo org/repo 5 --body "Cut it." --needs-decision --step-kind= --release-tag= --release-target=);;
+  esac
+  check_exit "invalid release metadata: $bad_case" 2 run_script "invalidreleasebot" "${args[@]}"
+done
+check "invalid release metadata writes no request" "" "$(find_req invalidreleasebot)"
+
 # --parent=value style also works.
 run_script "eqparentbot" --repo=org/repo --title="Eq parent" --body="body" --parent=42
 

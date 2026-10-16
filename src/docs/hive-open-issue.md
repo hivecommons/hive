@@ -61,6 +61,9 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
 | `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue |
 | `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated) |
+| `--step-kind` | — | issue, comment | `release`; requires `--needs-decision`, `--release-tag` and `--release-target`; records metadata only, never publishes a release |
+| `--release-tag` | — | issue, comment | release tag from the repository's version source |
+| `--release-target` | — | issue, comment | full lowercase 40-character commit SHA for the proposed release |
 | `--needs-decision` | — | issue, comment | park the new issue, or the existing issue being commented on, on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
 | `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed |
@@ -158,6 +161,49 @@ Hive posts records the done decision, and that reply is what tells the lane
 that next picks the issue up to re-check the step and close the issue once the
 fix is verified — nothing else routes it. The flag applies only to `issue` and
 `comment`; on any other kind the script exits `2` and writes nothing.
+
+#### Recording a release-only owner step
+
+When the only remaining step is a release, add `--step-kind release`,
+`--release-tag <tag>` and `--release-target <full-commit-sha>` to an `issue`
+or `comment` request with `--needs-decision`:
+
+```bash
+hive-open-issue comment --repo owner/repo 736 --body "Remaining step: release v0.12.0." \
+  --needs-decision --step-kind release --release-tag v0.12.0 \
+  --release-target aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+```
+
+Replace the example SHA with the repository's actual commit ID. Read the tag
+from the repository's version source (for example `VERSION`) and resolve the
+target commit on its default branch, rather than inferring either from issue
+prose. Targets must be full, lowercase 40-character SHAs; moving branch names,
+abbreviations, invalid tags, unknown kinds and incomplete metadata are refused.
+All three flags also accept `--flag=value`. The watcher validates direct JSON
+requests too, before making any GitHub API call.
+
+The request carries an `owner_step` object with `kind`, `tag` and `target`.
+The watcher appends the canonical marker:
+
+```html
+<!-- hive:owner-step kind=release tag=v0.12.0 target=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->
+```
+
+Supply metadata via the flags, not an additional marker in the body. Legacy
+untyped markers remain supported. Only the newest unanswered Hive-authored
+owner-step comment (or the initial issue body) supplies the proposal; a marker
+in another commenter's text is ignored. Lettered choices remain choices, not
+release actions.
+
+**This is descriptive metadata, not release authorization.** Hive still parks
+the issue and offers `/hive done` and `/hive decision` as before. `/hive approve`
+retains its existing meaning; it does **not** publish a release. No
+`release_on_approve` policy or dashboard release action is implemented yet.
+The owner must still cut the release themselves. The agent `gh release create`
+gate is unchanged. A future hub executor must independently validate live repo
+policy, human approval, tag/target provenance, required checks and replay safety
+before writing a tag or release; a syntactically valid marker proves none of
+those conditions.
 
 Every lane that can comment or file issues carries this rule in its policy (ci-maintainer, sec-check, quality, architect, outreach, strategist, guide and scanner), including the ADR-0019 `needs-direction` escalation and workflow-file hand-offs. Lanes that only record beads (advisory) note the owner-only step in the bead instead.
 

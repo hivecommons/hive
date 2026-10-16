@@ -39,6 +39,9 @@ type unparkMenu struct {
 	// ownerStep is true when the issue is parked on a step only the owner can
 	// do, so `/hive done` is offered.
 	ownerStep bool
+	// releaseStep is descriptive only: approve retains its existing meaning
+	// until a separate, owner-gated hub release executor is implemented.
+	releaseStep *IssueOwnerStep
 }
 
 // unparkMenuFromBody reads the menu from the issue body alone. An issue
@@ -51,6 +54,9 @@ func unparkMenuFromBody(issueBody string) unparkMenu {
 		m.recommended = unparkRecommendedOption(issueBody, m.options)
 	}
 	m.ownerStep = isUnparkOwnerStepText(issueBody)
+	if m.ownerStep {
+		m.releaseStep = parseIssueOwnerStep(issueBody)
+	}
 	return m
 }
 
@@ -59,7 +65,7 @@ func unparkMenuFromBody(issueBody string) unparkMenu {
 // comment parked with --needs-decision that lists options is a choice, not a
 // manual step).
 func isUnparkOwnerStepText(text string) bool {
-	return strings.Contains(text, unparkOwnerStepMarker) && len(unparkOptionLabels(text)) == 0
+	return hasOwnerStepMarker(text) && len(unparkOptionLabels(text)) == 0
 }
 
 // unparkMenuFor reads the menu from the issue body and from the hive's own
@@ -85,14 +91,19 @@ func (c *Client) unparkMenuFor(issueBody string, comments []*gh.IssueComment) un
 			// the prose hint and the ai_author refusal leave it open.
 			if strings.Contains(body, unparkAcceptedMarker) {
 				ownerStep = false
+				m.releaseStep = nil
 			}
 			continue
 		}
 		if strings.Contains(body, unparkNoticeMarker) {
 			continue
 		}
-		if strings.Contains(body, unparkOwnerStepMarker) {
+		if hasOwnerStepMarker(body) {
 			ownerStep = isUnparkOwnerStepText(body)
+			m.releaseStep = nil
+			if ownerStep {
+				m.releaseStep = parseIssueOwnerStep(body)
+			}
 		}
 		if opts := unparkOptionLabels(body); len(opts) > 0 {
 			m.options = opts
@@ -216,7 +227,7 @@ func unparkBoldOptionLetter(line string) string {
 // --needs-decision (a new issue or a comment on an existing one), so the
 // "What to reply" notice can offer `/hive done`.
 func ownerStepCommentBody(body string, needsDecision bool) string {
-	if !needsDecision || strings.Contains(body, unparkOwnerStepMarker) {
+	if !needsDecision || hasOwnerStepMarker(body) {
 		return body
 	}
 	return body + "\n\n" + unparkOwnerStepMarker

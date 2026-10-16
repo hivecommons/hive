@@ -68,6 +68,16 @@ close the issue; an explicit `/fixed` works on any open issue. Ambiguous prose
 with negation or remaining-work language asks the commenter to use `/fixed`
 instead of closing.
 
+## Release-only owner steps
+
+A parked issue can carry a typed `kind=release` owner-step marker naming a tag
+and immutable commit SHA (see [hive-open-issue.md](hive-open-issue.md#recording-a-release-only-owner-step)).
+This records a proposal only: `/hive approve` still accepts direction and
+un-parks the issue, **not** a release operation. There is no `release_on_approve`
+opt-in yet. Cut the release yourself and reply `/hive done`, or use
+`/hive decision <text>` to change direction. The menu, permission checks and
+agent release-write prohibition are unchanged.
+
 ## Prose replies on parked issues
 
 Plain approvals such as "approved", "go ahead", "sounds good", or "ship it" do
