@@ -1,0 +1,1 @@
+- Preserve existing `hub.snapshot_url` queries and fragments at config load with a warning instead of preventing startup; dashboard updates still reject them ([#12420](https://github.com/hivecommons/hive/issues/12420)).

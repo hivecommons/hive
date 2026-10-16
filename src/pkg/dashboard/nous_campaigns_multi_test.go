@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -262,45 +264,60 @@ func TestNousCampaignForAssignsRowsByWindowAndRepo(t *testing.T) {
 // experiment loop without asking anything more of the operator.
 func TestNousCampaignStageLifecycle(t *testing.T) {
 	unit := nousCampaignView{ID: 7, Status: nous.StatusActive, Snapshots: 3, Target: NousBaselineTarget}
-	nousCampaignStage(&unit, "observe", nil)
+	nousCampaignStage(&unit, "observe", nil, false)
 	if unit.Stage != NousStageBaseline || unit.StageLabel != "collecting baseline 3 / 672" || unit.NextAction != "" {
 		t.Fatalf("baseline stage = %+v", unit)
 	}
 	unit.Complete = true
-	nousCampaignStage(&unit, "observe", nil)
+	nousCampaignStage(&unit, "observe", nil, false)
 	if unit.Stage != NousStageReady || unit.NextAction != NousActionGenerateProposals || !strings.Contains(unit.StageDetail, "Observe mode") {
 		t.Fatalf("ready/observe stage = %+v", unit)
 	}
-	nousCampaignStage(&unit, "suggest", nil)
+	nousCampaignStage(&unit, "suggest", nil, false)
 	if unit.Stage != NousStageReady || unit.NextAction != "" || !strings.Contains(unit.StageDetail, "Suggest mode") {
 		t.Fatalf("ready/suggest stage = %+v", unit)
 	}
+	// #12541: with the experiment loop known idle, the waiting ready stage
+	// says so instead of promising proposals; observe mode still offers
+	// Generate proposals, and a proposal from the loop wins over idleness.
+	nousCampaignStage(&unit, "suggest", nil, true)
+	if unit.Stage != NousStageReady || unit.StageLabel != "ready — the experiment loop is not running on this hive" || !unit.ExperimentLoopIdle || unit.NextAction != "" || !strings.Contains(unit.StageDetail, "designs no proposals itself") {
+		t.Fatalf("ready/suggest/idle stage = %+v", unit)
+	}
+	nousCampaignStage(&unit, "observe", nil, true)
+	if unit.NextAction != NousActionGenerateProposals || unit.ExperimentLoopIdle {
+		t.Fatalf("ready/observe/idle stage = %+v", unit)
+	}
 	rows := []nousExperimentProgress{{CampaignID: 7, Status: "pending"}}
-	nousCampaignStage(&unit, "suggest", rows)
+	nousCampaignStage(&unit, "suggest", rows, true)
+	if unit.Stage != NousStageProposed || unit.ExperimentLoopIdle {
+		t.Fatalf("proposed/idle stage = %+v", unit)
+	}
+	nousCampaignStage(&unit, "suggest", rows, false)
 	if unit.Stage != NousStageProposed || unit.StageLabel != "proposals awaiting your review" {
 		t.Fatalf("proposed stage = %+v", unit)
 	}
 	rows = []nousExperimentProgress{{CampaignID: 7, Status: "active", Phase: "experiment"}, {CampaignID: 7, Status: "pending"}}
-	nousCampaignStage(&unit, "suggest", rows)
+	nousCampaignStage(&unit, "suggest", rows, false)
 	if unit.Stage != NousStageRunning {
 		t.Fatalf("running beats proposed: %+v", unit)
 	}
 	rows = []nousExperimentProgress{{CampaignID: 7, Status: "judged", Phase: "judged"}, {CampaignID: 8, Status: "active"}}
-	nousCampaignStage(&unit, "suggest", rows)
+	nousCampaignStage(&unit, "suggest", rows, false)
 	if unit.Stage != NousStageConcluded || !strings.Contains(unit.StageDetail, "1 experiment(s) judged") {
 		t.Fatalf("concluded ignores other campaigns' rows: %+v", unit)
 	}
 	unit.Status = nous.StatusPaused
-	nousCampaignStage(&unit, "observe", rows)
+	nousCampaignStage(&unit, "observe", rows, false)
 	if unit.Stage != NousStagePaused || unit.NextAction != "" {
 		t.Fatalf("paused stage = %+v", unit)
 	}
 	unit.Status = nous.StatusArchived
-	nousCampaignStage(&unit, "observe", nil)
+	nousCampaignStage(&unit, "observe", nil, false)
 	if unit.Stage != NousStageConcluded || unit.StageLabel != "concluded" {
 		t.Fatalf("archived stage = %+v", unit)
 	}
-	nousCampaignStage(nil, "observe", nil)
+	nousCampaignStage(nil, "observe", nil, false)
 
 	// End to end: the screenshot scenario — a question, baseline past 672,
 	// zero principles, lab booted in observe.
@@ -332,5 +349,86 @@ func TestNousCampaignStageLifecycle(t *testing.T) {
 	card = status["campaigns"].([]interface{})[0].(map[string]interface{})
 	if card["stage"] != NousStageReady || card["nextAction"] != nil || !strings.Contains(card["stageDetail"].(string), "experiment loop") {
 		t.Fatalf("card after switching to suggest = %v", card)
+	}
+}
+
+// TestNousExperimentLoopIdle pins hivecommons/hive#12541: the hive designs
+// no proposals itself, so GET /api/nous/status reports whether the external
+// experiment loop has written under the governor directory recently, and a
+// ready card in suggest mode says the loop is not running instead of
+// waiting forever.
+func TestNousExperimentLoopIdle(t *testing.T) {
+	s, deps, _ := nousCampaignServer(t, NousBaselineTarget+10)
+	deps.Nous.Mode = "suggest"
+	deps.Nous.Ledger = nil
+	govDir := t.TempDir()
+	deps.Nous.GovernorDir = govDir
+
+	readyCard := func(status map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		cards, _ := status["campaigns"].([]interface{})
+		if len(cards) != 1 {
+			t.Fatalf("campaigns = %v", status["campaigns"])
+		}
+		return cards[0].(map[string]interface{})
+	}
+
+	// Nothing ever written: loop not running, card says so.
+	status := nousStatusJSON(t, s)
+	loop := nousBlock(t, status, "experimentLoop")
+	if loop["running"] != false || loop["dir"] != govDir || loop["lastWriteAt"] != nil || loop["idleAfterSeconds"].(float64) <= 0 {
+		t.Fatalf("experimentLoop with empty dir = %v", loop)
+	}
+	card := readyCard(status)
+	if card["stage"] != NousStageReady || card["stageLabel"] != "ready — the experiment loop is not running on this hive" || card["experimentLoopIdle"] != true {
+		t.Fatalf("idle card = %v", card)
+	}
+
+	// A stale write (older than NousLoopIdleCycles cycles) is still idle.
+	ledger := filepath.Join(govDir, "ledger.json")
+	if err := os.WriteFile(ledger, []byte(`{"iterations":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	if err := os.Chtimes(ledger, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if got := deps.Nous.ExperimentLoopLastWrite(); got.Sub(old.UTC()).Abs() > time.Second {
+		t.Fatalf("ExperimentLoopLastWrite = %v, want %v", got, old)
+	}
+	status = nousStatusJSON(t, s)
+	if loop = nousBlock(t, status, "experimentLoop"); loop["running"] != false || loop["lastWriteAt"] == nil {
+		t.Fatalf("experimentLoop with stale write = %v", loop)
+	}
+	if card = readyCard(status); card["experimentLoopIdle"] != true {
+		t.Fatalf("card with stale write = %v", card)
+	}
+
+	// A fresh write: running, the card waits honestly on the loop.
+	now := time.Now()
+	if err := os.Chtimes(ledger, now, now); err != nil {
+		t.Fatal(err)
+	}
+	status = nousStatusJSON(t, s)
+	if loop = nousBlock(t, status, "experimentLoop"); loop["running"] != true {
+		t.Fatalf("experimentLoop with fresh write = %v", loop)
+	}
+	card = readyCard(status)
+	if card["stageLabel"] != "ready — generating proposals" || card["experimentLoopIdle"] != nil {
+		t.Fatalf("card with running loop = %v", card)
+	}
+
+	// Without a governor directory the loop cannot be observed: no block,
+	// no idle claim.
+	deps.Nous.GovernorDir = ""
+	status = nousStatusJSON(t, s)
+	if _, ok := status["experimentLoop"]; ok {
+		t.Fatalf("experimentLoop reported without a governor dir: %v", status["experimentLoop"])
+	}
+	if card = readyCard(status); card["experimentLoopIdle"] != nil {
+		t.Fatalf("card claims idle loop without a governor dir: %v", card)
+	}
+	if got := (*NousState)(nil).ExperimentLoopLastWrite(); !got.IsZero() {
+		t.Fatalf("nil state last write = %v", got)
 	}
 }

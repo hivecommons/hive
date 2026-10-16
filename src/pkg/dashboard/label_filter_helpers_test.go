@@ -160,6 +160,12 @@ func TestDashboardLabelFilterPinnedSidebar(t *testing.T) {
 			t.Fatalf("index.html is missing %s", id)
 		}
 	}
+	if !strings.Contains(html, ".repo-grid[hidden], .swarm-panel[hidden] { display: none; }") {
+		t.Fatal(".repo-grid is display:flex, so the hidden attribute needs an explicit override or the cards stack under the cross-repo list")
+	}
+	if strings.Index(html, `id="hf-crossrepo"`) > strings.Index(html, `id="swarm-panel"`) || strings.Index(html, `id="swarm-panel"`) > strings.Index(html, `<div class="repo-grid" id="repos">`) {
+		t.Fatal("Projects order must be: cross-repo list, swarm header, repo cards")
+	}
 	if !strings.Contains(html, "if (typeof hfOnNavigate === 'function') hfOnNavigate(section);") {
 		t.Fatal("ocNavigate must notify the label filter so the cross-repo view closes on navigation")
 	}
@@ -194,18 +200,26 @@ assert(/badge-count[^>]*>3</.test(els['hf-nav-items'].innerHTML), 'count badge s
 hfOpenCrossRepo('preset:needs-human');
 assert(navCalls.join(',') === 'repos-section', 'opening navigates to Projects');
 assert(els['repos'].hidden === true && els['hf-crossrepo'].hidden === false, 'grid swapped for the cross-repo panel');
+assert(els['swarm-panel'].hidden === true, 'swarm header hides with the grid it describes');
 const panel = els['hf-crossrepo'].innerHTML;
 assert((panel.match(/hf-crossrepo-group/g) || []).length === 2, 'only repos with matches get a group');
 assert(/id="hf-x-acme-repo"/.test(panel) && /id="hf-x-acme-two"/.test(panel) && !/acme-none/.test(panel), 'groups keyed per repo');
 assert(/data-action="hfToggleSection"/.test(panel), 'groups are collapsible via the shared hf toggle');
 assert(/hfCloseCrossRepo/.test(panel), 'panel offers a way back to the cards');
+assert(/id="hf-crossrepo-all"/.test(panel) && /data-arg0="hf-crossrepo-all"/.test(panel) && /aria-expanded="true"/.test(panel), 'the whole list has its own collapse chevron, open by default when it has matches');
+assert(/collapse with the chevron/.test(panel) && /← Project cards/.test(panel), 'header hint explains how to collapse or close the list');
 hfToggleSection('hf-x-acme-repo');
+hfToggleSection('hf-crossrepo-all');
+assert(store['sec:hf-crossrepo-all'] === '1', 'collapsing the whole list persists like a repo group');
+renderRepos();
+assert(/id="hf-crossrepo-all"[^>]*>[^]*?aria-expanded="false"/.test(els['hf-crossrepo'].innerHTML), 'collapsed state survives a re-render');
 assert(store['sec:hf-x-acme-repo'] === '1', 'group collapse state persists with the section collapse keys');
 hfOnNavigate('overview-section');
 assert(els['hf-crossrepo'].hidden === true && els['repos'].hidden === false, 'navigating elsewhere restores the card grid');
 hfOpenCrossRepo('preset:needs-human');
 hfCloseCrossRepo();
 assert(els['hf-crossrepo'].hidden === true && els['repos'].hidden === false, 'close button restores the card grid');
+assert(els['swarm-panel'].hidden === false, 'close button restores the swarm header above the cards');
 hfTogglePin('preset:needs-human');
 assert(els['hf-nav-group'].hidden === true, 'unpinning the last filter hides the Filters group');
 assert(JSON.parse(store['hive-label-filters:h1']).presetPins['needs-human'] === false, 'pin state persists with the store');
