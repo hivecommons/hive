@@ -1,0 +1,1 @@
+- Review evidence: a bundle started after its PR already merged (automerge ran before the first swarm review wrote one, or someone else merged) now records the merge GitHub reports — actor, time, merge SHA, opened time — instead of leaving the PR with no outcome forever; record-only, nothing reads it to decide a merge.
