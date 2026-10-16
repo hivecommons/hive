@@ -688,6 +688,26 @@ jobs:
         env:
           PLATFORM: ${{ matrix.platform }}
 
+      - name: Resolve contributor base manifests with retry
+        shell: bash
+        env:
+          CONTRIBUTOR_BASE_IMAGES: |
+            mirror.gcr.io/library/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d
+            mirror.gcr.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+        run: |
+          set -euo pipefail
+          for image in $CONTRIBUTOR_BASE_IMAGES; do
+            for attempt in 1 2 3; do
+              if docker buildx imagetools inspect "$image" >/dev/null; then
+                continue 2
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                sleep 90
+              fi
+            done
+            docker buildx imagetools inspect "$image" >/dev/null
+          done
+
       - name: Build and push contributor image by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
