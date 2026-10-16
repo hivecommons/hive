@@ -66,3 +66,73 @@ func (c *Client) ApplyStageLabel(ctx context.Context, repo string, number int, s
 	owner, name := c.splitRepo(repo)
 	return stagelabels.EnforceStage(ctx, c.StageLabeler(), owner, name, number, stage)
 }
+
+// observedState renders an item's list-payload updated_at as the state a
+// label write is journaled against (see addLabelsObserved). Zero → "": the
+// plain, state-less key.
+func observedState(updatedAt time.Time) string {
+	if updatedAt.IsZero() {
+		return ""
+	}
+	return updatedAt.UTC().Format(time.RFC3339Nano)
+}
+
+// RemoveLabelsFresh re-reads the item and removes each of labels it still
+// carries, journaled against that read. It is for writers that learn of a
+// change outside the enumeration cycle and hold no item snapshot (the claim
+// release hooks): the plain RemoveLabel journals "remove X on #N" as applied
+// forever, so a label another writer put back could never come off again
+// (hivecommons/hive#12512; the same key left hivecommons/hive#12560 with no
+// stage label at all). Absent labels cost nothing beyond the read.
+func (c *Client) RemoveLabelsFresh(ctx context.Context, repo string, number int, labels ...string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	l := c.StageLabeler()
+	fresh, err := l.Labels(ctx, owner, name, number)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, label := range labels {
+		if label == "" || !issueHasLabel(fresh, label) {
+			continue
+		}
+		if err := l.RemoveLabel(ctx, owner, name, number, label); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// AddLabelsFresh re-reads the item and adds labels, journaled against that
+// read; see RemoveLabelsFresh. When stage is not None the item's stage is
+// enforced in the same pass (exactly one `stage/NNN-*`, one add call), so a
+// claim landing on an issue the reconciler staged 010 replaces that label
+// rather than joining it.
+func (c *Client) AddLabelsFresh(ctx context.Context, repo string, number int, stage stagelabels.Stage, labels ...string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	l := c.StageLabeler()
+	if stage != stagelabels.None {
+		_, err := stagelabels.EnforceStageAdding(ctx, l, owner, name, number, stage, labels...)
+		return err
+	}
+	fresh, err := l.Labels(ctx, owner, name, number)
+	if err != nil {
+		return err
+	}
+	var add []string
+	for _, label := range labels {
+		if label != "" && !issueHasLabel(fresh, label) {
+			add = append(add, label)
+		}
+	}
+	if len(add) == 0 {
+		return nil
+	}
+	return l.AddLabels(ctx, owner, name, number, add)
+}

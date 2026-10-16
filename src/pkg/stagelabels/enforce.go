@@ -72,6 +72,14 @@ func Enforce(ctx context.Context, l Labeler, owner, repo string, number int, hin
 // leaves exactly stage among `stage/NNN-*` (None clears them all). Retired
 // labels (`claimed`, `hive/in-progress`, `🐝 covered by PR`) come off too.
 func EnforceStage(ctx context.Context, l Labeler, owner, repo string, number int, stage Stage) (Outcome, error) {
+	return EnforceStageAdding(ctx, l, owner, repo, number, stage)
+}
+
+// EnforceStageAdding is EnforceStage that also puts extra (non-stage labels
+// the caller owns, such as a claim's `hive/claimed-by-<agent>`) on the item
+// in the same add call when they are missing, so a claim is one read and at
+// most one add. Stage labels in extra are ignored; stage decides those.
+func EnforceStageAdding(ctx context.Context, l Labeler, owner, repo string, number int, stage Stage, extra ...string) (Outcome, error) {
 	var out Outcome
 	if l == nil {
 		return out, errors.New("stagelabels: nil labeler")
@@ -92,7 +100,23 @@ func EnforceStage(ctx context.Context, l Labeler, owner, repo string, number int
 		}
 	}
 	add, remove := Plan(fresh, want)
+	for _, lab := range extra {
+		lab = strings.TrimSpace(lab)
+		if lab == "" || IsStageLabel(lab) || Owned(lab) || contains(fresh, lab) || contains(add, lab) {
+			continue
+		}
+		add = append(add, lab)
+	}
 	return applyPlan(ctx, l, owner, repo, number, add, remove, out)
+}
+
+func contains(labels []string, label string) bool {
+	for _, l := range labels {
+		if strings.TrimSpace(l) == label {
+			return true
+		}
+	}
+	return false
 }
 
 func applyPlan(ctx context.Context, l Labeler, owner, repo string, number int, add, remove []string, out Outcome) (Outcome, error) {

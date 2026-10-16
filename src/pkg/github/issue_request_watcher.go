@@ -454,8 +454,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 		// Apply a namespaced ownership label (App bots can't be assignees)
 		// and, when enabled, stage/030-pr-in-progress — the timestamped "an
-		// agent started a PR for this" signal (see issue_inprogress.go).
-		err = c.AddLabels(ctx, req.Repo, req.Number, c.inProgressLabelsForClaim(req.Agent))
+		// agent started a PR for this" signal (see issue_inprogress.go). The
+		// stage goes through the one enforcer and both writes are journaled
+		// against a fresh read, so a second claim on an issue whose earlier
+		// labels lapsed is written, not replayed (hivecommons/hive#12512).
+		err = c.AddLabelsFresh(ctx, req.Repo, req.Number, c.claimStage(), c.inProgressLabelsForClaim(req.Agent)...)
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
@@ -591,7 +594,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
-	if signal := issueRequestStartSignal(kind, req.Body); signal != "" {
+	if signal := issueRequestStartSignal(kind, req.Body, req.Labels); signal != "" {
 		c.notifyAgentStart(req.Agent, req.Repo, req.Number, signal)
 	}
 

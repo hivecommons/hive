@@ -127,3 +127,23 @@ func TestEnforceStage_KeepsAuthorAndHealth(t *testing.T) {
 		t.Fatalf("after None: %v", f.truth)
 	}
 }
+
+// EnforceStageAdding puts the caller's own labels on in the same add as the
+// stage, skips ones already present and never takes a stage label from
+// extra.
+func TestEnforceStageAdding_ExtraLabelsInOneAdd(t *testing.T) {
+	l := &fakeLabeler{truth: []string{"bug", "stage/010-actionable", "hive/claimed-by-reviewer"}}
+	out, err := EnforceStageAdding(context.Background(), l, "o", "r", 1, PRInProgress, "hive/claimed-by-scanner", "hive/claimed-by-reviewer", "stage/100-merge-queue", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"stage/030-pr-in-progress", "hive/claimed-by-scanner"}; !reflect.DeepEqual(out.Added, want) {
+		t.Fatalf("added = %v, want %v", out.Added, want)
+	}
+	if want := []string{"stage/010-actionable"}; !reflect.DeepEqual(out.Removed, want) {
+		t.Fatalf("removed = %v, want %v", out.Removed, want)
+	}
+	if want := []string{"bug", "hive/claimed-by-reviewer", "stage/030-pr-in-progress", "hive/claimed-by-scanner"}; !reflect.DeepEqual(l.truth, want) {
+		t.Fatalf("truth = %v, want %v", l.truth, want)
+	}
+}

@@ -41,9 +41,10 @@ var legacyCoveredByPRLabels = []string{stagelabels.LegacyCoveredByPR, stagelabel
 // HasCoveredByPRLabel reports whether labels say an open PR covers the
 // issue: the `stage/040-covered-by-pr` label, any mirrored PR stage past it
 // (the issue carries its covering PR's stage, hivecommons/hive#12436), or
-// one of the retired spellings still awaiting migration.
+// one of the retired spellings still awaiting migration. stage/085 is the
+// exception: an issue parked on a person carries it with no PR at all.
 func HasCoveredByPRLabel(labels []string) bool {
-	if stagelabels.CarriesStageAtLeast(labels, stagelabels.CoveredByPR) {
+	if cur := stagelabels.Current(labels); cur != stagelabels.NeedsDecision && cur != stagelabels.None && !cur.Before(stagelabels.CoveredByPR) {
 		return true
 	}
 	for _, legacy := range legacyCoveredByPRLabels {

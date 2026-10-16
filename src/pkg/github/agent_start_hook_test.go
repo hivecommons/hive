@@ -109,7 +109,7 @@ func TestIssueRequestStartSignal(t *testing.T) {
 		"comment": AgentStartSignalComment, "label": AgentStartSignalLabel, "claim": AgentStartSignalClaim,
 		"issue": "", "close": "", "request_review": "",
 	} {
-		if got := issueRequestStartSignal(kind, "verified on v5"); got != want {
+		if got := issueRequestStartSignal(kind, "verified on v5", []string{"bug"}); got != want {
 			t.Errorf("issueRequestStartSignal(%q) = %q, want %q", kind, got, want)
 		}
 	}
@@ -142,12 +142,71 @@ func TestIssueRequestStartSignal_Deferral(t *testing.T) {
 		{"progress with deferral aside", "comment", "Implementing now. Deferring the rename until #9 lands.", AgentStartSignalComment},
 		{"past blocker", "comment", "Previously blocked by #12322, which has merged.", AgentStartSignalComment},
 		{"label request with deferral text", "label", "Deferred this cycle.", AgentStartSignalLabel},
+		{"label request with escalation text", "label", "needs-direction: parking this.", AgentStartSignalLabel},
 		{"claim request with deferral text", "claim", "Blocked by #1.", AgentStartSignalClaim},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := issueRequestStartSignal(tc.kind, tc.body); got != tc.want {
+			var labels []string
+			if tc.kind == "label" {
+				labels = []string{"kind/bug"}
+			}
+			if got := issueRequestStartSignal(tc.kind, tc.body, labels); got != tc.want {
 				t.Errorf("issueRequestStartSignal(%q, %q) = %q, want %q", tc.kind, tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+// hivecommons/hive#12570, #12481: an escalation comment parks the issue on a
+// person; it is not a start signal either.
+func TestIssueRequestStartSignal_Escalation(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"needs-decision verdict (#12570)", "needs-decision (scanner): parking this RFC out of the agent work queue until the **Maintainer review points** are settled — they are design decisions, not implementation gaps:\n\n1. Final public preset schema.", ""},
+		{"needs-direction second pass (#12481)", "needs-direction (scanner, second pass): triage above stands — the 403 is the LiteLLM team key lacking any Claude entitlement, not a Hive defect, and this lane has no PR to open.", ""},
+		{"triage not a defect (#12481)", "Triage (scanner): not a Hive code defect — the LiteLLM team key this hive uses has **no Claude entitlement at all**.", ""},
+		{"parking opener", "**Parking** this one: the spec is missing.", ""},
+		{"parks it mid-comment", "Read through the thread; this parks it until a maintainer answers.", ""},
+		{"out of the work queue", "Taking this out of the work queue pending a decision.", ""},
+		{"escalation then start now", "needs-direction earlier; maintainer answered, starting now.", AgentStartSignalComment},
+		{"progress mentions a bug", "Confirmed: this is not a config problem but a real bug in the parser; fixing.", AgentStartSignalComment},
+		{"progress mentions parking lot", "Added the parking-lot note to the design doc and started on the loader.", AgentStartSignalComment},
+		{"needs-signal filed as aside", "Repro confirmed; filed a needs-signal issue for the flaky check and working on the fix here.", AgentStartSignalComment},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := issueRequestStartSignal("comment", tc.body, nil); got != tc.want {
+				t.Errorf("issueRequestStartSignal(comment, %q) = %q, want %q", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+// hivecommons/hive#12481: a label request that only hands the issue to a
+// person (needs-direction, needs-spec, …) is not a start signal; one that
+// adds any other label still is.
+func TestIssueRequestStartSignal_EscalationLabels(t *testing.T) {
+	cases := []struct {
+		name   string
+		labels []string
+		want   string
+	}{
+		{"needs-direction only", []string{"needs-direction"}, ""},
+		{"needs-decision only", []string{"needs-decision"}, ""},
+		{"needs-spec and needs-signal", []string{"needs-spec", "needs-signal"}, ""},
+		{"needs-human mixed case", []string{"Needs-Human"}, ""},
+		{"remove-only request", nil, ""},
+		{"escalation plus work label", []string{"needs-direction", "area/relay"}, AgentStartSignalLabel},
+		{"work label", []string{"kind/bug"}, AgentStartSignalLabel},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := issueRequestStartSignal("label", "", tc.labels); got != tc.want {
+				t.Errorf("issueRequestStartSignal(label, %v) = %q, want %q", tc.labels, got, tc.want)
 			}
 		})
 	}

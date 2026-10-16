@@ -145,24 +145,26 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 		OnReleased: func(c claims.Claim, reason string) {
 			go func() {
 				if label {
-					run("remove claimed label", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.LabelClaimed)
-					})
-					run("remove claimed-by label", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.RemoveClaimedByLabel(ctx, c.Repo, c.Issue, c)
-					})
+					// One fresh read, then only the labels still present come
+					// off, journaled against that read: the plain remove
+					// replayed as "already applied" the second time a claim on
+					// the same issue lapsed (hivecommons/hive#12512). The
+					// preempted label names the holder this claim DISPLACED,
+					// not the holder being released. The claimed-by label is
+					// this claim's own; another holder's survives.
+					remove := []string{claims.LabelClaimed}
+					if l := claims.ClaimedByLabel(c); l != "" {
+						remove = append(remove, l)
+					}
 					if c.Kind == claims.KindAgent {
-						run("remove in-progress label", c, func(ctx context.Context, gh *github.Client) error {
-							return gh.RemoveLabel(ctx, c.Repo, c.Issue, github.InProgressLabel)
-						})
+						remove = append(remove, github.InProgressLabel)
 					}
-					// The preempted label names the holder this claim DISPLACED,
-					// not the holder being released.
 					if c.TakenFrom != "" {
-						run("remove preempted label", c, func(ctx context.Context, gh *github.Client) error {
-							return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.PreemptedLabel(c.TakenFrom))
-						})
+						remove = append(remove, claims.PreemptedLabel(c.TakenFrom))
 					}
+					run("remove claim labels", c, func(ctx context.Context, gh *github.Client) error {
+						return gh.RemoveLabelsFresh(ctx, c.Repo, c.Issue, remove...)
+					})
 				}
 				// Releases are frequent (every relay task completion) and the
 				// closing PR already tells the story; only narrate a release

@@ -107,3 +107,150 @@ func TestRemoveLabel_PlainReplayDedupes(t *testing.T) {
 		t.Fatalf("deletes = %d, want the replay deduped", deletes)
 	}
 }
+
+// issueLabelFixture is one issue whose labels and updated_at the handlers
+// mutate the way GitHub does: every add or remove bumps updated_at.
+type issueLabelFixture struct {
+	mu      sync.Mutex
+	labels  []string
+	updated time.Time
+	adds    [][]string
+	deletes []string
+}
+
+func newIssueLabelFixture(t *testing.T, labels ...string) (*issueLabelFixture, *Client) {
+	t.Helper()
+	f := &issueLabelFixture{labels: labels, updated: time.Date(2026, 10, 16, 19, 0, 0, 0, time.UTC)}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/issues/7", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		out := map[string]any{"number": 7, "updated_at": f.updated.Format(time.RFC3339), "labels": []map[string]string{}}
+		for _, l := range f.labels {
+			out["labels"] = append(out["labels"].([]map[string]string), map[string]string{"name": l})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/7/labels", func(w http.ResponseWriter, r *http.Request) {
+		var body []string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.adds = append(f.adds, body)
+		f.labels = append(f.labels, body...)
+		f.updated = f.updated.Add(time.Minute)
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/7/labels/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/7/labels/")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.deletes = append(f.deletes, name)
+		var keep []string
+		for _, l := range f.labels {
+			if l != name {
+				keep = append(keep, l)
+			}
+		}
+		f.labels = keep
+		f.updated = f.updated.Add(time.Minute)
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := NewClientForTest(srv.URL, "acme", []string{"widgets"}, testLogger())
+	c.SetMutationBoundary(replayTestBoundary(t))
+	return f, c
+}
+
+func (f *issueLabelFixture) readd(labels ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.labels = append(f.labels, labels...)
+	f.updated = f.updated.Add(time.Minute)
+}
+
+// hivecommons/hive#12560 had no stage label at all because every plain
+// label write on it replayed as "already applied". The claim-release hook
+// removes through a fresh read: the second lapse of a claim on the same
+// issue reaches the API again, and labels the item does not carry are not
+// requested.
+func TestRemoveLabelsFresh_RemovesAgainAfterReadd(t *testing.T) {
+	f, c := newIssueLabelFixture(t, "bug", "stage/020-claimed", "stage/030-pr-in-progress")
+	ctx := context.Background()
+	if err := c.RemoveLabelsFresh(ctx, "acme/widgets", 7, "stage/020-claimed", "stage/030-pr-in-progress", "hive/preempted-x"); err != nil {
+		t.Fatal(err)
+	}
+	f.readd("stage/030-pr-in-progress")
+	if err := c.RemoveLabelsFresh(ctx, "acme/widgets", 7, "stage/020-claimed", "stage/030-pr-in-progress"); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if strings.Join(f.deletes, ",") != "stage/020-claimed,stage/030-pr-in-progress,stage/030-pr-in-progress" {
+		t.Fatalf("deletes = %v", f.deletes)
+	}
+	if strings.Join(f.labels, ",") != "bug" {
+		t.Fatalf("item carries %v", f.labels)
+	}
+}
+
+// A claim request's labels go on through the enforcer: one read, the stale
+// stage off, one add carrying the stage and the ownership label, and a
+// second claim after the first lapsed is written, not replayed.
+func TestAddLabelsFresh_EnforcesStageAndRewritesAfterLapse(t *testing.T) {
+	f, c := newIssueLabelFixture(t, "bug", "stage/010-actionable")
+	ctx := context.Background()
+	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, stagelabels.PRInProgress, "hive/claimed-by-scanner"); err != nil {
+		t.Fatal(err)
+	}
+	// The claim lapsed: the hooks took both labels off and the reconciler
+	// staged the issue actionable again.
+	f.mu.Lock()
+	f.labels = []string{"bug", "stage/010-actionable"}
+	f.updated = f.updated.Add(time.Hour)
+	f.mu.Unlock()
+	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, stagelabels.PRInProgress, "hive/claimed-by-scanner"); err != nil {
+		t.Fatal(err)
+	}
+	// Already there: nothing is written.
+	if err := c.AddLabelsFresh(ctx, "acme/widgets", 7, stagelabels.PRInProgress, "hive/claimed-by-scanner"); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.adds) != 2 || strings.Join(f.adds[0], ",") != "stage/030-pr-in-progress,hive/claimed-by-scanner" || strings.Join(f.adds[1], ",") != "stage/030-pr-in-progress,hive/claimed-by-scanner" {
+		t.Fatalf("adds = %v, want one combined add per claim", f.adds)
+	}
+	if strings.Join(f.deletes, ",") != "stage/010-actionable,stage/010-actionable" {
+		t.Fatalf("deletes = %v", f.deletes)
+	}
+	if strings.Join(f.labels, ",") != "bug,stage/030-pr-in-progress,hive/claimed-by-scanner" {
+		t.Fatalf("item carries %v", f.labels)
+	}
+}
+
+// The in-progress sweep's "start mark lapsed" removal is keyed to the list
+// payload's updated_at (hivecommons/hive#12481 logged "label removed" while
+// GitHub kept stage/030): a second lapse on the same issue, seen with a
+// newer updated_at, reaches the API; the same payload twice still dedupes.
+func TestRemoveInProgressLabel_ObservedKeyedPerPayload(t *testing.T) {
+	f, c := newIssueLabelFixture(t, "stage/030-pr-in-progress")
+	ctx := context.Background()
+	at := time.Date(2026, 10, 16, 20, 0, 0, 0, time.UTC)
+	first := Issue{Repo: "acme/widgets", Number: 7, Labels: []string{"stage/030-pr-in-progress"}, UpdatedAt: at}
+	c.removeInProgressLabel(ctx, &first, "start mark lapsed", nil)
+	retry := Issue{Repo: "acme/widgets", Number: 7, Labels: []string{"stage/030-pr-in-progress"}, UpdatedAt: at}
+	c.removeInProgressLabel(ctx, &retry, "start mark lapsed", nil)
+	f.readd("stage/030-pr-in-progress")
+	later := Issue{Repo: "acme/widgets", Number: 7, Labels: []string{"stage/030-pr-in-progress"}, UpdatedAt: at.Add(2 * time.Hour)}
+	c.removeInProgressLabel(ctx, &later, "start mark lapsed", nil)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.deletes) != 2 {
+		t.Fatalf("deletes = %v, want the first and the later removal, not the retry", f.deletes)
+	}
+	if len(f.labels) != 0 {
+		t.Fatalf("item carries %v", f.labels)
+	}
+}

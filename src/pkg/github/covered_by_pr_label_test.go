@@ -65,7 +65,7 @@ func TestHasCoveredByPRLabelAcceptsStageAndRetiredSpellings(t *testing.T) {
 			t.Errorf("%v not recognised as covered", labels)
 		}
 	}
-	for _, labels := range [][]string{{"bug"}, {stagelabels.Claimed.Label()}, {stagelabels.Actionable.Label()}} {
+	for _, labels := range [][]string{{"bug"}, {stagelabels.Claimed.Label()}, {stagelabels.Actionable.Label()}, {"needs-direction", stagelabels.NeedsDecision.Label()}} {
 		if HasCoveredByPRLabel(labels) {
 			t.Errorf("%v wrongly recognised as covered", labels)
 		}

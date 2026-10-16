@@ -128,7 +128,7 @@ var Table = []Definition{
 	{Stage: ReturnedToContributor, Number: 72, Slug: "returned-to-contributor", Description: "Contributor PR: CI red, changes requested or conflicting; diagnosis posted, author must act", Dwell: 24 * time.Hour, PR: true},
 	{Stage: AdoptedByHive, Number: 74, Slug: "adopted-by-hive", Description: "Contributor PR adopted: author unavailable after red CI; the hive is finishing it via the takeover path", Dwell: 3 * time.Hour, PR: true},
 	{Stage: AwaitingMergeAdmission, Number: 80, Slug: "awaiting-merge-admission", Description: "CI green, verdict approve, no modifiers; the automerge lane has not admitted it yet", Dwell: 30 * time.Minute, StallNote: true, PR: true},
-	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed before this can move: sentinel alert, hold / do-not-merge / needs-decision label, or a human-only lane rule (see the hive's stage comment)", PR: true},
+	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed before this can move: sentinel alert, hold / do-not-merge / needs-decision label, a human-only lane rule (see the hive's stage comment), or an issue parked by needs-human / needs-direction / needs-decision / needs-spec", Issue: true, PR: true},
 	{Stage: ReadyForHumanMerge, Number: 90, Slug: "ready-for-human-merge", Description: "Hive would merge this itself but trust/role blocks it; a maintainer's /lgtm /approve is the only missing step", PR: true},
 	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted: soaking, merge-eligible or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
 }

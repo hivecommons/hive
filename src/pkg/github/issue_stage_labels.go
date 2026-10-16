@@ -12,8 +12,12 @@ package github
 //   - withheld because an open PR covers it  → the covering PR's own stage
 //     (read from the shared stage store the automerge sweep fills) or
 //     stage/040-covered-by-pr until the lanes have seen that PR
+//   - parked on a person by an escalation label (needs-human,
+//     needs-direction, needs-decision, needs-spec) → stage/085-needs-decision,
+//     the same "a human decision is owed" stage PRs use; the label that
+//     parked it is the reason
 //   - carrying hive/likely-done (merged PR, awaiting confirmation), or
-//     filtered out of the pipeline by an exempt label → no stage.
+//     filtered out of the pipeline by any other exempt label → no stage.
 //
 // The reconciler plans against the labels the list payload already carries
 // and writes only the difference, so an unchanged issue costs nothing; when
@@ -81,6 +85,7 @@ const issueStageRESTCaller = "hive:issue_stage_labels"
 const (
 	workBucketClaimed     = "claimed"
 	workBucketClaimedByPR = "claimed_by_pr"
+	workBucketFiltered    = "filtered"
 )
 
 // IssueStageInput is the one shape both actionable items and work-detail
@@ -90,6 +95,7 @@ type IssueStageInput struct {
 	Number    int
 	Labels    []string
 	Bucket    string // "" for an issue still in the actionable set
+	Reason    string // the bucket's reason; for "filtered", the label that parked it
 	ClaimKind string
 	ClaimedBy string
 	Claim     *IssueClaimContext
@@ -101,6 +107,9 @@ type IssueStageInput struct {
 func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) stagelabels.Stage) (stage stagelabels.Stage, mirrored bool, reason string) {
 	if issueHasLabel(in.Labels, LikelyDoneLabel) {
 		return stagelabels.None, false, "merged PR awaiting confirmation"
+	}
+	if label := parkedOnPersonLabel(in); label != "" {
+		return stagelabels.NeedsDecision, false, "parked on a person: " + label
 	}
 	switch in.Bucket {
 	case "":
@@ -127,6 +136,24 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 	return stagelabels.None, false, "outside the pipeline: " + in.Bucket
 }
 
+// parkedOnPersonLabel returns the escalation label that parks the issue on
+// a person, or "". A parked issue is hard-suppressed at enumeration (bucket
+// "filtered", reason = the configured label's canonical name), so the label
+// is read from the labels the issue carries and, for an operator-renamed
+// label, from the bucket reason. hivecommons/hive#12481 carried
+// needs-direction and stage/030-pr-in-progress together for five hours: the
+// reconciler cleared the stage to none, which read as "actionable" to a
+// person while the hive had in fact handed it to one.
+func parkedOnPersonLabel(in IssueStageInput) string {
+	if label := hardSuppressIssueLabel(in.Labels); label != "" {
+		return label
+	}
+	if in.Bucket == workBucketFiltered && hardSuppressIssueLabel([]string{in.Reason}) != "" {
+		return in.Reason
+	}
+	return ""
+}
+
 // IssueStageInputs flattens an enumeration result into one row per open
 // issue the cycle saw, actionable items first, then every work-detail row.
 func IssueStageInputs(result *ActionableResult) []IssueStageInput {
@@ -147,7 +174,7 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 			if row.Number <= 0 {
 				continue
 			}
-			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, Claim: row.ClaimContext})
+			out = append(out, IssueStageInput{Repo: row.Repo, Number: row.Number, Labels: row.Labels, Bucket: row.Bucket, Reason: row.Reason, ClaimKind: row.ClaimKind, ClaimedBy: row.ClaimedBy, Claim: row.ClaimContext})
 		}
 	}
 	return out
