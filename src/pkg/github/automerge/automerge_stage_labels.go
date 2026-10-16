@@ -529,6 +529,11 @@ func classifyStage(o stageObservation) stageVerdict {
 		// (CI pending, no-verdict, …) is not what the author has to act on.
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
 	}
+	if classifyCIReason(reason) == ciReasonRed {
+		// A red required check is the lane's own diagnosis; it outranks a
+		// red optional one in the recorded reason.
+		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+	}
 	if name := o.Detail.redCheck(o.HeadSHA); name != "" {
 		// The lane gates on required checks only, so it soaks (and merges)
 		// past a red optional check and its reason reads as queued or
@@ -542,10 +547,7 @@ func classifyStage(o stageObservation) stageVerdict {
 	if reason == contributorLaneReasonNoVerdict {
 		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 	}
-	switch classifyCIReason(reason) {
-	case ciReasonRed:
-		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
-	case ciReasonPending:
+	if classifyCIReason(reason) == ciReasonPending {
 		if o.Detail.VerdictKnown && o.Detail.Verdict.Approved {
 			return stageVerdict{Stage: stagelabels.Reviewed, Rank: stageRankOwned}
 		}
