@@ -202,8 +202,9 @@ type State struct {
 type ContinuousState struct {
 	NextKick time.Time `json:"nextKick,omitempty"`
 	// LastKickEnd is when the agent's most recent kick turn ended (the moment
-	// the CLI went idle and the re-kick cooldown started). Surfaced as
-	// idle_since / last_kick_end so the dashboard can say "idle since 16:31".
+	// the CLI went idle and the re-kick cooldown started). Surfaced in
+	// /api/status agents as lastKickEnd / idleSince (see
+	// dashboard/agent_continuous_status.go) so the UI can say "idle since 16:31".
 	LastKickEnd    time.Time     `json:"lastKickEnd,omitempty"`
 	BackoffUntil   time.Time     `json:"backoffUntil,omitempty"`
 	Backoff        time.Duration `json:"backoff,omitempty"`

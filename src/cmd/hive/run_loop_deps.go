@@ -42,7 +42,10 @@ type runLoopDeps struct {
 	newTicker      func(d time.Duration) loopTicker
 	// newWakeTimer arms the continuous re-kick wake (one-shot). nil disables
 	// the wake, which is what the loop tests want unless they drive it.
-	newWakeTimer   func(d time.Duration) loopTicker
+	newWakeTimer func(d time.Duration) loopTicker
+	// now is the wake's clock (nil = time.Now); tests inject it to step past
+	// continuousWakeMinGap and the stall hold without sleeping.
+	now            func() time.Time
 	runEval        func(b *boot, restarted []string)
 	runRotation    func(b *boot)
 	runSweeps      func(b *boot)

@@ -6011,18 +6011,27 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	// for up to 15 minutes after every "kick turn ended". The wake fires an
 	// early tick when the earliest NextKick elapses, bounded by
 	// continuousWakeMinGap, and otherwise re-checks every continuousWakePoll.
+	// When a wake-driven cycle leaves the due re-kick untouched (the agent was
+	// gated outside the governor: dashboard pause, first-scan deferral,
+	// provider budget, upgrade drain) wakeHold backs the wake off that re-kick
+	// so a gated agent does not turn the cadence into one eval per 30s.
+	wakeNow := deps.now
+	if wakeNow == nil {
+		wakeNow = time.Now
+	}
 	var (
 		wakeTimer    loopTicker
 		wakeCh       <-chan time.Time
 		lastWake     time.Time
 		wakeArmedFor time.Time
+		wakeHold     continuousWakeHold
 	)
 	armContinuousWake := func() {
 		if deps.newWakeTimer == nil || b.gov == nil {
 			return
 		}
-		next, _ := b.gov.NextContinuousKickAt()
-		delay, _ := continuousWakeDecision(next, time.Now(), lastWake)
+		next, who := b.gov.NextContinuousKickAt()
+		delay, _ := continuousWakeDecision(next, wakeNow(), lastWake, wakeHold.untilFor(next, who))
 		if delay <= 0 {
 			delay = continuousWakeMinDelay
 		}
@@ -6056,17 +6065,23 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			tick()
 			armContinuousWake()
 		case <-wakeCh:
+			now := wakeNow()
 			next, who := b.gov.NextContinuousKickAt()
-			if _, due := continuousWakeDecision(next, time.Now(), lastWake); due {
+			if _, due := continuousWakeDecision(next, now, lastWake, wakeHold.untilFor(next, who)); due {
 				idleFor := time.Duration(0)
 				if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
-					idleFor = time.Since(st.LastKickEnd).Round(time.Second)
+					idleFor = now.Sub(st.LastKickEnd).Round(time.Second)
 				}
 				b.logger.Info("continuous re-kick wake: running an early eval cycle",
 					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
 					"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
-				lastWake = time.Now()
+				lastWake = now
 				tick()
+				after, afterWho := b.gov.NextContinuousKickAt()
+				if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
+					b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
+						"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "backoff", backoff.String())
+				}
 			}
 			armContinuousWake()
 		case <-agentTickCh:

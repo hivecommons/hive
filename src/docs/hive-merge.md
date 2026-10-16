@@ -411,7 +411,10 @@ tier before the issue is leased.
 
 Every sweep cycle also writes the hive-owned `stage/NNN-*` label for each PR
 it evaluated, derived from the same per-lane reason it logs
-(`contributor-lane:no-verdict` → `stage/050-review-pending`,
+(`contributor-lane:no-verdict` → `stage/050-review-pending`, unless the
+swarm's known verdict is `requires_human`, which the lane also reports as
+no-verdict → `stage/090-needs-human` with reason
+`reviewer-verdict:requires_human`,
 `contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a

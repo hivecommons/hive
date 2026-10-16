@@ -421,13 +421,15 @@ func verdictBlocks(d stageDetail) bool {
 }
 
 // verdictNeedsHuman reports whether a known reviewer verdict defers the PR to
-// a human (requires_human) rather than approving or asking for changes.
+// a human rather than approving or asking for changes. Only requires_human
+// qualifies: it is the one such verdict hive-review can emit
+// (approve / changes_requested / requires_human / reject), and the 090 reason
+// documented for operators is reviewer-verdict:requires_human.
 func verdictNeedsHuman(d stageDetail) bool {
 	if !d.VerdictKnown || d.Verdict.Approved {
 		return false
 	}
-	v := strings.ToLower(strings.TrimSpace(d.Verdict.Verdict))
-	return v == "requires_human" || v == "needs_human" || v == "human"
+	return strings.ToLower(strings.TrimSpace(d.Verdict.Verdict)) == "requires_human"
 }
 
 // stageHandoffReasons are reasons that mean "not this lane's PR".
