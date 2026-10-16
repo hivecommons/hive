@@ -47,7 +47,13 @@ type EvidenceSummary struct {
 	// ClaimVsVerdict is panel 5 (#12365): per ISO week, agent-authored PRs
 	// whose author said "done" versus what CI and the swarm said.
 	ClaimVsVerdict []EvidenceClaimWeek `json:"claim_vs_verdict"`
-	Missing        EvidenceMissing     `json:"missing"`
+	// IntentCounters is the intent gate's evaluated-vs-would-block totals per
+	// tier (#12362), same shape as WriteCounters: Attempted is evaluations,
+	// Blocked is the subset BlocksMerge(true) would have withheld, whether or
+	// not intent.enforce was on. Omitted when the counter file is absent or
+	// unreadable. Record-only; it never feeds back into eligibility.
+	IntentCounters map[string]EvidenceWriteCount `json:"intent_counters,omitempty"`
+	Missing        EvidenceMissing               `json:"missing"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
@@ -261,6 +267,7 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	resp := buildEvidenceSummary(bundles, now, hours, repo, kind)
 	resp.Missing.RecordsUnreadable = unreadable
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
+	resp.IntentCounters = loadEvidenceWriteCounters(intentCountersPath)
 
 	days := (hours + 23) / 24
 	if days < 1 || days > reviewerAccuracyMaxWindowDays {

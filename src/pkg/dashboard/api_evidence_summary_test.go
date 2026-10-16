@@ -137,6 +137,46 @@ func TestLoadEvidenceWriteCounters(t *testing.T) {
 	}
 }
 
+func TestHandleEvidenceSummaryIntentCounters(t *testing.T) {
+	reviewEvidenceTestEnv(t)
+	dir := t.TempDir()
+	origW, origI := writeCountersPath, intentCountersPath
+	t.Cleanup(func() { writeCountersPath, intentCountersPath = origW, origI })
+	writeCountersPath = filepath.Join(dir, "write-counters.json")
+	intentCountersPath = filepath.Join(dir, "intent-counters.json")
+
+	s := &Server{}
+	w := httptest.NewRecorder()
+	s.handleEvidenceSummary(w, httptest.NewRequest(http.MethodGet, "/api/evidence/summary", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["intent_counters"]; ok {
+		t.Error("intent_counters must be omitted when the file is absent")
+	}
+
+	body := `{"totals":{"tier1":{"attempted":7,"blocked":3,"blocked_by_reason":{"tier1_needs_issue":3}},"tier3":{"attempted":2,"blocked":2}},"weeks":{}}`
+	if err := os.WriteFile(intentCountersPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	s.handleEvidenceSummary(w, httptest.NewRequest(http.MethodGet, "/api/evidence/summary", nil))
+	var resp EvidenceSummary
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.IntentCounters["tier1"] != (EvidenceWriteCount{Attempted: 7, Blocked: 3}) || resp.IntentCounters["tier3"].Blocked != 2 {
+		t.Errorf("intent_counters = %+v", resp.IntentCounters)
+	}
+	if resp.WriteCounters != nil {
+		t.Errorf("write_counters should be absent, got %+v", resp.WriteCounters)
+	}
+}
+
 func TestBuildEvidenceSummaryShadowGate(t *testing.T) {
 	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	recent := now.Add(-2 * time.Hour)

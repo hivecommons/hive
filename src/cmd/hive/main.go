@@ -48,6 +48,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inference"
+	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -2678,6 +2679,14 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			b.logger.Warn("sla history flush on shutdown failed", "error", err)
 		}
 	})
+
+	// Intent evaluation counters (#12362): one audit-log line per evaluation
+	// and a durable weekly file beside write-counters.json. Record-only;
+	// nothing reads these back into merge eligibility.
+	intent.SetEvaluationAuditSink(func(o intent.Observation) {
+		b.dashSrv.AuditLogRecord("system", intentEvaluatedAuditAction, intentEvaluatedAuditDetail(o), "", o.Repo, o.Number)
+	})
+	b.preShutdownHooks.add("flush-intent-counters", intent.StartEvaluationCounterPersistence(intent.CountersPath, b.logger))
 
 	// The scheduler's classifier pass records KindClassified journeys the
 	// moment lane routing decides an issue's lane — same store, no extra work.
