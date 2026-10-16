@@ -22432,6 +22432,19 @@ function burnAreaChart() {
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} verdicts` : `worse rate ${evPct(worst)}`,
         };
       },
+      maintainability: (dto) => {
+        const rows = evMaintainabilityRows(dto);
+        const latest = rows.map((r) => r.months[r.months.length - 1]).filter(Boolean);
+        const over = latest.reduce((sum, m) => sum + (Number(m.functions_over_threshold) || 0), 0);
+        return {
+          matters: 'Complexity that rises over time adds review and maintenance cost; this is an observation, not a causal claim about agents.',
+          measured: 'Monthly Go cyclomatic complexity snapshots per repo: median, functions over threshold, and warnings by tool. ACMM markers show when each level was first observed.',
+          how: 'Snapshots within the window include boundary months. Missing months and tool measurements stay gaps. n counts repos with at least two snapshots; single snapshots remain visible as points.',
+          good: 'A flat or falling median and fewer functions over threshold. Complexity alone does not say whether a change was good.',
+          ours: `${rows.length} repo(s) with snapshots; ${over} function(s) over threshold in their latest months. ${evLimitsSentence()}`,
+          grade: 'none', reason: 'report-only; not graded',
+        };
+      },
       'shadow-gates': (dto) => {
         const sg = dto.shadow_gate || {};
         let heldN = 0, heldReverted = 0, heldMerged = 0, passedN = 0, passedReverted = 0;
