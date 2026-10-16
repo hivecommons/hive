@@ -1,6 +1,8 @@
 package config
 
 import (
+	"bytes"
+	"log"
 	"strings"
 	"testing"
 )
@@ -28,6 +30,7 @@ func TestValidateSnapshotURL(t *testing.T) {
 		{name: "missing host", in: "https:///snapshot", wantErr: "missing host"},
 		{name: "query rejected", in: "https://snap.example.com/snapshot?view=1", wantErr: "query and fragment are not allowed"},
 		{name: "fragment rejected", in: "https://snap.example.com/snapshot#top", wantErr: "query and fragment are not allowed"},
+		{name: "bare query rejected", in: "https://snap.example.com/snapshot?", wantErr: "query and fragment are not allowed"},
 		{name: "credentials rejected", in: "https://u:p@snap.example.com/snapshot", wantErr: "credentials"},
 	}
 	for _, tc := range cases {
@@ -55,6 +58,25 @@ func TestValidateSnapshotURL(t *testing.T) {
 	}
 }
 
+func TestLoad_HubSnapshotURLLegacyWarning(t *testing.T) {
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	legacyURL := "https://snap.example.com/snapshot?token=private-snapshot-token#top"
+	path := writeTempConfig(t, minimalValidYAML("acme", "ghp_tok")+"\nhub:\n  snapshot_url: "+legacyURL+"\n")
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load() with legacy snapshot_url: %v", err)
+	}
+	if !strings.Contains(logs.String(), "warning: hub.snapshot_url contains a legacy query or fragment") {
+		t.Fatalf("missing legacy URL warning in logs: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), "private-snapshot-token") {
+		t.Fatal("legacy URL warning leaked query credentials")
+	}
+}
+
 func TestLoad_HubSnapshotURL(t *testing.T) {
 	base := minimalValidYAML("acme", "ghp_tok")
 
@@ -65,6 +87,39 @@ func TestLoad_HubSnapshotURL(t *testing.T) {
 	}
 	if cfg.Hub.SnapshotURL != "https://snap.example.com/snapshot" {
 		t.Fatalf("Hub.SnapshotURL = %q, want trailing slash trimmed", cfg.Hub.SnapshotURL)
+	}
+
+	for _, legacyURL := range []string{
+		"https://snap.example.com/snapshot/?view=1",
+		"https://snap.example.com/snapshot/#top",
+		"https://snap.example.com/snapshot/?view=1#top",
+		"http://snap.internal:8080/?",
+		"https://snap.example.com/snap%2Fshot/?view=a%2Fb#top",
+	} {
+		t.Run(legacyURL, func(t *testing.T) {
+			path := writeTempConfig(t, base+"\nhub:\n  snapshot_url: "+legacyURL+"\n")
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() must accept legacy query/fragment: %v", err)
+			}
+			if cfg.Hub.SnapshotURL != legacyURL {
+				t.Fatalf("Hub.SnapshotURL = %q, want legacy URL preserved as %q", cfg.Hub.SnapshotURL, legacyURL)
+			}
+		})
+	}
+
+	for _, invalidURL := range []string{
+		"ftp://snap.example.com/snapshot?view=1",
+		"https:///snapshot#top",
+		"https://u:p@snap.example.com/snapshot?view=1",
+		"https://snap.example.com/%zz?view=1",
+	} {
+		t.Run(invalidURL, func(t *testing.T) {
+			path := writeTempConfig(t, base+"\nhub:\n  snapshot_url: "+invalidURL+"\n")
+			if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "hub.snapshot_url") {
+				t.Fatalf("Load() error = %v, want snapshot URL validation error", err)
+			}
+		})
 	}
 
 	path = writeTempConfig(t, base+"\nhub:\n  snapshot_url: snap.example.com/snapshot\n")

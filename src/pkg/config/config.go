@@ -5681,6 +5681,12 @@ func ValidateDashboardPublicURL(raw string) (string, error) {
 // trailing slash trimmed when the path is otherwise root/empty. Query,
 // fragment and credentials are not allowed. Empty is valid and means "unset".
 func ValidateSnapshotURL(raw string) (string, error) {
+	return validateSnapshotURL(raw, false)
+}
+
+// Loading tolerates legacy query/fragment values accepted by hub registration,
+// while dashboard writes continue to enforce the stricter URL shape.
+func validateSnapshotURL(raw string, allowLegacyQueryFragment bool) (string, error) {
 	v := strings.TrimSpace(raw)
 	if v == "" {
 		return "", nil
@@ -5699,7 +5705,13 @@ func ValidateSnapshotURL(raw string) (string, error) {
 		return "", fmt.Errorf("hub.snapshot_url %q: credentials are not allowed", raw)
 	}
 	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
-		return "", fmt.Errorf("hub.snapshot_url %q: query and fragment are not allowed", raw)
+		if !allowLegacyQueryFragment {
+			return "", fmt.Errorf("hub.snapshot_url %q: query and fragment are not allowed", raw)
+		}
+		// Do not log the URL: legacy query strings may contain credentials.
+		log.Printf("[config] warning: hub.snapshot_url contains a legacy query or fragment; remove it before updating this field through the dashboard")
+		// Preserve path and suffix semantics rather than normalizing a legacy URL.
+		return u.String(), nil
 	}
 	if u.Path == "" || u.Path == "/" {
 		return u.Scheme + "://" + u.Host, nil
