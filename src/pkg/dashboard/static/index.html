@@ -39076,14 +39076,14 @@ function burnAreaChart() {
         : '';
       return `
         <div class="config-field mb-7">
-          <label>Cadence mode scope ${yamlHint('governor.cadence_scope')} ${settingHelpMark('governor-thresholds', '', 'Cadence mode scope', `Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.`)}</label>
+          <label>Cadence mode scope ${settingHelpMark('governor-thresholds', '', 'Cadence mode scope', `Aggregate preserves the current one-mode behavior. Per repo computes each successfully scanned repo's mode from its own actionable queue; hive-wide agents continue using the aggregate mode.`)} ${yamlHint('governor.cadence_scope')}</label>
           <select id="cfg-cadence-scope" data-change-action="markDirty" data-arg0="cadence-scope" data-arg1="cadenceScope" data-arg-types="s,s,v">
             ${[['aggregate', 'Aggregate (default)'], ['per_repo', 'Per repo']]
               .map(([v, label]) => `<option value="${v}" ${activeScope === v ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
         </div>
         <div class="config-field mb-7">
-          <label>Multi-repo threshold scaling ${yamlHint('governor.threshold_scaling')} ${settingHelpMark('governor-thresholds', '', 'Multi-repo threshold scaling', `How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.`)}</label>
+          <label>Multi-repo threshold scaling ${settingHelpMark('governor-thresholds', '', 'Multi-repo threshold scaling', `How issue/PR thresholds scale as repo count grows. Square-root is recommended for large hives.`)} ${yamlHint('governor.threshold_scaling')}</label>
           <select id="cfg-threshold-scaling" data-change-action="markDirty" data-arg0="threshold-scaling" data-arg1="thresholdScaling" data-arg-types="s,s,v" ${activeScope === 'per_repo' ? 'disabled style="opacity:0.6"' : ''}>
             ${[['linear', 'Linear'], ['sqrt', 'Square-root (default)'], ['none', 'None']]
               .map(([v, label]) => `<option value="${v}" ${activeScaling === v ? 'selected' : ''}>${label}</option>`).join('')}
