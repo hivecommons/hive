@@ -73,14 +73,14 @@ func TestWatchdogUIHasNoUndefinedCallees(t *testing.T) {
 		"esc",
 	} {
 		declared := regexp.MustCompile(`(?m)^\s*(function\s+` + fn + `\s*\(|const\s+` + fn + `\s*=)`)
-		if !declared.MatchString(html) {
+		if !jsDeclaredNear(html, fn, declared) {
 			t.Errorf("watchdog UI calls %q but it is never declared", fn)
 		}
 	}
 	// Top-level declarations sit at 4-space indent, matching the file's other
 	// script-scope functions.
 	for _, fn := range []string{"renderWatchdogSection", "watchdogConditionsRow", "hasWatchdogKeys", "splitWatchdogKeys"} {
-		if !regexp.MustCompile(`(?m)^ {4}function ` + fn + `\(`).MatchString(html) {
+		if !jsDeclaredNear(html, fn, regexp.MustCompile(`(?m)^ {4}function `+fn+`\(`)) {
 			t.Errorf("%q must be declared at top level (4-space indent)", fn)
 		}
 	}
@@ -243,7 +243,7 @@ func TestWatchdogActivityUIHasNoUndefinedCallees(t *testing.T) {
 		"fmtSparkVal",
 	} {
 		declared := regexp.MustCompile(`(?m)^\s*(async\s+)?(function\s+` + fn + `\s*\(|const\s+` + fn + `\s*=)`)
-		if !declared.MatchString(html) {
+		if !jsDeclaredNear(html, fn, declared) {
 			t.Errorf("watchdog activity UI calls %q but it is never declared", fn)
 		}
 	}
