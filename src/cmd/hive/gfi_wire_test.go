@@ -22,7 +22,6 @@ import (
 func gfiTestConfig() *config.Config {
 	cfg := &config.Config{HiveID: "acme-hive"}
 	cfg.Project.Org = "acme"
-	cfg.GoodFirstIssue.Enabled = true
 	cfg.Dashboard.PublicURL = "https://acme.hive.example/"
 	return cfg
 }
@@ -139,14 +138,15 @@ func TestGFISweepReleaseAndConvertWiring(t *testing.T) {
 		{Repo: "widgets", Number: 7, Title: "Fix off-by-one", Body: body, Labels: []string{"kind/bug", "size/S"}, CreatedAt: time.Now().Add(-48 * time.Hour)},
 	}}}
 
-	// Disabled: nothing happens.
-	cfg.GoodFirstIssue.Enabled = false
+	// Explicit opt-out: nothing happens.
+	off := false
+	cfg.GoodFirstIssue.Enabled = &off
 	var lastRun time.Time
 	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, last, &lastRun, logger)
 	if len(fake.added) != 0 || !lastRun.IsZero() {
 		t.Fatal("disabled sweep acted")
 	}
-	cfg.GoodFirstIssue.Enabled = true
+	cfg.GoodFirstIssue.Enabled = nil
 
 	// No public URL: skipped, but the interval is still armed.
 	cfg.Dashboard.PublicURL = ""
@@ -207,5 +207,37 @@ func TestGFISweepReleaseAndConvertWiring(t *testing.T) {
 	}
 	if state.known("acme/widgets#7") || state.sweeper.Stats().Released != 1 {
 		t.Fatalf("state after release: %+v", state.sweeper.Stats())
+	}
+}
+
+// A maintainer labels an issue by hand between sweeps; the hive must still
+// know it wears the label when an agent starts it, without waiting for the
+// next sweep interval.
+func TestGFILabelledSetRefreshesEveryCycle(t *testing.T) {
+	fake := &gfiFakeGitHub{}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+	logger := slog.New(slog.DiscardHandler)
+	gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, logger)
+	cfg := gfiTestConfig()
+	state := newGFIState()
+
+	lastRun := time.Now() // interval armed: the sweep itself must not run
+	plain := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
+		{Repo: "widgets", Number: 9, Title: "Typo in README", Body: "short", CreatedAt: time.Now().Add(-48 * time.Hour)},
+	}}}
+	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, plain, &lastRun, logger)
+	if state.known("acme/widgets#9") {
+		t.Fatal("unlabelled issue reported as labelled")
+	}
+	handLabelled := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
+		{Repo: "widgets", Number: 9, Title: "Typo in README", Body: "short", Labels: []string{gfi.Label}, CreatedAt: time.Now().Add(-48 * time.Hour)},
+	}}}
+	runGoodFirstIssueSweepIfDue(context.Background(), gh, cfg, nil, state, handLabelled, &lastRun, logger)
+	if !state.known("acme/widgets#9") {
+		t.Fatal("hand-labelled issue not tracked between sweeps")
+	}
+	if len(fake.added) != 0 || len(fake.comments) != 0 {
+		t.Fatalf("sweep ran inside the interval: added=%v comments=%d", fake.added, len(fake.comments))
 	}
 }

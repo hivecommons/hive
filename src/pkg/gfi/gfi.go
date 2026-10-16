@@ -60,8 +60,9 @@ const (
 	// sweep never floods a tracker with welcome comments.
 	DefaultMaxPerSweep = 2
 	// DefaultMinAge keeps the hive from racing a fresh issue its reporter may
-	// still be editing or about to fix.
-	DefaultMinAge = 24 * time.Hour
+	// still be editing or about to fix. An hour is enough for that; a day
+	// meant the scanner had long since claimed anything worth advertising.
+	DefaultMinAge = time.Hour
 	// DefaultMinBodyChars / DefaultMaxBodyChars bound the body length: too
 	// short has no acceptance criteria, too long is rarely a first issue.
 	DefaultMinBodyChars = 80
@@ -82,9 +83,11 @@ const (
 // DefaultExcludeLabels are labels that disqualify an issue outright, beyond
 // the hard-suppress set the caller supplies.
 var DefaultExcludeLabels = []string{
-	"kind/epic", "epic", "meta", "tracker", "security", "kind/security",
+	"kind/epic", "epic", "meta", "meta-tracker", "tracker", "roadmap", "security", "kind/security",
 	"blocked", "hold", "do-not-merge", "wontfix", "duplicate", "invalid",
 	"hive/in-progress", "hive/already-done", "hive/covered-by-pr", "🐝 covered by pr",
+	// The hive's own reports to itself are never a newcomer's first issue.
+	"hive/advisory", "hive/selfreport", "hive/sentinel", "hive/fleet", "fleet",
 }
 
 // sizeLabels are labels that already say "small".
@@ -93,8 +96,37 @@ var sizeLabels = []string{"size/xs", "size/s", "good-first-issue", "good first i
 // bugLabels mark a concrete, reproducible report.
 var bugLabels = []string{"bug", "kind/bug", "type/bug"}
 
-// epicTitlePrefixes disqualify by title shape.
-var epicTitlePrefixes = []string{"epic", "tracking", "[meta]", "meta:", "umbrella", "rfc", "proposal"}
+// epicTitlePrefixes disqualify by title shape. They are matched against the
+// title after NormalizeTitle strips emoji, brackets and punctuation, so
+// "📝 Epic: …", "[RFC]: …" and "✨ [v6] proposal …" all match.
+var epicTitlePrefixes = []string{"epic", "tracking", "umbrella", "rfc", "proposal", "hive advisory report", "self-report", "selfreport", "fleet report"}
+
+// epicTitleWords disqualify wherever they appear as a whole word ("v6 epic
+// + readiness bar", "[meta] …" once the bracket is unwrapped).
+var epicTitleWords = map[string]bool{"epic": true, "rfc": true, "umbrella": true, "meta": true}
+
+// securityTitleWords disqualify an issue whose title says it is a security
+// item even when nobody applied a security label ("Review backlog (security): …").
+var securityTitleWords = regexp.MustCompile(`(?i)\b(security|vulnerab\w*|cve-\d+|exploit|xss|csrf|rce|injection)\b`)
+
+// bracketTag turns a bracketed tag such as [RFC] or [v6] into a bare word
+// and leadingNoise strips everything before the first letter or digit
+// (emoji, variation selectors, punctuation, whitespace).
+var (
+	bracketTag   = regexp.MustCompile(`\[([^\]]*)\]`)
+	leadingNoise = regexp.MustCompile(`^[^\p{L}\p{N}]+`)
+)
+
+// NormalizeTitle lowercases a title, unwraps bracketed tags and strips
+// leading emoji and punctuation so shape checks see the first real word.
+// "[RFC]: Evidence pipeline" → "rfc : evidence pipeline"; "📝 v6 epic + …" →
+// "v6 epic + …".
+func NormalizeTitle(title string) string {
+	t := strings.ToLower(strings.TrimSpace(title))
+	t = bracketTag.ReplaceAllString(t, " $1 ")
+	t = leadingNoise.ReplaceAllString(t, "")
+	return strings.Join(strings.Fields(t), " ")
+}
 
 var (
 	// pathPattern finds source paths mentioned in a body: at least one slash,
@@ -241,11 +273,19 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 			return skip(d, "excluded-label:"+l)
 		}
 	}
-	title := strings.ToLower(strings.TrimSpace(c.Title))
+	title := NormalizeTitle(c.Title)
 	for _, prefix := range epicTitlePrefixes {
 		if strings.HasPrefix(title, prefix) {
 			return skip(d, "title:"+prefix)
 		}
+	}
+	for _, w := range strings.Fields(title) {
+		if epicTitleWords[w] {
+			return skip(d, "title:"+w)
+		}
+	}
+	if securityTitleWords.MatchString(c.Title) {
+		return skip(d, "title:security")
 	}
 	if c.CreatedAt.IsZero() || now.Sub(c.CreatedAt) < p.MinAge {
 		return skip(d, "too-fresh")

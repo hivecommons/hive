@@ -42,7 +42,21 @@ func TestScoreTable(t *testing.T) {
 		{"security", func(c *Candidate) { c.Labels = append(c.Labels, "security") }, false, "excluded-label:security", ""},
 		{"hive claimed-by", func(c *Candidate) { c.Labels = append(c.Labels, "hive/claimed-by-worker") }, false, "excluded-label:hive/claimed-by-worker", ""},
 		{"epic title", func(c *Candidate) { c.Title = "Epic: rewrite everything" }, false, "title:epic", ""},
-		{"too fresh", func(c *Candidate) { c.CreatedAt = now.Add(-time.Hour) }, false, "too-fresh", ""},
+		{"emoji epic title", func(c *Candidate) { c.Title = "📝 v6 epic + readiness bar: dashboard-optional operation" }, false, "title:epic", ""},
+		{"bracketed rfc title", func(c *Candidate) { c.Title = "[RFC]: Evidence pipeline — measure effectiveness" }, false, "title:rfc", ""},
+		{"meta tag title", func(c *Candidate) { c.Title = "✨ [meta] tidy the docs tree" }, false, "title:meta", ""},
+		{"security in title", func(c *Candidate) { c.Title = "Review backlog (security): snapshot_url accepted without validation" }, false, "title:security", ""},
+		{"cve in title", func(c *Candidate) { c.Title = "Bump x/net for CVE-2026-1234" }, false, "title:security", ""},
+		{"advisory report", func(c *Candidate) {
+			c.Title = "🐝 Hive Advisory Report"
+			c.Labels = append(c.Labels, "hive/advisory")
+		}, false, "excluded-label:hive/advisory", ""},
+		{"self report label", func(c *Candidate) { c.Labels = append(c.Labels, "hive/selfreport") }, false, "excluded-label:hive/selfreport", ""},
+		{"roadmap label", func(c *Candidate) { c.Labels = append(c.Labels, "roadmap") }, false, "excluded-label:roadmap", ""},
+		{"metadata is not meta", func(c *Candidate) { c.Title = "Metadata fields missing from pkg/paginate response" }, true, "", ""},
+		{"securely is not security", func(c *Candidate) { c.Title = "Securely-named variable is misspelled in pkg/paginate" }, true, "", ""},
+		{"too fresh", func(c *Candidate) { c.CreatedAt = now.Add(-30 * time.Minute) }, false, "too-fresh", ""},
+		{"an hour old is old enough", func(c *Candidate) { c.CreatedAt = now.Add(-61 * time.Minute) }, true, "", ""},
 		{"zero created", func(c *Candidate) { c.CreatedAt = time.Time{} }, false, "too-fresh", ""},
 		{"body too short", func(c *Candidate) { c.Body = "fix it" }, false, "body-too-short", ""},
 		{"body too long", func(c *Candidate) { c.Body = strings.Repeat("x ", 3000) }, false, "body-too-long", ""},
@@ -85,6 +99,20 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+func TestNormalizeTitle(t *testing.T) {
+	for in, want := range map[string]string{
+		"[RFC]: Evidence pipeline":            "rfc : evidence pipeline",
+		"📝 v6 epic + readiness bar":           "v6 epic + readiness bar",
+		"✨ [v6] hive-admin-mcp (stdio): warn": "v6 hive-admin-mcp (stdio): warn",
+		"  Fix off-by-one  ":                  "fix off-by-one",
+		"":                                    "",
+	} {
+		if got := NormalizeTitle(in); got != want {
+			t.Errorf("NormalizeTitle(%q)=%q want %q", in, got, want)
+		}
+	}
 }
 
 func TestMentionedPackages(t *testing.T) {

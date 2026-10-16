@@ -260,7 +260,8 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 		b.GoodFirstIssueReselectCooldown != nil || b.GoodFirstIssueDocsURL != nil || b.GoodFirstIssueCommentTemplate != nil {
 		g := cur.GoodFirstIssue
 		if b.GoodFirstIssueEnabled != nil {
-			g.Enabled = *b.GoodFirstIssueEnabled
+			v := *b.GoodFirstIssueEnabled
+			g.Enabled = &v
 		}
 		if b.GoodFirstIssueInterval != nil {
 			d, err := parseSettingsDuration("good_first_issue interval", *b.GoodFirstIssueInterval)
@@ -436,7 +437,7 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 		"reentrantTurnEnabled":                cfg.Turn.Reentrant.Enabled,
 		"reentrantTurnBackgroundFleetEnabled": cfg.Turn.Reentrant.BackgroundFleetEnabled,
 
-		"goodFirstIssueEnabled":     cfg.GoodFirstIssue.Enabled,
+		"goodFirstIssueEnabled":     cfg.GoodFirstIssue.IsEnabled(),
 		"goodFirstIssueInterval":    settingsDurationString(cfg.GoodFirstIssue.Interval),
 		"goodFirstIssueMaxPerRepo":  cfg.GoodFirstIssue.MaxPerRepo,
 		"goodFirstIssueMaxPerSweep": cfg.GoodFirstIssue.MaxPerSweep,

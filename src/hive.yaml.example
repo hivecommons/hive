@@ -69,8 +69,8 @@ project:
 # sentinel:
 #   trusted_authors_block: false  # set true to block trusted authors too
 
-# Optional hive-curated `good first issue` advertising (default off). A
-# periodic sweep scores open, unclaimed issues; the few that qualify get
+# Hive-curated `good first issue` advertising (default ON; `enabled: false`
+# opts out). A periodic sweep scores open, unclaimed issues; the few that qualify get
 # GitHub's canonical `good first issue` + `help wanted` labels and ONE welcome
 # comment that pitches the issue to contributors bringing their own coding
 # agent and links this hive's relay page (<dashboard.public_url>/contribute?
@@ -79,11 +79,11 @@ project:
 # dashboard.public_url (or a hub-assigned dashboard URL).
 # See docs/good-first-issue.md.
 # good_first_issue:
-#   enabled: true
-#   interval: 1h            # sweep cadence
+#   enabled: true           # default; false opts out
+#   interval: 15m           # sweep cadence (short: the scanner claims fresh issues within minutes)
 #   max_per_repo: 5         # issues wearing the label per repo, including hand-labelled
 #   max_per_sweep: 2        # new selections per repo per pass
-#   min_age: 24h            # never advertise an issue younger than this
+#   min_age: 1h             # never advertise an issue younger than this
 #   min_body_chars: 80
 #   max_body_chars: 4000
 #   max_packages: 2         # source directories an issue may mention
