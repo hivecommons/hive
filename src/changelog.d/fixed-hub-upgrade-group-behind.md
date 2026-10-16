@@ -1,0 +1,1 @@
+Hub dashboard: grouping hives by upgrade state no longer files hives that are 100+ commits behind under "Up to date". Hives behind their target with no rollout in flight and nothing queued now get their own "Behind target (no upgrade pending)" group, sorted between Upgrading and Up to date (#12466).

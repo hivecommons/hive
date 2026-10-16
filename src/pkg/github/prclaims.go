@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"log/slog"
 	"os"
 	"regexp"
@@ -101,18 +102,18 @@ const (
 	// the pod restarts that caused the incident this guard exists to prevent.
 	ClaimLedgerPath = "/data/pr-claims.json"
 
-	// CoveredByPRLabel marks an open issue with an API-verified open PR relation.
-	// The bee replaced the `hive/covered-by-pr` spelling (hivecommons/hive#11888)
-	// so the issue list carries hive's own glyph next to GitHub's PR icon.
-	CoveredByPRLabel = "🐝 covered by PR"
-	// LegacyCoveredByPRLabel is the pre-#11888 spelling. Readers accept both
-	// during the transition; EnsureCoveredByPRLabel renames it in place on the
-	// first sweep so existing issues keep the label without per-issue writes.
-	LegacyCoveredByPRLabel = "hive/covered-by-pr"
-	// CoveredByPRLabelColor is the hive-amber label colour.
-	CoveredByPRLabelColor = "f5a623"
+	// CoveredByPRLabel marks an open issue with an API-verified open PR
+	// relation. It is the `stage/040-covered-by-pr` stage label
+	// (hivecommons/hive#12436; pkg/stagelabels owns the family and a test
+	// pins the spelling). It replaced `🐝 covered by PR` (#11888) and
+	// `hive/covered-by-pr` before it; see legacyCoveredByPRLabels. An issue
+	// whose covering PR has advanced carries the PR's stage instead, so
+	// readers use HasCoveredByPRLabel rather than comparing this string.
+	CoveredByPRLabel = "stage/040-covered-by-pr"
+	// CoveredByPRLabelColor is the shared stage-family colour (hive amber).
+	CoveredByPRLabelColor = stagelabels.StageColor
 	// CoveredByPRLabelDescription is the label description hive creates it with.
-	CoveredByPRLabelDescription = "Hive verified that an open PR references or claims this issue; still actionable until confirmed"
+	CoveredByPRLabelDescription = "An open PR covers this issue"
 	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
 	// that is not yet a resolved/closed issue.
 	LikelyDoneLabel = "hive/likely-done"
@@ -2008,25 +2009,27 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		// close" with half its work in an open PR).
 		partialWanted := mergedWanted && claim.Reference
 		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
-		if coveredWanted {
-			if err := client.EnsureCoveredByPRLabel(ctx, issue.Repo); err != nil && logger != nil {
-				logger.Warn("ensuring covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
-			} else if HasCoveredByPRLabel(originalLabels) {
-				// Already carried (under either spelling after the in-place
-				// rename); re-adding would only spend a write.
-			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{CoveredByPRLabel}); err != nil && logger != nil {
-				logger.Warn("adding covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+		// The covered-by-PR stage label itself is written by the issue stage
+		// reconciler (SyncIssueStageLabels, hivecommons/hive#12436), which
+		// mirrors the covering PR's own stage once it advances; here only the
+		// retired spellings are stripped so the migration completes one cycle
+		// after upgrade, and the in-memory copy reflects the claim either way.
+		for _, name := range legacyCoveredByPRLabels {
+			if !issueHasLabel(originalLabels, name) {
+				continue
 			}
-		} else if HasCoveredByPRLabel(originalLabels) {
-			for _, name := range []string{CoveredByPRLabel, LegacyCoveredByPRLabel} {
-				if !issueHasLabel(originalLabels, name) {
-					continue
-				}
-				if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, name); err != nil && logger != nil {
-					logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "label", name, "error", err)
-				}
+			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, name); err != nil && logger != nil {
+				logger.Warn("removing retired covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "label", name, "error", err)
 			}
-			issue.Labels = removeCoveredByPRLabel(issue.Labels)
+			issue.Labels = removeIssueLabel(issue.Labels, name)
+		}
+		if !coveredWanted && stagelabels.Current(originalLabels) == stagelabels.CoveredByPR {
+			// The claim lapsed (PR closed or merged) but the stage label is
+			// still on the issue: take it off now rather than a cycle later.
+			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, CoveredByPRLabel); err != nil && logger != nil {
+				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
 		}
 		if partialWanted && !issueHasLabel(originalLabels, PartiallyAddressedLabel) {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, "fbca04", "A merged PR addressed only part of this issue; remainder still actionable"); err != nil && logger != nil {

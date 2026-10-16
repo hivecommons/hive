@@ -138,6 +138,42 @@ Two flags that appear in CI but are *not* part of the PR gate:
   report. Coverage is scored, but it is not the required merge gate; a failing
   test is.
 
+### Affected-package selection on pull requests
+
+On a pull request the gate does not always run every package. The
+`list-packages` job diffs the PR merge commit against its base parent and runs
+[`.github/scripts/affected-go-packages.sh`](../.github/scripts/affected-go-packages.sh),
+which selects:
+
+- the packages containing a changed `.go` file;
+- their reverse dependencies, including test-only imports (from
+  `go list -test`), for changes to non-test files — a `_test.go` change is
+  never compiled into importers;
+- packages whose tests name a changed file or directory as a string literal
+  (tests that read another package's source as text);
+- `./internal/...`, `pkg/config` and `pkg/rotation`, whose tests scan the
+  whole source tree.
+
+It falls back to the **full suite** for anything it cannot reason about: a
+change outside `src/` other than `docs/`, `changelog.d/` and `CHANGELOG.md`
+(workflows, `.github/scripts/`, `bin/`, `config/`, `Justfile`, `Makefile`,
+`dashboard/openapi.json`); `src/go.mod`/`src/go.sum`; `src/scripts/`; the
+shared harness under `src/internal/`; any non-Go file under `src/` (embedded
+static assets, docs, policies, fixtures — several are read across packages);
+any `testdata/` file; a `.go` file outside a module package; and any git or
+`go list` failure. The repository variable `HIVE_AFFECTED_TEST_SELECTION=off`
+forces the full suite on PRs without a code change.
+
+Every shard job still runs: a hub, agent, dashboard-shuffle or rest lane with
+nothing selected logs why and succeeds without testing, so the required `test`
+and `coverage` contexts never wait on a missing check. On a partial run the
+coverage job scores only the selected packages, each against its unchanged
+floor, fails if a selected package produced no result, labels the `./pkg/...`
+total as selection-only, and takes the no-test-files gate from the whole tree.
+It never writes floors or baselines. The safety net is unchanged: every push
+to a release branch and every scheduled run executes the full suite, and
+[`coverage-hourly.yml`](../.github/workflows/coverage-hourly.yml) scores it.
+
 Neither the PR gate nor the cron runs `./test/...`: both enumerate
 `./pkg/... ./cmd/... ./internal/...` explicitly, and the integration suite additionally needs
 the `integration` build tag and a live hive, as described above.

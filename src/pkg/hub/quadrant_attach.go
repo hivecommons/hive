@@ -100,6 +100,29 @@ func fleetCountGroup(e RegistryEntry) string {
 	return org + "/" + author
 }
 
+// repoMergesPerWeek sums the hive's audit-derived merges across the repos it
+// touched in its RepoActivity window and normalises to a weekly rate. It is
+// the hive-specific throughput figure Productivity prefers over the org-wide
+// collector count, which attributes an entire org's output to every hive in
+// it. Returns ok=false when the summary or its window is not reported.
+func repoMergesPerWeek(e RegistryEntry) (perWeek float64, repos int, ok bool) {
+	if e.RepoActivity == nil {
+		return 0, 0, false
+	}
+	hours := e.RepoActivityCountWindowHours
+	if hours <= 0 {
+		hours = e.RepoActivityWindowHours
+	}
+	if hours <= 0 {
+		return 0, 0, false
+	}
+	merges := 0
+	for _, r := range e.RepoActivity {
+		merges += r.Merges.Count
+	}
+	return float64(merges) / (float64(hours) / (24 * 7)), len(e.RepoActivity), true
+}
+
 // quadrantInputsFor extracts the evidence for one hive.
 //
 // The nil-vs-zero discipline the registry maintains is carried through here
@@ -111,10 +134,6 @@ func quadrantInputsFor(e RegistryEntry, now time.Time) quadrantInputs {
 	in := quadrantInputs{
 		acmmLevel:  e.ACMMLevel,
 		agentCount: e.AgentCount,
-		// The org-wide counters are collected per (org, ai-author) pair — see
-		// NewFleetStatsCollector — so that pair, not the hive ID, is what makes
-		// two hives' counts the same measurement rather than two of them.
-		countGroup: fleetCountGroup(e),
 		// WorkSource is empty for the DEFAULT GitHub Issues source rather than
 		// unknown, so an empty string is a real answer here: the hive is
 		// reading human-filed issues.
@@ -136,9 +155,20 @@ func quadrantInputsFor(e RegistryEntry, now time.Time) quadrantInputs {
 	if rate, ok := mergeAcceptanceRate(e); ok {
 		in.mergeAcceptance = &rate
 	}
+	if perWeek, repos, ok := repoMergesPerWeek(e); ok {
+		in.mergesPerWeek = &perWeek
+		in.activeRepos = repos
+	}
 	if e.Evidence != nil {
 		in.evidence = e.Evidence
 		in.selfMergeAllowed = e.Evidence.AutomergeSelfAuthored
+		// The 7-day hive-state token trend is the fallback burn rate for a
+		// spoke that reports hive state but no governor budget window.
+		if in.tokensPerDay == nil && e.Evidence.HiveState != nil &&
+			e.Evidence.HiveState.Last7d.Samples >= minHiveStateSamples && e.Evidence.HiveState.Last7d.TokensPerDay > 0 {
+			rate := e.Evidence.HiveState.Last7d.TokensPerDay
+			in.tokensPerDay = &rate
+		}
 	}
 	return in
 }
@@ -164,7 +194,7 @@ func canSeeQuadrant(role string, isAdmin bool) bool {
 // polygon disagree with the rows it summarises, which is worse than either
 // being imprecise.
 //
-// Returns the fleet average for the same population so the caller can render
+// Returns the fleet median for the same population so the caller can render
 // the reference polygon and the header without scoring twice.
 func attachQuadrants(rows []MyHiveEntry, isAdmin bool, now time.Time) Quadrant {
 	if len(rows) == 0 {
@@ -178,11 +208,11 @@ func attachQuadrants(rows []MyHiveEntry, isAdmin bool, now time.Time) Quadrant {
 
 	scores := ScoreFleet(inputs)
 
-	// The average is computed over EVERY row, including ones this caller may
+	// The median is computed over EVERY row, including ones this caller may
 	// not see individually. That is deliberate: the reference polygon should
-	// describe the fleet the hive is actually being ranked against, and it
+	// describe the fleet the hive is actually being compared with, and it
 	// discloses nothing about any single hive.
-	avg := FleetAverage(scores)
+	avg := FleetMedian(scores)
 
 	for i := range rows {
 		if !canSeeQuadrant(rows[i].Role, isAdmin) {

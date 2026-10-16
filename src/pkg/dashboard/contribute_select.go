@@ -379,6 +379,12 @@ func (h *ContributeWSHub) repoUnmintable(repo string, now time.Time) bool {
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
+	// hivecommons/hive#12436: "contributors should clean up their mess before
+	// taking on new stuff" — a contributor's queued red-PR fixes are served
+	// before any new issue at every task boundary.
+	if msg := h.selectFixTask(c); msg != nil {
+		return msg
+	}
 	// #7869: one selection may drop a candidate whose repository the App cannot
 	// mint a token for and scan again; skippedUnmintable counts those drops so the
 	// re-scan is bounded and an empty re-scan can name the real cause.

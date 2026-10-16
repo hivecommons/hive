@@ -8,8 +8,20 @@ import (
 
 // Labels the hub sets on GitHub issues.
 const (
-	// LabelClaimed marks an issue with a live claim.
-	LabelClaimed = "claimed"
+	// LabelClaimed marks an issue with a live claim. Since hivecommons/hive#12436
+	// it is the `stage/020-claimed` stage label (pkg/stagelabels owns the
+	// family; a test there pins the two spellings together). The bare
+	// `claimed` label it replaced is LegacyLabelClaimed and is only ever
+	// removed now.
+	LabelClaimed = "stage/020-claimed"
+	// LabelPRInProgress is the `stage/030-pr-in-progress` stage label: an
+	// agent kick / contributor session is actively working the issue and no
+	// PR exists yet. It replaced `hive/in-progress`.
+	LabelPRInProgress = "stage/030-pr-in-progress"
+	// LegacyLabelClaimed and LegacyLabelInProgress are the retired labels the
+	// stage family superseded; readers must not treat them as signals.
+	LegacyLabelClaimed    = "claimed"
+	LegacyLabelInProgress = "hive/in-progress"
 	// LabelPreemptedPrefix plus the displaced holder's login marks a takeover
 	// so pollers that only read labels notice they were preempted.
 	LabelPreemptedPrefix = "preempted:"

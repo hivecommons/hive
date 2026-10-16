@@ -141,12 +141,40 @@ func (a *AgentProcess) decideTokenRestart(now time.Time) tokenRestartAction {
 	if a.tokenRestartAttempts >= tokenRestartMaxAttempts {
 		return tokenRestartGiveUp
 	}
+	if a.tokenRestartsInWindow(now) >= tokenRestartWindowMax {
+		return tokenRestartGiveUp
+	}
 	if now.Sub(a.lastTokenRestart).Seconds() < float64(tokenRestartCooldownSec) {
 		return tokenRestartWait
 	}
 	a.tokenRestartAttempts++
 	a.lastTokenRestart = now
+	a.tokenRestartFiredAt = append(a.tokenRestartFiredAt, now)
 	return tokenRestartFire
+}
+
+// tokenRestartsInWindow prunes the rolling ledger to tokenRestartWindow and
+// returns how many token-triggered restarts fired inside it.
+func (a *AgentProcess) tokenRestartsInWindow(now time.Time) int {
+	cutoff := now.Add(-tokenRestartWindow)
+	kept := a.tokenRestartFiredAt[:0]
+	for _, at := range a.tokenRestartFiredAt {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	a.tokenRestartFiredAt = kept
+	return len(kept)
+}
+
+// clearTokenRestartCap is the operator-facing reset: it re-arms the per-boot
+// cap, the give-up latch AND the rolling window ledger together, so a reset
+// or resume genuinely allows the heal to run again. The poller's own re-arm
+// (shouldResetTokenRestartCap) deliberately touches only the first two.
+func (a *AgentProcess) clearTokenRestartCap() {
+	a.tokenRestartAttempts = 0
+	a.tokenRestartGaveUp = false
+	a.tokenRestartFiredAt = nil
 }
 
 // tokenRestartBlockedByOutput answers whether a token-triggered login restart

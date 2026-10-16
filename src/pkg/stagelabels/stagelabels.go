@@ -27,6 +27,7 @@ package stagelabels
 
 import (
 	"fmt"
+	"github.com/hivecommons/hive/pkg/claims"
 	"sort"
 	"strings"
 	"time"
@@ -251,6 +252,22 @@ func (a Author) Label() string { return authorDefs[a].Name }
 // String is the bare tier name ("trusted", …) or "" for AuthorNone.
 func (a Author) String() string { return strings.TrimPrefix(authorDefs[a].Name, AuthorPrefix) }
 
+// Merge combines two lanes' opinions of the same author into the tier to
+// show. The lanes see different evidence — the trusted-author lane the
+// maintainer role, the contributor lane the registry/claim tier — and a
+// maintainer with no registry profile is "untrusted" to the latter, so:
+// trusted always wins; any known tier replaces none or untrusted; between
+// two equally specific tiers the first recorded is kept.
+func (a Author) Merge(next Author) Author {
+	switch {
+	case next == AuthorNone:
+		return a
+	case a == AuthorNone, next == AuthorTrusted, a == AuthorUntrusted:
+		return next
+	}
+	return a
+}
+
 // AuthorFromTier maps a registry/claim tier string to an Author given the
 // lane's require_tiers set. Unknown or empty tiers are untrusted.
 func AuthorFromTier(tier string, requireTiers map[string]bool) Author {
@@ -346,14 +363,18 @@ func Plan(current []string, want Desired) (add, remove []string) {
 // The reconciler removes them from any open item it writes a stage for, so
 // the migration completes one cycle after upgrade. `hive/claimed-by-<who>`
 // is NOT retired: it is the "who" modifier the stage cannot carry.
-var LegacyLabels = []string{"🐝 covered by PR", "hive/covered-by-pr", "claimed", "hive/in-progress"}
+var LegacyLabels = []string{LegacyCoveredByPR, LegacyCoveredByPRASCII, claims.LegacyLabelClaimed, claims.LegacyLabelInProgress}
 
-// Owned reports whether label belongs to a hive-owned family this package
-// reconciles (including the retired labels it replaces).
-func Owned(label string) bool {
-	if strings.HasPrefix(label, Prefix) || strings.HasPrefix(label, AuthorPrefix) {
-		return true
-	}
+// Retired label spellings the stage family replaced (kept as constants so
+// readers that still have to RECOGNISE them for the migration cycle do not
+// re-type the strings). The claim-side pair lives in pkg/claims.
+const (
+	LegacyCoveredByPR      = "🐝 covered by PR"
+	LegacyCoveredByPRASCII = "hive/covered-by-pr"
+)
+
+// IsLegacy reports whether label is one of the retired labels (case-insensitive).
+func IsLegacy(label string) bool {
 	for _, legacy := range LegacyLabels {
 		if strings.EqualFold(label, legacy) {
 			return true
@@ -362,15 +383,32 @@ func Owned(label string) bool {
 	return false
 }
 
+// CarriesStageAtLeast reports whether labels carry a current stage label at
+// or past min. It is the migration-safe replacement for "has the
+// covered-by-PR label": a PR-covered issue carries 040 or a mirrored PR stage.
+func CarriesStageAtLeast(labels []string, min Stage) bool {
+	cur := Current(labels)
+	return cur != None && !cur.Before(min)
+}
+
+// Owned reports whether label belongs to a hive-owned family this package
+// reconciles (including the retired labels it replaces).
+func Owned(label string) bool {
+	return strings.HasPrefix(label, Prefix) || strings.HasPrefix(label, AuthorPrefix) || IsLegacy(label)
+}
+
 // Current returns the stage a label set carries, or None. An unknown
-// `stage/*` label (stale table entry, health marker) yields None.
+// `stage/*` label (stale table entry, health marker) yields None. Should an
+// item transiently carry two stage labels (mid-migration, before the
+// reconciler's next pass), the furthest along wins.
 func Current(labels []string) Stage {
+	cur := None
 	for _, l := range labels {
 		for _, d := range Table {
-			if l == d.Stage.Label() {
-				return d.Stage
+			if l == d.Stage.Label() && cur.Before(d.Stage) {
+				cur = d.Stage
 			}
 		}
 	}
-	return None
+	return cur
 }

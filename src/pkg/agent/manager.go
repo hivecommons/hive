@@ -319,6 +319,13 @@ type AgentProcess struct {
 	// tokenRestartGaveUp latches once the cap is hit so the diagnosis is logged
 	// a single time rather than every poll (~3s). Cleared alongside the counter.
 	tokenRestartGaveUp bool
+	// tokenRestartFiredAt is the rolling ledger of token-triggered restart
+	// times inside tokenRestartWindow. Unlike tokenRestartAttempts it is NOT
+	// re-armed when the pane clears, so a credential that boots clean and is
+	// rejected on first use cannot buy three fresh attempts per boot
+	// (hivecommons/hive#12466). Pruned on read; cleared by operator
+	// reset/resume alongside the counter. Owned by this agent's pane poller.
+	tokenRestartFiredAt []time.Time
 	// restartStormBackoffUntil is the shared circuit breaker for automatic
 	// relaunch paths (crashed-session recovery, token-refresh recovery and
 	// Copilot hang diagnostics). Operator restarts bypass it; automatic loops

@@ -193,14 +193,19 @@ func TestClearInProgressForPR(t *testing.T) {
 	}
 	enableInProgress(c, "hive-a", time.Hour)
 	c.clearInProgressForPR(context.Background(), "o/r", []int{42, 0, 43})
-	_, _, removed := fake.snapshot()
-	if len(removed) != 2 {
-		t.Fatalf("removed = %v, want two removals", removed)
+	added, _, removed := fake.snapshot()
+	// Every claim-side label comes off blind (a 404 is a no-op) and the
+	// issue moves to stage/040-covered-by-pr: three removals + one add each.
+	if len(removed) != 2*len(inProgressTriggerLabels) {
+		t.Fatalf("removed = %v, want %d removals", removed, 2*len(inProgressTriggerLabels))
 	}
 	for _, p := range removed {
-		if !strings.HasSuffix(p, "/labels/hive%2Fin-progress") && !strings.HasSuffix(p, "/labels/hive/in-progress") {
+		if !strings.Contains(p, "/labels/stage/0") && !strings.HasSuffix(p, "/labels/hive/in-progress") && !strings.HasSuffix(p, "/labels/hive%2Fin-progress") {
 			t.Errorf("unexpected removal path %q", p)
 		}
+	}
+	if len(added) != 2 || added[0][0] != CoveredByPRLabel || added[1][0] != CoveredByPRLabel {
+		t.Fatalf("added = %v, want stage/040 on both issues", added)
 	}
 }
 

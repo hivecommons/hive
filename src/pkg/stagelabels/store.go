@@ -41,6 +41,12 @@ type Record struct {
 	StallCommented bool `json:"stall_commented,omitempty"`
 	// Reason is the lane/CI/verdict reason behind the current stage.
 	Reason string `json:"reason,omitempty"`
+	// NudgeHead, NudgeCount and LastNudgeAt track the stage-072 contributor
+	// nudge: the head the nudges were for, how many were posted for it
+	// (cap 2) and when the last one went out.
+	NudgeHead   string    `json:"nudge_head,omitempty"`
+	NudgeCount  int       `json:"nudge_count,omitempty"`
+	LastNudgeAt time.Time `json:"last_nudge_at,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -252,6 +258,29 @@ func (s *Store) MarkStallCommented(key string) {
 		return
 	}
 	r.StallCommented = true
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkNudged records that nudge number n for head was posted at now. A new
+// head restarts the count.
+func (s *Store) MarkNudged(key, head string, n int, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	if r.NudgeHead != head {
+		r.NudgeCount = 0
+	}
+	r.NudgeHead = head
+	if n > r.NudgeCount {
+		r.NudgeCount = n
+	} else {
+		r.NudgeCount++
+	}
+	r.LastNudgeAt = now
 	s.items[key] = r
 	s.dirty = true
 }

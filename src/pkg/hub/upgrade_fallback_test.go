@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
@@ -82,7 +83,7 @@ func TestHandleUpgradeHiveUnreachableClusterArmsHeartbeatFallback(t *testing.T) 
 	}
 }
 
-func TestHandleUpgradeHiveStableAlreadyAtChannelRefusesNoop(t *testing.T) {
+func TestHandleUpgradeHiveStableAlreadyAtChannelIsNoop(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	stubChannelRevisions(t, map[string]string{"stable": "d5a638e"})
@@ -114,11 +115,27 @@ func TestHandleUpgradeHiveStableAlreadyAtChannelRefusesNoop(t *testing.T) {
 	req := setPathValue(reqWithUser("POST", "/up", "", "alice"), "id", "h-stable")
 	s.handleUpgradeHive(rec, req)
 
-	if rec.Code != 409 {
-		t.Fatalf("stable no-op upgrade status = %d, want 409 (body=%s)", rec.Code, rec.Body.String())
+	// A spoke already at its target is a clean no-op (200), NOT a refusal:
+	// both dashboards render every non-2xx as "Upgrade failed", and the spoke
+	// relay persisted the 409 as a failed self-upgrade (#12494).
+	if rec.Code != 200 {
+		t.Fatalf("already-current upgrade status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "current image revision is already the running commit d5a638e") {
-		t.Errorf("response should explain the channel no-op, got %s", rec.Body.String())
+	var body upgradeNoopResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %s: %v", rec.Body.String(), err)
+	}
+	if body.Status != upgradeStatusCurrent {
+		t.Errorf("status = %q, want %q", body.Status, upgradeStatusCurrent)
+	}
+	if body.Current != "d5a638e" || body.Target != "d5a638e" || body.Channel != "stable" {
+		t.Errorf("body = %+v, want current=target=d5a638e on channel stable", body)
+	}
+	if !strings.Contains(body.Message, "already up to date") || !strings.Contains(body.Message, "running commit d5a638e") {
+		t.Errorf("message should say already up to date and name the commit, got %q", body.Message)
+	}
+	if strings.Contains(rec.Body.String(), `"error"`) {
+		t.Errorf("a no-op must not carry an error key: %s", rec.Body.String())
 	}
 	s.mu.Lock()
 	_, armed := s.heartbeatUpgrade["h-stable"]
@@ -129,6 +146,55 @@ func TestHandleUpgradeHiveStableAlreadyAtChannelRefusesNoop(t *testing.T) {
 	}
 	if latched {
 		t.Error("no-op manual upgrade must not latch Upgrading")
+	}
+}
+
+// Branch-tracking variant (no channel): same no-op contract with the
+// branch-shaped message.
+func TestHandleUpgradeHiveBranchAlreadyAtTipIsNoop(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	seedLatestSHA(t, "v5", "abc9999")
+
+	mkUser(t, "alice")
+	if err := saveSaaSHive(&SaaSHive{ID: "h-branch", Owner: "alice", ClusterID: "vllm-d"}); err != nil {
+		t.Fatalf("save hive: %v", err)
+	}
+	s := &HubServer{
+		hubSecret: testHubSecret,
+		logger:    slog.Default(),
+		clusters:  map[string]ClusterConfig{"vllm-d": {ID: "vllm-d"}},
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:            "h-branch",
+		GitBranch:     "v5",
+		GitHash:       "abc9999",
+		ImageRef:      "ghcr.io/hivecommons/hive:abc9999",
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+	}}
+
+	rec := httptest.NewRecorder()
+	req := setPathValue(reqWithUser("POST", "/up", "", "alice"), "id", "h-branch")
+	s.handleUpgradeHive(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("already-current branch upgrade status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	var body upgradeNoopResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body %s: %v", rec.Body.String(), err)
+	}
+	if body.Status != upgradeStatusCurrent || body.Channel != "" || body.Target != "abc9999" {
+		t.Errorf("body = %+v, want status current, no channel, target abc9999", body)
+	}
+	if !strings.Contains(body.Message, "already up to date") {
+		t.Errorf("message = %q, want 'already up to date'", body.Message)
+	}
+	s.mu.Lock()
+	_, armed := s.heartbeatUpgrade["h-branch"]
+	s.mu.Unlock()
+	if armed {
+		t.Error("no-op manual upgrade must not arm heartbeat delivery")
 	}
 }
 
@@ -165,5 +231,33 @@ func TestHandleUpgradeHiveUnreachableClusterWithoutTargetFails(t *testing.T) {
 	s.mu.Unlock()
 	if armed {
 		t.Error("heartbeat fallback must not be armed when there is no target SHA")
+	}
+}
+
+// The hub dashboard's Upgrade click must branch on status=current before
+// declaring success and must never render the no-op through the error toast.
+func TestHubDashboardUpgradeClickHandlesAlreadyCurrent(t *testing.T) {
+	start := strings.Index(dashboardHTML, "async function upgradeHive(")
+	if start < 0 {
+		t.Fatal("upgradeHive not found in dashboard.html")
+	}
+	fn := dashboardHTML[start:]
+	if end := strings.Index(fn, "function toggleBranchMenu("); end > 0 {
+		fn = fn[:end]
+	}
+	current := strings.Index(fn, "data.status === 'current'")
+	started := strings.Index(fn, "'Upgrade started for '")
+	if current < 0 {
+		t.Fatal("upgradeHive must branch on data.status === 'current'")
+	}
+	if started < 0 || current > started {
+		t.Errorf("the status=current branch must precede the success toast (current=%d started=%d)", current, started)
+	}
+	branch := fn[current:started]
+	if !strings.Contains(branch, "delete _upgradingHives[id]") {
+		t.Error("the already-current branch must drop the optimistic upgrading sentinel so the row stops spinning")
+	}
+	if strings.Contains(branch, "'error')") {
+		t.Error("the already-current branch must not toast as an error")
 	}
 }

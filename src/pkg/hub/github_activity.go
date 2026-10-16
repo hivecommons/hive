@@ -734,7 +734,8 @@ func prTerminalEvent(pr githubPRSnapshot) string {
 
 func isHiveActivityLabel(label string) bool {
 	lower := strings.ToLower(strings.TrimSpace(label))
-	return lower == "claimed" || strings.HasPrefix(lower, "hive/") || strings.HasPrefix(lower, "priority/")
+	return lower == "claimed" || strings.HasPrefix(lower, "hive/") || strings.HasPrefix(lower, "priority/") ||
+		strings.HasPrefix(lower, "stage/") || strings.HasPrefix(lower, "author/")
 }
 
 func addedStrings(previous, current []string) []string {

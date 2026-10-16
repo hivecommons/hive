@@ -14,15 +14,37 @@ import (
 
 func bptr(v bool) *bool { return &v }
 
+// findCriterion returns the MEASURED criterion by name; an unmeasured one is a
+// test failure because every test here is about a value that was reported.
 func findCriterion(t *testing.T, cs []subCriterion, name string) subCriterion {
 	t.Helper()
 	for _, c := range cs {
-		if c.name == name {
+		if c.spec.name == name {
+			if !c.measured {
+				t.Fatalf("criterion %q is unmeasured (%s)", name, c.reason)
+			}
 			return c
 		}
 	}
-	t.Fatalf("criterion %q not found in %v", name, cs)
+	t.Fatalf("criterion %q not found", name)
 	return subCriterion{}
+}
+
+// assertUnmeasured checks a criterion is listed but carries no measurement.
+func assertUnmeasured(t *testing.T, cs []subCriterion, name string) {
+	t.Helper()
+	for _, c := range cs {
+		if c.spec.name == name {
+			if c.measured {
+				t.Errorf("criterion %q must be unmeasured, got value %v", name, c.value)
+			}
+			if c.reason == "" {
+				t.Errorf("unmeasured criterion %q must say why", name)
+			}
+			return
+		}
+	}
+	t.Errorf("criterion %q is not listed at all — an unmeasured criterion must still appear", name)
 }
 
 // --- Trust: merge_acceptance nudge -------------------------------------------
@@ -52,7 +74,7 @@ func TestEfficiencyOutputPerAgent(t *testing.T) {
 	if c.value <= 0 || c.value >= 1 {
 		t.Errorf("output_per_agent value = %v, want 1/3", c.value)
 	}
-	if !c.higherIsBetter {
+	if c.spec.curve.lowerIsBetter() {
 		t.Error("output_per_agent must be higher-is-better")
 	}
 	if !strings.Contains(c.nudge, "3 agents") || !strings.Contains(c.nudge, "pausing idle agents") {
@@ -69,13 +91,9 @@ func TestEfficiencyOutputPerAgent(t *testing.T) {
 		t.Errorf("output_per_agent value = %v, want 2", busy.value)
 	}
 
-	// Zero agents: the criterion declines entirely — a hive that is not
-	// running is not inefficient.
-	for _, c := range efficiencyCriteria(quadrantInputs{agentCount: 0, prsMerged90d: iptr(4)}) {
-		if c.name == "output_per_agent" {
-			t.Error("output_per_agent must not score with zero agents")
-		}
-	}
+	// Zero agents: the criterion is unmeasured — a hive that is not running
+	// is not inefficient.
+	assertUnmeasured(t, efficiencyCriteria(quadrantInputs{agentCount: 0, prsMerged90d: iptr(4)}), "output_per_agent")
 }
 
 // --- Productivity: budget-exhausted zero vs idle zero -------------------------
@@ -86,7 +104,7 @@ func TestProductivityZeroMergedNudgeDistinguishesThrottledFromIdle(t *testing.T)
 	throttled := findCriterion(t, productivityCriteria(quadrantInputs{
 		prsMerged90d:    iptr(0),
 		budgetExhausted: bptr(true),
-	}), "prs_merged")
+	}), critThroughput)
 	if !strings.Contains(throttled.nudge, "Budget exhausted") {
 		t.Errorf("throttled-hive nudge = %q, want the budget named as the cause", throttled.nudge)
 	}
@@ -95,23 +113,23 @@ func TestProductivityZeroMergedNudgeDistinguishesThrottledFromIdle(t *testing.T)
 	idle := findCriterion(t, productivityCriteria(quadrantInputs{
 		prsMerged90d:    iptr(0),
 		budgetExhausted: bptr(false),
-	}), "prs_merged")
-	if !strings.Contains(idle.nudge, "No agent-merged PRs") {
+	}), critThroughput)
+	if !strings.Contains(idle.nudge, "No agent merges") {
 		t.Errorf("idle-hive (budget ok) nudge = %q, want the no-PRs wording", idle.nudge)
 	}
 
 	// Nil budget signal falls back to the idle wording too.
 	unknown := findCriterion(t, productivityCriteria(quadrantInputs{
 		prsMerged90d: iptr(0),
-	}), "prs_merged")
-	if !strings.Contains(unknown.nudge, "No agent-merged PRs") {
+	}), critThroughput)
+	if !strings.Contains(unknown.nudge, "No agent merges") {
 		t.Errorf("idle-hive (budget unknown) nudge = %q, want the no-PRs wording", unknown.nudge)
 	}
 
 	// Nonzero throughput never nudges.
 	shipping := findCriterion(t, productivityCriteria(quadrantInputs{
 		prsMerged90d: iptr(5),
-	}), "prs_merged")
+	}), critThroughput)
 	if shipping.nudge != "" {
 		t.Errorf("a shipping hive should not be nudged, got %q", shipping.nudge)
 	}
@@ -175,7 +193,7 @@ func TestProductivityHumanBlockedCombinesHoldAndReviewQueues(t *testing.T) {
 	if both.value != 5 {
 		t.Errorf("human_blocked value = %v, want 5 (2 held + 3 awaiting)", both.value)
 	}
-	if both.higherIsBetter {
+	if !both.spec.curve.lowerIsBetter() {
 		t.Error("human_blocked must be lower-is-better")
 	}
 	if !strings.Contains(both.nudge, "5 items waiting on a human decision") {
@@ -205,13 +223,9 @@ func TestProductivityHumanBlockedCombinesHoldAndReviewQueues(t *testing.T) {
 		t.Errorf("empty queues = (%v, %q), want (0, no nudge)", emptyQueues.value, emptyQueues.nudge)
 	}
 
-	// Neither signal present: the criterion declines rather than reporting a
-	// fake zero.
-	for _, c := range productivityCriteria(quadrantInputs{}) {
-		if c.name == "human_blocked" {
-			t.Error("human_blocked must not score when neither queue is reported")
-		}
-	}
+	// Neither signal present: the criterion is unmeasured rather than a fake
+	// zero.
+	assertUnmeasured(t, productivityCriteria(quadrantInputs{}), "human_blocked")
 }
 
 // --- Productivity: SLA violations ----------------------------------------------
@@ -220,8 +234,8 @@ func TestProductivitySLAViolations(t *testing.T) {
 	hot := findCriterion(t, productivityCriteria(quadrantInputs{
 		slaViolations: iptr(3),
 	}), "sla_violations")
-	if hot.value != 3 || hot.higherIsBetter {
-		t.Errorf("sla_violations = (%v, higherIsBetter=%v), want (3, false)", hot.value, hot.higherIsBetter)
+	if hot.value != 3 || !hot.spec.curve.lowerIsBetter() {
+		t.Errorf("sla_violations = (%v, lowerIsBetter=%v), want (3, true)", hot.value, hot.spec.curve.lowerIsBetter())
 	}
 	if !strings.Contains(hot.nudge, "3 items past their SLA") {
 		t.Errorf("sla nudge = %q, want the violation count", hot.nudge)
@@ -244,7 +258,7 @@ func TestUnscoredReasonCoversEveryAxis(t *testing.T) {
 	reasons := map[string]string{}
 	for _, axis := range QuadrantAxisOrder {
 		r := unscoredReason(axis)
-		if r == "" || r == "Not enough data" {
+		if r == "" || r == "Not measured yet" {
 			t.Errorf("axis %q has no specific unscored reason (got %q)", axis, r)
 		}
 		reasons[r] = axis
@@ -252,7 +266,7 @@ func TestUnscoredReasonCoversEveryAxis(t *testing.T) {
 	if len(reasons) != len(QuadrantAxisOrder) {
 		t.Errorf("unscored reasons are not distinct per axis: %v", reasons)
 	}
-	if unscoredReason("no-such-axis") != "Not enough data" {
+	if unscoredReason("no-such-axis") != "Not measured yet" {
 		t.Errorf("unknown axis reason = %q, want the generic fallback", unscoredReason("no-such-axis"))
 	}
 }
