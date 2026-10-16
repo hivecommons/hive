@@ -6884,6 +6884,9 @@ func (c *Config) applyDefaults() {
 		if c.Knowledge.BeadSynthesizer.MaxFactsPerCycle == 0 {
 			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = 20
 		}
+		if c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle == 0 {
+			c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle = DefaultBeadSynthMaxAPICallsPerCycle
+		}
 		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
 			c.Knowledge.BeadSynthesizer.VaultPath = "/data/vaults/bead-synth-wiki"
 		}

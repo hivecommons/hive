@@ -1,0 +1,1 @@
+- The bead synthesizer now sends conditional (`If-None-Match`) PR GETs and reuses cached PRs on 304, and `knowledge.bead_synthesizer.max_api_calls_per_cycle` (default 40; `HIVE_BEAD_SYNTH_MAX_API_CALLS` still overrides) caps charged calls per cycle (#12252, part of #12005).

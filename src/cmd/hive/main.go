@@ -3186,6 +3186,8 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			Org:              b.cfg.Project.Org,
 			Repos:            b.cfg.Project.Repos,
 			RetentionPolicy:  kRetention,
+
+			MaxAPICallsPerCycle: b.cfg.Knowledge.BeadSynthesizer.EffectiveMaxAPICallsPerCycle(),
 		}, b.logger, rawGH)
 
 		if cleaned, err := b.beadSynth.CleanupVault(); err != nil {

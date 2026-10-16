@@ -326,6 +326,7 @@ knowledge.agent_scopes.<key>.repos[] # TODO #11854
 knowledge.agent_scopes.<key>.tags[] # TODO #11854
 knowledge.agent_scopes.<key>.types[] # TODO #11854
 knowledge.bead_synthesizer.enabled # TODO #11854
+knowledge.bead_synthesizer.max_api_calls_per_cycle # TODO #12005
 knowledge.bead_synthesizer.max_facts_per_cycle # TODO #11854
 knowledge.bead_synthesizer.min_confidence # TODO #11854
 knowledge.bead_synthesizer.retention_policy.archive_after_synth_days # TODO #11854
