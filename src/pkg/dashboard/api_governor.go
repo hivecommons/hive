@@ -1302,7 +1302,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		Enabled                        *bool                                  `json:"enabled"`
 		URL                            string                                 `json:"url"`
 		DashboardURL                   string                                 `json:"dashboard_url"`
-		SnapshotURL                    string                                 `json:"snapshot_url"`
+		SnapshotURL                    *string                                `json:"snapshot_url"`
 		IsPublic                       *bool                                  `json:"is_public"`
 		AutoSnapshot                   *bool                                  `json:"auto_snapshot"`
 		SnapshotFrameAncestors         []string                               `json:"snapshot_frame_ancestors"`
@@ -1365,7 +1365,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.DashboardURL != "" {
 		cfg.Hub.DashboardURL = body.DashboardURL
 	}
-	cfg.Hub.SnapshotURL = body.SnapshotURL
+	if body.SnapshotURL != nil {
+		cfg.Hub.SnapshotURL = *body.SnapshotURL
+	}
 	if body.IsPublic != nil {
 		cfg.Hub.IsPublic = *body.IsPublic
 	}
