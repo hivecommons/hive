@@ -345,12 +345,12 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 		},
 		{
 			// A hold-class reason applies whoever the author is.
-			name: "trusted author sentinel-blocked stays needs-human",
+			name: "trusted author sentinel-blocked is needs-decision",
 			list: []stageObservation{
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
 				{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked, Detail: trusted},
 			},
-			stage: stagelabels.ReadyForHumanMerge, rank: stageRankOwned, author: stagelabels.AuthorTrusted, lane: stageLaneContributor,
+			stage: stagelabels.NeedsDecision, rank: stageRankOwned, author: stagelabels.AuthorTrusted, lane: stageLaneContributor,
 		},
 	}
 	for _, tc := range cases {

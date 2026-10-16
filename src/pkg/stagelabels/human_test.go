@@ -215,6 +215,9 @@ func TestEntryCommentedResetsOnStageChange(t *testing.T) {
 		t.Fatalf("stage flip kept the flag: %+v", rec)
 	}
 	st.MarkEntryCommented(key)
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
 	st2 := NewStore(st.path, func() time.Time { return now })
 	if err := st2.Load(); err != nil {
 		t.Fatal(err)
