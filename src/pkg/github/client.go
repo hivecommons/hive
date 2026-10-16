@@ -2426,6 +2426,7 @@ func (c *Client) ensureLabel(ctx context.Context, owner, repo, name string) erro
 }
 
 // EnsureIssueLabel creates an issue label if it does not already exist.
+// origin/* labels are additionally recoloured to the shared family colour.
 func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, description string) error {
 	if c == nil {
 		return ErrNoGitHubClient
@@ -2435,6 +2436,9 @@ func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, descri
 		return nil
 	}
 	owner, repoName := c.splitRepo(repo)
+	if IsOriginLabel(name) {
+		return c.ensureOriginLabel(ctx, owner, repoName, name)
+	}
 	if _, _, err := c.client.Issues.GetLabel(ctx, owner, repoName, name); err == nil {
 		return nil
 	} else if ghErr, ok := err.(*gh.ErrorResponse); !ok || ghErr.Response == nil || ghErr.Response.StatusCode != http.StatusNotFound {

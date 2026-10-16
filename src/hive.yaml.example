@@ -748,7 +748,7 @@ governor:
 #     project_column_id: ""     # required for github_project: Projects v2 status option id
 #     linear_state: ""          # linear: workflow state; blank = team default
 #     jira_status: ""           # jira: status; blank = project initial status
-#     labels: [from-review]
+#     labels: [origin/review]   # provenance label; legacy from-review is mapped to it
 #     max_per_pr_per_day: 10    # 0/unset = 10
 
 # Compliance control mapping (#11078) — optional. Selects the framework
