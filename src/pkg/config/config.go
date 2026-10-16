@@ -6441,6 +6441,15 @@ func (c *Config) GitHubDefinitionAllowed(slug string) bool {
 	return c.GitHubPromptAllowed(slug)
 }
 
+// DefaultGitHubAPIReserve and DefaultGitHubAPICritical are the values a zero
+// github.api_reserve / github.api_critical means, both at Load (applyDefaults)
+// and in Validate; runtime editors substitute the same values so a cleared
+// field restores the default instead of failing the boot-time bound.
+const (
+	DefaultGitHubAPIReserve  = 800
+	DefaultGitHubAPICritical = 250
+)
+
 const (
 	MaxAgentReplicas = 5
 
@@ -6451,8 +6460,8 @@ const (
 	defaultEvalIntervalWebhookS   = 900
 	defaultConserveIntervalMult   = 2
 	defaultOptionalSweepEveryN    = 1
-	defaultGitHubAPIReserve       = 800
-	defaultGitHubAPICritical      = 250
+	defaultGitHubAPIReserve       = DefaultGitHubAPIReserve
+	defaultGitHubAPICritical      = DefaultGitHubAPICritical
 	defaultPollIntervalMins       = 5
 	defaultKnowledgeMaxFacts      = 25
 	defaultKnowledgeMaxBytes      = 4096

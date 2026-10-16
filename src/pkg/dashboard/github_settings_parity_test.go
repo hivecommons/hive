@@ -26,8 +26,9 @@ func TestConfigGitHubParityBatch6RoundTrip(t *testing.T) {
 		{"pr_detail_ttl_s": -1},
 		{"graphql_pr_batch_page_size": -1},
 		{"graphql_pr_batch_page_size": 101},
-		{"api_reserve": 0},
+		{"api_reserve": -1},
 		{"api_critical": 900},
+		{"api_reserve": 200},
 		{"api_reserve": 100, "api_critical": 100},
 		{"app_signed_commits": true, "api_critical": 801},
 	} {
@@ -55,6 +56,24 @@ func TestConfigGitHubParityBatch6RoundTrip(t *testing.T) {
 	if g.AgentReserveFloor != 500 || g.APIReserve != 1000 || g.APICritical != 300 || g.PRDetailTTLS != 600 ||
 		g.GraphQLPRBatchEnabled() || g.GraphQLPRBatchPageSize != 25 || g.AppAuthoredPRsEnabled() || !g.AppSignedCommitsEnabled() {
 		t.Fatalf("github settings not applied: %+v", g)
+	}
+
+	// Clearing a quota field restores the default, as config.Validate and
+	// applyDefaults treat 0 at boot; the bound is checked against the default.
+	if rec := doPut(s, "/api/config/github", map[string]any{"api_critical": 850}); rec.Code != http.StatusOK {
+		t.Fatalf("api_critical 850 under reserve 1000: %d — %s", rec.Code, rec.Body.String())
+	}
+	if rec := doPut(s, "/api/config/github", map[string]any{"api_reserve": 0}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("api_reserve 0 (default 800) under critical 850: expected 400, got %d", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/github", map[string]any{"api_reserve": 0, "api_critical": 0}); rec.Code != http.StatusOK {
+		t.Fatalf("clearing api_reserve/api_critical: %d — %s", rec.Code, rec.Body.String())
+	}
+	if g := s.deps.Config.GitHub; g.APIReserve != 800 || g.APICritical != 250 {
+		t.Fatalf("cleared quota fields did not restore defaults: reserve=%d critical=%d", g.APIReserve, g.APICritical)
+	}
+	if rec := doPut(s, "/api/config/github", map[string]any{"api_reserve": 1000, "api_critical": 300}); rec.Code != http.StatusOK {
+		t.Fatalf("restore quota: %d — %s", rec.Code, rec.Body.String())
 	}
 
 	// A partial PUT changes only what it carries.

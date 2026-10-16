@@ -35532,16 +35532,16 @@ function burnAreaChart() {
         : 'set in hive.yaml; requires restart';
       const roRow = (label, path, valueHtml) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm break-all">${valueHtml} <span class="text-muted">— ${esc(managedNote)}</span></div></div>`;
       const shown = v => v ? '<code>' + esc(String(v)) + '</code>' : '<span class="text-muted">unset</span>';
-      const num = (key, label, path, placeholder, help, restart) => `
+      const num = (key, label, path, placeholder, help, restart, mark) => `
           <div class="config-field">
-            <label for="forge-gh-${key}">${esc(label)} ${yamlHint(path)}</label>
+            <label for="forge-gh-${key}">${esc(label)} ${yamlHint(path)} ${mark}</label>
             <input id="forge-gh-${key}" type="number" min="0" step="1" value="${st[key] ? esc(String(st[key])) : ''}" placeholder="${esc(String(placeholder))}" ${owner ? '' : 'disabled'}>
             <div class="config-help">${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</div>
           </div>`;
-      const toggle = (key, label, path, help, restart) => `
+      const toggle = (key, label, path, help, restart, mark) => `
           <div class="config-toggle mt-3">
             <div id="forge-gh-${key}" class="config-toggle-switch ${st[key] ? 'on' : ''} ${owner ? '' : 'disabled'}" data-action="${owner ? 'forgeGitHubToggle' : ''}" data-arg-types="t" role="switch" aria-checked="${st[key] ? 'true' : 'false'}"></div>
-            <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} <span class="text-muted">— ${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</span></span>
+            <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} ${mark} <span class="text-muted">— ${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</span></span>
           </div>`;
       return `
         <div class="card-inset mt-5">
@@ -35556,17 +35556,17 @@ function burnAreaChart() {
         <div class="card-inset mt-5">
           <div class="settings-subsection-title">API quota, PR scans and authorship</div>
           <div class="config-field-row">
-            ${num('api_reserve', 'API reserve', 'github.api_reserve', 800, 'Remaining core REST quota below which Hive skips optional sweeps (conserve mode).', true)}
-            ${num('api_critical', 'API critical floor', 'github.api_critical', 250, 'Lower floor where Hive enters critical mode and stretches the eval interval further. Must be below the reserve.', true)}
-            ${num('agent_reserve_floor', 'Agent reserve floor', 'github.agent_reserve_floor', d.agent_reserve_floor || 400, 'Agent reads through the API proxy get a 429 once the shared core bucket drops below this, so daemon merge and scan work is never starved.', true)}
+            ${num('api_reserve', 'API reserve', 'github.api_reserve', 800, 'Remaining core REST quota below which Hive skips optional sweeps (conserve mode). 0 uses the default (800).', true, settingHelpMark('operator-reference', 'github-api-budget-governor', 'API reserve', 'Below this many remaining core REST calls the governor enters conserve mode: optional sweeps are skipped and the eval interval is multiplied. 0 restores the default (800).'))}
+            ${num('api_critical', 'API critical floor', 'github.api_critical', 250, 'Lower floor where Hive enters critical mode and stretches the eval interval further. Must be below the reserve. 0 uses the default (250).', true, settingHelpMark('operator-reference', 'github-api-budget-governor', 'API critical floor', 'Below this many remaining calls the governor also sheds unstick steps and stretches the eval interval 4x. Must stay below the reserve; 0 restores the default (250).'))}
+            ${num('agent_reserve_floor', 'Agent reserve floor', 'github.agent_reserve_floor', d.agent_reserve_floor || 400, 'Agent reads through the API proxy get a 429 once the shared core bucket drops below this, so daemon merge and scan work is never starved.', true, settingHelpMark('operator-reference', 'github-api-quota', 'Agent reserve floor', 'Protects the shared core bucket from agent traffic: once the latest rate-limit reading drops below the floor, agent reads through the API proxy are refused with a 429 until the bucket recovers. 0 uses the default.'))}
           </div>
           <div class="config-field-row">
-            ${num('pr_detail_ttl_s', 'PR detail cache TTL (seconds)', 'github.pr_detail_ttl_s', d.pr_detail_ttl_s || 1800, 'Reuses a PR detail response while the PR list still reports the same head SHA and updated_at. 0 uses the default.', false)}
-            ${num('graphql_pr_batch_page_size', 'GraphQL PR batch page size', 'github.graphql_pr_batch_page_size', d.graphql_pr_batch_page_size || 50, 'Page size for the batched pullRequests query, 1–100. 0 uses the default.', false)}
+            ${num('pr_detail_ttl_s', 'PR detail cache TTL (seconds)', 'github.pr_detail_ttl_s', d.pr_detail_ttl_s || 1800, 'Reuses a PR detail response while the PR list still reports the same head SHA and updated_at. 0 uses the default.', false, settingHelpMark('operator-reference', 'notable-fields', 'PR detail cache TTL', 'How long a GET /pulls/{number} detail response is reused while the cheap PR list still reports the same head SHA and updated_at and GitHub has resolved mergeable_state. 0 uses the default.'))}
+            ${num('graphql_pr_batch_page_size', 'GraphQL PR batch page size', 'github.graphql_pr_batch_page_size', d.graphql_pr_batch_page_size || 50, 'Page size for the batched pullRequests query, 1–100. 0 uses the default.', false, settingHelpMark('operator-reference', 'notable-fields', 'GraphQL PR batch page size', 'Page size for the GraphQL pullRequests(first:) batch query. Values above GitHub&#39;s maximum of 100 are rejected; 0 uses the default.'))}
           </div>
-          ${toggle('graphql_pr_batch', 'Batch open-PR scans with GraphQL', 'github.graphql_pr_batch', 'one paginated query per repo instead of per-PR detail and check-run reads.', false)}
-          ${toggle('app_authored_prs', 'Author agent PRs as the App bot', 'github.app_authored_prs', 'agents open PRs and commit as &lt;slug&gt;[bot] with the App installation token when project.ai_author is empty.', true)}
-          ${toggle('app_signed_commits', 'Re-author agent PRs as GitHub-signed commits', 'github.app_signed_commits', 'needed when a base branch requires signed commits; rewrites the agent branch before the PR opens.', false)}
+          ${toggle('graphql_pr_batch', 'Batch open-PR scans with GraphQL', 'github.graphql_pr_batch', 'one paginated query per repo instead of per-PR detail and check-run reads.', false, settingHelpMark('operator-reference', 'notable-fields', 'Batch open-PR scans with GraphQL', 'On by default. One paginated GraphQL query per repository scan fills the PR detail and CI rollup caches, replacing most per-PR detail and check-run reads. Off returns to the REST-only scan path.'))}
+          ${toggle('app_authored_prs', 'Author agent PRs as the App bot', 'github.app_authored_prs', 'agents open PRs and commit as &lt;slug&gt;[bot] with the App installation token when project.ai_author is empty.', true, settingHelpMark('github-app-setup', '', 'Author agent PRs as the App bot', 'With a GitHub App installed, agents open PRs and commit as &lt;slug&gt;[bot] using the installation token whenever project.ai_author is empty, so PR authorship is the App rather than a personal account.'))}
+          ${toggle('app_signed_commits', 'Re-author agent PRs as GitHub-signed commits', 'github.app_signed_commits', 'needed when a base branch requires signed commits; rewrites the agent branch before the PR opens.', false, settingHelpMark('github-app-setup', 'signed-commits-on-agent-prs-app_signed_commits', 'Re-author agent PRs as GitHub-signed commits', 'Opt-in; needs an installed App. Before a PR opens, the watcher squashes the agent branch into one commit created through the GraphQL createCommitOnBranch mutation, which GitHub signs and shows as Verified, so a required_signatures ruleset accepts it. Unsigned follow-up commits are reconciled the same way.'))}
           ${owner ? '<button class="hv-btn btn-primary mt-4" id="forge-gh-save-btn" data-action="saveForgeGitHubSettings">Save</button>' : '<div class="config-help mt-3">Owner role required to change these settings.</div>'}
         </div>`;
     }
@@ -42148,7 +42148,7 @@ function burnAreaChart() {
           </div>
           <div class="config-field"><label>Contributor docs URL ${yamlHint('good_first_issue.docs_url')} ${settingHelpMark('settings', 'features', 'Good first issue docs URL', `Base URL the welcome comment links contributor docs under. Absolute http(s) URL; empty uses the default (${esc(gfiDefaults.goodFirstIssueDocsUrl || '')}).`)}</label><input type="url" value="${esc(f.goodFirstIssueDocsUrl || '')}" placeholder="${esc(gfiDefaults.goodFirstIssueDocsUrl || '')}" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueDocsUrl" data-arg-types="s,s,w"></div>
           <div class="config-field"><label>Welcome comment template ${yamlHint('good_first_issue.comment_template')} ${settingHelpMark('settings', 'features', 'Good first issue comment template', `Overrides the welcome comment. Go text/template over the issue, repo, claim URL and docs variables; it must contain {{ .Marker }} so hive can find and supersede its own comment later. A template that does not parse is rejected on save. Empty uses the built-in comment.`)}</label><textarea rows="5" placeholder="Empty uses the built-in welcome comment" data-change-action="markDirty" data-arg0="features" data-arg1="goodFirstIssueCommentTemplate" data-arg-types="s,s,v">${esc(f.goodFirstIssueCommentTemplate || '')}</textarea></div>
-          <div class="config-help">${gfiStats ? `Since start: ${esc(String(gfiStats.selected || 0))} selected · ${esc(String(gfiStats.released || 0))} released to hive · ${esc(String(gfiStats.converted || 0))} claimed by contributors. ` : ''}Scoring knobs, exclude labels, repos and the comment template stay yaml-only.</div>
+          <div class="config-help">${gfiStats ? `Since start: ${esc(String(gfiStats.selected || 0))} selected · ${esc(String(gfiStats.released || 0))} released to hive · ${esc(String(gfiStats.converted || 0))} claimed by contributors. ` : ''}0 or empty = default. Exclude labels and the repo list stay yaml-only.</div>
         </div>
         ${renderGovReplanSection((_configState.data || {}).replan || {})}
         ${renderGovQuestionAutocloseSection((_configState.data || {}).question_autoclose || {})}

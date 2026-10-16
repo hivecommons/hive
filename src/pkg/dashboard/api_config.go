@@ -155,10 +155,12 @@ func (b githubAPISettings) validate(cur config.GitHubConfig) error {
 		{b.APIReserve, "api_reserve"},
 		{b.APICritical, "api_critical"},
 	} {
-		if f.v != nil && *f.v < 1 {
-			return fmt.Errorf("%s must be at least 1", f.name)
+		if f.v != nil && *f.v < 0 {
+			return fmt.Errorf("%s must be 0 (default) or greater", f.name)
 		}
 	}
+	// Same bound config.Validate applies at boot: a zero on either side means
+	// the default, so the comparison never silently passes on an unset field.
 	reserve, critical := cur.APIReserve, cur.APICritical
 	if b.APIReserve != nil {
 		reserve = *b.APIReserve
@@ -166,7 +168,13 @@ func (b githubAPISettings) validate(cur config.GitHubConfig) error {
 	if b.APICritical != nil {
 		critical = *b.APICritical
 	}
-	if (b.APIReserve != nil || b.APICritical != nil) && reserve > 0 && critical >= reserve {
+	if reserve == 0 {
+		reserve = config.DefaultGitHubAPIReserve
+	}
+	if critical == 0 {
+		critical = config.DefaultGitHubAPICritical
+	}
+	if (b.APIReserve != nil || b.APICritical != nil) && critical >= reserve {
 		return fmt.Errorf("api_critical must be less than api_reserve")
 	}
 	return nil
@@ -176,11 +184,18 @@ func (b githubAPISettings) apply(g *config.GitHubConfig) {
 	if b.AgentReserveFloor != nil {
 		g.AgentReserveFloor = *b.AgentReserveFloor
 	}
+	// A cleared field restores the default, as applyDefaults does at Load.
 	if b.APIReserve != nil {
 		g.APIReserve = *b.APIReserve
+		if g.APIReserve == 0 {
+			g.APIReserve = config.DefaultGitHubAPIReserve
+		}
 	}
 	if b.APICritical != nil {
 		g.APICritical = *b.APICritical
+		if g.APICritical == 0 {
+			g.APICritical = config.DefaultGitHubAPICritical
+		}
 	}
 	if b.PRDetailTTLS != nil {
 		g.PRDetailTTLS = *b.PRDetailTTLS
