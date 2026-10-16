@@ -350,6 +350,9 @@ func backfillBundle(repo string, pr backfillPR, now time.Time, opts *evidenceBac
 			sha = pr.Head.SHA
 		}
 		b.Merge = &evidence.MergeEvent{Actor: actor, Method: evidenceBackfillUnrecorded, At: pr.MergedAt.UTC(), SHA: sha}
+		if !pr.CreatedAt.IsZero() && !pr.CreatedAt.After(*pr.MergedAt) {
+			b.Merge.OpenedAt = pr.CreatedAt.UTC()
+		}
 		b.Backfill.State = evidence.BackfillStateMerged
 	case pr.ClosedAt != nil:
 		b.Backfill.State = evidence.BackfillStateClosed

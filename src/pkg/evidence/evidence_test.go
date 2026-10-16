@@ -96,6 +96,9 @@ func TestValidate(t *testing.T) {
 		{"sentinel", func(b *Bundle) { b.Sentinel[0].Rule = "" }, "sentinel[0]"},
 		{"action", func(b *Bundle) { b.HumanActions[0].Actor = "" }, "human_actions[0]"},
 		{"merge", func(b *Bundle) { b.Merge.SHA = "" }, "merge:"},
+		{"valid merge opened_at", func(b *Bundle) { b.Merge.OpenedAt = t0.Add(-time.Hour) }, ""},
+		{"merge opened_at equals at", func(b *Bundle) { b.Merge.OpenedAt = t0 }, ""},
+		{"merge opened_at after at", func(b *Bundle) { b.Merge.OpenedAt = t0.Add(time.Second) }, "merge.opened_at"},
 		{"valid author model and links", func(b *Bundle) {
 			b.Author.Agent, b.Author.Backend, b.Author.Model = "coder", "copilot", "gpt-5.6-luna"
 			b.RevertOf = []string{BundleID("hivecommons/hive", 40, "a")}
