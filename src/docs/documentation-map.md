@@ -14,7 +14,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
 - [Running a hive at ACMM Level 6](running-at-level-6.md) — preparation, GitHub/coverage/knowledge/Hive/ClankeR settings, weekly routine, and incident recovery.
-- [Maintainer commands](maintainer-commands.md) — slash-command reference for `/hive approve`, `/hive decision`, `/hive help`, `/fixed`, `/reopen`, and label/assignment helpers.
+- [Maintainer commands](maintainer-commands.md) — slash-command reference for `/hive approve`, `/hive decision`, `/hive done`, `/hive help`, `/fixed`, `/reopen`, and label/assignment helpers.
 - [Token mint](token-mint.md) — the opt-in `mint:` block (`pkg/mint`): what a minted token grants, key lifecycle, and the trust boundary an operator must get right before enabling it. Companion to [ADR-0007](adr/0007-token-mint.md).
 - [Changelog](../../CHANGELOG.md) — recent user-visible changes and release notes.
 - [Work-source terminology](work-source-terminology.md) — glossary and audit notes for keeping user-facing copy neutral across GitHub, GitLab, Gitea, Linear, Jira, and future work sources.

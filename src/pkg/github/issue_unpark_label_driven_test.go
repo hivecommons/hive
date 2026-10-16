@@ -110,7 +110,7 @@ func TestSweepIssueUnparkCommandsNotLabelDrivenUnchanged(t *testing.T) {
 
 // An already-answered command on a label-driven repo is not answered again.
 func TestSweepIssueUnparkCommandsLabelDrivenAnswersOnce(t *testing.T) {
-	answered := humanComment(92, "hive[bot]", unparkReplyMarkerPrefix+"91 -->\n"+unparkLabelDrivenReply)
+	answered := humanComment(92, "hive[bot]", unparkReplyMarkerPrefix+"91 -->\n"+renderUnparkLabelDrivenReply(nil))
 	issues := []unparkWireIssue{parkedIssue(22, humanComment(91, "maintainer", "/hive approve"), answered)}
 	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
 	c := newTestClient(t, server, "org", []string{"repo"})

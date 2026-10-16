@@ -221,7 +221,7 @@ behaves exactly as before. With it set:
   parked; Hive posts one "accepted, but still held by …" note per acceptance.
 - `pr_self_authorization` counts that label as human sign-off, the same way it
   counts `approved-direction`.
-- `/hive approve` and `/hive decision` on such a repo may also be issued by
+- `/hive approve`, `/hive decision` and `/hive done` on such a repo may also be issued by
   collaborators with the GitHub **triage** role (read via `role_name`, so
   custom roles based on triage count too); elsewhere write+ is still required.
 

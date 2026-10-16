@@ -47,11 +47,14 @@
 # (hivecommons/hive#11215): the watcher applies the hive's configured
 # needs-decision label (hard_suppress_labels.needs_decision) itself, so the
 # issue gets the "What to reply" notice and stays out of the actionable queue
-# until the maintainer answers with /hive approve or /hive decision. Use it
-# whenever the body asks the maintainer to choose or approve before work can
-# start; do not name the label yourself. On `comment` it parks the EXISTING
-# issue the same way (hivecommons/hive#12329): use it when your diagnosis ends
-# in a step only the owner can take, and say the exact step in the body.
+# until the maintainer answers with /hive approve, /hive decision or /hive
+# done. Use it whenever the body asks the maintainer to choose or approve
+# before work can start; do not name the label yourself. On `comment` it parks
+# the EXISTING issue the same way (hivecommons/hive#12329): use it when your
+# diagnosis ends in a step only the owner can take, and say the exact step in
+# the body. Either shape tags the text so the notice offers /hive done; the
+# owner's /hive done reply records the done decision, and the lane that next
+# picks the issue up re-checks the step and closes it once verified.
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is

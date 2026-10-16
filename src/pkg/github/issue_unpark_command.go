@@ -311,12 +311,13 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	}
 
 	if labelDriven {
-		body := unparkLabelDrivenReply
+		parking := c.parkingLabelsPresent(issueLabelNames(issue.Labels))
+		body := renderUnparkLabelDrivenReply(parking)
 		switch command.Kind {
 		case unparkCommandNone:
 			return false, nil
 		case unparkCommandHelp:
-			body = unparkLabelDrivenReply + "\n\n" + maintainerCommandReference()
+			body = renderUnparkLabelDrivenReply(parking) + "\n\n" + maintainerCommandReference()
 		case unparkCommandApprove, unparkCommandDecision, unparkCommandDone:
 			if la.enabled {
 				return c.unparkLabelDrivenCommand(ctx, displayRepo, owner, repo, issue, candidate, command, result, audit)
@@ -345,11 +346,12 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return true, nil
 	}
 
-	if err := c.clearIssueParkingLabels(ctx, owner, repo, number, issueLabelNames(issue.Labels)); err != nil {
+	removed, err := c.clearIssueParkingLabels(ctx, owner, repo, number, issueLabelNames(issue.Labels))
+	if err != nil {
 		return false, err
 	}
 	decision := unparkCommandDecisionText(command)
-	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkAcceptedReply(actor, decision)); err != nil {
+	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkAcceptedReply(actor, decision, removed)); err != nil {
 		return false, err
 	}
 	event := IssueUnparkEvent{
@@ -495,7 +497,7 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 
 func renderUnparkLabelDrivenAcceptedReply(actor, decision string, removed, kept []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Approved by @%s. Decision: %s\n\n`%s` is applied", actor, decision, HumanAckLabel)
+	fmt.Fprintf(&b, "%s\nApproved by @%s. Decision: %s\n\n`%s` is applied", unparkAcceptedMarker, actor, decision, HumanAckLabel)
 	if len(removed) > 0 {
 		fmt.Fprintf(&b, " and Hive's own %s removed", quoteLabels(removed))
 	}
@@ -545,24 +547,27 @@ func hasIssueParkingLabel(labels []string) bool {
 // carries, under the built-in or the configured hard_suppress_labels names,
 // and adds the approval label, so the resulting PR is not held for #5117 and
 // the issue ranks as an agreed direction. A label that has already gone is
-// not an error.
-func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
+// not an error. It returns the labels it removed, spelled as the issue
+// carried them, so the reply can name exactly what changed.
+func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string, number int, labels []string) ([]string, error) {
+	var removed []string
 	for _, label := range c.parkingLabelsPresent(labels) {
 		if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(label)); err != nil {
 			if githubStatusError(err, http.StatusNotFound) {
 				continue
 			}
-			return fmt.Errorf("removing %s from %s/%s#%d: %w", label, owner, repo, number, err)
+			return removed, fmt.Errorf("removing %s from %s/%s#%d: %w", label, owner, repo, number, err)
 		}
+		removed = append(removed, label)
 	}
 	if !labelPresent(labels, HumanAckLabel) {
 		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{HumanAckLabel}); err != nil {
-			return fmt.Errorf("adding %s to %s/%s#%d: %w", HumanAckLabel, owner, repo, number, err)
+			return removed, fmt.Errorf("adding %s to %s/%s#%d: %w", HumanAckLabel, owner, repo, number, err)
 		}
 	}
 	c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
 		WriteTarget{Repo: owner + "/" + repo, Number: number}, "label", HumanAckLabel)
-	return nil
+	return removed, nil
 }
 
 func labelPresent(labels []string, want string) bool {
@@ -768,13 +773,29 @@ func isUnparkProseAssent(body string) bool {
 
 const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision A`). A plain reply acknowledges the issue but leaves it parked."
 
-// unparkLabelDrivenReply answers `/hive approve`, `/hive decision` and
-// `/hive help` on a repo with project.repo_policies[].label_driven set.
-const unparkLabelDrivenReply = "This repository is label-driven: Hive leaves `needs-human`, `needs-decision` and `needs-direction` to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision` / `/hive done`. No labels were changed."
+// renderUnparkLabelDrivenReply answers `/hive approve`, `/hive decision`,
+// `/hive done` and `/hive help` on a repo with
+// project.repo_policies[].label_driven set. It names the parking labels the
+// issue carries, built-in or renamed, so the operator reads the labels their
+// own repository uses.
+func renderUnparkLabelDrivenReply(parking []string) string {
+	if len(parking) == 0 {
+		parking = []string{issueNeedsHumanLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
+	}
+	return fmt.Sprintf("This repository is label-driven: Hive leaves %s to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision` / `/hive done`. No labels were changed.", quoteLabels(parking))
+}
 
-func renderUnparkAcceptedReply(actor, decision string) string {
-	return fmt.Sprintf("Un-parked by @%s. Decision: %s\n\n`needs-human`, `needs-decision` and `needs-direction` are cleared when present and `%s` is applied; any `hold` label is left exactly as it was.",
-		actor, decision, HumanAckLabel)
+// renderUnparkAcceptedReply records an accepted command. It names the labels
+// actually removed (built-in or the operator's renamed ones) rather than the
+// built-in names, and carries unparkAcceptedMarker so the menu knows an owner
+// step was answered.
+func renderUnparkAcceptedReply(actor, decision string, removed []string) string {
+	cleared := "No parking label was left to remove"
+	if len(removed) > 0 {
+		cleared = quoteLabels(removed) + " removed"
+	}
+	return fmt.Sprintf("%s\nUn-parked by @%s. Decision: %s\n\n%s and `%s` is applied; any `hold` label is left exactly as it was.",
+		unparkAcceptedMarker, actor, decision, cleared, HumanAckLabel)
 }
 
 func renderUnparkHelpReply(issueBody string) string {
