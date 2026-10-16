@@ -9,15 +9,17 @@ It is available on the `v6` line only. There are two ways to reach it:
 
 | Transport | Where it runs | Use it when |
 |-----------|---------------|-------------|
-| **HTTP** | `POST /api/admin/mcp` on the dashboard | Your client accepts a plain JSON-RPC HTTP endpoint. One entry per hive. |
-| **Stdio** | the `hive-admin-mcp` binary on your machine | Your client only speaks stdio or strict streamable HTTP, or you manage several hives from one entry. |
+| **HTTP** (recommended) | `POST /api/admin/mcp` on the dashboard | Your client accepts a plain JSON-RPC HTTP endpoint. The running hub serves the tool catalogue, so it never drifts and there is nothing to rebuild after an upgrade. One entry per hive. |
+| **Stdio** | the `hive-admin-mcp` binary on your machine | Your client cannot use the HTTP endpoint, or you manage several hives from one entry (`select_hive` is stdio-only). The catalogue is compiled into the binary, so re-extract or rebuild it after each hub upgrade. |
+
+Use HTTP whenever your client supports it.
 
 ## Quick start
 
 1. **Get the token.** The admin MCP uses the same dashboard token as
    [`hivectl`](hivectl.md): `HIVE_DASHBOARD_TOKEN` or `dashboard.auth_token`.
    See [Generating and rotating `HIVE_DASHBOARD_TOKEN`](env-vars.md#generating-and-rotating-hive_dashboard_token).
-2. **Pick a transport** and paste the matching client config below.
+2. **Pick a transport** (HTTP if your client supports it) and paste the matching client config below.
 3. **Run one tool.** Ask the client to call `hive_status`. A JSON status
    summary back means you are connected.
 
@@ -30,7 +32,8 @@ claude mcp add --transport http hive http://127.0.0.1:3001/api/admin/mcp \
   --header "Authorization: Bearer $HIVE_DASHBOARD_TOKEN"
 ```
 
-Or in an MCP JSON config (`.mcp.json`, omp's MCP config):
+Or in an MCP JSON config (for example a project `.mcp.json`; omp has its own
+config paths, see [omp](#omp)):
 
 ```json
 {
@@ -45,8 +48,39 @@ Or in an MCP JSON config (`.mcp.json`, omp's MCP config):
 ```
 
 Replace the address with your dashboard's. The endpoint is stateless (see
-[HTTP endpoint](#http-endpoint)); a strict streamable-HTTP client that insists
-on SSE or a session id may refuse it. Use stdio instead.
+[HTTP endpoint](#http-endpoint)). omp is verified to work with it. A strict
+streamable-HTTP client that insists on SSE or a session id may refuse it; if
+you have not checked your client, try HTTP first and fall back to stdio if it
+is refused.
+
+#### omp
+
+omp reads `~/.omp/agent/mcp.json` (user scope) or `.omp/mcp.json` (one
+project). It only reads a root `.mcp.json` as a fallback. Keep the token out of
+the file: use `${HIVE_DASHBOARD_TOKEN}`, or a `!command` header value that omp
+runs at connect time:
+
+```json
+{
+  "mcpServers": {
+    "hive-admin": {
+      "type": "http",
+      "url": "http://127.0.0.1:3001/api/admin/mcp",
+      "headers": { "Authorization": "Bearer ${HIVE_DASHBOARD_TOKEN}" }
+    }
+  }
+}
+```
+
+```json
+"headers": { "Authorization": "!jq -r '\"Bearer \" + (.[] | select(.name==\"local\").token)' /path/to/hives.json" }
+```
+
+omp 18.8.9 is verified against the stateless endpoint (`hive_status`,
+`issues_by_band` and `prs_by_band` all returned data). The hub answers
+`notifications/initialized` with `200` and `{"jsonrpc":"2.0","result":{}}`
+rather than a bare `202`, which omp accepts. `GET` returns `405`, and omp
+disables its optional SSE listener without an error.
 
 ### Client config: stdio
 
@@ -102,7 +136,7 @@ podman rm hive-admin-mcp-extract
 
 Or build it from a checkout of the `v6` branch: `cd src && go build -o hive-admin-mcp ./cmd/hive-admin-mcp`.
 
-The tool catalogue is compiled into the binary, so re-extract or rebuild it after each hub upgrade. `version_read` shows the binary's own `stdio_build` and a `skew` flag next to the hub build, and `initialize` reports `serverInfo.version` as `<version>+<short sha>`.
+The tool catalogue is compiled into the binary, so re-extract or rebuild it after each hub upgrade (HTTP has no such step). `version_read` shows the binary's own `stdio_build` and a `skew` flag next to the hub build, and `initialize` reports `serverInfo.version` as `<version>+<short sha>`.
 
 ### Environment variables
 
