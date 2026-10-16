@@ -74,9 +74,45 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 	if reason == "" {
 		reason = "unknown"
 	}
+	// A pane that is busy because the agent is mid-turn is not a stall
+	// (#12268): the governor re-kicks an agent whose previous turn is still
+	// streaming, each attempt waits out the prompt timeout, and three of those
+	// inside one long review turn used to file an upstream issue that cleared
+	// itself the moment the turn ended. Only self-report once the agent's own
+	// transcript has been silent for the busy-no-activity threshold, the same
+	// bar busyCondition applies before it calls the pane stuck.
+	if silentFor, live := kickUndeliverableTranscriptLiveness(agent, now); live {
+		if m.logger != nil {
+			m.logger.Info("kick undeliverable while agent turn in progress; not self-reporting",
+				"agent", agent.Name,
+				"reason", reason,
+				"kicks_undeliverable", agent.KicksUndeliverable,
+				"transcript_silent_for", roundDurationForHumans(silentFor))
+		}
+		return
+	} else if silentFor > 0 {
+		reason = fmt.Sprintf("%s; transcript silent for %s", reason, roundDurationForHumans(silentFor))
+	}
 	// Self-report (#11868): the tracker applies the ≥3-consecutive threshold.
 	fleetreport.Observe(fleetreport.ClassKickFailedRepeatedly, agent.Name,
 		fmt.Sprintf("kick undeliverable %d times in a row (%s)", agent.KicksUndeliverable, reason), "")
+}
+
+// kickUndeliverableTranscriptLiveness reports how long the agent's transcript
+// has been silent and whether that is short enough to call the busy pane a
+// turn in progress. Agents without a transcript cache (non-Copilot backends,
+// or a scan that has not run yet) report (0, false): the caller cannot tell a
+// live turn from a stall, so it keeps self-reporting as before.
+func kickUndeliverableTranscriptLiveness(agent *AgentProcess, now time.Time) (time.Duration, bool) {
+	last := agent.LastTranscriptActivity
+	if last.IsZero() {
+		return 0, false
+	}
+	silentFor := now.Sub(last)
+	if silentFor < 0 {
+		silentFor = 0
+	}
+	return silentFor, silentFor < agent.Config.EffectiveBusyNoActivityThreshold()
 }
 
 // markCopilotQuestionFormLocked surfaces a question-form dismissal through the

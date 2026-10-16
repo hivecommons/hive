@@ -148,3 +148,43 @@ func TestKickUndeliverableSelfReportCarriesReason(t *testing.T) {
 	}
 	t.Fatal("no kick_failed_repeatedly evidence after 3 undeliverable kicks")
 }
+
+func TestKickUndeliverableDuringLiveTurnIsNotSelfReported(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 3, 26, 26, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
+	fleetreport.SetDefaultTrackerForTest(t, tr)
+
+	m := busyVisibilityTestManager()
+	agent := m.agents["scanner"]
+	// The governor re-kicks an agent mid-turn: its transcript was written to
+	// seconds ago, so the pane is busy, not stuck (#12268).
+	agent.LastTranscriptActivity = clock.Add(-20 * time.Second)
+	for i := 0; i < 3; i++ {
+		m.markKickUndeliverableLocked(agent, clock, "CLI did not reach input prompt")
+	}
+	if agent.KicksUndeliverable != 3 {
+		t.Fatalf("kicks undeliverable = %d, want 3 (dashboard counter still tracks the episode)", agent.KicksUndeliverable)
+	}
+	for _, ev := range tr.Evidence() {
+		if ev.Class == fleetreport.ClassKickFailedRepeatedly {
+			t.Fatalf("live turn produced kick_failed_repeatedly evidence: %q", ev.Message)
+		}
+	}
+
+	// Once the transcript has been silent past the busy-no-activity threshold
+	// the same failures are a stall and are reported, carrying the silence.
+	agent.LastTranscriptActivity = clock.Add(-config.DefaultBusyNoActivityThreshold - time.Minute)
+	for i := 0; i < 3; i++ {
+		m.markKickUndeliverableLocked(agent, clock, "CLI did not reach input prompt")
+	}
+	for _, ev := range tr.Evidence() {
+		if ev.Class != fleetreport.ClassKickFailedRepeatedly {
+			continue
+		}
+		if !strings.Contains(ev.Message, "transcript silent for 31m") {
+			t.Fatalf("message = %q, want the transcript silence in the reason", ev.Message)
+		}
+		return
+	}
+	t.Fatal("no kick_failed_repeatedly evidence once the transcript went silent")
+}
