@@ -34613,7 +34613,7 @@ function burnAreaChart() {
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
-      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
+      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path publish to repository knowledge.bead_synthesizer.publish.enabled knowledge.bead_synthesizer.publish.repo knowledge.bead_synthesizer.publish.path knowledge.bead_synthesizer.publish.base_branch knowledge.bead_synthesizer.publish.mode knowledge.bead_synthesizer.publish.cadence knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
       { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
@@ -36065,6 +36065,23 @@ function burnAreaChart() {
             <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} ${mark(label, tip)} <span class="text-muted">— ${help}${live ? ' Applies without a restart.' : restart}</span></span>
           </div>`;
       const roRow = (label, path, value, fallback) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm break-all">${value ? '<code>' + esc(String(value)) + '</code>' : '<span class="text-muted">' + esc(fallback) + '</span>'} <span class="text-muted">— set in hive.yaml; requires restart</span></div></div>`;
+      const pub = bs.publish || {};
+      const directCommitOK = Number((window._lastStatus && window._lastStatus.acmmLevel) || 0) >= 5;
+      const pubText = (id, label, path, value, placeholder, help) => `
+          <div class="config-field">
+            <label for="kp-${id}">${esc(label)} ${yamlHint(path)}</label>
+            <input id="kp-${id}" type="text" value="${esc(String(value || ''))}" placeholder="${esc(placeholder)}" ${dis}>
+            <div class="config-help">${help}${restart}</div>
+          </div>`;
+      const pubModes = directCommitOK ? ['pr', 'commit'] : ['pr'];
+      const pubModeField = `
+          <div class="config-field">
+            <label for="kp-pub-mode">Mode ${yamlHint('knowledge.bead_synthesizer.publish.mode')}</label>
+            <select id="kp-pub-mode" ${directCommitOK ? dis : 'disabled'}>
+              ${pubModes.map(v => `<option value="${v}" ${(directCommitOK ? pub.mode : 'pr') === v ? 'selected' : ''}>${v === 'pr' ? 'Pull request' : 'Direct commit'}</option>`).join('')}
+            </select>
+            <div class="config-help">${directCommitOK ? 'Pull request opens a PR for review; direct commit pushes to the base branch.' : 'Pull request only: this hive\'s policy level does not allow direct commits to the base branch.'}${restart}</div>
+          </div>`;
       const schedules = d.schedules || ['hourly', 'daily'];
       const layers = d.layers || ['personal', 'project', 'org', 'community'];
       return `
@@ -36081,6 +36098,17 @@ function burnAreaChart() {
             ${num('bs-max_api_calls_per_cycle', 'Max GitHub API calls per cycle', 'knowledge.bead_synthesizer.max_api_calls_per_cycle', bs.max_api_calls_per_cycle, def.bead_synthesizer_max_api_calls_per_cycle || 40, '1', '', 'Cap on charged PR GETs per cycle; HIVE_BEAD_SYNTH_MAX_API_CALLS still overrides.', 'Cap on charged GitHub PR GETs per synthesis cycle. PR reads are conditional, so a 304 reuses the cached PR and does not count. The HIVE_BEAD_SYNTH_MAX_API_CALLS environment variable overrides this. 0 restores the default (40).')}
           </div>
           ${roRow('Vault path', 'knowledge.bead_synthesizer.vault_path', bs.vault_path, 'default ' + (def.bead_synthesizer_vault_path || ''))}
+          <div class="settings-subsection-title mt-4">Publish to repository</div>
+          ${toggle('pub-enabled', 'Publish synthesized facts to a repository', 'knowledge.bead_synthesizer.publish.enabled', pub.enabled, 'off by default; only owners can change this.', false, 'Opt in to committing synthesized wiki facts into a repository path. Disabled unless you turn it on.')}
+          <div class="config-field-row">
+            ${pubText('pub-repo', 'Target repository', 'knowledge.bead_synthesizer.publish.repo', pub.repo, 'Default (hive primary repository)', 'owner/name. Empty uses the hive primary repository.')}
+            ${pubText('pub-path', 'Path', 'knowledge.bead_synthesizer.publish.path', pub.path, 'docs/knowledge/', 'Relative directory in the repository, no .. components.')}
+            ${pubText('pub-base_branch', 'Base branch', 'knowledge.bead_synthesizer.publish.base_branch', pub.base_branch, 'Default (repository default branch)', 'Branch the PR targets or the commit lands on.')}
+          </div>
+          <div class="config-field-row">
+            ${pubModeField}
+            ${choice('pub-cadence', 'Cadence', 'knowledge.bead_synthesizer.publish.cadence', pub.cadence, ['per_run', 'daily'], 'Default (per_run)', 'How often facts are published.', 'per_run publishes after each synthesis cycle; daily batches them once a day. Empty restores the default (per_run).')}
+          </div>
           <div class="settings-subsection-title mt-4">Bead retention</div>
           <div class="config-field-row">
             ${num('rp-max_beads', 'Max beads', 'knowledge.bead_synthesizer.retention_policy.max_beads', rp.max_beads, 5000, '1', '', 'Archiving starts above this many beads.', 'The bead lifecycle manager archives the lowest-scored beads once a store holds more than this, down to 80% of it. 0 uses the default (5000).')}
@@ -36133,6 +36161,7 @@ function burnAreaChart() {
       const d = _kpState.data || {};
       const cur = {
         bead_synthesizer: d.bead_synthesizer || {},
+        publish: (d.bead_synthesizer || {}).publish || {},
         retention_policy: (d.bead_synthesizer || {}).retention_policy || {},
         curator: d.curator || {},
         code_maps: d.code_maps || {},
@@ -36145,6 +36174,12 @@ function burnAreaChart() {
         ['bead_synthesizer', 'min_confidence', 'bs-min_confidence', 'frac'],
         ['bead_synthesizer', 'max_facts_per_cycle', 'bs-max_facts_per_cycle', 'int'],
         ['bead_synthesizer', 'max_api_calls_per_cycle', 'bs-max_api_calls_per_cycle', 'int'],
+        ['publish', 'enabled', 'pub-enabled', 'bool'],
+        ['publish', 'repo', 'pub-repo', 'str'],
+        ['publish', 'path', 'pub-path', 'str'],
+        ['publish', 'base_branch', 'pub-base_branch', 'str'],
+        ['publish', 'mode', 'pub-mode', 'str'],
+        ['publish', 'cadence', 'pub-cadence', 'str'],
         ['retention_policy', 'max_beads', 'rp-max_beads', 'int'],
         ['retention_policy', 'archive_after_synth_days', 'rp-archive_after_synth_days', 'int'],
         ['retention_policy', 'high_priority_retain_days', 'rp-high_priority_retain_days', 'int'],
@@ -36163,10 +36198,10 @@ function burnAreaChart() {
       ];
       const body = {};
       const put = (group, key, v) => {
-        if (group === 'retention_policy') {
+        if (group === 'retention_policy' || group === 'publish') {
           body.bead_synthesizer = body.bead_synthesizer || {};
-          body.bead_synthesizer.retention_policy = body.bead_synthesizer.retention_policy || {};
-          body.bead_synthesizer.retention_policy[key] = v;
+          body.bead_synthesizer[group] = body.bead_synthesizer[group] || {};
+          body.bead_synthesizer[group][key] = v;
         } else {
           body[group] = body[group] || {};
           body[group][key] = v;

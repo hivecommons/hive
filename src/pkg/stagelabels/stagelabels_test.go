@@ -37,7 +37,7 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 		CoveredByPR: "stage/040-covered-by-pr", ReviewPending: "stage/050-review-pending", Reviewed: "stage/060-reviewed",
 		AwaitingMergeAdmission: "stage/080-awaiting-merge-admission",
 		Fixing:                 "stage/070-fixing", ReturnedToContributor: "stage/072-returned-to-contributor", AdoptedByHive: "stage/074-adopted-by-hive",
-		MergeQueue: "stage/100-merge-queue", NeedsHuman: "stage/090-needs-human",
+		MergeQueue: "stage/100-merge-queue", ReadyForHumanMerge: "stage/090-ready-for-human-merge", NeedsDecision: "stage/085-needs-decision",
 	}
 	for s, l := range want {
 		if s.Label() != l {
@@ -50,8 +50,11 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 	if !Fixing.Before(MergeQueue) || MergeQueue.Before(Fixing) {
 		t.Fatal("Before() disagrees with table order")
 	}
-	if !Reviewed.Before(AwaitingMergeAdmission) || !AwaitingMergeAdmission.Before(NeedsHuman) || !AwaitingMergeAdmission.StallNote() || MergeQueue.StallNote() {
-		t.Fatal("awaiting-merge-admission must sit between reviewed and needs-human and be the only stall-note stage")
+	if !Reviewed.Before(AwaitingMergeAdmission) || !AwaitingMergeAdmission.Before(NeedsDecision) || !NeedsDecision.Before(ReadyForHumanMerge) || !AwaitingMergeAdmission.StallNote() || MergeQueue.StallNote() {
+		t.Fatal("awaiting-merge-admission must sit between reviewed and needs-decision/ready-for-human-merge and be the only stall-note stage")
+	}
+	if ReadyForHumanMerge.Dwell() != 0 || NeedsDecision.Dwell() != 0 {
+		t.Fatal("human stages are open-ended")
 	}
 	if got := StallComment(AwaitingMergeAdmission, 30*time.Minute, "review-state-check"); got != StallCommentMarker+"\nstage 080-awaiting-merge-admission stalled after 30m0s: review-state-check" {
 		t.Fatalf("StallComment = %q", got)
@@ -264,7 +267,7 @@ func TestLookupsAndAuthorStrings(t *testing.T) {
 	if got := StallComment(AwaitingMergeAdmission, time.Minute, ""); !strings.HasSuffix(got, ": lane has not evaluated this head") {
 		t.Fatalf("empty stall reason default: %q", got)
 	}
-	if Stalled(Record{}, nil, time.Now()) || Stalled(Record{Stage: NeedsHuman, EnteredAt: time.Unix(0, 0)}, nil, time.Now()) {
+	if Stalled(Record{}, nil, time.Now()) || Stalled(Record{Stage: ReadyForHumanMerge, EnteredAt: time.Unix(0, 0)}, nil, time.Now()) {
 		t.Fatal("None / open-ended stages never stall")
 	}
 }
@@ -402,22 +405,28 @@ func TestStoreMarkNudged(t *testing.T) {
 	}
 }
 
-// TestNeedsHumanIsNotAHighWaterMark: 090 is a parking stage, so leaving it
-// is never a regression, and a record that regressed "from 090" under the
-// old rule heals on its next observation (hivecommons/hive#12403).
-func TestNeedsHumanIsNotAHighWaterMark(t *testing.T) {
-	for _, to := range []Stage{ReviewPending, Reviewed, Fixing, ReturnedToContributor, AwaitingMergeAdmission} {
-		if IsRegression(NeedsHuman, to) {
-			t.Errorf("090 → %v flagged as regression", to)
+// TestHumanStagesAreNotHighWaterMarks: 085 and 090 are parking stages, so
+// leaving them is never a regression, and a record that regressed "from
+// 090" under the old rule heals on its next observation
+// (hivecommons/hive#12403, #12528).
+func TestHumanStagesAreNotHighWaterMarks(t *testing.T) {
+	for _, from := range []Stage{ReadyForHumanMerge, NeedsDecision} {
+		for _, to := range []Stage{ReviewPending, Reviewed, Fixing, ReturnedToContributor, AwaitingMergeAdmission} {
+			if IsRegression(from, to) {
+				t.Errorf("%v → %v flagged as regression", from, to)
+			}
 		}
 	}
-	if !IsRegression(MergeQueue, NeedsHuman) || !IsRegression(AwaitingMergeAdmission, ReviewPending) {
+	if IsRegression(ReadyForHumanMerge, NeedsDecision) || IsRegression(NeedsDecision, ReadyForHumanMerge) {
+		t.Fatal("085 ↔ 090 is a flip, not a regression")
+	}
+	if !IsRegression(MergeQueue, ReadyForHumanMerge) || !IsRegression(AwaitingMergeAdmission, ReviewPending) {
 		t.Fatal("ordinary falls must still be regressions")
 	}
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
 	key := Key("o/r", 12403)
-	st.Observe(key, NeedsHuman, "untrusted-author-role")
+	st.Observe(key, ReadyForHumanMerge, "untrusted-author-role")
 	if tr := st.Observe(key, ReviewPending, "contributor-lane:no-verdict"); tr.Regressed {
 		t.Fatalf("090 → 050 regressed: %+v", tr)
 	}
@@ -425,7 +434,7 @@ func TestNeedsHumanIsNotAHighWaterMark(t *testing.T) {
 		t.Fatalf("record regressed: %+v", rec)
 	}
 	// A record persisted by the old rule.
-	st.items[key] = Record{Stage: ReviewPending, EnteredAt: now, RegressedFrom: NeedsHuman, RegressedAt: now, RegressionCommented: true}
+	st.items[key] = Record{Stage: ReviewPending, EnteredAt: now, RegressedFrom: ReadyForHumanMerge, RegressedAt: now, RegressionCommented: true}
 	tr := st.Observe(key, ReturnedToContributor, "reviewer-verdict:changes_requested")
 	if !tr.Recovered || tr.Regressed {
 		t.Fatalf("stale 090 mark did not heal: %+v", tr)

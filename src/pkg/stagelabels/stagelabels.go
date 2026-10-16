@@ -56,8 +56,16 @@ const (
 	ReturnedToContributor
 	AdoptedByHive
 	AwaitingMergeAdmission
-	NeedsHuman
+	// ReadyForHumanMerge is stage/090 (hivecommons/hive#12528): the hive
+	// would merge this itself — verdict approve at the current head, checks
+	// green, DCO, soak, no modifiers — and only trust/role blocks it.
+	ReadyForHumanMerge
 	MergeQueue
+	// NeedsDecision is stage/085: a human decision (not a merge) is owed.
+	// Declared after MergeQueue so persisted records (which store the enum
+	// value) written before it existed keep their meaning; pipeline order
+	// comes from the Table's numbers, never from this enum.
+	NeedsDecision
 )
 
 // Prefix is the stage label family prefix. Every label under it is
@@ -120,7 +128,8 @@ var Table = []Definition{
 	{Stage: ReturnedToContributor, Number: 72, Slug: "returned-to-contributor", Description: "Contributor PR: CI red, changes requested or conflicting; diagnosis posted, author must act", Dwell: 24 * time.Hour, PR: true},
 	{Stage: AdoptedByHive, Number: 74, Slug: "adopted-by-hive", Description: "Contributor PR adopted: author unavailable after red CI; the hive is finishing it via the takeover path", Dwell: 3 * time.Hour, PR: true},
 	{Stage: AwaitingMergeAdmission, Number: 80, Slug: "awaiting-merge-admission", Description: "CI green, verdict approve, no modifiers; the automerge lane has not admitted it yet", Dwell: 30 * time.Minute, StallNote: true, PR: true},
-	{Stage: NeedsHuman, Number: 90, Slug: "needs-human", Description: "Cannot auto-merge; a person must act (see author/* and hold labels)", PR: true},
+	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed before this can move: sentinel alert, hold / do-not-merge / needs-decision label, or a human-only lane rule (see the hive's stage comment)", PR: true},
+	{Stage: ReadyForHumanMerge, Number: 90, Slug: "ready-for-human-merge", Description: "Hive would merge this itself but trust/role blocks it; a maintainer's /lgtm /approve is the only missing step", PR: true},
 	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted: soaking, merge-eligible or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
 }
 
@@ -179,6 +188,12 @@ func (s Stage) String() string {
 		return "none"
 	}
 	return numberString(d.Number) + "-" + d.Slug
+}
+
+// Description is the GitHub label description, or "" for None.
+func (s Stage) Description() string {
+	d, _ := definition(s)
+	return d.Description
 }
 
 // Dwell is the table's expected dwell for the stage (0 = open-ended).
@@ -400,6 +415,14 @@ func Owned(label string) bool {
 	return strings.HasPrefix(label, Prefix) || strings.HasPrefix(label, AuthorPrefix) || IsLegacy(label)
 }
 
+// Renames maps retired stage label spellings to their current name. The
+// reconciler renames the GitHub label in place (one PATCH per repo) so every
+// item carrying the old name keeps its stage through the upgrade, and
+// Current reads the old spelling as the new stage until then.
+var Renames = map[string]Stage{
+	"stage/090-needs-human": ReadyForHumanMerge,
+}
+
 // Current returns the stage a label set carries, or None. An unknown
 // `stage/*` label (stale table entry, health marker) yields None. Should an
 // item transiently carry two stage labels (mid-migration, before the
@@ -407,6 +430,9 @@ func Owned(label string) bool {
 func Current(labels []string) Stage {
 	cur := None
 	for _, l := range labels {
+		if s, ok := Renames[l]; ok && cur.Before(s) {
+			cur = s
+		}
 		for _, d := range Table {
 			if l == d.Stage.Label() && cur.Before(d.Stage) {
 				cur = d.Stage

@@ -1,0 +1,1 @@
+- Add an opt-in bead-synth publisher integration hook with per-run or daily batching, stable-slug updates, and retries independent of local synthesis; repository publishing remains disabled until a policy-enforcing publisher is installed.
