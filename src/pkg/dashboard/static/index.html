@@ -1564,7 +1564,7 @@
     .ev-n { display:inline-block; margin-left:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); font-weight:400; color:var(--muted); }
     .ev-svg { display:block; width:100%; max-width:640px; height:auto; margin-top:var(--sp-2); }
     .ev-svg .ev-axis { stroke:var(--border); stroke-width:1; }
-    .ev-svg text { fill:var(--muted); font-size:9px; }
+    .ev-svg text { fill:var(--muted); font-size:var(--fs-2xs); }
     .ev-svg .ev-line { fill:none; stroke:var(--ev-c); stroke-width:1.5; }
     .ev-svg .ev-pt { fill:var(--ev-c); opacity:.85; }
     .ev-svg .ev-pt-block { fill:none; stroke:var(--ev-c); stroke-width:1.5; }
@@ -1574,10 +1574,11 @@
     .ev-c0 { --ev-c: var(--blue); } .ev-c1 { --ev-c: var(--purple); } .ev-c2 { --ev-c: var(--cyan); }
     .ev-c3 { --ev-c: var(--orange); } .ev-c4 { --ev-c: var(--yellow); } .ev-c5 { --ev-c: var(--amber); }
     .ev-legend { display:flex; flex-wrap:wrap; gap:var(--sp-3); margin-top:var(--sp-1); font-size:var(--fs-2xs); color:var(--muted); }
-    .ev-legend i { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:var(--sp-1); background:var(--ev-c); }
-    .ev-legend i.fa { background:var(--orange); border-radius:0; }
-    .ev-legend i.fb { background:var(--purple); border-radius:0; }
-    .ev-legend i.unknown { background:var(--muted); opacity:.5; border-radius:0; }
+    .ev-legend i { display:inline-block; width:8px; height:8px; margin-right:var(--sp-1); background:var(--ev-c); }
+    .ev-legend i.dot { border-radius:var(--r-pill); }
+    .ev-legend i.fa { background:var(--orange); }
+    .ev-legend i.fb { background:var(--purple); }
+    .ev-legend i.unknown { background:var(--muted); opacity:.5; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
     .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
@@ -22059,7 +22060,7 @@ function burnAreaChart() {
         }).join('');
         return `<g class="ev-c${pi % EV_PALETTE_SIZE}">${pts.length > 1 ? `<polyline class="ev-line" points="${line}"/>` : ''}${dots}</g>`;
       }).join('');
-      const legend = rows.map((p, pi) => `<span class="ev-c${pi % EV_PALETTE_SIZE}"><i></i>${escapeHtml(String(p.perspective || 'unknown'))} (n=${Number(p.n) || 0})</span>`).join('');
+      const legend = rows.map((p, pi) => `<span class="ev-c${pi % EV_PALETTE_SIZE}"><i class="dot"></i>${escapeHtml(String(p.perspective || 'unknown'))} (n=${Number(p.n) || 0})</span>`).join('');
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer calibration: merge rate and block rate by confidence bucket per perspective">${grid}${series}</svg><div class="ev-legend">${legend}<span>● merged rate · ○ blocked rate · point size = samples</span></div>`;
     }
 
