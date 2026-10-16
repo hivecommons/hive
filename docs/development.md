@@ -227,7 +227,7 @@ Current public recipes are centered on the **contribute** workflow:
 - `just contribute-status`, `just contribute-browse`, and `just contribute-stop` — inspect, discover, or stop contributor relay activity.
 - `just contribute-move [backend]` — move a legacy positional contributor relay to another machine by reissuing its credential instead of hand-copying `contributor.env`; see [contributor-relay.md](../src/docs/contributor-relay.md#option-2--reissue-the-credential).
 - `just contribute-k8s [namespace] [outfile] [image_tag]` — print Kubernetes manifests for a headless contributor workload; it prints or writes the manifest you request and does not apply it.
-  - Optional `HIVE_K8S_RUNTIME_CLASS=<name>` (e.g. `gvisor`, `kata`) sets `runtimeClassName` on the contributor pod; unset emits no field. The RuntimeClass must already exist in the cluster.
+  - Optional `HIVE_K8S_RUNTIME_CLASS=<name>` (e.g. `gvisor`, `kata-qemu`) sets `runtimeClassName` on the contributor pod; unset emits no field. The RuntimeClass must already exist in the cluster.
 - `just hive-api <endpoint>` and `just hive-api-docs` — inspect hub API endpoints for the configured hive.
 - `just backend-smoke [backends]` — opt-in live smoke of the contributor CLI integration (`bin/test_backend_smoke.sh`) with this machine's own credentials; keyless machines still run the drift and stub wire-contract checks. See [backend-smoke.md](../src/docs/backend-smoke.md).
 

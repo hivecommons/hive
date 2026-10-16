@@ -2481,7 +2481,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # before any YAML is built so stdout stays empty on a bad value.
     if [[ -n "${HIVE_K8S_RUNTIME_CLASS:-}" ]]; then
       if (( ${#HIVE_K8S_RUNTIME_CLASS} > 253 )) \
-        || [[ ! "$HIVE_K8S_RUNTIME_CLASS" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; then
+        || [[ ! "$HIVE_K8S_RUNTIME_CLASS" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$ ]]; then
         echo "ERROR: HIVE_K8S_RUNTIME_CLASS='${HIVE_K8S_RUNTIME_CLASS}' is not a valid RuntimeClass name." >&2
         echo "  Use a DNS-1123 subdomain: lowercase letters, digits, '-' and '.', starting and" >&2
         echo "  ending with a letter or digit, at most 253 characters (e.g. kata-qemu, gvisor)." >&2
@@ -2722,7 +2722,7 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # else) — the relay is meant to run forever and reconnect, so this is the
     # right shape. Stated for the reader; not settable here.
     YAML+="      restartPolicy: Always"$'\n'
-    # Optional sandbox runtime (e.g. gvisor, kata); omitted entirely when unset
+    # Optional sandbox runtime (e.g. gvisor, kata-qemu); omitted entirely when unset
     # so the default manifest is unchanged. The RuntimeClass must already exist.
     if [[ -n "${HIVE_K8S_RUNTIME_CLASS:-}" ]]; then
       YAML+="      runtimeClassName: ${HIVE_K8S_RUNTIME_CLASS}"$'\n'

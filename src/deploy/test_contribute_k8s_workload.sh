@@ -123,7 +123,7 @@ for value in unset empty; do
 done
 
 # Invalid names are refused: nonzero exit, a message on stderr, NO YAML on stdout.
-for bad in Kata_QEMU -kata kata- "kata qemu" "$(printf 'a%.0s' $(seq 1 254))"; do
+for bad in Kata_QEMU -kata kata- a..b a-.b a.-b "kata qemu" "$(printf 'a%.0s' $(seq 1 254))"; do
   set +e
   (cd "$REPO_ROOT" && HOME="$FAKE_HOME" ANTHROPIC_API_KEY="" HIVE_K8S_RUNTIME_CLASS="$bad" just contribute-k8s hive-contributor >"$FAKE_HOME/bad.out" 2>"$FAKE_HOME/bad.err")
   BAD_RC=$?
