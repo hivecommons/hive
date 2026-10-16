@@ -4899,21 +4899,30 @@
                            the operator's target bucket.
              ''          — neither: up to date, or behind with auto-upgrade off
                            and no pending action.
-           Map each to a human-readable header. '' is rendered as its own
-           "Up to date" group rather than falling through to Unspecified, since
-           for this dimension "no pending upgrade" is a meaningful, expected
-           bucket rather than missing data. */
-        var st = hiveUpgradeState(h);
-        if (st === UPGRADE_FILTER_QUEUED) return HIVE_UPGRADE_GROUP_QUEUED;
-        if (st === UPGRADE_FILTER_UPGRADING) return HIVE_UPGRADE_GROUP_UPGRADING;
-        return HIVE_UPGRADE_GROUP_UPTODATE;
+           Map each to a human-readable header via hiveUpgradeGroupLabel. */
+        return hiveUpgradeGroupLabel(h);
       }, sort: function(a, b) {
         /* Queued first — it is why this dimension exists (systems READY for an
            upgrade that have not triggered) — then Upgrading (in flight), then
-           Up to date. Any unexpected label sorts last. */
+           Behind, then Up to date. Any unexpected label sorts last. */
         return _upgradeGroupOrder(a) - _upgradeGroupOrder(b);
       }}
     ];
+
+    /* Group header for the Upgrade-state dimension. The '' state covers two
+       very different hives: genuinely current ones, and ones 100+ commits
+       behind whose auto-upgrade is off (or whose channel has not promoted).
+       Splitting on commitsBehindTarget keeps "Up to date" honest — #12466 saw
+       an "Up to date (6)" header over six rows each reading "107–161 behind".
+       '' is still rendered as a named group rather than Unspecified, since
+       "no pending upgrade" is a meaningful bucket rather than missing data. */
+    function hiveUpgradeGroupLabel(h) {
+      var st = hiveUpgradeState(h);
+      if (st === UPGRADE_FILTER_QUEUED) return HIVE_UPGRADE_GROUP_QUEUED;
+      if (st === UPGRADE_FILTER_UPGRADING) return HIVE_UPGRADE_GROUP_UPGRADING;
+      if (Number((h || {}).commitsBehindTarget) > 0) return HIVE_UPGRADE_GROUP_BEHIND;
+      return HIVE_UPGRADE_GROUP_UPTODATE;
+    }
 
     /* Header labels for the Upgrade-state dimension. Named constants so the
        of() grouper and the sort comparator can never drift on a string typo.
@@ -4921,16 +4930,18 @@
        three surfaces, one wording. */
     var HIVE_UPGRADE_GROUP_QUEUED = 'Queued for auto-upgrade (not yet upgrading)';
     var HIVE_UPGRADE_GROUP_UPGRADING = 'Upgrading';
+    var HIVE_UPGRADE_GROUP_BEHIND = 'Behind target (no upgrade pending)';
     var HIVE_UPGRADE_GROUP_UPTODATE = 'Up to date';
 
     /* Sort weight for an upgrade-state group header. Queued (the actionable
-       "ready but not triggered" bucket) sorts first, then Upgrading, then Up to
-       date; anything else sorts last. */
+       "ready but not triggered" bucket) sorts first, then Upgrading, then
+       Behind, then Up to date; anything else sorts last. */
     var UPGRADE_GROUP_UNKNOWN_ORDER = Number.MAX_SAFE_INTEGER;
     function _upgradeGroupOrder(label) {
       if (label === HIVE_UPGRADE_GROUP_QUEUED) return 0;
       if (label === HIVE_UPGRADE_GROUP_UPGRADING) return 1;
-      if (label === HIVE_UPGRADE_GROUP_UPTODATE) return 2;
+      if (label === HIVE_UPGRADE_GROUP_BEHIND) return 2;
+      if (label === HIVE_UPGRADE_GROUP_UPTODATE) return 3;
       return UPGRADE_GROUP_UNKNOWN_ORDER;
     }
 
