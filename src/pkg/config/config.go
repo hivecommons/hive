@@ -3985,6 +3985,65 @@ type LabelsConfig struct {
 	// every managed repo to grow a second label meaning the same thing.
 	// Defaults to DefaultAutoMergeLabel.
 	AutoMerge string `yaml:"automerge"`
+	// Stage configures the hive-owned stage/NN-* pipeline labels
+	// (hivecommons/hive#12429; docs/labels-and-control-signals.md).
+	Stage StageLabelsConfig `yaml:"stage"`
+}
+
+// StageLabelsConfig is governor.labels.stage: the hive-owned stage/NN-*,
+// author/* and stage/stalled|regressed label families.
+type StageLabelsConfig struct {
+	// Enabled turns the stage reconciler on. nil = true.
+	Enabled *bool `yaml:"enabled"`
+	// Dwell overrides the expected time an item may sit in a stage before
+	// it is marked stage/stalled, keyed by stage slug (e.g. "review-pending":
+	// "1h"). Unset slugs keep the built-in table default; "0" means never.
+	Dwell map[string]string `yaml:"dwell,omitempty"`
+}
+
+// IsEnabled reports whether the stage reconciler runs (default on).
+func (s StageLabelsConfig) IsEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
+// stageSlugs is registered by pkg/stagelabels at init so config validation
+// can reject unknown dwell keys without pkg/dashboard importing the table.
+var stageSlugs []string
+
+// RegisterStageSlugs records the known stage slugs (called from pkg/stagelabels).
+func RegisterStageSlugs(slugs []string) { stageSlugs = append([]string(nil), slugs...) }
+
+// KnownStageSlugs returns the registered stage slugs (nil if none registered).
+func KnownStageSlugs() []string { return append([]string(nil), stageSlugs...) }
+
+// KnownStageSlug reports whether slug is a registered stage slug. When no
+// table has been registered (stagelabels not linked) every slug is accepted.
+func KnownStageSlug(slug string) bool {
+	if len(stageSlugs) == 0 {
+		return true
+	}
+	for _, s := range stageSlugs {
+		if s == slug {
+			return true
+		}
+	}
+	return false
+}
+
+// DwellOverrides parses Dwell into durations, skipping unparsable entries.
+func (s StageLabelsConfig) DwellOverrides() map[string]time.Duration {
+	if len(s.Dwell) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Duration, len(s.Dwell))
+	for slug, raw := range s.Dwell {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil || d < 0 {
+			continue
+		}
+		out[strings.ToLower(strings.TrimSpace(slug))] = d
+	}
+	return out
 }
 
 type SensingConfig struct {

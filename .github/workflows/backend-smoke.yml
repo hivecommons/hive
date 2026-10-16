@@ -269,6 +269,7 @@ jobs:
     # urgency, and must never collapse into one issue thread.
     if: failure() && github.event_name == 'schedule'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     needs: [smoke]
     permissions:
       contents: read

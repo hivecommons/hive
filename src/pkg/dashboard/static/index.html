@@ -1608,6 +1608,19 @@
     .ev-legend i.cv-ci { background:var(--orange); }
     .ev-legend i.cv-swarm { background:var(--purple); }
     .ev-legend i.cv-both { background:var(--red); }
+    .ev-svg .ev-bar.wb-human { fill:var(--green); }
+    .ev-svg .ev-bar.wb-agent { fill:var(--blue); }
+    .ev-svg .ev-bar.wb-bot { fill:var(--muted); opacity:.6; }
+    .ev-svg .ev-bar.wb-throttle { fill:var(--amber); opacity:.15; }
+    .ev-svg .wb-closed, .ev-legend .wb-closed { --ev-c: var(--orange); }
+    .ev-legend i.wb-human { background:var(--green); }
+    .ev-legend i.wb-agent { background:var(--blue); }
+    .ev-legend i.wb-bot { background:var(--muted); opacity:.6; }
+    .ev-svg .ev-bar.wa { fill:var(--blue); }
+    .ev-svg .ev-bar.wb { fill:var(--red); }
+    .ev-legend i.wa { background:var(--blue); }
+    .ev-legend i.wb { background:var(--red); }
+    .ev-svg.ev-spark { max-width:480px; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
     /* Evidence window pills (24h · 7d · 30d · custom) and the inline custom
@@ -2778,6 +2791,29 @@
     .feedback-option-extra { color:var(--muted); }
     .feedback-disclosure-list { margin:var(--sp-4) 0 0; padding-left:var(--sp-7); color:var(--muted); line-height:1.45; }
     .feedback-disclosure-list li { margin:var(--sp-2) 0; }
+    /* FAQ section (#faq-panel): token-only classes, no inline styles (faq_ui_test.go). */
+    .faq-panel { background:var(--card-bg); border:1px solid var(--border); border-radius:var(--r-lg); padding:var(--sp-6); font-size:var(--fs-base); line-height:1.6; max-width:900px; }
+    .faq-intro { color:var(--muted); margin:0 0 var(--sp-5); }
+    .faq-filter-row { display:flex; align-items:center; gap:var(--sp-3); margin:0 0 var(--sp-6); }
+    .faq-filter-label { color:var(--muted); font-size:var(--fs-sm); font-weight:600; }
+    .faq-filter { flex:1 1 auto; min-width:0; padding:var(--sp-3) var(--sp-5); background:var(--bg); border:1px solid var(--border); border-radius:var(--r); color:var(--text); font-size:var(--fs-base); outline:none; }
+    .faq-filter:focus { border-color:var(--accent); }
+    .faq-filter-count { color:var(--muted); font-size:var(--fs-sm); white-space:nowrap; }
+    .faq-group { margin:0 0 var(--sp-6); }
+    .faq-group[hidden] { display:none; }
+    .faq-group-title { font-size:var(--fs-lg); margin:var(--sp-5) 0 var(--sp-3); }
+    .faq-q { border-bottom:1px solid var(--border); padding:var(--sp-2) 0; }
+    .faq-q[hidden] { display:none; }
+    .faq-q > summary { cursor:pointer; font-weight:600; font-size:var(--fs-md); color:var(--text); padding:var(--sp-2) 0; list-style-position:inside; }
+    .faq-q > summary:hover { color:var(--accent); }
+    .faq-q > summary code { font-weight:400; }
+    .faq-q p, .faq-q .faq-list { margin:0 0 var(--sp-4); }
+    .faq-q > :last-child { margin-bottom:var(--sp-2); }
+    .faq-list { padding-left:var(--sp-7); }
+    .faq-muted { color:var(--muted); }
+    .faq-empty { color:var(--muted); font-style:italic; margin:0 0 var(--sp-5); }
+    .faq-footer { margin-top:var(--sp-6); padding-top:var(--sp-4); border-top:1px solid var(--border); color:var(--muted); }
+    .faq-footer-link { background:none; border:0; padding:0; font:inherit; color:var(--accent); font-weight:600; cursor:pointer; text-decoration:underline; }
     .feedback-preview-shell { margin-top:var(--sp-4); }
     .feedback-preview-shell summary { cursor:pointer; color:var(--text); font-weight:600; }
     .feedback-thumbs { display:flex; gap: var(--sp-3); flex-wrap:wrap; margin-top: var(--sp-3); }
@@ -5833,7 +5869,7 @@
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Help</div>
-      <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Answers to common first-time questions: the Advisory Digest, ACMM levels, how to advance, and managing cost"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
+      <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
       <a class="oc-nav-item" href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
@@ -6293,120 +6329,254 @@
 
   <!-- FAQ — intentionally NOT ACMM-gated (no entry in applyACMMVisibility's
        sidebarItems list and no display:none default), because the audience for
-       it is a confused L1/L2 user. Static content only: no JS, no fetch. -->
+       it is a confused L1/L2 user. Static content plus a client-side filter
+       (faqFilter); no fetch. Every answer links to its source doc — the panel
+       is a map, not a second source of truth. Guarded by faq_ui_test.go. -->
   <div class="mt-6 mb-8" id="faq-section" data-dashboard-section="faq-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="faq-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move FAQ section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> ❓ FAQ</h2>
     <div class="section-body">
-      <div id="faq-panel" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6);font-size:0.85rem;line-height:1.6;max-width:900px">
+      <div id="faq-panel" class="faq-panel">
 
-        <p style="color:var(--muted);margin:0 0 18px">Common questions from first-time users. Everything below describes what this hive
+        <p class="faq-intro">Short answers to the questions people ask once a hive is running. Everything below describes what this hive
         actually does today — where behaviour is surprising, it is called out rather than smoothed over. Each answer links to the
-        source doc so this panel stays a map, not a second source of truth.</p>
-        <p class="m-0 mb-6">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step.</p>
+        source doc, so this panel stays a map, not a second source of truth.</p>
+        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step.</p>
 
-        <h3 style="font-size:1rem;margin:var(--sp-0) var(--sp-0) var(--sp-4)">Getting started (L1–L2)</h3>
+        <div class="faq-filter-row">
+          <label for="faq-filter" class="faq-filter-label">Filter</label>
+          <input id="faq-filter" class="faq-filter" type="search" placeholder="Filter questions…" autocomplete="off" data-input-action="faqFilter" aria-controls="faq-panel">
+          <span id="faq-filter-count" class="faq-filter-count" aria-live="polite"></span>
+        </div>
 
-        <h4>Can I change the dashboard timezone?</h4>
-        <p><strong>Yes.</strong> Open <strong>Settings → Appearance → Display timezone</strong>. Pick browser local time, the hive server timezone, UTC, or an IANA timezone such as <code>America/Los_Angeles</code>. Absolute timestamps include the timezone abbreviation; relative ages like <code>1m ago</code> stay relative.</p>
+        <section class="faq-group" data-faq-group="getting-started">
+        <h3 class="faq-group-title">Getting started (L1–L2)</h3>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What are L1 and L2 for?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong>L1 is inception; L2 is calibration.</strong> At L1, the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the Inception panel. It asks clarifying questions, records facts, produces a scaffold, and stops when you approve it. At L2, the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement. Point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
+        <details class="faq-q" id="faq-l1-l2">
+          <summary>What are L1 and L2 for?</summary>
+          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the Inception panel; it asks clarifying questions and stops when you approve. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+          <p>The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement: point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What is the Advisory Digest for?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong>The Advisory Digest is the work ledger.</strong> Agents create beads with <code>bd create</code>; the digest rolls up every open <code>advisory</code>, <code>bug</code>, or <code>feature</code> bead, grouped by the agent that filed it. Internal work items such as <code>task</code> and <code>decision</code> are deliberately excluded so the ledger stays readable. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/beads-cli.md" target="_blank" rel="noopener noreferrer">Beads CLI</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM L2</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">You can read the same ledger here and in GitHub: the hive opens one issue named <strong>🐝 Hive Advisory Report</strong> in your default repo and keeps a digest comment current. That report is the whole of the normal L2 GitHub footprint.</p>
+        <details class="faq-q" id="faq-advisory-digest">
+          <summary>What is the Advisory Digest for?</summary>
+          <p><strong>The Advisory Digest is the work ledger.</strong> Agents record findings as <em>beads</em> (small tracked notes created with <code>bd create</code>); the digest rolls up every open <code>advisory</code>, <code>bug</code>, or <code>feature</code> bead, grouped by the agent that filed it. Internal items such as <code>task</code> and <code>decision</code> are left out so the ledger stays readable. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/beads-cli.md" target="_blank" rel="noopener noreferrer">Beads CLI</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#advisory-digest" target="_blank" rel="noopener noreferrer">Advisory Digest</a>.</p>
+          <p>The same ledger is mirrored to GitHub: the hive opens one issue named <strong>🐝 Hive Advisory Report</strong> in your default repo and keeps a digest comment current. That report is the whole of the normal L2 GitHub footprint.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What do the colors mean?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">The left bar and dot encode severity, derived directly from the bead priority set by the filing agent:</p>
-        <ul style="margin:var(--sp-0) var(--sp-0) var(--sp-4);padding-left:var(--sp-7)">
-          <li>🔴 <strong>critical</strong> (priority 0) — red bar</li>
-          <li>🟠 <strong>high</strong> (priority 1) — orange bar</li>
-          <li>🟡 <strong>medium</strong> (priority 2) — yellow bar</li>
-          <li>🔵 <strong>low</strong> (priority 3) — grey bar</li>
-          <li>⚪ <strong>info</strong> — anything else; grey bar</li>
-        </ul>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6);color:var(--muted)">The low-severity row intentionally has a blue dot but a grey bar: only critical, high, and medium have dedicated bar colors. Severity is a judgement call by the filing agent, not a measurement. Digest behaviour is summarized here and grounded in the L2 advisory mode in <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+        <details class="faq-q" id="faq-colors">
+          <summary>What do the colors in the digest mean?</summary>
+          <p>The left bar and dot encode severity, derived directly from the bead priority set by the filing agent:</p>
+          <ul class="faq-list">
+            <li>🔴 <strong>critical</strong> (priority 0) — red bar</li>
+            <li>🟠 <strong>high</strong> (priority 1) — orange bar</li>
+            <li>🟡 <strong>medium</strong> (priority 2) — yellow bar</li>
+            <li>🔵 <strong>low</strong> (priority 3) — grey bar</li>
+            <li>⚪ <strong>info</strong> — anything else; grey bar</li>
+          </ul>
+          <p class="faq-muted">Only critical, high, and medium have dedicated bar colors, so the low row has a blue dot but a grey bar. Severity is a judgement call by the filing agent, not a measurement. See the L2 advisory mode in the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How are digest items selected and ordered?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)"><strong>They are not ranked by severity.</strong> Findings are grouped by agent (agents sorted alphabetically), and within each agent they appear oldest first. Severity has no effect on position: a critical finding filed this morning sits below a low finding filed last week. Selection is simply every open advisory/bug/feature bead; recently closed beads appear separately as recently resolved. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/beads-cli.md" target="_blank" rel="noopener noreferrer">Beads CLI</a>.</p>
+        <details class="faq-q" id="faq-digest-order">
+          <summary>How are digest items selected and ordered?</summary>
+          <p><strong>They are not ranked by severity.</strong> Findings are grouped by agent (agents sorted alphabetically) and within each agent they appear oldest first, so a critical finding filed this morning sits below a low finding filed last week. Selection is every open advisory/bug/feature bead; recently closed beads appear separately as recently resolved. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/beads-cli.md" target="_blank" rel="noopener noreferrer">Beads CLI</a>.</p>
+        </details>
 
-        <h3 style="font-size:1rem;margin:18px 0 8px">Trust ladder (L3–L6)</h3>
+        <details class="faq-q" id="faq-timezone">
+          <summary>Can I change the dashboard timezone?</summary>
+          <p><strong>Yes.</strong> Open <strong>Settings → Appearance → Display timezone</strong> and pick browser local time, the hive server timezone, UTC, or an IANA timezone such as <code>America/Los_Angeles</code>. Absolute timestamps include the timezone abbreviation; relative ages like <code>1m ago</code> stay relative. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/settings.md" target="_blank" rel="noopener noreferrer">Dashboard settings explained</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How do I move from L2 to L3?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong>Change to L3 when you trust the findings — there is no gate.</strong> The ACMM Eval page and recommendation API are read-only advice; they never change the level and they do not license or block the move. The supported path is the dashboard level dialog (or <code>acmm_level</code> through config ownership rules), which applies the level pack and reconciles agents. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-advisor.md" target="_blank" rel="noopener noreferrer">ACMM advisor</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#changing-a-hives-acmm-level" target="_blank" rel="noopener noreferrer">changing ACMM level</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/config-layering.md" target="_blank" rel="noopener noreferrer">config layering</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">At L3, the quality lane builds the safety net: hold-gated test and CI PRs, plus CI health measurement. It is deliberately about making later automation safe, not about handing the hive production-code autonomy.</p>
+        <details class="faq-q" id="faq-sections">
+          <summary>Why can't I see a section, and how do I reorder or hide sections?</summary>
+          <p>Some sections only appear at certain ACMM levels or when their feature is on (Experiment Lab, for example, needs L4 and <code>dashboard.experiment_lab</code>), and a browser that has never seen this hive starts non-critical cards collapsed. To reorder, drag the <code>⠿</code> grip in a section header, or focus it and press Space, Up/Down, then Space/Enter. To hide a section, hover its sidebar row and press the eye-off control; the row stays in the sidebar, muted, and clicking it brings the card back. Layout is browser-local; the avatar menu's <strong>Layout</strong> section saves presets and offers <strong>Reset layout to default</strong>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard.md#reorder-sections" target="_blank" rel="noopener noreferrer">Reorder sections</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md" target="_blank" rel="noopener noreferrer">Dashboard sections explained</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What do L3, L4, L5, and L6 allow?</h4>
-        <ul style="margin:var(--sp-0) var(--sp-0) var(--sp-4);padding-left:var(--sp-7)">
-          <li><strong>L3 — Quality-Gated (Measured):</strong> quality may open hold-gated test/CI PRs; CI-maintainer watches build health.</li>
-          <li><strong>L4 — Security-Aware (Adaptive):</strong> sec-check joins; delivery agents may file issues; only quality, sec-check, and ci-maintainer may open hold-gated PRs.</li>
-          <li><strong>L5 — Semi-Autonomous:</strong> most lanes may open issues and hold-gated PRs; humans batch-review and remove holds. The reviewer agent joins and works the queue every 30 minutes.</li>
-          <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs can auto-merge when checks pass. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos off or back on afterward. Reviewer still never merges, and a <code>requires_human</code> or reject verdict pulls a PR out of the auto-merge lane.</li>
-        </ul>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Promotion adds agents and capability; demotion narrows them again. Hive also removes only level-owned holds when the level no longer calls for them — a hold you applied is never removed automatically. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-queue-triage.md" target="_blank" rel="noopener noreferrer">review queue triage</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>.</p>
+        <details class="faq-q" id="faq-mobile-menu">
+          <summary>On a phone, where is the profile menu?</summary>
+          <p>Tap your GitHub avatar at the right end of the top bar. On narrow screens the chip strip scrolls sideways, so swipe left if the avatar is off-screen; the menu then opens pinned under the navbar and scrolls on its own. If tapping did nothing on iOS Safari, you are on a build older than <a href="https://github.com/hivecommons/hive/pull/12193" target="_blank" rel="noopener noreferrer">#12193</a> — upgrade. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard.md" target="_blank" rel="noopener noreferrer">Spoke dashboard</a>.</p>
+        </details>
+        </section>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">Does Hive auto-promote or auto-demote me?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">The shipped advisor is advisory-only: it can say a hive appears ready for the next level, but a human applies the change. The separate autonomy controls are opt-in and default off; when documenting or enabling them, use the schema keys under <code>autonomy.auto_promote</code> and <code>autonomy.auto_demote</code>. Read the level-change rules in <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-advisor.md" target="_blank" rel="noopener noreferrer">ACMM advisor</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#changing-a-hives-acmm-level" target="_blank" rel="noopener noreferrer">ACMM level changes</a>.</p>
+        <section class="faq-group" data-faq-group="trust-ladder">
+        <h3 class="faq-group-title">Trust ladder (L3–L6)</h3>
 
-        <h3 style="font-size:1rem;margin:18px 0 8px">Runs and inception</h3>
+        <details class="faq-q" id="faq-l2-to-l3">
+          <summary>How do I move from L2 to L3?</summary>
+          <p><strong>Change to L3 when you trust the findings — there is no gate.</strong> The ACMM Eval page and recommendation API are read-only advice; they never change the level and do not license or block the move. The supported path is the level dialog behind the level chip in the top bar (or <code>acmm_level</code> through config ownership rules), which applies the level pack and reconciles agents. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-advisor.md" target="_blank" rel="noopener noreferrer">ACMM advisor</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#changing-a-hives-acmm-level" target="_blank" rel="noopener noreferrer">changing ACMM level</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/config-layering.md" target="_blank" rel="noopener noreferrer">config layering</a>.</p>
+          <p>At L3 the quality lane builds the safety net: hold-gated test and CI PRs, plus CI health measurement. It is about making later automation safe, not about handing the hive production-code autonomy.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What is a run?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">A run is staged work on one lease: <strong>spec → plan → implement</strong>. The Runs section and <code>/api/runs</code> show stage, generation, triage verdicts, receipts, checkpoints, and whether a person must intervene. Run-stage work is only offered to relays that declare the <code>run-stage</code> capability. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spektacular (Spek) stage runner</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/work-sources.md" target="_blank" rel="noopener noreferrer">work sources</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md#run-stage-assignments-add-one-more-negotiated-token-run-stage" target="_blank" rel="noopener noreferrer">relay capabilities</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Long-running pieces are default-off. Spek does nothing unless <code>runs.spektacular.enabled</code> is true. Incoming issue triage does nothing unless <code>runs.triage.enabled</code> is true. The live worktree cap is <code>runs.max_worktrees</code>; stage retry budget is <code>runs.max_stage_retries</code>.</p>
+        <details class="faq-q" id="faq-levels">
+          <summary>What do L3, L4, L5, and L6 allow?</summary>
+          <ul class="faq-list">
+            <li><strong>L3 — Quality-Gated (Measured):</strong> quality may open hold-gated test/CI PRs; ci-maintainer watches build health.</li>
+            <li><strong>L4 — Security-Aware (Adaptive):</strong> sec-check joins; delivery agents may file issues; only quality, sec-check, and ci-maintainer may open hold-gated PRs.</li>
+            <li><strong>L5 — Semi-Autonomous:</strong> most lanes may open issues and hold-gated PRs; humans batch-review and remove holds. The reviewer agent joins and works the queue every 30 minutes; adjudicator and dedupe recommend, never merge or close.</li>
+            <li><strong>L6 — Fully Autonomous:</strong> eligible App-authored PRs auto-merge when checks pass. Auto-merge is off below L6; switching to L6 turns it on for all active repos, and owners can toggle individual repos afterward. The reviewer still never merges — and its <code>requires_human</code> / <code>reject</code> verdicts do <em>not</em> stop the App auto-merge sweep; use a <code>hold</code> label or a GitHub branch rule when merging must stop.</li>
+          </ul>
+          <p>Promotion adds agents and capability; demotion narrows them again. Hive removes only level-owned holds when the level no longer calls for them — a hold you applied is never removed automatically. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/running-at-level-6.md#does-the-hive-reviewer-stop-a-merge" target="_blank" rel="noopener noreferrer">Running at Level 6</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How does Spek fit with L1?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
+        <details class="faq-q" id="faq-auto-promote">
+          <summary>Does Hive auto-promote or auto-demote me?</summary>
+          <p>The shipped advisor is advisory-only: it can say a hive appears ready for the next level, but a human applies the change. The separate autonomy controls are opt-in and default off, under <code>autonomy.auto_promote</code> and <code>autonomy.auto_demote</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-advisor.md" target="_blank" rel="noopener noreferrer">ACMM advisor</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#changing-a-hives-acmm-level" target="_blank" rel="noopener noreferrer">ACMM level changes</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What are external engines like Flue and OMP allowed to do?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">External engines are report-only admission surfaces, not extra credentials. They receive bounded context and return receipts that Hive verifies; they do not receive target-repo write credentials or dashboard tokens. Flue and OMP are independent, default-off bindings: <code>runs.external.flue.enabled</code> and <code>runs.external.omp.enabled</code>. Dispatch additionally requires the relay to advertise <code>ext-exec/flue</code> or <code>ext-exec/omp</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/design/external-workflow-admission.md" target="_blank" rel="noopener noreferrer">external workflow admission</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md#run-stage-assignments-add-one-more-negotiated-token-run-stage" target="_blank" rel="noopener noreferrer">contributor relay capability tokens</a>.</p>
+        <details class="faq-q" id="faq-hold">
+          <summary>Why did a PR get a <code>hold</code> label? What does "hold-gated" mean?</summary>
+          <p><strong>Hold-gated</strong> means an agent may open a PR, but a literal <code>hold</code> label keeps it out of every merge lane until a human removes the label. At L3–L5 the PR watcher applies that hold to every agent PR from the level gate; a PR can also be held because its only rationale is an unacknowledged hive-filed issue (#5117), or because it traces to an issue from an untrusted reporter (#9665, held at every level); the same label also lands on <code>kind/bug</code> issues that lack a reproducing SHA. Hive releases only holds it applied itself — a hold a person added is never removed automatically. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/labels-and-control-signals.md" target="_blank" rel="noopener noreferrer">Hive labels and control signals</a>.</p>
+        </details>
 
-        <h3 style="font-size:1rem;margin:18px 0 8px">Contributors and relays</h3>
+        <details class="faq-q" id="faq-shadow">
+          <summary>What is shadow mode? Does it ever block a merge?</summary>
+          <p><strong>No — shadow never blocks a merge.</strong> <code>review.shadow</code> evaluates the review-approval gate, and <code>intent.shadow</code> the intent-verification gate, exactly as if enforcement were on, then only records the answer (<code>would_have_held</code> / <code>would_have_blocked</code>) on the PR's evidence bundle and in the log. A PR that is otherwise merge-eligible stays eligible, and shadow is ignored when real enforcement is already on. The review toggle is under <strong>Settings → Features → Review Gate</strong>; the intent toggle is under <strong>Settings → Security</strong>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-swarm.md#configuration" target="_blank" rel="noopener noreferrer">Review swarm configuration</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/intent-verification.md#shadow-mode" target="_blank" rel="noopener noreferrer">Intent verification: shadow mode</a>.</p>
+        </details>
+        </section>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What is ClankeR?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">ClankeR lets contributors lend their own local AI CLI subscription to a hive. They run <code>just contribute-hive</code>; the relay connects to <code>/api/contribute/ws</code>, accepts one task at a time, works locally, and reports PR metadata back. The contributor's credentials stay on their machine; Hive mints short-lived task-scoped GitHub tokens for accepted tasks. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">ClankeR contributor relay</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Trust is tiered. Newcomers start rate-limited; contributors auto-promote after completed PR tasks; trusted, merger, and advisor tiers are maintainer/operator grants. Delegated roles are bounded by tier, explicit grants, and the hive allow-list at <code>hub.contribute_delegatable_roles</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-trust-and-roles.md" target="_blank" rel="noopener noreferrer">contributor trust and roles</a>.</p>
+        <section class="faq-group" data-faq-group="evidence-releases">
+        <h3 class="faq-group-title">Evidence, releases and upgrades</h3>
 
-        <h3 style="font-size:1rem;margin:18px 0 8px">Issue claims and GitHub footprint</h3>
+        <details class="faq-q" id="faq-evidence-card">
+          <summary>What is the Evidence card, and what do its charts prove?</summary>
+          <p>The Evidence card in the Throughput section summarises <em>review evidence bundles</em>: one JSON record per PR head commit of what Hive reviewed, what CI said, who acted and how it merged. Its panels (outcomes by author kind, reviewer calibration, accuracy by model family, shadow gates) follow the 24h / 7d / 30d / custom window pills, and every panel's ⓘ button opens a plain-language explainer ending in a grade of Strong, Fair, Weak or Not enough data. The charts show what was recorded; they do not prove a merge was correct ("merged" is not "correct", an open PR counts as not merged, and evidence only exists since the feature shipped), and nothing in them is read by anything that decides a merge. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/review-evidence.md#how-to-read-the-evidence-card" target="_blank" rel="noopener noreferrer">How to read the Evidence card</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">Why did an agent comment or label my issue as claimed?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply visible <code>hive/claimed-by-&lt;agent&gt;</code> and <code>hive/in-progress</code> labels (with a timestamped <code>hive:claim</code> start marker) and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Claims are issue writes, so they require the same ACMM issue-writing permission as comments and issue creation. The optional claim-expiry feature is default-off under <code>governor.claims.enabled</code>; when off, ordinary work assignment still relies on the existing queue/lease rules.</p>
+        <details class="faq-q" id="faq-behind">
+          <summary>Why does "N behind" measure against my release channel, not the v4 head?</summary>
+          <p>The version badge compares the running commit with the newest build <em>your deployment can actually reach</em>: the hub-delivered target for the channel or branch tag this spoke tracks, else the tip of the build's own branch. A <code>:stable</code> spoke is not "behind" commits that only <code>candidate</code> carries, and a v5 spoke is never measured against v4. Hover the badge to see which target the count is against. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/release-channels.md#channel-aware-upgrade-targeting" target="_blank" rel="noopener noreferrer">Channel-aware upgrade targeting</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How much GitHub footprint should I expect?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">At L2, expect only the 🐝 Hive Advisory Report issue and its digest comment. Higher levels add App-bot authored issues, comments, PRs, hold labels, review verdicts, claim labels, and — at L6 — auto-merge when checks pass for eligible App-authored PRs. Visible PR attribution is on by default and can be hidden with <code>governor.attribution_trailer</code>, but the audit entry is always written. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6);color:var(--muted)">Two GitHub-adjacent Features toggles are intentionally default-off. Audit finding publication requires <code>publication.enabled</code> and still refuses sensitive findings unless <code>publication.private_channel</code> is configured. Plan-match reviews require <code>review.plan_match.enabled</code>; without it, reviewer runs do not spend cycles scoring PRs against run trailers. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-campaign.md" target="_blank" rel="noopener noreferrer">audit campaign</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#which-levels-may-publish-audit-findings" target="_blank" rel="noopener noreferrer">publication level rules</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/planning-intelligence.md" target="_blank" rel="noopener noreferrer">planning intelligence</a>.</p>
+        <details class="faq-q" id="faq-channels">
+          <summary>What are release channels, and how does an upgrade happen?</summary>
+          <p>A <em>release channel</em> is a moving image tag: <code>candidate</code> moves on every green merge to <code>v5</code>, <code>stable</code> is promoted from candidate by digest after a 24-hour soak, and <code>edge</code> follows the development branch <code>v6</code>. When a channel moves, the hub notices within a few minutes and, if your hive's upgrade policy allows, delivers the new target on the spoke's next heartbeat; the pod rolls and keeps the channel tag. Hosted hives switch channels from the version pill on the hub's My Hives list or the spoke's <strong>Follow channel</strong> selector (owner only); self-hosted Podman spokes change <code>Image=</code> by hand. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/release-channels.md" target="_blank" rel="noopener noreferrer">Release channels</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/stable-soak-policy.md" target="_blank" rel="noopener noreferrer">Stable soak policy</a>.</p>
+        </details>
+        </section>
 
-        <h3 style="font-size:1rem;margin:18px 0 8px">Cost, cadence and models</h3>
+        <section class="faq-group" data-faq-group="runs">
+        <h3 class="faq-group-title">Runs, inception and the Experiment Lab</h3>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">My spend jumped after I raised my ACMM level. How do I manage cost?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)"><strong>Higher levels increase throughput and spend by design.</strong> The strongest lever is cadence: the Governor grid sets each agent's interval per mode (idle, quiet, busy, surge). Widening busy/surge from <code>1h</code> to <code>6h</code> roughly cuts that agent's kick count sixfold; <code>0</code> disables that agent in that mode. Cadences use Go durations, so write one day as <code>24h</code>, not <code>1d</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#cadences-and-the-governor" target="_blank" rel="noopener noreferrer">cadences and the governor</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Budgets are token budgets, not dollar budgets. <code>governor.budget.total_tokens</code> set to 0 disables budget tracking; otherwise the governor warns near <code>governor.budget.critical_pct</code> and suppresses kicks at 100% until the <code>governor.budget.period_days</code> window resets. The mode thresholds that decide idle/quiet/busy/surge scale by repo count unless you pin them; see <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a>.</p>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Move routine agents to cheaper backends or models when the work allows it. The agent card and Governor grid expose backend, model, and effort; model rotation is opt-in under <code>governor.rotation.enabled</code>. The quota publisher for contributor relays can run even when rotation is off, so rotation being disabled does not by itself disable contributor quota readings. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay</a>.</p>
+        <details class="faq-q" id="faq-run">
+          <summary>What is a run?</summary>
+          <p>A run is staged work on one lease: <strong>spec → plan → implement</strong>. The Runs section and <code>/api/runs</code> show stage, generation, triage verdicts, receipts, checkpoints, and whether a person must intervene; run-stage work is only offered to relays that declare the <code>run-stage</code> capability. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spektacular (Spek) stage runner</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/work-sources.md" target="_blank" rel="noopener noreferrer">work sources</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">relay capabilities</a>.</p>
+          <p>Long-running pieces are default-off. Spek does nothing unless <code>runs.spektacular.enabled</code> is true; incoming issue triage does nothing unless <code>runs.triage.enabled</code> is true. The live worktree cap is <code>runs.max_worktrees</code>; the stage retry budget is <code>runs.max_stage_retries</code>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">How does cadence impact cost? My scanner seems to run non-stop.</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)"><strong>Cadence is the wait between runs, not a maximum run length.</strong> A busy agent facing a deep queue can run, finish, and be kicked again soon after. Shortening cadence does not make it work harder; widening cadence spreads the same queue over more wall-clock time. A growing backlog can also push the governor from idle to quiet to busy to surge, selecting shorter cadence columns without any per-agent setting changing. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#cadences-and-the-governor" target="_blank" rel="noopener noreferrer">cadences</a>.</p>
+        <details class="faq-q" id="faq-spek-l1">
+          <summary>How does Spek fit with L1?</summary>
+          <p>Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">Is the first day supposed to cost this much?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Yes. A first run against a mature repo is a backlog drain: old technical debt appears all at once, agents have enough queued work to stay busy, and the governor may choose busy/surge. Steady-state cost should fall as the queue drains. If you need to slow the spike, start lower, widen cadences before the first run, pause nonessential agents, or set a real token budget. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+        <details class="faq-q" id="faq-external-engines">
+          <summary>What are external engines like Flue and OMP allowed to do?</summary>
+          <p>External engines are report-only admission surfaces, not extra credentials: they receive bounded context and return receipts that Hive verifies, and they never receive target-repo write credentials or dashboard tokens. Flue and OMP are independent, default-off bindings (<code>runs.external.flue.enabled</code>, <code>runs.external.omp.enabled</code>), and dispatch additionally requires the relay to advertise <code>ext-exec/flue</code> or <code>ext-exec/omp</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/design/external-workflow-admission.md" target="_blank" rel="noopener noreferrer">external workflow admission</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay capability tokens</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">Where did the money actually go?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-6)">Use the 💵 Cost section for estimated spend by timeframe, then drill into agent cards and Prior Prompts to see what each kick was asked to do. Treat cost as attribution, not an invoice: token counts and list prices can diverge from subscriptions, discounts, and self-hosted inference. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/telemetry.md" target="_blank" rel="noopener noreferrer">telemetry</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log</a>.</p>
+        <details class="faq-q" id="faq-experiment-lab">
+          <summary>What is the Experiment Lab?</summary>
+          <p>The Experiment Lab ("Nous" in the API) runs small, approved experiments against your repositories' code — tests, CI config, automation scripts — measures each against a recorded baseline, and keeps a ledger of results. It is <strong>repo-only</strong>: experiments on the hive's own cadences, models or thresholds are out of scope since <a href="https://github.com/hivecommons/hive/pull/12207" target="_blank" rel="noopener noreferrer">#12207</a>. The section appears only at L4+ with <code>dashboard.experiment_lab: true</code>, and you approve or stop every experiment. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">Experiment Lab section guide</a>, which links the full guide.</p>
+        </details>
+        </section>
 
-        <h3 style="font-size:1rem;margin:18px 0 8px">Where to get help</h3>
+        <section class="faq-group" data-faq-group="contributors">
+        <h3 class="faq-group-title">Contributors, relays and models</h3>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">Why couldn't the Guide agent answer my Hive questions?</h4>
-        <p style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Because the guide agent documents your project, not Hive itself. It audits your README, getting-started, architecture, and contributing docs; it does not operate the hive or explain ACMM policy. For Hive operations, use these docs and the dashboard. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+        <details class="faq-q" id="faq-clanker">
+          <summary>What is ClankeR?</summary>
+          <p>ClankeR lets contributors lend their own local AI CLI subscription to a hive. They run <code>just contribute-hive</code>; the relay connects to <code>/api/contribute/ws</code>, accepts one task at a time, works locally, and reports PR metadata back. The contributor's credentials stay on their machine; Hive mints short-lived task-scoped GitHub tokens for accepted tasks. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">ClankeR contributor relay</a>.</p>
+          <p>Trust is tiered. Newcomers start rate-limited; contributors auto-promote after completed PR tasks; trusted, merger, and advisor tiers are maintainer/operator grants. Delegated roles are bounded by tier, explicit grants, and the hive allow-list at <code>hub.contribute_delegatable_roles</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-trust-and-roles.md" target="_blank" rel="noopener noreferrer">contributor trust and roles</a>.</p>
+        </details>
 
-        <h4 style="font-size:0.95rem;margin:var(--sp-0) var(--sp-0) var(--sp-3)">What should my first week look like?</h4>
-        <ol style="margin:var(--sp-0) var(--sp-0) var(--sp-6);padding-left:var(--sp-7)">
-          <li>Start at L1 for inception or L2 for advisory calibration.</li>
-          <li>Let the ledger populate, then scan for 🔴/🟠 without assuming list order means priority.</li>
-          <li>Audit a few findings with a local agent you control.</li>
-          <li>Advance to L3 when you trust the findings and want Hive to build the test/CI safety net.</li>
-          <li>Review hold-gated PRs before considering L4–L6.</li>
-        </ol>
-        <p class="m-0">For operator setup and community-facing contributor flows, start with <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hosted-hub.md" target="_blank" rel="noopener noreferrer">hosted hub</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/getting-started.md" target="_blank" rel="noopener noreferrer">getting started</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/troubleshooting.md" target="_blank" rel="noopener noreferrer">troubleshooting</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay</a>.</p>
+        <details class="faq-q" id="faq-model-gateway">
+          <summary>What is a Model Gateway? Can I use OpenRouter instead of a CLI login?</summary>
+          <p><strong>Yes.</strong> Agents use one of two method families: subscription CLIs (<code>claude</code>, <code>copilot</code>, <code>gemini</code>, <code>goose</code>) that you log into once from the dashboard, and inference endpoints (<code>vllm</code>, <code>llm-d</code>, <code>litellm</code>, <code>openrouter</code>) that need only a base URL and a key reference. A <em>Model Gateway</em> is a named inference endpoint configured under <strong>Settings → Governor → Model Gateways</strong>; the OpenRouter gateway works with a key or the scan-to-fund flow and no CLI login, and the key value lives in <code>/data/secrets/</code>, never in YAML. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#methods-subscription-clis-vs-self-hosted-inference" target="_blank" rel="noopener noreferrer">subscription CLIs vs self-hosted inference</a> and <a href="https://github.com/hivecommons/hive/blob/v5/docs/inference-backends.md" target="_blank" rel="noopener noreferrer">inference backends</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="footprint">
+        <h3 class="faq-group-title">Issue claims, attribution and the audit log</h3>
+
+        <details class="faq-q" id="faq-claims">
+          <summary>Why did an agent comment on or label my issue as claimed?</summary>
+          <p>Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply visible <code>hive/claimed-by-&lt;agent&gt;</code> and <code>hive/in-progress</code> labels (with a timestamped <code>hive:claim</code> start marker) and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
+          <p>Claims are issue writes, so they require the same ACMM issue-writing permission as comments and issue creation. The optional claim-expiry feature is default-off under <code>governor.claims.enabled</code>; when off, ordinary work assignment still relies on the existing queue/lease rules.</p>
+        </details>
+
+        <details class="faq-q" id="faq-footprint">
+          <summary>How much GitHub footprint should I expect?</summary>
+          <p>At L2, expect only the 🐝 Hive Advisory Report issue and its digest comment. Higher levels add App-bot authored issues, comments, PRs, hold labels, review verdicts, claim labels, and — at L6 — auto-merge when checks pass for eligible App-authored PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md" target="_blank" rel="noopener noreferrer">hive-open-pr</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/github-write-surface.md" target="_blank" rel="noopener noreferrer">GitHub write surface</a>.</p>
+          <p class="faq-muted">Two GitHub-adjacent toggles are intentionally default-off. Audit finding publication requires <code>publication.enabled</code> and still refuses sensitive findings unless <code>publication.private_channel</code> is configured. Plan-match reviews require <code>review.plan_match.enabled</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-campaign.md" target="_blank" rel="noopener noreferrer">audit campaign</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md#which-levels-may-publish-audit-findings" target="_blank" rel="noopener noreferrer">publication level rules</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/planning-intelligence.md" target="_blank" rel="noopener noreferrer">planning intelligence</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-attribution">
+          <summary>What does the attribution trailer do?</summary>
+          <p>Every PR the hive opens ends with a <code>— hive:</code> line naming the agent and, when known, its backend, model, effort, tool versions, session and who requested the work, so a reader can tell at a glance which agent and model produced it. The trailer is controlled by <code>governor.attribution_trailer</code> (default on); turning it off hides the visible line but the matching <code>agent_pr_created</code> audit entry is written regardless, so attribution is never lost. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md#the-opened-pr-carries-an-attribution-trailer" target="_blank" rel="noopener noreferrer">the attribution trailer</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-audit">
+          <summary>Where is the audit log, and how do I find out who did something?</summary>
+          <p>The <strong>Audit Log</strong> section of this dashboard reads <code>/data/audit.jsonl</code>, one JSON line per action, newest first, with a search box (words are OR'd; <code>/regex/</code> works) and a <strong>Sensitive only</strong> filter. Each entry's <code>user</code> is who performed it — a GitHub login, or a pseudo-user such as <code>system</code> for automated paths — and GitHub writes also carry <code>repo</code> and <code>target</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/audit-log.md" target="_blank" rel="noopener noreferrer">audit log format</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#audit-log" target="_blank" rel="noopener noreferrer">the Audit Log section</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="cost">
+        <h3 class="faq-group-title">Cost, cadence and pausing</h3>
+
+        <details class="faq-q" id="faq-cost-level">
+          <summary>My spend jumped after I raised my ACMM level. How do I manage cost?</summary>
+          <p><strong>Higher levels increase throughput and spend by design.</strong> The strongest lever is cadence: the Governor grid sets each agent's interval per mode (idle, quiet, busy, surge). Widening busy/surge from <code>1h</code> to <code>6h</code> roughly cuts that agent's kick count sixfold; <code>0</code> disables that agent in that mode. Cadences use Go durations, so write one day as <code>24h</code>, not <code>1d</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#cadences-and-the-governor" target="_blank" rel="noopener noreferrer">cadences and the governor</a>.</p>
+          <p>Budgets are token budgets, not dollar budgets. <code>governor.budget.total_tokens</code> set to 0 disables budget tracking; otherwise the governor warns near <code>governor.budget.critical_pct</code> and suppresses kicks at 100% until the <code>governor.budget.period_days</code> window resets. The mode thresholds that decide idle/quiet/busy/surge scale by repo count unless you pin them; see <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a>.</p>
+          <p>Move routine agents to cheaper backends or models when the work allows it. The agent card and Governor grid expose backend, model, and effort; model rotation is opt-in under <code>governor.rotation.enabled</code>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-cadence">
+          <summary>Does a shorter cadence make an agent work harder?</summary>
+          <p><strong>No. Cadence is the wait between runs, not a maximum run length.</strong> A busy agent facing a deep queue can run, finish, and be kicked again soon after; widening cadence spreads the same queue over more wall-clock time. A growing backlog can also push the governor from idle to quiet to busy to surge, selecting shorter cadence columns without any per-agent setting changing. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md#cadences-and-the-governor" target="_blank" rel="noopener noreferrer">cadences</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-first-day-cost">
+          <summary>Is the first day supposed to cost this much?</summary>
+          <p>Yes. A first run against a mature repo is a backlog drain: old technical debt appears all at once, agents have enough queued work to stay busy, and the governor may choose busy/surge. Steady-state cost should fall as the queue drains. If you need to slow the spike, start lower, widen cadences before the first run, pause nonessential agents, or set a real token budget. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/governor-thresholds.md" target="_blank" rel="noopener noreferrer">governor thresholds</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-where-money">
+          <summary>Where did the money actually go?</summary>
+          <p>Use the 💵 Cost section for estimated spend by timeframe, then drill into agent cards and Prior Prompts to see what each kick was asked to do. Treat cost as attribution, not an invoice: token counts and list prices can diverge from subscriptions, discounts, and self-hosted inference. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/telemetry.md" target="_blank" rel="noopener noreferrer">telemetry</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#cost" target="_blank" rel="noopener noreferrer">the Cost section</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-pause">
+          <summary>How do I pause the whole hive, or stop one agent?</summary>
+          <p>Three stops, smallest to largest: the <strong>⏸</strong> button on an agent's card in the Agents section pauses that agent; the <strong>⏸ pause</strong> button on a Projects card stops every agent working that one repository (owner only, asks for a reason); and the <strong>fleet breaker</strong> chip in the top bar pauses every running agent at once (owner only) and, when released, resumes only the agents it paused. None of these is a merge brake — PRs already open keep their own state — and the dashboard, heartbeats and polling keep running. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/operator-reference.md#fleet-breaker" target="_blank" rel="noopener noreferrer">fleet breaker</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/repo-pause.md" target="_blank" rel="noopener noreferrer">per-repo pause</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/running-at-level-6.md#stops-smallest-to-largest" target="_blank" rel="noopener noreferrer">stops, smallest to largest</a>.</p>
+        </details>
+        </section>
+
+        <section class="faq-group" data-faq-group="help">
+        <h3 class="faq-group-title">Where to get help</h3>
+
+        <details class="faq-q" id="faq-guide-agent">
+          <summary>Why couldn't the Guide agent answer my Hive questions?</summary>
+          <p>Because the guide agent documents your project, not Hive itself. It audits your README, getting-started, architecture, and contributing docs; it does not operate the hive or explain ACMM policy. For Hive operations, use these docs and the dashboard. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/agent-configuration.md" target="_blank" rel="noopener noreferrer">agent configuration</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-first-week">
+          <summary>What should my first week look like?</summary>
+          <ol class="faq-list">
+            <li>Start at L1 for inception or L2 for advisory calibration.</li>
+            <li>Let the ledger populate, then scan for 🔴/🟠 without assuming list order means priority.</li>
+            <li>Audit a few findings with a local agent you control.</li>
+            <li>Advance to L3 when you trust the findings and want Hive to build the test/CI safety net.</li>
+            <li>Review hold-gated PRs before considering L4–L6.</li>
+          </ol>
+          <p>For operator setup and community-facing contributor flows, start with <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hosted-hub.md" target="_blank" rel="noopener noreferrer">hosted hub</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/getting-started.md" target="_blank" rel="noopener noreferrer">getting started</a>, <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/troubleshooting.md" target="_blank" rel="noopener noreferrer">troubleshooting</a>, and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md" target="_blank" rel="noopener noreferrer">contributor relay</a>.</p>
+        </details>
+        </section>
+
+        <p id="faq-empty" class="faq-empty" hidden>No question matches that filter.</p>
+
+        <div class="faq-footer">
+          <strong>Was this answered?</strong> If not, ask on <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Discord</a>,
+          <button type="button" class="faq-footer-link" data-action="openFeedbackModal" data-arg0="bug">report it from this dashboard</button>,
+          or <a class="text-accent fw-semibold" href="https://github.com/hivecommons/hive/issues/new/choose" target="_blank" rel="noopener noreferrer">open an issue</a> — a missing FAQ entry is a docs bug.
+        </div>
 
       </div>
     </div>
@@ -7321,7 +7491,7 @@
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
       'agents-section': { heading: 'Agents', help: 'Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.' },
       'agent-activity-section': { heading: 'Agent activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
-      'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people most often ask when they start using Hive.' },
+      'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people ask once a hive is running, each linking to the guide that explains it fully.' },
     });
     // The one place that decides where dashboard help lives: every help mark and
     // Overview "Learn more" link is built here, so moving them (for example to
@@ -17421,6 +17591,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const key = String(label || '').toLowerCase();
       if (HF_LABEL_TONE[key]) return 'hf-label-' + HF_LABEL_TONE[key];
       if (/^hold(\/|$)|^on-hold$|hold\//.test(key)) return 'hf-label-hold';
+      if (key === 'stage/stalled' || key === 'stage/regressed') return 'hf-label-hold';
       return '';
     }
     function hfDefaultStore() {
@@ -22065,8 +22236,8 @@ function burnAreaChart() {
     // Evidence sub-panel (#12064, RFC #12062): read-only reporting from
     // /api/evidence/summary for the Throughput window and repo selector.
     // Panels 1 (outcome by author kind), 2 (reviewer calibration), 3 (reviewer
-    // accuracy × model) and 8 (shadow gates). UI only; nothing here changes
-    // merge behaviour.
+    // accuracy × model), 4 (boundary enforcement) and 8 (shadow gates). UI only;
+    // nothing here changes merge behaviour.
     const EV_PALETTE_SIZE = 6;
     let evLast = null;
 
@@ -22171,6 +22342,10 @@ function burnAreaChart() {
     const EV_REVERT_FAIR = 0.15;            // ≤ → Fair, above → Weak
     const EV_SHADOW_FALSE_ALARM_STRONG = 0.25; // held-but-merged-clean share ≤ → Strong
     const EV_SHADOW_FALSE_ALARM_FAIR = 0.5;    // ≤ → Fair, above → Weak
+    const EV_BALANCE_STRONG = 0.8;          // issues closed ÷ issues opened ≥ → Strong
+    const EV_BALANCE_FAIR = 0.5;            // ≥ → Fair, below → Weak
+    const EV_BLOCKED_STRONG = 0.05;         // proxy-blocked share of attempted agent writes ≤ → Strong
+    const EV_BLOCKED_FAIR = 0.15;           // ≤ → Fair, above → Weak
     const EV_DATA_SINCE = '2026-10-08';     // first evidence bundles were written
     const EV_REVERTS_SINCE = '2026-10-15';  // reverted_by links recorded from this date
     const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };
@@ -22294,6 +22469,54 @@ function burnAreaChart() {
           good: `Few disagreements: CI not green on ${Math.round(EV_ERR_STRONG * 100)}% or less of the PRs with captured checks is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. A non-approve verdict is not proof the agent was wrong, so the swarm column is shown but not graded.`,
           ours: `${claimed} agent PRs claimed done across ${weeks.length} week(s). Of ${ciCaptured} with captured checks, ${ciNotGreen} had CI not green (${evPct(ciRate)}); ${notApprove} got a non-approve verdict (${evPct(swarmRate)} of claimed); ${both} had both.${emptyCI ? ` ${emptyCI} record(s) had empty CI and are left out of the CI column.` : ''} ${evLimitsSentence()}`,
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent PRs with captured checks` : `CI not green on ${evPct(ciRate)} of ${ciCaptured} PRs with checks`,
+        };
+      },
+      'work-balance': (dto) => {
+        const weeks = (Array.isArray(dto.work_balance) ? dto.work_balance : []).filter((w) => w && Number(w.n) > 0);
+        const opened = { human: 0, agent: 0, bot: 0 };
+        let closed = 0;
+        weeks.forEach((w) => {
+          Object.keys(opened).forEach((k) => { opened[k] += Number((w.opened || {})[k]) || 0; });
+          closed += Number(w.closed) || 0;
+        });
+        const openedTotal = opened.human + opened.agent + opened.bot;
+        const ratio = evRate(closed, openedTotal);
+        const grade = evGrade(ratio, openedTotal, EV_BALANCE_STRONG, EV_BALANCE_FAIR, true);
+        const hrs = evWindowHours();
+        const short = hrs <= EV_SHORT_WINDOW_HOURS ? ` Only ${hrs}h of data is in this window, so treat the grade as an early read.` : '';
+        const throttle = (dto.missing || {}).throttle_windows_unavailable === false ? 'Shaded weeks are governor throttle windows.' : 'This hive reports no issue-creation throttle windows, so no weeks are shaded.';
+        return {
+          matters: 'Agents that file issues faster than anyone closes them are amplifying work, not doing it. Watching opened against closed, by who opened them, shows whether the backlog is growing because of the agents.',
+          measured: 'Each week, how many issues were opened — split by whether a human, an AI agent or a bot (the hive\u2019s own automation) opened them — against how many issues were closed in the same week.',
+          how: `We read the hive\u2019s audit log for the selected window and repo, the same entries behind the Throughput card. Issue creates by the issue-request watcher count as agent, issues the hive files itself (advisory, ACMM gaps) count as bot, and audited closes count as closed. Bars are opened stacked by kind; the line is closed. ${throttle}`,
+          good: `Closed keeping pace with opened: closed ÷ opened at or above ${Math.round(EV_BALANCE_STRONG * 100)}% is Strong, ${Math.round(EV_BALANCE_FAIR * 100)}% or more is Fair, below that Weak. Agent-opened issues should not dwarf human-opened ones for long.`,
+          ours: `${openedTotal} issues opened across ${weeks.length} week(s) (human ${opened.human} · agent ${opened.agent} · bot ${opened.bot}) and ${closed} closed (${evPct(ratio)} of opened). Only hive-mediated issue writes are audited: issues humans or other bots open directly on GitHub are not observed, so the human column is a floor, and nothing is weighted by size or by whether an agent-opened issue was acted on.${short}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} audited issue opens` : `${closed} closed for ${openedTotal} opened (${evPct(ratio)})`,
+        };
+      },
+      'boundary-enforcement': (dto) => {
+        const counters = dto.write_counters && typeof dto.write_counters === 'object' ? dto.write_counters : {};
+        let attempted = 0, blocked = 0;
+        const reasons = {};
+        const tiers = Object.keys(counters).filter((k) => counters[k] && (Number(counters[k].attempted) > 0 || Number(counters[k].blocked) > 0));
+        tiers.forEach((k) => {
+          const c = counters[k];
+          attempted += Number(c.attempted) || 0; blocked += Number(c.blocked) || 0;
+          Object.entries(c.blocked_by_reason || {}).forEach(([r, v]) => { reasons[r] = (reasons[r] || 0) + (Number(v) || 0); });
+        });
+        const topReason = Object.entries(reasons).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+        const sentinel = dto.sentinel_hits_per_week || {};
+        const sentinelWeeks = Array.isArray(sentinel.weeks) ? sentinel.weeks : [];
+        const sentinelHits = sentinelWeeks.reduce((sum, wk) => sum + (Number(wk && wk.hits) || 0), 0);
+        const blockedRate = evRate(blocked, attempted);
+        const grade = evGrade(blockedRate, attempted, EV_BLOCKED_STRONG, EV_BLOCKED_FAIR, false);
+        return {
+          matters: 'Agents are only allowed to change GitHub through a proxy that enforces the trust tiers. If the proxy is blocking a lot, agents are repeatedly trying things they are not allowed to do; if it never blocks, either the agents are well behaved or the boundary is not being exercised.',
+          measured: 'Two things. First, every GitHub write an agent attempted through the proxy, per trust tier, and how many of those the proxy refused and why. Second, how many evidence records per week carry a "sentinel hit" — a canary that fires when an agent touched something it should not have.',
+          how: 'The proxy keeps a running tally per tier of attempted and blocked writes, with blocked split by refusal reason; bars show blocked as a share of attempted. Sentinel hits are counted from the newest evidence record per PR in the chosen window and grouped by ISO week.',
+          good: `Blocked at or below ${Math.round(EV_BLOCKED_STRONG * 100)}% of attempted writes is Strong, ${Math.round(EV_BLOCKED_FAIR * 100)}% or less is Fair, above that Weak. The sentinel line should sit at zero; any hit is worth reading the record for.`,
+          ours: `${attempted} agent writes attempted across ${tiers.length} tier(s), ${blocked} blocked (${evPct(blockedRate)})${topReason ? `, most often for ${topReason[0]} (${topReason[1]})` : ''}. ${sentinel.n ? `${sentinel.n} record(s) with ${sentinelHits} sentinel hit(s)` : 'No sentinel hits'} in this window. Write counters are all-time proxy totals and do not follow the selected window; direct writes that bypass the proxy are not seen at all.`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} attempted writes` : `${evPct(blockedRate)} of ${attempted} attempted writes blocked`,
         };
       },
     };
@@ -22469,6 +22692,55 @@ function burnAreaChart() {
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Shadow gates: PRs the review gate or intent verification would have stopped or passed, by actual outcome">${body}</svg><div class="ev-legend"><span><i class="sm"></i>merged</span><span><i class="sr"></i>merged, later reverted</span><span><i class="so"></i>still open</span></div>`;
     }
 
+    // Panel 4 (#12368): boundary enforcement — the N behind "nothing bad
+    // happened". Attempted vs blocked agent writes per intent tier from the
+    // proxy's durable counter file, plus sentinel hits per ISO week from the
+    // bundles. Counters are proxy-side observations; nothing here gates.
+    const EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];
+    const EV_TOP_REASONS = 3;
+    function evWriteCountersSvg(counters) {
+      if (!counters || typeof counters !== 'object') return '<div class="ev-empty">— no write counters yet (the proxy has not recorded an agent write, or the counter file is absent)</div>';
+      const tiers = EV_WRITE_TIERS.concat(Object.keys(counters).filter((k) => !EV_WRITE_TIERS.includes(k)).sort());
+      const rows = tiers.map((tier) => {
+        const c = counters[tier] || {};
+        const reasons = Object.entries(c.blocked_by_reason || {}).map(([k, v]) => [k, Number(v) || 0]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+        const idx = EV_WRITE_TIERS.indexOf(tier);
+        return { tier, label: idx >= 0 ? `${idx} · ${tier}` : tier, attempted: Number(c.attempted) || 0, blocked: Number(c.blocked) || 0, reasons };
+      }).filter((r) => r.attempted > 0 || r.blocked > 0);
+      if (!rows.length) return '<div class="ev-empty">— no agent writes recorded by the proxy yet</div>';
+      const w = EV_SVG_W, label = 118, valW = 56, barH = 7, gap = 2, rowH = 2 * (barH + gap) + 6, t = 4;
+      const barW = w - label - valW;
+      const h = t + rows.length * rowH;
+      const maxN = Math.max(1, ...rows.map((r) => r.attempted));
+      const pct = (num, den) => { const v = evRate(num, den); return v == null ? '—' : Math.round(v * 100) + '%'; };
+      const body = rows.map((row, i) => {
+        const y0 = t + i * rowH;
+        const top = row.reasons.slice(0, EV_TOP_REASONS).map(([k, v]) => `${k} ${v}`).join(', ');
+        const tip = escapeHtml(`tier ${row.label}: attempted ${row.attempted} · blocked ${row.blocked} (${pct(row.blocked, row.attempted)})${top ? ` · top reasons: ${top}` : ''}`);
+        const bar = (cls, v, k, txt) => {
+          const yy = y0 + k * (barH + gap);
+          return `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${((v / maxN) * barW).toFixed(1)}" height="${barH}"><title>${tip}</title></rect><text x="${w - 2}" y="${yy + barH}" text-anchor="end">${txt}</text>`;
+        };
+        return `<g><text x="0" y="${y0 + 13}">${escapeHtml(row.label.slice(0, 22))}<title>${tip}</title></text>${bar('wa', row.attempted, 0, row.attempted)}${bar('wb', row.blocked, 1, `${row.blocked} · ${pct(row.blocked, row.attempted)}`)}</g>`;
+      }).join('');
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Boundary enforcement: attempted versus proxy-blocked agent writes per intent tier">${body}</svg><div class="ev-legend"><span><i class="wa"></i>attempted</span><span><i class="wb"></i>blocked by proxy</span><span>hover a row for the top block reasons</span></div>`;
+    }
+
+    function evSentinelSparkline(series) {
+      const weeks = (series && Array.isArray(series.weeks) ? series.weeks : []).map((wk) => ({ week: String((wk && wk.week) || ''), hits: Number(wk && wk.hits) || 0 }));
+      if (!weeks.length) return '<div class="ev-empty">— no sentinel hits recorded in this window</div>';
+      const w = EV_SVG_W, h = 44, l = 4, r = 4, t = 6, b = 14;
+      const pw = w - l - r, ph = h - t - b;
+      const maxHits = Math.max(1, ...weeks.map((wk) => wk.hits));
+      const x = (i) => l + (weeks.length > 1 ? (i * pw) / (weeks.length - 1) : pw / 2);
+      const y = (v) => t + ph - (v / maxHits) * ph;
+      const pts = weeks.map((wk, i) => `${x(i).toFixed(1)},${y(wk.hits).toFixed(1)}`).join(' ');
+      const dots = weeks.map((wk, i) => `<circle class="ev-pt" cx="${x(i).toFixed(1)}" cy="${y(wk.hits).toFixed(1)}" r="2.5"><title>${escapeHtml(`week of ${wk.week}: ${wk.hits} sentinel hit(s)`)}</title></circle>`).join('');
+      const first = weeks[0].week, last = weeks[weeks.length - 1].week;
+      const total = weeks.reduce((sum, wk) => sum + wk.hits, 0);
+      return `<svg class="ev-svg ev-spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Sentinel hits per ISO week"><g class="ev-c3">${weeks.length > 1 ? `<polyline class="ev-line" points="${pts}"/>` : ''}${dots}</g><text x="${l}" y="${h - 3}">${escapeHtml(first)}</text><text x="${w - r}" y="${h - 3}" text-anchor="end">${escapeHtml(last)}</text></svg><div class="ev-legend"><span class="ev-c3"><i class="dot"></i>sentinel hits per ISO week (UTC Monday) · ${total} in ${weeks.length} week(s) · peak ${maxHits}</span></div>`;
+    }
+
     // Panel 5 (#12365): claim vs verdict. Each ISO week of agent-authored PRs
     // gets grouped bars: claimed done (every agent PR), CI not green (captured
     // checks only), swarm not approve, and both. Read-only; no gate reads it.
@@ -22503,6 +22775,49 @@ function burnAreaChart() {
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Claim vs verdict: agent-authored PRs per week that claimed done against CI not green and swarm not approve">${grid}${body}</svg><div class="ev-legend">${legend}</div>`;
     }
 
+    // Panel 6 (#12366): work balance. Each ISO week gets one bar of issues
+    // opened, stacked by actor kind (human / agent / bot), and a closed-count
+    // line over the top. Throttle shading is drawn only for weeks the API
+    // flags as throttled; this hive reports none today. Read-only.
+    function evWorkBalanceSvg(weeks) {
+      const rows = (Array.isArray(weeks) ? weeks : []).filter((w) => w && Number(w.n) > 0);
+      if (!rows.length) return '<div class="ev-empty">— no audited issue opens or closes in this window</div>';
+      const kinds = [['human', 'wb-human', 'opened by humans'], ['agent', 'wb-agent', 'opened by agents'], ['bot', 'wb-bot', 'opened by bots']];
+      const w = EV_SVG_W, h = 150, l = 26, r = 6, t = 8, b = 22;
+      const pw = w - l - r, ph = h - t - b;
+      const groupW = pw / rows.length;
+      const barW = Math.max(2, groupW * 0.6);
+      const opened = (row) => kinds.reduce((sum, [k]) => sum + (Number((row.opened || {})[k]) || 0), 0);
+      const maxN = Math.max(1, ...rows.map((row) => Math.max(opened(row), Number(row.closed) || 0)));
+      const y = (v) => t + ph - (v / maxN) * ph;
+      const cx = (i) => l + i * groupW + groupW / 2;
+      let grid = '';
+      [0, 0.5, 1].forEach((f) => {
+        const v = Math.round(maxN * f);
+        grid += `<line class="ev-axis" x1="${l}" x2="${w - r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text x="${l - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`;
+      });
+      const body = rows.map((row, i) => {
+        const o = row.opened || {};
+        const closed = Number(row.closed) || 0;
+        const tip = escapeHtml(`${row.week}: opened ${opened(row)} (human ${Number(o.human) || 0} · agent ${Number(o.agent) || 0} · bot ${Number(o.bot) || 0}) · closed ${closed} · n=${Number(row.n) || 0}`);
+        const shade = row.throttled ? `<rect class="ev-bar wb-throttle" x="${(l + i * groupW).toFixed(1)}" y="${t}" width="${groupW.toFixed(1)}" height="${ph}"><title>${tip}</title></rect>` : '';
+        let acc = 0;
+        const stack = kinds.map(([k, cls]) => {
+          const v = Number(o[k]) || 0;
+          if (!(v > 0)) return '';
+          const top = y(acc + v), bottom = y(acc);
+          acc += v;
+          return `<rect class="ev-bar ${cls}" x="${(cx(i) - barW / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${(bottom - top).toFixed(1)}"><title>${tip}</title></rect>`;
+        }).join('');
+        const label = rows.length > 8 ? String(row.week || '').replace(/^\d{4}-/, '') : String(row.week || '');
+        return `<g>${shade}${stack}<text x="${cx(i).toFixed(1)}" y="${h - 6}" text-anchor="middle">${escapeHtml(label)}<title>${tip}</title></text></g>`;
+      }).join('');
+      const closedPts = rows.map((row, i) => `${cx(i).toFixed(1)},${y(Number(row.closed) || 0).toFixed(1)}`);
+      const closedLine = `<g class="wb-closed">${rows.length > 1 ? `<polyline class="ev-line" points="${closedPts.join(' ')}"/>` : ''}${closedPts.map((pt) => `<circle class="ev-pt" cx="${pt.split(',')[0]}" cy="${pt.split(',')[1]}" r="2.5"/>`).join('')}</g>`;
+      const legend = kinds.map(([, cls, label]) => `<span><i class="${cls}"></i>${label}</span>`).join('') + '<span class="wb-closed"><i class="dot"></i>closed</span>';
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Work balance: issues opened per week stacked by human, agent and bot, against issues closed">${grid}${body}${closedLine}</svg><div class="ev-legend">${legend}</div>`;
+    }
+
     function renderEvidenceSummary(dto) {
       const card = document.getElementById('evidence-card');
       if (!card) return;
@@ -22514,11 +22829,17 @@ function burnAreaChart() {
       const modelN = models.reduce((sum, m) => sum + (Number(m && m.n) || 0), 0);
       const unknown = Number((dto.missing || {}).verdicts_model_unknown) || 0;
       const shadow = dto.shadow_gate || {};
+      const counters = dto.write_counters && typeof dto.write_counters === 'object' ? dto.write_counters : null;
+      const attemptedN = counters ? Object.keys(counters).reduce((sum, k) => sum + (Number(counters[k] && counters[k].attempted) || 0), 0) : 0;
+      const sentinel = dto.sentinel_hits_per_week || {};
       const outcomes = dto.outcomes_by_author_kind || {};
       const outcomeN = Object.keys(outcomes).reduce((sum, k) => sum + (Number(outcomes[k] && outcomes[k].n) || 0), 0);
       const claims = Array.isArray(dto.claim_vs_verdict) ? dto.claim_vs_verdict : [];
       const claimN = claims.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
       const emptyCI = Number((dto.missing || {}).records_empty_ci) || 0;
+      const balance = Array.isArray(dto.work_balance) ? dto.work_balance : [];
+      const balanceN = balance.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
+      const throttleNote = (dto.missing || {}).throttle_windows_unavailable === false ? 'Shaded weeks are governor issue-creation throttle windows.' : 'Throttle windows not reported by this hive, so no weeks are shaded.';
       const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
@@ -22527,8 +22848,12 @@ function burnAreaChart() {
           'Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. Merged is not the same as correct, and a PR that is still open counts as not merged.')
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
           `Outcome is merged vs not merged, not ground truth: a block that was later fixed and merged counts as a false block, and an approval on a still-open PR counts as a false approve.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
+        + evPanel('boundary-enforcement', 'Boundary enforcement', attemptedN, evWriteCountersSvg(counters) + evSentinelSparkline(sentinel),
+          'Write counters are proxy-side observations of agent GitHub writes since the counter file was created (all-time totals, reset only with the weekly file; they do not follow the Throughput window), so direct writes that bypass the proxy are invisible here. Would-block counts from intent verification are not included in these bars; only writes the proxy actually blocked are. Sentinel hits come from evidence bundles in the window. Blocked is not the same as harmful.')
         + evPanel('claim-vs-verdict', 'Claim vs verdict', claimN, evClaimVsVerdictSvg(claims),
           `Only agent-authored PRs; opening or marking a PR ready is taken as the agent claiming done. CI conclusion is as captured at merge-eligibility evaluation, not the final run, and a PR with no captured checks is left out of the CI column rather than counted as agreement${emptyCI ? ` (${emptyCI} record(s) in this window had empty CI)` : ''}. A non-approve verdict is not proof the agent was wrong.`)
+        + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance),
+          `Issues only, from this hive's audit log: issues humans or third-party bots open directly on GitHub are not observed, so the human column only counts hive-mediated opens. Nothing is weighted by size, and an agent-opened issue counts whether or not anyone acted on it. ${throttleNote}`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
           'Shadow mode only records; no merge was held or blocked. Closed-without-merge is not recorded in bundles, so a closed PR counts as still open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
@@ -22974,9 +23299,8 @@ function burnAreaChart() {
       }
 
       // Stats row
-      const snapPct = s.snapshotTarget ? Math.min(Math.round((s.snapshotCount / s.snapshotTarget) * 100), 100) : 0;
       html += '<div class="nous-stat-grid">';
-      html += `<div class="nous-stat"><div class="val">${s.snapshotCount || 0}</div><div class="lbl">Snapshots (${snapPct}% of baseline)</div></div>`;
+      html += `<div class="nous-stat"><div class="val">${s.snapshotCount || 0}</div><div class="lbl">State snapshots</div></div>`;
       html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles</div></div>`;
       html += `<div class="nous-stat"><div class="val">${ledger.length}</div><div class="lbl">Experiments</div></div>`;
       html += '</div>';
@@ -22985,7 +23309,7 @@ function burnAreaChart() {
       const ss = s.snapshotSummary;
       if (ss) {
         html += '<div class="nous-card mt-5">';
-        html += '<h3>Baseline Data</h3>';
+        html += '<h3>State history</h3>';
         const timeRange = ss.firstTs && ss.latestTs
           ? `${formatDashboardDate(ss.firstTs, {month:'short',day:'numeric'})} – ${formatDashboardDateTime(ss.latestTs, {month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'})}`
           : '';
@@ -23030,17 +23354,8 @@ function burnAreaChart() {
       // Data collection progress
       html += '<div class="nous-card mt-5">';
       html += '<h3>Data Collection</h3>';
-      html += `<div class="nous-progress"><div class="nous-progress-fill" style="width:${snapPct}%;background:var(--blue)"></div></div>`;
-      const snapCount = s.snapshotCount || 0;
-      const snapTarget = s.snapshotTarget || 672;
-      let snapText;
-      if (snapCount >= snapTarget) {
-        snapText = `Baseline complete \u00b7 ${snapCount} snapshots collected (target ${snapTarget})`;
-      } else {
-        snapText = `${snapCount} / ${snapTarget} snapshots \u2014 ${snapPct >= 75 ? (mode === 'observe' ? 'Baseline sufficient \u2014 switch to Suggest when ready' : 'Baseline sufficient') : 'Collecting baseline data'}`;
-      }
-      html += `<div style="font-size:0.72rem;color:var(--muted)">${snapText}</div>`;
-      html += '<div class="nous-pending-params">Observe records a snapshot of hive state every governor evaluation cycle to build a baseline; no experiments run until you switch to Suggest/Evolve and approve/apply proposals.</div>';
+      html += `<div style="font-size:0.72rem;color:var(--muted)">${s.snapshotCount || 0} snapshots recorded \u00b7 one per governor evaluation cycle, kept 24 h raw then hourly for 30 days</div>`;
+      html += '<div class="nous-pending-params">Observe records a snapshot of hive state every governor evaluation cycle (the hive-state time series). No experiments run until you switch to Suggest/Evolve and approve proposals.</div>';
 
       // Show experiment proposals from ledger
       const dryRuns = ledger.filter(e => e.type === 'dry_run').slice(-5);
@@ -26213,6 +26528,12 @@ function burnAreaChart() {
       if (e.confidence_band) metaBits.push(esc(String(e.confidence_band)));
       metaBits.push(reviewQueueAgeLabel(e.age_hours) + ' old');
       if (e.held) metaBits.push('held');
+      // Hive-owned stage/author labels (#12429) tell at a glance where the
+      // PR sits in the pipeline; other labels stay out of the meta line.
+      (Array.isArray(e.labels) ? e.labels : []).map(function(l) { return String(l || ''); })
+        .filter(function(l) { return /^(stage|author)\//.test(l.toLowerCase()); })
+        .sort()
+        .forEach(function(l) { metaBits.push('<span class="hf-label ' + hfLabelToneClass(l) + '" title="' + esc(l) + '">' + esc(l) + '</span>'); });
       var reasons = Array.isArray(e.reasons) ? e.reasons : [];
       var reasonsHtml = reasons.length
         ? '<ul class="review-queue-reasons">' + reasons.map(function(r) { return '<li>' + esc(String(r)) + '</li>'; }).join('') + '</ul>'
@@ -29185,7 +29506,34 @@ function burnAreaChart() {
 
     function renderFAQ() {
       refreshSectionCardShell('faq-section');
-      setSectionSummary('faq-section', '');
+      const n = document.querySelectorAll('#faq-panel details.faq-q').length;
+      setSectionSummary('faq-section', n ? `${n} questions` : '');
+    }
+
+    // Client-side filter for the FAQ panel: hides every <details class="faq-q">
+    // whose question or answer does not contain the typed text, hides groups
+    // that end up empty, and opens the matches so the hit is visible. Static
+    // content only — no fetch.
+    function faqFilter() {
+      const input = document.getElementById('faq-filter');
+      const panel = document.getElementById('faq-panel');
+      if (!input || !panel) return;
+      const q = (input.value || '').trim().toLowerCase();
+      let shown = 0;
+      const items = panel.querySelectorAll('details.faq-q');
+      items.forEach(d => {
+        const hit = !q || (d.textContent || '').toLowerCase().includes(q);
+        d.hidden = !hit;
+        if (hit && q) d.open = true;
+        if (hit) shown++;
+      });
+      panel.querySelectorAll('.faq-group').forEach(g => {
+        g.hidden = !!q && !g.querySelector('details.faq-q:not([hidden])');
+      });
+      const empty = document.getElementById('faq-empty');
+      if (empty) empty.hidden = shown > 0;
+      const count = document.getElementById('faq-filter-count');
+      if (count) count.textContent = q ? `${shown} of ${items.length}` : '';
     }
 
     function renderLogs() {
@@ -33545,6 +33893,8 @@ function burnAreaChart() {
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory fully autonomous' },
       { tab: 'General', section: 'Governor', label: 'Eval loop pacing', key: 'governor.eval_interval_max_s', text: 'eval interval max cap webhook conserve multiplier optional sweep every n cycles provider spend limit budget probe threshold ownership pack governor.eval_interval_s governor.eval_interval_max_s governor.eval_interval_webhook_s governor.conserve_interval_multiplier governor.optional_sweep_every_n_cycles governor.provider_budget.probe_interval_s governor.thresholds_source governor.explain_mode' },
       { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
+      { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled regressed author tier governor.labels.stage.enabled' },
+      { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
@@ -40211,6 +40561,12 @@ function burnAreaChart() {
       const writingGuide = (_configState.dirty.labels && _configState.dirty.labels.writing_guide !== undefined)
         ? _configState.dirty.labels.writing_guide
         : (_configState.data.writingGuide || '');
+      const stageLabelsOn = (_configState.dirty.labels && _configState.dirty.labels.stage_enabled !== undefined)
+        ? _configState.dirty.labels.stage_enabled
+        : (_configState.data.stageLabelsEnabled !== false);
+      const stageDwell = (_configState.dirty.labels && _configState.dirty.labels.stage_dwell !== undefined)
+        ? _configState.dirty.labels.stage_dwell
+        : (_configState.data.stageLabelsDwell || '');
       return `
         ${renderOutsideBucketsPanel(labels, requireLabels)}
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
@@ -40239,6 +40595,13 @@ function burnAreaChart() {
           <label for="cfg-automerge-label">Queue label ${yamlHint('governor.labels.automerge')} ${settingHelpMark('settings', 'labels', 'Auto-merge queue label', `The label a merger or owner queue action applies to a PR to queue it for auto-merge. Configurable because the label lives in the managed repository, where a convention may already exist (Prow-style projects use lgtm). Empty uses the default.`)}</label>
           <input type="text" id="cfg-automerge-label" value="${esc(automergeLabel)}" placeholder="${esc(_configState.data.automergeLabelDefault || 'lgtm')}" data-change-action="markDirty" data-arg0="labels" data-arg1="automerge" data-arg-types="s,s,w">
           <div class="config-help">Label applied by the merger queue; default is ${esc(_configState.data.automergeLabelDefault || 'lgtm')}. Requires restart.</div>
+        </div>
+        <h4 class="mt-6 mb-3">Stage labels</h4>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageLabelsOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_enabled"></div><span class="config-toggle-label">Hive-owned stage/NN labels ${yamlHint('governor.labels.stage.enabled')} ${settingHelpMark('settings', 'labels', 'Stage labels', `Each eval cycle the hive writes exactly one stage/NN-* label per open issue/PR (review-pending, reviewed, fixing, returned-to-contributor, adopted-by-hive, awaiting-merge-admission, needs-human, merge-queue), an author/* admission-tier label, and stage/stalled or stage/regressed when progress is disrupted. Writes happen only on change. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-field">
+          <label for="cfg-stage-dwell">Dwell overrides ${yamlHint('governor.labels.stage.dwell.<key>')}</label>
+          <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">
+          <div class="config-help">How long an item may sit in a stage before it gets <code>stage/stalled</code>; comma-separated <code>slug=duration</code>, <code>0</code> = never. Unset stages use the built-in table.</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>

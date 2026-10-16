@@ -68,6 +68,7 @@ jobs:
       (github.event_name != 'workflow_run' ||
        github.event.workflow_run.conclusion == 'success')
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
@@ -303,6 +304,7 @@ jobs:
     # merged, rather than the workflow silently doing nothing (#7693 §4).
     if: vars.V4_FEATURE_FREEZE != ''
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     steps:
       - name: Report the freeze
         env:

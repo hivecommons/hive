@@ -448,6 +448,12 @@ governor:
   labels:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
+    stage:                              # Hive-owned stage/NN-* pipeline labels (docs/labels-and-control-signals.md)
+      enabled: true                     # One stage label per open issue/PR, plus author/* and stage/stalled|regressed
+      # dwell:                          # Per-stage "stalled" thresholds by slug; 0 = never
+      #   review-pending: 1h
+      #   returned-to-contributor: 24h
+      #   awaiting-merge-admission: 30m  # a stall here = the lane, not the author; the hive comments the last skip reason
 
   # Optional: read actionable work from Linear instead of GitHub Issues.
   # Secrets should come from env interpolation, not literal values.

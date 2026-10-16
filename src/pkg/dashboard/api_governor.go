@@ -150,6 +150,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// default); automergeLabelDefault is the label used when it is empty.
 		"automergeLabel":        cfg.Governor.Labels.AutoMerge,
 		"automergeLabelDefault": config.DefaultAutoMergeLabel,
+		// stageLabelsEnabled/Dwell are governor.labels.stage (#12429).
+		"stageLabelsEnabled": cfg.Governor.Labels.Stage.IsEnabled(),
+		"stageLabelsDwell":   formatStageDwell(cfg.Governor.Labels.Stage.Dwell),
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -666,6 +669,11 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		// action applies. Empty restores the default. The GitHub client reads it
 		// at boot, so a change applies after a restart.
 		Automerge *string `json:"automerge"`
+		// StageEnabled/StageDwell are governor.labels.stage.enabled and
+		// governor.labels.stage.dwell ("slug=duration, ..."), read live by the
+		// automerge sweep so no restart is needed.
+		StageEnabled *bool   `json:"stage_enabled"`
+		StageDwell   *string `json:"stage_dwell"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -753,6 +761,14 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var stageDwell map[string]string
+	if body.StageDwell != nil {
+		var err error
+		if stageDwell, err = parseStageDwell(*body.StageDwell); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 	if body.WritingGuide != nil {
 		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
@@ -823,6 +839,13 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Automerge != nil {
 		s.deps.Config.Governor.Labels.AutoMerge = automerge
+	}
+	if body.StageEnabled != nil {
+		v := *body.StageEnabled
+		s.deps.Config.Governor.Labels.Stage.Enabled = &v
+	}
+	if body.StageDwell != nil {
+		s.deps.Config.Governor.Labels.Stage.Dwell = stageDwell
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)
@@ -3191,4 +3214,52 @@ func trimNonEmpty(in []string) []string {
 		}
 	}
 	return out
+}
+
+// formatStageDwell renders governor.labels.stage.dwell as "slug=dur, ..." in
+// stable order for the Settings field.
+func formatStageDwell(dwell map[string]string) string {
+	if len(dwell) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(dwell))
+	for k := range dwell {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+dwell[k])
+	}
+	return strings.Join(parts, ", ")
+}
+
+// parseStageDwell parses the Settings field back into the config map,
+// validating slugs against the stage table and durations with
+// time.ParseDuration. Empty input clears every override.
+func parseStageDwell(raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		slug, dur, ok := strings.Cut(part, "=")
+		slug, dur = strings.ToLower(strings.TrimSpace(slug)), strings.TrimSpace(dur)
+		if !ok || slug == "" || dur == "" {
+			return nil, fmt.Errorf("stage dwell %q must be slug=duration", part)
+		}
+		if !config.KnownStageSlug(slug) {
+			return nil, fmt.Errorf("stage dwell: unknown stage %q (known: %s)", slug, strings.Join(config.KnownStageSlugs(), ", "))
+		}
+		if d, err := time.ParseDuration(dur); err != nil || d < 0 {
+			return nil, fmt.Errorf("stage dwell %q: invalid duration", part)
+		}
+		out[slug] = dur
+	}
+	return out, nil
 }

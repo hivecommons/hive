@@ -2291,6 +2291,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
+		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
@@ -8626,6 +8627,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
+		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
@@ -8691,6 +8693,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 				logger.Info("contributor-lane automerge sweep complete", "seen", laneResult.Seen, "merged", len(laneResult.Merged), "skipped", laneResult.Skipped)
 			}
 		}
+	}
+	// Stage labels (#12429): the lanes above each recorded their per-PR
+	// reason into the process-shared tracker; one pass writes the labels.
+	if stageResult, stageErr := automerge.ApplyStageLabels(ctx, ghClient, opts); stageErr != nil {
+		logger.Warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
+	} else if stageResult.Writes+stageResult.Comments > 0 {
+		logger.Info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
