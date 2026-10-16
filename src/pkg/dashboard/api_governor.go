@@ -1366,7 +1366,12 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		cfg.Hub.DashboardURL = body.DashboardURL
 	}
 	if body.SnapshotURL != nil {
-		cfg.Hub.SnapshotURL = *body.SnapshotURL
+		normalized, err := config.ValidateSnapshotURL(*body.SnapshotURL)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		cfg.Hub.SnapshotURL = normalized
 	}
 	if body.IsPublic != nil {
 		cfg.Hub.IsPublic = *body.IsPublic

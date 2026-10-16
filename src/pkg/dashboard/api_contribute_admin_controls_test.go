@@ -746,3 +746,27 @@ func TestGovernorHubExplicitEmptySnapshotURLClears(t *testing.T) {
 		t.Errorf("snapshot_url = %q, want cleared by explicit empty string", got)
 	}
 }
+
+func TestGovernorHubSnapshotURLValidation(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Hub.SnapshotURL = "https://snap.example.com"
+
+	// Valid URL with trailing slash is normalized
+	putGovernorHub(t, s, `{"snapshot_url":"https://preview.example.com/snapshot/"}`)
+	if got := deps.Config.Hub.SnapshotURL; got != "https://preview.example.com/snapshot" {
+		t.Errorf("snapshot_url = %q, want trailing slash trimmed", got)
+	}
+
+	// Invalid URL is rejected with 400 and does not mutate existing value
+	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/hub", strings.NewReader(`{"snapshot_url":"ftp://bad.example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
+	w := httptest.NewRecorder()
+	s.handleGovernorHub(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("governor hub update got %d, want 400 (body: %s)", w.Code, w.Body.String())
+	}
+	if got := deps.Config.Hub.SnapshotURL; got != "https://preview.example.com/snapshot" {
+		t.Errorf("snapshot_url = %q, want unchanged after failed validation", got)
+	}
+}
