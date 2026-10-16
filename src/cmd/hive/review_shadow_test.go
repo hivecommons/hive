@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,4 +120,64 @@ func TestRecordReviewShadowRoundTrip(t *testing.T) {
 	// Shadow off or nil config: nothing happens, no panic.
 	recordReviewShadow(cfg, logger, pr, "org/repo", mergeGates{}, later)
 	recordReviewShadow(nil, logger, pr, "org/repo", mergeGates{shadowReview: true}, later)
+}
+
+// A configured but unreadable signing key must not downgrade the bundle: the
+// shadow write is skipped and a Warn line says so, instead of Seal(b, nil)
+// rewriting a signed bundle as unsigned.
+func TestRecordReviewShadowSigningKeyUnusable(t *testing.T) {
+	root := t.TempDir()
+	prev := github.ReviewEvidenceRoot
+	github.ReviewEvidenceRoot = root
+	t.Cleanup(func() { github.ReviewEvidenceRoot = prev })
+
+	at := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	pr := github.PullRequest{Number: 9, HeadSHA: "def"}
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion,
+		ID:            evidence.BundleID("org/repo", pr.Number, pr.HeadSHA),
+		Repo:          "org/repo", Number: pr.Number,
+		Author:  evidence.Author{Login: "a", Kind: evidence.AuthorHuman},
+		BaseSHA: "base", HeadSHA: pr.HeadSHA,
+		CreatedAt: at.Add(-time.Hour), UpdatedAt: at.Add(-time.Hour),
+	}
+	if err := evidence.Seal(b, priv); err != nil {
+		t.Fatal(err)
+	}
+	path := github.ReviewEvidencePath("", "org/repo", pr.Number, pr.HeadSHA)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{Review: config.ReviewConfig{Shadow: true}}
+	cfg.Evidence.SigningKeyFile = filepath.Join(root, "missing-key.pem")
+
+	recordReviewShadow(cfg, logger, pr, "org/repo", mergeGates{shadowReview: true, reviewLoaded: true}, at)
+
+	got, err := github.LoadReviewEvidence(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Signed || got.Signature == "" || got.Shadow != nil {
+		t.Fatalf("signed bundle rewritten with unusable key: signed=%v shadow=%+v", got.Signed, got.Shadow)
+	}
+	if !strings.Contains(buf.String(), "level=WARN") || !strings.Contains(buf.String(), "signing key unusable") {
+		t.Fatalf("expected Warn about unusable signing key, got %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "confidence=1") {
+		t.Fatalf("audit log line missing confidence: %q", buf.String())
+	}
 }
