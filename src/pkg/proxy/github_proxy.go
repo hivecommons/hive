@@ -1621,7 +1621,11 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			p.logTimeout("proxy upstream response read timed out", err, "agent", agentName, "path", req.URL.Path)
 			return
 		}
-		hgithub.RecordRESTRequest("agent:"+agentName, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
+		if p.injectGHAuth && agentName != internalCallerName {
+			hgithub.RecordInjectedRESTRequest("agent:"+agentName, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
+		} else {
+			hgithub.RecordRESTRequest("agent:"+agentName, req.Method, req.URL.Path, resp.StatusCode, resp.Header)
+		}
 		p.recordAgentGitHubBudget(agentName, req.URL.Path, resp.StatusCode, p.agentGitHubCap(agentName))
 
 		// Bound the BODY relay too, not just the header read above. The

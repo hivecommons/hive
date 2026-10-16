@@ -80,6 +80,17 @@ func (t *restAccountingTransport) RoundTrip(req *http.Request) (*http.Response, 
 }
 
 func RecordRESTRequest(caller, method, path string, status int, h http.Header) {
+	recordRESTRequest(caller, method, path, status, h, !strings.HasPrefix(caller, agentRESTCallerPrefix))
+}
+
+// RecordInjectedRESTRequest records an agent's request that was made with the
+// daemon's injected credential, so its rate-limit headers describe the
+// daemon's own core bucket and may update the shared snapshot.
+func RecordInjectedRESTRequest(caller, method, path string, status int, h http.Header) {
+	recordRESTRequest(caller, method, path, status, h, true)
+}
+
+func recordRESTRequest(caller, method, path string, status int, h http.Header, daemonCredential bool) {
 	if strings.TrimSpace(caller) == "" {
 		caller = "unknown"
 	}
@@ -101,7 +112,7 @@ func RecordRESTRequest(caller, method, path string, status int, h http.Header) {
 		charged:     charged,
 		notModified: notModified,
 		rateLimited: rateLimited,
-	}, h)
+	}, h, daemonCredential)
 }
 
 func RESTTopConsumers(limit int) []RESTConsumer {
@@ -117,11 +128,16 @@ func CoreRateLimitSnapshot() (remaining int, reset time.Time, ok bool) {
 	return sharedRESTAccounting().coreSnapshot()
 }
 
-func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header) {
+func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header, daemonCredential bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, ev)
 	s.pruneLocked(ev.at)
+	if !daemonCredential {
+		// A pass-through agent credential is a different bucket; it is kept
+		// in the per-caller events above but never moves the shared snapshot.
+		return
+	}
 	if strings.EqualFold(h.Get("X-RateLimit-Resource"), githubCoreRateLimitResource) || h.Get("X-RateLimit-Resource") == "" {
 		if !s.sameCoreBucketLocked(ev.caller, h) {
 			return
