@@ -9138,17 +9138,23 @@ func applyDuplicatePRGuard(
 		return
 	}
 	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
-	// hive/in-progress runs after the PR-claim guard so an issue whose PR just
-	// opened sheds the start mark here, and a lapsed mark frees the issue
-	// before kicks are built. Independent of governor.claims: the label is
-	// read from the issue, the marker from the comment, on every hive.
+	// The in-progress sweep runs after the PR-claim guard so an issue whose
+	// PR just opened sheds the start mark here, and a lapsed mark frees the
+	// issue before kicks are built. Independent of governor.claims: the
+	// label is read from the issue, the marker from the comment, on every hive.
 	if withheld := github.SweepInProgressIssues(ctx, ghClient, actionable, time.Now(), logger); withheld > 0 {
 		logger.Info("in-progress guard applied", "withheld", withheld)
+	}
+	// hivecommons/hive#12436: with every bucket final, mirror the cycle's
+	// decision about each open issue onto its stage/NNN label (and strip the
+	// retired claimed / hive/in-progress / 🐝 covered by PR labels).
+	if res := github.SyncIssueStageLabels(ctx, ghClient, actionable, nil, time.Now(), logger); res.Writes+res.Comments > 0 {
+		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments)
 	}
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
 }
 
-// inProgressSetting resolves the hive/in-progress label setting from config.
+// inProgressSetting resolves the pr-in-progress stage label setting from config.
 // The label follows the claims label mirror: an operator who set
 // governor.claims.label: false asked for no hive-managed claim labels, and
 // gets none here either; otherwise the start signal is always labelled. The
@@ -9331,6 +9337,12 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		return cfg.Governor.Claims.Enabled, cfg.Governor.Claims.EffectiveTTL()
 	})
 	client.SetInProgress(func() github.InProgressSetting { return inProgressSetting(cfg) })
+	// hivecommons/hive#12436: the issue stage reconciler follows the same
+	// governor.labels.stage policy as the PR one, read live.
+	client.SetIssueStageLabels(func() github.IssueStagePolicy {
+		p := stageLabelPolicyFunc(cfg)()
+		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell}
+	})
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },

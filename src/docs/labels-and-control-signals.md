@@ -198,6 +198,38 @@ stateDiagram-v2
     s100 --> [*]: merged (labels removed)
 ```
 
+### How an issue's stage is decided
+
+The enumeration cycle already sorts every open issue into a work bucket
+(actionable, live claim, in-progress start mark, covered by an open PR,
+filtered …) before the scanner kicks anything. `src/pkg/github/issue_stage_labels.go`
+(`SyncIssueStageLabels`, REST caller `hive:issue_stage_labels`) runs once per
+cycle after the claim guards and the in-progress sweep, so the buckets are
+final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12436)):
+
+| Enumeration bucket | Stage |
+|---|---|
+| carries `hive/likely-done` (a PR merged, awaiting confirmation) | no stage — every hive-owned label removed, timing forgotten |
+| actionable (no claim, no PR) | `010-actionable` |
+| live claim (`<!-- hive:claim … -->` marker / ledger) by a human or relay contributor | `020-claimed` |
+| live claim by one of the hive's own agents, or an in-progress start mark (`kind=agent` marker from `hive-open-issue claim`) | `030-pr-in-progress` |
+| covered by an open PR, PR not yet staged by the automerge sweep | `040-covered-by-pr` |
+| covered by an open PR the sweep has staged (≥ 050) | **mirrors the PR's stage** (`050-review-pending` … `100-merge-queue`) so the issue list reads the same as the PR list |
+| exempt / filtered / reporter triage / advisory / dependency dashboard | no stage |
+
+Labels come from the issue list payload the cycle already fetched — no
+per-issue GETs — and are written only when the planned set differs from the
+current one. When the stage is mirrored from a PR, `stage/stalled` and
+`stage/regressed` belong to the PR and are not written on the issue; when the
+issue falls back between its *own* stages (a claim or kick lapsed with no PR:
+030 → 010) it gets `stage/regressed` and one explanatory comment. The claim
+relay (`hive-open-issue claim`) writes `stage/020-claimed` /
+`stage/030-pr-in-progress` directly alongside `hive/claimed-by-<who>` so the
+label is right as soon as the claim lands; `hive-open-pr --issues` swaps 030
+for 040 when the PR opens; close-on-merge strips every hive-owned label from
+an issue it closes. Timing and mirroring share the PR engine's state file
+(`/data/stage-labels.json`, issues and PRs share a number space per repo).
+
 ### How a PR's stage is decided
 
 The automerge sweep already computes one reason per PR per lane each cycle
@@ -327,10 +359,12 @@ those labels — it uses the `<!-- hive:claim … -->` marker comment
 no gate. On the first cycle after upgrade the reconciler removes them from
 every open item it writes a stage for, so open items lose
 `claimed` / `hive/in-progress` / `🐝 covered by PR` and gain their stage label;
-the repo-level labels can be deleted afterwards. The issue-side stages
-(010–040), issue→PR mirroring and the retirement of the legacy writers land
-in the follow-up PR linked from #12429; until then the PR-side reconciler
-already removes the legacy labels from PRs it labels.
+the repo-level labels can be deleted afterwards. The legacy writers are gone:
+the claim relay and ledger mirror write `stage/020-claimed` /
+`stage/030-pr-in-progress`, the PR-claim sync writes `stage/040-covered-by-pr`,
+and the in-progress sweep still recognises `hive/in-progress` as a trigger for
+one migration cycle so a lapsed mark from an older spoke is cleared rather
+than orphaned. `hive/claimed-by-<who>` is kept as the grey "who" modifier.
 
 ## Matching rules
 

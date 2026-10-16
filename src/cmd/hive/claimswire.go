@@ -122,7 +122,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				}
 				if label {
 					run("preempted label", now, func(ctx context.Context, gh *github.Client) error {
-						return gh.AddLabels(ctx, now.Repo, now.Issue, []string{claims.LabelClaimed, claims.PreemptedLabel(previous.Holder)})
+						return gh.AddLabels(ctx, now.Repo, now.Issue, append(claimLabelsFor(now), claims.PreemptedLabel(previous.Holder)))
 					})
 				}
 			}()
@@ -159,16 +159,18 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 	}
 }
 
-// claimLabelsFor returns the labels mirrored onto an issue for a new claim:
-// `claimed` for every kind, plus hive/in-progress for a hive agent's own
-// claim — the agent claim is recorded on its start signal (#10527), which is
-// exactly the "an agent began a PR for this" instant the label states.
+// claimLabelsFor returns the stage label mirrored onto an issue for a new
+// claim (hivecommons/hive#12436): `stage/030-pr-in-progress` for a hive
+// agent's own claim — recorded on its start signal (#10527), which is exactly
+// the "an agent began a PR for this" instant — and `stage/020-claimed` for
+// every other kind. One stage label per issue; the issue stage reconciler
+// keeps it in step from the next enumeration on. The ledger, not the label,
+// is what claim detection reads.
 func claimLabelsFor(c claims.Claim) []string {
-	labels := []string{claims.LabelClaimed}
 	if c.Kind == claims.KindAgent {
-		labels = append(labels, github.InProgressLabel)
+		return []string{github.InProgressLabel}
 	}
-	return labels
+	return []string{claims.LabelClaimed}
 }
 
 // claimsInflightLookup makes the ledger a scheduler in-flight source: an

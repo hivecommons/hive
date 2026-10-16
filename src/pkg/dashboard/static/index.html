@@ -6497,7 +6497,7 @@
 
         <details class="faq-q" id="faq-claims">
           <summary>Why did an agent comment on or label my issue as claimed?</summary>
-          <p>Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply visible <code>hive/claimed-by-&lt;agent&gt;</code> and <code>hive/in-progress</code> labels (with a timestamped <code>hive:claim</code> start marker) and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
+          <p>Hive agents do not claim issues by assigning themselves as users. They use the App-bot path: <code>hive-open-issue claim</code> asks the issue-request watcher to apply visible <code>hive/claimed-by-&lt;agent&gt;</code> and <code>stage/030-pr-in-progress</code> labels (with a timestamped <code>hive:claim</code> start marker) and audit <code>agent_issue_claimed</code>. The watcher re-derives the requesting agent from file ownership, so an agent cannot forge another agent's claim. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-issue.md" target="_blank" rel="noopener noreferrer">hive-open-issue</a>.</p>
           <p>Claims are issue writes, so they require the same ACMM issue-writing permission as comments and issue creation. The optional claim-expiry feature is default-off under <code>governor.claims.enabled</code>; when off, ordinary work assignment still relies on the existing queue/lease rules.</p>
         </details>
 
@@ -14924,7 +14924,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     const REPO_ISSUE_BAND_DEFAULTS = {
       waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
-      doneLabels: ['hive/already-done', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
+      doneLabels: ['hive/already-done', 'stage/040-covered-by-pr', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
       staleDays: 14
     };
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -15070,7 +15070,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (labels.has('blocked')) kinds.push('issue:blocked');
       if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('issue:needs-decision');
       if (labels.has('epic')) kinds.push('issue:epic');
-      if (issueLabels.some(l => l === 'claimed' || l === 'hive/in-progress' || l.startsWith('hive/claimed-by-')) || ((issue && issue.assignees) || []).length) kinds.push('issue:claimed');
+      if (issueLabels.some(l => l === 'claimed' || l === 'hive/in-progress' || l === 'stage/020-claimed' || l === 'stage/030-pr-in-progress' || l.startsWith('hive/claimed-by-')) || ((issue && issue.assignees) || []).length) kinds.push('issue:claimed');
       if (info && info.role) kinds.push('issue:role');
       if (issueIsStale(issue)) kinds.push('issue:stale');
       if (Array.isArray(issue && issue.linked_prs) && issue.linked_prs.length) kinds.push('issue:linked-pr');
@@ -15685,8 +15685,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // The covering-PR glyph on an issue pill is derived from hive's own
-    // PR-claim evidence (linked_prs, the same source that applies
-    // `🐝 covered by PR`), not from GitHub's closing-link data, so a partial
+    // PR-claim evidence (linked_prs, the same source that drives
+    // `stage/040-covered-by-pr`), not from GitHub's closing-link data, so a partial
     // PR (`Refs #N`) shows the glyph without hive having to arm auto-close
     // on merge (hivecommons/hive#12144). One badge per issue: the open
     // closing PR wins, then any open PR, then a merged one. Returns null
@@ -22018,7 +22018,7 @@ function burnAreaChart() {
     const PRT_SLA_SPANS = [
       { key: 'open_to_triage', target: '', label: 'Open → triage', color: 'var(--muted)', wait: 'collecting — needs issue created_at (recorded at the next enumeration)', tip: 'Hours from the issue being opened on GitHub to the hive classifying it.' },
       { key: 'triage_to_start', target: '', label: 'Triage → start', color: 'var(--muted)', wait: 'collecting — first numbers after an agent starts a classified issue', tip: 'Hours from the hive classifying the issue to an agent starting work on it.' },
-      { key: 'start_to_pr', hist: 'start_to_pr_p50', target: 'start_to_pr_h', label: 'Start → PR', color: 'var(--accent)', wait: 'collecting — first numbers after the next linked PR (hive-open-pr --issues) opens', tip: 'Hours from the hive/in-progress start mark (an agent claimed, commented or opened a PR on the issue) to the PR that fixes it being opened.' },
+      { key: 'start_to_pr', hist: 'start_to_pr_p50', target: 'start_to_pr_h', label: 'Start → PR', color: 'var(--accent)', wait: 'collecting — first numbers after the next linked PR (hive-open-pr --issues) opens', tip: 'Hours from the stage/030-pr-in-progress start mark (an agent claimed, commented or opened a PR on the issue) to the PR that fixes it being opened.' },
       { key: 'pr_to_merge', hist: 'pr_to_merge_p50', target: 'pr_to_merge_h', label: 'PR → merge', color: 'var(--green)', wait: 'collecting — first numbers after the next linked PR merges', tip: 'Hours from the fixing PR opening to its merge (hive-driven or observed).' },
       { key: 'open_to_merge', hist: 'open_to_merge_p50', target: 'open_to_merge_h', label: 'Open → merge', color: 'var(--orange)', wait: 'collecting — needs issue created_at (next enumeration) and a linked PR merge', tip: 'Hours from the issue being opened on GitHub to the fixing PR merging — the end-to-end delivery time.' },
     ];
@@ -22097,8 +22097,8 @@ function burnAreaChart() {
       const ttl = Number(report && report.claim_ttl_s);
       const ttlText = Number.isFinite(ttl) && ttl > 0 ? fmtSLAHours(ttl / 3600) : 'the claim TTL';
       const tip = n
-        ? `${n} issue${n === 1 ? '' : 's'} marked hive/in-progress for longer than ${ttlText} with no PR yet. Click to list them.`
-        : `No issue has carried hive/in-progress past ${ttlText} without a PR.`;
+        ? `${n} issue${n === 1 ? '' : 's'} marked stage/030-pr-in-progress for longer than ${ttlText} with no PR yet. Click to list them.`
+        : `No issue has carried stage/030-pr-in-progress past ${ttlText} without a PR.`;
       if (n === 1) {
         const s0 = stale[0];
         return `<a class="prt-sla-stale" data-sla-state="breach" href="${esc(prtSLAIssueURL(s0.repo, s0.number))}" target="_blank" rel="noopener" title="${esc(tip)}" aria-label="${esc(tip)}">⚠ 1 stale in-progress · ${esc(s0.repo)}#${esc(String(s0.number))}</a>`;
@@ -40250,7 +40250,7 @@ function burnAreaChart() {
       const defaults = sla.defaults || { start_to_pr_h: 4, pr_to_merge_h: 24, open_to_merge_h: 72 };
       const dirty = _configState.dirty.sla || {};
       const fields = [
-        ['start_to_pr_h', 'Start → PR', 'Hours from the hive/in-progress start mark to the fixing PR opening.'],
+        ['start_to_pr_h', 'Start → PR', 'Hours from the stage/030-pr-in-progress start mark to the fixing PR opening.'],
         ['pr_to_merge_h', 'PR → merge', 'Hours from the fixing PR opening to its merge.'],
         ['open_to_merge_h', 'Open → merge', 'Hours from the issue opening on GitHub to the fixing PR merging.'],
       ];

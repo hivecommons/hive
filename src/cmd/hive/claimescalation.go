@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Claim escalation gate (hivecommons/hive#10527).
@@ -201,7 +202,11 @@ func claimProgress(events []github.IssueEvent) (string, bool) {
 		case "closed", "reopened":
 			return "it was " + e.Event, true
 		case "labeled", "unlabeled":
-			if strings.EqualFold(e.Label, claims.LabelClaimed) ||
+			// Hive-owned mirrors (stage/author labels, their retired
+			// spellings, preempted markers) are the hive's own bookkeeping,
+			// not the issue moving (#12436).
+			if stagelabels.Owned(e.Label) || strings.EqualFold(e.Label, claims.LegacyLabelClaimed) ||
+				strings.EqualFold(e.Label, claims.LegacyLabelInProgress) ||
 				strings.HasPrefix(strings.ToLower(e.Label), claims.LabelPreemptedPrefix) {
 				continue
 			}

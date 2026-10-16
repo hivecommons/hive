@@ -149,16 +149,17 @@ hive. The flag only applies to a create; on any other kind the script exits
 records that this agent is starting work on an issue. Because App bots cannot
 be GitHub assignees, the watcher applies a `hive/claimed-by-<agent>` label
 instead — the visible, auditable ownership signal — and audits it as
-`agent_issue_claimed`. The same label call adds `hive/in-progress`, and the
+`agent_issue_claimed`. The same label call adds `stage/030-pr-in-progress` (formerly `hive/in-progress`), and the
 watcher posts one bot comment carrying a timestamped start marker
 (`<!-- hive:claim who=<agent> kind=agent hive=<spoke> at=<RFC3339>
 until=<at+agent TTL> -->`) so maintainers can see exactly when an agent
 began a PR for the issue ([#11841](https://github.com/hivecommons/hive/issues/11841)). Every kick
 instructs the agent to claim before touching an issue; while the marker is
 live every hive that scans the repo withholds the issue from kicks. The
-`hive/in-progress` label clears when the agent's `hive-open-pr --issues`
-request opens the PR, when the claim is released, or at enumeration once PR
-evidence exists or the marker lapsed (default 2h).
+`stage/030-pr-in-progress` label is swapped for `stage/040-covered-by-pr` when
+the agent's `hive-open-pr --issues` request opens the PR, and cleared when the
+claim is released or at enumeration once PR evidence exists or the marker
+lapsed (default 2h).
 
 ### `label`
 

@@ -6,135 +6,83 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-// coveredLabelFixture simulates a repo's label namespace for
-// EnsureCoveredByPRLabel: which names exist, plus what was renamed/created.
-type coveredLabelFixture struct {
-	existing   map[string]bool
-	renameFail bool
-	renamed    map[string]string
-	created    []string
-	gets       atomic.Int32
-}
-
-func (f *coveredLabelFixture) handler(t *testing.T) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func TestEnsureCoveredByPRLabelCreatesStageLabelOnce(t *testing.T) {
+	var gets, creates atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		const prefix = "/repos/hivecommons/hive/labels"
-		if !strings.HasPrefix(r.URL.Path, prefix) {
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-		name, _ := url.PathUnescape(strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, prefix), "/"))
 		switch r.Method {
 		case http.MethodGet:
-			f.gets.Add(1)
-			if f.existing[name] {
-				_ = json.NewEncoder(w).Encode(map[string]any{"name": name})
-				return
-			}
+			gets.Add(1)
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
-		case http.MethodPatch:
-			raw, _ := io.ReadAll(r.Body)
-			var body map[string]string
-			_ = json.Unmarshal(raw, &body)
-			if f.renameFail {
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"message":"nope"}`))
-				return
-			}
-			if f.renamed == nil {
-				f.renamed = map[string]string{}
-			}
-			f.renamed[name] = body["new_name"]
-			delete(f.existing, name)
-			f.existing[body["new_name"]] = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"name": body["new_name"], "color": body["color"]})
 		case http.MethodPost:
 			raw, _ := io.ReadAll(r.Body)
 			var body map[string]string
 			_ = json.Unmarshal(raw, &body)
-			f.created = append(f.created, body["name"])
-			f.existing[body["name"]] = true
+			if body["name"] != CoveredByPRLabel || body["color"] != stagelabels.StageColor {
+				t.Fatalf("created %v, want %s in %s", body, CoveredByPRLabel, stagelabels.StageColor)
+			}
+			creates.Add(1)
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"name": body["name"]})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClientForTest(srv.URL, "hivecommons", []string{"hive"}, testLogger())
+	for i := 0; i < 2; i++ {
+		if err := c.EnsureCoveredByPRLabel(context.Background(), "hivecommons/hive"); err != nil {
+			t.Fatalf("EnsureCoveredByPRLabel #%d: %v", i, err)
+		}
+	}
+	if gets.Load() != 1 || creates.Load() != 1 {
+		t.Fatalf("gets=%d creates=%d, want 1/1 (memoised)", gets.Load(), creates.Load())
 	}
 }
 
-func TestEnsureCoveredByPRLabel(t *testing.T) {
-	tests := []struct {
-		name        string
-		existing    []string
-		renameFail  bool
-		wantRenamed bool
-		wantCreated bool
-	}{
-		{name: "current label present is a no-op", existing: []string{CoveredByPRLabel}},
-		{name: "legacy label is renamed in place", existing: []string{LegacyCoveredByPRLabel}, wantRenamed: true},
-		{name: "neither present creates the new label", wantCreated: true},
-		{name: "failed rename falls back to create", existing: []string{LegacyCoveredByPRLabel}, renameFail: true, wantCreated: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			f := &coveredLabelFixture{existing: map[string]bool{}, renameFail: tt.renameFail}
-			for _, n := range tt.existing {
-				f.existing[n] = true
-			}
-			srv := httptest.NewServer(f.handler(t))
-			t.Cleanup(srv.Close)
-			c := NewClientForTest(srv.URL, "hivecommons", []string{"hive"}, testLogger())
-			if err := c.EnsureCoveredByPRLabel(context.Background(), "hivecommons/hive"); err != nil {
-				t.Fatalf("EnsureCoveredByPRLabel: %v", err)
-			}
-			if got := f.renamed[LegacyCoveredByPRLabel] == CoveredByPRLabel; got != tt.wantRenamed {
-				t.Fatalf("renamed = %v (%v), want %v", got, f.renamed, tt.wantRenamed)
-			}
-			if got := len(f.created) == 1 && f.created[0] == CoveredByPRLabel; got != tt.wantCreated {
-				t.Fatalf("created = %v, want created=%v", f.created, tt.wantCreated)
-			}
-			if !f.existing[CoveredByPRLabel] {
-				t.Fatalf("current label missing after ensure: %v", f.existing)
-			}
-			gets := f.gets.Load()
-			if err := c.EnsureCoveredByPRLabel(context.Background(), "hivecommons/hive"); err != nil {
-				t.Fatalf("second EnsureCoveredByPRLabel: %v", err)
-			}
-			if f.gets.Load() != gets {
-				t.Fatal("second call was not memoised")
-			}
-		})
+func TestCoveredByPRLabelIsTheStageLabel(t *testing.T) {
+	if CoveredByPRLabel != stagelabels.CoveredByPR.Label() {
+		t.Fatalf("CoveredByPRLabel = %q, stage table says %q", CoveredByPRLabel, stagelabels.CoveredByPR.Label())
 	}
 }
 
-func TestHasCoveredByPRLabelAcceptsBothSpellings(t *testing.T) {
-	if !HasCoveredByPRLabel([]string{"bug", LegacyCoveredByPRLabel}) {
-		t.Fatal("legacy spelling not recognised")
+func TestHasCoveredByPRLabelAcceptsStageAndRetiredSpellings(t *testing.T) {
+	for _, labels := range [][]string{
+		{"bug", stagelabels.LegacyCoveredByPR},
+		{stagelabels.LegacyCoveredByPRASCII},
+		{CoveredByPRLabel},
+		{"bug", stagelabels.MergeQueue.Label()}, // mirrored PR stage
+	} {
+		if !HasCoveredByPRLabel(labels) {
+			t.Errorf("%v not recognised as covered", labels)
+		}
 	}
-	if !HasCoveredByPRLabel([]string{CoveredByPRLabel}) {
-		t.Fatal("current spelling not recognised")
+	for _, labels := range [][]string{{"bug"}, {stagelabels.Claimed.Label()}, {stagelabels.Actionable.Label()}} {
+		if HasCoveredByPRLabel(labels) {
+			t.Errorf("%v wrongly recognised as covered", labels)
+		}
 	}
-	if HasCoveredByPRLabel([]string{"bug"}) {
-		t.Fatal("unrelated label recognised")
-	}
-	got := removeCoveredByPRLabel([]string{"bug", CoveredByPRLabel, LegacyCoveredByPRLabel})
+	got := removeCoveredByPRLabel([]string{"bug", CoveredByPRLabel, stagelabels.LegacyCoveredByPR, stagelabels.LegacyCoveredByPRASCII})
 	if len(got) != 1 || got[0] != "bug" {
 		t.Fatalf("removeCoveredByPRLabel = %v", got)
 	}
 }
 
-// TestSyncIssuePRClaimLabels_LegacyLabelIsNotReAdded covers the transition:
-// an issue still carrying the legacy spelling (renamed in place server-side)
-// must not get a second label write.
-func TestSyncIssuePRClaimLabels_LegacyLabelIsNotReAdded(t *testing.T) {
+// TestSyncIssuePRClaimLabels_StripsRetiredLabelOnly covers the migration: the
+// claim sync no longer writes the covered-by-PR label (the issue stage
+// reconciler owns stage/040), and an issue still carrying the retired bee
+// label loses it in one write.
+func TestSyncIssuePRClaimLabels_StripsRetiredLabelOnly(t *testing.T) {
 	var adds atomic.Int32
+	var removed []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -143,6 +91,9 @@ func TestSyncIssuePRClaimLabels_LegacyLabelIsNotReAdded(t *testing.T) {
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/issues/7/labels"):
 			adds.Add(1)
 			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/issues/7/labels/"):
+			removed = append(removed, strings.TrimPrefix(r.URL.Path, "/repos/hivecommons/hive/issues/7/labels/"))
+			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/graphql"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"repository": map[string]any{
 				"defaultBranchRef": map[string]any{"name": "v5"},
@@ -158,9 +109,15 @@ func TestSyncIssuePRClaimLabels_LegacyLabelIsNotReAdded(t *testing.T) {
 	ledger := NewClaimLedger("", testLogger())
 	ledger.Reconcile([]IssueClaim{{Repo: "hivecommons/hive", Issue: 7, PRNumber: 1, PRRepo: "hivecommons/hive", PRState: "open", Closing: true}}, true)
 	result := &ActionableResult{}
-	result.Issues.Items = []Issue{{Repo: "hivecommons/hive", Number: 7, Labels: []string{LegacyCoveredByPRLabel}}}
+	result.Issues.Items = []Issue{{Repo: "hivecommons/hive", Number: 7, Labels: []string{stagelabels.LegacyCoveredByPR}}}
 	SyncIssuePRClaimLabels(context.Background(), c, result, ledger, testLogger())
 	if adds.Load() != 0 {
-		t.Fatalf("label adds = %d, want 0 for an issue already carrying the legacy spelling", adds.Load())
+		t.Fatalf("label adds = %d, want 0: the stage reconciler writes stage/040", adds.Load())
+	}
+	if len(removed) != 1 {
+		t.Fatalf("removed = %v, want exactly the retired bee label", removed)
+	}
+	if got := result.Issues.Items[0].Labels; !issueHasLabel(got, CoveredByPRLabel) || issueHasLabel(got, stagelabels.LegacyCoveredByPR) {
+		t.Fatalf("in-memory labels = %v, want stage/040 without the retired spelling", got)
 	}
 }

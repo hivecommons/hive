@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/claims"
 )
 
 func TestTableIsOrderedSparseAndUnique(t *testing.T) {
@@ -304,5 +306,31 @@ func TestStoreMarksForgetsAndSharedLoad(t *testing.T) {
 	first := Shared()
 	if first == nil || Shared() != first {
 		t.Fatal("Shared() must return one store")
+	}
+}
+
+// TestClaimLabelConstantsMatchStages pins pkg/claims' label strings (which
+// cannot import this package) to the stage table so the claim hooks and the
+// reconciler never disagree on the spelling.
+func TestClaimLabelConstantsMatchStages(t *testing.T) {
+	if got := Claimed.Label(); got != claims.LabelClaimed {
+		t.Fatalf("claims.LabelClaimed = %q, stage table says %q", claims.LabelClaimed, got)
+	}
+	if got := PRInProgress.Label(); got != claims.LabelPRInProgress {
+		t.Fatalf("claims.LabelPRInProgress = %q, stage table says %q", claims.LabelPRInProgress, got)
+	}
+	for _, l := range []string{claims.LegacyLabelClaimed, claims.LegacyLabelInProgress, LegacyCoveredByPR, LegacyCoveredByPRASCII, "CLAIMED"} {
+		if !IsLegacy(l) || !Owned(l) {
+			t.Errorf("%q should be a retired, owned label", l)
+		}
+	}
+	if IsLegacy(claims.LabelClaimed) || IsLegacy("hive/claimed-by-bob") {
+		t.Fatal("live stage label / who-modifier must not be legacy")
+	}
+	if !CarriesStageAtLeast([]string{"bug", MergeQueue.Label()}, CoveredByPR) {
+		t.Fatal("mirrored PR stage should count as covered")
+	}
+	if CarriesStageAtLeast([]string{Claimed.Label()}, CoveredByPR) || CarriesStageAtLeast(nil, Actionable) {
+		t.Fatal("claimed / no stage must not count as covered")
 	}
 }
