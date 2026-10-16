@@ -533,6 +533,110 @@ func TestSelectTask_DeclaredCapabilitiesDoNotAffectUnrequiredWork(t *testing.T) 
 	}
 }
 
+// TestSelectTask_IsolationClassNeverGates guards #12200: the isolation class is
+// display-only, so two contributors that differ ONLY in it get the same pick,
+// for work with requirements and without.
+func TestSelectTask_IsolationClassNeverGates(t *testing.T) {
+	hub, s := covK2Hub(t)
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{{
+			Name: "repo1",
+			Full: "myorg/repo1",
+			ActionableIssues: []any{
+				map[string]any{
+					"number": float64(10),
+					"title":  "Needs Docker",
+					"url":    "https://github.com/myorg/repo1/issues/10",
+					"labels": []string{"needs-docker", "os/linux"},
+					"author": "someone",
+				},
+				map[string]any{
+					"number": float64(20),
+					"title":  "Plain work",
+					"url":    "https://github.com/myorg/repo1/issues/20",
+					"author": "someone",
+				},
+			},
+		}},
+	}
+	s.statusMu.Unlock()
+
+	for _, base := range []ContributorCapabilities{
+		*richDeclaration(),
+		{ContainerRuntime: "podman", OS: "linux", Arch: "amd64"},
+	} {
+		krunCaps := base
+		krunCaps.IsolationClass = "microvm-krun"
+		plainCaps := base
+		mkConn := func(user string, caps ContributorCapabilities) *ContributorConnection {
+			return &ContributorConnection{
+				profile:      &ContributorProfile{GitHubUsername: user, ContributorID: "c-" + user, TrustTier: "contributor"},
+				lastPong:     time.Now(),
+				cliBackend:   "copilot",
+				capabilities: &caps,
+			}
+		}
+		krun := hub.selectTask(mkConn("iso-krun-"+base.ContainerRuntime, krunCaps))
+		if krun != nil && krun.Type == "task_assign" {
+			hub.revokeLease("c-iso-krun-"+base.ContainerRuntime, krun.TaskID)
+		}
+		plain := hub.selectTask(mkConn("iso-plain-"+base.ContainerRuntime, plainCaps))
+		if plain != nil && plain.Type == "task_assign" {
+			hub.revokeLease("c-iso-plain-"+base.ContainerRuntime, plain.TaskID)
+		}
+		if krun == nil || plain == nil {
+			t.Fatalf("%s: expected a selection result both times, got krun=%+v plain=%+v", base.ContainerRuntime, krun, plain)
+		}
+		if krun.Type != plain.Type || krun.Reason != plain.Reason || krun.Repo != plain.Repo || krun.Number != plain.Number {
+			t.Fatalf("%s: isolation class changed the selection: krun=%s %s#%d (%s), plain=%s %s#%d (%s)",
+				base.ContainerRuntime, krun.Type, krun.Repo, krun.Number, krun.Reason,
+				plain.Type, plain.Repo, plain.Number, plain.Reason)
+		}
+	}
+}
+
+// TestWS_IsolationClassDoesNotAlterAdmission guards #12200 on the admission
+// side: declaring an isolation class buys no trust tier or permission.
+func TestWS_IsolationClassDoesNotAlterAdmission(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+
+	authOnce := func(username string, caps *ContributorCapabilities) (string, string, []string) {
+		t.Helper()
+		token, _ := registerWSUser(t, s, username)
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close()
+		readMsg(t, conn) // challenge
+		conn.WriteJSON(WSMessage{
+			Type:              "auth_response",
+			RegistrationToken: token,
+			CLIBackend:        "claude",
+			Capabilities:      caps,
+		})
+		authOK := readMsg(t, conn)
+		return authOK.Type, authOK.TrustTier, authOK.Permissions
+	}
+
+	base := ContributorCapabilities{ContainerRuntime: "none", OS: "linux", Arch: "amd64"}
+	krun := base
+	krun.IsolationClass = "microvm-krun"
+	plainType, plainTier, plainPerms := authOnce("iso-admit-plain", &base)
+	krunType, krunTier, krunPerms := authOnce("iso-admit-krun", &krun)
+	if plainType != "auth_ok" || krunType != "auth_ok" {
+		t.Fatalf("expected auth_ok both times, got plain=%s krun=%s", plainType, krunType)
+	}
+	if krunTier != plainTier {
+		t.Fatalf("isolation class altered trust tier: krun=%q, plain=%q", krunTier, plainTier)
+	}
+	if strings.Join(krunPerms, ",") != strings.Join(plainPerms, ",") {
+		t.Fatalf("isolation class altered permissions: krun=%v, plain=%v", krunPerms, plainPerms)
+	}
+}
+
 // selectionFuncBody returns the source of the named ContributeWSHub method,
 // from its func line to the first column-0 closing brace — the same extraction
 // the F14 owner-gate invariant tests use on api_contribute.go.
@@ -783,6 +887,7 @@ func TestOpsPage_DeclaredCapabilitiesLabeledSelfReported(t *testing.T) {
 		"clanker-declares",               // stable hook class for the line
 		"Self-declared by the client",    // labeling at the point of use
 		"never routes, gates, or trusts", // the no-routing / not-a-trust-signal statement
+		"caps.isolation_class",           // the krun isolation class is shown (#12200)
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("ops page missing %q — declared capabilities must stay labeled self-reported (#2547)", want)

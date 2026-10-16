@@ -206,6 +206,11 @@ machine the banner warns that **nested krun is untested and may be
 unstable**. An exit the runtime reports as OOM-killed names the VM memory as
 the cause; an exit 137 without that report is a stop (every krun stop ends
 in SIGKILL, because the stop signal does not reach the guest).
+The relay also declares the capability `isolation_class: microvm-krun` to the
+hub, which shows it on the Operations tab as `isolation:microvm-krun` and never
+routes or admits on it. The recipe sets it with `HIVE_ISOLATION_CLASS`, and also
+passes your host's kernel release as `HIVE_TEAM_KERNEL_RELEASE`, so opt-in team
+metadata reports the host's kernel, not the guest's (#12200).
 `just contribute-stop` removes contributor containers that podman reports
 ran under krun, which also ends the VMM and deletes the relay's token cache
 with the container, and deletes the relay PID record. `hivectl`'s relay
@@ -930,7 +935,9 @@ Two admission behaviors are worth knowing when your relay seems idle:
 
 ## Capability declaration (DECLARE)
 
-Since protocol 1.2 the relay self-reports coarse client facts on connect — container runtime (docker/podman/none), OS/arch, agent CLI version, relay protocol version, and credential *type* (app/pat/oauth; never the credential itself). The hub records these and shows them on the Operations tab as a `declares: …` sub-line.
+Since protocol 1.2 the relay self-reports coarse client facts on connect — container runtime (docker/podman/none), OS/arch, agent CLI version, relay protocol version, and credential *type* (app/pat/oauth; never the credential itself). A krun launch also declares the isolation class (`isolation_class: microvm-krun`), which the launcher passes in as `HIVE_ISOLATION_CLASS`; the relay never detects it, and without it nothing is declared (#12200). The hub records these and shows them on the Operations tab as a `declares: …` sub-line.
+
+The isolation class is display-only: task selection and admission never read it.
 
 This is **display-only and untrusted**: the hub never routes, gates, or trusts work based on a declared capability — server-side policy still governs everything a contributor may do. Empty declarations render nothing, and older relays that don't declare behave exactly as before.
 

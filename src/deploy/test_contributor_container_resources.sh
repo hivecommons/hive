@@ -248,11 +248,13 @@ normalized_capture() {
     -e 's/hive-contributor-\([a-z]*\)-[0-9a-f]\{8\}/hive-contributor-\1-<id>/g' "${1:-$CAPTURE}"
 }
 
-# Drops exactly what krun mode adds: --runtime krun and krun.* annotations.
+# Drops exactly what krun mode adds: --runtime krun, krun.* annotations, and
+# the isolation-class and host-kernel variables (#12200).
 without_krun_flags() {
   awk '
     $0 == "--runtime"    { getline; if ($0 != "krun") print "--runtime\n" $0; next }
     $0 == "--annotation" { getline; if ($0 !~ /^krun\./) print "--annotation\n" $0; next }
+    $0 == "-e"           { getline; if ($0 !~ /^HIVE_(ISOLATION_CLASS|TEAM_KERNEL_RELEASE)=/) print "-e\n" $0; next }
     { print }
   '
 }
@@ -471,6 +473,10 @@ else
   fail "krun launch otherwise matches a podman launch" \
     "$(diff <(printf '%s\n' "$REFERENCE") <(printf '%s\n' "$GOT") | head -20)"
 fi
+contains "krun launch passes the isolation class (#12200)" "$(cat "$CAPTURE")" "HIVE_ISOLATION_CLASS=microvm-krun"
+contains "krun launch passes the host kernel release (#12200)" "$(cat "$CAPTURE")" "HIVE_TEAM_KERNEL_RELEASE=6.11.0-host"
+lacks "plain launch passes no isolation class (#12200)" "$REFERENCE" "HIVE_ISOLATION_CLASS"
+lacks "plain launch passes no host kernel release (#12200)" "$REFERENCE" "HIVE_TEAM_KERNEL_RELEASE"
 lacks "krun output has no exec attach command" "$OUT" "exec -it"
 contains "krun banner has the Isolation line" "$OUT" "Isolation: microVM (krun), guest kernel 6.12.68-krun-guest, 3072 MiB guest of a 4g container limit, 2 vCPUs"
 lacks "bare-metal host gets no nested warning" "$OUT" "nested krun is untested"

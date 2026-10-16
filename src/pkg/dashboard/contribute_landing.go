@@ -5050,7 +5050,7 @@ async function initAdmin(){
 
 // capabilityLine renders the client-declared runtime posture (#2547 DECLARE half)
 // as a compact, READ-ONLY sub-line: "declares: podman &middot; linux/arm64 &middot;
-// cli 1.2.3 &middot; proto 1.1 &middot; cred:app". It returns '' when the client
+// cli 1.2.3 &middot; proto 1.1 &middot; cred:app &middot; isolation:microvm-krun". It returns '' when the client
 // declared nothing (an unversioned relay), so those rows look exactly as before.
 // The literal "declares:" prefix and the title tooltip keep the SELF-REPORTED
 // nature visible at the point of use: this data is advisory only and is never used
@@ -5066,6 +5066,7 @@ function capabilityLine(caps){
   if(caps.agent_cli_version)parts.push('cli '+esc(caps.agent_cli_version));
   if(caps.relay_protocol_version)parts.push('proto '+esc(caps.relay_protocol_version));
   if(caps.credential_type)parts.push('cred:'+esc(caps.credential_type));
+  if(caps.isolation_class)parts.push('isolation:'+esc(caps.isolation_class));
   if(caps.pi_binary)parts.push('pi binary:'+esc(caps.pi_binary));
   if(caps.pi_configuration)parts.push('config:'+esc(caps.pi_configuration));
   if(caps.pi_authentication)parts.push('auth:'+esc(caps.pi_authentication));

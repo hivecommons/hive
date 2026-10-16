@@ -1540,6 +1540,8 @@ contribute-hive backend="" mode="docker": check-version
       KRUN_RAM_MIB=""
       KRUN_CPUS=""
       KRUN_NESTED=""
+      # Only krun mode fills this (#12200); a plain launch passes nothing new.
+      KRUN_ENV_ARGS=()
       if [[ "$KRUN_MODE" == "true" ]]; then
         # VM sizing. crun's krun handler takes guest RAM from krun.ram_mib,
         # else the whole OCI memory limit; a guest given the whole limit was
@@ -1638,6 +1640,11 @@ contribute-hive backend="" mode="docker": check-version
           echo "  smoke run, so it did not run under krun. The contributor was not started."
           exit 1
         fi
+        # #12200: the launcher, not the relay, names the isolation class; the
+        # relay declares it to the hub as the display-only capability
+        # isolation_class. The host's kernel release goes in too, so team
+        # metadata keeps reporting the host's kernel rather than the guest's.
+        KRUN_ENV_ARGS=(-e HIVE_ISOLATION_CLASS=microvm-krun -e "HIVE_TEAM_KERNEL_RELEASE=${KRUN_HOST_KERNEL}")
       fi
       # Mount CLI-specific config directories.
       #
@@ -2029,6 +2036,7 @@ contribute-hive backend="" mode="docker": check-version
         -e HIVE_USE_CONTRIBUTOR_GH=true \
         -e HIVE_CONTAINER_NAME="${CONTAINER_NAME}" \
         -e HIVE_CONTAINER_RUNTIME="${RUNTIME}" \
+        "${KRUN_ENV_ARGS[@]}" \
         -e HIVE_CONTRIBUTOR_ENV="/home/dev/.config/hive/contributor.env" \
         "${PROVIDER_ENV_ARGS[@]}" \
         ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \

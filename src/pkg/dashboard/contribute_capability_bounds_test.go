@@ -80,6 +80,7 @@ func TestSanitizedCoversEveryDeclaredField(t *testing.T) {
 		AgentCLIVersion:      over,
 		RelayProtocolVersion: over,
 		CredentialType:       over,
+		IsolationClass:       over,
 		PiBinary:             over,
 		PiConfiguration:      over,
 		PiAuthentication:     over,
@@ -93,6 +94,7 @@ func TestSanitizedCoversEveryDeclaredField(t *testing.T) {
 		"agent_cli_version":      got.AgentCLIVersion,
 		"relay_protocol_version": got.RelayProtocolVersion,
 		"credential_type":        got.CredentialType,
+		"isolation_class":        got.IsolationClass,
 		"pi_binary":              got.PiBinary,
 		"pi_configuration":       got.PiConfiguration,
 		"pi_authentication":      got.PiAuthentication,
@@ -116,6 +118,7 @@ func TestSanitizedLeavesAnHonestDeclarationAlone(t *testing.T) {
 		RelayProtocolVersion: "1.2",
 		RelayCapabilities:    []string{"quota_preflight_v1"},
 		CredentialType:       "app",
+		IsolationClass:       "microvm-krun",
 		PiBinary:             "present",
 		PiConfiguration:      "configured",
 		PiAuthentication:     "configured_unverified",
@@ -254,5 +257,88 @@ func TestContributorCanRunTaskRejectsExplicitContradiction(t *testing.T) {
 	}
 	if ContributorCanRunTask(&ContributorCapabilities{ContainerRuntime: "docker", OS: "darwin"}, "copilot", req) {
 		t.Fatal("darwin declaration must not fit os/linux")
+	}
+}
+
+// The isolation class is display-only (#12200): two declarations that differ
+// only in it must fit exactly the same tasks, whatever the requirements.
+func TestContributorCanRunTaskIgnoresIsolationClass(t *testing.T) {
+	labelSets := [][]string{
+		nil,
+		{"needs-docker"},
+		{"needs-container"},
+		{"needs-docker", "os/linux", "arch/amd64", "backend/copilot", "credential/app"},
+		{"os/darwin"},
+		{"backend/claude"},
+	}
+	bases := []ContributorCapabilities{
+		{},
+		{ContainerRuntime: "docker", OS: "linux", Arch: "amd64", CredentialType: "app"},
+		{ContainerRuntime: "none", OS: "linux", Arch: "arm64", CredentialType: "pat"},
+		{ContainerRuntime: "podman", OS: "linux"},
+	}
+	for _, labels := range labelSets {
+		req := TaskRequirementsFromLabels(labels)
+		for _, base := range bases {
+			plain := base
+			krun := base
+			krun.IsolationClass = "microvm-krun"
+			for _, backend := range []string{"", "copilot", "claude"} {
+				want := ContributorCanRunTask(&plain, backend, req)
+				if got := ContributorCanRunTask(&krun, backend, req); got != want {
+					t.Fatalf("labels %v, caps %+v, backend %q: isolation class changed the fit from %v to %v",
+						labels, base, backend, want, got)
+				}
+			}
+		}
+	}
+}
+
+// End-to-end (#12200): a declared isolation class is stored bounded and
+// surfaced in the fleet snapshot, and a declaration that carries only the
+// isolation class is still a declaration, not "declared nothing".
+func TestWS_IsolationClassStoredAndSurfaced(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+
+	declare := func(username string, caps *ContributorCapabilities) FleetClanker {
+		t.Helper()
+		token, cid := registerWSUser(t, s, username)
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		readMsg(t, conn) // challenge
+		if err := conn.WriteJSON(WSMessage{
+			Type:              "auth_response",
+			RegistrationToken: token,
+			CLIBackend:        "claude",
+			Capabilities:      caps,
+		}); err != nil {
+			t.Fatalf("write auth_response: %v", err)
+		}
+		if authOK := readMsg(t, conn); authOK.Type != "auth_ok" {
+			t.Fatalf("expected auth_ok, got %s: %s", authOK.Type, authOK.Reason)
+		}
+		return waitForClanker(t, s, cid)
+	}
+
+	fc := declare("iso-krun", &ContributorCapabilities{IsolationClass: "microvm-krun"})
+	if fc.Capabilities == nil || fc.Capabilities.IsolationClass != "microvm-krun" {
+		t.Fatalf("declared isolation class was not surfaced: %+v", fc.Capabilities)
+	}
+
+	fc = declare("iso-long", &ContributorCapabilities{OS: "linux", IsolationClass: strings.Repeat("m", 4096)})
+	if fc.Capabilities == nil {
+		t.Fatal("declaration was dropped entirely; it should be bounded, not discarded")
+	}
+	if n := len([]rune(fc.Capabilities.IsolationClass)); n != capabilityFieldMaxLen {
+		t.Fatalf("stored isolation_class is %d runes, want it bounded to %d", n, capabilityFieldMaxLen)
+	}
+
+	fc = declare("iso-none", &ContributorCapabilities{OS: "linux"})
+	if fc.Capabilities == nil || fc.Capabilities.IsolationClass != "" {
+		t.Fatalf("a declaration without isolation_class must be accepted as-is: %+v", fc.Capabilities)
 	}
 }
