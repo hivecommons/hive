@@ -1,0 +1,1 @@
+- Added a recovery runbook for agent backend-auth failures (`src/docs/backend-auth-recovery-runbook.md`) covering detection, per-status remedies and verification.
