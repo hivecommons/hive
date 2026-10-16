@@ -112,7 +112,7 @@ func (c *Client) listOpenIssuesWithLabel(ctx context.Context, owner, repo, label
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
-		opts.Page = resp.NextPage
+		opts.ListOptions.Page = resp.NextPage
 	}
 	return out, nil
 }
@@ -189,7 +189,7 @@ func (c *Client) prMergedSinceForIssue(ctx context.Context, owner, repo string, 
 		if resp == nil || resp.NextPage == 0 {
 			return "", nil
 		}
-		opts.Page = resp.NextPage
+		opts.ListOptions.Page = resp.NextPage
 	}
 }
 
