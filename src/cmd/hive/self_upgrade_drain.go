@@ -30,6 +30,8 @@ type upgradeDrain struct {
 	target    string
 	startedAt time.Time
 	checkedAt time.Time
+	// deadline is startedAt plus the drain timeout of the open drain window.
+	deadline time.Time
 	// released is set once decide lets the upgrade proceed. Every path after
 	// that point exits the process or blocks until SIGTERM, so kicks stay
 	// withheld for good: a kick started now would be cut by the restart.
@@ -60,7 +62,7 @@ func (d *upgradeDrain) decide(target string, inFlight []string, timeout time.Dur
 	defer d.mu.Unlock()
 
 	if timeout <= 0 {
-		d.target, d.startedAt, d.checkedAt = "", time.Time{}, time.Time{}
+		d.target, d.startedAt, d.checkedAt, d.deadline = "", time.Time{}, time.Time{}, time.Time{}
 		return upgradeDrainDecision{Proceed: true}
 	}
 	if len(inFlight) == 0 {
@@ -77,6 +79,7 @@ func (d *upgradeDrain) decide(target string, inFlight []string, timeout time.Dur
 	}
 	d.target = target
 	d.checkedAt = now
+	d.deadline = d.startedAt.Add(timeout)
 
 	waited := now.Sub(d.startedAt)
 	if waited >= timeout {
@@ -98,7 +101,7 @@ func (d *upgradeDrain) Active(now time.Time) (target string, active bool) {
 		return "", false
 	}
 	if now.Sub(d.checkedAt) >= selfUpgradeDrainStaleAfter {
-		d.target, d.startedAt, d.checkedAt = "", time.Time{}, time.Time{}
+		d.target, d.startedAt, d.checkedAt, d.deadline = "", time.Time{}, time.Time{}, time.Time{}
 		return "", false
 	}
 	return d.target, true
@@ -110,7 +113,23 @@ func (d *upgradeDrain) releaseLocked(target string, now time.Time) {
 	d.target = target
 	d.startedAt = time.Time{}
 	d.checkedAt = now
+	d.deadline = time.Time{}
 	d.released = true
+}
+
+// Deadline returns the latest moment the open drain will keep deferring the
+// self-upgrade, for the heartbeat. ok is false when no drain is waiting
+// (none opened, already released, or no longer re-confirmed by the hub).
+func (d *upgradeDrain) Deadline(now time.Time) (deadline time.Time, ok bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.released || d.target == "" || d.deadline.IsZero() {
+		return time.Time{}, false
+	}
+	if now.Sub(d.checkedAt) >= selfUpgradeDrainStaleAfter || !now.Before(d.deadline) {
+		return time.Time{}, false
+	}
+	return d.deadline, true
 }
 
 // agentKicksInFlight names the running, unpaused agents whose most recent kick was
@@ -134,4 +153,13 @@ func agentKicksInFlight(statuses map[string]*agent.AgentProcess, processStart ti
 	}
 	sort.Strings(names)
 	return names
+}
+
+// upgradeDrainUntilForHeartbeat renders the drain deadline for the heartbeat,
+// or "" when no self-upgrade is draining.
+func upgradeDrainUntilForHeartbeat(now time.Time) string {
+	if deadline, ok := selfUpgradeDrain.Deadline(now); ok {
+		return deadline.UTC().Format(time.RFC3339)
+	}
+	return ""
 }

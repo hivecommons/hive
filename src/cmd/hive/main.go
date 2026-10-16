@@ -5144,6 +5144,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				GitHubAppHTTPStatus:      ghAppHTTPStatus,
 				PendingGitHubAppInstall:  b.dashSrv.IsPendingGitHubAppInstall(),
 				AutoUpgrade:              b.cfg.Hub.AutoUpgrade,
+				UpgradeDrainUntil:        upgradeDrainUntilForHeartbeat(selfUpgradeDrainNow()),
 				ClusterHealth: func() *spoke.HeartbeatClusterHealthReport {
 					if os.Getenv("HIVE_CLUSTER_ID") == "" {
 						return nil

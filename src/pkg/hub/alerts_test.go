@@ -335,8 +335,24 @@ func TestEvaluateAlerts_StuckUpgradeRule(t *testing.T) {
 		upgrading  bool
 		startedAgo time.Duration
 		zeroStart  bool
+		drainLeft  time.Duration // >0: spoke reported a drain deadline this far ahead
+		drainPast  bool          // spoke reported a drain deadline already elapsed
 		want       bool
 	}{
+		{
+			name:       "draining past the timeout with a live deadline does not alert",
+			upgrading:  true,
+			startedAgo: staleUpgradeTimeout + 17*time.Minute,
+			drainLeft:  10 * time.Minute,
+			want:       false,
+		},
+		{
+			name:       "drain deadline elapsed and still upgrading alerts",
+			upgrading:  true,
+			startedAgo: staleUpgradeTimeout + 17*time.Minute,
+			drainPast:  true,
+			want:       true,
+		},
 		{
 			name:      "not upgrading does not alert",
 			upgrading: false,
@@ -376,6 +392,12 @@ func TestEvaluateAlerts_StuckUpgradeRule(t *testing.T) {
 			h.Upgrading = tc.upgrading
 			if !tc.zeroStart {
 				h.UpgradeStartedAt = fixedNow.Add(-tc.startedAgo)
+			}
+			if tc.drainLeft > 0 {
+				h.UpgradeDrainUntil = fixedNow.Add(tc.drainLeft)
+			}
+			if tc.drainPast {
+				h.UpgradeDrainUntil = fixedNow.Add(-time.Minute)
 			}
 			got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
 			if hasAlert(got.Alerts, "h1", AlertTypeStuckUpgrade) != tc.want {

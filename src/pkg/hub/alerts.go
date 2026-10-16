@@ -581,21 +581,22 @@ type alertHive struct {
 	// GitHub App, ACMM 0, zero agents) — an idle pool slot legitimately has
 	// none of those and flagging it would bury the real problems. Mirrors the
 	// dashboard's isPlaceholderHive() exactly.
-	IsPlaceholder    bool
-	Online           bool
-	LastHeartbeat    string
-	OfflineSince     string
-	StartedAt        string
-	RegisteredAt     string
-	Upgrading        bool
-	UpgradeStartedAt time.Time
-	UpgradeTarget    string
-	UpgradeFailed    bool
-	UpgradeError     string
-	TotalTokens24h   int64
-	Health           map[string]any
-	ProvStatus       string
-	ProvError        string
+	IsPlaceholder     bool
+	Online            bool
+	LastHeartbeat     string
+	OfflineSince      string
+	StartedAt         string
+	RegisteredAt      string
+	Upgrading         bool
+	UpgradeStartedAt  time.Time
+	UpgradeDrainUntil time.Time
+	UpgradeTarget     string
+	UpgradeFailed     bool
+	UpgradeError      string
+	TotalTokens24h    int64
+	Health            map[string]any
+	ProvStatus        string
+	ProvError         string
 	// AdvisoryStale / AdvisoryStaleReason are carried through verbatim from
 	// the entry rather than recomputed. advisoryStale() owns the threshold and
 	// the advisory-mode + app-can-write gating; duplicating either here is
@@ -644,23 +645,24 @@ type alertHive struct {
 // alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
 func alertHiveFromEntry(h MyHiveEntry) alertHive {
 	return alertHive{
-		ID:               h.ID,
-		Name:             h.Name,
-		IsPlaceholder:    isPlaceholderEntry(h),
-		Online:           h.Online,
-		LastHeartbeat:    h.LastHeartbeat,
-		OfflineSince:     h.OfflineSince,
-		StartedAt:        h.StartedAt,
-		RegisteredAt:     h.RegisteredAt,
-		Upgrading:        h.Upgrading,
-		UpgradeStartedAt: h.UpgradeStartedAt,
-		UpgradeTarget:    h.UpgradeTarget,
-		UpgradeFailed:    h.UpgradeFailed,
-		UpgradeError:     h.UpgradeError,
-		TotalTokens24h:   h.TotalTokens24h,
-		Health:           h.Health,
-		ProvStatus:       h.ProvStatus,
-		ProvError:        h.ProvError,
+		ID:                h.ID,
+		Name:              h.Name,
+		IsPlaceholder:     isPlaceholderEntry(h),
+		Online:            h.Online,
+		LastHeartbeat:     h.LastHeartbeat,
+		OfflineSince:      h.OfflineSince,
+		StartedAt:         h.StartedAt,
+		RegisteredAt:      h.RegisteredAt,
+		Upgrading:         h.Upgrading,
+		UpgradeStartedAt:  h.UpgradeStartedAt,
+		UpgradeDrainUntil: h.UpgradeDrainUntil,
+		UpgradeTarget:     h.UpgradeTarget,
+		UpgradeFailed:     h.UpgradeFailed,
+		UpgradeError:      h.UpgradeError,
+		TotalTokens24h:    h.TotalTokens24h,
+		Health:            h.Health,
+		ProvStatus:        h.ProvStatus,
+		ProvError:         h.ProvError,
 
 		AdvisoryStale:       h.AdvisoryStale,
 		AdvisoryStaleReason: h.AdvisoryStaleReason,
@@ -1027,7 +1029,9 @@ func evaluateAlertsInFleet(state *alertState, hives, fleet []alertHive, driftAle
 			add(h.ID, h.Name, AlertTypeFailedUpgrade, AlertSeverityCritical, reason)
 		}
 
-		if h.Upgrading && !h.UpgradeStartedAt.IsZero() {
+		// A spoke draining agent kicks before a self-upgrade is waiting, not
+		// stuck, until the deadline it reported.
+		if h.Upgrading && !h.UpgradeStartedAt.IsZero() && !upgradeDrainActive(h.UpgradeDrainUntil, now) {
 			if age := now.Sub(h.UpgradeStartedAt); age > staleUpgradeTimeout {
 				reason := "Upgrade in flight for " + roundedDuration(age) +
 					" (limit " + staleUpgradeTimeout.String() + ")"

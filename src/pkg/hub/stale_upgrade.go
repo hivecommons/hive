@@ -144,6 +144,12 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time, latestSHA stri
 	// checked in since — and is not already on the target — so a genuinely
 	// fresh upgrade whose stamp merely lags a beat is never dropped.
 	zeroStart := entry.UpgradeStartedAt.IsZero()
+	// A spoke that is deliberately deferring the upgrade to drain in-flight
+	// agent kicks heartbeats normally and is not on the target, which would
+	// look exactly like an orphan. Leave it alone until its drain deadline.
+	if upgradeDrainActive(entry.UpgradeDrainUntil, now) {
+		return ev
+	}
 	if !zeroStart {
 		ev.elapsed = now.Sub(entry.UpgradeStartedAt)
 		if ev.elapsed < orphanedUpgradeClearAfter {

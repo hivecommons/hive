@@ -124,6 +124,9 @@ const (
 	registrySaveDelay   = 5 * time.Second
 	maxPayloadBytes     = 1 << 20 // 1MB
 	staleUpgradeTimeout = 10 * time.Minute
+	// maxUpgradeDrainDeadline caps how far ahead a spoke-reported drain
+	// deadline is honoured, so a bogus value cannot mute stuck detection.
+	maxUpgradeDrainDeadline = 6 * time.Hour
 )
 
 type Registry struct {
@@ -336,6 +339,10 @@ type RegistryEntry struct {
 	Upgrading        bool      `json:"upgrading,omitempty"`
 	UpgradeTarget    string    `json:"upgradeTarget,omitempty"`
 	UpgradeStartedAt time.Time `json:"upgradeStartedAt,omitempty"`
+	// UpgradeDrainUntil is the deadline the spoke reported for deferring its
+	// self-upgrade while agent kicks drain. Until it passes the upgrade is
+	// waiting, not stuck. Zero when the spoke is not draining.
+	UpgradeDrainUntil time.Time `json:"upgradeDrainUntil,omitempty"`
 	// UpgradeFailed records that the spoke reported an upgrade it could not
 	// complete, with the cause. Distinct from Upgrading: "failed" is a terminal
 	// state a human must see, not an in-flight one.
@@ -2248,6 +2255,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if payload.Upgrading {
 		entry.Upgrading = true
 	}
+	entry.UpgradeDrainUntil = parseUpgradeDrainUntil(payload.UpgradeDrainUntil, time.Now())
 
 	// A spoke that explicitly reports a FAILED upgrade must not be left showing
 	// the "Upgrading" spinner, and must not be re-instructed on a loop. Record

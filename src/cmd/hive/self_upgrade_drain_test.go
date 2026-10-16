@@ -153,3 +153,37 @@ func TestHubConfigEffectiveUpgradeDrainTimeout(t *testing.T) {
 		}
 	}
 }
+
+func TestUpgradeDrain_DeadlineReportedOnlyWhileWaiting(t *testing.T) {
+	start := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	timeout := 45 * time.Minute
+	kicks := []string{"architect"}
+
+	tests := []struct {
+		name   string
+		act    func(d *upgradeDrain)
+		at     time.Time
+		wantOK bool
+	}{
+		{"no drain opened", func(d *upgradeDrain) {}, start, false},
+		{"draining reports the deadline", func(d *upgradeDrain) { d.decide("feedbeef", kicks, timeout, start) }, start.Add(time.Minute), true},
+		{"released drain reports nothing", func(d *upgradeDrain) {
+			d.decide("feedbeef", kicks, timeout, start)
+			d.decide("feedbeef", nil, timeout, start.Add(time.Minute))
+		}, start.Add(2 * time.Minute), false},
+		{"drain the hub stopped re-confirming reports nothing", func(d *upgradeDrain) { d.decide("feedbeef", kicks, timeout, start) }, start.Add(selfUpgradeDrainStaleAfter), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var d upgradeDrain
+			tc.act(&d)
+			deadline, ok := d.Deadline(tc.at)
+			if ok != tc.wantOK {
+				t.Fatalf("Deadline ok = %v, want %v", ok, tc.wantOK)
+			}
+			if ok && !deadline.Equal(start.Add(timeout)) {
+				t.Fatalf("deadline = %v, want %v", deadline, start.Add(timeout))
+			}
+		})
+	}
+}

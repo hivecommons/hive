@@ -835,6 +835,11 @@ type HeartbeatPayload struct {
 	AutoUpgrade      bool   `json:"auto_upgrade,omitempty"`
 	Upgrading        bool   `json:"upgrading,omitempty"`
 	UpgradeTargetSHA string `json:"upgrade_target_sha,omitempty"`
+	// UpgradeDrainUntil (RFC3339) is set while a hub-instructed self-upgrade is
+	// deferred to let in-flight agent kicks finish; it is the latest moment the
+	// spoke will wait. The hub does not call the upgrade stuck before it.
+	// Empty from a spoke that is not draining or is too old to report it.
+	UpgradeDrainUntil string `json:"upgrade_drain_until,omitempty"`
 	// UpgradeFailed / UpgradeError let a spoke tell the hub that an instructed
 	// upgrade did NOT land. Without them a failed upgrade is indistinguishable
 	// from a slow one: the hub keeps re-instructing and the UI shows a permanent

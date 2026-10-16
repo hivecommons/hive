@@ -297,6 +297,7 @@ type HeartbeatPayload struct {
 	AutoUpgrade                  bool                            `json:"auto_upgrade,omitempty"`
 	Upgrading                    bool                            `json:"upgrading,omitempty"`
 	UpgradeTargetSHA             string                          `json:"upgrade_target_sha,omitempty"`
+	UpgradeDrainUntil            string                          `json:"upgrade_drain_until,omitempty"`
 	UpgradeFailed                bool                            `json:"upgrade_failed,omitempty"`
 	UpgradeError                 string                          `json:"upgrade_error,omitempty"`
 	PendingGitHubAppInstall      bool                            `json:"pending_github_app_install,omitempty"`

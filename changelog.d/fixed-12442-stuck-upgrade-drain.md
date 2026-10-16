@@ -1,0 +1,1 @@
+- A self-upgrade that is deferred while agent kicks drain (`hub.upgrade_drain_timeout_s`) is no longer shown as a stuck upgrade: the spoke reports its drain deadline in the heartbeat and the hub holds the stuck-upgrade alert, drift signal and orphan sweep until it passes. Spokes that do not report it behave as before.
