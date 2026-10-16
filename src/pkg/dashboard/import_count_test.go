@@ -28,8 +28,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// pkg/hivestate for the state-snapshot time series behind the nous
 	// self-report and fleet report (hivecommons/hive#12339), plus pkg/fixqueue
 	// for the per-contributor red-PR fix budget the contribute hub schedules
-	// stage-072 fix-pr interrupts through (hivecommons/hive#12436).
-	const maxDashboardInternalImports = 48
+	// stage-072 fix-pr interrupts through (hivecommons/hive#12436), plus
+	// pkg/stagelabels so the Operations fleet payload can derive new-vs-rework
+	// and pending (not yet dispatched) rework from the persisted stage-label
+	// store without extra GitHub calls (hivecommons/hive#12502).
+	const maxDashboardInternalImports = 49
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

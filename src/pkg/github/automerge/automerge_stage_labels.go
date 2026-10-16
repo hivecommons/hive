@@ -561,6 +561,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				verdict.Stage = stagelabels.AdoptedByHive
 			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
+			// hivecommons/hive#12502: remember the author so the dashboard can
+			// list "PRs returned to this contributor" from the store alone.
+			store.NoteAuthor(key, obs.Author)
 			if verdict.Stage != stagelabels.ReturnedToContributor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
 			}

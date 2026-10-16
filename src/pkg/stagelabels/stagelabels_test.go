@@ -434,3 +434,57 @@ func TestNeedsHumanIsNotAHighWaterMark(t *testing.T) {
 		t.Fatalf("record after heal: %+v", rec)
 	}
 }
+
+// hivecommons/hive#12502: the store remembers the author so the dashboard
+// can list a contributor's returned PRs without a GitHub call.
+func TestStoreNoteAuthorAndByAuthor(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "s.json")
+	st := NewStore(path, func() time.Time { return now })
+
+	st.NoteAuthor("acme/w#1", "Alice") // unknown key: no-op
+	if _, ok := st.Get("acme/w#1"); ok {
+		t.Fatal("NoteAuthor must not create a record")
+	}
+	st.Observe("acme/w#1", ReturnedToContributor, "check-failing:unit")
+	st.Observe("acme/w#2", ReturnedToContributor, "conflicting")
+	st.Observe("acme/w#3", ReviewPending, "")
+	st.Observe("acme/w#4", ReturnedToContributor, "changes-requested")
+	st.NoteAuthor("acme/w#1", "Alice")
+	st.NoteAuthor("acme/w#2", "alice")
+	st.NoteAuthor("acme/w#3", "ALICE")
+	st.NoteAuthor("acme/w#4", "bob")
+	st.NoteAuthor("acme/w#4", "") // empty login: no-op
+
+	if r, _ := st.Get("acme/w#1"); r.Author != "alice" {
+		t.Fatalf("author should be lower-cased, got %q", r.Author)
+	}
+	if r, _ := st.Get("acme/w#4"); r.Author != "bob" {
+		t.Fatalf("empty login must not clear the author, got %q", r.Author)
+	}
+	got := st.ByAuthor("aLiCe", ReturnedToContributor)
+	if len(got) != 2 || got[0].Key != "acme/w#1" || got[1].Key != "acme/w#2" {
+		t.Fatalf("ByAuthor(072) = %+v", got)
+	}
+	if all := st.ByAuthor("alice", None); len(all) != 3 {
+		t.Fatalf("ByAuthor(any) = %+v", all)
+	}
+	if st.ByAuthor("", None) != nil || len(st.ByAuthor("carol", None)) != 0 {
+		t.Fatal("unknown / empty author must return nothing")
+	}
+	// Author survives a stage change and a persistence round trip.
+	st.Observe("acme/w#1", ReviewPending, "")
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+	st2 := NewStore(path, func() time.Time { return now })
+	if err := st2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := st2.Get("acme/w#1"); r.Author != "alice" || r.Stage != ReviewPending {
+		t.Fatalf("round trip: %+v", r)
+	}
+	if got := st2.ByAuthor("alice", ReturnedToContributor); len(got) != 1 || got[0].Key != "acme/w#2" {
+		t.Fatalf("after recovery ByAuthor(072) = %+v", got)
+	}
+}

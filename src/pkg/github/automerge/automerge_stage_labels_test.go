@@ -586,3 +586,27 @@ func TestApplyStageLabelsRecordsVerdictReason(t *testing.T) {
 		t.Fatalf("comments=%v", api.comments)
 	}
 }
+
+// hivecommons/hive#12502: every observation records the PR author on the
+// stage store so the dashboard can list "PRs returned to this contributor".
+func TestApplyStageLabelsRecordsAuthor(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+
+	pr := stagePR(21)
+	pr.User = &gh.User{Login: gh.Ptr("Alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, "check-failing:unit", false, nil)
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := store.Get(stageKey("acme", "widget", 21))
+	if !ok || rec.Stage != stagelabels.ReturnedToContributor || rec.Author != "alice" {
+		t.Fatalf("record %+v ok=%v", rec, ok)
+	}
+	if got := store.ByAuthor("alice", stagelabels.ReturnedToContributor); len(got) != 1 {
+		t.Fatalf("ByAuthor = %+v", got)
+	}
+}

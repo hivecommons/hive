@@ -1,0 +1,260 @@
+package dashboard
+
+import (
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/fixqueue"
+	"github.com/hivecommons/hive/pkg/stagelabels"
+)
+
+// Per-contributor capacity, in-flight items and new-vs-rework on the fleet
+// snapshot (hivecommons/hive#12502).
+//
+// The operator asked to see, on each row of "Connected contributor agents":
+// (a) the relay's parallel capacity, (b) every work item in flight when that
+// capacity is above 1, and (c) whether each item is NEW work or REWORK of one
+// of the contributor's own red PRs — "so I can see whether the clankers are
+// getting the rework our labels claim they should get". Everything here is
+// derived from state the hub already holds (connection tasks, the fix
+// scheduler behind stage 072, the stage-label store); nothing calls GitHub.
+
+const (
+	// FleetWorkKindNew marks an in-flight item that is a fresh issue claim or
+	// any other task that is not repair of the contributor's own PR.
+	FleetWorkKindNew = "new"
+	// FleetWorkKindRework marks an in-flight item that repairs one of the
+	// contributor's own PRs: a `fix-pr` task, or a task whose target the stage
+	// store has in a repair stage (fixing / returned-to-contributor /
+	// adopted-by-hive).
+	FleetWorkKindRework = "rework"
+)
+
+// FleetInFlightItem is one work item a connected contributor is running.
+type FleetInFlightItem struct {
+	TaskID string `json:"task_id"`
+	// Kind is "new" or "rework" (FleetWorkKind*).
+	Kind string `json:"kind"`
+	// TaskKind is the task_assign kind ("issue", "fix-pr", "pr-review", ...).
+	TaskKind string `json:"task_kind,omitempty"`
+	Repo     string `json:"repo,omitempty"`
+	Number   int    `json:"number,omitempty"`
+	Title    string `json:"title,omitempty"`
+	URL      string `json:"url,omitempty"`
+	// Stage is the item's stage label as the store last observed it (e.g.
+	// "stage/072-returned-to-contributor"); empty when unknown.
+	Stage string `json:"stage,omitempty"`
+	// Mode is the fix-pr dispatch mode (spawn / preempt / boundary); empty
+	// for a primary task.
+	Mode      string `json:"mode,omitempty"`
+	StartedAt string `json:"started_at,omitempty"`
+}
+
+// FleetReworkPR is one of the contributor's PRs waiting in stage 072 that has
+// not been dispatched to them.
+type FleetReworkPR struct {
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Title  string `json:"title,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Stage  string `json:"stage,omitempty"`
+	// Since is when the PR entered stage 072 (or was queued), RFC3339.
+	Since string `json:"since,omitempty"`
+	// Cause is the failing check / review ask, when the fix queue knows it.
+	Cause string `json:"cause,omitempty"`
+}
+
+// FleetRework is the per-contributor rework view spliced onto FleetClanker.
+type FleetRework struct {
+	// ParallelCapacity is the total number of sessions the relay may run
+	// (primary + fix sub-sessions) once `parallel_sessions` is advertised and
+	// clamped by contribute.max_parallel_fixes; 1 for a relay that understands
+	// fix-pr but runs a single session (preempt). 0 = the relay advertised
+	// neither, so the hub can only comment on GitHub.
+	ParallelCapacity int `json:"parallel_capacity"`
+	// FixMode is how a stage-072 fix reaches this relay: "spawn" or "preempt".
+	FixMode string `json:"fix_mode,omitempty"`
+	// InFlight lists every item this connection is working: the primary task
+	// plus any fix-pr tasks running beside / instead of it.
+	InFlight []FleetInFlightItem `json:"in_flight,omitempty"`
+	// FixQueueDepth is how many red PRs wait in the contributor's fix queue.
+	FixQueueDepth int `json:"fix_queue_depth"`
+	// PendingRework counts the contributor's PRs in
+	// stage/072-returned-to-contributor that have NOT been dispatched to them
+	// (fix queue ∪ stage store, minus in-flight). Non-zero while the relay is
+	// idle is the operator's tell that rework is not reaching the agent.
+	PendingRework    int             `json:"pending_rework"`
+	PendingReworkPRs []FleetReworkPR `json:"pending_rework_prs,omitempty"`
+}
+
+// stageStoreOrShared returns the injected stage store or the process-wide one.
+func (h *ContributeWSHub) stageStoreOrShared() *stagelabels.Store {
+	if h != nil && h.stageStore != nil {
+		return h.stageStore
+	}
+	return stagelabels.Shared()
+}
+
+// isReworkStage reports whether a stage means "this PR is being repaired".
+func isReworkStage(st stagelabels.Stage) bool {
+	switch st {
+	case stagelabels.Fixing, stagelabels.ReturnedToContributor, stagelabels.AdoptedByHive:
+		return true
+	}
+	return false
+}
+
+// workKindFor classifies one task: fix-pr is always rework; otherwise the
+// stage store decides by the target's current stage.
+func workKindFor(store *stagelabels.Store, taskKind, repo string, number int) (kind, stage string) {
+	if store != nil && repo != "" && number > 0 {
+		if rec, ok := store.Get(stagelabels.Key(repo, number)); ok && rec.Stage != stagelabels.None {
+			stage = rec.Stage.Label()
+			if isReworkStage(rec.Stage) {
+				kind = FleetWorkKindRework
+			}
+		}
+	}
+	if taskKind == taskKindFixPR {
+		kind = FleetWorkKindRework
+		if stage == "" {
+			stage = stagelabels.ReturnedToContributor.Label()
+		}
+	}
+	if kind == "" {
+		kind = FleetWorkKindNew
+	}
+	return kind, stage
+}
+
+// fleetReworkFor builds the rework view for one connection. Call with c.mu
+// held; it takes only the fix scheduler's and stage store's own locks.
+func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool) FleetRework {
+	var out FleetRework
+	store := h.stageStoreOrShared()
+	cap := h.fixCapacity(c)
+	switch {
+	case cap.Parallel:
+		out.ParallelCapacity = cap.Max
+	case relaySupportsFixPR(c):
+		// Understands fix-pr but runs one session: capacity 1, preempt.
+		out.ParallelCapacity = 1
+	}
+	out.FixMode = string(cap.Mode())
+
+	inFlightKeys := map[string]bool{}
+	if !stale {
+		if t := c.currentTask; t != nil {
+			kind, stage := workKindFor(store, t.Kind, t.Repo, t.Number)
+			item := FleetInFlightItem{TaskID: t.TaskID, Kind: kind, TaskKind: t.Kind, Repo: t.Repo, Number: t.Number, Title: t.Title, URL: t.URL, Stage: stage}
+			if !c.taskAssignedAt.IsZero() {
+				item.StartedAt = c.taskAssignedAt.UTC().Format(time.RFC3339)
+			}
+			out.InFlight = append(out.InFlight, item)
+			inFlightKeys[fixqueue.Key(t.Repo, t.Number)] = true
+		}
+		fixIDs := make([]string, 0, len(c.fixTasks))
+		for id := range c.fixTasks {
+			fixIDs = append(fixIDs, id)
+		}
+		sort.Strings(fixIDs)
+		for _, id := range fixIDs {
+			t := c.fixTasks[id]
+			if t == nil {
+				continue
+			}
+			started := ""
+			if at, ok := c.fixTasksAt[id]; ok && !at.IsZero() {
+				started = at.UTC().Format(time.RFC3339)
+			}
+			prs := t.FixPRs
+			if len(prs) == 0 {
+				prs = []WSFixPR{{Repo: t.Repo, Number: t.Number, Title: t.Title, URL: t.URL}}
+			}
+			for _, pr := range prs {
+				_, stage := workKindFor(store, taskKindFixPR, pr.Repo, pr.Number)
+				out.InFlight = append(out.InFlight, FleetInFlightItem{
+					TaskID: t.TaskID, Kind: FleetWorkKindRework, TaskKind: taskKindFixPR,
+					Repo: pr.Repo, Number: pr.Number, Title: pr.Title, URL: pr.URL,
+					Stage: stage, Mode: t.Mode, StartedAt: started,
+				})
+				inFlightKeys[fixqueue.Key(pr.Repo, pr.Number)] = true
+			}
+		}
+	}
+
+	user := ""
+	if c.profile != nil {
+		user = c.profile.GitHubUsername
+	}
+	if user == "" {
+		return out
+	}
+	sched := h.fixQueue()
+	queued := sched.Queued(user)
+	out.FixQueueDepth = len(queued)
+	// Dispatched on ANY of this contributor's connections counts as in flight.
+	for _, d := range sched.InFlight(user) {
+		for _, it := range d.Items {
+			inFlightKeys[it.Key()] = true
+		}
+	}
+	pending := map[string]FleetReworkPR{}
+	for _, it := range queued {
+		if inFlightKeys[it.Key()] {
+			continue
+		}
+		cause := it.Cause.Check
+		if cause == "" {
+			cause = it.Summary
+		}
+		pr := FleetReworkPR{Repo: it.Repo, Number: it.Number, Title: it.Title, URL: it.URL, Stage: stagelabels.ReturnedToContributor.Label(), Cause: cause}
+		if !it.OpenedAt.IsZero() {
+			pr.Since = it.OpenedAt.UTC().Format(time.RFC3339)
+		}
+		pending[it.Key()] = pr
+	}
+	for _, ai := range store.ByAuthor(user, stagelabels.ReturnedToContributor) {
+		if inFlightKeys[ai.Key] {
+			continue
+		}
+		if _, dup := pending[ai.Key]; dup {
+			continue
+		}
+		repo, number := splitStageKey(ai.Key)
+		if repo == "" || number == 0 {
+			continue
+		}
+		pr := FleetReworkPR{Repo: repo, Number: number, Stage: ai.Record.Stage.Label()}
+		if !ai.Record.EnteredAt.IsZero() {
+			pr.Since = ai.Record.EnteredAt.UTC().Format(time.RFC3339)
+		}
+		pending[ai.Key] = pr
+	}
+	keys := make([]string, 0, len(pending))
+	for k := range pending {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		out.PendingReworkPRs = append(out.PendingReworkPRs, pending[k])
+	}
+	out.PendingRework = len(out.PendingReworkPRs)
+	return out
+}
+
+// splitStageKey inverts stagelabels.Key ("owner/repo#N").
+func splitStageKey(key string) (repo string, number int) {
+	i := strings.LastIndex(key, "#")
+	if i < 0 || i == len(key)-1 {
+		return "", 0
+	}
+	for _, r := range key[i+1:] {
+		if r < '0' || r > '9' {
+			return "", 0
+		}
+		number = number*10 + int(r-'0')
+	}
+	return key[:i], number
+}

@@ -492,7 +492,14 @@ after the first nudge is adopted (`governor.labels.stage.adoption.enabled`,
 default on): the hive pushes `hive/adopt-<n>` at the contributor head, opens a
 superseding App PR that preserves the author's commits, moves the original to
 `stage/074-adopted-by-hive` and closes it once the superseder merges; the
-scanner's red-PR fix-first kick finishes the superseder. The retired `🐝 covered by PR`,
+scanner's red-PR fix-first kick finishes the superseder. Whether that rework reaches each agent is visible per row
+on Operations → Connected contributor agents: the relay's parallel capacity
+(`capacity N · spawn|preempt`, or *not advertised*), one line per in-flight
+item tagged **NEW** / **REWORK** with its stage label, and a red *N PRs
+awaiting rework (not yet dispatched)* line when the contributor has
+`stage/072` PRs the hub has not handed them (`parallel_capacity`,
+`in_flight[]`, `fix_queue_depth`, `pending_rework` on `/api/contribute/fleet`;
+see [contributor-relay.md](contributor-relay.md#what-the-operator-sees-operations--connected-contributor-agents)). The retired `🐝 covered by PR`,
 `claimed` and `hive/in-progress` labels are removed from open items on the
 first cycle after upgrade. Full table, state diagram and migration note:
 [labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine).

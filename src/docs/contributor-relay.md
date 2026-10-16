@@ -992,6 +992,20 @@ The one place a declaration DOES shape dispatch is the stage-072 contributor nud
 
 The hub records the mode it used in the nudge comment's marker (`mode=spawn|preempt|queued|comment`) and exposes queue depth / in-flight as `fix_queue` on the contributor profile API.
 
+#### What the operator sees (Operations → Connected contributor agents)
+
+Each row of the "Connected contributor agents (ClankeR)" list on `/contribute/operations` reads the same declaration back (hivecommons/hive#12502), so an operator can check whether the rework the stage labels promise is actually reaching the agent. The row is fed by `/api/contribute/fleet`; each `clankers[]` entry carries:
+
+| Field | Meaning |
+|---|---|
+| `parallel_capacity` | Total sessions the hub will use for this relay: `max_parallel_fixes + 1` once `parallel_sessions` is advertised (clamped by `contribute.max_parallel_fixes`); `1` for a relay that advertises `fix_pr_interrupt_v1` without parallel sessions (preempt); `0` when neither is advertised — the row reads **capacity: not advertised**. |
+| `fix_mode` | `spawn` or `preempt`, the interrupt mode that capacity implies. |
+| `in_flight[]` | One entry per work item on the connection — the primary task plus every `fix-pr` sub-session — each with `kind` (`new` or `rework`), `task_kind`, `repo`, `number`, `title`, `url`, `stage` (the item's `stage/NNN-*` label as the hive last observed it), `mode` and `started_at`. The row shows one line per item with a **NEW** / **REWORK** badge. A relay running only a boundary-dispatched fix therefore shows as *working*, not *idle*. |
+| `fix_queue_depth` | Red PRs waiting in the contributor's server-side fix queue (not dispatched). |
+| `pending_rework`, `pending_rework_prs[]` | The contributor's open PRs in `stage/072-returned-to-contributor` that have **not** been dispatched to them. The row prints a red **N PRs awaiting rework (not yet dispatched)** line, and an idle relay reads **idle · N PRs awaiting rework** instead of `idle: no matching work`. |
+
+`kind: rework` means the item repairs one of the contributor's own PRs: any `fix-pr` task, or a task whose target the stage store has in a repair stage (`070-fixing`, `072-returned-to-contributor`, `074-adopted-by-hive`). Everything else is `new`. `pending_rework` is derived without a GitHub call: the stage-label store (which remembers each PR's author) ∪ the fix queue, minus the fix tasks in flight on any of the contributor's connections. A non-zero `pending_rework` on an idle row is the signal to look at — typically a relay that did not advertise `fix_pr_interrupt_v1`, a preempt-mode relay inside its `contribute.min_focus_window`, or a contributor who is offline.
+
 ## Reconnecting without losing in-flight work
 
 The relay heartbeats every 30 s and reconnects with exponential backoff (1 s to 60 s). A drop inside that window is meant to be invisible to the agent: the relay keeps its task locally, re-asserts it on the new socket, and carries on typing into the same tmux pane.

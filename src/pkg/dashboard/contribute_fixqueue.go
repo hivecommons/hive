@@ -363,6 +363,10 @@ func (h *ContributeWSHub) sendFixTask(c *ContributorConnection, user string, d *
 		c.fixTasks = map[string]*WSTaskAssign{}
 	}
 	c.fixTasks[d.ID] = assign
+	if c.fixTasksAt == nil {
+		c.fixTasksAt = map[string]time.Time{}
+	}
+	c.fixTasksAt[d.ID] = time.Now()
 	c.mu.Unlock()
 	msg := WSMessage{
 		Type: "task_assign", Seq: h.nextSeq(), TaskID: d.ID, TaskGen: h.nextTaskGen(),
@@ -407,6 +411,7 @@ func (h *ContributeWSHub) completeFixTask(c *ContributorConnection, taskID strin
 	assign, ok := c.fixTasks[taskID]
 	if ok {
 		delete(c.fixTasks, taskID)
+		delete(c.fixTasksAt, taskID)
 	}
 	c.mu.Unlock()
 	if !ok || c.profile == nil {

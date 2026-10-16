@@ -41,6 +41,11 @@ type Record struct {
 	StallCommented bool `json:"stall_commented,omitempty"`
 	// Reason is the lane/CI/verdict reason behind the current stage.
 	Reason string `json:"reason,omitempty"`
+	// Author is the item's author login, lower-cased, as the lane saw it
+	// (hivecommons/hive#12502). It lets the dashboard answer "which of this
+	// contributor's PRs are returned to them" from the store alone, with no
+	// GitHub call. Empty for records written before the field existed.
+	Author string `json:"author,omitempty"`
 	// NudgeHead, NudgeCount and LastNudgeAt track the stage-072 contributor
 	// nudge: the head the nudges were for, how many were posted for it
 	// (cap 2) and when the last one went out.
@@ -406,6 +411,52 @@ func (s *Store) Keys() []string {
 		out = append(out, k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// NoteAuthor records login as the author of key (hivecommons/hive#12502).
+// A no-op for an unknown key or an empty login; the login is lower-cased
+// so lookups by GitHub username are case-insensitive like GitHub itself.
+func (s *Store) NoteAuthor(key, login string) {
+	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.Author == login {
+		return
+	}
+	r.Author = login
+	s.items[key] = r
+	s.dirty = true
+}
+
+// AuthorItem is one stored record with its key, as ByAuthor returns it.
+type AuthorItem struct {
+	Key    string
+	Record Record
+}
+
+// ByAuthor returns every record whose Author is login (case-insensitive),
+// optionally restricted to stage (None = any stage), sorted by key so the
+// dashboard view is stable across polls.
+func (s *Store) ByAuthor(login string, stage Stage) []AuthorItem {
+	login = strings.ToLower(strings.TrimSpace(login))
+	if login == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []AuthorItem
+	for k, r := range s.items {
+		if r.Author != login || (stage != None && r.Stage != stage) {
+			continue
+		}
+		out = append(out, AuthorItem{Key: k, Record: r})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
 }
 
