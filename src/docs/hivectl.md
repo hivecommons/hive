@@ -251,6 +251,32 @@ hash, then checks the signature with `--pubkey` (hex, base64, or a file holding 
 key embedded in the file (a zip manifest's `public_key`). Unsigned bundles, hash mismatches and bad signatures exit
 non-zero. See [Review evidence bundle](review-evidence.md).
 
+### evidence — export stored bundles
+
+```bash
+hivectl evidence export                                            # every PR, JSON Lines on stdout
+hivectl evidence export --since 168h --format csv --out ev.csv     # last 7 days as CSV
+hivectl evidence export --since 2026-10-01T00:00:00Z --repo hivecommons/hive
+hivectl evidence export --root ./evidence --format csv | column -ts,
+```
+
+`evidence export` reads the schema v1 bundles under `--root` (default `/data/evidence`, layout
+`<org>/<repo>/<pr>/<sha>.json`) directly from the filesystem — no hive session, no network — and emits one row per
+pull request from the **newest bundle per PR**, the same rule `GET /api/evidence/summary` applies, so the numbers
+reconcile with the dashboard Evidence charts. `--since` takes an RFC3339 timestamp or a Go duration (`72h`) and keeps
+bundles created at or after it; `--repo` narrows to one `owner/name` (case-insensitive); `--format` is `jsonl`
+(default) or `csv`; `--out FILE` writes a file instead of stdout. Rows are ordered by repo then PR number. Bundles that
+do not parse or are not schema v1 are skipped and counted on stderr, never fabricated.
+
+Columns: `repo`, `pr`, `head_sha`, `bundle_id`, `author_login`, `author_kind`, `author_model`, `acmm_level`,
+`perspectives`, `reviewer_models`, `verdicts` (per perspective: perspective, verdict, model, backend, confidence),
+`ci_conclusion`, `ci_captured_at`, `outcome` (`merged` or `open` — schema v1 does not record a close without merge),
+`merged_at`, `revert_of`, `reverted_by`, `followup_of`, `followed_up_by`, `shadow_review_would_have_held`,
+`shadow_intent_would_have_blocked` (empty/`null` when the gate was not evaluated), `sentinel_hits`, `signed`,
+`created_at`, `updated_at`. In CSV, lists join with `;` and each verdict is `perspective:verdict:model:backend:confidence`.
+Reporting only: nothing here reads into or alters merge eligibility. See
+[Review evidence bundle](review-evidence.md#exporting).
+
 ### observe — read-only metrics
 
 ```bash

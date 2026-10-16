@@ -92,6 +92,7 @@ A PR named both ways counts as a revert. A referenced number is linked only when
 - **Shadow gates (panel 8):** `shadow_gate` in the summary counts, over the latest bundle per PR in the window, the PRs with any shadow observation (`n`), `would_have_held` (review gate) and `would_have_blocked` (intent), and for each gate (`review_gate`, `intent`) splits the evaluated PRs into `held` and `passed`, each with how they actually turned out: `merged`, `open`, `reverted` (merged and later linked by `reverted_by`) and `closed` (0 until bundles record a close without merge). The Throughput section's Evidence sub-panel draws it as the **Shadow gates** panel, with a zero state while shadow mode is off. Reporting only; nothing reads it to decide a merge ([#12068](https://github.com/hivecommons/hive/issues/12068)).
 - **Dashboard:** owners get an **Evidence** button on Review Queue rows and Pipeline cards. It opens a modal with the bundle id, head, hash, whether it is signed, the verdict count and merge status, and **Download JSON** / **Download ZIP** buttons.
 - **CLI:** `hivectl review evidence <owner/repo#n> [--head <sha>] [-o FILE] [--zip]` prints or saves the bundle, and `hivectl review evidence verify FILE [--pubkey KEY]` checks it offline (see [hivectl](hivectl.md#review--review-evidence)).
+- **Export:** `hivectl evidence export [--since <RFC3339|duration>] [--format csv|jsonl] [--repo owner/name] [--out FILE] [--root DIR]` dumps one row per PR straight from the bundles on disk; see [Exporting](#exporting).
 - **On the PR:** when a PR merges through any Hive merge path, the merge event is added to the head's bundle (re-signed) and Hive posts one comment:
 
   ```
@@ -99,6 +100,21 @@ A PR named both ways counts as a revert. A referenced number is linked only when
   ```
 
   The marker makes it idempotent: a PR gets one such comment, however many sweeps see the merge.
+
+## Exporting
+
+Operators and the study need the raw per-PR evidence off a spoke without scraping `/data/evidence`. `hivectl evidence export` reads the schema v1 bundles under `--root` (default `/data/evidence`, layout `<org>/<repo>/<pr>/<sha>.json`) from the local filesystem — no hive session, no network — and emits one row per pull request from the **newest bundle per PR**, the same rule `GET /api/evidence/summary` uses, so exported counts reconcile with the dashboard Evidence charts ([#12367](https://github.com/hivecommons/hive/issues/12367), RFC [#12062](https://github.com/hivecommons/hive/issues/12062)).
+
+```bash
+hivectl evidence export --since 168h --format csv --out evidence.csv   # last 7 days
+hivectl evidence export --since 2026-10-01T00:00:00Z --repo hivecommons/hive   # JSON Lines on stdout
+```
+
+- `--since` takes an RFC3339 timestamp or a Go duration and keeps bundles whose `created_at` is at or after it; it is applied before the newest-per-PR choice, as the summary API does.
+- `--format` is `jsonl` (default, one JSON object per line) or `csv` (header row first). Lists join with `;` in CSV and each verdict is `perspective:verdict:model:backend:confidence`.
+- Columns: `repo`, `pr`, `head_sha`, `bundle_id`, `author_login`, `author_kind`, `author_model`, `acmm_level`, `perspectives`, `reviewer_models` (distinct, sorted), `verdicts` (perspective, verdict, model, backend, confidence; sorted by perspective), `ci_conclusion` (`ci.status`), `ci_captured_at`, `outcome` (`merged` or `open`; v1 bundles do not record a close without merge), `merged_at`, `revert_of`, `reverted_by`, `followup_of`, `followed_up_by` (bundle ids), `shadow_review_would_have_held`, `shadow_intent_would_have_blocked` (empty / `null` when the gate was not evaluated), `sentinel_hits`, `signed`, `created_at`, `updated_at`.
+- Rows are ordered by repo (case-insensitive) then PR number, so two runs over the same files are byte-identical. Files that do not parse or are not schema v1 are skipped and counted on stderr; nothing is fabricated.
+- Reporting only: the export reads bundles and never influences a merge.
 
 ## Signing key
 
