@@ -1,0 +1,1 @@
+- Add the Evidence maintainability trend panel with monthly per-repo Go complexity, over-threshold functions, tool warnings, and first-observed ACMM level markers; reporting only, with no merge-policy changes.

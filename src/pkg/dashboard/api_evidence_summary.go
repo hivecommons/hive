@@ -45,6 +45,8 @@ type EvidenceSummary struct {
 	// intent tier (#12069); omitted when the counter file is absent or unreadable.
 	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
 	Missing       EvidenceMissing               `json:"missing"`
+	// ACMMChanges records the first observed month of each policy level per repo.
+	ACMMChanges []EvidenceACMMChange `json:"acmm_changes,omitempty"`
 }
 
 // EvidenceWriteCount is one tier's attempted and proxy-blocked write counts.
@@ -271,6 +273,7 @@ func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, repo, kind string) EvidenceSummary {
 	resp := EvidenceSummary{
 		Hours: hours, AllTime: hours == 0, Repo: repo, AuthorKind: kind,
+		ACMMChanges:     evidenceACMMChanges(bundles, repo),
 		Outcomes:        map[string]EvidenceOutcomes{},
 		Calibration:     []EvidencePerspectiveCalib{},
 		ReviewerModels:  []EvidenceModelAccuracy{},

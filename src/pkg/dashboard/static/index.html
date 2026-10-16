@@ -22172,6 +22172,74 @@ function burnAreaChart() {
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Shadow gates: PRs the review gate or intent verification would have stopped or passed, by actual outcome">${body}</svg><div class="ev-legend"><span><i class="sm"></i>merged</span><span><i class="sr"></i>merged, later reverted</span><span><i class="so"></i>still open</span></div>`;
     }
 
+    // Panel 7 (#12369). Monthly observations are report-only and independent
+    // of PR author kind. Missing tool measurements stay gaps, never zeroes.
+    function evMaintainabilityRows(dto) {
+      const end = new Date().toISOString().slice(0, 7);
+      const start = Number(dto.hours) > 0 ? new Date(Date.now() - Number(dto.hours) * 3600000).toISOString().slice(0, 7) : '';
+      return (Array.isArray(dto.complexity_by_repo) ? dto.complexity_by_repo : [])
+        .filter((r) => r && (!dto.repo || String(r.repo).toLowerCase() === String(dto.repo).toLowerCase()))
+        .map((r) => ({ repo: String(r.repo), months: (Array.isArray(r.months) ? r.months : [])
+          .filter((m) => m && /^\d{4}-\d{2}$/.test(m.month) && m.month >= start && m.month <= end)
+          .slice().sort((a, b) => a.month.localeCompare(b.month)) }))
+        .filter((r) => r.months.length).sort((a, b) => a.repo.localeCompare(b.repo));
+    }
+
+    function evMaintainabilitySvg(rows, changes) {
+      if (!rows.length) return '<div class="ev-empty">— no monthly complexity snapshots in this window</div>';
+      const months = [...new Set(rows.flatMap((r) => r.months.map((m) => m.month)))].sort();
+      const ordinal = (m) => Number(m.slice(0, 4)) * 12 + Number(m.slice(5, 7)) - 1;
+      const first = ordinal(months[0]), last = ordinal(months[months.length - 1]);
+      const w = 420, left = 38, right = 10, laneH = 110;
+      const x = (month) => left + (last > first ? (ordinal(month) - first) / (last - first) : 0.5) * (w - left - right);
+      const tools = [...new Set(rows.flatMap((r) => r.months.flatMap((m) => Object.keys(m.static_warnings_by_tool || {}))))].sort();
+      const metrics = [
+        { label: 'Median cyclomatic (Go)', keys: ['median_cyclomatic'], value: (m, k) => m[k] },
+        { label: 'Functions over threshold', keys: ['functions_over_threshold'], value: (m, k) => m[k] },
+        { label: 'Warnings by tool', keys: tools, value: (m, k) => (m.static_warnings_by_tool || {})[k] }
+      ];
+      const valid = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+      const body = metrics.map((metric, mi) => {
+        const top = mi * laneH + 22, bottom = top + 64;
+        const values = rows.flatMap((r) => r.months.flatMap((m) => metric.keys.map((k) => metric.value(m, k)))).filter(valid);
+        const max = Math.max(1, ...values);
+        const y = (v) => bottom - v / max * 64;
+        let svg = `<text x="${left}" y="${top - 9}">${escapeHtml(metric.label)}</text><line class="ev-axis" x1="${left}" x2="${w - right}" y1="${bottom}" y2="${bottom}"/><text x="${left - 4}" y="${top + 4}" text-anchor="end">${max}</text><text x="${left - 4}" y="${bottom}" text-anchor="end">0</text>`;
+        if (!values.length) svg += `<text x="${left}" y="${top + 30}">No tool measurements</text>`;
+        rows.forEach((row, ri) => {
+          const byMonth = new Map(row.months.map((m) => [m.month, m]));
+          metric.keys.forEach((key, ki) => {
+            let points = [], marks = '';
+            const flush = () => {
+              if (points.length > 1) marks += `<polyline class="ev-line" stroke-dasharray="${mi === 2 ? (ki + 1) * 3 + ' 3' : 'none'}" points="${points.join(' ')}"/>`;
+              points = [];
+            };
+            // Include missing calendar months so lines do not imply measurements.
+            for (let month = first; month <= last; month++) {
+              const name = `${Math.floor(month / 12)}-${String(month % 12 + 1).padStart(2, '0')}`;
+              const m = byMonth.get(name), v = m && metric.value(m, key);
+              if (!valid(v)) { flush(); continue; }
+              const xx = x(name).toFixed(1), yy = y(v).toFixed(1);
+              points.push(`${xx},${yy}`);
+              const tip = `${row.repo} · ${name} · ${mi === 2 ? key : metric.label}: ${v}${mi === 1 ? ' (threshold ' + m.threshold + ')' : ''}`;
+              marks += `<circle class="ev-pt" cx="${xx}" cy="${yy}" r="2.5"><title>${escapeHtml(tip)}</title></circle>`;
+            }
+            flush();
+            svg += `<g class="ev-c${ri % EV_PALETTE_SIZE}">${marks}</g>`;
+          });
+          (Array.isArray(changes) ? changes : []).filter((c) => String(c.repo).toLowerCase() === row.repo.toLowerCase() && c.month >= months[0] && c.month <= months[months.length - 1]).forEach((c) => {
+            const xx = x(c.month).toFixed(1);
+            svg += `<g class="ev-c${ri % EV_PALETTE_SIZE}"><line class="ev-line" stroke-dasharray="2 3" x1="${xx}" x2="${xx}" y1="${top}" y2="${bottom}"><title>${escapeHtml(`${row.repo} · ${c.month}: ACMM L${c.level} first observed`)}</title></line></g>`;
+          });
+        });
+        return svg;
+      }).join('');
+      const h = laneH * 3 + 12;
+      const labels = months.filter((m, i) => i === 0 || i === months.length - 1 || (months.length <= 4)).map((m) => `<text x="${x(m).toFixed(1)}" y="${h - 4}" text-anchor="${m === months[0] ? 'start' : m === months[months.length - 1] ? 'end' : 'middle'}">${m}</text>`).join('');
+      const legend = rows.map((r, i) => `<span class="ev-c${i % EV_PALETTE_SIZE}"><i class="dot"></i>${escapeHtml(r.repo)} (${r.months.length} months)</span>`).join('');
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Maintainability trend: median cyclomatic, over-threshold functions and warnings by tool; vertical ACMM first-observed markers">${body}${labels}</svg><div class="ev-legend">${legend}<span>Dashed: ${escapeHtml(tools.join(', ') || 'no warning tools')} · vertical dotted: ACMM level first observed</span></div>`;
+    }
+
     function renderEvidenceSummary(dto) {
       const card = document.getElementById('evidence-card');
       if (!card) return;
@@ -22182,6 +22250,8 @@ function burnAreaChart() {
       const modelN = models.reduce((sum, m) => sum + (Number(m && m.n) || 0), 0);
       const unknown = Number((dto.missing || {}).verdicts_model_unknown) || 0;
       const shadow = dto.shadow_gate || {};
+      const complexity = evMaintainabilityRows(dto);
+      const complexityN = complexity.filter((r) => r.months.length >= 2).length;
       const outcomes = dto.outcomes_by_author_kind || {};
       const outcomeN = Object.keys(outcomes).reduce((sum, k) => sum + (Number(outcomes[k] && outcomes[k].n) || 0), 0);
       const windowName = PRT_WINDOWS.find(([h]) => h === prtHours);
@@ -22193,6 +22263,8 @@ function burnAreaChart() {
           'Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. Merged is not the same as correct, and a PR that is still open counts as not merged.')
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
           `Outcome is merged vs not merged, not ground truth: a block that was later fixed and merged counts as a false block, and an approval on a still-open PR counts as a false approve.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
+        + evPanel('maintainability', 'Maintainability trend', complexityN, evMaintainabilitySvg(complexity, dto.acmm_changes),
+          'Report-only; Go-only cyclomatic complexity. No causal claim: complexity may rise. n = repos with at least 2 monthly snapshots in the selected window (boundary months included). Monthly repo measurements ignore author kind. Tool measurements can be unavailable; gaps are not zero. ACMM markers show the first month each level is seen in stored bundles, not the exact configuration change; returns to an earlier level are not shown.')
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
           'Shadow mode only records; no merge was held or blocked. Closed-without-merge is not recorded in bundles, so a closed PR counts as still open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
