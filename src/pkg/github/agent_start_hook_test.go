@@ -109,8 +109,67 @@ func TestIssueRequestStartSignal(t *testing.T) {
 		"comment": AgentStartSignalComment, "label": AgentStartSignalLabel, "claim": AgentStartSignalClaim,
 		"issue": "", "close": "", "request_review": "",
 	} {
-		if got := issueRequestStartSignal(kind); got != want {
+		if got := issueRequestStartSignal(kind, "verified on v5"); got != want {
 			t.Errorf("issueRequestStartSignal(%q) = %q, want %q", kind, got, want)
 		}
+	}
+}
+
+// #12387: a deferral comment parks the issue; it is not a start signal.
+func TestIssueRequestStartSignal_Deferral(t *testing.T) {
+	cases := []struct {
+		name string
+		kind string
+		body string
+		want string
+	}{
+		{"reported deferral", "comment", "**Deferred this cycle**: #12322 is open and edits the same files; implementing here now would conflict with it. **Picks up once #12322 merges.**", ""},
+		{"deferring until", "comment", "Deferring implementation until #12322 merges.", ""},
+		{"blocked by bare ref", "comment", "Blocked by #12322.", ""},
+		{"blocked by cross-repo ref", "comment", "Blocked by hivecommons/hive#12322; picks up after it merges.", ""},
+		{"blocked by PR URL", "comment", "Status: still blocked by https://github.com/hivecommons/hive/pull/12322", ""},
+		{"this is blocked on cross-repo ref", "comment", "This is blocked on other/repo#7.", ""},
+		{"waiting for ref", "comment", "Waiting for #12322 to land.", ""},
+		{"not starting", "comment", "Not starting yet: #12322 touches the same files.", ""},
+		{"picks up after cross-repo merges", "comment", "Picks up after hivecommons/hive#12322 merges.", ""},
+		{"negated start does not override", "comment", "Deferred: not starting now.", ""},
+		{"resume after merge with comma", "comment", "Picking this up after #12322 merged, starting now.", AgentStartSignalComment},
+		{"resume after cross-repo merge", "comment", "Picking this up after hivecommons/hive#12322 merged.", AgentStartSignalComment},
+		{"historical blocker then start", "comment", "Blocked by #12322 earlier; that merged, starting now.", AgentStartSignalComment},
+		{"deferral then unblocked", "comment", "Deferred earlier; no longer blocked, working on it now.", AgentStartSignalComment},
+		{"progress comment", "comment", "Working on a fix; repro confirmed on v5.", AgentStartSignalComment},
+		{"progress with wait aside", "comment", "Opened PR #5, waiting on #6 CI.", AgentStartSignalComment},
+		{"progress with deferral aside", "comment", "Implementing now. Deferring the rename until #9 lands.", AgentStartSignalComment},
+		{"past blocker", "comment", "Previously blocked by #12322, which has merged.", AgentStartSignalComment},
+		{"label request with deferral text", "label", "Deferred this cycle.", AgentStartSignalLabel},
+		{"claim request with deferral text", "claim", "Blocked by #1.", AgentStartSignalClaim},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := issueRequestStartSignal(tc.kind, tc.body); got != tc.want {
+				t.Errorf("issueRequestStartSignal(%q, %q) = %q, want %q", tc.kind, tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+// #12387: the relay still posts a deferral comment but reports no start.
+func TestAgentStartHook_DeferralCommentRecordsNoStart(t *testing.T) {
+	commented := 0
+	srv := newIssueMockServer(t, "", nil, nil, &commented)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	calls := recordStarts(c)
+	dir := withIssueDir(t)
+
+	if _, err := WriteIssueRequest(dir, IssueRequest{Kind: "comment", Repo: "o/r", Number: 41, Body: "Deferred this cycle: picks up once #40 merges.", Agent: "scanner"}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if commented != 1 {
+		t.Fatalf("expected the deferral comment to be posted, got %d comments", commented)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("deferral comment reported start signals: %+v", *calls)
 	}
 }

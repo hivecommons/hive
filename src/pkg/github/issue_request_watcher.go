@@ -597,7 +597,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
-	if signal := issueRequestStartSignal(kind); signal != "" {
+	if signal := issueRequestStartSignal(kind, req.Body); signal != "" {
 		c.notifyAgentStart(req.Agent, req.Repo, req.Number, signal)
 	}
 

@@ -1,0 +1,1 @@
+- An agent's deferral comment ("Deferred this cycle", "Picks up once #N merges", "Blocked by owner/repo#N") no longer records a 2h start claim that leaves an idle issue marked in progress after its blocker lands; a comment that also says work is starting now still claims.

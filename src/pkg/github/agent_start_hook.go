@@ -1,5 +1,7 @@
 package github
 
+import "regexp"
+
 // Agent start signals (hivecommons/hive#10527).
 //
 // A governor kick lists many issues and the agent starts on few of them, so
@@ -46,13 +48,67 @@ func (c *Client) notifyAgentStart(agent, repo string, number int, signal string)
 	}
 }
 
-// issueRequestStartSignal maps a successful issue-request kind to the start
-// signal it is, or "" for kinds that are not one: creating an issue, closing
-// one, and asking for a review do not show the agent working an existing
-// issue.
-func issueRequestStartSignal(kind string) string {
+// blockerRef is an issue or pull-request reference as an agent writes a
+// blocker: "#N", "owner/repo#N", or a GitHub issue/pull URL.
+const blockerRef = `(?:#\d+|[\w.-]+/[\w.-]+#\d+|https?://github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d+)`
+
+// commentDeferral matches a comment that parks the issue instead of starting
+// it (#12387): one that opens (after markdown and an optional "Status:" or
+// "Update:" label) with "Deferred"/"Deferring", "Not starting",
+// "[this is] [still] blocked by/on <ref>" or "waiting on/for <ref>"; or that
+// says "deferred this cycle" or "pick(s) [this/it] up once/when …" anywhere,
+// or "pick(s) [this/it] up after <ref> merges/lands/closes". A past "picking
+// this up after #N merged" is a resume, not a deferral. The opening forms
+// only look at how the comment starts, so a progress comment with a
+// deferral aside later on still records the claim.
+var commentDeferral = regexp.MustCompile(`(?i)` +
+	`^\W*(?:(?:status|update)\s*:\W*)?(?:` +
+	`deferr(?:ed|ing)\b` +
+	`|(?:not|never|won't|can't|cannot)\s+start` +
+	`|(?:(?:this|it)\s+is\s+)?(?:still\s+|currently\s+)?(?:blocked\s+(?:by|on)|waiting\s+(?:on|for))\s+` + blockerRef +
+	`)` +
+	`|\bdeferred\s+this\s+cycle\b` +
+	`|\bpick(?:s|ing)?\s+(?:this\s+|it\s+)?up\s+(?:once|when)\b` +
+	`|\bpick(?:s|ing)?\s+(?:this\s+|it\s+)?up\s+after\s+\S+(?:\s+\S+){0,3}?\s+(?:merges|lands|closes|ships|is\s+(?:merged|closed|fixed|resolved))\b`)
+
+// commentStartNow matches an explicit statement that work is starting or
+// resuming now. It overrides commentDeferral, so "Picking this up after
+// #12322 merged, starting now." or "Deferred earlier; no longer blocked,
+// working on it now." still record the claim that keeps a second agent off
+// the issue (#10527). Group 1 captures a negation ("not starting now"),
+// which does not count.
+var commentStartNow = regexp.MustCompile(`(?i)\b((?:not|never|won't|can't|cannot)\s+)?(?:` +
+	`(?:starting|started|resuming|resumed)\s+(?:work\s+|on\s+(?:this|it)\s+)?now` +
+	`|(?:working\s+on|picking\s+up)\s+(?:this|it)\s+now` +
+	`|picking\s+(?:this|it)\s+up\s+now` +
+	`|no\s+longer\s+blocked|now\s+unblocked|unblocked\s+now` +
+	`)\b`)
+
+// commentIsDeferral reports whether a comment body is an explicit deferral
+// with no statement that work is starting now.
+func commentIsDeferral(body string) bool {
+	if !commentDeferral.MatchString(body) {
+		return false
+	}
+	for _, m := range commentStartNow.FindAllStringSubmatch(body, -1) {
+		if m[1] == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// issueRequestStartSignal maps a successful issue request to the start
+// signal it is, or "" for requests that are not one: creating an issue,
+// closing one, asking for a review, and a deferral comment (#12387) do not
+// show the agent working an existing issue. A label or claim request is a
+// start signal whatever an accompanying comment said.
+func issueRequestStartSignal(kind, body string) string {
 	switch kind {
 	case "comment":
+		if commentIsDeferral(body) {
+			return ""
+		}
 		return AgentStartSignalComment
 	case "label":
 		return AgentStartSignalLabel
