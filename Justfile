@@ -2475,6 +2475,20 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
     BACKEND="${AGENT_BACKEND:-claude}"
 
+    # ── RuntimeClass name check (#12227) ──
+    # runtimeClassName must be a DNS-1123 subdomain: lowercase alphanumerics, '-'
+    # and '.', starting and ending alphanumeric, at most 253 characters. Refuse
+    # before any YAML is built so stdout stays empty on a bad value.
+    if [[ -n "${HIVE_K8S_RUNTIME_CLASS:-}" ]]; then
+      if (( ${#HIVE_K8S_RUNTIME_CLASS} > 253 )) \
+        || [[ ! "$HIVE_K8S_RUNTIME_CLASS" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]]; then
+        echo "ERROR: HIVE_K8S_RUNTIME_CLASS='${HIVE_K8S_RUNTIME_CLASS}' is not a valid RuntimeClass name." >&2
+        echo "  Use a DNS-1123 subdomain: lowercase letters, digits, '-' and '.', starting and" >&2
+        echo "  ending with a letter or digit, at most 253 characters (e.g. kata-qemu, gvisor)." >&2
+        exit 1
+      fi
+    fi
+
     # ── Headless-backend preflight (#2549 / #2660) ──
     # The workload runs headless. Only the backends in HEADLESS_BACKENDS have a
     # verified non-interactive entry point; anything else makes the relay refuse

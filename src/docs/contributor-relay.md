@@ -900,6 +900,14 @@ kubectl apply -f relay.yaml
 kubectl -n my-namespace rollout status deploy/hive-contributor
 ```
 
+To run the contributor pod under a sandbox runtime, set `HIVE_K8S_RUNTIME_CLASS` when generating the manifest:
+
+```bash
+HIVE_K8S_RUNTIME_CLASS=kata-qemu just contribute-k8s my-namespace relay.yaml
+```
+
+The value becomes `runtimeClassName` on the pod; unset or empty emits no field. The cluster must already provide the RuntimeClass — `just contribute-k8s` does not create it, and a pod that names a missing class stays unschedulable. Use the class names your cluster installs: Kata Containers installs names such as `kata-qemu` and `kata-clh`, and gVisor's is typically `gvisor`. A value that is not a valid Kubernetes object name (a DNS-1123 subdomain: lowercase letters, digits, `-` and `.`, starting and ending alphanumeric, at most 253 characters), such as `Kata_QEMU`, is refused with a non-zero exit and no YAML on stdout.
+
 The generated pod sets `CONTRIBUTOR_MODE=headless` because Kubernetes pods have no TTY; interactive tmux mode would stall. Headless mode is currently verified for `claude`, `litellm`, `copilot`, `codex`, `goose`, and `agy` (`agy -p`, verified on 1.1.13) — but **`agy` stays out of `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist regardless**: it signs in through an interactive Google OAuth flow with no API-key mode, and a pod has no way to complete that sign-in even once (unlike the container path, where an operator can attach and run `agy` interactively, or the relay can stage an already-signed-in `~/.gemini`). Headless `agy` is verified only on a host that has already signed in. `opencode` has a verified one-shot invocation (`opencode run "<prompt>"`, [#4970](https://github.com/hivecommons/hive/issues/4970)) but is **not yet** in `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist: whether `opencode auth login`'s credential file supports non-interactive, unattended use in a fresh pod is unverified, so it currently runs headless on a host that has already signed in, the same posture as `agy`. The Deployment has one replica per registered contributor identity and uses readiness/liveness probes that read the relay's headless status file (`waiting`, `working`, `done` pass; missing/failed state fails).
 
 **If you need `agy`, `opencode`, or `kilo` on the K8s path**, the allowlist is

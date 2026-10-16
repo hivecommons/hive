@@ -105,6 +105,43 @@ fi
 RC_OUT="$(cd "$REPO_ROOT" && HOME="$FAKE_HOME" ANTHROPIC_API_KEY="" HIVE_K8S_RUNTIME_CLASS=gvisor just contribute-k8s hive-contributor 2>/dev/null)"
 contains "HIVE_K8S_RUNTIME_CLASS sets runtimeClassName" "$RC_OUT" "      runtimeClassName: gvisor"
 
+# Golden (#12227): the full unset YAML is pinned byte for byte, and an empty
+# value must be indistinguishable from unset. Files, not $(...), so trailing
+# newlines are compared too.
+GOLDEN="$REPO_ROOT/src/deploy/testdata/contribute_k8s_unset.golden"
+(cd "$REPO_ROOT" && HOME="$FAKE_HOME" ANTHROPIC_API_KEY="" just contribute-k8s hive-contributor 2>/dev/null) > "$FAKE_HOME/unset.yaml"
+(cd "$REPO_ROOT" && HOME="$FAKE_HOME" ANTHROPIC_API_KEY="" HIVE_K8S_RUNTIME_CLASS="" just contribute-k8s hive-contributor 2>/dev/null) > "$FAKE_HOME/empty.yaml"
+for value in unset empty; do
+  if cmp -s "$GOLDEN" "$FAKE_HOME/$value.yaml"; then
+    echo "  PASS: HIVE_K8S_RUNTIME_CLASS $value output matches the golden byte for byte"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: HIVE_K8S_RUNTIME_CLASS $value output differs from the golden"
+    diff "$GOLDEN" "$FAKE_HOME/$value.yaml" | head -20 || true
+    FAIL=$((FAIL + 1))
+  fi
+done
+
+# Invalid names are refused: nonzero exit, a message on stderr, NO YAML on stdout.
+for bad in Kata_QEMU -kata kata- "kata qemu" "$(printf 'a%.0s' $(seq 1 254))"; do
+  set +e
+  (cd "$REPO_ROOT" && HOME="$FAKE_HOME" ANTHROPIC_API_KEY="" HIVE_K8S_RUNTIME_CLASS="$bad" just contribute-k8s hive-contributor >"$FAKE_HOME/bad.out" 2>"$FAKE_HOME/bad.err")
+  BAD_RC=$?
+  set -e
+  if [ "$BAD_RC" -ne 0 ] && [ ! -s "$FAKE_HOME/bad.out" ]; then
+    echo "  PASS: invalid HIVE_K8S_RUNTIME_CLASS '${bad:0:20}' refused with empty stdout"
+    PASS=$((PASS + 1))
+  else
+    echo "  FAIL: invalid HIVE_K8S_RUNTIME_CLASS '${bad:0:20}' (exit $BAD_RC, stdout $(wc -c < "$FAKE_HOME/bad.out") bytes)"
+    FAIL=$((FAIL + 1))
+  fi
+done
+contains "refusal names the variable" "$(cat "$FAKE_HOME/bad.err")" "HIVE_K8S_RUNTIME_CLASS"
+for good in kata-qemu kata-clh gvisor kata.v2 a; do
+  GOOD_OUT="$(cd "$REPO_ROOT" && HOME="$FAKE_HOME" ANTHROPIC_API_KEY="" HIVE_K8S_RUNTIME_CLASS="$good" just contribute-k8s hive-contributor 2>/dev/null)"
+  contains "valid name '$good' is emitted" "$GOOD_OUT" "      runtimeClassName: $good"
+done
+
 # ── Placeholder discipline: no real token bytes leak; still base64 placeholders. ──
 if printf '%s' "$OUT" | grep -q "GH_TOKEN: cGxhY2Vob2xkZXItZ2gtdG9rZW4="; then
   echo "  PASS: Secret carries the base64 placeholder token (templated, not raw)"

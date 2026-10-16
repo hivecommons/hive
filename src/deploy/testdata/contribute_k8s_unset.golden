@@ -1,0 +1,122 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hive-contributor
+---
+# Non-sensitive contributor configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-contributor-config
+  namespace: hive-contributor
+  labels:
+    app.kubernetes.io/name: hive-contributor
+    app.kubernetes.io/component: config
+data:
+  HIVE_HUB: "wss://hive.example.io:3001/contribute"
+  CONTRIBUTOR_ID: "c-test01"
+  CONTRIBUTOR_USERNAME: "testuser"
+  AGENT_BACKEND: "claude"
+  CONTRIBUTOR_MODE: "headless"
+  HIVE_HEADLESS_STATUS_FILE: "/tmp/contributor-headless-status.json"
+---
+# Sensitive credentials — treat as secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hive-contributor-secrets
+  namespace: hive-contributor
+  labels:
+    app.kubernetes.io/name: hive-contributor
+    app.kubernetes.io/component: secrets
+type: Opaque
+data:
+  HIVE_REGISTRATION_TOKEN: cGxhY2Vob2xkZXItcmVnLXRva2Vu
+  GH_TOKEN: cGxhY2Vob2xkZXItZ2gtdG9rZW4=
+  HIVE_CLAUDE_CREDENTIALS_B64: ZXlKamJHRjFaR1ZCYVU5aGRYUm9JanA3SW1GalkyVnpjMVJ2YTJWdUlqb2ljR3hoWTJWb2IyeGtaWEl0WTJ4aGRXUmxMVzloZFhSb0lpd2ljbVZtY21WemFGUnZhMlZ1SWpvaWNHeGhZMlZvYjJ4a1pYSXRZMnhoZFdSbExYSmxabkpsYzJnaWZYMD0=
+---
+# The contributor workload. Runs the relay HEADLESS (#2660): no TTY, one
+# one-shot CLI invocation per task. A long-lived Deployment (not a Job)
+# because the relay stays connected to the hub and pulls work over time;
+# Kubernetes restarts it on failure and keeps a stable identity — the
+# exact reason an operator wants a cluster over a laptop.
+#
+# INTERIM CREDENTIAL NOTE (#2537, #5103): the Secret above carries a
+# long-lived, personal GH_TOKEN (scope repo,read:org) and, when the
+# selected backend requires one, that backend's own credential (an API
+# key, or a Claude OAuth credential file with a refresh token).
+# In a cluster these are base64 (NOT
+# encrypted), readable by anyone with 'get secrets' in this namespace and
+# by cluster-scoped operators/backups. This is materially more exposed
+# than a 0600 file on a laptop. Revoke any time with: gh auth logout (or
+# revoke the token in GitHub settings). Gating the credential on explicit
+# task acceptance is tracked in kubestellar/hive#2537 and is NOT solved
+# here — this path reuses the existing Secret rather than inventing new
+# long-lived credential plumbing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive-contributor
+  namespace: hive-contributor
+  labels:
+    app.kubernetes.io/name: hive-contributor
+    app.kubernetes.io/component: relay
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hive-contributor
+      app.kubernetes.io/component: relay
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hive-contributor
+        app.kubernetes.io/component: relay
+    spec:
+      restartPolicy: Always
+      containers:
+        - name: contributor
+          image: ghcr.io/hivecommons/hive-contributor:v4
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: hive-contributor-config
+            - secretRef:
+                name: hive-contributor-secrets
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  STATE=$(sed -n "s/.*\"state\"[^\"]*\"\\([a-z]*\\)\".*/\\1/p" /tmp/contributor-headless-status.json 2>/dev/null | head -1)
+                  case "$STATE" in waiting|working|done) exit 0 ;; *) exit 1 ;; esac
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  STATE=$(sed -n "s/.*\"state\"[^\"]*\"\\([a-z]*\\)\".*/\\1/p" /tmp/contributor-headless-status.json 2>/dev/null | head -1)
+                  case "$STATE" in waiting|working|done) exit 0 ;; *) exit 1 ;; esac
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+
+# Apply with: just contribute-k8s hive-contributor | kubectl apply -f -
+# Or save:    just contribute-k8s hive-contributor manifests.yaml
+# Then:       kubectl -n hive-contributor rollout status deploy/hive-contributor
+# Pin image:  just contribute-k8s hive-contributor manifests.yaml <git-short-sha>
+# Interim credential note (#2537): Secret holds a long-lived personal GH_TOKEN
+#   (base64, cluster-readable). Revoke with 'gh auth logout'.
