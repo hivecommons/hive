@@ -974,7 +974,7 @@ func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 	}
 }
 
-func TestDashboardStrategyLabDefaultsHidden(t *testing.T) {
+func TestDashboardExperimentLabDefaultsHidden(t *testing.T) {
 	cfg := &Config{
 		Project: ProjectConfig{Org: "o", Repos: []string{"r"}},
 		GitHub:  GitHubConfig{Token: "t"},
@@ -982,8 +982,11 @@ func TestDashboardStrategyLabDefaultsHidden(t *testing.T) {
 	}
 	cfg.applyDefaults()
 
+	if cfg.Dashboard.ExperimentLab {
+		t.Fatal("dashboard.experiment_lab defaulted on; Experiment Lab must stay hidden unless explicitly enabled")
+	}
 	if cfg.Dashboard.StrategyLab {
-		t.Fatal("dashboard.strategy_lab defaulted on; Strategy Lab must stay hidden unless explicitly enabled")
+		t.Fatal("deprecated dashboard.strategy_lab alias defaulted on")
 	}
 }
 

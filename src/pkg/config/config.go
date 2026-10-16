@@ -5542,9 +5542,17 @@ type DashboardConfig struct {
 	Port               int    `yaml:"port"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
-	// StrategyLab opts the in-dashboard Strategy Lab/Nous UI back in while it
-	// is hidden by default for rework.
-	StrategyLab bool `yaml:"strategy_lab" json:"strategy_lab"`
+	// ExperimentLab opts the in-dashboard Experiment Lab/Nous UI back in
+	// while it is hidden by default for rework.
+	ExperimentLab bool `yaml:"experiment_lab,omitempty" json:"experiment_lab,omitempty"`
+	// StrategyLab is the pre-rename alias of ExperimentLab (RFC #11585 part
+	// 2, #11695). It is read ONLY so an operator's explicit
+	// dashboard.strategy_lab: true keeps working for one release; applyDefaults
+	// folds it into ExperimentLab via migrateDeprecatedStrategyLab and clears
+	// it so a re-save writes the documented key.
+	//
+	// Deprecated: set dashboard.experiment_lab instead.
+	StrategyLab bool `yaml:"strategy_lab,omitempty" json:"strategy_lab,omitempty"`
 	// SnapshotFrameAncestors is the explicit set of HTTPS origins allowed to
 	// embed the public, read-only /snapshot document. Empty keeps the historical
 	// fail-closed framing policy (X-Frame-Options: DENY plus CSP
@@ -6784,6 +6792,7 @@ func (c *Config) applyDefaults() {
 		c.Governor.Sensing.PullbackSeconds = defaultSensingPullbackSeconds
 	}
 	c.migrateDeprecatedHealthSettings()
+	c.migrateDeprecatedStrategyLab()
 	if c.Governor.Budget.PeriodDays == 0 {
 		c.Governor.Budget.PeriodDays = defaultBudgetPeriodDays
 	}

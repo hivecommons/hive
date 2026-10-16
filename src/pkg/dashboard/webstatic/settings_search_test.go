@@ -50,27 +50,27 @@ func TestSettingsSearchOpenTabRevealsRow(t *testing.T) {
 	if got.Error != "" {
 		t.Fatalf("scenario error: %s (groups=%v hits=%v)", got.Error, got.Groups, got.Hits)
 	}
-	// dashboard.strategy_lab is rendered by the Dashboard tab even though the
+	// dashboard.experiment_lab is rendered by the Dashboard tab even though the
 	// hand-written index used to file it under Features.
 	if len(got.Groups) != 1 || got.Groups[0] != "Dashboard" {
 		t.Errorf("result groups = %v, want [Dashboard]", got.Groups)
 	}
-	if len(got.Hits) == 0 || got.Hits[0]["action"] != "settingsSearchOpenHit" || got.Hits[0]["key"] != "dashboard.strategy_lab" {
+	if len(got.Hits) == 0 || got.Hits[0]["action"] != "settingsSearchOpenHit" || got.Hits[0]["key"] != "dashboard.experiment_lab" {
 		t.Errorf("hit rows must be clickable via settingsSearchOpenHit with the key; got %v", got.Hits)
 	}
 	if got.ActiveTab != "Dashboard" {
 		t.Errorf("active tab = %q, want Dashboard", got.ActiveTab)
 	}
 	if !got.RowFound {
-		t.Fatal("row [data-setting-key=dashboard.strategy_lab] not rendered in #config-body")
+		t.Fatal("row [data-setting-key=dashboard.experiment_lab] not rendered in #config-body")
 	}
 	if !strings.Contains(" "+got.RowClass+" ", " cfg-row-flash ") {
 		t.Errorf("target row class = %q, want cfg-row-flash", got.RowClass)
 	}
-	if len(got.Scrolled) != 1 || got.Scrolled[0].Key != "dashboard.strategy_lab" || got.Scrolled[0].Block != "center" {
+	if len(got.Scrolled) != 1 || got.Scrolled[0].Key != "dashboard.experiment_lab" || got.Scrolled[0].Block != "center" {
 		t.Errorf("scrollIntoView calls = %+v, want one on the row with block:center", got.Scrolled)
 	}
-	if !strings.Contains(got.Focused, "dashboard.strategy_lab") {
+	if !strings.Contains(got.Focused, "dashboard.experiment_lab") {
 		t.Errorf("focus = %q, want the setting row/control", got.Focused)
 	}
 	if !got.SearchCleared {
@@ -98,7 +98,7 @@ func TestSettingsSearchRowClickAndEnter(t *testing.T) {
 	if got.First != (landing{"Logging", "logging.kick_log_source", 1}) {
 		t.Errorf("row click landed on %+v", got.First)
 	}
-	if got.Second != (landing{"Dashboard", "dashboard.strategy_lab", 1}) {
+	if got.Second != (landing{"Dashboard", "dashboard.experiment_lab", 1}) {
 		t.Errorf("Enter landed on %+v", got.Second)
 	}
 }
@@ -131,7 +131,7 @@ func TestSettingsSearchDriftedEntryResolvesFromDOM(t *testing.T) {
 	if got.Error != "" {
 		t.Fatal(got.Error)
 	}
-	if got.Resolved != "Dashboard" || got.ActiveTab != "Dashboard" || got.Key != "dashboard.strategy_lab" || len(got.Groups) != 1 || got.Groups[0] != "Dashboard" {
+	if got.Resolved != "Dashboard" || got.ActiveTab != "Dashboard" || got.Key != "dashboard.experiment_lab" || len(got.Groups) != 1 || got.Groups[0] != "Dashboard" {
 		t.Errorf("drifted entry: %+v", got)
 	}
 }
@@ -151,7 +151,7 @@ func TestSettingsSearchRevealRetriesLazyRows(t *testing.T) {
 
 // Every hand-written search index entry must resolve to a rendered control
 // carrying its key, in the tab it claims — otherwise "Open tab" strands the
-// user on a tab with no such setting (as happened for Strategy Lab).
+// user on a tab with no such setting (as happened for Experiment Lab).
 func TestSettingsSearchIndexResolvesToControls(t *testing.T) {
 	var got struct {
 		Entries  int `json:"entries"`

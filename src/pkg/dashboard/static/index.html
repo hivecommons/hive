@@ -3470,7 +3470,7 @@
       .audit-controls-row { padding-right: 52px; }
     }
 
-    /* Strategy Lab (Nous) */
+    /* Experiment Lab (Nous) */
     .nous-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: var(--sp-5); }
     .nous-card h3 { font-size: var(--fs-md); margin: var(--sp-0) var(--sp-0) var(--sp-4) var(--sp-0); color: var(--fg); }
     .nous-mode-toggle { display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 14px; }
@@ -3508,7 +3508,9 @@
     /* Nous Config Panel */
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
        (also reused by the kb modals via className); z-index stays. */
-    .nous-config-overlay { z-index: 1000; }
+    /* Same layer as .config-overlay: the fixed navbar (--navbar-sticky-z 9400)
+       used to draw over the dialog header on every viewport. */
+    .nous-config-overlay { z-index: 10000; }
     .nous-config-dialog { width: min(900px, calc(100vw - var(--modal-gap) - var(--modal-gap))); max-width: calc(100vw - var(--modal-gap) - var(--modal-gap)); height: min(82vh, 760px); max-height: calc(100vh - var(--modal-gap) - var(--modal-gap)); display: flex; flex-direction: column; padding: var(--sp-0); overflow: hidden; }
     .nous-config-dialog > h2 { flex: 0 0 auto; padding: var(--sp-8) var(--sp-8) var(--sp-0); }
     .nous-config-dialog > .nous-config-body { flex: 1 1 auto; min-height:0; overflow: auto; padding: var(--sp-6) var(--sp-8); }
@@ -3556,6 +3558,7 @@
     .nous-config-pill { margin: var(--sp-1); cursor: pointer; transition: all 0.15s; }
     .nous-config-pill.active { --pill-c: var(--accent); }
     .nous-config-pill:hover { border-color: var(--accent); }
+    .nous-config-pill:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
     .nous-config-output-modes { flex:0 0 auto; display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
     .nous-config-output-mode { flex: 1; padding: 8px 10px; text-align: center; font-size: 0.76rem; cursor: pointer; border: none; background: var(--bg); color: var(--muted); transition: all 0.2s; }
     .nous-config-output-mode:not(:last-child) { border-right: 1px solid var(--border); }
@@ -3577,6 +3580,66 @@
     .nous-trust-step.current { font-weight: 700; }
     .nous-trust-step .step-label { font-weight: 600; display: block; margin-bottom: var(--sp-1); }
     .nous-trust-step .step-desc { color: var(--muted); font-size: 0.65rem; }
+
+    /* Experiment Lab configuration dialog (.nous-lab-*): the same recipe as
+       the Knowledge Sources modal — a wide fixed-size shell whose body is the
+       single scroller, a sticky header with its own Close, a footer for
+       Cancel/Save, and every section rendered as a padded card instead of a
+       hairline-divided run of text flush against the dialog edges (ported
+       from v6 #12033). Sizing overrides live on the .nous-lab-dialog modifier
+       so the base .nous-config-dialog shell (shared with the kb modals) keeps
+       its 900px recipe. */
+    .nous-config-dialog.nous-lab-dialog { width: min(1480px, 94vw); height: min(92vh, 1100px); }
+    .nous-config-dialog.nous-lab-dialog > h2 { margin: var(--sp-0); padding: var(--sp-6) var(--sp-8); border-bottom: var(--line-width) solid var(--border); justify-content: space-between; gap: var(--sp-5); }
+    .nous-config-dialog.nous-lab-dialog > h2 > .nous-lab-title { display: inline-flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+    .nous-config-dialog.nous-lab-dialog > h2 > .hv-btn { flex: 0 0 auto; }
+    .nous-config-dialog.nous-lab-dialog > .nous-config-body { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-8) var(--sp-9) var(--sp-9); font-size: var(--fs-base); line-height: 1.5; }
+    .nous-config-dialog.nous-lab-dialog > .nous-config-footer.nous-config-btn-bar { margin-top: var(--sp-0); flex-wrap: wrap; }
+    .nous-lab-loading { text-align: center; color: var(--muted); padding: var(--sp-9); }
+    .nous-lab-error { color: var(--red); padding: var(--sp-7) var(--sp-8); }
+    .nous-lab-dialog .nous-config-section { margin: var(--sp-0); padding: var(--sp-7); background: var(--surface); border: var(--line-width) solid var(--line-subtle); border-bottom: var(--line-width) solid var(--line-subtle); border-radius: var(--r-lg); min-width: 0; }
+    .nous-lab-card-head { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-6); }
+    .nous-lab-eyebrow { color: var(--muted); font-size: var(--fs-2xs); font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+    .nous-lab-dialog .nous-config-section h3 { font-size: var(--fs-md); margin: var(--sp-0); line-height: var(--lh-tight); }
+    .nous-lab-dialog .nous-config-section h3 .nous-lab-h3-note { font-weight: 400; color: var(--muted); font-size: var(--fs-sm); }
+    .nous-lab-card-desc { margin: var(--sp-0); color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; max-width: 80ch; }
+    .nous-lab-dialog .nous-config-section label { font-size: var(--fs-sm); line-height: 1.4; margin-bottom: var(--sp-3); }
+    .nous-lab-dialog .nous-config-section textarea { max-width: 100ch; min-height: 64px; line-height: 1.5; box-sizing: border-box; }
+    .nous-lab-field { display: flex; flex-direction: column; min-width: 0; }
+    .nous-lab-field + .nous-lab-field { margin-top: var(--sp-6); }
+    .nous-lab-dialog .nous-config-row, .nous-lab-dialog .nous-config-row-2 { gap: var(--sp-6); margin-bottom: var(--sp-0); }
+    .nous-lab-dialog .nous-config-row-2 { max-width: 80ch; }
+    .nous-lab-dialog .nous-config-row > div, .nous-lab-dialog .nous-config-row-2 > div { min-width: 0; }
+    .nous-lab-dialog .nous-config-row input[type="number"], .nous-lab-dialog .nous-config-row-2 input[type="number"] { box-sizing: border-box; }
+    .nous-lab-dialog .nous-config-output-modes { max-width: 80ch; margin-bottom: var(--sp-0); }
+    .nous-lab-checks { display: flex; flex-direction: column; gap: var(--sp-2); margin-top: var(--sp-6); }
+    /* Beats `.nous-config-section label { display: block }`, which was
+       flattening the flex row and dropping the checkbox/text gap. */
+    .nous-lab-dialog .nous-config-section .nous-config-check { display: flex; align-items: flex-start; gap: var(--sp-4); font-size: var(--fs-base); line-height: 1.5; margin: var(--sp-0); padding: var(--sp-2) var(--sp-0); }
+    .nous-lab-dialog .nous-config-check input[type="checkbox"] { flex: 0 0 auto; margin: calc((1.5em - 16px) / 2) var(--sp-0) var(--sp-0); }
+    .nous-lab-dialog .nous-config-check > span { min-width: 0; }
+    .nous-lab-dialog .nous-config-check code { font-size: var(--fs-sm); line-height: inherit; padding: var(--sp-0) var(--sp-2); vertical-align: baseline; }
+    .nous-lab-chips { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+    .nous-lab-dialog .nous-config-pill { margin: var(--sp-0); }
+    .nous-lab-chips-note { margin-top: var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-lab-empty { padding: var(--sp-6); text-align: center; color: var(--muted); font-size: var(--fs-sm); border: var(--line-width) dashed var(--border); border-radius: var(--r); }
+    .nous-lab-principles { margin-top: var(--sp-6); max-height: 240px; overflow-y: auto; border-top: var(--line-width) solid var(--line-subtle); }
+    .nous-lab-dialog .nous-config-principle-row { font-size: var(--fs-base); padding: var(--sp-3) var(--sp-0); gap: var(--sp-5); }
+    .nous-lab-dialog .nous-config-principle-row .conf { font-size: var(--fs-sm); width: 44px; }
+    .nous-lab-dialog .nous-config-principle-row .del-btn { flex: 0 0 auto; }
+    /* Trust Ladder segmented control: equal cells, label and sublabel on
+       their own lines, active state is a tint + coloured text (button-system
+       convention) rather than the old solid semantic fill. */
+    .nous-lab-dialog .nous-trust-ladder { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: var(--sp-0); }
+    .nous-lab-dialog .nous-trust-step { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: var(--sp-2); padding: var(--sp-5) var(--sp-6); min-height: 64px; font-size: var(--fs-base); line-height: 1.4; background: var(--bg); color: var(--muted); }
+    .nous-lab-dialog .nous-trust-step .step-label { margin: var(--sp-0); font-weight: 700; }
+    .nous-lab-dialog .nous-trust-step .step-desc { font-size: var(--fs-sm); color: var(--muted); }
+    .nous-lab-dialog .nous-trust-step.current .step-desc { color: inherit; opacity: 0.85; }
+    .nous-lab-dialog .nous-trust-step.current[data-step="observe"] { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); border-color: color-mix(in srgb, var(--blue) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current[data-step="suggest"] { background: color-mix(in srgb, var(--yellow) 15%, transparent); color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current[data-step="evolve"] { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
+    .nous-lab-dialog .nous-trust-step.current + .nous-trust-step { border-left-color: transparent; }
+    .nous-lab-trust-note { margin-top: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
 
     /* Knowledge Panel */
     .public-knowledge-control { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
@@ -4128,8 +4191,8 @@
     @media (max-width: 600px) {
       /* .config-modal already goes fullscreen (incl. border-radius:0) in the
          600px block above; the duplicate rule that used to live here was dead.
-         The Strategy Lab dialog never got the same treatment — at 900px wide
-         with only max-width:95vw it is cramped on a phone. */
+         The Experiment Lab dialog goes fullscreen here too; its desktop
+         sizing and card layout live on the .nous-lab-dialog modifier. */
       .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, .hive-chat-shortcuts { padding: var(--sp-0); }
       .nous-config-dialog {
         width: 100vw; max-width: 100vw;
@@ -4286,6 +4349,30 @@
       }
       .nous-config-dialog.kb-sources-dialog > .nous-config-body {
         padding: var(--sp-5);
+      }
+      .nous-config-dialog.nous-lab-dialog > h2 {
+        padding-left: var(--sp-5);
+        padding-right: var(--sp-5);
+      }
+      .nous-config-dialog.nous-lab-dialog > .nous-config-body {
+        padding: var(--sp-5);
+        gap: var(--sp-6);
+      }
+      .nous-lab-dialog .nous-config-section {
+        padding: var(--sp-5);
+      }
+      .nous-lab-dialog .nous-config-row,
+      .nous-lab-dialog .nous-config-row-2,
+      .nous-lab-dialog .nous-trust-ladder {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .nous-lab-dialog .nous-trust-step { min-height: var(--tap-target); }
+      .nous-lab-dialog .nous-trust-step:first-child { border-radius: var(--r) var(--r) var(--sp-0) var(--sp-0); }
+      .nous-lab-dialog .nous-trust-step:last-child { border-radius: var(--sp-0) var(--sp-0) var(--r) var(--r); }
+      .nous-lab-dialog .nous-trust-step:not(:last-child) { border-right: var(--line-width) solid var(--border); border-bottom: none; }
+      .nous-lab-dialog .nous-trust-step.current + .nous-trust-step { border-left-color: var(--border); border-top-color: transparent; }
+      .nous-lab-dialog .nous-config-footer.nous-config-btn-bar {
+        padding-bottom: max(var(--sp-5), env(safe-area-inset-bottom));
       }
       .kb-sources-grid {
         grid-template-columns: minmax(0, 1fr);
@@ -4771,6 +4858,31 @@
       }
       .nous-config-dialog.kb-sources-dialog > .nous-config-body {
         padding: var(--sp-4) var(--sp-5);
+      }
+      .nous-config-dialog.nous-lab-dialog > h2 {
+        padding-left: var(--sp-5);
+        padding-right: var(--sp-5);
+      }
+      .nous-config-dialog.nous-lab-dialog > .nous-config-body {
+        padding: var(--sp-4) var(--sp-5);
+        gap: var(--sp-5);
+      }
+      .nous-lab-dialog .nous-config-section {
+        padding: var(--sp-5);
+      }
+      .nous-lab-dialog .nous-config-row,
+      .nous-lab-dialog .nous-config-row-2,
+      .nous-lab-dialog .nous-trust-ladder {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .nous-lab-dialog .nous-trust-step { min-height: var(--tap-target); }
+      .nous-lab-dialog .nous-trust-step:first-child { border-radius: var(--r) var(--r) var(--sp-0) var(--sp-0); }
+      .nous-lab-dialog .nous-trust-step:last-child { border-radius: var(--sp-0) var(--sp-0) var(--r) var(--r); }
+      .nous-lab-dialog .nous-trust-step:not(:last-child) { border-right: var(--line-width) solid var(--border); border-bottom: none; }
+      .nous-lab-dialog .nous-trust-step.current + .nous-trust-step { border-left-color: var(--border); border-top-color: transparent; }
+      .nous-lab-dialog .nous-config-footer.nous-config-btn-bar {
+        padding-top: var(--sp-3);
+        padding-bottom: max(var(--sp-3), env(safe-area-inset-bottom));
       }
       .kb-sources-grid {
         grid-template-columns: minmax(0, 1fr);
@@ -5614,7 +5726,7 @@
       <div class="oc-tree-children" id="oc-agent-tree">
         <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
       </div>
-      <div id="nous-sidebar-config" data-feature="strategy_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
+      <div id="nous-sidebar-config" data-feature="experiment_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
         <div><span id="nous-sb-mode"></span></div>
         <div id="nous-sb-phase" style="opacity:0.8"></div>
       </div>
@@ -5634,7 +5746,7 @@
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
-      <a class="oc-nav-item" data-section="nous-section" data-feature="strategy_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
+      <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Admin</div>
@@ -6025,8 +6137,8 @@
     </div>
   </div>
 
-  <div id="nous-section" data-dashboard-section="nous-section" data-feature="strategy_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Strategy Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-research-question" class="nous-research-question text-muted fs-sm" hidden></span></h2>
+  <div id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab <span id="nous-research-question" class="nous-research-question text-muted fs-sm" hidden></span></h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
@@ -7091,7 +7203,7 @@
       'review-queue-section': { title: '🔎 Review', summary: '0 PRs' },
       'review-pipeline-subsection': { title: 'Pipeline', summary: '—' },
       'review-queue-subsection': { title: 'Queue', summary: '—' },
-      'nous-section': { title: '🧪 Strategy Lab', summary: '—', settingsHtml: sectionSettingsGear('Strategy Lab', 'openNousConfig', 'Strategy Lab Configuration') },
+      'nous-section': { title: '🧪 Experiment Lab', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'contributors-section': { title: '👥 Contributors', summary: '0 active / 0 registered' },
@@ -7128,7 +7240,7 @@
       'review-queue-section': { heading: 'Review', help: "Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order." },
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
-      'nous-section': { heading: 'Strategy Lab', help: 'An experimental planner that tries out code changes in your repositories and records what it learned.' },
+      'nous-section': { heading: 'Experiment Lab', help: 'An experimental planner that tries out code changes in your repositories and records what it learned.' },
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
@@ -8565,8 +8677,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var dashboardDragState=null;
     var dashboardKeyboardSnapshot=null;
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
-    function strategyLabEnabled(){return dashboardFeatureEnabled('strategy_lab');}
-    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!strategyLabEnabled();}
+    function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
+    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!experimentLabEnabled();}
     function dashboardCanHideSection(id){id=dashboardAliasSectionId(id);return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
     function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
     function dashboardHiddenSectionsWrite(ids){try{var valid=(ids||[]).filter(function(id,i,a){return dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(valid.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(valid));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}catch(e){}dashboardUpdateLayoutMenuState();}
@@ -9124,9 +9236,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     function applyDashboardFeatureVisibility() {
-      const strategyOn = strategyLabEnabled();
-      document.querySelectorAll('[data-feature="strategy_lab"]').forEach(el => {
-        if (strategyOn) {
+      const experimentOn = experimentLabEnabled();
+      document.querySelectorAll('[data-feature="experiment_lab"]').forEach(el => {
+        if (experimentOn) {
           el.hidden = false;
           if (el.id !== 'nous-section' && el.id !== 'nous-sidebar-config') el.style.display = '';
         } else {
@@ -9134,7 +9246,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           el.style.display = 'none';
         }
       });
-      if (!strategyOn) {
+      if (!experimentOn) {
         if (_nousPollTimer) { clearInterval(_nousPollTimer); _nousPollTimer = null; }
         _nousPollStarted = false;
         const panel = document.getElementById('nous-panel');
@@ -22176,7 +22288,7 @@ function burnAreaChart() {
       if (el.innerHTML !== html) el.innerHTML = html;
     }
 
-    // ── Strategy Lab (Nous) rendering ──────────────────────────────────────
+    // ── Experiment Lab (Nous) rendering ──────────────────────────────────────
     let _nousCache = null;
     let _nousPollTimer = null;
     let _nousPollStarted = false;
@@ -22185,7 +22297,7 @@ function burnAreaChart() {
     const NOUS_PRINCIPLE_HIGH_CONFIDENCE = 5;
 
     async function fetchNousStatus() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       try {
         const [statusRes, ledgerRes, principlesRes] = await Promise.all([
           fetch('/api/nous/status'), fetch('/api/nous/ledger'), fetch('/api/nous/principles'),
@@ -22205,20 +22317,20 @@ function burnAreaChart() {
     }
 
     function ensureNousPolling() {
-      if (!strategyLabEnabled() || _nousPollStarted) return Promise.resolve();
+      if (!experimentLabEnabled() || _nousPollStarted) return Promise.resolve();
       _nousPollStarted = true;
-      return fetchNousStatus().then(() => { if (strategyLabEnabled() && !_nousPollTimer) _nousPollTimer = dashboardSetInterval('nous-status', fetchNousStatus, NOUS_POLL_MS); });
+      return fetchNousStatus().then(() => { if (experimentLabEnabled() && !_nousPollTimer) _nousPollTimer = dashboardSetInterval('nous-status', fetchNousStatus, NOUS_POLL_MS); });
     }
 
     function _nousExplainerCard() {
-      return emptyStateCard('🧪', 'Strategy Lab — controlled experiments on your repositories',
-        'The Strategy Lab is the hive’s strategist: it designs controlled experiments on your repositories’ code — tests, CI config, automation scripts — and measures each one against a recorded baseline of hive behavior. Every repo experiment is proposed as a pull request and always needs your approval before it lands. ' +
+      return emptyStateCard('🧪', 'Experiment Lab — controlled experiments on your repositories',
+        'The Experiment Lab is the hive’s strategist: it designs controlled experiments on your repositories’ code — tests, CI config, automation scripts — and measures each one against a recorded baseline of hive behavior. Every repo experiment is proposed as a pull request and always needs your approval before it lands. ' +
         '<strong>Observe</strong> only collects baseline data, <strong>Suggest</strong> proposes experiments for your approval, and <strong>Evolve</strong> runs them autonomously, distilling proven changes into principles. ' +
         'To get started, leave it in Observe while it builds a baseline (it needs a few days of snapshots), then switch to Suggest to review its first proposals.');
     }
 
     function renderNous() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
       const rqEl = document.getElementById('nous-research-question');
       if (!panel || !_nousCache) return;
@@ -22474,7 +22586,7 @@ function burnAreaChart() {
     }
 
     async function nousSetMode(mode) {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       const current = (_nousCache && _nousCache.status && _nousCache.status.mode) || 'observe';
       const modeOrder = { observe: 0, suggest: 1, evolve: 2 };
       let force = false;
@@ -22492,7 +22604,7 @@ function burnAreaChart() {
     }
 
     async function nousApprove() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       try {
         const r = await fetch('/api/nous/approve', { method: 'POST' });
         const j = await r.json();
@@ -22502,7 +22614,7 @@ function burnAreaChart() {
     }
 
     async function nousReject() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       if (!(await hiveConfirm('Reject this experiment proposal?'))) return;
       try {
         await fetch('/api/nous/abort', { method: 'POST' });
@@ -22512,7 +22624,7 @@ function burnAreaChart() {
     }
 
     async function nousAbort() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       if (!(await hiveConfirm('Abort the active experiment? Its proposed repo change will be withdrawn.'))) return;
       try {
         const r = await fetch('/api/nous/abort', { method: 'POST' });
@@ -22526,7 +22638,7 @@ function burnAreaChart() {
     let _nousConfig = null;
 
     async function fetchNousConfig() {
-      if (!strategyLabEnabled()) return null;
+      if (!experimentLabEnabled()) return null;
       try {
         const r = await fetch('/api/nous/config');
         _nousConfig = await r.json();
@@ -22535,16 +22647,17 @@ function burnAreaChart() {
     }
 
     async function openNousConfig() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       const overlay = document.getElementById('nous-config-overlay');
       if (!overlay) return;
       overlay.style.display = 'flex';
       hiveRememberModalOpen(overlay);
-      overlay.innerHTML = '<div class="nous-config-dialog"><div style="text-align:center;color:var(--muted);padding:40px">Loading configuration...</div></div>';
+      overlay.innerHTML = nousLabShell('<div class="nous-lab-loading">Loading configuration...</div>', '');
 
       const cfg = await fetchNousConfig();
       if (!cfg) {
-        overlay.innerHTML = '<div class="nous-config-dialog"><div style="color:var(--red);padding:var(--sp-7)">Failed to load config</div><div class="nous-config-btn-bar"><button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig">Close</button></div></div>';
+        overlay.innerHTML = nousLabShell('<div class="nous-lab-error">Failed to load config</div>',
+          '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig">Close</button>');
         return;
       }
       renderNousConfig(cfg);
@@ -22553,6 +22666,29 @@ function burnAreaChart() {
     function closeNousConfig() {
       const overlay = document.getElementById('nous-config-overlay');
       if (overlay) overlay.style.display = 'none';
+    }
+
+    // Dialog shell: fixed header (title + Close ×), the body as the single
+    // scroller, footer for the action bar. Same recipe as the Knowledge
+    // Sources modal; sizing lives on .nous-lab-dialog.
+    function nousLabShell(bodyHtml, footerHtml) {
+      let h = '<div class="nous-config-dialog nous-lab-dialog" role="dialog" aria-modal="true" aria-labelledby="nous-lab-title">';
+      h += '<h2 id="nous-lab-title"><span class="nous-lab-title">⚙️ Experiment Lab Configuration</span>';
+      h += '<button type="button" class="hv-btn btn-icon btn-sm" data-action="closeNousConfig" aria-label="Close Experiment Lab configuration">✕</button></h2>';
+      h += `<div class="nous-config-body">${bodyHtml}</div>`;
+      if (footerHtml) h += `<div class="nous-config-footer nous-config-btn-bar">${footerHtml}</div>`;
+      h += '</div>';
+      return h;
+    }
+
+    // Section card: eyebrow + heading + one-line description, then content.
+    function nousLabCardHead(eyebrow, heading, desc, note) {
+      let h = '<div class="nous-lab-card-head">';
+      h += `<span class="nous-lab-eyebrow">${escapeHtml(eyebrow)}</span>`;
+      h += `<h3>${heading}${note ? ` <span class="nous-lab-h3-note">${escapeHtml(note)}</span>` : ''}</h3>`;
+      if (desc) h += `<p class="nous-lab-card-desc">${desc}</p>`;
+      h += '</div>';
+      return h;
     }
 
     function renderNousConfig(cfg) {
@@ -22573,42 +22709,42 @@ function burnAreaChart() {
       const decayRate = configEnvVal(cfg, 'NOUS_DECAY_RATE_PER_WEEK', '0.05');
 
       let h = '';
-      h += '<div class="nous-config-dialog">';
-      h += '<h2>⚙️ Strategy Lab Configuration</h2>';
 
-      // Trust Ladder
-      h += '<div class="nous-config-section">';
-      h += '<h3>Trust Ladder</h3>';
-      h += '<div class="nous-trust-ladder">';
+      // Trust Ladder (display only on v5 — the mode is changed from the
+      // section's segmented control). The current step is coloured by the
+      // .nous-lab-dialog [data-step] rules rather than inline styles.
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Autonomy', 'Trust Ladder', 'How much Nous may do on its own. The current level is highlighted.');
+      h += '<div class="nous-trust-ladder" role="group" aria-label="Trust level">';
       const trustSteps = [
-        { id: 'observe', label: 'Observe', desc: 'Data collection only', color: 'var(--blue)' },
-        { id: 'suggest', label: 'Suggest', desc: 'Experiments need approval', color: 'var(--yellow)' },
-        { id: 'evolve', label: 'Evolve', desc: 'Fully autonomous', color: 'var(--green)' },
+        { id: 'observe', label: 'Observe', desc: 'Data collection only' },
+        { id: 'suggest', label: 'Suggest', desc: 'Experiments need approval' },
+        { id: 'evolve', label: 'Evolve', desc: 'Fully autonomous' },
       ];
       for (const step of trustSteps) {
         const isCurrent = step.id === mode;
-        const bg = isCurrent ? step.color : 'var(--bg)';
-        const fg = isCurrent ? 'var(--bg)' : 'var(--muted)';
-        h += `<div class="nous-trust-step${isCurrent ? ' current' : ''}" style="background:${bg};color:${fg}">`;
+        h += `<div class="nous-trust-step${isCurrent ? ' current' : ''}" data-step="${step.id}" aria-current="${isCurrent ? 'true' : 'false'}">`;
         h += `<span class="step-label">${escapeHtml(step.label)}</span>`;
-        h += `<span class="step-desc" style="color:${isCurrent ? 'var(--bg)' : ''}">${escapeHtml(step.desc)}</span>`;
+        h += `<span class="step-desc">${escapeHtml(step.desc)}</span>`;
         h += '</div>';
       }
       h += '</div>';
-      h += '<div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-3)">The issue/PR output trail builds evidence for operators to advance the trust level.</div>';
-      h += '</div>';
+      h += '<div class="nous-lab-trust-note">The issue/PR output trail builds evidence for operators to advance the trust level.</div>';
+      h += '</section>';
 
       // Goal Definition
-      h += '<div class="nous-config-section">';
-      h += '<h3>🎯 Goal Definition</h3>';
-      h += '<label title="The hypothesis Nous will test through repo experiments (code changes). These always require approval regardless of trust level. Example: Can we cut CI time by 20% by sharding the slowest test package?">Research Question</label>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Hypothesis', '🎯 Goal Definition', 'What Nous should optimize through repo-scope experiments.');
+      h += '<div class="nous-lab-field">';
+      h += '<label for="nc-repo-goal" title="The hypothesis Nous will test through repo experiments (code changes). These always require approval regardless of trust level. Example: Can we cut CI time by 20% by sharding the slowest test package?">Research Question</label>';
       h += `<textarea id="nc-repo-goal" rows="2" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(repoCamp.research_question || '')}</textarea>`;
       h += '</div>';
+      h += '</section>';
 
       // Output Mode
-      h += '<div class="nous-config-section">';
-      h += '<h3>📤 Output Mode</h3>';
-      h += '<div class="nous-config-output-modes">';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Verdicts & labels', '📤 Output Mode', 'Where results land and which safety labels Nous-created items carry.');
+      h += '<div class="nous-config-output-modes" role="group" aria-label="Output mode">';
       const outModes = [
         { id: 'state-only', label: 'State Only', desc: 'Write to files, read in dashboard' },
         { id: 'issue', label: 'Issue', desc: 'Open issue with proposal' },
@@ -22619,55 +22755,59 @@ function burnAreaChart() {
         h += `<button class="nous-config-output-mode${active}" data-output-mode="${om.id}" data-action="selectNousOutputMode" data-arg-types="t" title="${escapeHtml(om.desc)}">${escapeHtml(om.label)}</button>`;
       }
       h += '</div>';
-      h += '<div class="mt-4">';
-      h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'hold' label to any issues or PRs it creates. This prevents agents from acting on Nous-generated work items until an operator reviews them."><input type="checkbox" id="nc-auto-hold" ${output.autoHold ? 'checked' : ''}> Auto-apply <code>hold</code> label to Nous issues/PRs</label>`;
-      h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'do-not-merge' label to any PRs it creates. This prevents automated merge workflows from merging experiment PRs without operator review."><input type="checkbox" id="nc-auto-dnm" ${output.autoDoNotMerge ? 'checked' : ''}> Auto-apply <code>do-not-merge</code> label to Nous PRs</label>`;
+      h += '<div class="nous-lab-checks">';
+      h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'hold' label to any issues or PRs it creates. This prevents agents from acting on Nous-generated work items until an operator reviews them."><input type="checkbox" id="nc-auto-hold" ${output.autoHold ? 'checked' : ''}><span>Auto-apply <code>hold</code> label to Nous issues/PRs</span></label>`;
+      h += `<label class="nous-config-check" title="When enabled, Nous automatically adds the 'do-not-merge' label to any PRs it creates. This prevents automated merge workflows from merging experiment PRs without operator review."><input type="checkbox" id="nc-auto-dnm" ${output.autoDoNotMerge ? 'checked' : ''}><span>Auto-apply <code>do-not-merge</code> label to Nous PRs</span></label>`;
       h += '</div>';
-      h += '</div>';
+      h += '</section>';
 
       // Repo Targets
-      h += '<div class="nous-config-section">';
-      h += '<h3>📂 Repo Targets</h3>';
-      h += '<div style="display:flex;flex-wrap:wrap;gap:var(--sp-2)">';
-      for (const repo of projectRepos) {
-        const active = repoTargets.includes(repo) ? ' active' : '';
-        const shortName = repo.includes('/') ? repo.split('/')[1] : repo;
-        h += `<div class="nous-config-pill${active}" data-repo="${escapeHtml(repo)}" data-action="toggleNousRepo" data-arg-types="t">`;
-        h += `<span>${escapeHtml(shortName)}</span>`;
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Scope', '📂 Repo Targets', 'Repos Nous may target for code experiments. Click a repo to toggle it; changes apply on Save.', '(for repo-scope experiments)');
+      if (projectRepos.length === 0) {
+        h += '<div class="nous-lab-empty">No project repos available &mdash; add repos to the hive before targeting experiments.</div>';
+      } else {
+        h += '<div class="nous-lab-chips" role="group" aria-label="Repo targets">';
+        for (const repo of projectRepos) {
+          const isActive = repoTargets.includes(repo);
+          const shortName = repo.includes('/') ? repo.split('/')[1] : repo;
+          h += `<div class="nous-config-pill${isActive ? ' active' : ''}" role="button" tabindex="0" aria-pressed="${isActive}" data-repo="${escapeHtml(repo)}" data-action="toggleNousRepo" data-keydown-action="toggleNousRepo" data-keys="Enter, " data-prevent="1" data-arg-types="t" title="${escapeHtml(repo)}">`;
+          h += `<span>${escapeHtml(shortName)}</span>`;
+          h += '</div>';
+        }
         h += '</div>';
+        h += `<div class="nous-lab-chips-note" id="nc-repo-summary">${nousRepoSummary(repoTargets.filter(r => projectRepos.includes(r)).length, projectRepos.length)}</div>`;
       }
-      h += '</div>';
-      h += '<div class="fs-xs text-muted mt-3">Select which repos Nous can target for code experiments. Click to toggle.</div>';
-      h += '</div>';
+      h += '</section>';
 
       // Campaign Parameters
-      h += '<div class="nous-config-section">';
-      h += '<h3>⚡ Fast-Fail Bounds</h3>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Guardrails', '⚡ Fast-Fail Bounds', 'An experiment aborts and reverts the moment any of these bounds is crossed.');
       h += '<div class="nous-config-row">';
-      h += `<div><label title="If the issue queue depth exceeds this number during an experiment, Nous immediately aborts and reverts. Prevents experiments from causing unacceptable issue buildup. Default: 30.">Queue Depth Max</label><input type="number" id="nc-ff-queue" value="${ff.queue_depth_max || 30}" min="5" max="100" title="Maximum allowed actionable issues before auto-abort (5-100)"></div>`;
-      h += `<div><label title="If the mean time to resolution exceeds this many minutes during an experiment, Nous immediately aborts. Prevents experiments from stalling issue resolution. Default: 180 (3 hours).">MTTR Max (min)</label><input type="number" id="nc-ff-mttr" value="${ff.mttr_max_minutes || 180}" min="30" max="1440" title="Maximum allowed MTTR in minutes before auto-abort (30-1440)"></div>`;
-      h += `<div><label title="If the token burn rate exceeds this percentage of the normal rate during an experiment, Nous aborts. Values above 100% allow higher-than-normal spending. Default: 110%.">Burn Rate Max %</label><input type="number" id="nc-ff-burn" value="${ff.budget_burn_rate_max_pct || 110}" min="80" max="200" title="Maximum burn rate as percentage of normal (80-200)"></div>`;
+      h += `<div><label for="nc-ff-queue" title="If the issue queue depth exceeds this number during an experiment, Nous immediately aborts and reverts. Prevents experiments from causing unacceptable issue buildup. Default: 30.">Queue Depth Max</label><input type="number" id="nc-ff-queue" value="${ff.queue_depth_max || 30}" min="5" max="100" title="Maximum allowed actionable issues before auto-abort (5-100)"></div>`;
+      h += `<div><label for="nc-ff-mttr" title="If the mean time to resolution exceeds this many minutes during an experiment, Nous immediately aborts. Prevents experiments from stalling issue resolution. Default: 180 (3 hours).">MTTR Max (min)</label><input type="number" id="nc-ff-mttr" value="${ff.mttr_max_minutes || 180}" min="30" max="1440" title="Maximum allowed MTTR in minutes before auto-abort (30-1440)"></div>`;
+      h += `<div><label for="nc-ff-burn" title="If the token burn rate exceeds this percentage of the normal rate during an experiment, Nous aborts. Values above 100% allow higher-than-normal spending. Default: 110%.">Burn Rate Max %</label><input type="number" id="nc-ff-burn" value="${ff.budget_burn_rate_max_pct || 110}" min="80" max="200" title="Maximum burn rate as percentage of normal (80-200)"></div>`;
       h += '</div>';
-      h += '</div>';
+      h += '</section>';
 
-      h += '<div class="nous-config-section">';
-      h += '<h3>⏱️ Experiment Timing</h3>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Schedule', '⏱️ Experiment Timing', 'How long Nous observes, experiments, and rests between runs.');
       h += '<div class="nous-config-row">';
-      h += `<div><label title="How long each experiment runs before Nous collects results. Longer durations give more statistical confidence. Default: 4 hours.">Duration (hours)</label><input type="number" id="nc-sched-dur" value="${sched.experiment_duration_hours || 4}" min="1" max="48" step="0.5" title="Experiment duration in hours (1-48)"></div>`;
-      h += `<div><label title="How many hours of baseline data Nous collects before its first experiment. More data means better comparison accuracy. Default: 4 hours.">Baseline (hours)</label><input type="number" id="nc-sched-base" value="${sched.baseline_hours || 4}" min="1" max="48" step="0.5" title="Baseline collection period in hours (1-48)"></div>`;
-      h += `<div><label title="Mandatory pause between experiments to let the system stabilize. Prevents confounding back-to-back results. Default: 2 hours.">Cooldown (hours)</label><input type="number" id="nc-sched-cool" value="${sched.cooldown_hours || 2}" min="0.5" max="24" step="0.5" title="Cooldown between experiments in hours (0.5-24)"></div>`;
+      h += `<div><label for="nc-sched-dur" title="How long each experiment runs before Nous collects results. Longer durations give more statistical confidence. Default: 4 hours.">Duration (hours)</label><input type="number" id="nc-sched-dur" value="${sched.experiment_duration_hours || 4}" min="1" max="48" step="0.5" title="Experiment duration in hours (1-48)"></div>`;
+      h += `<div><label for="nc-sched-base" title="How many hours of baseline data Nous collects before its first experiment. More data means better comparison accuracy. Default: 4 hours.">Baseline (hours)</label><input type="number" id="nc-sched-base" value="${sched.baseline_hours || 4}" min="1" max="48" step="0.5" title="Baseline collection period in hours (1-48)"></div>`;
+      h += `<div><label for="nc-sched-cool" title="Mandatory pause between experiments to let the system stabilize. Prevents confounding back-to-back results. Default: 2 hours.">Cooldown (hours)</label><input type="number" id="nc-sched-cool" value="${sched.cooldown_hours || 2}" min="0.5" max="24" step="0.5" title="Cooldown between experiments in hours (0.5-24)"></div>`;
       h += '</div>';
-      h += '</div>';
+      h += '</section>';
 
       // Principle Store
-      h += '<div class="nous-config-section">';
-      h += '<h3>🧠 Principle Store</h3>';
+      h += '<section class="nous-config-section">';
+      h += nousLabCardHead('Learned', '🧠 Principle Store', 'What Nous has concluded so far, and how much evidence it needs before recommending a change permanently.');
       h += '<div class="nous-config-row-2">';
-      h += `<div><label title="Minimum confidence score (0.0-1.0) a principle must reach before Nous recommends applying it permanently. Higher values require more experimental evidence. Default: 0.8.">Recommendation Threshold</label><input type="number" id="nc-prin-thresh" value="${confThresh}" min="0.1" max="1.0" step="0.05" title="Confidence threshold for permanent recommendations (0.1-1.0)"></div>`;
-      h += `<div><label title="How much a principle's confidence decays per week without reinforcing experimental evidence. Higher values require more frequent validation. Default: 0.05 (5% per week).">Decay Rate / Week</label><input type="number" id="nc-prin-decay" value="${decayRate}" min="0.01" max="0.5" step="0.01" title="Weekly confidence decay rate (0.01-0.5)"></div>`;
+      h += `<div><label for="nc-prin-thresh" title="Minimum confidence score (0.0-1.0) a principle must reach before Nous recommends applying it permanently. Higher values require more experimental evidence. Default: 0.8.">Recommendation Threshold</label><input type="number" id="nc-prin-thresh" value="${confThresh}" min="0.1" max="1.0" step="0.05" title="Confidence threshold for permanent recommendations (0.1-1.0)"></div>`;
+      h += `<div><label for="nc-prin-decay" title="How much a principle's confidence decays per week without reinforcing experimental evidence. Higher values require more frequent validation. Default: 0.05 (5% per week).">Decay Rate / Week</label><input type="number" id="nc-prin-decay" value="${decayRate}" min="0.01" max="0.5" step="0.01" title="Weekly confidence decay rate (0.01-0.5)"></div>`;
       h += '</div>';
       if (principles.length > 0) {
-        h += '<div style="margin-top:10px;max-height:200px;overflow-y:auto">';
+        h += '<div class="nous-lab-principles">';
         const sorted = [...principles].sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
         for (const p of sorted) {
           const conf = Math.round((p.confidence || 0) * 100);
@@ -22679,18 +22819,21 @@ function burnAreaChart() {
         }
         h += '</div>';
       } else {
-        h += '<div class="fs-sm text-muted mt-4">No principles accumulated yet.</div>';
+        h += '<div class="nous-lab-empty mt-6">No principles accumulated yet.</div>';
       }
-      h += '</div>';
+      h += '</section>';
 
       // Save / Cancel
-      h += '<div class="nous-config-btn-bar">';
-      h += '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig" title="Discard all changes and close this dialog">Cancel</button>';
-      h += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Research question, output mode, repo targets, fast-fail bounds, timing, and principle settings will be updated.">Save Configuration</button>';
-      h += '</div>';
+      let footer = '';
+      footer += '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig" title="Discard all changes and close this dialog">Cancel</button>';
+      footer += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Research question, output mode, repo targets, fast-fail bounds, timing, and principle settings will be updated.">Save Configuration</button>';
 
-      h += '</div>';
-      overlay.innerHTML = h;
+      overlay.innerHTML = nousLabShell(h, footer);
+    }
+
+    function nousRepoSummary(active, total) {
+      if (active === 0) return 'No repos watched yet — click a repo above to add it.';
+      return `${active} of ${total} repo${total === 1 ? '' : 's'} watched.`;
     }
 
     function configEnvVal(cfg, key, fallback) {
@@ -22706,10 +22849,14 @@ function burnAreaChart() {
 
     function toggleNousRepo(pill) {
       pill.classList.toggle('active');
+      pill.setAttribute('aria-pressed', String(pill.classList.contains('active')));
+      const summary = document.getElementById('nc-repo-summary');
+      const pills = document.querySelectorAll('.nous-config-pill[data-repo]');
+      if (summary) summary.textContent = nousRepoSummary(document.querySelectorAll('.nous-config-pill[data-repo].active').length, pills.length);
     }
 
     async function deleteNousPrinciple(id) {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       if (!(await hiveConfirm('Invalidate this principle? It will be removed from the store.'))) return;
       try {
         const r = await fetch('/api/nous/principles/' + encodeURIComponent(id), { method: 'DELETE' });
@@ -22725,7 +22872,7 @@ function burnAreaChart() {
     }
 
     async function saveNousConfig() {
-      if (!strategyLabEnabled()) return;
+      if (!experimentLabEnabled()) return;
       const errors = [];
 
       // Goals
@@ -32819,7 +32966,7 @@ function burnAreaChart() {
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
-      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Strategy Lab', key: 'dashboard.strategy_lab', text: 'strategy_lab Strategy Lab dashboard feature experimental planner' },
+      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
       { tab: 'Logging', section: 'Logging', label: 'Kick log source', key: 'logging.kick_log_source', text: 'kick log source live file audit' },
@@ -33712,9 +33859,9 @@ function burnAreaChart() {
         level >= ACMM_REPOS_MIN_LEVEL ? show(reposSection, '') : hide(reposSection);
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
-        (strategyLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
+        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
         const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        (strategyLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
+        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 
@@ -33730,7 +33877,7 @@ function burnAreaChart() {
           if (section === 'repos-section' && level < ACMM_REPOS_MIN_LEVEL) hide(item);
           if (section === 'contributors-section' && level < ACMM_CONTRIBUTORS_MIN_LEVEL) hide(item);
           if (section === 'leaderboard-section' && level < ACMM_LEADERBOARD_MIN_LEVEL) hide(item);
-          if (section === 'nous-section' && (!strategyLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);
+          if (section === 'nous-section' && (!experimentLabEnabled() || level < ACMM_NOUS_MIN_LEVEL)) hide(item);
         });
 
         // #7099: the pack-roster gate is NOT re-applied here. The server already
@@ -34441,7 +34588,7 @@ function burnAreaChart() {
           '<div class="config-field"><label>Port ' + yamlHint('dashboard.port') + '</label><input type="number" min="1" max="65535" value="' + esc(String(dash.port || 3001)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="port" data-arg-types="s,s,N"><div class="config-help">Requires restart.</div></div>' +
           '<div class="config-field"><label>Agent poll interval (seconds) ' + yamlHint('dashboard.agent_poll_interval_s') + '</label><input type="number" min="1" value="' + esc(String(dash.agent_poll_interval_s || 0)) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="agent_poll_interval_s" data-arg-types="s,s,N"></div>' +
         '</div>' +
-        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.strategy_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="strategy_lab"></div><span class="config-toggle-label">Strategy Lab ' + yamlHint('dashboard.strategy_lab') + '</span></div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +

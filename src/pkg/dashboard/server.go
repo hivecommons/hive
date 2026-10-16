@@ -545,6 +545,12 @@ type FrontendOverviewTotal struct {
 // FrontendFeatures is the secret-free set of dashboard feature flags consumed
 // by the SPA.
 type FrontendFeatures struct {
+	// ExperimentLab gates the Nous / Experiment Lab section.
+	ExperimentLab bool `json:"experiment_lab"`
+	// StrategyLab mirrors ExperimentLab under the pre-rename name so external
+	// snapshot builders keep working for one release (#11695).
+	//
+	// Deprecated: read experiment_lab instead.
 	StrategyLab bool `json:"strategy_lab"`
 }
 

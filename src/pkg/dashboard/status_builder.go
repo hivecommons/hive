@@ -484,8 +484,13 @@ func buildFeatures(cfg *config.Config) FrontendFeatures {
 	if cfg == nil {
 		return FrontendFeatures{}
 	}
+	// The deprecated dashboard.strategy_lab alias is normally folded into
+	// ExperimentLab by applyDefaults; honour it here too for configs built
+	// without going through the loader.
+	enabled := cfg.Dashboard.ExperimentLab || cfg.Dashboard.StrategyLab
 	return FrontendFeatures{
-		StrategyLab: cfg.Dashboard.StrategyLab,
+		ExperimentLab: enabled,
+		StrategyLab:   enabled,
 	}
 }
 

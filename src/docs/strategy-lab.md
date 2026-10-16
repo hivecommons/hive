@@ -1,6 +1,6 @@
-# Strategy Lab (Nous) operator guide
+# Experiment Lab (Nous) operator guide
 
-The Strategy Lab (the dashboard's **Experiment Lab**) — internally and in the
+The Experiment Lab (formerly the Strategy Lab) — internally and in the
 API called **Nous** — is a controlled experiment framework for your
 repositories. It records a baseline of hive behavior, designs experiments
 against repo code (tests, CI config, automation scripts), and measures each
@@ -12,7 +12,7 @@ by the lab's UI or API.
 
 **There is no `nous:` block in `hive.yaml` or `hive.yaml.example`.** Despite
 what `src/README.md` used to say, Nous has no YAML config surface — it is
-configured entirely at runtime through the dashboard (Strategy Lab panel, ACMM
+configured entirely at runtime through the dashboard (Experiment Lab panel, ACMM
 level 4+) or directly through the `/api/nous/*` endpoints. This page documents
 that runtime configuration and the experiment lifecycle, verified against
 `pkg/dashboard/api.go`, `pkg/dashboard/deps.go`, `cmd/hive/main.go`, and the
@@ -20,8 +20,9 @@ dashboard's `renderNousConfig()`/`renderNous()` UI code.
 
 ## Visibility
 
-The Strategy Lab section of the dashboard only appears at **ACMM level 4 and
-above** (`ACMM_NOUS_MIN_LEVEL` in `pkg/dashboard/static/index.html`). Below
+The Experiment Lab section of the dashboard only appears at **ACMM level 4 and
+above** and when `dashboard.experiment_lab: true` is set (the pre-rename
+`dashboard.strategy_lab` key is a deprecated alias for one release) (`ACMM_NOUS_MIN_LEVEL` in `pkg/dashboard/static/index.html`). Below
 that level the panel and sidebar summary are hidden entirely, though the
 `/api/nous/*` endpoints still respond. On a hive with no snapshots yet, the
 panel shows an explainer card instead of empty stats.
@@ -174,10 +175,10 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 ## Worked example: enabling Nous on a hive
 
 1. Confirm the hive is at ACMM level 4 or above (`HIVE_LEVEL` or the config
-   pack), so the Strategy Lab section is visible in the dashboard sidebar.
+   pack), so the Experiment Lab section is visible in the dashboard sidebar.
 2. Leave mode at the default `observe` and let the hive run — no action is
    needed here. Snapshots accumulate automatically once per evaluation cycle.
-3. Open the Strategy Lab panel's gear icon to set the research question
+3. Open the Experiment Lab panel's gear icon to set the research question
    (`PUT /api/nous/config/goals`) describing what you want Nous to optimize
    in your repositories.
 4. Once the baseline progress bar reports sufficient coverage, switch mode to

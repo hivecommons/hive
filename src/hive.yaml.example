@@ -903,10 +903,13 @@ dashboard:
 #       env: EXAMPLE_TOKEN
 #       scope: config
 
-# Strategy Lab (Nous) — repo-only controlled experiment framework.
+# Experiment Lab (Nous) — repo-only controlled experiment framework.
+# Formerly the Strategy Lab. The dashboard section is hidden by default; show
+# it with `dashboard.experiment_lab: true` (the old `dashboard.strategy_lab`
+# key is a deprecated alias for one release).
 # There is intentionally NO `nous:` block here: Nous has no YAML config
 # surface. It is configured entirely at runtime through the dashboard
-# (Strategy Lab panel, ACMM level 4+) or the /api/nous/* endpoints.
+# (Experiment Lab panel, ACMM level 4+) or the /api/nous/* endpoints.
 # See docs/strategy-lab.md for the experiment lifecycle, trust modes,
 # fast-fail bounds, schedule, and gate-decision flow.
 

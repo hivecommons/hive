@@ -431,11 +431,11 @@ Every open PR across the governed repos in one deterministic rank order (GET /ap
 
 **Settings that change it.** The review settings in **Settings** change the loop cap, ranking rules and which repositories are included. See [Review queue triage](review-queue-triage.md).
 
-## Strategy Lab
+## Experiment Lab
 
 An experimental planner that tries out code changes in your repositories and records what it learned.
 
-**What it tells you.** The Strategy Lab runs small experiments on your repositories' code. It shows its goal, its plan and a ledger of results.
+**What it tells you.** The Experiment Lab (formerly the Strategy Lab) runs small experiments on your repositories' code. It shows its goal, its plan and a ledger of results.
 
 **How the numbers are worked out.** The ledger lists each experiment and its result. The section has no other numbers.
 
@@ -443,9 +443,9 @@ An experimental planner that tries out code changes in your repositories and rec
 
 **Example.** The lab proposes splitting a slow test package across two CI jobs. You approve it, and the ledger records the result.
 
-**When it appears.** Only when the Strategy Lab setting is on and the autonomy level is L4 or above. The autonomy level is how much Hive may do on its own, from L1 to L6.
+**When it appears.** Only when the Experiment Lab setting is on and the autonomy level is L4 or above. The autonomy level is how much Hive may do on its own, from L1 to L6.
 
-**Settings that change it.** `dashboard.strategy_lab: true` turns it on. See [Strategy Lab](strategy-lab.md).
+**Settings that change it.** `dashboard.experiment_lab: true` turns it on (`dashboard.strategy_lab` is a deprecated alias for one release). See [Experiment Lab](strategy-lab.md).
 
 ## Inception
 

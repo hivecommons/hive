@@ -57,14 +57,17 @@ The main dashboard layout is browser-local and display-only. Use the `⠿` grip 
 
 ## Default collapsed cards
 
-A browser that has never stored any dashboard state (a new hive, or a first visit from a fresh profile) starts with the non-critical cards collapsed so a new operator first sees the cards that say whether the hive is alive and merging: **Overview**, **Governor**, **Projects**, **Review**, **Approvals**, **Agents** and **Agent activity** open expanded; **Throughput**, **Tokens**, **Cost**, **Advisory**, **Knowledge**, **Contributors**, **Inception**, **ACMM Eval**, **Diagnostics**, **Audit Log**, **Agent Logs**, **Strategy Lab** and **FAQ** start collapsed with their one-line summaries visible. The set is the `DASHBOARD_DEFAULT_COLLAPSED_SECTIONS` constant in the dashboard page. A browser that already holds dashboard state when it first loads this version is marked `legacy` in `localStorage` (`hive.dashboard.collapseDefaults`) and keeps the historical all-expanded default, including after **Reset layout to default**. An operator's explicit choice always wins: expanding a default-collapsed card stores `hive-section-collapsed-<id>=0`, collapsing any card stores `1`, and saved presets, JSON export/import and reset round-trip those values. The avatar menu's **Layout** section also offers **Expand all sections** and **Collapse all sections**.
+A browser that has never stored any dashboard state (a new hive, or a first visit from a fresh profile) starts with the non-critical cards collapsed so a new operator first sees the cards that say whether the hive is alive and merging: **Overview**, **Governor**, **Projects**, **Review**, **Approvals**, **Agents** and **Agent activity** open expanded; **Throughput**, **Tokens**, **Cost**, **Advisory**, **Knowledge**, **Contributors**, **Inception**, **ACMM Eval**, **Diagnostics**, **Audit Log**, **Agent Logs**, **Experiment Lab** and **FAQ** start collapsed with their one-line summaries visible. The set is the `DASHBOARD_DEFAULT_COLLAPSED_SECTIONS` constant in the dashboard page. A browser that already holds dashboard state when it first loads this version is marked `legacy` in `localStorage` (`hive.dashboard.collapseDefaults`) and keeps the historical all-expanded default, including after **Reset layout to default**. An operator's explicit choice always wins: expanding a default-collapsed card stores `hive-section-collapsed-<id>=0`, collapsing any card stores `1`, and saved presets, JSON export/import and reset round-trip those values. The avatar menu's **Layout** section also offers **Expand all sections** and **Collapse all sections**.
 
 To hide a dashboard section, hover or focus its left-menu row and press the small eye-off control. The row remains in the sidebar in a muted state, while the matching dashboard card is removed from the main layout. The same control changes to **Unhide <section>** with an eye icon; choosing it, or clicking the hidden row, restores the card in its saved order and jumps to it. Hidden sections are stored locally as `hive.dashboard.hiddenSections`; Overview cannot be hidden.
 
-The Strategy Lab (`dashboard.strategy_lab`) is hidden by default while that
-surface is being reworked. Set `dashboard.strategy_lab: true` to show the
-Strategy Lab dashboard section, its sidebar navigation item, and its Nous
-status controls.
+The Experiment Lab (`dashboard.experiment_lab`) is hidden by default while
+that surface is being reworked. Set `dashboard.experiment_lab: true` to show
+the Experiment Lab dashboard section, its sidebar navigation item, and its
+Nous status controls. The pre-rename key `dashboard.strategy_lab` is still
+honoured as a deprecated alias for one release: it enables the panel, logs a
+one-line deprecation at config load, and is folded into
+`dashboard.experiment_lab` so the next config save writes the documented key.
 
 ## Governor card
 

@@ -421,22 +421,77 @@ func TestStaticDashboardDefaultLayoutOrder(t *testing.T) {
 	}
 }
 
-func TestStaticStrategyLabFeatureGateWiring(t *testing.T) {
+func TestStaticExperimentLabFeatureGateWiring(t *testing.T) {
 	body, err := os.ReadFile("../static/index.html")
 	if err != nil {
 		t.Fatal(err)
 	}
 	html := string(body)
 	for _, want := range []string{
-		`id="nous-section" data-dashboard-section="nous-section" data-feature="strategy_lab" hidden`,
-		`data-section="nous-section" data-feature="strategy_lab" hidden`,
-		`function strategyLabEnabled()`,
+		`id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden`,
+		`data-section="nous-section" data-feature="experiment_lab" hidden`,
+		`function experimentLabEnabled()`,
 		`function applyDashboardFeatureVisibility()`,
-		`if (!strategyLabEnabled()) return;`,
+		`if (!experimentLabEnabled()) return;`,
 		`() => ensureNousPolling()`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Fatalf("static dashboard Strategy Lab feature gate missing %q", want)
+			t.Fatalf("static dashboard Experiment Lab feature gate missing %q", want)
+		}
+	}
+}
+
+// TestStaticNoStrategyLabCopy pins the Strategy Lab → Experiment Lab rename
+// (RFC #11585 part 2, #11695; v5 backport): no user-facing copy, feature gate
+// or helper in the static dashboard may still use the old name. The section
+// id and the /api/nous/* routes keep their Nous names by decision.
+func TestStaticNoStrategyLabCopy(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lower := strings.ToLower(string(body))
+	for _, stale := range []string{"strategy lab", "strategy_lab", "strategylab", "strategy-lab"} {
+		if idx := strings.Index(lower, stale); idx >= 0 {
+			end := idx + 120
+			if end > len(lower) {
+				end = len(lower)
+			}
+			t.Fatalf("static dashboard still contains %q: %q", stale, lower[idx:end])
+		}
+	}
+	for _, want := range []string{
+		`<span class="oc-nav-text">Experiment Lab</span>`,
+		`🧪 Experiment Lab`,
+		`Experiment Lab Configuration`,
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("static dashboard missing Experiment Lab copy %q", want)
+		}
+	}
+}
+
+// TestStaticExperimentLabDialogShell pins the padded card recipe for the ⚙️
+// dialog (v6 #12033 backport): a .nous-lab-dialog shell with header, single
+// scrolling body and footer, and sections rendered as cards rather than
+// content flush against the dialog edges.
+func TestStaticExperimentLabDialogShell(t *testing.T) {
+	body, err := os.ReadFile("../static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, want := range []string{
+		`function nousLabShell(bodyHtml, footerHtml)`,
+		`<div class="nous-config-dialog nous-lab-dialog" role="dialog" aria-modal="true" aria-labelledby="nous-lab-title">`,
+		`<span class="nous-lab-title">⚙️ Experiment Lab Configuration</span>`,
+		`.nous-config-dialog.nous-lab-dialog > .nous-config-body {`,
+		`.nous-lab-dialog .nous-config-section {`,
+		`.nous-lab-dialog .nous-trust-ladder {`,
+		`overlay.innerHTML = nousLabShell(h, footer);`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("static dashboard Experiment Lab dialog shell missing %q", want)
 		}
 	}
 }

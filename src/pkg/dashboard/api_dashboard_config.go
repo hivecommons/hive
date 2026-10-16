@@ -10,6 +10,7 @@ import (
 type dashboardSettingsPayload struct {
 	Port                int                        `json:"port"`
 	AgentPollIntervalS  int                        `json:"agent_poll_interval_s"`
+	ExperimentLab       bool                       `json:"experiment_lab"`
 	StrategyLab         bool                       `json:"strategy_lab"`
 	AuthTokenConfigured bool                       `json:"auth_token_configured"`
 	AuthorizedUsers     []string                   `json:"authorized_users"`
@@ -36,6 +37,7 @@ func dashboardSettingsResponse(cfg *config.Config) dashboardSettingsPayload {
 	return dashboardSettingsPayload{
 		Port:                d.Port,
 		AgentPollIntervalS:  d.AgentPollIntervalS,
+		ExperimentLab:       d.ExperimentLab,
 		StrategyLab:         d.StrategyLab,
 		AuthTokenConfigured: strings.TrimSpace(d.AuthToken) != "",
 		AuthorizedUsers:     append([]string{}, d.AuthorizedUsers...),
@@ -63,6 +65,7 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 	var body struct {
 		Port                *int                        `json:"port"`
 		AgentPollIntervalS  *int                        `json:"agent_poll_interval_s"`
+		ExperimentLab       *bool                       `json:"experiment_lab"`
 		StrategyLab         *bool                       `json:"strategy_lab"`
 		AuthToken           *string                     `json:"auth_token"`
 		AuthorizedUsers     []string                    `json:"authorized_users"`
@@ -93,6 +96,9 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		next.AgentPollIntervalS = *body.AgentPollIntervalS
+	}
+	if body.ExperimentLab != nil {
+		next.ExperimentLab = *body.ExperimentLab
 	}
 	if body.StrategyLab != nil {
 		next.StrategyLab = *body.StrategyLab
