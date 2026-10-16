@@ -1,0 +1,1 @@
+Hub dashboard: an unescaped apostrophe in the Fleet quadrant column tooltip (#12469) broke the inline script, leaving My Hives stuck on "Loading your hives…". Fixed, and the hub test suite now parses every inline script block (unterminated-string scan + `node --check`).
