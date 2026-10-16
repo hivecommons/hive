@@ -1,0 +1,1 @@
+- `agent/<lane>` and `hive/<hive-id>` no longer leak onto contributor PRs: the gh wrapper's `pr edit`/`pr comment`/`pr merge` arms stamp them only when the PR's author is the hive's own App identity (a review-fix `gh pr edit --body` on a human's PR re-routed it to the scanner), and the stage reconciler strips stray ones from open PRs the App did not author (#12545).

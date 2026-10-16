@@ -51,6 +51,61 @@ type StageLabelPolicy struct {
 	// relay was online at the nudge (defaults 2h / 1h).
 	GraceOnline  time.Duration
 	GraceOffline time.Duration
+	// HiveID is this hive's id; hive/<HiveID> on a PR the App did not author
+	// is a stray the reconciler removes (hivecommons/hive#12545).
+	HiveID string
+}
+
+// ownershipRoutingPrefix is the lane routing label family. `agent/<lane>`
+// means "this hive agent owns the work" (prOwningLane, the classifier, the
+// CI-repair router read it); together with hive/<id> ("authored by this
+// hive") it belongs only on PRs the App itself authored. Adoption (stage/074)
+// opens a NEW App PR, which carries both legitimately; the adopted
+// contributor PR keeps its own authorship and must not carry either.
+const ownershipRoutingPrefix = "agent/"
+
+// strayOwnershipLabels returns the agent/* and hive/<hiveID> labels on a PR
+// that the App did not author. appLogin and author are compared with the
+// [bot] suffix tolerated, as the rest of the engine does; an unknown author
+// or App login yields nothing (fail closed: never strip on a guess).
+func strayOwnershipLabels(labels []string, author, appLogin, hiveID string) []string {
+	norm := func(s string) string { return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s), "[bot]")) }
+	a, self := norm(author), norm(appLogin)
+	if a == "" || self == "" || a == self {
+		return nil
+	}
+	prov := strings.ToLower(hgithub.HiveProvenanceLabel(hiveID))
+	var stray []string
+	for _, l := range labels {
+		lower := strings.ToLower(strings.TrimSpace(l))
+		if strings.HasPrefix(lower, ownershipRoutingPrefix) || (prov != "" && lower == prov) {
+			stray = append(stray, strings.TrimSpace(l))
+		}
+	}
+	return stray
+}
+
+// stripStrayOwnershipLabels self-heals a contributor PR that picked up the
+// hive's routing/provenance labels — a review-fix kick's `gh pr edit --body`
+// on a human's PR used to stamp agent/<lane> + hive/<id> onto it
+// (hivecommons/hive#12545), re-routing a PR the hive never owned. Returns the
+// number of labels removed.
+func (c *Engine) stripStrayOwnershipLabels(ctx context.Context, obs stageObservation, policy StageLabelPolicy) (int, error) {
+	stray := strayOwnershipLabels(obs.Labels, obs.Author, c.transport.AppBotLogin(), policy.HiveID)
+	if len(stray) == 0 {
+		return 0, nil
+	}
+	labeler := engineStageLabeler{c.gh}
+	removed := 0
+	for _, l := range stray {
+		if err := labeler.RemoveLabel(ctx, obs.Owner, obs.Repo, obs.Number, l); err != nil {
+			c.warn("stage labels: stray ownership label removal failed", "repo", obs.Display, "pr", obs.Number, "label", l, "error", err)
+			return removed, err
+		}
+		removed++
+	}
+	c.info("stage labels: stray ownership labels removed from non-hive PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "removed", stray, "lane", obs.Lane)
+	return removed, nil
 }
 
 // stageRESTCaller tags the label/comment writes for /api/gh-rate-limits.
@@ -575,6 +630,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				Author:    author,
 				Stalled:   stagelabels.Stalled(rec, policy.Dwell, now),
 				Regressed: rec.Regressed(),
+			}
+		}
+		if !verdict.Terminal {
+			n, err := c.stripStrayOwnershipLabels(ctx, obs, policy)
+			result.Writes += n
+			if err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 		add, remove := stagelabels.Plan(obs.Labels, want)
