@@ -270,6 +270,12 @@ knowledge.agent_scopes.<key>.layers[] # TODO #11854
 knowledge.agent_scopes.<key>.repos[] # TODO #11854
 knowledge.agent_scopes.<key>.tags[] # TODO #11854
 knowledge.agent_scopes.<key>.types[] # TODO #11854
+knowledge.bead_synthesizer.publish.base_branch # TODO #11854
+knowledge.bead_synthesizer.publish.cadence # TODO #11854
+knowledge.bead_synthesizer.publish.enabled # TODO #11854
+knowledge.bead_synthesizer.publish.mode # TODO #11854
+knowledge.bead_synthesizer.publish.path # TODO #11854
+knowledge.bead_synthesizer.publish.repo # TODO #11854
 knowledge.code_maps.repos[].branch # TODO #11854
 knowledge.code_maps.repos[].name # TODO #11854
 knowledge.code_maps.repos[].path # TODO #11854

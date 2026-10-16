@@ -64,7 +64,7 @@ type BeadSynthesizerConfig struct {
 	MaxFactsPerCycle int                    `yaml:"max_facts_per_cycle"`
 	VaultPath        string                 `yaml:"vault_path"`
 	RetentionPolicy  *RetentionPolicy       `yaml:"retention_policy"`
-	Publish          BeadSynthPublishConfig `yaml:"publish"`
+	Publish          BeadSynthPublishConfig `yaml:"publish,omitempty"`
 	// MaxAPICallsPerCycle caps charged GitHub PR GETs per synthesis cycle.
 	// 0/unset defaults to 40; HIVE_BEAD_SYNTH_MAX_API_CALLS still overrides.
 	MaxAPICallsPerCycle int `yaml:"max_api_calls_per_cycle"`
