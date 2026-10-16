@@ -1,0 +1,1 @@
+- Fixed troubleshooting.md and documentation-map.md links to the admin MCP reference, which lives on v6; v5 now links to the v6 document instead of a missing local file (#12162).

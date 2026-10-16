@@ -50,12 +50,49 @@ project:
 #     - legacy-entry-no-longer-needed
 #   no_ci_ok:
 #     - your-org/docs-only-repo
+#   # Contributor-lane tier (src/docs/hive-merge.md#contributor-lane-auto-merge):
+#   # merges a green, soaked, reviewer-approved PR from a contributor the
+#   # operator trusts. The author is admitted either by holding a require_tiers
+#   # tier on their contributor-registry profile (registry_tiers_sufficient,
+#   # default true) or by closing an issue that carries this hive's verified
+#   # hive:claim marker for them.
+#   contributor_lane:
+#     enabled: true
+#     soak_minutes: 120
+#     require_reviewer_verdict: true
+#     require_tiers: [trusted, merger]
+#     registry_tiers_sufficient: true
 
 # Optional suspicious-activity alerts. Default: enabled, `sentinel-alert` is a
 # hard block for untrusted authors, and trusted authors (Hive App, owner-tier
 # authorized users, allow-listed bots) receive informational notices only.
 # sentinel:
 #   trusted_authors_block: false  # set true to block trusted authors too
+
+# Optional hive-curated `good first issue` advertising (default off). A
+# periodic sweep scores open, unclaimed issues; the few that qualify get
+# GitHub's canonical `good first issue` + `help wanted` labels and ONE welcome
+# comment that pitches the issue to contributors bringing their own coding
+# agent and links this hive's relay page (<dashboard.public_url>/contribute?
+# issue=<owner/repo>#<n>). Not a hold: when a hive agent starts the issue the
+# label comes off and the comment is marked superseded. Needs
+# dashboard.public_url (or a hub-assigned dashboard URL).
+# See docs/good-first-issue.md.
+# good_first_issue:
+#   enabled: true
+#   interval: 1h            # sweep cadence
+#   max_per_repo: 5         # issues wearing the label per repo, including hand-labelled
+#   max_per_sweep: 2        # new selections per repo per pass
+#   min_age: 24h            # never advertise an issue younger than this
+#   min_body_chars: 80
+#   max_body_chars: 4000
+#   max_packages: 2         # source directories an issue may mention
+#   min_score: 2            # positive signals required
+#   reselect_cooldown: 168h # a released issue stays out this long
+#   exclude_labels: [kind/epic, epic, meta, security]  # replaces the built-in list
+#   repos: []               # empty = every watched repo
+#   docs_url: https://github.com/hivecommons/hive/blob/v5/src/docs
+#   comment_template: ""    # text/template over gfi.Vars; must contain {{ .Marker }}
 
 # Optional contributor help/community links. Shown on /contribute Onboarding,
 # Operations, and printed by relays when they connect. Empty/omitted defaults to
@@ -794,7 +831,14 @@ governor:
 #   fan_out: false
 #   max_parallel_reviews: 5
 #   reviewer_agents: [] # optional explicit list; otherwise agents with review role/keywords are used
+#   combined_perspectives: true # RECOMMENDED (#12126): one session + one comment covering every
+#                               # perspective; shared review boilerplate is sent once instead of once
+#                               # per perspective. Verdicts stay per-perspective. Default false.
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
+#   pending_ttl: 45m    # re-dispatch a review whose kick posted no verdict after this long
+#                       # (Go duration; default 45m; negative disables expiry)
+#   max_redispatch: 3   # expiries per PR head before the planner stops re-kicking and
+#                       # records a requires_human hold (review-dispatch-exhausted)
 #   out_of_scope_backlog_disabled: false # true opts out of review-filed backlog issues
 #   max_out_of_scope_backlog_issues: 3   # cap per PR; 0 uses the default
 #   severity:                 # blocking line (#11088); Settings -> Features -> Review Gate
@@ -980,14 +1024,15 @@ dashboard:
 #       env: EXAMPLE_TOKEN
 #       scope: config
 
-# Experiment Lab (Nous) — controlled experiment framework for the governor.
+# Experiment Lab (Nous) — repo-only controlled experiment framework for
+# your repositories' code (tests, CI config, automation scripts).
 # The dashboard section is hidden by default; show
 # it with `dashboard.experiment_lab: true` (the old `dashboard.strategy_lab`
 # key is a deprecated alias for one release).
 # There is intentionally NO `nous:` block here: Nous has no YAML config
 # surface. It is configured entirely at runtime through the dashboard
 # (Experiment Lab panel, ACMM level 4+) or the /api/nous/* endpoints.
-# See docs/experiment-lab.md for the experiment lifecycle, mode/scope,
+# See docs/experiment-lab.md for the experiment lifecycle, trust modes,
 # fast-fail bounds, schedule, and gate-decision flow.
 
 # Knowledge — 4-layer wiki system powered by llm-wiki (geronimo-iia/llm-wiki)

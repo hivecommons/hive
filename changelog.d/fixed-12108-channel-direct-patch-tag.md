@@ -1,0 +1,1 @@
+- Hub: the exhausted heartbeat-fallback Deployment patch now re-pulls a release-channel hive on its channel tag instead of pinning it to a SHA tag, so channel-tracked spokes roll once per upgrade instead of being rolled again by the tracked-channel re-arm (#12108).

@@ -9,12 +9,13 @@ func TestIssueClaimed_InProgressLabel(t *testing.T) {
 		labels []string
 		want   bool
 	}{
-		"in-progress":   {[]string{"hive/in-progress"}, true},
-		"upper":         {[]string{"HIVE/In-Progress"}, true},
-		"claimed":       {[]string{"claimed"}, true},
-		"claimed-by":    {[]string{"hive/claimed-by-scanner"}, true},
-		"covered-by-pr": {[]string{"hive/covered-by-pr"}, false},
-		"none":          {nil, false},
+		"in-progress":       {[]string{"hive/in-progress"}, true},
+		"upper":             {[]string{"HIVE/In-Progress"}, true},
+		"claimed":           {[]string{"claimed"}, true},
+		"claimed-by":        {[]string{"hive/claimed-by-scanner"}, true},
+		"covered-by-pr":     {[]string{"hive/covered-by-pr"}, false},
+		"covered-by-pr-bee": {[]string{"🐝 covered by PR"}, false},
+		"none":              {nil, false},
 	}
 	for name, tc := range cases {
 		if got := issueClaimed(tc.labels); got != tc.want {

@@ -1,0 +1,1 @@
+- Merge gate: refuse to merge when any completed non-required check run on the head SHA has failed or timed out, so a red `syntax-check` can no longer be merged past.

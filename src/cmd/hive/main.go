@@ -1461,6 +1461,7 @@ func (b *boot) wireBootClosures() {
 			FleetStats:            b.fleetStatsCollector,
 			Activity:              b.activityCollector,
 			RepoCost:              b.repoCostCollector,
+			LaunchCost:            b.launchCostCollector,
 			BeadSynthesizer:       b.beadSynth,
 			KnowledgeConnectors:   b.knowledgeConnectorRuntime(),
 			KnowledgePublish:      b.knowledgePublishRuntime(),
@@ -1927,11 +1928,13 @@ func (b *boot) newKnowledgePrimer() *knowledge.Primer {
 		MaxFacts:      b.cfg.Knowledge.Primer.MaxFacts,
 		Priority:      b.cfg.Knowledge.Primer.Priority,
 		MergeStrategy: b.cfg.Knowledge.Primer.MergeStrategy,
+		MaxBytes:      b.cfg.Knowledge.Primer.MaxBytes,
 	}
 	p := knowledge.NewPrimer(layers, primerCfg, b.logger)
 	b.logger.Info("knowledge primer enabled",
 		"layers", len(b.cfg.Knowledge.Layers),
 		"max_facts", primerCfg.MaxFacts,
+		"max_bytes", p.MaxBytes(),
 	)
 	return p
 }
@@ -2410,11 +2413,14 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// against the SAME allowlist the dashboard uses so there is one notion of
 	// trust; read through cfg on every call so a config reload takes effect.
 	autoMergeOpts := automerge.Options{
-		Logger:              b.logger,
-		MergerAuthorizer:    trustedMergerFunc(b.cfg),
-		TrustedAuthorizer:   trustedAuthorFunc(b.cfg),
-		TrustedAuthorPolicy: trustedAuthorPolicyFunc(b.cfg),
-		SentinelLabel:       func() string { return b.cfg.Sentinel.LabelOrDefault() },
+		Logger:                  b.logger,
+		MergerAuthorizer:        trustedMergerFunc(b.cfg),
+		TrustedAuthorizer:       trustedAuthorFunc(b.cfg),
+		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(b.cfg),
+		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
+		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
+		ContributorRegistryTier: contributorRegistryTierFunc(),
+		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
@@ -2497,6 +2503,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// Read through b.cfg on every sweep tick so a config reload of
 	// auto_merge.trusted_bot_authors takes effect without a restart.
 	autoMergeOpts.TrustedBotAuthors = func() map[string]bool { return b.cfg.AutoMerge.TrustedBotAuthorSet() }
+	autoMergeOpts.BotTakeoverEnabled = func() bool { return b.cfg.AutoMerge.BotTakeover.IsEnabled() }
 	// Intent tier gate (#6258): the human lane only queues PRs that
 	// survive writeMergeEligible's intent check, but this sweep lists
 	// the App's PRs on its own, so it carries the same policy (same
@@ -2819,6 +2826,12 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// here, after lifecycle persistence is enabled, so every producer records
 	// into a persisted store (#9614).
 	b.applyGitHubClientDashboardHooks(b.ghClient)
+	// #12007: fold the last week of merged PRs onto their Fixes issues so a
+	// freshly upgraded spoke does not report already-merged work as stale
+	// in-progress, and start→PR / open→merge have samples on day one.
+	if b.ghClient != nil && b.dashSrv != nil {
+		go backfillRecentMergedPRs(b.ctx, b.ghClient, b.dashSrv, b.cfg.Project.Org, time.Now(), b.logger)
+	}
 
 	if b.cfg.GitHub.Mentions.Enabled || b.cfg.GitHub.Actions.OIDC.Enabled {
 		// Parse failures self-heal inside NewStore; reaching here means the
@@ -3073,6 +3086,16 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.repoCostCollector = collect.NewRepoCostCollector(b.dashSrv.GetAudit(), b.tokenCollector, "", b.logger)
 	deps.enablePersistence("repo-cost", b.repoCostCollector, repoCostPersistPath)
 	deps.startCollector(b.ctx, "repo-cost", b.repoCostCollector)
+
+	// Launch attribution (#12128): the kick path records which issue / PR /
+	// head SHA each delivered kick was launched for (tokenCollector.RecordLaunch
+	// in runEvalCycle); this collector joins those records against the same
+	// usage timeline repo-cost uses and caches /api/launch-cost. Read-only —
+	// the governor window budget remains the single enforced budget.
+	b.tokenCollector.SetLaunchLog(tokens.NewLaunchLog(tokens.DefaultLaunchLogPath, b.logger))
+	b.launchCostCollector = collect.NewLaunchCostCollector(b.tokenCollector, b.logger)
+	deps.enablePersistence("launch-cost", b.launchCostCollector, launchCostPersistPath)
+	deps.startCollector(b.ctx, "launch-cost", b.launchCostCollector)
 
 	// Persistent hourly metrics behind the Operations + Leaderboard sparklines
 	// (queue depth, tasks/hour, fleet size, per-contributor completions). The
@@ -3637,7 +3660,11 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		return rewireSpektacular(b.cfg, b.dashSrv, b.logger, spekCloneAuth)
 	})
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
-	b.dashSrv.InstallClaimHooks(githubClaimHooks(b.ctx, b.cfg, func() *github.Client { return b.ghClient }, b.logger))
+	ghClientFn := func() *github.Client { return b.ghClient }
+	b.dashSrv.InstallClaimHooks(gfiClaimHooks(b.ctx, b.cfg, b.gfiState(), ghClientFn, b.dashSrv, b.logger,
+		githubClaimHooks(b.ctx, b.cfg, ghClientFn, b.logger)))
+	b.dashSrv.SetGoodFirstIssueStats(func() any { return b.gfiState().sweeper.Stats() })
+	installClaimAdmissionCheck(b.ctx, b.issueClaims, func() *github.Client { return b.ghClient })
 	// Forge App tab inventory: the resolved active key path and the per-app-id
 	// PVC keys live here in cmd/hive, so they are injected as a provider (the
 	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
@@ -4228,6 +4255,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		// Durable attempted-vs-blocked write counters (#12069); observation only.
+		stopWriteCounters := b.githubProxy.StartWriteCounterPersistence(proxy.WriteCountersPath)
+		b.preShutdownHooks.add("flush-write-counters", stopWriteCounters)
 		b.githubProxy.SetAgentGitHubBudgetConfig(b.cfg.AgentGitHubAPIHourlyCap, b.cfg.GitHubAgentReserveFloor)
 		if b.agentMgr != nil {
 			b.githubProxy.SetAgentGitHubBudgetNudgeFunc(b.agentMgr.SendGitHubAPIBudgetNudge)
@@ -4332,6 +4362,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						Backend:      backend,
 						Endpoint:     endpoint,
 						Model:        model,
+						DefaultModel: gw.DefaultModel,
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
@@ -4356,6 +4387,11 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						return
 					}
 					model = resolvedModel
+					// The backend's own default (resolved from the same source as
+					// the endpoint) rides along so the proxy can fall back to it
+					// when the per-agent model is one the gateway's team is not
+					// entitled to (hivecommons/hive#9945).
+					_, defaultModel, _ := resolveLiteLLMInferenceRoute(b.cfg, backend, "")
 					// Key source must MATCH the entitlement/probe path (gateways.go,
 					// cost.go, openrouter.go), which resolve the key from the gateway
 					// via ResolveGateway(backend).ResolveAPIKey(). When an EXPLICIT
@@ -4381,11 +4417,12 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						}
 					}
 					deps.setInferenceRoute(b.githubProxy, agentName, &proxy.InferenceRoute{
-						Backend:  backend,
-						Endpoint: endpoint,
-						Model:    model,
-						APIKey:   apiKey,
-						CABundle: caBundle,
+						Backend:      backend,
+						Endpoint:     endpoint,
+						Model:        model,
+						DefaultModel: defaultModel,
+						APIKey:       apiKey,
+						CABundle:     caBundle,
 					})
 					return
 				}
@@ -4418,6 +4455,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						Backend:      backend,
 						Endpoint:     endpoint,
 						Model:        model,
+						DefaultModel: gw.DefaultModel,
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
@@ -5936,6 +5974,21 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 
 			}),
+			spoke.ClusterIDCallback(func(clusterID string) {
+				// The hub knows which cluster this hive runs on and sends it while
+				// we report none — spokes provisioned before hub.cluster_id was
+				// rendered (#11432) on pull_only clusters the hub cannot re-render.
+				// Adopting it gates cluster_health on from the next beat; persist
+				// so it survives restarts.
+				if !adoptHubDeliveredClusterID(&b.cfg.Hub, clusterID) {
+					return
+				}
+				b.logger.Info("adopted cluster_id from hub heartbeat; cluster_health will be reported from the next beat",
+					"cluster_id", b.cfg.Hub.ClusterID)
+				if err := b.cfg.Save(); err != nil {
+					b.logger.Error("failed to save hub-delivered cluster_id", "error", err)
+				}
+			}),
 			spoke.FreshStatusCollector(func() *spoke.HeartbeatPayload {
 				if !b.cfg.Hub.Enabled {
 					return nil
@@ -6040,6 +6093,7 @@ func (b *boot) bootLanes() {
 					OnDivergence: b.cfg.Governor.Trajectory.OnDivergence,
 					ExemptAgents: b.cfg.Governor.Trajectory.ExemptAgents,
 				}, b.logger)
+			dashboard.SetTrajectoryCountersProvider(trajectoryMetricsCounters(b.trajLane))
 			b.logger.Info("trajectory-review lane enabled",
 				"model", reviewModel,
 				"interval_s", b.cfg.Governor.Trajectory.IntervalS,
@@ -7234,7 +7288,12 @@ func runEvalCycle(
 	// log so "agents_due" names the agents that are actually about to be
 	// kicked; anything gated out is reported in "agents_skipped" with its
 	// reason rather than vanishing silently.
-	agentsDue, agentsSkipped := partitionKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused)
+	agentsDue, agentsSkipped := partitionKickableAgents(agentsDue, cfg.Agents, config.OnDemandAgentsFromPacks(), agentMgr.IsPaused, func(name string) string {
+		if st, err := agentMgr.GetStatusFast(name); err == nil && st != nil {
+			return st.PausedTrigger
+		}
+		return ""
+	})
 
 	logger.Info("governor eval complete",
 		"mode", govState.Mode,
@@ -7822,6 +7881,14 @@ func runEvalCycle(
 				// #8380: the kicked agent now holds these issues; record the
 				// claims so contributors and other hives back off.
 				recordAgentKickListings(dashSrv, cfg.Project.Org, msg.Agent, msg.IssueRefs, logger)
+
+				// #12128: record which issue/PR/head SHA this kick was launched
+				// for, so /api/launch-cost can place the turn's spend. Review
+				// kicks carry the PR head; governor kicks carry the issue refs.
+				if tokenCollector != nil {
+					reviewKick, isReview := reviewKickByMessage[msg.Agent+"\x00"+msg.Message]
+					tokenCollector.RecordLaunch(launchRecordForKick(msg, reviewKick, isReview, time.Now()))
+				}
 
 				// Log token state at time of kick for cost attribution
 				if tokenCollector != nil {
@@ -9017,10 +9084,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		*lastRun = now
 	}
 	opts := automerge.Options{
-		Logger:              logger,
-		MergerAuthorizer:    trustedMergerFunc(cfg),
-		TrustedAuthorizer:   trustedAuthorFunc(cfg),
-		TrustedAuthorPolicy: trustedAuthorPolicyFunc(cfg),
+		Logger:                  logger,
+		MergerAuthorizer:        trustedMergerFunc(cfg),
+		TrustedAuthorizer:       trustedAuthorFunc(cfg),
+		TrustedAuthorPolicy:     trustedAuthorPolicyFunc(cfg),
+		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
+		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
+		ContributorRegistryTier: contributorRegistryTierFunc(),
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
@@ -9065,6 +9135,23 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 			result.Merged = append(result.Merged, trustedResult.Merged...)
 			if len(trustedResult.Merged) > 0 || trustedResult.Seen > 0 {
 				logger.Info("trusted-author automerge sweep complete", "seen", trustedResult.Seen, "merged", len(trustedResult.Merged), "skipped", trustedResult.Skipped)
+			}
+		}
+	}
+	remaining = automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
+	if remaining > 0 && opts.ContributorLanePolicy().Enabled {
+		laneResult, laneErr := automerge.SweepContributorLaneAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
+			MaxMerges: remaining,
+			Audit:     audit,
+		})
+		if laneErr != nil {
+			logger.Warn("contributor-lane automerge sweep failed", "error", laneErr)
+		} else {
+			result.Seen += laneResult.Seen
+			result.Skipped += laneResult.Skipped
+			result.Merged = append(result.Merged, laneResult.Merged...)
+			if len(laneResult.Merged) > 0 || laneResult.Seen > 0 {
+				logger.Info("contributor-lane automerge sweep complete", "seen", laneResult.Seen, "merged", len(laneResult.Merged), "skipped", laneResult.Skipped)
 			}
 		}
 	}
@@ -10001,12 +10088,20 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		AcknowledgeNoFindings: cfg.Review.AcknowledgeNoFindings,
 		ReviseRepos:           cfg.Review.ReviseRepos,
 		ReviseVerdictsBefore:  parseReviseCutoff(cfg.Review.ReviseVerdictsBefore, logger),
+		PendingTTL:            cfg.Review.PendingReviewTTL(),
+		MaxRedispatch:         cfg.Review.EffectiveMaxRedispatch(),
 		ProjectOrg:            cfg.Project.Org,
 		AIAuthor:              cfg.EffectiveAIAuthor(),
 		Agents:                agents,
 		ReviewBotLogins:       reviewBotLogins,
 		ReviewBotMinPriority:  reviewBots.MinPriority,
 	})
+	for _, e := range plan.Expired {
+		logger.Warn("review pending expired", "repo", e.Repo, "pr", e.Number, "head", e.HeadSHA, "perspective", e.Perspective, "agent", e.Agent, "age", e.Age.Round(time.Second).String(), "expiries", e.Count)
+	}
+	for _, h := range plan.Exhausted {
+		logger.Warn("review dispatch exhausted; holding PR for a human", "repo", h.Repo, "pr", h.Number, "head", h.HeadSHA, "reason", h.Reason)
+	}
 	if len(plan.ReviewKicks)+len(plan.FixKicks) > 0 {
 		logger.Info("review swarm dispatch planned", "review_kicks", len(plan.ReviewKicks), "fix_kicks", len(plan.FixKicks))
 	}
@@ -10401,7 +10496,7 @@ func wireNousGateWith(state *dashboard.NousState, layout nousstore.Layout, notif
 func newNousState(snapshotDir string) *dashboard.NousState {
 	state := &dashboard.NousState{
 		Mode:   "observe",
-		Scope:  "governor",
+		Scope:  dashboard.NousScopeRepo,
 		Phase:  "collecting",
 		Status: make(map[string]interface{}),
 		Config: make(map[string]interface{}),

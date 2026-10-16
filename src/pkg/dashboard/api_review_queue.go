@@ -72,8 +72,17 @@ func (s *Server) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 		}
 		artifact = review.Artifact{}
 	}
+	dispatch, err := review.LoadDispatchState("")
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			jsonError(w, "review dispatch state unreadable: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		dispatch = review.DispatchState{}
+	}
 	opts := ghpkg.ReviewQueueOptions{
 		Verdicts:     artifact,
+		Dispatch:     dispatch,
 		ChangedPaths: ghpkg.CachedPRChangedPaths,
 		Now:          time.Now(),
 	}

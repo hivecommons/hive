@@ -1,0 +1,1 @@
+- Push-reported node health docs: the per-namespace ClusterRole now grants `nodes/proxy` and cluster-wide `pods` list in addition to `nodes`; without them the hub card showed "pods API failed … 403" and no disk figures even after `HIVE_CLUSTER_ID` was set (seen on vLLM-d, follow-up to #12049).

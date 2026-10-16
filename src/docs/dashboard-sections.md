@@ -315,12 +315,16 @@ One card per repository Hive looks after, listing its open issues and pull reque
 
 - The cards use the same bands as the Overview charts. See the Overview entry for each band's meaning.
 - Small pills on each item show signals, such as a hold, a failing check or no recent activity.
+- A `🔗` pill on an issue means Hive has verified an open or merged pull request covers it. Hover it: "closes via PR #N" means merging the PR closes the issue; "covered by PR #N (partial)" means the PR says `Refs #N` and merging it does not close the issue. The pill comes from Hive's own PR-claim evidence, so it appears on every issue labelled `🐝 covered by PR` — including ones Hive has parked in the "covered by PR" group because an outside PR already fixes them — and never depends on GitHub having a closing link.
 - A red pull-request pill means the sentinel flagged it for a possible security override, privilege escalation or codebase damage. Hive will not merge it until a maintainer reviews it and removes the sentinel label. Pull requests from trusted authors usually get a sentinel comment instead of the label, so they are usually not red.
 - A ☐ marker before an item's chip means it is your turn: Hive is stuck on a person and no agent will move it until you act. Hover or focus it for the verb and reason, or click it for a menu of what you can do. The verbs are `DECIDE`, `STEER`, `SPEC`, `REVIEW`, `TRIAGE`, `ADMIT`, `INSPECT` and `CLOSE`.
 - The **Your turn** strip above the cards lists every your-turn item of the repositories shown, grouped by verb, with the reason and the same menu. Its header reads "Your turn · N", plus "· M to close" when items are waiting to be closed.
 - The counter beside the Projects title reads "· N your turn · M to close" and matches the strip. It is hidden only when both numbers are zero.
 - The band called **Parked** holds issues carrying a parking label. The band called **Gated** holds held pull requests and pull requests carrying a human-gate label such as `needs-human`. Both titles describe the item's state. Only the ☐ marker says it is your turn.
 - Hold sources, the level table that decides whose turn it is at each autonomy level, and the safety net that surfaces forgotten items are described in [Dashboard](dashboard.md#your-turn-decision).
+- Each card ends with a collapsible **Filter** section. Press **🔎 Filter** in the Projects toolbar to open the facet bar: tick labels (every label present on the repo's open issues and pull requests is offered, with a live count), add free-text terms (`"rate limit"` matches as a phrase, unquoted words must all appear, `-term` excludes; matching is case-insensitive over title, number and labels), and narrow by type (issue / PR), state (claimed, unclaimed, parked, covered by PR) or author kind (hive / human / bot). Labels and terms match **any** by default; switch to **all** for AND. The section lists the matching items for that repo — number, title linked to GitHub, one pill per label, age, and the PR icon for pull requests — and is collapsed by default only while it is empty; its open/closed state is remembered per repo.
+- The same selection applies to every card. Name it and press **Save** to keep it; saved filters appear as chips next to the built-in presets and can be renamed, updated or deleted inline (no browser dialogs). Presets cannot be deleted but can be hidden. **Needs human** is the default preset: issues and pull requests carrying the hard-suppress labels (`needs-direction`, `needs-decision`, `needs-spec`, `needs-human` — honouring `issue_filter.hard_suppress_labels` overrides), `needs-signal`, or a hold label (`hold`, `on-hold`, `hold/review`, the hive's own hold label), sorted in that priority order so operator decisions come first. The label set comes from the server (`labelPresets[]` on `/api/status`), so it never drifts from the labels Hive itself parks on (ADR-0019). Saved filters, the active selection and hidden presets are stored in the browser's localStorage per hive (`hive-label-filters:<hiveId>`).
+- Any saved filter or preset can be **pinned to the sidebar** (☆ Pin to sidebar in the facet bar). Pinned filters appear in a **Filters** group at the bottom of the left navigation, each with a live count of matching items across every project. Clicking one opens a **cross-repo view** in place of the project cards: one list of matching issues and pull requests grouped by repository (groups collapse and remember their state), with the facet bar on top so you can refine and re-save. **Needs human** is pinned by default; unpin it from the facet bar. Choosing any other sidebar entry, or **← Project cards**, returns to the cards. Pin state is stored with the saved filter.
 
 **What it is good for.** Use it to act on single items. Open the legend above the cards to learn what each pill means.
 
@@ -432,15 +436,15 @@ Every open PR across the governed repos in one deterministic rank order (GET /ap
 
 ## Experiment Lab
 
-An experimental planner that tries out changes to how Hive works and records what it learned.
+An experimental planner that tries out code changes in your repositories and records what it learned.
 
-**What it tells you.** The Experiment Lab runs small experiments on Hive's own settings. It shows its goals, its plan and a ledger of results. The header shows the research question you set in the gear dialog, if there is one; otherwise nothing appears beside the title. Mode (Observe, Suggest, Evolve) and scope (Governor, Repo, Both) are shown by the buttons inside the card, not in the header.
+**What it tells you.** The Experiment Lab runs small experiments on your repositories' code (tests, CI config, automation scripts). It shows its goal, its plan and a ledger of results. The header shows the research question you set in the gear dialog, if there is one; otherwise nothing appears beside the title. Mode (Observe, Suggest, Evolve) is shown by the buttons inside the card, not in the header. The lab is repo-only: there is no scope selector.
 
 **How the numbers are worked out.** The ledger lists each experiment and its result. The section has no other numbers.
 
-**What it is good for.** Try it only if you want Hive to tune itself. You approve or stop each experiment.
+**What it is good for.** Try it only if you want Hive to propose code changes on its own. You approve or stop each experiment.
 
-**Example.** The lab proposes a faster schedule for one worker for a day. You approve it, and the ledger records the result.
+**Example.** The lab proposes splitting a slow test package across two CI jobs. You approve it, and the ledger records the result.
 
 **When it appears.** Only when the Experiment Lab setting is on and the autonomy level is L3 or above. The autonomy level is how much Hive may do on its own, from L1 to L6. Turning the setting on adds the **Experiment Lab (nous)** sidebar entry and section on the next status refresh, without a page reload (#12076); the toggle's helper text names the L3 requirement. The parenthetical is the codename of the planner behind it, the same way the Inception entry reads "Inception (spektacular)".
 

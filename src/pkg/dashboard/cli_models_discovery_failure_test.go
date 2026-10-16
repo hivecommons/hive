@@ -19,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 // arm64Failure is the helper error verbatim from the #7365 spoke logs.
@@ -278,5 +280,25 @@ func TestDiscoveryFailureWiredInDashboard(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q (#7384)", want)
 		}
+	}
+}
+
+func TestAuditDiscoveryTransition_HTTPCatalogOnlyIsNotSelfReported(t *testing.T) {
+	clock := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
+	fleetreport.SetDefaultTrackerForTest(t, tr)
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger(), audit: &AuditLog{lastAction: map[string]time.Time{}}}
+
+	s.auditDiscoveryTransition("copilot", cliModelResult{degraded: true, discoveryErr: copilotHTTPCatalogOnlyErr})
+	clock = clock.Add(2 * time.Hour)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("helper-absent HTTP-catalog state must not self-report, got %#v", ev)
+	}
+
+	s.cliModels.noteDiscoveryState("copilot", "")
+	s.auditDiscoveryTransition("copilot", cliModelResult{fallback: true, discoveryErr: "http probe: 502"})
+	clock = clock.Add(90 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 1 {
+		t.Fatalf("a real discovery failure must still self-report, got %#v", ev)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -32,11 +33,16 @@ var fetchContext7Docs = knowledge.FetchContext7Docs
 // The API key is a reference (auth.env or auth.file); with neither set the
 // CONTEXT7_API_KEY environment variable is used when present.
 type context7Connector struct {
-	cfg ConnectorConfig
+	cfg    ConnectorConfig
+	logger *slog.Logger
 }
 
-func newContext7Connector(cfg ConnectorConfig, _ Deps) (Connector, error) {
-	return &context7Connector{cfg: cfg}, nil
+func newContext7Connector(cfg ConnectorConfig, deps Deps) (Connector, error) {
+	logger := deps.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &context7Connector{cfg: cfg, logger: logger}, nil
 }
 
 func (c *context7Connector) Type() string { return TypeContext7 }
@@ -82,6 +88,13 @@ func (c *context7Connector) Sync(ctx context.Context, cur Cursor, emit func(Page
 		res, err := fetchContext7Docs(ctx, id, topic, key)
 		if err != nil {
 			return cur, fmt.Errorf("library %s: %w", id, err)
+		}
+		if res.Omitted.Any() {
+			// The content carries its own marker; this names the library so
+			// the operator can raise HIVE_CONTEXT7_MAX_* if the cap bites.
+			c.logger.Warn("context7: dropped snippets over the content cap",
+				"connector", c.cfg.Name, "library", id,
+				"omitted_snippets", res.Omitted.Snippets, "omitted_bytes", res.Omitted.Bytes)
 		}
 		_, _ = fmt.Fprintf(h, "%s\x00%s\x00", id, res.Content)
 		p := Page{

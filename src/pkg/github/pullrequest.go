@@ -271,6 +271,10 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 	}
 	c.logger.Info("CreatePR: opened PR as the App bot",
 		slog.String("repo", repo), slog.String("head", head), slog.Int("number", pr.GetNumber()))
+	// GitHub only derives Development-sidebar links from `Fixes #N` for
+	// default-branch PRs; release-line PRs get theirs here
+	// (hivecommons/hive#11888). Best-effort: the PR is already open.
+	c.linkClosingIssuesForPR(ctx, owner, repo, pr.GetNumber(), body)
 	return CreatePRResult{Number: pr.GetNumber(), URL: pr.GetHTMLURL(), Author: pr.GetUser().GetLogin()}, nil
 }
 

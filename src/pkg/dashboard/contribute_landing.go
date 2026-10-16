@@ -328,7 +328,7 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .tier-table th{color:var(--text-muted);font-weight:600}
 .feed-header{padding:var(--sp-7) var(--sp-7) var(--sp-5);border-bottom:1px solid var(--line-strong);display:flex;align-items:center;gap:var(--sp-4)}
 .feed-header h3{font-size:.95rem;color:var(--text)}
-.feed-dot{width:8px;height:8px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
+.feed-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%%;background:var(--cc-green);animation:pulse 2s infinite}
 @keyframes pulse{0%%,100%%{opacity:1}50%%{opacity:.4}}
 .feed-count{font-size:var(--fs-sm);color:var(--text-muted);margin-left:auto}
 .feed-scroll{flex:1;overflow-y:auto;padding:var(--sp-0)}
@@ -361,10 +361,15 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
    to the viewport and hands the overflow back to the ellipsis/wrapping the cards
    already declare. */
 .ops-grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:var(--sp-7);margin-top:var(--sp-8)}
-@media(max-width:900px){.ops-grid{grid-template-columns:minmax(0,1fr);gap:var(--sp-7)}}
+.ops-shell.ops-rail-collapsed .ops-grid{grid-template-columns:minmax(340px,.42fr) minmax(0,1fr)}
+@media(max-width:900px){.ops-grid,.ops-shell.ops-rail-collapsed .ops-grid{grid-template-columns:minmax(0,1fr);gap:var(--sp-7)}}
 .ops-card{background:var(--surface-1);border:var(--line-width) solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-0);overflow:hidden;box-shadow:var(--shadow-card)}
 .ops-card-head{padding:var(--sp-6) var(--sp-7);border-bottom:1px solid var(--line-strong);display:flex;align-items:center;gap:10px}
 .ops-card-head h3{font-size:.95rem;color:var(--text);margin:var(--sp-0)}
+.ops-card[data-ops-card="clankers"]>.ops-card-head{flex-wrap:wrap}
+.ops-card[data-ops-card="clankers"]>.ops-card-head h3{flex:1 1 11rem;min-width:0}
+.ops-card[data-ops-card="clankers"]>.ops-card-head .ops-card-count{flex:0 0 auto;margin-left:0}
+.ops-card[data-ops-card="clankers"]>.ops-card-head .spark{flex:0 1 auto;margin-left:var(--sp-2)}
 .ops-card-count{font-size:var(--fs-sm);color:var(--text-muted);margin-left:auto}
 .ops-layout-reset{display:none;margin-left:auto;align-self:center}
 .ops-grip{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:1.55rem;height:1.55rem;border:1px solid transparent;border-radius:var(--r-sm);background:transparent;color:var(--text-muted);font:inherit;line-height:1;cursor:grab;touch-action:none;user-select:none}
@@ -815,21 +820,23 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .admin-badge{font-size:var(--fs-xs);font-weight:600;padding:var(--badge-pad-y) var(--badge-pad-x);border-radius:var(--r-pill);background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent);margin-left:auto}
 .admin-badge:empty{display:none}
 .admin-body{padding:18px 20px 22px;display:grid;gap:var(--sp-6)}
+.admin-section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%%,26.25rem),1fr));gap:var(--sp-6);align-items:start}
+.admin-section--wide{grid-column:1/-1}
 .admin-section{border:1px solid var(--line-subtle);border-radius:var(--r-lg);background:rgba(139,148,158,.04);padding:var(--sp-6);display:grid;gap:14px}
-.admin-section-head{display:grid;gap:3px;max-width:760px}
+.admin-section-head{display:grid;gap:var(--sp-1)}
 .admin-section-head h3{font-size:var(--fs-md);color:var(--text);margin:var(--sp-0)}
 .admin-section-head p{font-size:.76rem;color:var(--text-muted);line-height:1.5;margin:var(--sp-0)}
-.admin-form-stack{display:grid;gap:10px;max-width:720px;width:100%%}
+.admin-form-stack{display:grid;gap:var(--sp-4);width:100%%}
 .admin-form-stack label,.admin-field>label{display:block;font-size:.78rem;font-weight:600;color:var(--text);margin-bottom:var(--sp-3)}
-.admin-field{margin:var(--sp-0);max-width:760px}
+.admin-field{margin:var(--sp-0)}
 .admin-control-note,.admin-toggle-sub{font-size:.74rem;color:var(--text-muted);line-height:1.45}
 .admin-control-note code,.admin-toggle-sub code{word-break:break-word}
 .admin-input,.admin-field input[type="text"],.admin-field input[type="number"],.admin-addrow input{background:var(--surface-0);border:1px solid var(--line-strong);border-radius:8px;color:var(--text);font-size:.8rem;padding:7px 9px;font-family:inherit;min-width:0}
 .admin-input:focus,.admin-field input:focus,.admin-field textarea:focus,.admin-addrow input:focus{outline:none;border-color:var(--cc-accent)}
-.admin-textarea{width:100%%;box-sizing:border-box;max-width:720px;resize:vertical;background:var(--surface-0);border:1px solid var(--line-strong);border-radius:10px;color:var(--text);font-family:inherit;font-size:var(--fs-base);line-height:1.5;padding:10px 12px;min-width:0}
+.admin-textarea{width:100%%;box-sizing:border-box;resize:vertical;background:var(--surface-0);border:1px solid var(--line-strong);border-radius:10px;color:var(--text);font-family:inherit;font-size:var(--fs-base);line-height:1.5;padding:10px 12px;min-width:0}
 .admin-textarea--announcement{min-height:96px}
 .admin-textarea--links{min-height:140px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
-.admin-action-row{display:flex;flex-wrap:wrap;gap:var(--sp-4);align-items:center;max-width:720px}
+.admin-action-row{display:flex;flex-wrap:wrap;gap:var(--sp-4);align-items:center;width:100%%}
 .admin-action-row select,.admin-action-row input{background:var(--surface-0);border:1px solid var(--line-strong);border-radius:8px;color:var(--text);padding:7px 9px;font-family:inherit;font-size:.8rem;min-height:34px}
 .admin-toggle{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:10px;padding:var(--sp-4) var(--sp-0)}
 .admin-switch{width:38px;height:20px;border-radius:var(--r-pill);background:var(--line-strong);position:relative;cursor:pointer;flex-shrink:0;transition:background .15s;margin-top:1px}
@@ -838,7 +845,7 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .admin-switch.on.danger{background:var(--cc-red)}
 .admin-switch.on::after{left:20px}
 .admin-toggle-label{font-size:.85rem;font-weight:600;color:var(--text);margin-bottom:var(--sp-1)}
-.admin-toggle-grid{display:grid;gap:var(--sp-1);max-width:760px}
+.admin-toggle-grid{display:grid;gap:var(--sp-1)}
 .admin-nested-field{margin-left:48px;max-width:420px}
 .admin-inline-input{display:flex;align-items:center;gap:var(--sp-4);flex-wrap:wrap}
 .admin-inline-input input[type="number"]{width:88px;text-align:right}
@@ -850,13 +857,13 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .admin-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:var(--r-pill);font-size:.72rem;background:rgba(139,148,158,.12);color:var(--text);border:1px solid var(--line-strong)}
 .admin-chip .x{cursor:pointer;opacity:.7}
 .admin-chip .x:hover{opacity:1;color:var(--cc-red)}
-.admin-addrow{display:flex;gap:var(--sp-3);max-width:520px}
+.admin-addrow{display:flex;gap:var(--sp-3);width:100%%}
 .admin-addrow input{flex:1}
 .admin-addrow button,.admin-save{min-height:var(--control-min-h)}
 .admin-save{margin-top:var(--sp-0)}
 .admin-save:disabled{opacity:.5;cursor:default}
 .admin-hr{border:none;border-top:1px solid var(--line-subtle);margin:var(--sp-1) var(--sp-0)}
-.admin-filter-grid{display:grid;gap:var(--sp-5);max-width:760px}
+.admin-filter-grid{display:grid;gap:var(--sp-5)}
 @media(max-width:720px){.admin-body{padding:14px}.admin-section{padding:14px}.admin-action-row,.admin-addrow{align-items:stretch}.admin-action-row>*,.admin-addrow input,.admin-addrow button,.admin-save{width:100%%}.admin-nested-field{margin-left:var(--sp-0)}.admin-inline-input input[type="number"]{width:100%%}}
 /* Repos-for-Contribute enable toggles + Tier rate-limit rows (Management mirror of
    the Governor Hub sections). Subtle, matching the rest of the admin controls. */
@@ -1197,20 +1204,26 @@ select.admin-act{min-width:0;max-width:100%%}
    rankings. Data is hydrated from scrubbed public endpoints; rendering uses
    textContent-only DOM construction below. */
 .lb-showcase-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:var(--sp-6);margin-bottom:var(--sp-7)}
-.battle-log-list{display:flex;flex-direction:column;gap:8px;padding:var(--sp-6)}
-.battle-log-line{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;align-items:center;gap:var(--sp-4);background:var(--surface-0);border:1px solid var(--line-subtle);border-radius:var(--r-lg);padding:var(--sp-4) var(--sp-5);font-size:var(--fs-base)}
-.battle-log-actor{font-weight:700;color:var(--text);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.battle-log-list{display:flex;flex-direction:column;padding:var(--sp-3) var(--sp-6) var(--sp-5)}
+.battle-log-line{display:grid;grid-template-columns:minmax(120px,max-content) auto minmax(0,1fr) max-content;align-items:center;gap:var(--sp-4);border-bottom:1px solid var(--line-subtle);padding:var(--sp-3) var(--sp-4);font-size:var(--fs-base);border-radius:var(--r)}
+.battle-log-line:last-child{border-bottom:none}
+.battle-log-line.hive-row-alt{background:color-mix(in srgb,var(--text) 4%%,transparent)}
+.battle-log-actor{font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
 .battle-log-icon{font-size:var(--fs-lg);filter:drop-shadow(0 0 6px color-mix(in srgb,var(--cc-amber) 35%%,transparent))}
-.battle-log-target{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.battle-log-time{font-size:var(--fs-xs);color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.hotw-video{width:100%%;border-radius:var(--r-lg);border:1px solid var(--line-strong);background:var(--surface-terminal);display:block}
+.battle-log-target{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.battle-log-target a{color:var(--cc-accent);text-decoration:none;font-weight:600}
+.battle-log-target a:hover{text-decoration:underline}
+.battle-log-time{font-size:var(--fs-xs);color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right;white-space:nowrap;min-width:5.5em}
+.hotw-video{width:100%%;border-radius:var(--r-lg);border:1px solid var(--line-strong);background:var(--surface-terminal);display:block;margin-bottom:var(--sp-5)}
 .hotw-body{padding:var(--sp-6)}
 .hotw-project{font-size:var(--fs-lg);font-weight:800;color:var(--text);margin-bottom:var(--sp-2)}
 .hotw-meta{font-size:var(--fs-sm);color:var(--text-muted);margin-bottom:var(--sp-5)}
+.hotw-empty{border:1px dashed var(--line-strong);border-radius:var(--r-lg);padding:var(--sp-6);margin-bottom:var(--sp-5);color:var(--text-muted);font-size:var(--fs-sm);line-height:1.5;text-align:center}
+.hotw-empty b{color:var(--text)}
 .hotw-links{display:flex;flex-wrap:wrap;gap:8px}
 .hotw-links a{font-size:var(--fs-sm);color:var(--cc-accent);text-decoration:none;border:1px solid var(--line-strong);border-radius:var(--r-pill);padding:var(--sp-2) var(--sp-5)}
 .hotw-links a:hover{border-color:var(--cc-accent)}
-@media(max-width:900px){.lb-showcase-grid{grid-template-columns:1fr}.battle-log-line{grid-template-columns:auto minmax(0,1fr);}.battle-log-actor{text-align:left}.battle-log-target,.battle-log-time{grid-column:2}}
+@media(max-width:900px){.lb-showcase-grid{grid-template-columns:1fr}.battle-log-line{grid-template-columns:auto minmax(0,1fr) max-content}.battle-log-actor{max-width:none}.battle-log-target{grid-column:1/span 3;white-space:normal}}
 /* "File an issue on this page" link (#2594) — a subtle footer affordance present
    on every tab. Quiet grey, matches the sober dashboard chrome; an outbound link. */
 .cc-page-foot{padding:26px 48px 34px;border-top:1px solid var(--line-subtle);margin-top:28px;display:flex;justify-content:center}
@@ -2023,7 +2036,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-manage" role="tabpanel" aria-labelledby="ptab-manage">
 <div class="ops">
 <h1>Management</h1>
-<p class="subtitle" style="font-size:.95rem">Operator admin controls for the Contributor agent (ClankeR) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:var(--text)">Operations</strong> tab.</p>
+<p class="subtitle">Operator admin controls for the Contributor agent (ClankeR) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong>Operations</strong> tab.</p>
 
 <!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
      reports owner or read-write. These mirror the Governor Hub config section
@@ -2034,8 +2047,9 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="ops-card ops-admin" id="ops-admin">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Operator admin controls</h3><span class="admin-badge" id="admin-role-badge"></span></div>
 <div class="admin-body">
-<p class="ops-note" style="margin-top:var(--sp-0)">Mirrored from the Governor Hub configuration. Changes here write the same <code>Config.Hub.*</code> fields the Governor config dialog edits. Owner &amp; read-write only.</p>
+<p class="ops-note m-0">Mirrored from the Governor Hub configuration. Changes here write the same <code>Config.Hub.*</code> fields the Governor config dialog edits. Owner &amp; read-write only.</p>
 
+<div class="admin-section-grid">
 <section class="admin-section" aria-labelledby="admin-section-announcement">
 <div class="admin-section-head"><h3 id="admin-section-announcement">Announcement</h3><p>Broadcast a short contributor announcement on Operations, Onboarding, profile, and relays. Empty text clears it.</p></div>
 <div class="admin-form-stack announcement-admin">
@@ -2106,21 +2120,27 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 </section>
 
-<hr class="admin-hr">
-<h3 style="font-size:.9rem;color:var(--text);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Repos for Contribute</h3>
-<p class="ops-note" style="margin-top:var(--sp-0)">Which repos feed the contribute queue. A repo is enabled unless toggled off. Mirrors the Governor Hub repo list; persists as <code>disabled_repos</code>.</p>
+<section class="admin-section admin-section--wide" aria-labelledby="admin-section-repos">
+<div class="admin-section-head"><h3 id="admin-section-repos">Repos for Contribute</h3><p>Which repos feed the contribute queue. A repo is enabled unless toggled off. Mirrors the Governor Hub repo list; persists as <code>disabled_repos</code>.</p></div>
 <div id="admin-repos"></div>
+</section>
 
-<hr class="admin-hr">
-<h3 style="font-size:.9rem;color:var(--text);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Tier access &amp; rate limits</h3>
-<p class="ops-note" style="margin-top:var(--sp-0)">Per-tier managed-queue limits. Enable/disable a tier and set tasks per hour / per day / concurrent. 0 means unlimited. Persists as <code>tier_limits</code> + <code>disabled_tiers</code>.</p>
+<section class="admin-section admin-section--wide" aria-labelledby="admin-section-tiers">
+<div class="admin-section-head"><h3 id="admin-section-tiers">Tier access &amp; rate limits</h3><p>Per-tier managed-queue limits. Enable/disable a tier and set tasks per hour / per day / concurrent. 0 means unlimited. Persists as <code>tier_limits</code> + <code>disabled_tiers</code>.</p></div>
 <div id="admin-tiers"></div>
+</section>
 
+<section class="admin-section" aria-labelledby="admin-section-save">
+<div class="admin-section-head"><h3 id="admin-section-save">Save configuration</h3><p>Persist queued filter, repo, and tier edits after immediate fleet toggles have already applied.</p></div>
 <button type="button" class="hv-btn btn-primary admin-save" id="admin-save-btn" disabled>Save filters</button>
 <p class="admin-note" id="admin-save-hint">Suspend / skip toggles apply immediately. Filter edits apply on Save. Both persist through <code>PUT /api/config/governor/hub</code>.</p>
-<hr class="admin-hr">
-<h3 style="font-size:.9rem;color:var(--text);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Wall moderation</h3>
+</section>
+
+<section class="admin-section" aria-labelledby="admin-section-wall">
+<div class="admin-section-head"><h3 id="admin-section-wall">Wall moderation</h3><p>Review flagged Operations wall posts and contributor mutes.</p></div>
 <div id="admin-wall-flags"><div class="ops-empty">Enable the wall to review flagged posts and mutes.</div></div>
+</section>
+</div>
 </div>
 </div>
 </div>
@@ -2399,8 +2419,6 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <div class="opp-list" id="opp-list"><div class="ops-empty">Looking for fresh work&hellip;</div></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A light, calm read of fresh, actionable issues beyond what&rsquo;s already lined up &mdash; surfaced by recency, not a heavy recommender. Owner/read-write operators can add one to the queue; it becomes offer-priority only and still obeys every admission filter.</p>
 </div>
-</div>
-</div>
 <!-- ── Triage ladder (#2612 part b) — a Warp-style lifecycle view over the hive's
      contribute issues, grouped Triaging → Ready → Implementing → Reviewing →
      Closed. Each level is DERIVED LIVE from the raw candidate pool + ready queue
@@ -2408,7 +2426,6 @@ It clears automatically when the period elapses. An operator can shorten or disa
      (a future enhancement, out of scope). A SECTION within Operations — NOT a new
      page/tab. Fetched from /api/contribute/triage after load so a slow GitHub
      PR-link lookup never delays the page. Full-width card below the ops grid. -->
-<div class="ops-wide ops-region" data-ops-region="wide" id="ops-wide-region">
 <div class="ops-card cc-triage-card mt-7" id="cc-triage-card" data-ops-card="triage">
 <div class="ops-card-head"><button type="button" class="ops-grip" data-ops-grip aria-label="Move Issue triage card" aria-pressed="false">⠿</button><span class="feed-dot"></span><h3>Issue triage</h3><span class="ops-card-count count-strong" id="cc-triage-total"></span></div>
 <!-- Compact ladder summary: one chip per level with its live count. -->
@@ -2418,6 +2435,8 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <p class="ops-note" style="padding:10px 20px 14px;margin:var(--sp-0)">A live lifecycle view of this hive&rsquo;s contribute issues &mdash; raw candidates withheld by admission remain in Triaging, while ready work, the fleet&rsquo;s in-flight work, and fixing PRs advance issues through the ladder. Read-only and recomputed on each load; there is no stored per-issue state.</p>
 </div>
 </div>
+</div>
+<div class="ops-wide ops-region" data-ops-region="wide" id="ops-wide-region"></div>
 </div>
 <!-- Dedicated full-height LIVE ACTIVITY RAIL. Holds ONLY the live activity feed
      (moved here out of the former right column). Named "Live Activity" to match
@@ -2852,6 +2871,7 @@ function tabFromLocation(){
   // Surface the trusted-invite banner if we arrived via ?invite=<token> (#2598).
   try{loadContributorThemes();}catch(e){console.error('loadContributorThemes failed',e);}
   try{initInviteBanner();}catch(e){console.error('initInviteBanner failed',e);}
+  try{initGoodFirstIssueBanner();}catch(e){console.error('initGoodFirstIssueBanner failed',e);}
   // Build the tab-aware "file an issue" link on load even when we DON'T activate
   // (bare /contribute = onboarding, no activateTab call). Guarded.
   try{ccUpdateReportLink((target&&target.getAttribute('data-panel'))||'tab-onboarding');}catch(e){}
@@ -2904,14 +2924,29 @@ function loadBattleLog(){
 function renderBattleLog(events){
   var el=document.getElementById('battle-log-list'),cnt=document.getElementById('battle-log-count');if(!el)return;
   el.textContent='';
-  if(cnt)cnt.textContent=events.length+' events';
+  if(cnt)cnt.textContent=events.length+(events.length===1?' event':' events');
   if(!events.length){var empty=document.createElement('div');empty.className='ops-empty';empty.textContent='No public activity yet.';el.appendChild(empty);return;}
-  events.forEach(function(e){
-    var row=document.createElement('div');row.className='battle-log-line';
-    var actor=document.createElement('span');actor.className='battle-log-actor';actor.textContent=e.actor||'contributor';row.appendChild(actor);
+  events.forEach(function(e,i){
+    var row=document.createElement('div');row.className='battle-log-line'+(i%%2===1?' hive-row-alt':'');
+    var actor=document.createElement('span');actor.className='battle-log-actor';actor.textContent=e.actor||'contributor';actor.title=e.actor||'';row.appendChild(actor);
     var icon=document.createElement('span');icon.className='battle-log-icon';icon.setAttribute('aria-label',e.action||'acted');icon.textContent=e.icon||'⚡';row.appendChild(icon);
-    var target=document.createElement('span');target.className='battle-log-target';target.textContent=(e.action?e.action+' ':'')+(e.target||'the hive');row.appendChild(target);
-    var time=document.createElement('span');time.className='battle-log-time';var d=e.timestamp?new Date(e.timestamp):null;time.textContent=(d&&!isNaN(d.getTime()))?d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';row.appendChild(time);
+    var target=document.createElement('span');target.className='battle-log-target';
+    var verb=e.action?e.action+' ':'';
+    if(e.ref){
+      target.appendChild(document.createTextNode(verb));
+      var refNode;
+      if(e.url&&/^https:\/\/github\.com\//.test(e.url)){refNode=document.createElement('a');refNode.href=e.url;refNode.target='_blank';refNode.rel='noopener noreferrer';}
+      else{refNode=document.createElement('b');}
+      refNode.textContent=e.ref;target.appendChild(refNode);
+      if(e.title)target.appendChild(document.createTextNode(' · '+e.title));
+      target.title=(verb+e.ref+(e.title?': '+e.title:'')).trim();
+    }else{
+      var text=verb+(e.target||'the hive');target.textContent=text;target.title=text;
+    }
+    row.appendChild(target);
+    var time=document.createElement('span');time.className='battle-log-time';var d=e.timestamp?new Date(e.timestamp):null;
+    if(d&&!isNaN(d.getTime())){time.textContent=d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});time.title=d.toLocaleString();}
+    row.appendChild(time);
     el.appendChild(row);
   });
 }
@@ -2921,19 +2956,32 @@ function loadHiveOfWeek(){
     el.textContent='';var div=document.createElement('div');div.className='ops-empty';div.textContent='Could not load Hive of the Week.';el.appendChild(div);
   });
 }
+// renderHiveOfWeek shows the weekly Gource "bee swarm" render of the busiest
+// public project when the hub has one configured (video_url). Nothing on the
+// hub serves a default render, so without a URL the player is replaced by an
+// explanatory empty state instead of a black box (#12109).
 function renderHiveOfWeek(d){
   var el=document.getElementById('hotw-card'),cnt=document.getElementById('hotw-count');if(!el)return;
-  el.textContent='';
-  if(cnt)cnt.textContent=(d&&d.week)||'weekly';
-  var project=document.createElement('div');project.className='hotw-project';project.textContent=(d&&d.project)||'hive';el.appendChild(project);
-  var meta=document.createElement('div');meta.className='hotw-meta';meta.textContent=((d&&d.activity_count)||0)+' public events this week';el.appendChild(meta);
-  var video=document.createElement('video');video.className='hotw-video';video.controls=true;video.preload='metadata';if(d&&d.poster_url)video.poster=d.poster_url;
-  var source=document.createElement('source');source.type='video/mp4';source.src=(d&&d.video_url)||'/assets/hive-of-the-week/latest.mp4';video.appendChild(source);el.appendChild(video);
+  d=d||{};el.textContent='';
+  if(cnt)cnt.textContent=d.week||'weekly';
+  var count=Number(d.activity_count||0),featured=count>0&&d.project&&d.project!=='hive';
+  var project=document.createElement('div');project.className='hotw-project';project.textContent=featured?d.project:'No featured project yet';el.appendChild(project);
+  var meta=document.createElement('div');meta.className='hotw-meta';
+  meta.textContent=featured?(count+(count===1?' public event':' public events')+' this week'):'Only activity on repositories the hub lists as public counts toward the weekly feature.';el.appendChild(meta);
+  if(d.video_url){
+    var video=document.createElement('video');video.className='hotw-video';video.controls=true;video.preload='metadata';if(d.poster_url)video.poster=d.poster_url;
+    var source=document.createElement('source');source.type='video/mp4';source.src=d.video_url;video.appendChild(source);el.appendChild(video);
+  }else{
+    var empty=document.createElement('div');empty.className='hotw-empty';
+    var b=document.createElement('b');b.textContent='No weekly render yet.';empty.appendChild(b);
+    empty.appendChild(document.createTextNode(' Hive of the Week is a Gource bee-swarm replay of the featured project\u2019s public activity, rendered by the weekly workflow once a project is featured.'));
+    el.appendChild(empty);
+  }
   var links=document.createElement('div');links.className='hotw-links';
-  [['Source log',d&&d.gource_log_url],['Leaderboard',d&&d.leaderboard_url],['Video',d&&d.video_url]].forEach(function(pair){
+  [['Source log',d.gource_log_url],['Leaderboard',d.leaderboard_url],['Video',d.video_url]].forEach(function(pair){
     if(!pair[1])return;var a=document.createElement('a');a.href=pair[1];a.textContent=pair[0];links.appendChild(a);
   });
-  el.appendChild(links);
+  if(links.childNodes.length)el.appendChild(links);
 }
 function teamRows(rows){
   rows=(rows||[]).slice(0,5);
@@ -2945,11 +2993,14 @@ function teamRows(rows){
 }
 function renderTeamLeagues(data){
   var el=document.getElementById('team-leagues'),cnt=document.getElementById('teams-count');if(!el)return;
-  var total=(data.by_distro||[]).length+(data.by_os_family||[]).length+(data.by_agent||[]).length;
-  if(cnt)cnt.textContent=total+' leagues';
+  // A league is a non-empty group; headings are only rendered for those so the
+  // count and the body agree (#12109).
+  var groups=[['Distros',data.by_distro||[]],['OS families',data.by_os_family||[]],['Agents',data.by_agent||[]]].filter(function(g){return g[1].length;});
+  if(cnt)cnt.textContent=groups.length+(groups.length===1?' league':' leagues');
   var rare=data.rarest_setup;
   var rareHTML=rare?'<div class="ops-empty"><b>Rarest setup:</b> '+esc(rare.team||'Wildcard')+(rare.member?' · '+esc(rare.member):'')+(rare.kernel?' · kernel '+esc(rare.kernel):'')+'</div>':'';
-  el.innerHTML=rareHTML+'<div class="effective-section-title">Distros</div>'+teamRows(data.by_distro)+'<div class="effective-section-title">OS families</div>'+teamRows(data.by_os_family)+'<div class="effective-section-title">Agents</div>'+teamRows(data.by_agent);
+  if(!groups.length){el.innerHTML=rareHTML+'<div class="ops-empty">No opt-in team members yet.</div>';return;}
+  el.innerHTML=rareHTML+groups.map(function(g){return '<div class="effective-section-title">'+g[0]+'</div>'+teamRows(g[1]);}).join('');
 }
 
 var OPS_SORT_KEY='hive.ops.tableSort';
@@ -3388,7 +3439,12 @@ function loadMeStanding(){
     if(ccMeUsername!==u){ccMeUsername=u;if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}}
     fetch('/api/leaderboard/contributor/'+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(p){
       if(!p||!p.found){
-        mount.innerHTML='<div class="me-standing"><span><b>'+esc(u)+'</b> — ship a task to enter the standings.</span></div>';
+        // Standings count tasks shipped through the contributor relay, so a
+        // hub owner who merges PRs by hand is not "missing" work (#12109).
+        mount.innerHTML='<div class="me-standing"><span><b>'+esc(u)+'</b> — not on the board yet. Standings count tasks shipped through the contributor relay (<code>hive contribute</code>).</span>'
+          +'<a class="me-standing__link" href="/contribute" id="me-standing-join">How to join &#9656;</a></div>';
+        var join=document.getElementById('me-standing-join');
+        if(join)join.addEventListener('click',function(ev){var t=document.getElementById('ptab-onboarding');if(t&&typeof activateTab==='function'){ev.preventDefault();activateTab(t);}});
         return;
       }
       var place=(p.rank&&p.total)?('You stand <b>#'+p.rank+'</b> of '+p.total):'You are on the board';
@@ -3657,6 +3713,27 @@ function initInviteBanner(){
   banner.innerHTML='<b>You were invited to contribute.</b> Follow the setup below to join &mdash; '
     +'you’ll come in as a <b>newcomer</b>, credited to whoever invited you. '
     +'<span class="invite-tier">The invite records attribution only; it does not change your tier.</span>';
+  banner.hidden=false;
+}
+
+// initGoodFirstIssueBanner greets a visitor who followed a hive-curated
+// good-first-issue welcome comment (?issue=<owner/repo>#<n>). Informational:
+// it names the issue they came from and says the relay will offer them work
+// once they are set up. The parameter is only displayed, never fetched or
+// trusted; it is stashed so a later queue view can surface the same issue.
+function initGoodFirstIssueBanner(){
+  var banner=document.getElementById('invite-banner');
+  if(!banner||!banner.hidden)return;
+  var ref='';
+  try{ref=new URLSearchParams(window.location.search).get('issue')||'';}catch(e){ref='';}
+  var m=/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d{1,9})$/.exec(ref.trim());
+  if(!m)return;
+  try{window.sessionStorage.setItem('hive.gfi_issue',m[1]+'#'+m[2]);}catch(e){}
+  var url='https://github.com/'+m[1]+'/issues/'+m[2];
+  banner.innerHTML='<b>Welcome from a good first issue.</b> You followed hive’s invitation on '
+    +'<a href="'+esc(url)+'" target="_blank" rel="noopener">'+esc(m[1]+'#'+m[2])+'</a>. '
+    +'Finish the setup below and sign in with GitHub; claiming through this relay stamps the issue so hive leaves it to you. '
+    +'<span class="invite-tier">Bring your own coding agent — a PR that says <b>Fixes #'+esc(m[2])+'</b>, DCO-signed, merges on green CI without waiting on a human.</span>';
   banner.hidden=false;
 }
 
@@ -6533,7 +6610,8 @@ function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
 var OPS_LAYOUT_KEY='hive.ops.layout';
 var OPS_LAYOUT_VERSION=1;
 var OPS_LAYOUT_REGIONS=['left','main','wide'];
-var OPS_LAYOUT_TEMPLATE={left:['clankers','pipeline'],main:['mine','wall','models','work','runs','decisions','queue','opp'],wide:['triage']};
+var OPS_LAYOUT_TEMPLATE={left:['clankers','pipeline'],main:['mine','wall','models','work','runs','decisions','queue','opp','triage'],wide:[]};
+var OPS_LAYOUT_ALLOWED_REGION={triage:'main'};
 var OPS_LAYOUT_GRIP_SELECTOR='[data-ops-grip]';
 var OPS_LAYOUT_CARD_SELECTOR='[data-ops-card]';
 var opsLayoutInit=false;
@@ -6545,22 +6623,23 @@ function opsLayoutAnnounce(msg){var live=document.getElementById('ops-layout-liv
 function opsLayoutCardName(card){var h=card&&card.querySelector('.ops-card-head h3,.ops-card-title');return h?h.textContent.trim():(card?card.getAttribute('data-ops-card'):'card');}
 function opsLayoutTemplateRegion(id){for(var i=0;i<OPS_LAYOUT_REGIONS.length;i++){var r=OPS_LAYOUT_REGIONS[i],arr=OPS_LAYOUT_TEMPLATE[r];if(arr.indexOf(id)>=0)return r;}return 'main';}
 function opsLayoutAllIds(){return OPS_LAYOUT_TEMPLATE.left.concat(OPS_LAYOUT_TEMPLATE.main,OPS_LAYOUT_TEMPLATE.wide);}
+function opsLayoutRegionAllowed(id,region){return !OPS_LAYOUT_ALLOWED_REGION[id]||OPS_LAYOUT_ALLOWED_REGION[id]===region;}
 function opsLayoutRead(){try{var raw=localStorage.getItem(OPS_LAYOUT_KEY);return raw?JSON.parse(raw):null;}catch(e){return null;}}
 function opsLayoutCurrent(){var out={v:OPS_LAYOUT_VERSION,left:[],main:[],wide:[]};OPS_LAYOUT_REGIONS.forEach(function(r){var el=opsRegionEl(r);if(!el)return;Array.prototype.forEach.call(el.querySelectorAll(':scope > '+OPS_LAYOUT_CARD_SELECTOR),function(card){var id=card.getAttribute('data-ops-card');if(id)out[r].push(id);});});return out;}
 function opsLayoutWrite(){try{localStorage.setItem(OPS_LAYOUT_KEY,JSON.stringify(opsLayoutCurrent()));}catch(e){}}
-function opsLayoutNormalize(saved){var valid=opsLayoutAllIds(),seen={},out={v:OPS_LAYOUT_VERSION,left:[],main:[],wide:[]};OPS_LAYOUT_REGIONS.forEach(function(r){var arr=saved&&Array.isArray(saved[r])?saved[r]:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id])return;seen[id]=true;out[r].push(id);});});OPS_LAYOUT_REGIONS.forEach(function(r){OPS_LAYOUT_TEMPLATE[r].forEach(function(id){if(!seen[id]){seen[id]=true;out[r].push(id);}});});return out;}
+function opsLayoutNormalize(saved){var valid=opsLayoutAllIds(),seen={},out={v:OPS_LAYOUT_VERSION,left:[],main:[],wide:[]};OPS_LAYOUT_REGIONS.forEach(function(r){var arr=saved&&Array.isArray(saved[r])?saved[r]:[];arr.forEach(function(id){if(valid.indexOf(id)<0||seen[id]||!opsLayoutRegionAllowed(id,r))return;seen[id]=true;out[r].push(id);});});OPS_LAYOUT_REGIONS.forEach(function(r){OPS_LAYOUT_TEMPLATE[r].forEach(function(id){if(!seen[id]){seen[id]=true;out[r].push(id);}});});return out;}
 function opsApplyLayout(layout){OPS_LAYOUT_REGIONS.forEach(function(r){var region=opsRegionEl(r);if(!region)return;(layout[r]||[]).forEach(function(id){var card=opsCardEl(id);if(card)region.appendChild(card);});});}
 function opsResetLayout(){try{localStorage.removeItem(OPS_LAYOUT_KEY);}catch(e){}opsApplyLayout(opsLayoutNormalize(null));opsLayoutAnnounce('Operations card layout reset to the default order.');}
 function opsResetCard(card){if(!card)return;var id=card.getAttribute('data-ops-card'),region=opsRegionEl(opsLayoutTemplateRegion(id));if(!region)return;var after=null,template=OPS_LAYOUT_TEMPLATE[opsLayoutTemplateRegion(id)];for(var i=0;i<template.length;i++){if(template[i]===id)break;var prev=opsCardEl(template[i]);if(prev&&prev.parentElement===region)after=prev;}if(after)after.insertAdjacentElement('afterend',card);else region.insertBefore(card,region.firstElementChild);opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(card)+' returned to its default slot.');}
 function opsLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+OPS_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var vertical=window.matchMedia&&matchMedia('(max-width:900px)').matches;var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=vertical?y<(rect.top+rect.height/2):y<(rect.top+rect.height/2);var anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
-function opsNearestRegion(x,y){var regions=OPS_LAYOUT_REGIONS.map(opsRegionEl).filter(Boolean),best=null,bestDist=Infinity;regions.forEach(function(r){var rect=r.getBoundingClientRect();var cx=Math.max(rect.left,Math.min(x,rect.right)),cy=Math.max(rect.top,Math.min(y,rect.bottom));var dx=x-cx,dy=y-cy,dist=dx*dx+dy*dy;if(dist<bestDist){bestDist=dist;best=r;}});return best||opsRegionEl('main');}
+function opsNearestRegion(x,y,card){var id=card&&card.getAttribute('data-ops-card'),regions=OPS_LAYOUT_REGIONS.map(opsRegionEl).filter(function(r){return r&&opsLayoutRegionAllowed(id,r.getAttribute('data-ops-region'));}),best=null,bestDist=Infinity;regions.forEach(function(r){var rect=r.getBoundingClientRect();var cx=Math.max(rect.left,Math.min(x,rect.right)),cy=Math.max(rect.top,Math.min(y,rect.bottom));var dx=x-cx,dy=y-cy,dist=dx*dx+dy*dy;if(dist<bestDist){bestDist=dist;best=r;}});return best||opsRegionEl('main');}
 function opsMoveIndicator(slot){var indicator=opsDragState&&opsDragState.indicator;if(!indicator||!slot||!slot.region)return;if(slot.before)slot.region.insertBefore(indicator,slot.before);else slot.region.appendChild(indicator);}
 function opsClearIndicator(){if(opsDragState&&opsDragState.indicator&&opsDragState.indicator.parentElement)opsDragState.indicator.parentElement.removeChild(opsDragState.indicator);}
 function opsStartDrag(ev,grip){if(ev.button!==undefined&&ev.button!==0)return;var card=grip.closest(OPS_LAYOUT_CARD_SELECTOR);if(!card)return;ev.preventDefault();var rect=card.getBoundingClientRect();var ghost=card.cloneNode(true);ghost.classList.add('ops-card-ghost');ghost.style.width=rect.width+'px';ghost.style.left='0';ghost.style.top='0';ghost.style.setProperty('--ops-ghost-x',rect.left+'px');ghost.style.setProperty('--ops-ghost-y',rect.top+'px');var indicator=document.createElement('div');indicator.className='ops-drop-indicator';card.classList.add('ops-drag-source');document.body.appendChild(ghost);opsDragState={card:card,grip:grip,ghost:ghost,indicator:indicator,dx:ev.clientX-rect.left,dy:ev.clientY-rect.top,slot:null};try{grip.setPointerCapture(ev.pointerId);}catch(e){}grip.setAttribute('aria-pressed','true');opsLayoutAnnounce('Moving '+opsLayoutCardName(card)+'.');opsDragMove(ev);}
-function opsDragMove(ev){if(!opsDragState)return;var x=ev.clientX-opsDragState.dx,y=ev.clientY-opsDragState.dy;opsDragState.ghost.style.setProperty('--ops-ghost-x',x+'px');opsDragState.ghost.style.setProperty('--ops-ghost-y',y+'px');var region=opsNearestRegion(ev.clientX,ev.clientY),slot=opsLayoutSlot(region,ev.clientX,ev.clientY,opsDragState.card);opsDragState.slot=slot;opsMoveIndicator(slot);}
+function opsDragMove(ev){if(!opsDragState)return;var x=ev.clientX-opsDragState.dx,y=ev.clientY-opsDragState.dy;opsDragState.ghost.style.setProperty('--ops-ghost-x',x+'px');opsDragState.ghost.style.setProperty('--ops-ghost-y',y+'px');var region=opsNearestRegion(ev.clientX,ev.clientY,opsDragState.card),slot=opsLayoutSlot(region,ev.clientX,ev.clientY,opsDragState.card);opsDragState.slot=slot;opsMoveIndicator(slot);}
 function opsEndDrag(save){if(!opsDragState)return;var st=opsDragState;opsClearIndicator();if(st.ghost&&st.ghost.parentElement)st.ghost.parentElement.removeChild(st.ghost);st.card.classList.remove('ops-drag-source');st.grip.setAttribute('aria-pressed','false');if(save&&st.slot&&st.slot.region){if(st.slot.before)st.slot.region.insertBefore(st.card,st.slot.before);else st.slot.region.appendChild(st.card);opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(st.card)+' moved.');}else{opsLayoutAnnounce('Move cancelled.');}opsDragState=null;}
 function opsRestoreSnapshot(){if(!opsKeyboardSnapshot)return;opsApplyLayout(opsKeyboardSnapshot);opsLayoutWrite();opsKeyboardSnapshot=opsLayoutCurrent();opsLayoutAnnounce('Keyboard reorder cancelled.');}
-function opsMoveCardByKeyboard(card,key){var current=card.parentElement,regionName=current&&current.getAttribute('data-ops-region'),regions=OPS_LAYOUT_REGIONS,idx=regions.indexOf(regionName);if(key==='ArrowUp'){var prev=card.previousElementSibling;if(prev)current.insertBefore(card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;if(next)current.insertBefore(next,card);}else if(key==='ArrowLeft'||key==='ArrowRight'){var dir=key==='ArrowLeft'?-1:1;var target=opsRegionEl(regions[Math.max(0,Math.min(regions.length-1,idx+dir))]);if(target&&target!==current)target.appendChild(card);}opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(card)+' moved to '+(card.parentElement.getAttribute('data-ops-region')||'main')+'.');}
+function opsMoveCardByKeyboard(card,key){var current=card.parentElement,regionName=current&&current.getAttribute('data-ops-region'),regions=OPS_LAYOUT_REGIONS,idx=regions.indexOf(regionName);if(key==='ArrowUp'){var prev=card.previousElementSibling;if(prev)current.insertBefore(card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;if(next)current.insertBefore(next,card);}else if(key==='ArrowLeft'||key==='ArrowRight'){var dir=key==='ArrowLeft'?-1:1;var target=opsRegionEl(regions[Math.max(0,Math.min(regions.length-1,idx+dir))]);if(target&&target!==current&&opsLayoutRegionAllowed(card.getAttribute('data-ops-card'),target.getAttribute('data-ops-region')))target.appendChild(card);}opsLayoutWrite();opsLayoutAnnounce(opsLayoutCardName(card)+' moved to '+(card.parentElement.getAttribute('data-ops-region')||'main')+'.');}
 function initOpsCardLayout(){if(opsLayoutInit)return;var tab=document.getElementById('tab-ops');if(!tab)return;opsLayoutInit=true;opsApplyLayout(opsLayoutNormalize(opsLayoutRead()));var reset=document.getElementById('ops-layout-reset');if(reset)reset.addEventListener('click',opsResetLayout);tab.querySelectorAll(OPS_LAYOUT_GRIP_SELECTOR).forEach(function(grip){grip.addEventListener('pointerdown',function(ev){opsStartDrag(ev,grip);});grip.addEventListener('pointermove',function(ev){if(opsDragState){ev.preventDefault();opsDragMove(ev);}});grip.addEventListener('pointerup',function(ev){if(opsDragState){ev.preventDefault();opsEndDrag(true);}});grip.addEventListener('pointercancel',function(){opsEndDrag(false);});grip.addEventListener('dblclick',function(ev){ev.preventDefault();opsResetCard(grip.closest(OPS_LAYOUT_CARD_SELECTOR));});grip.addEventListener('focus',function(){opsKeyboardSnapshot=opsLayoutCurrent();});grip.addEventListener('blur',function(){opsKeyboardSnapshot=null;grip.setAttribute('aria-pressed','false');});grip.addEventListener('keydown',function(ev){var key=ev.key,card=grip.closest(OPS_LAYOUT_CARD_SELECTOR);if(!card)return;if(key===' '||key==='Enter'){ev.preventDefault();var active=grip.getAttribute('aria-pressed')==='true';if(active){opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','false');opsLayoutAnnounce('Dropped '+opsLayoutCardName(card)+'.');}else{opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','true');opsLayoutAnnounce('Picked up '+opsLayoutCardName(card)+'. Use arrow keys to move, Escape to cancel.');}return;}if(key==='Escape'){ev.preventDefault();opsRestoreSnapshot();grip.setAttribute('aria-pressed','false');return;}if(key==='ArrowUp'||key==='ArrowDown'||key==='ArrowLeft'||key==='ArrowRight'){ev.preventDefault();if(!opsKeyboardSnapshot)opsKeyboardSnapshot=opsLayoutCurrent();grip.setAttribute('aria-pressed','true');opsMoveCardByKeyboard(card,key);}});});}
 
 // ── Dev-log RAIL collapse: open by default, persisted in localStorage ──────────
@@ -6666,6 +6745,8 @@ function ccHydrateOpsFromCache(){
 }
 function ccRailApply(rail,btn,collapsed){
   rail.classList.toggle('collapsed',collapsed);
+  var shell=document.getElementById('ops-shell');
+  if(shell)shell.classList.toggle('ops-rail-collapsed',collapsed);
   if(btn){
     btn.setAttribute('aria-expanded',collapsed?'false':'true');
     btn.setAttribute('title',collapsed?'Show log':'Collapse log');
@@ -7190,28 +7271,42 @@ function ccLoadMine(force){
   if(!force&&ccMineLast&&(now-ccMineLast)<ccMineMinGap)return;
   ccMineLast=now;
   fetch('/api/contribute/me').then(function(r){
-    // 401 (anonymous) and 403 (no profile on this hive) are the NORMAL answers
-    // for a visitor, not failures — but they are still ANSWERS, and the card now
-    // renders them instead of staying hidden (#6937). Hiding it meant a
-    // signed-out viewer saw a page that looked complete, with nothing to suggest
-    // that signing in would reveal anything. The Profile tab already drew this
-    // distinction with .me-signin; Operations draws the same one, same class.
+    // 401 (anonymous) is the NORMAL answer for a visitor, not a failure — but
+    // it is still an ANSWER, and the card now renders it instead of staying
+    // hidden (#6937). Hiding it meant a signed-out viewer saw a page that
+    // looked complete, with nothing to suggest that signing in would reveal
+    // anything. The Profile tab already drew this distinction with .me-signin;
+    // Operations draws the same one, same class.
     if(r.status===401){ccRenderMineSignIn();return ccMineHandled;}
+    // 403 is what a spoke older than #12111 answers for "signed in, no profile
+    // on this hive". Newer spokes say the same thing as a 200 with
+    // has_profile:false (handled below), because on a hosted spoke the Ingress
+    // intercepted this 403 and replaced it with an HTML error page — which is
+    // exactly the fault the catch below then reported as a bug.
     if(r.status===403){ccRenderMineNoProfile(ccMeUsername);return ccMineHandled;}
     // Anything else non-2xx is a fault, not a statement about who is looking.
     if(!r.ok){console.error('contribution stats load failed: HTTP '+r.status);ccRenderMineError();return ccMineHandled;}
+    // A 2xx that is not JSON is the Ingress error backend speaking in the
+    // spoke's place (#12111): say which, so the console names the layer at
+    // fault instead of a bare SyntaxError from the parser.
+    var ct=(r.headers&&r.headers.get&&r.headers.get('content-type'))||'';
+    if(ct&&ct.indexOf('json')<0){console.error('contribution stats load failed: HTTP '+r.status+' with content-type '+ct+' — an intermediary answered instead of the hive');ccRenderMineError();return ccMineHandled;}
     return r.json();
   }).then(function(d){
     if(d===ccMineHandled)return;
     // A 200 we cannot read is a BUG, not an absent profile — saying so is the
     // same call renderMeError makes on the Profile tab.
     if(!d||!d.github_username){console.error('contribution stats payload unusable',d);ccRenderMineError();return;}
-    ccMineData=d;
     // Adopt the profile's STORED username when we have no viewer identity yet.
     // The metrics rings are keyed on that exact string, so this is also what lets
     // the personal sparklines find their series on a tab where the leaderboard
     // (the other setter of ccMeUsername) never ran.
     if(!ccMeUsername)ccMeUsername=d.github_username;
+    // Signed in, identified, but no contributor record on this hive yet — the
+    // hive's own owner is routinely here (#12111). An empty state, not tiles
+    // of zeros, and never the error message.
+    if(d.has_profile===false){ccMineData=null;ccRenderMineNoProfile(d.github_username);return;}
+    ccMineData=d;
     ccRenderMine();
     // Paint the sparkline immediately if metrics already landed; otherwise the
     // next ccMetricsPoll picks it up.
@@ -7239,14 +7334,15 @@ function ccRenderMineSignIn(){
   ccRenderMineMessage(ccSignInCTA('Sign in with GitHub')+' to see your own contribution stats '
     +'&mdash; issues worked, PRs produced, and your trust tier on this hive.');
 }
-// Signed in, but no contributor profile on this hive yet (403). The username is
+// Signed in, but no contributor profile on this hive yet (a 200 with
+// has_profile:false, or a 403 from a spoke older than #12111). The username is
 // whatever identity the page already resolved; it is routinely empty on the
 // Operations tab, where nothing else fetches the viewer, so the sentence has to
 // read correctly without it.
 function ccRenderMineNoProfile(username){
   var who=username?('<b>'+esc(username)+'</b>, you'):'You';
-  ccRenderMineMessage(who+' don’t have a contributor profile on this hive yet. '
-    +'Ship a task to start your card.');
+  ccRenderMineMessage(who+' have no contributor tasks on this hive yet &mdash; '
+    +'connect a contributor agent to get started, and your issues worked, PRs produced and trust tier will show here.');
 }
 // A transport, status or parse fault is shown AS a fault. Anonymous, profile-less
 // and broken used to render identically — as absence — so a bug here looked

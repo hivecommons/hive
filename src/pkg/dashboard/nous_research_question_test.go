@@ -6,10 +6,11 @@ import (
 	"testing"
 )
 
-// #12089: the Experiment Lab header shows the research question for the
-// active scope in place of the retired "OBSERVING · GOVERNOR" pill, so
-// GET /api/nous/status must carry it — and omit it when none is set.
-func TestNousStatusCarriesResearchQuestionForScope(t *testing.T) {
+// #12089: the Experiment Lab header shows the research question in place of
+// the retired "OBSERVING · GOVERNOR" pill, so GET /api/nous/status must carry
+// it — as an empty string when none is set. The lab is repo-only (#12207), so
+// the repo goal is used whatever scope the state still records.
+func TestNousStatusCarriesResearchQuestion(t *testing.T) {
 	s, deps := apiServer(t)
 	deps.Nous = &NousState{
 		Mode:   "observe",
@@ -31,19 +32,19 @@ func TestNousStatusCarriesResearchQuestionForScope(t *testing.T) {
 		return got
 	}
 
-	if got := readStatus(); got[nousStatusKeyResearchQuestion] != nil {
-		t.Fatalf("no goals set: researchQuestion must be absent, got %v", got[nousStatusKeyResearchQuestion])
+	if got := readStatus(); got[nousStatusKeyResearchQuestion] != "" {
+		t.Fatalf("no goals set: researchQuestion must be empty, got %v", got[nousStatusKeyResearchQuestion])
 	}
 
 	rec := doPut(s, "/api/nous/config/goals", map[string]interface{}{
 		"governorGoal": "  Can we cut MTTR 20% with shorter busy cadences?  ",
-		"repoGoal":     "Does a flaky-test quarantine lower CI reruns?",
+		"repoGoal":     "  Does a flaky-test quarantine lower CI reruns?  ",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT goals = %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := readStatus(); got[nousStatusKeyResearchQuestion] != "Can we cut MTTR 20% with shorter busy cadences?" {
-		t.Fatalf("governor scope researchQuestion = %v", got[nousStatusKeyResearchQuestion])
+	if got := readStatus(); got[nousStatusKeyResearchQuestion] != "Does a flaky-test quarantine lower CI reruns?" {
+		t.Fatalf("researchQuestion = %v, want the repo goal (governor goal ignored)", got[nousStatusKeyResearchQuestion])
 	}
 
 	if rec := doPut(s, "/api/nous/scope", map[string]interface{}{"scope": "repo"}); rec.Code != http.StatusOK {
@@ -54,24 +55,29 @@ func TestNousStatusCarriesResearchQuestionForScope(t *testing.T) {
 	}
 
 	// Whitespace-only goals count as unset.
-	if rec := doPut(s, "/api/nous/config/goals", map[string]interface{}{"governorGoal": " ", "repoGoal": ""}); rec.Code != http.StatusOK {
+	if rec := doPut(s, "/api/nous/config/goals", map[string]interface{}{"governorGoal": " ", "repoGoal": " "}); rec.Code != http.StatusOK {
 		t.Fatalf("PUT goals = %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := readStatus(); got[nousStatusKeyResearchQuestion] != nil {
-		t.Fatalf("blank goals: researchQuestion must be absent, got %v", got[nousStatusKeyResearchQuestion])
+	if got := readStatus(); got[nousStatusKeyResearchQuestion] != "" {
+		t.Fatalf("blank goals: researchQuestion must be empty, got %v", got[nousStatusKeyResearchQuestion])
 	}
 }
 
-func TestNousResearchQuestionBothScopeAndLegacyKeys(t *testing.T) {
+func TestNousResearchQuestionLegacyKeysAndGovernorIgnored(t *testing.T) {
 	ns := &NousState{Scope: "both", Config: map[string]interface{}{
 		"goals": map[string]interface{}{"repo": "repo question"},
 	}}
 	if got := ns.researchQuestionLocked(); got != "repo question" {
-		t.Fatalf("both scope with only a repo goal = %q", got)
+		t.Fatalf("bare repo key = %q", got)
 	}
 	ns.Config["goals"].(map[string]interface{})["governor"] = "governor question"
-	if got := ns.researchQuestionLocked(); got != "governor question" {
-		t.Fatalf("both scope prefers the governor goal, got %q", got)
+	ns.Config["goals"].(map[string]interface{})["governorGoal"] = "governor question"
+	if got := ns.researchQuestionLocked(); got != "repo question" {
+		t.Fatalf("governor goal must be ignored, got %q", got)
+	}
+	ns.Config["goals"].(map[string]interface{})["repoGoal"] = "preferred repo question"
+	if got := ns.researchQuestionLocked(); got != "preferred repo question" {
+		t.Fatalf("repoGoal must win over the bare repo key, got %q", got)
 	}
 	ns.Config["goals"] = "not a map"
 	if got := ns.researchQuestionLocked(); got != "" {

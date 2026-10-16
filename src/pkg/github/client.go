@@ -295,6 +295,14 @@ type Client struct {
 	// the life of the process.
 	defaultBranchMu sync.RWMutex
 	defaultBranches map[string]string
+	// closingLinks memoises issue↔PR pairs already pushed to GitHub's
+	// Development sidebar for PRs GitHub did not link itself (hivecommons/hive#11888).
+	// Zero value is ready to use.
+	closingLinks closingLinkCache
+	// coveredByPRLabel memoises repos whose covered-by-PR label is already
+	// under its current spelling (hivecommons/hive#11888). Zero value is
+	// ready to use.
+	coveredByPRLabel coveredByPRLabelState
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning
@@ -541,6 +549,10 @@ type IssueLinkedPR struct {
 	Merged  bool   `json:"merged"`
 	URL     string `json:"url,omitempty"`
 	Closing bool   `json:"closing,omitempty"`
+	// Reference marks a PR that references the issue without closing it
+	// (`Refs #N`, `Part of #N`): the dashboard glyph reads "covered by PR
+	// #N (partial)" rather than "closes via PR #N" (hivecommons/hive#12144).
+	Reference bool `json:"reference,omitempty"`
 }
 
 type Issue struct {
@@ -3617,6 +3629,13 @@ type RepoWorkIssue struct {
 	Reason            string    `json:"reason,omitempty"`
 	// ReporterConfirmationGate mirrors Issue.ReporterConfirmationGate.
 	ReporterConfirmationGate bool `json:"reporter_confirmation_gate,omitempty"`
+	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
+	// duplicate-PR guard suppressed into the claimed_by_pr bucket
+	// (hivecommons/hive#12144), so the repo card can render the same
+	// covering-PR glyph it shows on actionable issues. Both are the
+	// github.Issue fields of the same name, copied as-is.
+	LinkedPRs    []IssueLinkedPR    `json:"linked_prs,omitempty"`
+	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
@@ -3635,6 +3654,8 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		Reason:            reason,
 
 		ReporterConfirmationGate: issue.ReporterConfirmationGate,
+		LinkedPRs:                append([]IssueLinkedPR(nil), issue.LinkedPRs...),
+		ClaimContext:             issue.ClaimContext,
 	}
 }
 

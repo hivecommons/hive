@@ -1,0 +1,1 @@
+- Dashboard: restore the `modeColors` lookup used by the Experiment Lab sidebar mode indicator, which #12095 removed along with the header pill (left `v5` failing `syntax-check` with an undefined identifier).

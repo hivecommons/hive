@@ -553,6 +553,10 @@ type HeartbeatClusterHealthReport struct {
 	// NodeHealthError carries the spoke-side reason health is partial or
 	// absent, for example a missing metrics API or forbidden node list.
 	NodeHealthError string `json:"node_health_error,omitempty"`
+	// NodeRBAC is this spoke's verdict on its cluster-scoped Node read access:
+	// "ok" when listing /api/v1/nodes succeeded, "forbidden" on HTTP 403, and
+	// empty when the list failed for any other reason.
+	NodeRBAC string `json:"node_rbac,omitempty"`
 }
 
 // HeartbeatNodeMetric holds per-node resource usage collected on the spoke.
@@ -1188,6 +1192,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onAuthorizedUsers AuthorizedUsersCallback
 	var onProjectConfig ProjectConfigCallback
 	var onGatewayConfig GatewayConfigCallback
+	var onClusterID ClusterIDCallback
 	var onRestartSpoke RestartSpokeCallback
 	var onAgentRestartReset AgentRestartResetCallback
 	var freshCollect FreshStatusCollector
@@ -1210,6 +1215,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onProjectConfig = fn
 		case GatewayConfigCallback:
 			onGatewayConfig = fn
+		case ClusterIDCallback:
+			onClusterID = fn
 		case RestartSpokeCallback:
 			onRestartSpoke = fn
 		case AgentRestartResetCallback:
@@ -1260,6 +1267,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		// creates/replaces the gateway.
 		if resp.PendingGateway != nil && onGatewayConfig != nil {
 			onGatewayConfig(resp.PendingGateway)
+		}
+		if resp.ClusterID != "" && onClusterID != nil {
+			onClusterID(resp.ClusterID)
 		}
 		if resp.RestartSpoke && onRestartSpoke != nil {
 			onRestartSpoke()
@@ -2530,6 +2540,12 @@ type HeartbeatResponse struct {
 	// nil means "nothing to deliver". The hub sends it once (drained on delivery)
 	// rather than every beat, since it carries a secret key value.
 	PendingGateway *HeartbeatGatewayConfig `json:"pending_gateway,omitempty"`
+	// ClusterID is the cluster the hub's record places this hive on. The hub
+	// sends it only while the spoke reports no cluster_id of its own, so a
+	// spoke provisioned before the template rendered hub.cluster_id (#11432)
+	// learns it — the only channel on pull_only clusters the hub cannot
+	// re-render. Empty means "nothing to deliver".
+	ClusterID string `json:"cluster_id,omitempty"`
 	// UpgradePolicy is the hub's upgrade posture for THIS spoke (#7262): who
 	// owns upgrades, on what schedule, toward which branch/channel head. Sent
 	// on every beat for any hive the hub has an upgrade opinion about; nil
@@ -2580,6 +2596,11 @@ type GitHubAppConfigCallback func(cfg *HeartbeatGitHubAppConfig)
 // cannot push config over kubectl (mirrors AuthorizedUsersCallback).
 type ProjectConfigCallback func(cfg *HeartbeatProjectConfig)
 
+// ClusterIDCallback is called with the hub-known cluster id when the hub
+// delivers one via the heartbeat response. The spoke adopts it only when its
+// own hub.cluster_id is empty, which enables cluster_health on later beats.
+type ClusterIDCallback func(clusterID string)
+
 // HeartbeatUpgradePolicy is the hub's authoritative upgrade posture for one
 // spoke (#7262). Every field is descriptive: nothing here instructs the spoke
 // to change its image (UpgradeTo / SwitchToTag still do that). Wire-compatible
@@ -2620,6 +2641,11 @@ type HeartbeatUpgradePolicy struct {
 	// send it — and must not be rendered as "no update coming".
 	NextUpdateAt     string `json:"next_update_at,omitempty"`
 	NextUpdateStatus string `json:"next_update_status,omitempty"`
+	// ScheduledHoldReason is why the hub did not apply this hive's daily/weekly
+	// upgrade while its window was open; ScheduledHoldAt (RFC3339 UTC) is when
+	// it was recorded. Empty when nothing is held or the hub is too old to say.
+	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
+	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
 }
 
 // Schedule values carried by HeartbeatUpgradePolicy.Schedule. These mirror

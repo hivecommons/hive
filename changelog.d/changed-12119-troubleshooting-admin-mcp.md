@@ -1,0 +1,1 @@
+- Troubleshooting and documentation-map now guide operators without host shell access to the admin MCP diagnostic reads for logs, startup output, request logs, agent terminals, kick logs, and crash/restart/memory evidence (#12119).

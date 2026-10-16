@@ -96,6 +96,17 @@ func TestValidate(t *testing.T) {
 		{"sentinel", func(b *Bundle) { b.Sentinel[0].Rule = "" }, "sentinel[0]"},
 		{"action", func(b *Bundle) { b.HumanActions[0].Actor = "" }, "human_actions[0]"},
 		{"merge", func(b *Bundle) { b.Merge.SHA = "" }, "merge:"},
+		{"valid author model and links", func(b *Bundle) {
+			b.Author.Agent, b.Author.Backend, b.Author.Model = "coder", "copilot", "gpt-5.6-luna"
+			b.RevertOf = []string{BundleID("hivecommons/hive", 40, "a")}
+			b.FollowupOf = []string{BundleID("hivecommons/hive", 41, "b")}
+			b.RevertedBy = []string{BundleID("hivecommons/hive", 43, "c")}
+			b.FollowedUpBy = []string{BundleID("hivecommons/hive", 44, "d")}
+		}, ""},
+		{"revert_of empty", func(b *Bundle) { b.RevertOf = []string{""} }, "revert_of[0]"},
+		{"followup_of empty", func(b *Bundle) { b.FollowupOf = []string{"x", ""} }, "followup_of[1]"},
+		{"reverted_by empty", func(b *Bundle) { b.RevertedBy = []string{""} }, "reverted_by[0]"},
+		{"followed_up_by empty", func(b *Bundle) { b.FollowedUpBy = []string{""} }, "followed_up_by[0]"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -434,5 +445,55 @@ func TestUnsignedBundleWhenKeyAbsent(t *testing.T) {
 	raw, _ := json.Marshal(b)
 	if !strings.Contains(string(raw), `"signed":false`) {
 		t.Fatalf("JSON missing signed:false: %s", raw)
+	}
+}
+
+func TestShadowAbsentLeavesHashUnchanged(t *testing.T) {
+	b := sample()
+	canon, err := Canonical(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(canon), "shadow") {
+		t.Fatalf("canonical form of a bundle without shadow mentions it: %s", canon)
+	}
+	before, err := Hash(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Bundle
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	after, err := Hash(&back)
+	if err != nil || after != before {
+		t.Fatalf("hash after round trip = %q, want %q (err %v)", after, before, err)
+	}
+}
+
+func TestValidateShadow(t *testing.T) {
+	yes := true
+	good := &ShadowGate{WouldHaveHeld: &yes, Confidence: 0.5, EvaluatedAt: t0}
+	b := sample()
+	b.Shadow = &Shadow{ReviewGate: good, Intent: &ShadowGate{WouldHaveBlocked: &yes, Confidence: 1, EvaluatedAt: t0}}
+	if err := b.Validate(); err != nil {
+		t.Fatalf("valid shadow rejected: %v", err)
+	}
+	for name, sh := range map[string]*Shadow{
+		"review gate without flag": {ReviewGate: &ShadowGate{Confidence: 0.5, EvaluatedAt: t0}},
+		"review gate wrong flag":   {ReviewGate: &ShadowGate{WouldHaveBlocked: &yes, Confidence: 0.5, EvaluatedAt: t0}},
+		"intent without flag":      {Intent: &ShadowGate{Confidence: 0.5, EvaluatedAt: t0}},
+		"confidence range":         {ReviewGate: &ShadowGate{WouldHaveHeld: &yes, Confidence: 1.5, EvaluatedAt: t0}},
+		"missing evaluated_at":     {ReviewGate: &ShadowGate{WouldHaveHeld: &yes, Confidence: 0.5}},
+	} {
+		b := sample()
+		b.Shadow = sh
+		if err := b.Validate(); err == nil {
+			t.Errorf("%s: want error", name)
+		}
 	}
 }

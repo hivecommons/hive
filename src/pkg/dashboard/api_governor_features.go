@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -28,10 +29,13 @@ const (
 //
 //   - ioscan            (legacy API compatibility; UI moved to Security)
 //   - otel/tracing      (Config.OTel/Tracing Enabled + advanced exporter fields)
-//   - retro             (Config.Retro enabled + analysis model)
-//   - mint              (Config.Mint.Enabled + Issuer — NOT KeyPath: the signing
-//     key is a secret/PEM path and the dashboard overlay is deliberately
-//     secret-free)
+//   - retro             (Config.Retro enabled, analysis model and the pacing
+//     knobs scan_interval_s, max_fix_attempts, max_kicks, long_stall_days and
+//     recent_closed_window_s; the lane is built at startup, so these take
+//     effect after a restart)
+//   - mint              (Config.Mint.Enabled + Issuer; KeyPath is returned
+//     read-only by featuresPlatformResponse and never written here, and the
+//     key's contents are never read)
 //   - plan_from_label   (Config.Planning.PlanFromLabel, a *bool tri-state)
 //   - quality.formal    (Config.Quality.Formal opt-in, ACMM L5+ effective gate)
 //   - review.plan_match (Config.Review.PlanMatch.Enabled, the plan_match
@@ -41,8 +45,7 @@ const (
 //   - publication       (Config.Publication: the audit campaign's authorized
 //     issue publisher, default off, ACMM L3+ effective gate, plus the private
 //     disclosure channel security-sensitive findings route to)
-//   - runs.external.flue (Enabled + Mode of the report-only Flue binding, #8361;
-//     endpoint and workflow version are yaml-only)
+//   - runs.external.flue (Enabled + Mode of the report-only Flue binding, #8361)
 //   - runs.external.omp  (Enabled + Mode of the report-only OMP workbench host,
 //     #8361 step 9; workflow version is yaml-only)
 //
@@ -82,6 +85,13 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		RetroEnabled       *bool   `json:"retroEnabled"`
 		RetroAnalysisModel *string `json:"retroAnalysisModel"`
+		// Retro pacing knobs. 0 means the built-in default (no window for
+		// recent_closed_window_s); negative values are rejected.
+		RetroScanIntervalS       *int `json:"retroScanIntervalS"`
+		RetroMaxFixAttempts      *int `json:"retroMaxFixAttempts"`
+		RetroMaxKicks            *int `json:"retroMaxKicks"`
+		RetroLongStallDays       *int `json:"retroLongStallDays"`
+		RetroRecentClosedWindowS *int `json:"retroRecentClosedWindowS"`
 
 		MintEnabled *bool   `json:"mintEnabled"`
 		MintIssuer  *string `json:"mintIssuer"`
@@ -119,14 +129,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		PublicationPrivateChannel *string   `json:"publicationPrivateChannel"`
 		PublicationOwner          *string   `json:"publicationOwner"`
 		// #8361: the report-only Flue external-execution binding. Endpoint
-		// and workflow version stay yaml-only; the dialog flips the toggle
-		// and picks the mode.
-		ExtFlueEnabled         *bool   `json:"extFlueEnabled"`
-		ExtFlueMode            *string `json:"extFlueMode"`
-		ExtFlueEndpoint        *string `json:"extFlueEndpoint"`
-		ExtFlueWorkflowVersion *string `json:"extFlueWorkflowVersion"`
+		// and workflow version are in featuresRunsBody.
+		ExtFlueEnabled *bool   `json:"extFlueEnabled"`
+		ExtFlueMode    *string `json:"extFlueMode"`
 		// #8361 step 9: the OMP workbench host, an independent toggle beside
-		// the Flue one. Workflow version stays yaml-only.
+		// the Flue one. Workflow version is in featuresRunsBody.
 		ExtOMPEnabled *bool   `json:"extOmpEnabled"`
 		ExtOMPMode    *string `json:"extOmpMode"`
 
@@ -170,6 +177,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		RotationHighVolumeCadenceS *int                                      `json:"rotationHighVolumeCadenceS"`
 		RotationProviders          *map[string]config.ProviderRotationConfig `json:"rotationProviders"`
 		RotationAgents             *map[string]string                        `json:"rotationAgents"`
+
+		featuresOpsBody
+		featuresPlatformBody
+		featuresRunsBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -342,6 +353,36 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, nousErr.Error(), http.StatusBadRequest)
 		return
 	}
+	for _, f := range []struct {
+		v    *int
+		name string
+	}{
+		{body.RetroScanIntervalS, "scan_interval_s"},
+		{body.RetroMaxFixAttempts, "max_fix_attempts"},
+		{body.RetroMaxKicks, "max_kicks"},
+		{body.RetroLongStallDays, "long_stall_days"},
+		{body.RetroRecentClosedWindowS, "recent_closed_window_s"},
+	} {
+		if f.v != nil && *f.v < 0 {
+			jsonError(w, fmt.Sprintf("retro %s must be 0 (default) or greater", f.name), http.StatusBadRequest)
+			return
+		}
+	}
+	applyOps, err := body.featuresOpsBody.prepare(s.deps.Config)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	applyPlatform, err := body.featuresPlatformBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	applyRuns, err := body.featuresRunsBody.prepare(s.deps.Config)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// --- apply ---
 	// runsBefore is compared after the apply to decide whether the stage
@@ -352,6 +393,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	// Struct copy of the whole config, restored if the save fails so a 500
 	// does not leave unsaved, unwired changes live (#10122).
 	cfgBefore := *cfg
+	applyOps(cfg)
+	applyPlatform(cfg)
+	applyRuns(cfg)
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -385,6 +429,20 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	}
 	if body.RetroAnalysisModel != nil {
 		cfg.Retro.AnalysisModel = strings.TrimSpace(*body.RetroAnalysisModel)
+	}
+	for _, f := range []struct {
+		src *int
+		dst *int
+	}{
+		{body.RetroScanIntervalS, &cfg.Retro.ScanIntervalS},
+		{body.RetroMaxFixAttempts, &cfg.Retro.MaxFixAttempts},
+		{body.RetroMaxKicks, &cfg.Retro.MaxKicks},
+		{body.RetroLongStallDays, &cfg.Retro.LongStallDays},
+		{body.RetroRecentClosedWindowS, &cfg.Retro.RecentClosedWindowS},
+	} {
+		if f.src != nil {
+			*f.dst = *f.src
+		}
 	}
 	if body.MintEnabled != nil {
 		cfg.Mint.Enabled = *body.MintEnabled
@@ -522,12 +580,6 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.ExtFlueMode != nil {
 		cfg.Runs.External.Flue.Mode = strings.TrimSpace(*body.ExtFlueMode)
 	}
-	if body.ExtFlueEndpoint != nil {
-		cfg.Runs.External.Flue.Endpoint = strings.TrimSpace(*body.ExtFlueEndpoint)
-	}
-	if body.ExtFlueWorkflowVersion != nil {
-		cfg.Runs.External.Flue.WorkflowVersion = strings.TrimSpace(*body.ExtFlueWorkflowVersion)
-	}
 	if body.ExtOMPEnabled != nil {
 		cfg.Runs.External.OMP.Enabled = *body.ExtOMPEnabled
 	}
@@ -649,8 +701,8 @@ func claimsTTLsResponse(c config.ClaimsConfig) map[string]interface{} {
 
 // featuresSectionResponse builds the opt-in-features payload for the governor
 // config GET so the Features dialog can prefill its controls. The mint signing
-// key (Config.Mint.KeyPath) is intentionally never returned — only whether mint
-// is enabled and its issuer, keeping the response secret-free.
+// key path (Config.Mint.KeyPath) is returned read-only; the key itself is
+// never read, keeping the response secret-free.
 //
 // planFromLabel is reported as a tri-state: null when the key is unset (falls
 // back to the ACMM-level gate), otherwise the explicit true/false the operator
@@ -659,8 +711,9 @@ func claimsTTLsResponse(c config.ClaimsConfig) map[string]interface{} {
 // only the server's ExternalExec seam knows (#8361).
 func (s *Server) featuresLinkedView() map[string]interface{} {
 	return map[string]interface{}{
-		"extFlueLinked": s.externalExecLinked(extExecEngineFlue),
-		"extOmpLinked":  s.externalExecLinked(extExecEngineOMP),
+		"extFlueLinked":       s.externalExecLinked(extExecEngineFlue),
+		"extOmpLinked":        s.externalExecLinked(extExecEngineOMP),
+		"extVibeKanbanLinked": s.externalExecLinked(extExecEngineVibeKanban),
 	}
 }
 
@@ -670,6 +723,9 @@ func (s *Server) featuresSectionWithLinked(cfg *config.Config) map[string]interf
 	out := featuresSectionResponse(cfg)
 	for k, v := range s.featuresLinkedView() {
 		out[k] = v
+	}
+	if fn := s.goodFirstIssueStats.Load(); fn != nil && *fn != nil {
+		out["goodFirstIssueStats"] = (*fn)()
 	}
 	return out
 }
@@ -696,6 +752,11 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"otelHasHeaders":                      len(otelCfg.Headers) > 0,
 		"retroEnabled":                        cfg.Retro.Enabled,
 		"retroAnalysisModel":                  cfg.Retro.AnalysisModel,
+		"retroScanIntervalS":                  cfg.Retro.ScanIntervalS,
+		"retroMaxFixAttempts":                 cfg.Retro.MaxFixAttempts,
+		"retroMaxKicks":                       cfg.Retro.MaxKicks,
+		"retroLongStallDays":                  cfg.Retro.LongStallDays,
+		"retroRecentClosedWindowS":            cfg.Retro.RecentClosedWindowS,
 		"mintEnabled":                         cfg.Mint.Enabled,
 		"mintIssuer":                          cfg.Mint.Issuer,
 		"planFromLabel":                       planFromLabel,
@@ -779,6 +840,23 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"rotationAgents":                      rotationCfg.AgentTiers,
 	}
 	for k, v := range claimsTTLsResponse(cfg.Governor.Claims) {
+		out[k] = v
+	}
+	// Built-in values a zero retro pacing knob falls back to, so the dialog
+	// can show them as placeholders.
+	out["retroDefaults"] = map[string]int{
+		"retroScanIntervalS":  retro.DefaultScanIntervalS,
+		"retroMaxFixAttempts": retro.DefaultMaxFixAttempts,
+		"retroMaxKicks":       retro.DefaultMaxKicks,
+		"retroLongStallDays":  retro.DefaultLongStallDays,
+	}
+	for k, v := range featuresOpsResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresPlatformResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresRunsResponse(cfg) {
 		out[k] = v
 	}
 	return out

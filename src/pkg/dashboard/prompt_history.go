@@ -43,6 +43,14 @@ const (
 	//   repos section      ~0.4 KiB
 	// giving ~25 KiB for a worst-case prompt and ~8 KiB for a typical one.
 	//
+	// Those template figures predate the ACMM L6 scanner-automerge.md growing
+	// to ~28 KiB. Re-measured for hivecommons/hive#12133 (pkg/scheduler
+	// TestKickSizeMeasurement): fixed cost 32.9 KiB with empty lists, 56.8 KiB
+	// with every list at the default caps, 63.4 KiB against the 302-PR
+	// backlog. The store is unaffected because promptHistoryMaxPromptBytes
+	// truncates each stored body at 32 KiB; see "Kick size and the list caps"
+	// in docs/operator-reference.md for the full table.
+	//
 	// At the most aggressive shipped cadence pack (level-6 "busy": supervisor
 	// 2m, scanner/ci-maintainer 10m, quality 15m, architect/sec-check 30m,
 	// outreach/strategist 1h) a hive issues ~8,700 kicks/week. At the typical

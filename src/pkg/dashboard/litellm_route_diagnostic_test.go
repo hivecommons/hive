@@ -65,6 +65,9 @@ func TestInferenceRouteDiagnostic_LegacyTabWarnsWhenGatewayWinsRoute(t *testing.
 		"⚠ That is NOT the endpoint this Test just exercised (https://old-gateway.example)",
 		"does not prove agent inference works",
 		"governor.litellm.endpoint",
+		// #9945 reopen: the reporter could not find "the legacy endpoint";
+		// the warning must say where in Settings it lives.
+		"Settings → Model Gateways → Legacy LiteLLM endpoint",
 		config.LiteLLMEndpointEnv,
 	} {
 		if !strings.Contains(line, want) {
@@ -90,8 +93,8 @@ func TestInferenceRouteDiagnostic_KeyMismatchWarns(t *testing.T) {
 	if !strings.Contains(line, "⚠ The key agents send (SHA256 "+wantRoute+") is NOT the key this Test just used (SHA256 "+wantTested+")") {
 		t.Errorf("expected key mismatch warning with both fingerprints, got %q", line)
 	}
-	if !strings.Contains(line, "legacy governor.litellm block") {
-		t.Errorf("no explicit gateway: source must be the legacy block, got %q", line)
+	if !strings.Contains(line, "legacy governor.litellm block (Settings → Model Gateways → Legacy LiteLLM endpoint)") {
+		t.Errorf("no explicit gateway: source must be the legacy block and say where it is edited, got %q", line)
 	}
 }
 

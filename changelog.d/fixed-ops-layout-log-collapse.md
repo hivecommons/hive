@@ -1,0 +1,1 @@
+- Fixed the Operations tab layout so the left column expands when the log rail collapses, the contributor-agent header stays readable, and Issue triage stays in the center column.

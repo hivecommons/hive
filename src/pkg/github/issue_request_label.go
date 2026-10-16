@@ -33,6 +33,9 @@ var reservedExactLabels = []string{
 	"needs-decision",     // blocked on a human decision
 	"blocked",            // workflow skip marker
 	AutoMergeQueuedLabel, // lgtm: queues the merge
+	// Hive-managed verification state that no longer lives under hive/
+	// since the 🐝 spelling (#11888); it follows open-PR evidence.
+	CoveredByPRLabel,
 }
 
 // reservedLabelPrefixes are namespaces owned by the hive itself: claim
@@ -182,7 +185,7 @@ func verifiedOpenResendHint(add, remove, bad []string) string {
 	}
 	for _, label := range bad {
 		name := strings.ToLower(label)
-		if name != LikelyDoneLabel && name != CoveredByPRLabel {
+		if name != LikelyDoneLabel && !strings.EqualFold(name, CoveredByPRLabel) {
 			return ""
 		}
 		for _, a := range add {

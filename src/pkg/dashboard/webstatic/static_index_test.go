@@ -508,10 +508,10 @@ func TestStaticExperimentLabHeaderShowsResearchQuestionNotModePill(t *testing.T)
 			t.Fatalf("static dashboard missing Experiment Lab research-question header wiring %q", want)
 		}
 	}
-	// The gear dialog must prefill the goals from where PUT /api/nous/config/goals stores them.
+	// The gear dialog must prefill the repo goal from where PUT /api/nous/config/goals
+	// stores it (the lab is repo-only, #12207).
 	for _, want := range []string{
 		`const goals = cfg.goals || {};`,
-		`goals.governorGoal || goals.governor || camp.research_question`,
 		`goals.repoGoal || goals.repo || repoCamp.research_question`,
 	} {
 		if !strings.Contains(src, want) {

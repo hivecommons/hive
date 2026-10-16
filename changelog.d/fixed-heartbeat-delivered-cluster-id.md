@@ -1,0 +1,1 @@
+- Hub now delivers each hive's recorded `cluster_id` in the heartbeat response; spokes with no configured cluster id (provisioned before #11432) adopt and persist it and start reporting node health, and the hub's push-reported note names missing node RBAC (`node_rbac: forbidden` / 403 on `/api/v1/nodes`) with a link to `src/docs/push-reported-node-health.md`.

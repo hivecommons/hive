@@ -126,6 +126,28 @@ func TestSaaSAuthCheckAuthReturnIsExactPublicPath(t *testing.T) {
 	}
 }
 
+// The phone widget's read-only summary must bypass the hub's auth_request gate
+// (the widget has no browser session; the spoke authenticates the widget
+// token itself), but only that exact path: token mint/revoke and the rest of
+// /api/widget stay hub-private.
+func TestSaaSAuthCheckWidgetSummaryIsExactPublicPath(t *testing.T) {
+	for _, tc := range []struct {
+		uri  string
+		want bool
+	}{
+		{"/api/widget/summary", true},
+		{"/api/widget/summary?ts=1", true},
+		{"/api/widget/token", false},
+		{"/api/widget", false},
+		{"/api/widget/summary/extra", false},
+		{"/api/widget/summaryx", false},
+	} {
+		if got := isSaaSPublicPath(tc.uri); got != tc.want {
+			t.Errorf("isSaaSPublicPath(%q) = %v, want %v", tc.uri, got, tc.want)
+		}
+	}
+}
+
 func TestSaaSAuthCheckGHUserStatusIsOnlyPublicAuthStatus(t *testing.T) {
 	for _, tc := range []struct {
 		uri  string
@@ -249,6 +271,23 @@ func TestContributeIngressAsksWhoIsCallingButNeverRedirects(t *testing.T) {
 		}
 		if ann["nginx.ingress.kubernetes.io/proxy-read-timeout"] != "3600" {
 			t.Errorf("useWildcard=%v: the relay's long-poll timeout was lost", useWildcard)
+		}
+		// #12111: without an explicit list the Ingress inherits the controller's
+		// global custom-http-errors, which includes 403 — and nginx then swaps
+		// the spoke's JSON 403 for the error backend's HTML, served as 200, so
+		// the "Your contribution" card reported a bug instead of an empty state.
+		codes, has := ann["nginx.ingress.kubernetes.io/custom-http-errors"]
+		if !has {
+			t.Errorf("useWildcard=%v: hive-contribute has no custom-http-errors; it inherits the controller's global list and a JSON 403 on /api/contribute comes back as an HTML 200 (#12111)", useWildcard)
+		}
+		for _, code := range strings.Split(codes, ",") {
+			switch strings.TrimSpace(code) {
+			case "401", "403", "404":
+				t.Errorf("useWildcard=%v: hive-contribute intercepts %s, a status its handlers answer with JSON on purpose", useWildcard, code)
+			}
+		}
+		if ann["nginx.ingress.kubernetes.io/default-backend"] != "hive-error-pages" {
+			t.Errorf("useWildcard=%v: hive-contribute routes intercepted statuses to %q, want hive-error-pages like the page and XHR Ingresses", useWildcard, ann["nginx.ingress.kubernetes.io/default-backend"])
 		}
 	}
 }

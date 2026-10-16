@@ -16,7 +16,10 @@
       "additionalProperties": false,
       "properties": {
         "login": {"type": "string", "minLength": 1},
-        "kind": {"enum": ["human", "agent", "bot"]}
+        "kind": {"enum": ["human", "agent", "bot"]},
+        "agent": {"type": "string"},
+        "backend": {"type": "string"},
+        "model": {"type": "string"}
       }
     },
     "base_sha": {"type": "string", "minLength": 1},
@@ -59,6 +62,18 @@
         "sha": {"type": "string", "minLength": 1}
       }
     },
+    "revert_of": {"$ref": "#/$defs/bundle_ids"},
+    "followup_of": {"$ref": "#/$defs/bundle_ids"},
+    "reverted_by": {"$ref": "#/$defs/bundle_ids"},
+    "followed_up_by": {"$ref": "#/$defs/bundle_ids"},
+    "shadow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "review_gate": {"$ref": "#/$defs/shadow_review_gate"},
+        "intent": {"$ref": "#/$defs/shadow_intent"}
+      }
+    },
     "created_at": {"type": "string", "format": "date-time"},
     "updated_at": {"type": "string", "format": "date-time"},
     "signed": {"type": "boolean"},
@@ -66,6 +81,7 @@
     "signature": {"type": "string"}
   },
   "$defs": {
+    "bundle_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "verdict": {
       "type": "object",
       "required": ["perspective", "model", "backend", "verdict", "confidence", "recorded_at"],
@@ -119,6 +135,30 @@
         "rule": {"type": "string", "minLength": 1},
         "summary": {"type": "string"},
         "paths": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "shadow_review_gate": {
+      "type": "object",
+      "required": ["would_have_held", "confidence", "evaluated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "would_have_held": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "tier": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evaluated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "shadow_intent": {
+      "type": "object",
+      "required": ["would_have_blocked", "confidence", "evaluated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "would_have_blocked": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "tier": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evaluated_at": {"type": "string", "format": "date-time"}
       }
     },
     "action": {

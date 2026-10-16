@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -68,5 +69,96 @@ func TestTrustedAuthorAutoMergeConfigDefaultsAndValidation(t *testing.T) {
 	cfg = TrustedAuthorAutoMergeConfig{RequireGitHubPermission: &disabled}
 	if cfg.EffectiveRequireGitHubPermission() {
 		t.Fatal("explicit require_github_permission: false should be honored")
+	}
+}
+
+func TestContributorLaneAutoMergeConfigDefaultsAndValidation(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if !cfg.IsEnabled() {
+		t.Fatal("contributor-lane automerge must default on")
+	}
+	if got := cfg.EffectiveSoakMinutes(); got != DefaultContributorLaneSoakMinutes {
+		t.Fatalf("default soak = %d, want %d", got, DefaultContributorLaneSoakMinutes)
+	}
+	if !cfg.EffectiveRequireReviewerVerdict() {
+		t.Fatal("default require_reviewer_verdict must be true")
+	}
+	labels := cfg.ExcludeLabelSet()
+	for _, want := range DefaultContributorLaneExcludeLabels {
+		if !labels[want] {
+			t.Fatalf("default exclude labels = %v, missing %q", labels, want)
+		}
+	}
+	if len(cfg.RepoSet()) != 0 {
+		t.Fatalf("empty repos should yield empty set, got %v", cfg.RepoSet())
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("zero config should validate: %v", err)
+	}
+	if err := (ContributorLaneAutoMergeConfig{SoakMinutes: -1}).Validate(); err == nil {
+		t.Fatal("negative soak_minutes should fail validation")
+	}
+	off := false
+	cfg = ContributorLaneAutoMergeConfig{Enabled: &off, RequireReviewerVerdict: &off, SoakMinutes: 30, Repos: []string{" Widget ", ""}, ExcludeLabels: []string{"Hold", " "}}
+	if cfg.IsEnabled() || cfg.EffectiveRequireReviewerVerdict() || cfg.EffectiveSoakMinutes() != 30 {
+		t.Fatalf("explicit values not honored: %+v", cfg)
+	}
+	if repos := cfg.RepoSet(); !repos["widget"] || len(repos) != 1 {
+		t.Fatalf("RepoSet = %v, want lower-cased trimmed widget", repos)
+	}
+	if ex := cfg.ExcludeLabelSet(); !ex["hold"] || len(ex) != 1 {
+		t.Fatalf("ExcludeLabelSet = %v, want hold only", ex)
+	}
+}
+
+// require_tiers defaults to the operator-granted trusted/merger tiers and
+// rejects tiers a contributor reaches without an operator (#12041).
+func TestContributorLaneAutoMergeConfigRequireTiers(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if got := strings.Join(cfg.EffectiveRequireTiers(), ","); got != "merger,trusted" {
+		t.Fatalf("default require_tiers = %q, want merger,trusted", got)
+	}
+	if set := cfg.RequireTierSet(); set["newcomer"] || set["contributor"] {
+		t.Fatalf("default require_tiers must not include self-reached tiers: %v", set)
+	}
+	cfg.RequireTiers = []string{" Advisor ", "trusted"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("grantable tiers should validate: %v", err)
+	}
+	if set := cfg.RequireTierSet(); !set["advisor"] || !set["trusted"] || set["merger"] || len(set) != 2 {
+		t.Fatalf("RequireTierSet = %v, want advisor+trusted", set)
+	}
+	for _, tier := range []string{"newcomer", "contributor", "revoked", "", "anyone"} {
+		if err := (ContributorLaneAutoMergeConfig{RequireTiers: []string{"trusted", tier}}).Validate(); err == nil {
+			t.Fatalf("require_tiers %q must fail validation", tier)
+		}
+	}
+}
+
+func TestBotTakeoverAutoMergeConfigDefaultsOnAndHonorsExplicitOff(t *testing.T) {
+	var a AutoMergeConfig
+	if !a.BotTakeover.IsEnabled() {
+		t.Fatal("auto_merge.bot_takeover.enabled must default on")
+	}
+	if err := yaml.Unmarshal([]byte("bot_takeover:\n  enabled: false\n"), &a); err != nil {
+		t.Fatal(err)
+	}
+	if a.BotTakeover.IsEnabled() {
+		t.Fatal("explicit auto_merge.bot_takeover.enabled: false must disable the takeover")
+	}
+}
+
+// registry_tiers_sufficient defaults on so an operator-granted registry tier
+// admits a contributor-lane PR without a claim marker; an explicit false
+// turns the registry path off.
+func TestContributorLaneAutoMergeConfigRegistryTiersSufficient(t *testing.T) {
+	var cfg ContributorLaneAutoMergeConfig
+	if !cfg.EffectiveRegistryTiersSufficient() {
+		t.Fatal("registry_tiers_sufficient must default to true")
+	}
+	off := false
+	cfg.RegistryTiersSufficient = &off
+	if cfg.EffectiveRegistryTiersSufficient() {
+		t.Fatal("explicit registry_tiers_sufficient: false must turn the registry path off")
 	}
 }

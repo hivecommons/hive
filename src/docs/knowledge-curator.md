@@ -473,6 +473,54 @@ Runtime status and toggle: `GET /api/knowledge/bead-synthesizer` and
 `PUT /api/knowledge/bead-synthesizer/enabled` (owner-only) — see
 [api-reference.md](api-reference.md).
 
+## Kick primer size cap (`knowledge.primer.max_bytes`)
+
+`knowledge.primer.max_facts` (default 25) bounds how many facts a kick may
+receive; `knowledge.primer.max_bytes` (default 4096, minimum 512) bounds
+how many bytes the rendered `# Relevant Knowledge` block may take
+(`pkg/knowledge/primer_render.go`). Facts are visited in the primer's rank
+order (type priority, then confidence) and each is kept only if its whole
+entry — title, confidence, source link and body — fits the remaining
+budget. A fact that does not fit is **dropped whole, never clipped
+mid-body**, and later, smaller facts are still considered, so one long fact
+cannot suppress everything ranked after it. Context7 "Available
+Documentation" hints follow the same rule.
+
+When anything was dropped the block ends with a visible one-line marker,
+`_… truncated: N facts / M bytes omitted (size cap)._` (the same
+`… truncated:` prefix the code map uses), and the scheduler logs
+`knowledge primer: dropped facts over the byte cap` with the counts and the
+cap, so a cap that is too tight for the vault is visible in the kick and in
+the log rather than silently thinning what agents are told.
+
+```yaml
+knowledge:
+  primer:
+    max_facts: 25
+    max_bytes: 4096        # 0 = default; values under 512 are raised to 512
+```
+
+### Context7 content cap
+
+The Context7 llms.txt body a document import or the `context7` connector
+fetches is bounded the same way before it is stored (`CapContext7Content`
+in `pkg/knowledge/context7.go`). The body is split into Context7's snippet
+blocks (or paragraphs for plain prose), snippets are ranked by how many
+query/topic terms they mention, and each is kept only if it is within the
+per-snippet cap and fits the remaining total; dropped snippets are dropped
+whole and the content ends with `… truncated: N snippets / M bytes omitted
+(size cap)`. Kept snippets stay in source order. The fetch logs
+`context7: dropped snippets over the content cap` naming the library.
+
+| Env var | Default | Meaning |
+| --- | --- | --- |
+| `HIVE_CONTEXT7_MAX_SNIPPETS` | 40 | Snippets kept per fetch. |
+| `HIVE_CONTEXT7_MAX_SNIPPET_BYTES` | 4096 | A single snippet larger than this is dropped. |
+| `HIVE_CONTEXT7_MAX_TOTAL_BYTES` | 16384 | Total content kept, marker included; minimum 1024. |
+
+Unparseable or non-positive overrides fall back to the default rather than
+to no cap.
+
 ## Repository code maps (`knowledge.code_maps`)
 
 A code map is a **generated** knowledge page — never hand-authored — that
@@ -514,6 +562,9 @@ body is capped at `max_bytes` (default 16 KiB, minimum 1 KiB); individual
 entries are clipped to 240 bytes; the walk stops after 20,000 files and the
 map says it is partial. Dropped entries or sections are replaced by a
 `… truncated:` marker line, always at the same point for the same input.
+
+The same whole-entry-or-nothing rule bounds what the kick primer renders —
+see [Kick primer size cap](#kick-primer-size-cap-knowledgeprimermax_bytes).
 
 **Storage and scoping.** Maps are written to
 `<vault_path>/codemaps/codemap-<repo>.md` as `type: reference`,

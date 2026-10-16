@@ -45,7 +45,7 @@ plainly in the relevant answers below rather than hidden behind a marker:
 - **Website:** [hive.hivecommons.dev](https://hive.hivecommons.dev)
 - **Date Updated:** 2026-08-28
 - **Template Version:** v1.0.1
-- **Description:** Hive orchestrates fleets of AI coding agents (Claude, GitHub Copilot, Gemini, Goose, Bob, Agy) that autonomously maintain software projects — filing issues, opening pull requests, reviewing code, and, at the highest operator-selected autonomy level, merging on green CI — under deterministic, technically-enforced guardrails rather than prompted behavior. It runs as a single-container Kubernetes/Compose/Podman workload, with an optional hub coordinating many self-hosted "spoke" hives.
+- **Description:** Hive orchestrates fleets of AI coding agents (Claude, GitHub Copilot, Codex, Antigravity, Goose, Bob) that autonomously maintain software projects — filing issues, opening pull requests, reviewing code, and, at the highest operator-selected autonomy level, merging on green CI — under deterministic, technically-enforced guardrails rather than prompted behavior. It runs as a single-container Kubernetes/Compose/Podman workload, with an optional hub coordinating many self-hosted "spoke" hives.
 
 ## Day 0 - Planning Phase
 
@@ -92,7 +92,7 @@ The dashboard is a server-rendered/inline-JS web UI (no separate SPA build — `
 
 #### Describe how this project integrates with other projects in a production environment.
 
-Hive integrates with: **GitHub / GitHub Enterprise / GitLab / Gitea** as the managed source-control system, via a GitHub App or PAT and, going forward, the forge abstraction (`pkg/forge`, `src/docs/adr/0005-forge-abstraction.md`); **AI CLI backends** — Claude Code, GitHub Copilot CLI, Gemini, Goose, Bob, Agy — run as subprocesses (`src/docs/architecture.md:9`, `src/docs/agent-configuration.md`); **self-hosted inference gateways** — vLLM, llm-d, LiteLLM, OpenRouter, watsonx — reached through an in-pod credential-translating proxy (`src/docs/security-model.md` Layer 3); **cert-manager** and **nginx-ingress** for Kubernetes TLS termination and routing (README.md "Kubernetes Deployment" prerequisites); **Prometheus**, via an opt-in `/metrics` scrape endpoint (`src/docs/security-model.md` "Metrics endpoint"); and **notification channels** — ntfy, Slack, Discord (`src/docs/notifications.md`). It is part of the KubeStellar CNCF Sandbox project family (`src/docs/security-self-assessment.md` "Related projects / vendors").
+Hive integrates with: **GitHub / GitHub Enterprise / GitLab / Gitea** as the managed source-control system, via a GitHub App or PAT and, going forward, the forge abstraction (`pkg/forge`, `src/docs/adr/0005-forge-abstraction.md`); **AI CLI backends** — Claude Code, GitHub Copilot CLI, Codex, Antigravity, Goose, Bob — run as subprocesses (`src/docs/architecture.md:9`, `src/docs/agent-configuration.md`); **self-hosted inference gateways** — vLLM, llm-d, LiteLLM, OpenRouter, watsonx — reached through an in-pod credential-translating proxy (`src/docs/security-model.md` Layer 3); **cert-manager** and **nginx-ingress** for Kubernetes TLS termination and routing (README.md "Kubernetes Deployment" prerequisites); **Prometheus**, via an opt-in `/metrics` scrape endpoint (`src/docs/security-model.md` "Metrics endpoint"); and **notification channels** — ntfy, Slack, Discord (`src/docs/notifications.md`). It is part of the KubeStellar CNCF Sandbox project family (`src/docs/security-self-assessment.md` "Related projects / vendors").
 
 ### Design
 

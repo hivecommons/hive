@@ -170,8 +170,8 @@ func TestAddReviewThreadFixFirst_Injection(t *testing.T) {
 	s := New(cfg, logger)
 
 	msg := s.addReviewThreadFixFirst("scanner", "[agent:scanner]\nWORK LIST\n")
-	if !strings.HasPrefix(msg, "[agent:scanner]\n\n## 💬 FIX-BEFORE-NEW") {
-		t.Errorf("section must land directly below the kick header:\n%s", msg[:min(len(msg), 120)])
+	if !strings.HasPrefix(msg, "[agent:scanner]\nWORK LIST\n\n## 💬 FIX-BEFORE-NEW") {
+		t.Errorf("section must land in the dynamic tail after the body (#12125):\n%s", msg[:min(len(msg), 120)])
 	}
 	if got := s.addReviewThreadFixFirst("advisor", "[agent:advisor]\nADVISORY\n"); strings.Contains(got, "review-bot threads") {
 		t.Error("advisory agent must not receive the section")
@@ -183,12 +183,13 @@ func TestAddReviewThreadFixFirst_Injection(t *testing.T) {
 		t.Error("empty (fail-closed) message must stay empty")
 	}
 
-	// Both stuck-PR blocks ride the same seam: red CI first, then threads.
+	// Both stuck-PR blocks ride the same dynamic tail, after the body: red CI
+	// first, then threads (kick_layout.go).
 	both := s.addReviewThreadFixFirst("scanner", s.addRedPRFixFirst("scanner", "[agent:scanner]\nWORK LIST\n"))
 	red := strings.Index(both, "🔴 FIX-BEFORE-NEW")
 	threads := strings.Index(both, "💬 FIX-BEFORE-NEW")
 	work := strings.Index(both, "WORK LIST")
-	if red < 0 || threads < 0 || !(threads < red && red < work) {
-		t.Errorf("expected thread block, then red-CI block, then the work list (thread=%d red=%d work=%d):\n%s", threads, red, work, both)
+	if red < 0 || threads < 0 || !(work < red && red < threads) {
+		t.Errorf("expected the work list, then red-CI block, then thread block (work=%d red=%d thread=%d):\n%s", work, red, threads, both)
 	}
 }

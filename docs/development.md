@@ -9,7 +9,7 @@ This guide describes the local workflow for contributing to the Hive Go codebase
 - Docker or Podman if you are exercising containerized contributor relay or deployment paths.
 - `tmux` for local agent/contributor workflows that attach CLIs to terminal sessions.
 - `just` if you use the repository's helper recipes (`brew install just` on macOS, or install from the `just` project for your platform).
-- Optional agent CLIs depending on what you test locally: Claude Code, GitHub Copilot/`gh`, Gemini, Bob, Goose, Codex, Pi, or Antigravity.
+- Optional agent CLIs depending on what you test locally: Claude Code, GitHub Copilot/`gh`, Bob, Goose, Codex, Pi, or Antigravity.
 
 ## Clone and branch
 
@@ -195,7 +195,8 @@ There is no public `just lint` recipe in the current root `Justfile`; use `go ve
 
 ## Running Hive locally
 
-The quickest operator path remains Docker Compose from the root README:
+The quickest operator path remains Docker Compose; see the full quick start in
+[`src/docs/quickstart-docker-compose.md`](../src/docs/quickstart-docker-compose.md):
 
 ```bash
 cp src/hive.yaml.example src/hive.yaml
@@ -226,6 +227,7 @@ Current public recipes are centered on the **contribute** workflow:
 - `just contribute-status`, `just contribute-browse`, and `just contribute-stop` — inspect, discover, or stop contributor relay activity.
 - `just contribute-move [backend]` — move a legacy positional contributor relay to another machine by reissuing its credential instead of hand-copying `contributor.env`; see [contributor-relay.md](../src/docs/contributor-relay.md#option-2--reissue-the-credential).
 - `just contribute-k8s [namespace] [outfile] [image_tag]` — print Kubernetes manifests for a headless contributor workload; it prints or writes the manifest you request and does not apply it.
+  - Optional `HIVE_K8S_RUNTIME_CLASS=<name>` (e.g. `gvisor`, `kata`) sets `runtimeClassName` on the contributor pod; unset emits no field. The RuntimeClass must already exist in the cluster.
 - `just hive-api <endpoint>` and `just hive-api-docs` — inspect hub API endpoints for the configured hive.
 - `just backend-smoke [backends]` — opt-in live smoke of the contributor CLI integration (`bin/test_backend_smoke.sh`) with this machine's own credentials; keyless machines still run the drift and stub wire-contract checks. See [backend-smoke.md](../src/docs/backend-smoke.md).
 

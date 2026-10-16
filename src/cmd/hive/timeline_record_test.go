@@ -353,6 +353,17 @@ func TestRecordStarted(t *testing.T) {
 	}
 }
 
+// A comment/label on a PR's own number must not record started on the PR journey.
+func TestRecordStarted_SkipsPRJourney(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordPROpened(rec, "acme", "scanner", "acme/widgets", 41, "https://x/41")
+	recordStarted(rec, "acme", "scanner", "acme/widgets", 41, "comment")
+	j, ok := rec.store.Journey("widgets#41")
+	if !ok || j.Stages[timeline.KindStarted] != nil {
+		t.Fatalf("PR journey recorded started: %+v ok=%v", j, ok)
+	}
+}
+
 // Delivery SLA wiring: the issue journeys a PR fixes get pr_opened (with the
 // PR's ref) and later merged, so start→PR and PR→merge spans close per issue.
 func TestRecordPROpenedForIssues_ThenMergeFoldsOntoIssues(t *testing.T) {
@@ -436,5 +447,137 @@ func TestRecordEnumeratedIssues_RetainsCreatedAt(t *testing.T) {
 	j2, _ := rec.store.Journey("widgets#2")
 	if j2.Stages[timeline.KindEnumerated].Attrs[timeline.AttrIssueCreatedAt] != "" {
 		t.Fatal("zero CreatedAt must not be recorded")
+	}
+}
+
+// #12007: a merged PR is folded onto the issue journeys it fixes with the
+// PR's real created_at / merged_at, re-running is a no-op, and the issue
+// stops being reported as stale in-progress.
+func TestBackfillMergedPROnIssues_TimestampsIdempotencyAndStale(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	started := now.Add(-20 * time.Hour)
+	created := now.Add(-19 * time.Hour)
+	merged := now.Add(-18 * time.Hour)
+	rec.store.Record(timeline.Event{IssueRef: "widgets#7", Kind: timeline.KindStarted, Agent: "bee", At: started.UnixMilli()})
+
+	ttl := 4 * time.Hour
+	if stale := timeline.DeriveSLAStale(rec.store.Journeys(0), ttl, now); len(stale) != 1 || stale[0].Number != 7 {
+		t.Fatalf("precondition: stale = %+v, want widgets#7", stale)
+	}
+
+	obs := github.PRTerminalObservation{
+		Repo: "acme/widgets", Number: 41, State: github.PRStateMerged,
+		ObservedAt: merged, CreatedAt: created, URL: "https://x/41", Actor: "alice",
+		Issues: []int{7, 9, 41, 0},
+	}
+	if got := backfillMergedPROnIssues(rec, "acme", obs); got != 1 {
+		t.Fatalf("updated = %d, want 1 (only the retained widgets#7)", got)
+	}
+	j, _ := rec.store.Journey("widgets#7")
+	op, mg := j.Stages[timeline.KindPROpened], j.Stages[timeline.KindMerged]
+	if op == nil || op.FirstAt != created.UnixMilli() || op.Attrs[timeline.AttrPRRef] != "widgets#41" {
+		t.Fatalf("pr_opened = %+v, want PR created_at and pr_ref widgets#41", op)
+	}
+	if mg == nil || mg.FirstAt != merged.UnixMilli() || mg.Attrs["source"] != "backfill" || mg.Attrs[timeline.AttrPRRef] != "widgets#41" {
+		t.Fatalf("merged = %+v, want PR merged_at", mg)
+	}
+	if _, ok := rec.store.Journey("widgets#9"); ok {
+		t.Fatal("backfill must not create journeys for issues the store never tracked")
+	}
+	if _, ok := rec.store.Journey("widgets#41"); ok {
+		t.Fatal("the PR's own number must be skipped")
+	}
+
+	if got := backfillMergedPROnIssues(rec, "acme", obs); got != 0 {
+		t.Fatalf("re-run updated = %d, want 0", got)
+	}
+	j2, _ := rec.store.Journey("widgets#7")
+	if j2.Stages[timeline.KindPROpened].Count != 1 || j2.Stages[timeline.KindMerged].Count != 1 {
+		t.Fatalf("re-run touched stages: %+v", j2.Stages)
+	}
+
+	if stale := timeline.DeriveSLAStale(rec.store.Journeys(0), ttl, now); len(stale) != 0 {
+		t.Fatalf("stale after backfill = %+v, want none", stale)
+	}
+	samples := map[string]float64{}
+	for _, s := range timeline.DeriveSLASamples(rec.store.Journeys(0)) {
+		samples[s.Ref+":"+string(s.Span)] = s.Hours
+	}
+	if h, ok := samples["widgets#7:start_to_pr"]; !ok || h != 1 {
+		t.Errorf("start_to_pr = %v (present %v), want 1h from the PR's created_at; samples %v", h, ok, samples)
+	}
+}
+
+// An existing pr_opened (possibly naming another PR) is kept; a PR with no
+// created_at still records merged so the issue leaves stale in-progress.
+func TestBackfillMergedPROnIssues_KeepsExistingPROpenedAndGuards(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordStarted(rec, "acme", "bee", "acme/widgets", 7, "claim")
+	recordPROpenedForIssues(rec, "acme", "bee", "acme/widgets", 40, "", []int{7})
+	merged := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+
+	obs := github.PRTerminalObservation{Repo: "acme/widgets", Number: 41, State: github.PRStateMerged, ObservedAt: merged, Issues: []int{7}}
+	if got := backfillMergedPROnIssues(rec, "acme", obs); got != 1 {
+		t.Fatalf("updated = %d, want 1", got)
+	}
+	j, _ := rec.store.Journey("widgets#7")
+	if st := j.Stages[timeline.KindPROpened]; st.Attrs[timeline.AttrPRRef] != "widgets#40" || st.Count != 1 {
+		t.Fatalf("existing pr_opened rewritten: %+v", st)
+	}
+	if st := j.Stages[timeline.KindMerged]; st == nil || st.FirstAt != merged.UnixMilli() {
+		t.Fatalf("merged = %+v", st)
+	}
+
+	for _, bad := range []github.PRTerminalObservation{
+		{Repo: "acme/widgets", Number: 42, State: github.PRStateClosed, ObservedAt: merged, Issues: []int{7}},
+		{Repo: "acme/widgets", Number: 42, State: github.PRStateMerged, Issues: []int{7}},
+		{Repo: "acme/widgets", Number: 42, State: github.PRStateMerged, ObservedAt: merged},
+	} {
+		if got := backfillMergedPROnIssues(rec, "acme", bad); got != 0 {
+			t.Errorf("backfill(%+v) = %d, want 0", bad, got)
+		}
+	}
+	if got := backfillMergedPROnIssues(nil, "acme", obs); got != 0 {
+		t.Error("nil recorder must be a no-op")
+	}
+	if got := backfillMergedPROnIssues(&fakeLifecycleRecorder{}, "acme", obs); got != 0 {
+		t.Error("nil store must be a no-op")
+	}
+}
+
+type fakeMergedPRLister struct {
+	since time.Time
+	prs   []github.PRTerminalObservation
+	err   error
+}
+
+func (f *fakeMergedPRLister) MergedPRsSince(_ context.Context, since time.Time) ([]github.PRTerminalObservation, error) {
+	f.since = since
+	return f.prs, f.err
+}
+
+func TestBackfillRecentMergedPRs_LooksBackSevenDaysAndAppliesPartialResults(t *testing.T) {
+	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
+	recordStarted(rec, "acme", "bee", "acme/widgets", 7, "claim")
+	now := time.Now().UTC()
+	lister := &fakeMergedPRLister{
+		prs: []github.PRTerminalObservation{{
+			Repo: "acme/widgets", Number: 41, State: github.PRStateMerged,
+			ObservedAt: now.Add(-time.Hour), CreatedAt: now.Add(-2 * time.Hour), Issues: []int{7},
+		}},
+		err: context.DeadlineExceeded,
+	}
+	if got := backfillRecentMergedPRs(context.Background(), lister, rec, "acme", now, nil); got != 1 {
+		t.Fatalf("updated = %d, want 1", got)
+	}
+	if want := now.Add(-github.MergedPRBackfillWindow); !lister.since.Equal(want) {
+		t.Errorf("since = %v, want %v", lister.since, want)
+	}
+	if got := backfillRecentMergedPRs(context.Background(), lister, rec, "acme", now, nil); got != 0 {
+		t.Fatalf("second run updated = %d, want 0", got)
+	}
+	if got := backfillRecentMergedPRs(context.Background(), nil, rec, "acme", now, nil); got != 0 {
+		t.Error("nil lister must be a no-op")
 	}
 }

@@ -110,6 +110,9 @@ type PR struct {
 	Files       []ChangedFile
 	Author      string
 	AgentAuthor bool
+	// HeadSHA is the PR head commit when known; it keys the alignment
+	// verdict cache (see AlignmentContext.HeadSHA).
+	HeadSHA string
 }
 
 type Classification struct {
@@ -153,6 +156,28 @@ func (v Verdict) MergeAllowed() bool {
 // single function so neither lane can merge at a tier the other refuses.
 func (v Verdict) BlocksMerge(enforce bool) bool {
 	return enforce && v.AgentPR && !v.MergeAllowed()
+}
+
+// BlockReason is the reason a merge lane reports when BlocksMerge refuses v:
+// the alignment rationale for an authorized-but-misaligned verdict, else the
+// authorization reason.
+func (v Verdict) BlockReason() string {
+	if v.Authorized && v.Alignment != nil && v.Alignment.Misaligned() {
+		return ReasonAlignmentMisaligned + ": " + v.Alignment.Rationale
+	}
+	return v.Reason
+}
+
+// ShadowConfidence is the confidence recorded with an intent.shadow
+// observation: the alignment model's confidence when it reported one in
+// (0,1], else 1 (the tier gate is deterministic).
+func (v Verdict) ShadowConfidence() float64 {
+	if v.Alignment != nil && v.Alignment.Model != nil {
+		if c := v.Alignment.Model.Confidence; c > 0 && c <= 1 {
+			return c
+		}
+	}
+	return 1
 }
 
 func Classify(pr PR, cfg Config) Classification {
@@ -320,6 +345,17 @@ func externalRefMatchesIssue(ref string, refs []IssueRef) bool {
 		}
 	}
 	return false
+}
+
+// DefaultConfig returns copies of the built-in patterns used when the
+// corresponding intent.* list is empty, so callers can show them.
+func DefaultConfig() Config {
+	return Config{
+		TestPathPatterns:      append([]string(nil), defaultTestPathPatterns...),
+		DocsPathPatterns:      append([]string(nil), defaultDocsPathPatterns...),
+		GuardrailPathPatterns: append([]string(nil), defaultGuardrailPathPatterns...),
+		FeatureSignals:        append([]string(nil), defaultFeatureSignals...),
+	}
 }
 
 func withDefaults(cfg Config) Config {

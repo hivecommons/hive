@@ -25,6 +25,7 @@ const (
 	defaultGitHubAPICritical      = 250
 	defaultPollIntervalMins       = 5
 	defaultKnowledgeMaxFacts      = 25
+	defaultKnowledgeMaxBytes      = 4096
 	defaultKnowledgeEngine        = "llm-wiki"
 	defaultCuratorSchedule        = "daily"
 	defaultPromoteThreshold       = 0.9
@@ -452,6 +453,9 @@ func (c *Config) applyDefaults() {
 		}
 		if c.Knowledge.Primer.MaxFacts == 0 {
 			c.Knowledge.Primer.MaxFacts = defaultKnowledgeMaxFacts
+		}
+		if c.Knowledge.Primer.MaxBytes == 0 {
+			c.Knowledge.Primer.MaxBytes = defaultKnowledgeMaxBytes
 		}
 		if c.Knowledge.Primer.MergeStrategy == "" {
 			c.Knowledge.Primer.MergeStrategy = "precedence"

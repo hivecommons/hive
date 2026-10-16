@@ -244,6 +244,8 @@ class El {
 }
 const localStorage = {data:{}, setItem(k,v){this.data[k]=String(v)}, getItem(k){return this.data[k] ?? null}, removeItem(k){delete this.data[k]}, key(i){return Object.keys(this.data)[i] || null}, get length(){return Object.keys(this.data).length}};
 function isSectionCollapsed(sectionId){ return localStorage.getItem(SECTION_LS_PREFIX + sectionId) === '1'; }
+function dashboardLayoutDefaultCollapsed(){ return {}; }
+function writeSectionCollapsedKey(id, collapsed){ if (collapsed) localStorage.setItem(SECTION_LS_PREFIX + id, '1'); else localStorage.removeItem(SECTION_LS_PREFIX + id); }
 function applySectionCollapse(){}
 function hiveConfirm(){ return Promise.resolve(true); }
 function dashboardEnsureSidebarHandles(){}

@@ -1,0 +1,1 @@
+- Test Connection now names the kind of proxy (e.g. AWS Elastic Load Balancer) that refused a gateway probe, identified from its Server header (#9945)

@@ -159,8 +159,13 @@ type SLAReport struct {
 }
 
 // slaIssueJourney reports whether j is keyed by an issue number: it reached
-// an issue-side stage, or its pr_opened stage names a different PR ref.
+// an issue-side stage, or its pr_opened stage names a different PR ref. A
+// journey whose pr_opened names its own ref is a PR, whatever other stages it
+// carries (e.g. a stray started from a self-comment).
 func slaIssueJourney(j *Journey) bool {
+	if st := j.Stages[KindPROpened]; st != nil && st.Attrs[AttrPRRef] == j.Ref {
+		return false
+	}
 	for _, k := range []Kind{KindEnumerated, KindClassified, KindKicked, KindStarted} {
 		if j.Stages[k] != nil {
 			return true
@@ -528,8 +533,8 @@ func (h *SLAHistory) Series(repo string, now time.Time) []SLADay {
 	var days map[string]SLADay
 	if h != nil {
 		h.mu.Lock()
+		defer h.mu.Unlock()
 		days = h.days[repo]
-		h.mu.Unlock()
 	}
 	start := now.UTC().AddDate(0, 0, -(SLAHistoryDays - 1))
 	for i := 0; i < SLAHistoryDays; i++ {

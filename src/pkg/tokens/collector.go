@@ -218,6 +218,9 @@ type Collector struct {
 	prevSessionCount          int
 	prevTotalTokens           int64
 	prevByAgent               map[string]int64
+	// launchLog, when attached, records which issue/PR/head SHA each delivered
+	// kick was launched for (see launch.go). Attribution only — never a gate.
+	launchLog *LaunchLog
 
 	// loadOnce guards the one-time restore of the persisted snapshot. The
 	// load is deferred until first read (see Summary) instead of happening in

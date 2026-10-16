@@ -150,7 +150,7 @@ function dashboardSectionHelpAnchor(heading) { return String(heading || '').toLo
 		jsFunctionBody(t, html, "function sectionCardHeader(opts)") + `
 const cases = [
   ['overview-section', '🍩 Overview', sectionSettingsGear('Overview', 'toggleOverviewChartSettings', 'Configure Overview chart types, carousel timing, and transitions', ' aria-haspopup="true" aria-expanded="false" aria-controls="overview-chart-settings"')],
-  ['governor', '📊 Governor', sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration', ' data-arg0="governor"')],
+  ['governor', '🚦 Governor', sectionSettingsGear('Governor', 'openConfigDialog', 'Open Governor configuration', ' data-arg0="governor"')],
   ['repos-section', '📦 Projects', sectionSettingsGear('Projects', 'gh1', 'Manage monitored projects')],
   ['nous-section', '🧪 Experiment Lab', sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration')],
 ];

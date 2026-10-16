@@ -229,6 +229,8 @@ type GitHubProxy struct {
 	mu         sync.RWMutex
 	violations map[string]int // agent name -> blocked request count
 
+	writes writeCounters
+
 	certMu    sync.RWMutex
 	certCache map[string]cachedCert
 
@@ -1297,6 +1299,11 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 
 		blocked := false
 		blockReason := ""
+		// blockCode is the machine-readable reason (#12127) that rides on the
+		// one-line 403 body and the X-Hive-Proxy-Reason header. Each gate that
+		// sets blockReason sets it; a gate that sets neither falls back to a
+		// generic code in ProxyDenialBody.
+		blockCode := ""
 
 		// Per-repo pause (#6203) and per-repo agent scope (#6204) are both
 		// checked BEFORE the mode chain, and outside it, for the same two
@@ -1325,17 +1332,21 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			if reason, paused := p.repoPauseRefusal(req.Method, req.URL.Path); paused {
 				blocked = true
 				blockReason = reason
+				blockCode = DenyReasonRepoPaused
 			} else if reason, refused := p.agentRepoScopeRefusal(agentName, req.Method, req.URL.Path); refused {
 				blocked = true
 				blockReason = reason
+				blockCode = DenyReasonAgentRepoScope
 			} else if reason, refused := p.autoMergeRefusal(req.Method, req.URL.Path); refused {
 				blocked = true
 				blockReason = reason
+				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if !isLinear {
 				if reason, kind, refused := WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(), agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
 					blocked = true
 					blockReason = reason
+					blockCode = DenyReasonWriteSurfaceEnforced
 					writeSurfaceKind = kind
 				}
 			}
@@ -1360,6 +1371,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// permissive default, backed by the REST table. Linear has no
 			// table underneath. See linear_rules.go.
 			blocked, blockReason = p.enforceLinear(req, agentName, mode, caps)
+			if blocked {
+				blockCode = DenyReasonLinear
+			}
 		} else if req.Method == "POST" && IsGraphQLPath(req.URL.Path) {
 			body, readErr := io.ReadAll(io.LimitReader(req.Body, graphQLBodyLimit))
 			if req.Body != nil {
@@ -1373,11 +1387,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			if reason, refused := p.graphQLAutoMergeRefusal(body); agentName != internalCallerName && refused {
 				blocked = true
 				blockReason = reason
+				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if agentName != internalCallerName {
 				if reason, refused := WriteSurfaceGraphQLRefusal(p.writeSurfaceEnforcedFunc(), agentName, body); refused {
 					blocked = true
 					blockReason = reason
+					blockCode = DenyReasonWriteSurfaceEnforced
 					writeSurfaceKind = WriteSurfaceKindGraphQL
 				}
 			}
@@ -1387,8 +1403,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blocked = true
 				if isMutation {
 					blockReason = "graphql mutation"
+					blockCode = DenyReasonGraphQLMutation
 				} else {
 					blockReason = "graphql"
+					blockCode = DenyReasonGraphQL
 				}
 			}
 			req.Body = io.NopCloser(strings.NewReader(string(body)))
@@ -1400,6 +1418,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// canary-egress checks below still apply.
 		} else if !AllowedByModeCaps(autonomyModeForRepo(agentName, ExtractRepo(req.URL.Path), mode), caps, req.Method, req.URL.Path) {
 			blocked = true
+			blockCode = DenyReasonMode
 			// An unidentified agent is silently treated as ADVISORY, which turns
 			// a permissions bug into an indistinguishable "policy denial". Say so
 			// loudly on writes: a write from an unknown caller means UID
@@ -1413,10 +1432,12 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// agent knows to use hive-open-pr rather than seeing only a mode error.
 			if msg, denied := DeniedMessage(req.Method, req.URL.Path); denied && msg != "" {
 				blockReason = msg
+				blockCode = DenyReasonHardDeny
 			}
 		} else if len(p.allowedRepos) > 0 && !RepoFilterAllowed(p.allowedRepos, req.Method, req.URL.Path) {
 			blocked = true
 			blockReason = "repo not in hive config"
+			blockCode = DenyReasonRepoNotInConfig
 		}
 		// Shape-gate agent-authored issue/comment REST writes. The issue-request
 		// watcher validates the file-drop creation path, but an agent's
@@ -1436,6 +1457,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blocked = true
 				if blockReason == "" {
 					blockReason = reason
+					blockCode = DenyReasonIssueShape
 				}
 			}
 		}
@@ -1444,7 +1466,26 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blocked = true
 				if blockReason == "" {
 					blockReason = reason
+					blockCode = DenyReasonCanaryEgress
 				}
+			}
+		}
+
+		if !isLinear && agentName != internalCallerName {
+			isGraphQL := req.Method == "POST" && IsGraphQLPath(req.URL.Path)
+			isWrite := writeMethods[req.Method] && !gitUploadPackPath.MatchString(req.URL.Path)
+			if isGraphQL {
+				isWrite = graphQLMutation
+			}
+			if isWrite {
+				reason := ""
+				if blocked {
+					reason = blockCode
+					if reason == "" {
+						reason = DenyReasonUnknown
+					}
+				}
+				p.writes.record(mode.String(), reason)
 			}
 		}
 
@@ -1458,7 +1499,10 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				p.auditWriteRefused(agentName, writeSurfaceKind, req.Method, req.URL.Path)
 			}
 
-			respBody := fmt.Sprintf("⛔ ACMM proxy: %s (%s) blocked %s %s\n", agentName, mode, req.Method, detail)
+			if blockCode == "" {
+				blockCode = DenyReasonUnknown
+			}
+			respBody := ProxyDenialBody(agentName, mode, req.Method, detail, blockCode)
 			contentType := "text/plain"
 			if blockJSON {
 				contentType = "application/json"
@@ -1478,6 +1522,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			}
 			resp.Header.Set("Content-Type", contentType)
 			resp.Header.Set("X-Hive-Proxy-Blocked", "true")
+			resp.Header.Set(ProxyDenialHeader, blockCode)
 			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
 			writeErr := resp.Write(client)
 			_ = client.SetWriteDeadline(time.Time{})
@@ -2590,6 +2635,19 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 // agent on a perfectly valid model. Self-healing: the first 403 teaches the
 // entitled set (recordInferenceError), so the next request resolves.
 //
+// When the stored model is NOT entitled at all — verbatim or by drift — and
+// the backend's DefaultModel IS, the request goes out for the default instead
+// (hivecommons/hive#9945). The FMA hive's agents carried a `model:
+// claude-sonnet-4-6` written for their original copilot backend into a
+// switch to the litellm gateway whose default_model was the only model the
+// team could use; the per-agent value won, and every call 403'd forever with
+// "team not allowed to access model" while the operator stared at a gateway
+// card showing the right default. The gateway's own entitlement signal (the
+// key-info probe or that very 403) is what authorises the substitution, so a
+// model the team can't use is never sent when one it can use is configured.
+// The stored route is still untouched: a key/team change that re-entitles the
+// per-agent model takes effect on the next request.
+//
 // The stored route is never mutated: the rewrite is per-request, so a
 // key/team change that re-entitles the verbatim id takes effect immediately,
 // and concurrent requests race on nothing. Unknown entitlements, verbatim
@@ -2602,16 +2660,45 @@ func (p *GitHubProxy) routeWithEntitledModel(route *InferenceRoute, agentName st
 	if !known {
 		return route
 	}
-	resolved, ok := resolveEntitledModelID(entitled, route.Model)
-	if !ok {
+	if entitledModelListed(entitled, route.Model) {
 		return route
 	}
-	p.logger.Info("inference model resolved to entitled gateway id",
-		"agent", agentName, "endpoint", route.Endpoint,
-		"configured", route.Model, "resolved", resolved)
+	if resolved, ok := resolveEntitledModelID(entitled, route.Model); ok {
+		p.logger.Info("inference model resolved to entitled gateway id",
+			"agent", agentName, "endpoint", route.Endpoint,
+			"configured", route.Model, "resolved", resolved)
+		rewritten := *route
+		rewritten.Model = resolved
+		return &rewritten
+	}
+	fallback := strings.TrimSpace(route.DefaultModel)
+	if fallback == "" || fallback == route.Model {
+		return route
+	}
+	if !entitledModelListed(entitled, fallback) {
+		resolved, ok := resolveEntitledModelID(entitled, fallback)
+		if !ok {
+			return route
+		}
+		fallback = resolved
+	}
+	p.logger.Warn("inference model not entitled on gateway; sending the backend default model instead",
+		"agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint,
+		"configured", route.Model, "default", fallback,
+		"remedy", "clear the agent's model (or pick one of the gateway's entitled models) so the agent uses the gateway default")
 	rewritten := *route
-	rewritten.Model = resolved
+	rewritten.Model = fallback
 	return &rewritten
+}
+
+// entitledModelListed reports whether model appears verbatim in entitled.
+func entitledModelListed(entitled []string, model string) bool {
+	for _, id := range entitled {
+		if id == model {
+			return true
+		}
+	}
+	return false
 }
 
 // recordInferenceSuccess records a successful inference call so a previously

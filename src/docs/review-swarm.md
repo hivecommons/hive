@@ -31,6 +31,18 @@ review:
 - `perspective_prompts` overrides the focus line for a built-in, or defines a hive-specific perspective entirely (custom names: lowercase letters, digits, single dashes, ≤ 40 chars). A blank entry means the built-in text.
 - `combined_perspectives` reviews every enabled perspective in **one** agent session that leaves **one** review comment, with findings grouped under the perspective they belong to. Off, each perspective is its own session and its own comment, and `max_perspectives_per_pr` caps how many a PR receives. Combined mode ignores that cap: it exists to bound comments, and a combined review is always exactly one. The reviewer still emits one verdict per perspective — as a JSON array in the verdict file — so any single perspective can still hold a PR for a human.
 
+### Combined perspectives: recommended, opt-in
+
+**Turn `combined_perspectives: true` on** (Governor → Features → Review Gate, or the config above) unless you have a reason not to. It is the single largest review-swarm token saving available (hivecommons/hive#12126):
+
+- The per-perspective kick repeats ~4–6 KiB of shared instruction — scope contract, how to read the PR, review-bot thread obligations, grounding, output schema, publish contract — for every perspective a PR is sent for. The combined kick emits that block **once**, under a `SHARED INSTRUCTIONS` heading, then one short `[perspective:<name>]` section per perspective carrying only what differs (its focus line and, for `plan_match`, the plan wave). Five perspectives cost one shared block plus five short sections, not five full prompts.
+- The diff and the surrounding tree are read once per session instead of once per perspective. The grounding tool-call budget is stated once for the whole session: `GroundingToolCallBudget` plus `GroundingToolCallBudgetPerExtraPerspective` for each perspective beyond the first.
+- What is **not** changed by combining: every perspective still returns its own verdict object (the verdict file is a JSON array, one object per perspective, validated by `ValidateReportsFor`), the review-bot thread contract is unchanged (unresolved threads from `review_bots` are fetched, answered in the review, never replied to or resolved by the reviewer), and dispatch stays keyed on (repo, PR, head SHA, perspective) with durable pending state — a combined kick records one pending entry per perspective it covers.
+
+**Decision: it stays off by default.** Flipping the zero value of a plain bool would silently change the dashboard toggle's meaning, the relay's derived per-head review quota (one review per head in combined mode, one per perspective otherwise), the reviewer selection (combined dispatch sends the first eligible reviewer rather than fanning out), and the blast radius of a malformed verdict (one schema slip discards every perspective's verdict at once) on hives that never asked for it. Those are operator choices, so the hive promotes the setting — here, in `hive.yaml.example`, and in the settings UI — rather than making it for them. To opt out after enabling, set `combined_perspectives: false`.
+
+The review-bot thread fetch in both kick shapes is bounded to what the reviewer acts on: `reviewThreads(first:ReviewBotThreadPageSize)` pages through the threads (the command paginates, so this bounds the page, not the total), and `comments(first:ReviewBotThreadCommentsFetched)` fetches the bot's finding plus the first few replies per thread rather than the full back-and-forth. The reviewer answers the finding; it does not need the twentieth reply.
+
 Verdicts are validated against the hive's own perspective set: a verdict naming a perspective this hive does not review with is refused by the relay, since nothing dispatched it and nothing is waiting on it.
 
 ### Plan match
@@ -81,7 +93,8 @@ Aggregation rules are deterministic:
 3. Any explicit `requires_human` yields `requires_human`.
 4. Any `changes_requested` enters a fix cycle while below the fix cap.
 5. Every perspective in the hive's configured set approving (or, under `max_perspectives_per_pr`, every perspective the PR was eligible to receive) yields a merge-eligible aggregate.
-6. Missing perspectives or any other non-unanimous result requires human review.
+6. Every delivered perspective approving while some the PR is owed have not reported yields `incomplete`: not merge-eligible, not a human hold, with a reason naming the missing perspectives (`review coverage incomplete: missing docs-currency`). An incomplete head stays in the dispatcher: only the missing perspectives are re-asked (under `pending_ttl` / `max_redispatch`), never the ones whose reports already exist. Before this state existed a reviewer kick that died after its peers had reported left the head on a `requires_human` hold that no re-dispatch could clear (hivecommons/hive#12045).
+7. Any other non-unanimous result requires human review.
 
 Out-of-scope findings alone are normalized to an approving perspective for aggregation and confidence. They remain in the structured record, but they never lower the verdict or the 0–5 confidence score for the PR.
 
@@ -107,7 +120,7 @@ Out-of-scope findings follow `review.backlog` (destination, labels, per-PR daily
 | `approved` | A merge-eligible `approve` verdict on the current head, an `lgtm`/`approved`/`reviewer-passed` label, the escalation ledger's reviewer-passed SHA on the head, or an approving hive review on the head. The next action is merge, fix CI or wait for CI depending on the CI rollup. |
 | `fixing` | A fix is dispatched for the current head. |
 | `changes_requested` | The current head's verdict (or, without one, the hive's posted review) requests changes. |
-| `reviewing` | Review perspectives are dispatched for the current head and not yet aggregated. |
+| `reviewing` | Review perspectives are dispatched for the current head and not yet aggregated, or the head's aggregate is `incomplete` (every delivered perspective approved; the rest are still owed). |
 | `unreviewed` | None of the above; a verdict on an older head does not count once the head moves. |
 
 Each card also carries the reviewers (perspective and model), in-scope finding counts on the P0–P3 scale `review_bots.min_priority` uses (critical → P0, high → P1, medium → P2, low/info → P3), the loop counter against its cap, one next action and the reasons for the stage. The review queue lists open PRs only, so the endpoint does not return `merged` or `abandoned` cards yet.
@@ -165,6 +178,8 @@ review:
   contributor_prs:
     base_sync: false                        # optional; let GitHub update-branch unstick hive-authored fork PRs (default off)
   priority_labels: false                    # optional; mirror the PR review queue rank onto review-priority/* labels (default off)
+  pending_ttl: 45m                          # optional; re-dispatch a review that has posted no verdict after this long (default 45m)
+  max_redispatch: 3                         # optional; expiries per head before the PR is held for a human (default 3)
   severity:
     block_at: P2                            # optional; P1 | P2 | P3, see "Blocking line" below
     comment_below: true                     # default true
@@ -249,7 +264,17 @@ Source: `dashboardAgentReviewCapable` in `src/pkg/dashboard/status_builder.go`.
 
 `pkg/review` provides prompt builders for one prompt per perspective plus a sequential fallback prompt. These prompts instruct review-capable agents to emit the extended AgentReport JSON shape above.
 
-Phase 2 adds dispatch state in `/var/run/hive-metrics/review-dispatch-state.json`. Pending review kicks are scoped by repo, PR number, perspective, and head SHA; when a PR head changes, stale pending entries are pruned and the new head must be reviewed again. Multiple review-capable agents receive perspective prompts in parallel up to `max_parallel_reviews`; a single reviewer receives one perspective per eval round.
+Phase 2 adds dispatch state in `/data/review-dispatch-state.json`. Pending review kicks are scoped by repo, PR number, perspective, and head SHA; when a PR head changes, stale pending entries are pruned and the new head must be reviewed again. Multiple review-capable agents receive perspective prompts in parallel up to `max_parallel_reviews`; a single reviewer receives one perspective per eval round.
+
+### Pending-review expiry (`review.pending_ttl`, `review.max_redispatch`)
+
+A pending entry is the planner's only record that a perspective was asked, so a reviewer whose kick turn dies — model timeout, proxy read timeout, pod restart — leaves entries that post no verdict and, with no expiry, made every perspective look covered until someone pushed a new commit (hivecommons/hive#12045 and #12025 sat at queue position 1 for hours with CI green and the contributor lane stuck at `no-verdict`). Each cycle the planner therefore expires pending entries older than `pending_ttl` (Go duration string, default `45m`; a negative value disables expiry) whose head still has no verdict in the artifact: the expired perspectives are dropped from state and re-dispatched in the same cycle, the governor logs `review pending expired repo=… pr=… head=… perspective=… age=… expiries=N`, and the state file's `redispatches[]` counts expiries per head. Entries younger than the TTL are left alone, so a review genuinely in flight is never re-kicked, and a verdict for the head settles it however old the entries are. The same expiry releases a `revise_verdicts_before` revisit whose reviewer died.
+
+The retry is bounded. Once a head's expiry count reaches `max_redispatch` (default 3) the planner stops re-kicking it, leaves the entries in place, and records a `requires_human` hold whose reason starts `review-dispatch-exhausted`; `review.human_decision_label` is applied the same way as for a reviewer's own requires_human verdict, and the governor logs `review dispatch exhausted; holding PR for a human`. A new push clears the counter and the hold along with the head's pending entries.
+
+Expiry also covers a head whose aggregate is `incomplete`: the delivered perspectives are taken off the pending list (their reports exist) and only the undelivered ones expire and re-dispatch, against the same per-head budget.
+
+The PR review queue (`GET /api/review/queue`) shows this state on unreviewed items: `pending_since` (first dispatch for the current head still pending) and `redispatch_count`, plus a reason such as `review dispatched 32m ago, no verdict yet (re-dispatched 2x after expiry)` or `review dispatch exhausted: …; waiting on a human` after the generic `not reviewed at this head` line.
 
 When an aggregate verdict is `changes_requested`, Hive builds a review-fix kick containing the aggregate findings and sends it to `review.fixer_agent`, the classified PR lane, or `scanner`. Fix dispatches are capped by `escalation.MaxReEngagements`; once exhausted, dispatch state records a `requires_human` hold for the PR head so the automated loop stops.
 

@@ -23,6 +23,21 @@ const (
 	DefaultDispatchStateDir = "/data"
 	DefaultFixerAgent       = "scanner"
 	reviewRoleToken         = "review"
+	// DefaultPendingReviewTTL is how long a dispatched review may sit without
+	// a verdict before its pending entry expires and the perspectives are
+	// re-dispatched (review.pending_ttl). A kick turn that dies — model
+	// timeout, proxy read timeout, pod restart — leaves no verdict and no
+	// error, and without an expiry its pending entries made every perspective
+	// look covered forever (hivecommons/hive#12045 sat 3.5h at queue
+	// position 1).
+	DefaultPendingReviewTTL = 45 * time.Minute
+	// DefaultMaxRedispatch is how many times the same head may have its
+	// pending reviews expire before the planner stops re-kicking and hands
+	// the PR to a human (review.max_redispatch).
+	DefaultMaxRedispatch = 3
+	// HoldReasonDispatchExhausted prefixes the requires_human reason recorded
+	// when a head's reviews expired DefaultMaxRedispatch times.
+	HoldReasonDispatchExhausted = "review-dispatch-exhausted"
 )
 
 // ReviewDispatchStatePath is where the review swarm records which
@@ -120,8 +135,16 @@ type DispatchOptions struct {
 	// a fresh review even though the PR's head SHA has not moved. Zero
 	// disables revisiting entirely.
 	ReviseVerdictsBefore time.Time
-	Agents               []AgentCapability
-	Now                  time.Time
+	// PendingTTL is how long a pending review entry stays authoritative with
+	// no verdict for its head before it expires and is re-dispatched. Zero
+	// means DefaultPendingReviewTTL; negative disables expiry.
+	PendingTTL time.Duration
+	// MaxRedispatch caps how many times one head's pending reviews may expire
+	// before the PR is held for a human instead of re-kicked. Zero means
+	// DefaultMaxRedispatch.
+	MaxRedispatch int
+	Agents        []AgentCapability
+	Now           time.Time
 }
 
 type DispatchState struct {
@@ -136,6 +159,35 @@ type DispatchState struct {
 	// Fixes, so each refusal is reported (and audited) once per head rather
 	// than on every eval cycle, and a new push earns a fresh decision.
 	Withheld []WithheldFix `json:"withheld_fixes,omitempty"`
+	// Redispatches counts, per head, how many times its pending reviews
+	// expired without a verdict. It is what turns a dead reviewer into a
+	// bounded number of retries and then a human hold, rather than either an
+	// indefinite stall or an endless re-kick.
+	Redispatches []RedispatchCount `json:"redispatches,omitempty"`
+}
+
+// RedispatchCount is the per-head expiry counter behind review.max_redispatch.
+type RedispatchCount struct {
+	Repo        string    `json:"repo"`
+	Number      int       `json:"number"`
+	HeadSHA     string    `json:"head_sha,omitempty"`
+	Count       int       `json:"count"`
+	LastExpired time.Time `json:"last_expired_at"`
+}
+
+// ExpiredPending is one pending review the planner dropped this cycle because
+// it outlived PendingTTL with no verdict. The caller logs each so a reviewer
+// that keeps dying is visible in the governor log, not only in the state file.
+type ExpiredPending struct {
+	Repo        string
+	Number      int
+	HeadSHA     string
+	Perspective Perspective
+	Agent       string
+	Dispatched  time.Time
+	Age         time.Duration
+	// Count is the head's expiry count after this one.
+	Count int
 }
 
 // WithheldFix is a fix kick the planner declined to dispatch. It carries what
@@ -227,7 +279,14 @@ type DispatchPlan struct {
 	// should log and audit. Refusals already recorded in State.Withheld for
 	// the same head are not repeated here.
 	WithheldFixes []WithheldFix
-	State         DispatchState
+	// Expired are the pending reviews dropped THIS cycle for outliving
+	// PendingTTL without a verdict; their perspectives are re-dispatched in
+	// the same plan unless the head's retry budget is exhausted.
+	Expired []ExpiredPending
+	// Exhausted are the heads that hit MaxRedispatch this cycle and were
+	// held for a human instead of re-kicked.
+	Exhausted []HumanReviewHold
+	State     DispatchState
 }
 
 func LoadDispatchState(path string) (DispatchState, error) {
@@ -308,6 +367,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			continue
 		}
 		revisiting := false
+		var delivered map[Perspective]Verdict
 		if agg, ok := artifact.AggregateFor(pr.Repo, pr.Number, pr.HeadSHA); ok {
 			// A verdict normally settles a PR until its head moves. That is
 			// right while the reviewer is sound, and a trap once a
@@ -315,38 +375,63 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 			// by a known-broken reviewer stay frozen until someone happens to
 			// push a commit.
 			if !staleVerdictRevisitable(pr.Repo, agg, opts) {
-				plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
-				switch agg.Verdict {
-				case VerdictChangesRequested:
-					if fixPushAllowed(pr, opts) {
-						plan.dispatchFix(pr, agg, opts, now)
-					} else {
-						plan.withholdFix(pr, now)
+				if agg.Verdict == VerdictIncomplete {
+					// Every perspective that reported approved; some never
+					// reported. The head is not settled, it is under-asked:
+					// keep the delivered perspectives off the pending list
+					// (their reports exist) and let the normal missing-
+					// perspective path below re-ask only for the rest, under
+					// the same TTL and max_redispatch budget as any head.
+					plan.State.Pending = removePendingForPerspectives(plan.State.Pending, pr, agg.Perspectives)
+					delivered = agg.Perspectives
+					if plan.redispatchExhausted(pr) {
+						continue
 					}
-				case VerdictRequiresHuman:
-					plan.holdForHuman(pr, agg, now)
+					plan.expirePending(pr, opts, now)
+				} else {
+					plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+					switch agg.Verdict {
+					case VerdictChangesRequested:
+						if fixPushAllowed(pr, opts) {
+							plan.dispatchFix(pr, agg, opts, now)
+						} else {
+							plan.withholdFix(pr, now)
+						}
+					case VerdictRequiresHuman:
+						plan.holdForHuman(pr, agg, now)
+					}
+					continue
 				}
-				continue
+			} else {
+				// Pending entries are the lifetime record of what this head has
+				// already been asked, and a PR with a verdict always has them —
+				// so left in place they make every perspective look covered and
+				// the revisit silently never dispatches. Clear them so the whole
+				// set is asked again. But only once: a revisit already in flight
+				// shows as entries dispatched after the cutoff, and clearing
+				// those would re-kick the same PR every cycle until its new
+				// verdict lands.
+				if revisitInFlight(plan.State, pr, opts.ReviseVerdictsBefore) {
+					// A revisit whose reviewer died is stuck the same way an
+					// unreviewed head is: the stale verdict stands and nothing
+					// re-asks. Let the TTL release it.
+					if dropped := plan.expirePending(pr, opts, now); !dropped {
+						continue
+					}
+				}
+				plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
+				revisiting = true
 			}
-			// Pending entries are the lifetime record of what this head has
-			// already been asked, and a PR with a verdict always has them —
-			// so left in place they make every perspective look covered and
-			// the revisit silently never dispatches. Clear them so the whole
-			// set is asked again. But only once: a revisit already in flight
-			// shows as entries dispatched after the cutoff, and clearing
-			// those would re-kick the same PR every cycle until its new
-			// verdict lands.
-			if revisitInFlight(plan.State, pr, opts.ReviseVerdictsBefore) {
-				continue
-			}
-			plan.State.Pending = removePendingForHead(plan.State.Pending, pr)
-			revisiting = true
+		} else if plan.redispatchExhausted(pr) {
+			continue
+		} else {
+			plan.expirePending(pr, opts, now)
 		}
 		prReviewers := reviewersForPR(reviewers, pr.AuthorAgent)
 		if len(prReviewers) == 0 || availableSlots <= 0 {
 			continue
 		}
-		missing := pendingMissingPerspectives(plan.State, pr, opts.Perspectives.List())
+		missing := pendingMissingPerspectives(plan.State, pr, opts.Perspectives.List(), delivered)
 		if len(missing) == 0 {
 			continue
 		}
@@ -454,6 +539,130 @@ func (p *DispatchPlan) holdForHuman(pr PullRequest, agg Aggregate, now time.Time
 	// Route through addHuman so a fresh hold also reaches NewHuman and the
 	// v6 escalation fan-out sees it, not only the label pass.
 	p.addHuman(pr, humanReason(agg), now)
+}
+
+// effectivePendingTTL resolves PendingTTL: zero is the default, negative
+// turns expiry off.
+func (o DispatchOptions) effectivePendingTTL() time.Duration {
+	if o.PendingTTL < 0 {
+		return 0
+	}
+	if o.PendingTTL == 0 {
+		return DefaultPendingReviewTTL
+	}
+	return o.PendingTTL
+}
+
+func (o DispatchOptions) effectiveMaxRedispatch() int {
+	if o.MaxRedispatch <= 0 {
+		return DefaultMaxRedispatch
+	}
+	return o.MaxRedispatch
+}
+
+// expirePending drops this head's pending entries that have outlived
+// PendingTTL with no verdict, so pendingMissingPerspectives re-dispatches
+// them, and reports whether it dropped any. Each cycle that drops something
+// counts one expiry against the head; once the count reaches MaxRedispatch
+// the entries are left in place (so nothing is re-kicked) and the PR is held
+// for a human with a HoldReasonDispatchExhausted reason.
+//
+// An entry with no dispatched_at has no measurable age and is never expired.
+func (p *DispatchPlan) expirePending(pr PullRequest, opts DispatchOptions, now time.Time) bool {
+	ttl := opts.effectivePendingTTL()
+	if ttl <= 0 || p.redispatchExhausted(pr) {
+		return false
+	}
+	var expired []ExpiredPending
+	for _, e := range p.State.Pending {
+		if !samePRHead(e.Repo, e.Number, e.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) || e.Dispatched.IsZero() {
+			continue
+		}
+		age := now.Sub(e.Dispatched)
+		if age < ttl {
+			continue
+		}
+		expired = append(expired, ExpiredPending{Repo: e.Repo, Number: e.Number, HeadSHA: e.HeadSHA, Perspective: e.Perspective, Agent: e.Agent, Dispatched: e.Dispatched, Age: age})
+	}
+	if len(expired) == 0 {
+		return false
+	}
+	idx := redispatchIndex(p.State.Redispatches, pr)
+	if idx < 0 {
+		p.State.Redispatches = append(p.State.Redispatches, RedispatchCount{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA})
+		idx = len(p.State.Redispatches) - 1
+	}
+	p.State.Redispatches[idx].Count++
+	p.State.Redispatches[idx].LastExpired = now
+	count := p.State.Redispatches[idx].Count
+	for i := range expired {
+		expired[i].Count = count
+	}
+	p.Expired = append(p.Expired, expired...)
+	if count >= opts.effectiveMaxRedispatch() {
+		hold := HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA,
+			Reason:    fmt.Sprintf("%s: %d review dispatches for this head ended without a verdict", HoldReasonDispatchExhausted, count),
+			UpdatedAt: now}
+		p.State.Human = upsertHuman(p.State.Human, hold)
+		p.Exhausted = append(p.Exhausted, hold)
+		return false
+	}
+	kept := p.State.Pending[:0]
+	for _, e := range p.State.Pending {
+		if samePRHead(e.Repo, e.Number, e.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) && !e.Dispatched.IsZero() && now.Sub(e.Dispatched) >= ttl {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	p.State.Pending = kept
+	return true
+}
+
+// redispatchExhausted reports whether this head already spent its
+// MaxRedispatch budget, so the planner neither re-kicks it nor counts another
+// expiry against it every cycle.
+func (p *DispatchPlan) redispatchExhausted(pr PullRequest) bool {
+	for _, h := range p.State.Human {
+		if samePRHead(h.Repo, h.Number, h.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) && strings.HasPrefix(h.Reason, HoldReasonDispatchExhausted) {
+			return true
+		}
+	}
+	return false
+}
+
+func redispatchIndex(items []RedispatchCount, pr PullRequest) int {
+	for i, r := range items {
+		if samePRHead(r.Repo, r.Number, r.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			return i
+		}
+	}
+	return -1
+}
+
+// RedispatchCountFor is the number of times this head's pending reviews have
+// expired, for the review queue's status line.
+func (s DispatchState) RedispatchCountFor(repo string, number int, headSHA string) int {
+	for _, r := range s.Redispatches {
+		if samePRHead(r.Repo, r.Number, r.HeadSHA, repo, number, headSHA) {
+			return r.Count
+		}
+	}
+	return 0
+}
+
+// PendingSince is the earliest dispatch time among this head's pending
+// reviews, or zero when none is pending.
+func (s DispatchState) PendingSince(repo string, number int, headSHA string) time.Time {
+	var since time.Time
+	for _, p := range s.Pending {
+		if !samePRHead(p.Repo, p.Number, p.HeadSHA, repo, number, headSHA) || p.Dispatched.IsZero() {
+			continue
+		}
+		if since.IsZero() || p.Dispatched.Before(since) {
+			since = p.Dispatched
+		}
+	}
+	return since
 }
 
 // hiveAuthored reports whether this hive is answerable for the PR: its login
@@ -759,12 +968,18 @@ func hasReviewCapability(a AgentCapability) bool {
 	return false
 }
 
-func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspectives []Perspective) []Perspective {
+// pendingMissingPerspectives lists the perspectives this head still needs
+// asked: not already dispatched (state.Pending) and not already reported
+// (delivered, the perspectives of an incomplete aggregate for this head).
+func pendingMissingPerspectives(state DispatchState, pr PullRequest, perspectives []Perspective, delivered map[Perspective]Verdict) []Perspective {
 	pending := map[Perspective]bool{}
 	for _, p := range state.Pending {
 		if samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
 			pending[p.Perspective] = true
 		}
+	}
+	for p := range delivered {
+		pending[p] = true
 	}
 	if len(perspectives) == 0 {
 		perspectives = DefaultPerspectives
@@ -788,6 +1003,20 @@ func revisitInFlight(state DispatchState, pr PullRequest, cutoff time.Time) bool
 		}
 	}
 	return false
+}
+
+// removePendingForPerspectives drops this head's pending entries for the
+// perspectives that have already reported, leaving the ones still owed so
+// their TTL keeps running.
+func removePendingForPerspectives(pending []PendingReview, pr PullRequest, reported map[Perspective]Verdict) []PendingReview {
+	out := pending[:0]
+	for _, p := range pending {
+		if _, done := reported[p.Perspective]; done && samePRHead(p.Repo, p.Number, p.HeadSHA, pr.Repo, pr.Number, pr.HeadSHA) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func removePendingForHead(pending []PendingReview, pr PullRequest) []PendingReview {
@@ -849,6 +1078,13 @@ func pruneState(state DispatchState, prs []PullRequest, org string) DispatchStat
 		}
 	}
 	state.Withheld = withheld
+	var redispatches []RedispatchCount
+	for _, r := range state.Redispatches {
+		if openHeads[reviewKey(r.Repo, r.Number, r.HeadSHA)] {
+			redispatches = append(redispatches, r)
+		}
+	}
+	state.Redispatches = redispatches
 	return state
 }
 

@@ -1,0 +1,1 @@
+- Spoke `/api/version` no longer reports "Upgrade available" when the hub-resolved channel target lags the commit the spoke already runs (e.g. right after a promotion); such an offer was always refused by the hub as "not armed — already at target".

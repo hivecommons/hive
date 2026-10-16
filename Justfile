@@ -1426,12 +1426,18 @@ contribute-hive backend="" mode="docker": check-version
       RELAY_PID=$!
       echo ""
       echo "✓ Contributor running in local mode."
-      echo "  CLI:    $CMD (tmux session: $TMUX_SESSION)"
+      if [[ "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
+        echo "  CLI:    $CMD (headless: no tmux session)"
+      else
+        echo "  CLI:    $CMD (tmux session: $TMUX_SESSION)"
+      fi
       echo "  Relay:  PID $RELAY_PID"
       if [[ -n "$QUOTA_PUBLISHER_PID" ]]; then
         echo "  Quota:  publisher PID $QUOTA_PUBLISHER_PID (HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0 to opt out)"
       fi
-      echo "  Attach: tmux attach -t $TMUX_SESSION"
+      if [[ "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then
+        echo "  Attach: tmux attach -t $TMUX_SESSION"
+      fi
       echo ""
       echo "Relay logs:"
       wait "$RELAY_PID"
@@ -2147,50 +2153,56 @@ contribute-hive backend="" mode="docker": check-version
       fi
 
       # Open the CLI session in a new terminal window
-      ATTACH_CMD="${RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t contributor"
       if [[ "$KRUN_MODE" == "true" ]]; then
         # The krun handler refuses `podman exec`, so there is nothing to
         # attach to; headless status arrives in the relay logs below.
         echo ""
         echo "Attach:    none in krun mode (headless; the krun handler refuses exec). Interactive krun mode: #12202."
-      elif [[ "$OSTYPE" == "darwin"* ]]; then
-        # Detect iTerm via System Events rather than pgrep. On macOS the
-        # iTerm process's comm is the full bundle path
-        # (/Applications/iTerm.app/Contents/MacOS/iTerm2), so `pgrep -x iTerm2`
-        # anchors against that path and NEVER matches — every iTerm user
-        # silently fell through to Terminal.app. System Events reports the
-        # application name ("iTerm2"), which is what we actually want.
-        TAB_OPENED=true
-        RUNNING_APPS=$(osascript -e 'tell application "System Events" to get name of every application process whose background only is false' 2>/dev/null || echo "")
-        if [[ "$RUNNING_APPS" == *"iTerm"* ]]; then
-          # iTerm may be running with no open window, in which case
-          # `tell current window` errors — fall back to creating a window.
-          osascript -e "tell application \"iTerm2\"
-            if (count of windows) = 0 then
-              create window with default profile command \"${ATTACH_CMD}\"
-            else
-              tell current window to create tab with default profile command \"${ATTACH_CMD}\"
-            end if
-          end tell" >/dev/null 2>&1 || {
-            TAB_OPENED=false
-            echo "WARNING: could not open an iTerm tab; attach manually with:"
-            echo "  ${ATTACH_CMD}"
-          }
-        else
-          osascript -e "tell application \"Terminal\" to do script \"${ATTACH_CMD}\"" >/dev/null 2>&1 || {
-            TAB_OPENED=false
-            echo "WARNING: could not open a Terminal window; attach manually with:"
-            echo "  ${ATTACH_CMD}"
-          }
-        fi
-        if [[ "$TAB_OPENED" == "true" ]]; then
-          echo ""
-          echo "✓ CLI session opened in a new terminal tab."
-        fi
-      else
+      elif [[ "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
+        # Headless has no tmux session to attach to; the relay logs below are the view.
         echo ""
-        echo "Attach to the CLI session with:"
-        echo "  ${ATTACH_CMD}"
+        echo "Headless mode: no tmux session to attach to."
+      else
+        ATTACH_CMD="${RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t contributor"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+          # Detect iTerm via System Events rather than pgrep. On macOS the
+          # iTerm process's comm is the full bundle path
+          # (/Applications/iTerm.app/Contents/MacOS/iTerm2), so `pgrep -x iTerm2`
+          # anchors against that path and NEVER matches — every iTerm user
+          # silently fell through to Terminal.app. System Events reports the
+          # application name ("iTerm2"), which is what we actually want.
+          TAB_OPENED=true
+          RUNNING_APPS=$(osascript -e 'tell application "System Events" to get name of every application process whose background only is false' 2>/dev/null || echo "")
+          if [[ "$RUNNING_APPS" == *"iTerm"* ]]; then
+            # iTerm may be running with no open window, in which case
+            # `tell current window` errors — fall back to creating a window.
+            osascript -e "tell application \"iTerm2\"
+              if (count of windows) = 0 then
+                create window with default profile command \"${ATTACH_CMD}\"
+              else
+                tell current window to create tab with default profile command \"${ATTACH_CMD}\"
+              end if
+            end tell" >/dev/null 2>&1 || {
+              TAB_OPENED=false
+              echo "WARNING: could not open an iTerm tab; attach manually with:"
+              echo "  ${ATTACH_CMD}"
+            }
+          else
+            osascript -e "tell application \"Terminal\" to do script \"${ATTACH_CMD}\"" >/dev/null 2>&1 || {
+              TAB_OPENED=false
+              echo "WARNING: could not open a Terminal window; attach manually with:"
+              echo "  ${ATTACH_CMD}"
+            }
+          fi
+          if [[ "$TAB_OPENED" == "true" ]]; then
+            echo ""
+            echo "✓ CLI session opened in a new terminal tab."
+          fi
+        else
+          echo ""
+          echo "Attach to the CLI session with:"
+          echo "  ${ATTACH_CMD}"
+        fi
       fi
 
       echo ""
@@ -2688,6 +2700,11 @@ contribute-k8s namespace="hive-contributor" outfile="" image_tag="v4":
     # else) — the relay is meant to run forever and reconnect, so this is the
     # right shape. Stated for the reader; not settable here.
     YAML+="      restartPolicy: Always"$'\n'
+    # Optional sandbox runtime (e.g. gvisor, kata); omitted entirely when unset
+    # so the default manifest is unchanged. The RuntimeClass must already exist.
+    if [[ -n "${HIVE_K8S_RUNTIME_CLASS:-}" ]]; then
+      YAML+="      runtimeClassName: ${HIVE_K8S_RUNTIME_CLASS}"$'\n'
+    fi
     YAML+="      containers:"$'\n'
     YAML+="        - name: contributor"$'\n'
     YAML+="          image: ${IMAGE}"$'\n'

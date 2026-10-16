@@ -1,6 +1,6 @@
 # Hive
 
-AI agent orchestrator for connected work sources and source repositories. A single Go binary that enumerates issues and pull/merge requests, classifies them by complexity, and dispatches work to AI agents (Claude, Copilot, Gemini, Goose) on adaptive cadences.
+AI agent orchestrator for connected work sources and source repositories. A single Go binary that enumerates issues and pull/merge requests, classifies them by complexity, and dispatches work to AI agents (Claude, Copilot, Codex, Antigravity, Goose) on adaptive cadences.
 
 ## Quick Start (Docker)
 
@@ -299,7 +299,7 @@ knowledge:
 
 ## Experiment Lab (Nous)
 
-An experiment framework that lets you test configuration changes (models, cadences, thresholds) against live data before committing them. Experiments run in a sandbox with rollback on failure.
+A repo-only experiment framework that lets Hive propose and measure changes to your repositories' code (tests, CI config, automation scripts) against live data before they land. Every experiment is a pull request that needs your approval; failed experiments are withdrawn.
 
 Configure via the dashboard (Experiment Lab panel, ACMM level 4+, enabled with `dashboard.experiment_lab: true`) or the `/api/nous/*` endpoints directly — there is no `nous:` block in `hive.yaml.example`; Nous has no YAML config surface. See [docs/experiment-lab.md](docs/experiment-lab.md) for the experiment lifecycle, configuration options, and gate-decision flow. The dashboard REST API is described by [../dashboard/openapi.json](../dashboard/openapi.json).
 

@@ -1,0 +1,1 @@
+- README gains a "Contributor relay" section explaining donated compute/tokens with no shared secrets and no forge permission changes (#12122).

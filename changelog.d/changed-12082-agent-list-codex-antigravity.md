@@ -1,0 +1,1 @@
+- README and introduction now list Codex and Antigravity (replacing the retired Gemini CLI) among example agent CLIs (#12082).

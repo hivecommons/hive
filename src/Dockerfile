@@ -280,7 +280,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.296
+ARG CLAUDE_CODE_VERSION=2.1.300
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -575,6 +575,9 @@ COPY bin/hive-review.sh /usr/local/bin/hive-review
 COPY bin/hive-push-branch.sh /usr/local/bin/hive-push-branch
 COPY bin/hive-baseline-check.sh /usr/local/bin/hive-baseline-check.sh
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
+# Compact `gh --json` projections for the common read verbs (#12127); runs the
+# wrapper above, so every gate still applies — it is a projection, not a bypass.
+COPY bin/hive-gh.sh /usr/local/bin/hive-gh
 COPY bin/go-wrapper.sh /usr/local/go/bin/go
 # SDK-based copilot model discovery helper (see Layer 3b). Invoked as
 # `node /usr/local/bin/copilot-models.mjs` by the dashboard, so no exec bit.
@@ -583,7 +586,7 @@ COPY config/backends.conf /usr/local/etc/hive/backends.conf
 RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bin/gh-app-token.sh \
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh /usr/local/go/bin/go \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-open-issue /usr/local/bin/hive-merge /usr/local/bin/hive-review \
-    /usr/local/bin/hive-push-branch \
+    /usr/local/bin/hive-push-branch /usr/local/bin/hive-gh \
     /usr/local/bin/hive-baseline-check.sh
 
 # SECURITY (#4045): interactive-shell arm of the agent credential scrub.

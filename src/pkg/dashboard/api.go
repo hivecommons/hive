@@ -117,6 +117,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/project-sync", s.handleCampaignJamProjectSyncPost)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/ws", s.handleCampaignJamWebSocket)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
+	s.mux.HandleFunc("GET /api/widget/summary", s.handleWidgetSummary)
+	s.mux.HandleFunc("GET /api/widget/token", s.handleWidgetTokenStatus)
+	s.mux.HandleFunc("POST /api/widget/token", s.handleWidgetTokenMint)
+	s.mux.HandleFunc("DELETE /api/widget/token", s.handleWidgetTokenRevoke)
 	s.mux.HandleFunc("GET /api/pane/{agent}", s.handlePane)
 	// Full retained scrollback of an agent's latest run, as plain text (#3693).
 	// Backs the Terminal's "view / download full log" controls.
@@ -160,6 +164,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
 	s.mux.HandleFunc("GET /api/repo-activity", s.handleRepoActivity)
 	s.mux.HandleFunc("GET /api/repo-cost", s.handleRepoCost)
+	// #12128: per-issue/PR/head-SHA launch attribution over the same collector.
+	s.mux.HandleFunc("GET /api/launch-cost", s.handleLaunchCost)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
 	// #4298: "for every recent reset, how much of the budget had been used".
 	s.mux.HandleFunc("GET /api/budget/history", s.handleBudgetHistory)
@@ -500,6 +506,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// or zipped with the artifacts it references; owner/merger only.
 	s.mux.HandleFunc("GET /api/review/evidence", s.handleReviewEvidence)
 	s.mux.HandleFunc("GET /api/review/evidence/list", s.handleReviewEvidenceList)
+	// Durable attempted-vs-blocked agent write counters (#12069); owner/merger only.
+	s.mux.HandleFunc("GET /api/evidence/write-counters", s.handleWriteCounters)
 	// write_surface is a top-level Config field; the lane write allowlist
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)
@@ -843,6 +851,13 @@ func (s *Server) sentinelLabel() string {
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, s.historyPayload())
+}
+
+// historyPayload is the /api/history body: the live eval history, prefixed by
+// the seeded sparkline history when one exists. Shared with the read-only
+// widget summary so both report the same series.
+func (s *Server) historyPayload() any {
 	history := s.deps.Governor.EvalHistory()
 
 	seedData, err := os.ReadFile("/data/sparkline-history.json")
@@ -851,21 +866,17 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(seedData, &seed) == nil && len(seed) > 0 {
 			liveData, err := json.Marshal(history)
 			if err != nil {
-				jsonResponse(w, history)
-				return
+				return history
 			}
 			var liveEntries []json.RawMessage
 			if json.Unmarshal(liveData, &liveEntries) != nil {
-				jsonResponse(w, history)
-				return
+				return history
 			}
-			combined := append(seed, liveEntries...)
-			jsonResponse(w, combined)
-			return
+			return append(seed, liveEntries...)
 		}
 	}
 
-	jsonResponse(w, history)
+	return history
 }
 
 func (s *Server) handleTrends(w http.ResponseWriter, r *http.Request) {

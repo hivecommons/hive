@@ -35,6 +35,10 @@ journalctl --user -u hive-gateway.service -n 100 --no-pager
 
 The process also writes `hive.log` under the configured logs directory (default `/data/logs`, from `governor.logging.dir`, falling back to `data.logs_dir`), and tees the same lines to stdout — so `docker compose logs` / `kubectl logs` show everything the file does. The older per-agent `AGENT_LOG_FILE` heartbeat file from v1 is not used.
 
+### No shell on the host?
+
+Operators without direct host shell access can read Hive's logs, auth proxy output, early startup output, request logs, agent terminal and kick logs, and restart/crash/memory evidence through the admin MCP (available on v6). Start with `log_sources` and `log_read` in [`admin-mcp.md`](https://github.com/hivecommons/hive/blob/v6/src/docs/admin-mcp.md). See also [`admin-mcp.md` § What still needs a host shell](https://github.com/hivecommons/hive/blob/v6/src/docs/admin-mcp.md#what-still-needs-a-host-shell).
+
 ## Config fails to load or save
 
 Hive reads `/etc/hive/hive.yaml` by default, or `HIVE_CONFIG`/`--config` when set. Startup logs `failed to load config` when `config.LoadWithDashboardOverlay` fails. Common validation strings in `src/pkg/config/` include:

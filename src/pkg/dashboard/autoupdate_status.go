@@ -90,9 +90,16 @@ type AutoUpdateStatus struct {
 	// It may be in the past while a promotion gate holds.
 	NextUpdateAt     string `json:"nextUpdateAt,omitempty"`
 	NextUpdateStatus string `json:"nextUpdateStatus,omitempty"`
-	LastError        string `json:"lastError,omitempty"`
-	Attempts         int    `json:"attempts,omitempty"`
-	MaxAttempts      int    `json:"maxAttempts,omitempty"`
+	// HeldReason is why the hub did not apply this hive's scheduled
+	// (daily/weekly) upgrade while its window was open (#11196), relayed from
+	// the heartbeat policy; HeldAt is when the hub recorded it. Without it a
+	// hive that skipped its window only showed the PREVIOUS upgrade, which
+	// reads as "the schedule never ran".
+	HeldReason  string `json:"heldReason,omitempty"`
+	HeldAt      string `json:"heldAt,omitempty"`
+	LastError   string `json:"lastError,omitempty"`
+	Attempts    int    `json:"attempts,omitempty"`
+	MaxAttempts int    `json:"maxAttempts,omitempty"`
 	// Detail is a human-friendly one-liner that always explains the state and,
 	// for a failure or unknown, WHY.
 	Detail string `json:"detail"`
@@ -169,6 +176,8 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 		st.Paused = p.Paused
 		st.NextUpdateAt = strings.TrimSpace(p.NextUpdateAt)
 		st.NextUpdateStatus = strings.TrimSpace(p.NextUpdateStatus)
+		st.HeldReason = strings.TrimSpace(p.ScheduledHoldReason)
+		st.HeldAt = strings.TrimSpace(p.ScheduledHoldAt)
 		switch {
 		case p.HubManaged:
 			st.ManagedBy = autoUpdateManagedByHub
@@ -188,6 +197,8 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 	if !st.Enabled {
 		st.NextUpdateAt = ""
 		st.NextUpdateStatus = ""
+		st.HeldReason = ""
+		st.HeldAt = ""
 		st.State = autoUpdateStateDisabled
 		// Disabled is a deliberate configuration, not a fault, so it is not
 		// "unhealthy" — but it must never read as "up to date" either.
@@ -202,6 +213,8 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 	if st.Paused {
 		st.NextUpdateAt = ""
 		st.NextUpdateStatus = ""
+		st.HeldReason = ""
+		st.HeldAt = ""
 		st.State = autoUpdateStatePaused
 		st.Healthy = true
 		st.Detail = "Automatic updates are paused fleet-wide by a hub admin; no new version is applied until the hub resumes spoke upgrades."
@@ -256,9 +269,13 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 		} else {
 			st.Detail = "Could not determine whether this hive is up to date: the version comparison is unavailable. Not treating unknown as healthy."
 		}
+		st.Detail += heldSuffix(st.HeldReason, st.HeldAt)
 		return st
 	}
 	if *in.CommitsBehind <= 0 {
+		// Up to date: whatever held an earlier window no longer matters.
+		st.HeldReason = ""
+		st.HeldAt = ""
 		st.State = autoUpdateStateUpToDate
 		st.Healthy = true
 		st.Detail = "This hive is running the latest built commit" + onBranchSuffix(in.TargetBranch) + onChannelSuffix(in.TargetChannel) + "." + lastUpdatedSuffix(st.LastUpdatedAt)
@@ -267,8 +284,22 @@ func buildAutoUpdateStatus(in autoUpdateInputs) AutoUpdateStatus {
 	st.State = autoUpdateStateBehind
 	st.Healthy = false
 	st.Detail = fmt.Sprintf("This hive is %d commit(s) behind%s%s and the update has not been applied yet.",
-		*in.CommitsBehind, onBranchSuffix(in.TargetBranch), onChannelSuffix(in.TargetChannel)) + lastUpdatedSuffix(st.LastUpdatedAt)
+		*in.CommitsBehind, onBranchSuffix(in.TargetBranch), onChannelSuffix(in.TargetChannel)) + lastUpdatedSuffix(st.LastUpdatedAt) + heldSuffix(st.HeldReason, st.HeldAt)
 	return st
+}
+
+// heldSuffix explains why the scheduled window passed without an upgrade
+// (#11196). Empty when the hub reported no hold.
+func heldSuffix(reason, at string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ""
+	}
+	when := ""
+	if strings.TrimSpace(at) != "" {
+		when = " at " + at
+	}
+	return " The scheduled update window opened but the hub held the upgrade" + when + ": " + strings.TrimSuffix(reason, ".") + "."
 }
 
 // lastUpdatedSuffix renders the "when was this hive last updated" clause that

@@ -139,6 +139,10 @@ type KnowledgePrimer struct {
 	MaxFacts      int      `yaml:"max_facts"`
 	Priority      []string `yaml:"priority"`
 	MergeStrategy string   `yaml:"merge_strategy"`
+	// MaxBytes caps the rendered knowledge primer per kick; facts past it are
+	// dropped whole and a marker says so. Zero takes the knowledge package
+	// default (4096).
+	MaxBytes int `yaml:"max_bytes"`
 }
 
 // KnowledgeAgentScope is one `knowledge.agent_scopes` entry. Each field is an

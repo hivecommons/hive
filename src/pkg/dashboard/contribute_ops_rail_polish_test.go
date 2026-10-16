@@ -66,6 +66,14 @@ func TestOpsRailHeadingIsLiveActivity(t *testing.T) {
 			t.Errorf("rail plumbing marker %q lost by the rename", want)
 		}
 	}
+	for _, want := range []string{
+		`ops-rail-collapsed`,
+		`grid-template-columns:minmax(340px,.42fr) minmax(0,1fr)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rail collapse layout marker %q is missing", want)
+		}
+	}
 }
 
 // TestOpsRailRendersHelloReplay proves the rail's SSE hello handler (ccHydrate)

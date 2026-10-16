@@ -703,7 +703,12 @@ func (c *cliModelCache) lastGoodPath(backend string) string {
 
 // loadLastGood reads every persisted last-good catalog under lastGoodDir.
 // A missing or unreadable directory (dev machines, unit tests) is simply no
-// catalogs; a malformed or expired file is ignored.
+// catalogs; a malformed file is ignored. Age is NOT checked here: it runs
+// from newCLIModelCache before a caller can install its clock, so filtering
+// against the wall clock at load would silently drop a catalog the caller's
+// clock still considers fresh (#11994). lastGoodFor applies
+// cliModelLastGoodTTL with c.clock() on every read, which is the only place
+// the cutoff matters.
 func (c *cliModelCache) loadLastGood() {
 	if c.lastGoodDir == "" {
 		return
@@ -712,7 +717,6 @@ func (c *cliModelCache) loadLastGood() {
 	if err != nil {
 		return
 	}
-	now := c.clock()
 	for _, p := range matches {
 		raw, err := os.ReadFile(p)
 		if err != nil {
@@ -720,9 +724,6 @@ func (c *cliModelCache) loadLastGood() {
 		}
 		var f cliModelLastGoodFile
 		if json.Unmarshal(raw, &f) != nil || f.Backend == "" || len(f.Models) == 0 || f.At.IsZero() {
-			continue
-		}
-		if now.Sub(f.At) > cliModelLastGoodTTL {
 			continue
 		}
 		c.lastGood[f.Backend] = cliModelCacheEntry{
@@ -1113,8 +1114,10 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 	}
 	// Self-report (#11868): the tracker only surfaces this once it has
 	// persisted for an hour, so a transient discovery blip never files.
-	fleetreport.Observe(fleetreport.ClassModelDiscoveryDegraded, backend,
-		fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served), r.discoveryErr)
+	if r.discoveryErr != copilotHTTPCatalogOnlyErr {
+		fleetreport.Observe(fleetreport.ClassModelDiscoveryDegraded, backend,
+			fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served), r.discoveryErr)
+	}
 	if s.audit != nil {
 		s.audit.Log("system", auditActionModelDiscoveryFailed, auditDetail(
 			"backend", backend,
@@ -1317,7 +1320,7 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	// Copilot CLI's model catalog. The SDK helper path above is the only clean
 	// Copilot discovery source because it drives the pinned CLI itself (#8418).
 	out.degraded = true
-	out.discoveryErr = "serving the HTTP chat-completions catalog, which is not the CLI's"
+	out.discoveryErr = copilotHTTPCatalogOnlyErr
 	if sdkErr != "" {
 		// The HTTP probe answered, but it is the chat-completions catalog,
 		// not the CLI's: real ids, wrong inventory. Serve it, say so, and
@@ -1326,6 +1329,11 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	}
 	return out
 }
+
+// copilotHTTPCatalogOnlyErr is the discovery error when no SDK helper is
+// installed and the HTTP catalog is the only source: an expected steady state
+// on such hives, shown in the dropdown but not worth a fleet self-report.
+const copilotHTTPCatalogOnlyErr = "serving the HTTP chat-completions catalog, which is not the CLI's"
 
 // cliModelStaleTimeLayout renders when a stale catalog was discovered, in
 // UTC, for the dropdown reason and the audit log.

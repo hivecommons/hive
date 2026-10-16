@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-10-15 (v5.175.0)
+
+### Added
+
+- Expose retro lane settings (scan interval, fix-attempt, kick and long-stall thresholds, recent-closed window) in the dashboard Settings dialog.
+
+### Changed
+
+- images: bump claude 2.1.296 -> 2.1.300 (#11987)
+
 ## 2026-10-15 (v5.174.0)
 
 ### Added

@@ -1,5 +1,14 @@
 # ACMM Policy Matrix
 
+**ACMM** is the **AI Codebase Maturity Model**: a six-level framework that ties
+how much autonomy AI agents get in a repository to how mature that repository's
+safeguards are — tests, coverage, review practice, security posture. A project
+starts at a low level where agents only observe and advise, and earns higher
+levels (opening PRs, then merging on green CI) as the deterministic checks that
+catch mistakes are put in place. Hive enforces each level in code: the level
+decides which agents run, in which policy mode, with which GitHub permissions.
+Background: [the ACMM paper](https://arxiv.org/abs/2604.09388).
+
 ## Policy Modes
 
 Each agent runs in one of four modes, controlling what actions it can take on GitHub.

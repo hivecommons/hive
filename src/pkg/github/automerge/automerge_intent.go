@@ -2,9 +2,12 @@ package automerge
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/beads"
+	"github.com/hivecommons/hive/pkg/evidence"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 )
@@ -51,10 +54,33 @@ type IntentGate struct {
 	// as the human lane's BuildEvidenceForRepo call receives it. nil means
 	// body-only evidence.
 	BeadStores map[string]*beads.Store
+	// Shadow reports whether intent.shadow is on. When it is and Enforce is
+	// off, the gate evaluates BlocksMerge(true) and hands the observation to
+	// RecordShadow without withholding the merge. nil is treated as false.
+	Shadow func() bool
+	// RecordShadow persists an intent.shadow observation (evidence bundle +
+	// audit log) for the PR head. Recording only; nil disables shadow.
+	RecordShadow func(fullRepo string, number int, head string, gate evidence.ShadowGate)
 }
 
 func (g *IntentGate) enforced() bool {
 	return g != nil && g.Enforce != nil && g.Enforce()
+}
+
+func (g *IntentGate) shadowed() bool {
+	return g != nil && g.Shadow != nil && g.RecordShadow != nil && g.Shadow()
+}
+
+// recordShadow hands an intent.shadow observation to RecordShadow. It never
+// influences the merge decision.
+func (g *IntentGate) recordShadow(fullRepo string, number int, head string, blocked bool, reason, tier string, confidence float64) {
+	g.RecordShadow(fullRepo, number, head, evidence.ShadowGate{
+		WouldHaveBlocked: &blocked,
+		Reason:           reason,
+		Tier:             tier,
+		Confidence:       confidence,
+		EvaluatedAt:      time.Now(),
+	})
 }
 
 // SetIntentGate installs (or, with nil, removes) the intent-tier gate
@@ -109,6 +135,9 @@ func (c *Engine) selfMergeIntentGate(ctx context.Context, displayRepo, owner, re
 	if err != nil {
 		if !enforce {
 			c.warn("self-authored automerge sweep intent evidence unavailable (advisory)", "repo", displayRepo, "pr", number, "error", err)
+			if gate.shadowed() {
+				gate.recordShadow(owner+"/"+repo, number, pr.GetHead().GetSHA(), true, autoMergeReasonIntentEvidence+": "+err.Error(), "", 1)
+			}
 			return "", nil
 		}
 		return autoMergeReasonIntentEvidence, err
@@ -132,6 +161,14 @@ func (c *Engine) selfMergeIntentGate(ctx context.Context, displayRepo, owner, re
 	}
 	if verdict.BlocksMerge(enforce) {
 		return autoMergeReasonIntentUnauthorized, nil
+	}
+	if !enforce && gate.shadowed() {
+		blocked := verdict.BlocksMerge(true)
+		reason := verdict.Reason
+		if blocked {
+			reason = verdict.BlockReason()
+		}
+		gate.recordShadow(fullRepo, number, pr.GetHead().GetSHA(), blocked, reason, fmt.Sprintf("tier%d", verdict.Tier), verdict.ShadowConfidence())
 	}
 	return "", nil
 }

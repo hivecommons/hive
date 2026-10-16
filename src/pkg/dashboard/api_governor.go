@@ -1663,6 +1663,29 @@ func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]str
 	return len(models), nil
 }
 
+// describeEdgeServer names the kind of intermediary a Server header identifies,
+// so an operator told "a proxy refused the request" learns which one it was
+// (hivecommons/hive#9945: "awselb/2.0" alone does not say it is an AWS load
+// balancer). Unknown values yield "" and the raw header is still reported.
+func describeEdgeServer(server string) string {
+	s := strings.ToLower(strings.TrimSpace(server))
+	switch {
+	case strings.HasPrefix(s, "awselb"):
+		return "an AWS Elastic Load Balancer"
+	case strings.HasPrefix(s, "cloudflare"):
+		return "Cloudflare"
+	case strings.HasPrefix(s, "nginx"):
+		return "an nginx ingress/reverse proxy"
+	case strings.HasPrefix(s, "envoy"):
+		return "an Envoy proxy"
+	case strings.HasPrefix(s, "akamaighost"):
+		return "an Akamai edge"
+	case strings.HasPrefix(s, "squid"):
+		return "a Squid proxy"
+	}
+	return ""
+}
+
 func litellmModelsHTTPError(req *http.Request, resp *http.Response, apiKey string) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
 	gatewayMsg := redactLiteLLMKeyMaterial(strings.TrimSpace(string(body)))
@@ -1683,10 +1706,14 @@ func litellmModelsHTTPError(req *http.Request, resp *http.Response, apiKey strin
 		// WWW-Authenticate header), not an edge refusal: keep the more
 		// accurate missing-key message below.
 		if looksLikeIntermediaryRejection(contentType, gatewayMsg) && !(apiKey == "" && gatewayMsg == "") {
+			edgeKind := ""
+			if k := describeEdgeServer(resp.Header.Get("Server")); k != "" {
+				edgeKind = ", identified from the Server header as " + k
+			}
 			return &probeEdgeRejectedError{fmt.Errorf("GET %s was refused with HTTP %d by a proxy in front of the gateway, not by the gateway API"+
-				" (content-type %q, server %q, final URL %s, non-JSON body) — the configured key was probably never evaluated;"+
+				" (content-type %q, server %q%s, final URL %s, non-JSON body) — the configured key was probably never evaluated;"+
 				" check that ingress/WAF/VPN rules allow GET /v1/models from the hive%s: %s",
-				req.URL.String(), resp.StatusCode, contentType, resp.Header.Get("Server"), finalURL, describeEgressProxy(req), gatewayMsg)}
+				req.URL.String(), resp.StatusCode, contentType, resp.Header.Get("Server"), edgeKind, finalURL, describeEgressProxy(req), gatewayMsg)}
 		}
 		// The two auth failures lead users to different fixes.
 		if apiKey == "" {

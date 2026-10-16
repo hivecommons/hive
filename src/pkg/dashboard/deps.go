@@ -103,7 +103,10 @@ type Dependencies struct {
 	// repo_cost_collector.go), mirroring Activity's caching of
 	// /api/repo-activity. Nil is safe: handleRepoCost falls back to computing
 	// inline (used by tests that construct a bare Dependencies).
-	RepoCost        *collect.RepoCostCollector
+	RepoCost *collect.RepoCostCollector
+	// LaunchCost caches the /api/launch-cost join (#12128). Nil is safe:
+	// handleLaunchCost falls back to computing inline from Tokens.
+	LaunchCost      *collect.LaunchCostCollector
 	BeadSynthesizer *knowledge.BeadSynthesizer
 	BeadStores      map[string]*beads.Store
 	// ChatResponder handles dashboard Hive Chat free-text messages that are
@@ -269,8 +272,14 @@ type Dependencies struct {
 	ReviewEvents *eventdispatch.Dispatcher
 }
 
+// NousScopeRepo is the only experiment scope the Experiment Lab supports.
+// Governor-scope experiments are out of scope for the lab.
+const NousScopeRepo = "repo"
+
 type NousState struct {
-	Mode         string                   `json:"mode"`
+	Mode string `json:"mode"`
+	// Scope is always NousScopeRepo; it is kept as a field for state
+	// compatibility with the experiment loop's status publishing.
 	Scope        string                   `json:"scope"`
 	Phase        string                   `json:"phase"`
 	Status       map[string]interface{}   `json:"status"`

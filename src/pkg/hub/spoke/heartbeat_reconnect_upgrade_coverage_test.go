@@ -53,6 +53,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 		AuthorizedUsers: []string{"alice:owner"},
 		ProjectConfig:   &HeartbeatProjectConfig{Org: "acme", Repos: []string{"r"}},
 		PendingGateway:  &HeartbeatGatewayConfig{Name: "gw", Key: "k"},
+		ClusterID:       "vllm-d",
 		RestartSpoke:    true,
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +75,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 		gotUsers        []string
 		gotProject      *HeartbeatProjectConfig
 		gotGateway      *HeartbeatGatewayConfig
+		gotClusterID    string
 		gotRestart      bool
 		gotSwitchBranch string
 	)
@@ -113,6 +115,11 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 		gotGateway = c
 		mu.Unlock()
 	})
+	onClusterID := ClusterIDCallback(func(id string) {
+		mu.Lock()
+		gotClusterID = id
+		mu.Unlock()
+	})
 	onSwitch := SwitchBranchCallback(func(tag string) {
 		mu.Lock()
 		gotSwitchBranch = tag
@@ -136,7 +143,7 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	go func() {
 		defer close(done)
 		StartHeartbeat(ctx, srv.URL, collect, 50*time.Millisecond, nil2Logger(),
-			onUpgrade, onApp, onBanner, onVis, onUsers, onProject, onGateway, onSwitch, onRestart)
+			onUpgrade, onApp, onBanner, onVis, onUsers, onProject, onGateway, onClusterID, onSwitch, onRestart)
 	}()
 
 	// RestartSpoke is the last dispatch in processHeartbeatResponse, so once it
@@ -178,6 +185,9 @@ func TestStartHeartbeatProcessesFullResponse(t *testing.T) {
 	}
 	if gotGateway == nil || gotGateway.Name != "gw" {
 		t.Errorf("gateway callback got %+v", gotGateway)
+	}
+	if gotClusterID != "vllm-d" {
+		t.Errorf("cluster-id callback got %q, want vllm-d", gotClusterID)
 	}
 	if !gotRestart {
 		t.Error("restart-spoke callback did not record")

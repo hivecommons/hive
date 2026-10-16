@@ -63,6 +63,9 @@ func ClaimMarker(c Claim) string {
 	if c.Hive != "" {
 		fmt.Fprintf(&b, " hive=%s", c.Hive)
 	}
+	if c.Kind == KindContributor {
+		fmt.Fprintf(&b, " tier=%s verified=%t", markerTier(c.Tier), c.Verified)
+	}
 	if !c.ClaimedAt.IsZero() {
 		fmt.Fprintf(&b, " at=%s", c.ClaimedAt.UTC().Format(time.RFC3339))
 	}
@@ -142,6 +145,25 @@ func hiveSuffix(c Claim) string {
 	}
 	return " on hive " + c.Hive
 }
+
+// markerTier renders a contributor tier as a single marker token. Anything
+// empty or not a plain lowercase word becomes the lowest tier so a malformed
+// value can never read as an elevated one.
+func markerTier(tier string) string {
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	if tier == "" {
+		return contributorTierDefault
+	}
+	for _, r := range tier {
+		if (r < 'a' || r > 'z') && r != '-' && r != '_' {
+			return contributorTierDefault
+		}
+	}
+	return tier
+}
+
+// contributorTierDefault mirrors issueclaim.ContributorTierDefault.
+const contributorTierDefault = "newcomer"
 
 func sanitizeReason(r string) string {
 	r = strings.ReplaceAll(strings.TrimSpace(r), "-->", "")

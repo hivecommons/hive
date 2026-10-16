@@ -113,20 +113,62 @@ the kick path knows which file an agent will touch. The live call uses the flat
 
 ### Rendered injection text
 
-`AgentsConfig.InjectionText(requestedSkills)` (`agentsmd.go:330`) is what gets
-prepended to a kick: a `# Repository Agent Instructions (AGENTS.md)`
-header, a **precedence statement**, the body, and (if any skills resolve) a
-`## Requested Skills` subsection with each skill's text under a `### <name>`
-heading. It returns `""` — and therefore injects nothing — when both the body
-and the resolved skills are empty, so the precedence statement never appears
-with no rules under it.
+`AgentsConfig.Render(requestedSkills, maxBytes)` (and `InjectionText`, which
+is `Render` at the default cap) is what gets prepended to a kick: a
+`# Repository Agent Instructions (AGENTS.md)` header, a **precedence
+statement**, a **size warning** when the cap below bit, the body, and (if any
+skills resolve) a `## Requested Skills` subsection with each skill's text under
+a `### <name>` heading. It returns `""` — and therefore injects nothing — when
+both the body and the resolved skills are empty, so the precedence statement
+never appears with no rules under it.
+
+### Size cap: whole sections, visible warning
+
+The block is capped at `project.agents_md_max_bytes` bytes (default **8192**
+— the same as the skills cap — minimum 2048;
+[#12129](https://github.com/hivecommons/hive/issues/12129)). `AGENTS.md` is a
+repo-owned contract, so the cap **never clips a rule mid-sentence**:
+
+- The body is split at its `#` and `##` headings (text before the first
+  heading is the "(preamble)"; deeper headings and fenced code stay inside
+  their section). Each resolved skill is its own unit.
+- Sections are visited in document order and each is kept only if it fits the
+  remaining budget **whole**. One that does not fit is dropped whole, and
+  later, smaller sections are still considered, so a single long section does
+  not take the rest of the file down with it.
+- If nothing of the repository's text fits, the block is the header, the
+  precedence statement and a whole-file warning — never a fragment.
+
+When anything was dropped, a one-line warning follows the precedence statement
+and precedes the surviving rules, so the agent reads it first:
+
+```
+> ⚠️ AGENTS.md exceeded 8192 bytes; 2 section(s) omitted (9114 bytes): "Style guide", "skill: release-notes" — read AGENTS.md in the repository root for the full instructions before you start.
+```
+
+The scheduler logs the same facts at warn
+(`agentsmd: AGENTS.md exceeded the injection cap; sections dropped whole`,
+with `cap_bytes`, `omitted_sections`, `omitted_bytes`, `whole_file`) so the
+repo owner learns the file outgrew the cap from the log, not from an agent that
+missed a rule. The fix on the repo side is to shorten `AGENTS.md` or move
+reference material to a linked file; on the hive side, raise the cap:
+
+```yaml
+project:
+  checkouts_dir: /data/checkouts
+  agents_md_max_bytes: 16384   # 0 = default 8192; values under 2048 are raised
+```
 
 ### The precedence statement
 
-The block leads with a declaration that the repository's instructions **outrank
-hive's own defaults** on any conflict — the branch a PR targets, the title
-format, commit conventions, test commands, review etiquette
-([#7159](https://github.com/hivecommons/hive/issues/7159)).
+The block leads with a one-sentence declaration that the repository's
+instructions **outrank hive's own defaults** on any conflict — the branch a PR
+targets, the title format, commit conventions, test commands, review etiquette
+([#7159](https://github.com/hivecommons/hive/issues/7159)) — with the two
+carve-outs below stated in the same sentence. It was a ~1.1 KB paragraph until
+[#12129](https://github.com/hivecommons/hive/issues/12129) shortened it; every
+clause the precedence tests pin is still there, it just no longer re-argues its
+own rationale on every kick (that lives here and in the source comment).
 
 This is not decoration. Before it, the repo's rules arrived as undifferentiated
 prose under a bare header, while hive's own prompts stated the same subjects as

@@ -174,13 +174,21 @@ var yourTurnPageConsts = []string{
 func yourTurnPageScript(t *testing.T, skip map[string]bool, body string, roots ...string) string {
 	t.Helper()
 	page := yourTurnPage(t)
+	// The label-filter strip (hf*, #12172) lives inside every repo card but
+	// is its own DOM-free module with its own node test; stub it here so the
+	// your-turn closure does not pull in its store and editor state.
+	skipAll := map[string]bool{"hfRepoSectionHtml": true, "hfRenderEditor": true, "hfRenderPinned": true, "hfRenderCrossRepo": true}
+	for k, v := range skip {
+		skipAll[k] = v
+	}
 	var script strings.Builder
 	script.WriteString(yourTurnFakeBrowser)
+	script.WriteString("function hfRepoSectionHtml() { return ''; } function hfRenderEditor() {} function hfRenderPinned() {} function hfRenderCrossRepo() {}\n")
 	for _, src := range page.consts {
 		script.WriteString(src)
 		script.WriteByte('\n')
 	}
-	script.WriteString(jsClosure(t, page.html, page.defined, skip, roots...))
+	script.WriteString(jsClosure(t, page.html, page.defined, skipAll, roots...))
 	script.WriteString("\n")
 	script.WriteString(body)
 	return script.String()
@@ -520,7 +528,7 @@ renderRepos(window._lastStatus.repos);
 let row = parkedRow(els['repos'].innerHTML);
 assert.match(row, /data-action="planIssue"/, 'plan affordance');
 assert.match(row, /data-action="designIssue" data-arg-types="t"/, 'design affordance');
-assert.match(row, /aria-label="Linked pull request #4"/, 'linked-PR affordance');
+assert.match(row, /aria-label="closes via PR #4"/, 'linked-PR affordance (#12144 glyph)');
 assert.match(row, /repo-issue-pill repo-pill-main waiting stale/, 'stale dimming');
 assert.match(row, /repo-pill-status repo-issue-pill waiting stale/);
 assert.match(row, />decision</, 'the chip word is unchanged');

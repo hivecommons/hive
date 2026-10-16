@@ -10361,6 +10361,9 @@
                   "intentEnforce": {
                     "type": "boolean"
                   },
+                  "intentShadow": {
+                    "type": "boolean"
+                  },
                   "intentAlignmentModel": {
                     "type": "string"
                   },
@@ -24148,6 +24151,96 @@
         }
       }
     },
+    "/api/evidence/write-counters": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Durable attempted vs blocked agent write counters",
+        "description": "Owner or merger role. Serves the proxy's persisted agent write counters (/var/run/hive-metrics/write-counters.json, #12069): cumulative totals keyed by intent tier (ACMM mode) with blocked counts by refusal reason, plus a weekly series keyed by the UTC Monday of each ISO week. Observation only; nothing here gates a write or a merge. Returns empty totals and weeks when the file does not exist yet.",
+        "responses": {
+          "200": {
+            "description": "Durable write counters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "totals": {
+                      "type": "object",
+                      "description": "Intent tier (ACMM mode) -> cumulative counts.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "attempted": {
+                            "type": "integer"
+                          },
+                          "blocked": {
+                            "type": "integer"
+                          },
+                          "blocked_by_reason": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "integer"
+                            },
+                            "description": "Blocked count keyed by the machine-readable DenyReason* code."
+                          }
+                        }
+                      }
+                    },
+                    "weeks": {
+                      "type": "object",
+                      "description": "UTC Monday (YYYY-MM-DD) -> counts for that ISO week.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "attempted": {
+                            "type": "integer"
+                          },
+                          "blocked": {
+                            "type": "integer"
+                          },
+                          "tiers": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "attempted": {
+                                  "type": "integer"
+                                },
+                                "blocked": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          },
+                          "blocked_by_reason": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller lacks the owner or merger role"
+          },
+          "500": {
+            "description": "Counters file unreadable or corrupt"
+          }
+        }
+      }
+    },
     "/api/review/pipeline": {
       "get": {
         "tags": [
@@ -27189,6 +27282,98 @@
         }
       }
     },
+    "/api/launch-cost": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get per-issue / PR / head-SHA launch cost attribution",
+        "description": "Returns the cached launch-cost collector snapshot: token spend joined against the issue, PR, and head SHA each governor or review-swarm kick was launched for (#12128). by_ref carries a repeat-spend `launches` counter, distinct `head_shas`, undivided `launch_*` totals and even-split `share_*` figures per work item; by_launch lists each delivered kick. Mandatory `unattributed` and `backend_unsupported` buckets keep the sum equal to total_tokens. Attribution only — never a budget gate. Reports ready=false with empty lists (never a fabricated $0.00) before the collector's first tick.",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "query",
+            "required": false,
+            "description": "Narrow by_ref and by_launch to one work key such as owner/repo#123; totals stay whole-window.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "launchCostResponse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ready": {
+                      "type": "boolean"
+                    },
+                    "phase": {
+                      "type": "string"
+                    },
+                    "by_launch": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "by_ref": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "unattributed": {
+                      "type": "object"
+                    },
+                    "backend_unsupported": {
+                      "type": "object"
+                    },
+                    "total_usd": {
+                      "type": "number"
+                    },
+                    "attributed_tokens": {
+                      "type": "integer"
+                    },
+                    "total_tokens": {
+                      "type": "integer"
+                    },
+                    "launches_retained": {
+                      "type": "integer"
+                    },
+                    "window_hours": {
+                      "type": "integer"
+                    },
+                    "ownership_hours": {
+                      "type": "integer"
+                    },
+                    "price_table_date": {
+                      "type": "string"
+                    },
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "limitations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "collected_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/repos/pause": {
       "post": {
         "tags": [
@@ -28488,6 +28673,162 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/widget/summary": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get the read-only phone widget summary",
+        "description": "Everything the iPhone widget renders in one call: eval history for the sparklines and each agent's name and state. Besides the normal dashboard credentials, accepts the hive's read-only widget token in the X-Hive-Widget-Token header; that token authenticates this operation only.",
+        "responses": {
+          "200": {
+            "description": "Widget summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "hiveId": {
+                      "type": "string"
+                    },
+                    "history": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "agents": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid or revoked credentials"
+          }
+        }
+      }
+    },
+    "/api/widget/token": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Get read-only widget token state",
+        "description": "Owner only. Reports whether a read-only widget token exists and when it was created. Never returns the token.",
+        "responses": {
+          "200": {
+            "description": "Widget token state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "configured": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "createdBy": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a verified owner"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Mint the read-only widget token",
+        "description": "Owner only. Creates a new read-only widget token, replacing any previous one, and returns it once together with a scriptable:// setup link and a QR code (PNG data URL) of that link. Only the token's SHA-256 is stored.",
+        "responses": {
+          "200": {
+            "description": "Minted token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "token": {
+                      "type": "string"
+                    },
+                    "hiveUrl": {
+                      "type": "string"
+                    },
+                    "setupUrl": {
+                      "type": "string"
+                    },
+                    "qrDataUrl": {
+                      "type": "string"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a verified owner"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Revoke the read-only widget token",
+        "description": "Owner only. Deletes the widget token; widgets using it stop updating. Idempotent.",
+        "responses": {
+          "200": {
+            "description": "Revocation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "revoked": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not a verified owner"
           }
         }
       }

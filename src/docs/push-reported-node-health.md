@@ -8,6 +8,28 @@ both:
   the hub's `/data/saas/clusters.json` entry, such as `vllm-d`
 - read-only cluster-scoped access to core Nodes and NodeMetrics
 
+## Cluster identity: delivered by the hub
+
+Spokes do not need a manual cluster id. When a spoke's heartbeat reports no
+`cluster_id`, the hub answers with the `cluster_id` it records for that hive
+(its SaaS `meta.json`). The spoke adopts it only when its own `hub.cluster_id`
+is empty — a value from `hive.yaml` or `HIVE_CLUSTER_ID` is never overridden —
+persists it as `hub.cluster_id` in `hive.yaml` so it survives restarts, and
+attaches `cluster_health` from the next beat. This covers spokes provisioned
+before the template rendered `hub.cluster_id` / `HIVE_CLUSTER_ID` (#11432),
+including `pull_only` clusters whose Deployments the hub cannot re-render. The
+spoke must run a build that includes heartbeat-delivered cluster ids.
+
+## Node RBAC: one-time cluster-admin step
+
+The hub cannot grant Node read access; that needs a cluster-admin on the remote
+cluster. Each spoke's `cluster_health` carries `node_rbac`: `ok` when listing
+`/api/v1/nodes` succeeded, `forbidden` on HTTP 403. The hub surfaces it per
+cluster as `node_rbac` in the cluster-health API, and a forbidden verdict (or,
+from older spokes, a `node_health_error` naming a 403 on `/api/v1/nodes`)
+replaces the generic note with "node RBAC missing — … apply
+src/docs/push-reported-node-health.md".
+
 For an existing vLLM-d hosted spoke namespace, an operator with cluster-admin on
 vLLM-d can apply the one-time fix below. Replace `NS` if needed; repeat for each
 hosted namespace on the cluster. Do not grant `nodes/proxy` or cluster-wide
@@ -25,7 +47,9 @@ metadata:
   name: hive-node-health-reader-${NS}
 rules:
 - apiGroups: [""]
-  resources: ["nodes"]
+  # nodes: capacity/conditions; nodes/proxy: kubelet stats/summary for disk;
+  # pods (cluster-wide list): per-node running-pod counts. All read-only.
+  resources: ["nodes", "nodes/proxy", "pods"]
   verbs: ["get", "list"]
 - apiGroups: ["metrics.k8s.io"]
   resources: ["nodes"]
@@ -47,6 +71,10 @@ YAML
 kubectl --context vllm-d -n "${NS}" set env deploy/hive HIVE_CLUSTER_ID="${CLUSTER_ID}"
 kubectl --context vllm-d -n "${NS}" rollout restart deploy/hive
 ```
+
+The `set env` / `rollout restart` lines are only needed for spokes on builds
+that predate heartbeat-delivered cluster ids; current spokes learn the id from
+the hub, and the RBAC grant alone is enough.
 
 On OpenShift clusters where `metrics.k8s.io` is served by the monitoring stack,
 the NodeMetrics list can require an additional operator-managed monitoring

@@ -89,7 +89,8 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 		s.logger.Warn("agentsmd: parse failed, skipping injection", "root", repoRoot, "error", err)
 		return ""
 	}
-	section := cfg.InjectionText(nil)
+	capBytes := s.agentsMdMaxBytes()
+	section, omitted := cfg.Render(nil, capBytes)
 	if section == "" {
 		// The silent half of kubestellar/hive#5227: a wired root holding no
 		// AGENTS.md produced exactly the same nothing as an unwired scheduler,
@@ -102,7 +103,24 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 		"requested_skills", len(cfg.RequestedSkills),
 		"chars", len(section),
 	)
+	if omitted.Any() {
+		// The kick carries its own warning line; this is the operator-side
+		// half, so the repo owner learns the file outgrew the cap from the log
+		// rather than from an agent that missed a rule (#12129).
+		s.logger.Warn("agentsmd: AGENTS.md exceeded the injection cap; sections dropped whole",
+			"root", repoRoot, "cap_bytes", capBytes, "whole_file", omitted.WholeFile,
+			"omitted_sections", omitted.Sections, "omitted_bytes", omitted.Bytes)
+	}
 	return section
+}
+
+// agentsMdMaxBytes is project.agents_md_max_bytes, or zero for the agentsmd
+// default when no config is loaded.
+func (s *Scheduler) agentsMdMaxBytes() int {
+	if s.cfg == nil {
+		return 0
+	}
+	return s.cfg.Project.AgentsMdMaxBytes
 }
 
 // skillsRegistryDir is the host-local directory the skill registry is loaded
@@ -260,9 +278,18 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 		scope = &agentScope
 	}
 	primed := primer.PrimeScoped(context.Background(), scope, nil, keywords)
-	result := primed.FormatForPrompt()
+	result, omitted := primed.Render()
 	if result != "" {
-		s.logger.Info("knowledge primer: injecting facts into kick", "facts", len(primed.Facts), "chars", len(result))
+		s.logger.Info("knowledge primer: injecting facts into kick",
+			"facts", len(primed.Facts)-omitted.Facts, "chars", len(result))
+	}
+	if omitted.Any() {
+		// The render carries its own marker; this is the operator-side half so
+		// a cap that is too tight for the vault shows up in logs, not only in
+		// a kick transcript (#12124).
+		s.logger.Warn("knowledge primer: dropped facts over the byte cap",
+			"omitted_facts", omitted.Facts, "omitted_hints", omitted.Hints,
+			"omitted_bytes", omitted.Bytes, "cap_bytes", primed.MaxBytes)
 	}
 	return result
 }

@@ -136,10 +136,10 @@ func writeLinkPreview(w http.ResponseWriter) {
 	previewHTML := `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
 <title>Hive — AI agents that maintain your repo</title>
-<meta name="description" content="Hive — the AI maintainer you own outright. AI agents triage issues, write fixes, patch CVEs, and merge on green behind six autonomy levels.">
+<meta name="description" content="Hive is a co-maintainer system for your GitHub projects: AI agents (Claude, Copilot, Codex, Antigravity, Goose) do the chores. You decide how much they may do.">
 <meta property="og:site_name" content="Hive">
 <meta property="og:title" content="Hive — AI agents that maintain your repo">
-<meta property="og:description" content="Put your repo on autopilot. Hive runs a fleet of AI agents on your backlog behind six autonomy levels — test coverage earns the confidence to raise a level, and you (the admin) choose when to raise it.">
+<meta property="og:description" content="A co-maintainer that never sleeps. Hive sends AI coding agents to the work that piles up in your repo, under six trust levels (ACMM L1 advise-only → L6 merge on green CI). Humans keep every decision that matters.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="` + publicURL + `">
 <meta property="og:image" content="` + publicURL + `/og-card.png">
@@ -149,7 +149,7 @@ func writeLinkPreview(w http.ResponseWriter) {
 <meta property="og:image:alt" content="Hive — AI agents that maintain your repo">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Hive — AI agents that maintain your repo">
-<meta name="twitter:description" content="Put your repo on autopilot. AI agents on your backlog behind six autonomy levels.">
+<meta name="twitter:description" content="A co-maintainer that never sleeps. Governed AI coding agents work your repo; you decide how much they may do.">
 <meta name="twitter:image" content="` + publicURL + `/og-card.png">
 </head><body>
 <h1>Hive</h1>

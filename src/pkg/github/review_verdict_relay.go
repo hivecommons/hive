@@ -264,7 +264,15 @@ type verdictAuditEntry struct {
 }
 
 func auditAuthorAgentForPR(repo string, number int, path string, since time.Time) string {
-	var authorAgent string
+	return auditAuthorMetaForPR(repo, number, path, since).Agent
+}
+
+// auditAuthorMetaForPR is the launch metadata (agent, backend, model) of the
+// agent_pr_created audit entry for repo#number: the same InvocationMeta the
+// PR's attribution trailer was rendered from. Agent is empty when no hive
+// agent opened the PR.
+func auditAuthorMetaForPR(repo string, number int, path string, since time.Time) InvocationMeta {
+	var author InvocationMeta
 	exactMatch := false
 	for _, auditFile := range verdictAuditLogFiles(path) {
 		data, err := readVerdictAuditLogFile(auditFile)
@@ -292,16 +300,35 @@ func auditAuthorAgentForPR(repo string, number int, path string, since time.Time
 			}
 			switch verdictRepoMatchRank(entryRepo, repo) {
 			case 2:
-				authorAgent = entry.Agent
+				author = auditPRDetailMeta(entry)
 				exactMatch = true
 			case 1:
 				if !exactMatch {
-					authorAgent = entry.Agent
+					author = auditPRDetailMeta(entry)
 				}
 			}
 		}
 	}
-	return authorAgent
+	return author
+}
+
+// auditPRDetailMeta reads the backend and model pairs InvocationMeta.AuditDetail
+// wrote into an agent_pr_created entry's detail.
+func auditPRDetailMeta(entry verdictAuditEntry) InvocationMeta {
+	m := InvocationMeta{Agent: strings.TrimSpace(entry.Agent)}
+	for _, part := range strings.Split(entry.Detail, ",") {
+		k, v, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "backend":
+			m.Backend = strings.TrimSpace(v)
+		case "model":
+			m.Model = strings.TrimSpace(v)
+		}
+	}
+	return m
 }
 
 func verdictAuditLogFiles(filePath string) []string {

@@ -79,6 +79,7 @@ func FetchDocumentFacts(ctx context.Context, cfg DocSourceConfig, knowledgeDir, 
 		if fetchErr != nil {
 			return nil, "", fmt.Errorf("fetching Context7 docs: %w", fetchErr)
 		}
+		logContext7Omitted(logger, cfg.Context7ID, result.Omitted)
 		content = []byte(result.Content)
 		contentType = "text/plain"
 	case cfg.URL != "":

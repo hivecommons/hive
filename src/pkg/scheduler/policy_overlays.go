@@ -62,12 +62,8 @@ Before choosing work:
    human review before the hold is lifted again.
 5. Make each new PR title and body name the exact files/functions/cluster it
    claims so the next kick can make the same comparison.
-
 `
-	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
-		return message[:newline+1] + "\n" + section + message[newline+1:]
-	}
-	return section + message
+	return appendKickSection(message, section)
 }
 
 func (s *Scheduler) isHoldGatedPRAgent(agentName string) bool {
@@ -132,12 +128,8 @@ When a fix belongs in a workflow file:
 
 Everything else is pushable as normal, including composite actions under
 ` + "`.github/actions/`" + ` — GitHub's restriction covers the workflows directory only.
-
 `
-	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
-		return message[:newline+1] + "\n" + section + message[newline+1:]
-	}
-	return section + message
+	return insertAfterKickHeader(message, section)
 }
 
 // agentEffectiveMode returns the agent's configured mode, preferring the
@@ -184,9 +176,9 @@ const (
 	redPRFixExcerptRunes = 400
 )
 
-// addRedPRFixFirst prepends a fix-before-new section listing the agent's OWN
-// red-CI or conflicted PRs, with the failing checks and raw CI evidence, right
-// below the kick header. It reads ci-failing.json (written by writeMergeEligible each
+// addRedPRFixFirst appends a fix-before-new section listing the agent's OWN
+// red-CI or conflicted PRs, with the failing checks and raw CI evidence, in
+// the dynamic tail of the kick (see kick_layout.go). It reads ci-failing.json (written by writeMergeEligible each
 // eval tick), which attributes each PR to the agent whose relay request opened
 // it. Unattributed rows default to scanner — the fleet's primary PR creator.
 // Escalated (needs-human) PRs are never listed: they belong to a human.
@@ -202,12 +194,7 @@ func (s *Scheduler) addRedPRFixFirst(agentName string, message string) string {
 	if section == "" {
 		return message
 	}
-	// Insert directly after the "[agent:x]" header line when present, so the
-	// section is the first thing the agent reads; otherwise prefix.
-	if idx := strings.Index(message, "\n"); idx >= 0 && strings.HasPrefix(message, "[agent:") {
-		return message[:idx+1] + section + message[idx+1:]
-	}
-	return section + message
+	return appendKickSection(message, section)
 }
 
 // heldRedPRNote is appended to a held PR's entry in the fix-before-new
@@ -365,10 +352,9 @@ var reviewThreadsPath = github.ReviewThreadsPath
 // the bot's finding. It reads review-threads.json (written by the governor's
 // eval tick), which — exactly like ci-failing.json — attributes each PR to the
 // agent whose relay request opened it; unattributed rows default to scanner.
-// Escalated (needs-human) PRs are never listed. Inserted at the same
-// below-the-header seam as the red-CI block (which runs first, so this block
-// lands directly above it) so the two stuck-PR lists sit together at the top
-// of the kick, ahead of the work list.
+// Escalated (needs-human) PRs are never listed. Appended to the dynamic tail
+// directly after the red-CI block (kick_layout.go) so the two stuck-PR lists
+// sit together.
 func (s *Scheduler) addReviewThreadFixFirst(agentName string, message string) string {
 	if message == "" || !s.isPRCapableAgent(agentName) {
 		return message
@@ -381,10 +367,7 @@ func (s *Scheduler) addReviewThreadFixFirst(agentName string, message string) st
 	if section == "" {
 		return message
 	}
-	if idx := strings.Index(message, "\n"); idx >= 0 && strings.HasPrefix(message, "[agent:") {
-		return message[:idx+1] + section + message[idx+1:]
-	}
-	return section + message
+	return appendKickSection(message, section)
 }
 
 // reviewBotsResolveAfterFix reads classification.review_bots.resolve_after_fix
@@ -598,7 +581,7 @@ func (s *Scheduler) addIndependentReviewSection(agentName, msg string) string {
 		return msg
 	}
 	if section := s.independentReviewSection(agentName); section != "" && !strings.Contains(msg, "## Independent review") {
-		return section + "\n\n" + msg
+		return insertAfterKickHeader(msg, section)
 	}
 	return msg
 }

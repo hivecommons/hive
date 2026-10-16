@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -151,6 +152,15 @@ type ReviewConfig struct {
 	// expensive part of a review (reading the diff and the surrounding tree)
 	// is done once instead of five times. The verdicts stay separate, so any
 	// single perspective can still withhold approval.
+	//
+	// Recommended on, but deliberately NOT default-on (hivecommons/hive#12126,
+	// decision recorded here and in docs/review-swarm.md): a plain bool's
+	// zero value is the dashboard toggle's "off", the relay derives its
+	// per-head review quota from this flag, combined dispatch sends one
+	// reviewer (not the fan-out set), and a single schema slip in a combined
+	// verdict discards every perspective at once. Flipping the zero value
+	// would change all of that under running hives mid-cycle. Operators opt
+	// in explicitly; the example config and docs promote it.
 	CombinedPerspectives bool `yaml:"combined_perspectives,omitempty" json:"combined_perspectives,omitempty"`
 	// MaxReviewsPerHead caps how many top-level hive reviews one PR head may
 	// receive before the relay refuses further ones (revisions and thread
@@ -213,6 +223,20 @@ type ReviewConfig struct {
 	// Only repos in ReviseRepos are eligible, so this cannot re-post anywhere
 	// the hive has not been granted the quieter in-place path.
 	ReviseVerdictsBefore string `yaml:"revise_verdicts_before,omitempty" json:"revise_verdicts_before,omitempty"`
+	// PendingTTL is how long a dispatched review may go without a verdict
+	// before its dispatch record expires and the perspectives are asked
+	// again (Go duration string, default DefaultPendingReviewTTL). A reviewer
+	// kick turn that dies — model timeout, proxy read timeout, pod restart —
+	// posts no verdict, and before this the pending record made every
+	// perspective look covered until someone pushed a new commit
+	// (hivecommons/hive#12045). "0" or unset means the default; a negative
+	// value disables expiry.
+	PendingTTL string `yaml:"pending_ttl,omitempty" json:"pending_ttl,omitempty"`
+	// MaxRedispatch caps how many times one PR head's pending reviews may
+	// expire before the planner stops re-kicking and records a requires_human
+	// hold (reason prefix review-dispatch-exhausted). 0 means
+	// DefaultMaxRedispatch.
+	MaxRedispatch int `yaml:"max_redispatch,omitempty" json:"max_redispatch,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the
@@ -390,12 +414,31 @@ type AutoMergeConfig struct {
 	// (`trusted_bot_authors: []`) disables the lane. Matched case-insensitively
 	// by exact login, e.g. "dependabot[bot]".
 	TrustedBotAuthors []string `yaml:"trusted_bot_authors,omitempty" json:"trusted_bot_authors,omitempty"`
+	// BotTakeover lets the sweep re-author a trusted `github-actions[bot]` PR
+	// whose required `pull_request` checks can never run because the bot
+	// opened it with a workflow GITHUB_TOKEN (#12003). The App pushes the
+	// same change as one signed-off commit to `hive/takeover-<n>`, opens a PR
+	// that supersedes the bot PR, and closes the bot PR. It applies only when
+	// github-actions[bot] is in TrustedBotAuthors.
+	BotTakeover BotTakeoverAutoMergeConfig `yaml:"bot_takeover,omitempty" json:"bot_takeover,omitempty"`
 	// TrustedAuthors enables a separate, default-off sweep for human-authored
 	// PRs whose AUTHOR already holds merge authority. Unlike the App
 	// self-authored lane, this never bypasses to create new authority: the
 	// author must be in authorized_users at the configured role, and by default
 	// GitHub must also report push/maintain/admin permission on the repository.
 	TrustedAuthors TrustedAuthorAutoMergeConfig `yaml:"trusted_authors,omitempty" json:"trusted_authors,omitempty"`
+	// ContributorLane merges PRs that THIS hive's contributor lane produced
+	// for a contributor it dispatched (the linked issue carries the hive's
+	// own `hive:claim kind=contributor` marker naming the PR author and this
+	// hive) once CI is green, the reviewer verdict approves and the head has
+	// soaked. Default ON: the maintainer already trusted the hive to hand the
+	// work out, so a green hive-produced PR waiting for a manual `/lgtm` is
+	// the stall the lane exists to remove (#11756, #11840 sat green for hours
+	// as `untrusted-author-role` / `not-app-authored`). The claim alone only
+	// proves a lease, so the tier also requires the marker's contributor to
+	// hold an operator-granted tier (require_tiers) and a GitHub login proven
+	// against GitHub (#12041); everyone else's PRs wait for a human.
+	ContributorLane ContributorLaneAutoMergeConfig `yaml:"contributor_lane,omitempty" json:"contributor_lane,omitempty"`
 	// HumanMergePaths maps owner/repo to glob patterns (same syntax as
 	// intent.guardrail_path_patterns) for paths a person must merge. Unset
 	// means no such paths. This key only declares the paths; enforcement
@@ -423,12 +466,173 @@ type AutoMergeRepoConfig struct {
 	RequiredChecks []string `yaml:"required_checks,omitempty" json:"required_checks,omitempty"`
 }
 
+// BotTakeoverAutoMergeConfig is auto_merge.bot_takeover.*.
+type BotTakeoverAutoMergeConfig struct {
+	// Enabled turns the takeover on. nil/unset means ON; an explicit
+	// `enabled: false` disables it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+func (b BotTakeoverAutoMergeConfig) IsEnabled() bool {
+	return b.Enabled == nil || *b.Enabled
+}
+
 type TrustedAuthorAutoMergeConfig struct {
 	Enabled                 bool     `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Repos                   []string `yaml:"repos,omitempty" json:"repos,omitempty"`
 	RequireRole             string   `yaml:"require_role,omitempty" json:"require_role,omitempty"`
 	RequireGitHubPermission *bool    `yaml:"require_github_permission,omitempty" json:"require_github_permission,omitempty"`
 	ExcludeLabels           []string `yaml:"exclude_labels,omitempty" json:"exclude_labels,omitempty"`
+}
+
+// ContributorLaneAutoMergeConfig is the policy for the contributor-lane
+// auto-merge tier (auto_merge.contributor_lane.*). Every field is optional;
+// the zero value is the default-on policy described on each field.
+type ContributorLaneAutoMergeConfig struct {
+	// Enabled turns the tier on. nil/unset means ON (see
+	// AutoMergeConfig.ContributorLane for why the default is on); an explicit
+	// `enabled: false` disables it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// SoakMinutes is how long the head SHA must stay unchanged and green
+	// before the tier merges. 0/unset means DefaultContributorLaneSoakMinutes.
+	SoakMinutes int `yaml:"soak_minutes,omitempty" json:"soak_minutes,omitempty"`
+	// RequireReviewerVerdict requires an approving aggregate reviewer verdict
+	// for the current head whenever a reviewer agent is enabled. nil/unset
+	// means ON. A hive with no reviewer agent satisfies the gate vacuously.
+	RequireReviewerVerdict *bool `yaml:"require_reviewer_verdict,omitempty" json:"require_reviewer_verdict,omitempty"`
+	// Repos restricts the tier to these repositories (bare name or
+	// owner/repo). Empty means every watched repository.
+	Repos []string `yaml:"repos,omitempty" json:"repos,omitempty"`
+	// ExcludeLabels keeps a PR out of the tier. nil means
+	// DefaultContributorLaneExcludeLabels.
+	ExcludeLabels []string `yaml:"exclude_labels,omitempty" json:"exclude_labels,omitempty"`
+	// RequireTiers lists the contributor trust tiers whose claimed PRs the
+	// tier may merge; the tier= stamped on the hive:claim marker must be one
+	// of them. nil/empty means DefaultContributorLaneRequireTiers. Only
+	// operator-granted tiers are accepted (ContributorLaneGrantableTiers):
+	// newcomer and contributor are reached by self-registration and
+	// automatic promotion, so they never confer unattended merge.
+	RequireTiers []string `yaml:"require_tiers,omitempty" json:"require_tiers,omitempty"`
+	// RegistryTiersSufficient admits a PR whose author holds a RequireTiers
+	// tier in this hive's contributor registry (the operator-set trust tier
+	// on the contributor profile) without a linked issue or hive:claim
+	// marker. nil/unset means ON. With it off, only the claim-marker path
+	// admits a PR, so a trusted contributor's PR that references rather
+	// than closes its issue, or was claimed outside the relay, waits for a
+	// human (`contributor-lane:no-linked-issue` / `no-claim`).
+	RegistryTiersSufficient *bool `yaml:"registry_tiers_sufficient,omitempty" json:"registry_tiers_sufficient,omitempty"`
+}
+
+// DefaultContributorLaneRequireTiers is the contributor-lane tier allow-list
+// when auto_merge.contributor_lane.require_tiers is unset.
+var DefaultContributorLaneRequireTiers = []string{"trusted", "merger"}
+
+// ContributorLaneGrantableTiers are the contributor trust tiers only an
+// operator can grant, and so the only values require_tiers accepts.
+var ContributorLaneGrantableTiers = []string{"trusted", "merger", "advisor"}
+
+// DefaultContributorLaneSoakMinutes is the contributor-lane soak when
+// auto_merge.contributor_lane.soak_minutes is unset: two hours of unchanged,
+// green head gives a maintainer who does want to look a realistic window.
+const DefaultContributorLaneSoakMinutes = 120
+
+// DefaultContributorLaneExcludeLabels is the contributor-lane exclude set when
+// auto_merge.contributor_lane.exclude_labels is unset.
+var DefaultContributorLaneExcludeLabels = []string{"hold", "do-not-merge", "needs-human", "blocked", "needs-rebase"}
+
+func (c ContributorLaneAutoMergeConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+func (c ContributorLaneAutoMergeConfig) EffectiveSoakMinutes() int {
+	if c.SoakMinutes <= 0 {
+		return DefaultContributorLaneSoakMinutes
+	}
+	return c.SoakMinutes
+}
+
+func (c ContributorLaneAutoMergeConfig) EffectiveRequireReviewerVerdict() bool {
+	return c.RequireReviewerVerdict == nil || *c.RequireReviewerVerdict
+}
+
+// EffectiveRegistryTiersSufficient reports whether a RequireTiers tier in
+// the contributor registry admits a PR without a claim marker (default on).
+func (c ContributorLaneAutoMergeConfig) EffectiveRegistryTiersSufficient() bool {
+	return c.RegistryTiersSufficient == nil || *c.RegistryTiersSufficient
+}
+
+func (c ContributorLaneAutoMergeConfig) RepoSet() map[string]bool {
+	return repoListSet(c.Repos)
+}
+
+func (c ContributorLaneAutoMergeConfig) ExcludeLabelSet() map[string]bool {
+	labels := c.ExcludeLabels
+	if labels == nil {
+		labels = DefaultContributorLaneExcludeLabels
+	}
+	set := make(map[string]bool, len(labels))
+	for _, label := range labels {
+		label = strings.ToLower(strings.TrimSpace(label))
+		if label == "" {
+			continue
+		}
+		set[label] = true
+	}
+	return set
+}
+
+// RequireTierSet returns the normalized require_tiers set, falling back to
+// DefaultContributorLaneRequireTiers when none is configured.
+func (c ContributorLaneAutoMergeConfig) RequireTierSet() map[string]bool {
+	tiers := c.RequireTiers
+	set := make(map[string]bool, len(tiers))
+	for _, tier := range tiers {
+		tier = strings.ToLower(strings.TrimSpace(tier))
+		if tier != "" {
+			set[tier] = true
+		}
+	}
+	if len(set) == 0 {
+		for _, tier := range DefaultContributorLaneRequireTiers {
+			set[tier] = true
+		}
+	}
+	return set
+}
+
+// EffectiveRequireTiers returns RequireTierSet as a sorted list for display.
+func (c ContributorLaneAutoMergeConfig) EffectiveRequireTiers() []string {
+	set := c.RequireTierSet()
+	out := make([]string, 0, len(set))
+	for tier := range set {
+		out = append(out, tier)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IsContributorLaneGrantableTier reports whether tier is one an operator
+// must grant (see ContributorLaneGrantableTiers).
+func IsContributorLaneGrantableTier(tier string) bool {
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	for _, t := range ContributorLaneGrantableTiers {
+		if tier == t {
+			return true
+		}
+	}
+	return false
+}
+
+func (c ContributorLaneAutoMergeConfig) Validate() error {
+	if c.SoakMinutes < 0 {
+		return fmt.Errorf("auto_merge.contributor_lane.soak_minutes must be 0 (default) or greater, got %d", c.SoakMinutes)
+	}
+	for _, tier := range c.RequireTiers {
+		if !IsContributorLaneGrantableTier(tier) {
+			return fmt.Errorf("auto_merge.contributor_lane.require_tiers: %q is not an operator-granted tier (allowed: %s)", tier, strings.Join(ContributorLaneGrantableTiers, ", "))
+		}
+	}
+	return nil
 }
 
 // DefaultAutoMergeMinHeadAge is the fail-closed post-push quiet period used

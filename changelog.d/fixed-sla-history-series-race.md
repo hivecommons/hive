@@ -1,0 +1,1 @@
+- timeline: `SLAHistory.Series` read the per-repo day map outside the lock, racing concurrent `Update` (fixes #12077).

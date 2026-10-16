@@ -30,7 +30,7 @@ import (
 //     governor.claims is off — with it on, the ledger's 🔒 comment carries the
 //     same marker (ClaimComment includes at=);
 //   - removed by the pr-request watcher the moment a PR naming the issue
-//     opens (the PR-claim sync then mirrors `hive/covered-by-pr`), by the
+//     opens (the PR-claim sync then mirrors `🐝 covered by PR`), by the
 //     ledger release hook (claims on), and by the enumeration sweep when the
 //     marker has lapsed (agent TTL) or the issue carries PR evidence;
 //   - while present with a live marker the issue is withheld from every kick
@@ -227,7 +227,7 @@ func startedLabel(claim issueclaim.Claim) string {
 // pull request to the issue this cycle.
 func issueHasPREvidence(issue Issue) bool {
 	return len(issue.LinkedPRs) > 0 || issue.ClaimContext != nil ||
-		issueHasLabel(issue.Labels, CoveredByPRLabel) || issueHasLabel(issue.Labels, LikelyDoneLabel)
+		HasCoveredByPRLabel(issue.Labels) || issueHasLabel(issue.Labels, LikelyDoneLabel)
 }
 
 func (c *Client) removeInProgressLabel(ctx context.Context, issue *Issue, why string, logger *slog.Logger) {

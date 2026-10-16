@@ -186,6 +186,7 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		Required:                required,
 		RequiredKnown:           requiredKnown,
 		RequiredKnownFromConfig: fromConfig,
+		FailOnAnyFailedCheck:    true,
 		ExpectedChecks:          expected,
 		MinHeadAge:              c.configuredAutoMergeMinHeadAge(),
 		HeadPushedAt:            headPushedAt,

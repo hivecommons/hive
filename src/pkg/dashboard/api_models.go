@@ -143,10 +143,39 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 				resp["models"] = usable
 				resp["entitled"] = true
 				resp["entitledSource"] = source
+				// The FULL entitled set (not just its intersection with the
+				// catalog) so the agent config dialog can mark a stored model
+				// the gateway's team may not use (hivecommons/hive#9945).
+				resp["entitled_models"] = entitled
 			}
 		}
 	}
+	// What an agent on this backend uses when it names no model, so the
+	// dialog's "no per-agent model" option can say which model that is
+	// instead of the opaque "(from launch command)" (hivecommons/hive#9945).
+	if def := s.inferenceBackendDefaultModel(backend); def != "" {
+		resp["default_model"] = def
+	}
 	jsonResponse(w, resp)
+}
+
+// inferenceBackendDefaultModel is the model agents on backend use when they
+// select none: for the built-in litellm backend the default of whichever
+// source supplies the route (the same resolution the Test diagnostic prints),
+// for a named gateway its default_model. "" for vllm/llm-d (no default) and
+// when the server has no config.
+func (s *Server) inferenceBackendDefaultModel(backend string) string {
+	if s == nil || s.deps == nil || s.deps.Config == nil {
+		return ""
+	}
+	if strings.EqualFold(backend, config.GatewayKindLiteLLM) {
+		_, model, _ := resolveLiteLLMRouteForDiagnostic(s.deps.Config, config.GatewayKindLiteLLM)
+		return strings.TrimSpace(model)
+	}
+	if gw := s.deps.Config.Governor.ResolveGateway(backend); gw != nil {
+		return strings.TrimSpace(gw.DefaultModel)
+	}
+	return ""
 }
 
 // entitledModelsFor returns the entitled model set the proxy has learned for a

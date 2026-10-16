@@ -100,6 +100,13 @@ type Claim struct {
 	Session string `json:"session,omitempty"`
 	// Hive names the hive that recorded the claim, for the marker comment.
 	Hive string `json:"hive,omitempty"`
+	// Tier is a relay contributor's trust tier when the claim was taken; it
+	// is stamped as tier= in a contributor marker. Empty for other kinds.
+	Tier string `json:"tier,omitempty"`
+	// Verified records that the contributor had proven ownership of the
+	// GitHub login (reissue-token flow) when the claim was taken; stamped as
+	// verified= in a contributor marker.
+	Verified bool `json:"verified,omitempty"`
 	// ClaimedAt is when the current holder took the claim.
 	ClaimedAt time.Time `json:"claimed_at"`
 	// ExpiresAt is when the claim lapses unless renewed.
@@ -200,6 +207,9 @@ type Request struct {
 	HolderID string
 	Kind     Kind
 	Session  string
+	// Tier and Verified describe a relay contributor holder; see Claim.
+	Tier     string
+	Verified bool
 	// TTL overrides the ledger's default for the Kind. Zero means default;
 	// values above MaxTTL are clamped.
 	TTL time.Duration
@@ -451,6 +461,7 @@ func (l *Ledger) Claim(req Request) (Result, error) {
 		Repo: req.Repo, Issue: req.Issue,
 		Holder: req.Holder, HolderID: req.HolderID, Kind: req.Kind,
 		Session: req.Session, Hive: l.hive,
+		Tier: req.Tier, Verified: req.Verified,
 		ClaimedAt: now, ExpiresAt: now.Add(ttl),
 	}
 	prev, held := l.claims[key]

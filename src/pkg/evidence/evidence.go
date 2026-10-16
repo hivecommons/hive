@@ -37,6 +37,11 @@ const (
 )
 
 // Bundle is the review evidence record for a single PR head SHA.
+//
+// RevertOf and FollowupOf are the bundle ids of earlier merged PRs this PR
+// reverts or fixes up; RevertedBy and FollowedUpBy are the reverse links
+// written on those earlier bundles. They are a change-failure-rate proxy, not
+// a verdict on the change (hivecommons/hive#12067).
 type Bundle struct {
 	SchemaVersion    string            `json:"schema_version"`
 	ID               string            `json:"id"`
@@ -53,6 +58,11 @@ type Bundle struct {
 	Sentinel         []SentinelFinding `json:"sentinel,omitempty"`
 	HumanActions     []Action          `json:"human_actions,omitempty"`
 	Merge            *MergeEvent       `json:"merge,omitempty"`
+	RevertOf         []string          `json:"revert_of,omitempty"`
+	FollowupOf       []string          `json:"followup_of,omitempty"`
+	RevertedBy       []string          `json:"reverted_by,omitempty"`
+	FollowedUpBy     []string          `json:"followed_up_by,omitempty"`
+	Shadow           *Shadow           `json:"shadow,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 	Signed           bool              `json:"signed"`
@@ -60,10 +70,15 @@ type Bundle struct {
 	Signature        string            `json:"signature,omitempty"`
 }
 
-// Author identifies the PR author. Kind is one of human, agent or bot.
+// Author identifies the PR author. Kind is one of human, agent or bot. For
+// an agent-authored PR, Agent, Backend and Model are the launch metadata the
+// hive recorded when the agent opened it; empty when unknown.
 type Author struct {
-	Login string `json:"login"`
-	Kind  string `json:"kind"`
+	Login   string `json:"login"`
+	Kind    string `json:"kind"`
+	Agent   string `json:"agent,omitempty"`
+	Backend string `json:"backend,omitempty"`
+	Model   string `json:"model,omitempty"`
 }
 
 // Policy snapshots the review policy in force when the bundle was written.
@@ -136,6 +151,25 @@ type MergeEvent struct {
 	Method string    `json:"method"`
 	At     time.Time `json:"at"`
 	SHA    string    `json:"sha"`
+}
+
+// Shadow records what shadow-mode gates would have done for the head SHA.
+// It is pure recording: nothing reads it to decide a merge.
+type Shadow struct {
+	ReviewGate *ShadowGate `json:"review_gate,omitempty"`
+	Intent     *ShadowGate `json:"intent,omitempty"`
+}
+
+// ShadowGate is one shadow gate observation. ReviewGate sets WouldHaveHeld
+// and Intent sets WouldHaveBlocked; a false value is kept (the gate ran and
+// would not have acted), which is why they are pointers.
+type ShadowGate struct {
+	WouldHaveHeld    *bool     `json:"would_have_held,omitempty"`
+	WouldHaveBlocked *bool     `json:"would_have_blocked,omitempty"`
+	Reason           string    `json:"reason,omitempty"`
+	Tier             string    `json:"tier,omitempty"`
+	Confidence       float64   `json:"confidence"`
+	EvaluatedAt      time.Time `json:"evaluated_at"`
 }
 
 // BundleID returns the canonical bundle identifier owner/repo#number@head.
@@ -224,7 +258,43 @@ func (b *Bundle) Validate() error {
 	if m := b.Merge; m != nil && (m.Actor == "" || m.Method == "" || m.SHA == "") {
 		bad("merge: actor, method and sha are required")
 	}
+	if sh := b.Shadow; sh != nil {
+		if g := sh.ReviewGate; g != nil {
+			if g.WouldHaveHeld == nil || g.WouldHaveBlocked != nil {
+				bad("shadow.review_gate: exactly would_have_held is required")
+			}
+			validateShadowGate("shadow.review_gate", g, bad)
+		}
+		if g := sh.Intent; g != nil {
+			if g.WouldHaveBlocked == nil || g.WouldHaveHeld != nil {
+				bad("shadow.intent: exactly would_have_blocked is required")
+			}
+			validateShadowGate("shadow.intent", g, bad)
+		}
+	}
+	for _, l := range []struct {
+		name string
+		ids  []string
+	}{
+		{"revert_of", b.RevertOf}, {"followup_of", b.FollowupOf},
+		{"reverted_by", b.RevertedBy}, {"followed_up_by", b.FollowedUpBy},
+	} {
+		for i, id := range l.ids {
+			if id == "" {
+				bad("%s[%d]: bundle id is required", l.name, i)
+			}
+		}
+	}
 	return errors.Join(errs...)
+}
+
+func validateShadowGate(name string, g *ShadowGate, bad func(string, ...any)) {
+	if g.Confidence < 0 || g.Confidence > 1 {
+		bad("%s: confidence %v outside [0,1]", name, g.Confidence)
+	}
+	if g.EvaluatedAt.IsZero() {
+		bad("%s: evaluated_at is required", name)
+	}
 }
 
 // Canonical returns the deterministic JSON encoding of b: object keys sorted

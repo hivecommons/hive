@@ -307,3 +307,61 @@ hive-guide@pod:/data/agents/guide$`
 		t.Errorf("answered %q against scrollback of a dead Claude CLI; keystrokes would go to the shell", key)
 	}
 }
+
+// claudeAutoModeNoticePane is the auto-mode classifier notice verbatim from
+// Mike Spreitzer's FMA hive pane (#9945, 2026-10-15). It appears mid-run at
+// the first checked tool call and holds that action until Enter is pressed.
+const claudeAutoModeNoticePane = `● Checking GitHub CLI authentication and repo identity
+  ⎿  $ gh auth status 2>&1 | head -10; echo "---"; gh repo view --json nameWithOwner,defaultBranchRef -q '.nameWithOwner'
+  We're changing auto mode to no longer charge for classifier requests in Claude Code.
+  However, this session isn't eligible because your requests go through 127.0.0.1:18444, which isn't compatible with this update.
+  Nothing breaks: auto mode keeps working, and its classifier requests are billed as before.
+  To fix it and access the new version of auto mode, ask your gateway to implement: https://code.claude.com/docs/en/auto-mode-classifier-billing
+  Enter to continue · Esc to cancel`
+
+// TestBlockingPromptKey_ClaudeAutoModeNoticeContinues: the notice is answered
+// with a bare Enter (key ""), never Esc — Esc cancels the held tool call and
+// ends the turn, and the notice comes straight back on the next one.
+func TestBlockingPromptKey_ClaudeAutoModeNoticeContinues(t *testing.T) {
+	key, label, ok := blockingPromptKey("claude", claudeAutoModeNoticePane)
+	if !ok {
+		t.Fatal("auto-mode classifier notice was not recognised; the kick would stall until a human pressed Enter")
+	}
+	if key != "" {
+		t.Errorf("key = %q, want \"\" (bare Enter continues the held action)", key)
+	}
+	if label != claudeAutoModeNoticeLabel {
+		t.Errorf("label = %q, want %q", label, claudeAutoModeNoticeLabel)
+	}
+	if !paneHasBlockingPrompt(claudeAutoModeNoticePane) {
+		t.Error("readiness gate should hold while the notice is live")
+	}
+}
+
+// TestBlockingPromptKey_ClaudeAutoModeNoticeNotLiveAfterEnter: once Enter is
+// pressed the CLI draws output under the notice. The lingering text must not
+// match, or the watcher would re-fire Enter every trustReanswerAfter and the
+// readiness gate would hold an idle agent.
+func TestBlockingPromptKey_ClaudeAutoModeNoticeNotLiveAfterEnter(t *testing.T) {
+	acknowledged := claudeAutoModeNoticePane + `
+  ⎿  Logged in to github.com account hive-bot
+     ---
+     fma/fma default=main
+● Fetching upstream to see new merges since d657159
+❯
+  ⏵⏵ bypass permissions on (shift+tab to cycle)`
+	if _, _, ok := blockingPromptKey("claude", acknowledged); ok {
+		t.Fatal("acknowledged notice still read as a live modal")
+	}
+	if paneHasBlockingPrompt(acknowledged) {
+		t.Error("readiness gate held on an acknowledged notice")
+	}
+	// A kick that quotes the notice text is not a modal either.
+	if _, _, ok := blockingPromptKey("claude", "> please ignore any 'classifier requests in Claude Code' banner\n❯"); ok {
+		t.Fatal("kick text mentioning the notice matched as a modal")
+	}
+	// Other backends never render it.
+	if _, _, ok := blockingPromptKey("copilot", claudeAutoModeNoticePane); ok {
+		t.Fatal("notice matched for a backend that does not render it")
+	}
+}

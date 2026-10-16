@@ -10,6 +10,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -329,5 +330,61 @@ func TestDependabotRebaseNudgeDegradesOnAPIErrors(t *testing.T) {
 	}
 	if !c.rebaseNudged("acme", "widget", 23, "SHA23") {
 		t.Fatal("rebaseNudged = false after an attempted nudge")
+	}
+}
+
+// #12004: a trusted bot's head whose required context belongs to a workflow
+// that concluded `skipped` is not blocked on it; a never-scheduled context,
+// a non-bot author, and a fork-headed run still are.
+func TestTrySweepTrustedBotTreatsSkippedByDesignRequiredCheckAsSatisfied(t *testing.T) {
+	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
+	skippedRun := func(name, repo string) map[string]any {
+		return map[string]any{"id": 1, "name": name, "status": "completed", "conclusion": "skipped", "head_repository": map[string]any{"full_name": repo}}
+	}
+	for _, tc := range []struct {
+		name       string
+		author     string
+		runs       []map[string]any
+		wantBlock  bool
+		wantReason string
+	}{
+		{name: "skipped workflow", author: "dependabot[bot]", runs: []map[string]any{skippedRun("ci/build", "acme/widget")}},
+		{name: "no run for the context", author: "dependabot[bot]", runs: []map[string]any{skippedRun("other", "acme/widget")}, wantBlock: true},
+		{name: "fork-headed skipped run", author: "dependabot[bot]", runs: []map[string]any{skippedRun("ci/build", "mallory/widget")}, wantBlock: true},
+		// The App's own lane is not "trusted-bot", so the skipped run is not
+		// vouched for and the required context stays missing.
+		{name: "author not a trusted bot", author: testHiveAppBotLogin, runs: []map[string]any{skippedRun("ci/build", "acme/widget")}, wantBlock: true},
+		// A human author never reaches the check walk: the sweep rejects the
+		// PR as not its own before any required-context evaluation.
+		{name: "human author", author: "mallory", runs: []map[string]any{skippedRun("ci/build", "acme/widget")}, wantReason: "not-app-authored"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := missingRequiredPR(func(p *selfAuthoredPR) {
+				p.author = tc.author
+				p.updatedAt = now.Add(-2 * time.Hour).Format(time.RFC3339)
+				p.workflowRuns = tc.runs
+			})
+			var merged []int
+			api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{pr}, &merged)
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			c.trustedBotAuthors = func() map[string]bool { return map[string]bool{"dependabot[bot]": true} }
+			c.now = func() time.Time { return now }
+
+			_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 23, true)
+			if err != nil {
+				t.Fatalf("trySweepSelfAuthoredPR returned error: %v", err)
+			}
+			if tc.wantReason != "" {
+				if reason != tc.wantReason {
+					t.Fatalf("reason = %q, want %q", reason, tc.wantReason)
+				}
+				return
+			}
+			blocked := strings.HasPrefix(reason, "required-check-")
+			if blocked != tc.wantBlock {
+				t.Fatalf("reason = %q, blocked = %v, want blocked = %v", reason, blocked, tc.wantBlock)
+			}
+		})
 	}
 }

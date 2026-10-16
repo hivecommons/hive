@@ -184,6 +184,10 @@ type HeartbeatClusterHealthReport struct {
 	// NodeHealthError carries the spoke-side reason health is partial or
 	// absent, for example a missing metrics API or forbidden node list.
 	NodeHealthError string `json:"node_health_error,omitempty"`
+	// NodeRBAC is the spoke's verdict on its cluster-scoped Node read access:
+	// "ok" when listing /api/v1/nodes succeeded, "forbidden" on HTTP 403.
+	// Empty from spokes that predate the field (or on any other failure).
+	NodeRBAC string `json:"node_rbac,omitempty"`
 }
 
 type HeartbeatNodeMetric struct {
@@ -425,6 +429,7 @@ type HeartbeatResponse struct {
 	AuthorizedUserNames map[string]string         `json:"authorized_user_names,omitempty"`
 	ProjectConfig       *HeartbeatProjectConfig   `json:"project_config,omitempty"`
 	PendingGateway      *HeartbeatGatewayConfig   `json:"pending_gateway,omitempty"`
+	ClusterID           string                    `json:"cluster_id,omitempty"`
 	UpgradePolicy       *HeartbeatUpgradePolicy   `json:"upgrade_policy,omitempty"`
 	SigHiveID           string                    `json:"sig_hive_id,omitempty"`
 	SigSeq              int64                     `json:"sig_seq,omitempty"`
@@ -497,6 +502,13 @@ type HeartbeatUpgradePolicy struct {
 	// that cooldown.
 	CooldownSeconds int    `json:"cooldown_seconds,omitempty"`
 	NextEligibleAt  string `json:"next_eligible_at,omitempty"`
+	// ScheduledHoldReason is why the hub did not apply this hub-managed
+	// daily/weekly hive's upgrade while its window was open (#11196), and
+	// ScheduledHoldAt (RFC3339 UTC) is when that was first recorded. Omitted
+	// when nothing is being held, so a spoke can explain a missed window
+	// instead of only showing the previous upgrade.
+	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
+	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
 }
 
 type TaskStatusPayload struct {

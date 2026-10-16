@@ -56,7 +56,35 @@ type PullRequest struct {
 const (
 	// GroundingToolCallBudget caps repository investigation per perspective.
 	GroundingToolCallBudget = 25
+	// GroundingToolCallBudgetPerExtraPerspective is what each perspective
+	// beyond the first adds to a combined review's budget. The expensive
+	// reads — the diff, the touched files, their callers — happen once for
+	// the whole session, so an extra perspective costs a few targeted
+	// lookups, not another full pass (hivecommons/hive#12126).
+	GroundingToolCallBudgetPerExtraPerspective = 5
 )
+
+// Review-bot thread fetch page sizes (hivecommons/hive#12126). The reviewer
+// acts on the bot's finding (the first comment of each unresolved thread) and
+// needs to see whether anyone has already answered it; it does not act on a
+// twenty-reply back-and-forth, so fetching one is tokens spent on nothing.
+const (
+	// ReviewBotThreadPageSize is the reviewThreads(first:) page size. The
+	// command paginates, so this bounds the page, not the total.
+	ReviewBotThreadPageSize = 100
+	// ReviewBotThreadCommentsFetched is the comments(first:) bound per
+	// thread: the finding plus the first few replies.
+	ReviewBotThreadCommentsFetched = 5
+)
+
+// combinedGroundingBudget is the investigation budget for one session that
+// covers n perspectives.
+func combinedGroundingBudget(n int) int {
+	if n < 1 {
+		n = 1
+	}
+	return GroundingToolCallBudget + (n-1)*GroundingToolCallBudgetPerExtraPerspective
+}
 
 // groundingSection instructs the reviewer to read the actual tree, and it is
 // the single most important paragraph in this file.
@@ -95,6 +123,14 @@ const (
 // (pkg/github.redactedQuoteRefusal); this line is what keeps the reviewer from
 // writing one in the first place.
 func groundingSection(pr PullRequest) string {
+	return groundingSectionWithBudget(pr, GroundingToolCallBudget, "this perspective")
+}
+
+// groundingSectionWithBudget is groundingSection with the tool-call budget and
+// the scope it applies to spelled out, so a combined review can state one
+// budget for the whole session instead of repeating a per-perspective one
+// (hivecommons/hive#12126).
+func groundingSectionWithBudget(pr PullRequest, budget int, scope string) string {
 	var b strings.Builder
 	b.WriteString("\nGROUNDING — read the code, do not infer it.\n")
 	if pr.MergeBase != "" {
@@ -108,7 +144,7 @@ func groundingSection(pr PullRequest) string {
 	b.WriteString("- Prefer one verified finding over three plausible ones. Measured: reviewers that read the tree found 4x more real defects AND made 61% fewer false claims.\n")
 	b.WriteString("- If you cannot verify a concern, either state it as an explicit open question or leave it out. Do not assert it as a defect.\n")
 	b.WriteString("- MASKED TEXT IS NOT THE CODE. If a line you are reading has a credential-shaped literal replaced by [REDACTED], <redacted>, or a run of asterisks, a secret scrubber put it there — the file does not say that. Re-read the line from the repository before you quote it, and never report the mask itself as a defect.\n")
-	fmt.Fprintf(&b, "- Budget: up to %d investigation tool calls for this perspective.\n", GroundingToolCallBudget)
+	fmt.Fprintf(&b, "- Budget: up to %d investigation tool calls for %s.\n", budget, scope)
 	return b.String()
 }
 
@@ -307,7 +343,7 @@ func buildReviewBotFindingsInstruction(pr PullRequest, logins []string, minPrior
 	var b strings.Builder
 	b.WriteString("REVIEW-BOT FINDINGS — answer them before you judge.\n")
 	fmt.Fprintf(&b, "This hive treats these accounts as review bots: %s. Their unresolved inline threads on this PR are findings a maintainer reads next to your review, so a review that is silent about them is incomplete. Fetch them:\n", strings.Join(bots, ", "))
-	fmt.Fprintf(&b, "  gh api graphql --paginate -f owner=%s -f name=%s -F number=%d -f query='query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated path line comments(first:20){nodes{author{login} body url}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | sub(\"\\\\[bot\\\\]$\"; \"\")) as $a | [%s] | index($a))%s | {path, line, isOutdated, comments: [.comments.nodes[] | {author: .author.login, body, url}]}'\n", owner, name, pr.Number, strings.Join(quoted, ","), priorityFilter)
+	fmt.Fprintf(&b, "  gh api graphql --paginate -f owner=%s -f name=%s -F number=%d -f query='query($owner:String!,$name:String!,$number:Int!,$endCursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:%d,after:$endCursor){pageInfo{hasNextPage endCursor} nodes{isResolved isOutdated path line comments(first:%d){nodes{author{login} body url}}}}}}}' --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved | not) | select((.comments.nodes[0].author.login // \"\" | ascii_downcase | sub(\"\\\\[bot\\\\]$\"; \"\")) as $a | [%s] | index($a))%s | {path, line, isOutdated, comments: [.comments.nodes[] | {author: .author.login, body, url}]}'\n", owner, name, pr.Number, ReviewBotThreadPageSize, ReviewBotThreadCommentsFetched, strings.Join(quoted, ","), priorityFilter)
 	if priorityFilter != "" {
 		b.WriteString("The command applies the configured min_priority to Codex badges; unknown formats remain included. Lower-priority threads are left for humans and need not be answered here.\n")
 	}
@@ -451,6 +487,14 @@ func mentionableAuthor(author string) string {
 // aggregate blocks if ANY perspective withholds approval -- so collapsing five
 // judgments into one would quietly weaken the merge gate. One comment, five
 // verdicts.
+//
+// Layout (hivecommons/hive#12126): the header, then every instruction that is
+// the same for all perspectives — scope contract, how to read the PR, the
+// review-bot thread obligations, grounding, the output schema and the publish
+// contract — emitted exactly ONCE, then one short section per perspective
+// carrying only what differs: its focus and, for plan_match, the plan wave.
+// The per-perspective kick repeats the shared block for every perspective it
+// is sent for (~4–6 KiB each); here it is paid for once per session.
 func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts PromptOptions) string {
 	if len(perspectives) == 0 {
 		perspectives = opts.Perspectives.List()
@@ -471,20 +515,17 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	if pr.Author != "" {
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
 	}
-	fmt.Fprintf(&b, "\nJudge this PR from ALL %d perspectives below, in one pass. Read the PR once; apply every perspective to what you read.\n", len(perspectives))
-	for _, p := range perspectives {
-		fmt.Fprintf(&b, "  - %s — %s\n", p, opts.Perspectives.Focus(p))
-	}
+	fmt.Fprintf(&b, "\nJudge this PR from ALL %d perspectives, in one pass: %s. Read the PR once; apply every perspective to what you read.\n", len(perspectives), joinPerspectives(perspectives))
 	b.WriteString("These are distinct questions, not one question asked several ways. A change can be correct and still leak a secret, or secure and still not do what its issue asked. Ask each one separately and answer it on its own evidence.\n")
 	b.WriteString("Report each finding under exactly one perspective — whichever it most belongs to. Do not restate one finding under several to look thorough; that is the padding failure mode, multiplied.\n\n")
+
+	b.WriteString(combinedSharedHeader)
 	b.WriteString(scopeContractSection(pr))
 	b.WriteString(buildReadInstruction(pr))
 	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins, opts.ReviewBotMinPriority))
-	if hasPerspective(perspectives, PerspectivePlanMatch) {
-		b.WriteString(planMatchSection(pr))
-	}
+	b.WriteString(groundingSectionWithBudget(pr, combinedGroundingBudget(len(perspectives)), fmt.Sprintf("this whole review, across all %d perspectives", len(perspectives))))
 	writeReviewWritingGuide(&b, opts)
-	b.WriteString("Return exactly one JSON ARRAY containing one object per perspective — all ")
+	b.WriteString("\nReturn exactly one JSON ARRAY containing one object per perspective — all ")
 	fmt.Fprintf(&b, "%d of them, even the ones that found nothing.\n", len(perspectives))
 	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
@@ -496,6 +537,34 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 		b.WriteString(buildCombinedPublishInstruction(pr, perspectives, opts))
 	}
 	b.WriteString(buildProposeOnlyInstruction(pr, opts))
+
+	b.WriteString(combinedPerspectiveSections(pr, perspectives, opts))
+	return b.String()
+}
+
+// combinedSharedHeader opens the once-per-session block of a combined kick so
+// the reviewer knows the instructions that follow are not repeated per
+// perspective and must be carried into each section below.
+const combinedSharedHeader = "SHARED INSTRUCTIONS — stated once, binding for every perspective below.\n" +
+	"Everything from here to the per-perspective sections at the end applies to each perspective exactly as if it had been repeated under it: the scope contract, how to read the PR, the review-bot thread obligations, grounding, the output schema and the publish contract.\n\n"
+
+// combinedPerspectiveSections is the per-perspective tail of a combined kick:
+// one short section each, carrying only what the shared block cannot — the
+// focus text and any perspective-specific material (plan_match's plan wave).
+// They come AFTER the shared block so a reader meets the contract once and
+// then the questions, rather than the same contract five times.
+func combinedPerspectiveSections(pr PullRequest, perspectives []Perspective, opts PromptOptions) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nPERSPECTIVE SECTIONS — %d, one verdict object each.\n", len(perspectives))
+	for _, p := range perspectives {
+		fmt.Fprintf(&b, "\n[perspective:%s]\n", p)
+		fmt.Fprintf(&b, "%s — %s. Focus ONLY on that; do not duplicate other perspectives unless the issue is severe.\n", p, opts.Perspectives.Focus(p))
+		fmt.Fprintf(&b, "Verdict object: perspective \"%s\", judged on this perspective's own in-scope evidence under the shared instructions above.\n", p)
+		if p == PerspectivePlanMatch {
+			b.WriteString(planMatchSection(pr))
+		}
+	}
+	fmt.Fprintf(&b, "\nDeliver all %d verdict objects in the one JSON array the shared instructions describe.\n", len(perspectives))
 	return b.String()
 }
 
@@ -559,15 +628,6 @@ const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspectiv
 
 const findingSchemaInstruction = "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
 	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional), review_scope (required for new reports; exactly \"in-scope\" or \"out-of-scope\"). A finding missing title, severity or summary, or carrying any other review_scope value, fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"
-
-func hasPerspective(ps []Perspective, want Perspective) bool {
-	for _, p := range ps {
-		if p == want {
-			return true
-		}
-	}
-	return false
-}
 
 func perspectiveNames(ps []Perspective) []string {
 	out := make([]string, 0, len(ps))

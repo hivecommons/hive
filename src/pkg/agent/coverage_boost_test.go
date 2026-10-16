@@ -1896,3 +1896,33 @@ func TestFormatTimeForLog(t *testing.T) {
 		t.Fatalf("formatTimeForLog = %q", got)
 	}
 }
+
+// TestAgentEnvPairs_InferenceAutoModeServerOff: inference-routed claude
+// sessions must not ask the translator for auto-mode's server-side classifier
+// verdict (#9945) — the OpenAI-format gateway behind it cannot return one and
+// the CLI then stops on an interactive notice. Subscription sessions talk to
+// Anthropic directly, where the server check works and is free, so they are
+// left alone.
+func TestAgentEnvPairs_InferenceAutoModeServerOff(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"inf": {Backend: "litellm", Model: "rits/zai-org/glm-5-3"},
+		"sub": {Backend: "claude", Model: "sonnet"},
+	}, discardLogger(), ProjectContext{})
+
+	value := func(pairs []agentEnvPair) (string, bool) {
+		for _, p := range pairs {
+			if p.Key == claudeAutoModeServerEnv {
+				return p.Value, true
+			}
+		}
+		return "", false
+	}
+	inf := m.agentEnvPairs(&AgentProcess{Name: "inf", Config: config.AgentConfig{Backend: "litellm", Model: "rits/zai-org/glm-5-3"}})
+	if v, ok := value(inf); !ok || v != claudeAutoModeServerOff {
+		t.Errorf("inference backend: %s = %q (present=%v), want %q", claudeAutoModeServerEnv, v, ok, claudeAutoModeServerOff)
+	}
+	sub := m.agentEnvPairs(&AgentProcess{Name: "sub", Config: config.AgentConfig{Backend: "claude", Model: "sonnet"}})
+	if _, ok := value(sub); ok {
+		t.Errorf("subscription backend should not set %s", claudeAutoModeServerEnv)
+	}
+}

@@ -164,6 +164,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Review.ValidateReviewEventDispatch(); err != nil {
 		return err
 	}
+	if err := c.Review.ValidatePendingReviewTTL(); err != nil {
+		return err
+	}
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
@@ -188,10 +191,16 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
 		return err
 	}
+	if err := c.AutoMerge.ContributorLane.Validate(); err != nil {
+		return err
+	}
 	if err := c.Compliance.Validate(); err != nil {
 		return err
 	}
 	if err := c.Review.Severity.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateGoodFirstIssue(c.GoodFirstIssue); err != nil {
 		return err
 	}
 	if err := c.Review.Backlog.Validate(); err != nil {
