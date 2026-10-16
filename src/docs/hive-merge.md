@@ -330,10 +330,17 @@ A PR merges through this tier only when all of the following hold:
     with `contributor-lane:no-linked-issue`. The marker's `tier=` must be in
     `require_tiers` (`contributor-lane:claim-tier-untrusted`) and it must say
     `verified=true` (`contributor-lane:claim-unverified`).
-- GitHub's `author_association` for the PR author is `OWNER`, `MEMBER`,
+- When neither admission path above vouches for the author, GitHub's
+  `author_association` for the PR author must be `OWNER`, `MEMBER`,
   `COLLABORATOR` or `CONTRIBUTOR`; `NONE`, `FIRST_TIMER`,
-  `FIRST_TIME_CONTRIBUTOR` or a missing value skip with
-  `contributor-lane:author-association`.
+  `FIRST_TIME_CONTRIBUTOR` or a missing value then skip with
+  `contributor-lane:author-association`, outranking the marker path's own
+  reason. A verified claim marker or a registry tier is this hive's own
+  statement of trust and admits the PR regardless of the association —
+  GitHub reports `FIRST_TIME_CONTRIBUTOR` for every relay contributor's
+  first PR to a repo, which left admitted, green, reviewer-approved PRs
+  skipping every cycle (#12344; #12195, #12290). An unmarked, unregistered
+  first-timer is still never admitted.
 - The diff does not touch `.github/workflows/**` or `.github/actions/**`
   (`contributor-lane:workflow-path`) and does not delete a test file or remove
   25+ test lines while deleting at least 3× what it adds

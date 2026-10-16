@@ -29,8 +29,13 @@ package automerge
 //     an operator-trusted contributor's PR waiting whenever the body merely
 //     referenced the issue (`Part of #N`) or the issue was claimed outside
 //     the relay (#12045, #11756);
-//   - GitHub's author_association for the PR author is not NONE,
-//     FIRST_TIMER or FIRST_TIME_CONTRIBUTOR;
+//   - when neither admission path above applies, GitHub's author_association
+//     for the PR author must not be NONE, FIRST_TIMER or
+//     FIRST_TIME_CONTRIBUTOR (an unmarked, unregistered first-timer is never
+//     admitted). A verified marker or registry tier is this hive's own
+//     statement of trust and outranks GitHub's per-repo association, which
+//     reports FIRST_TIME_CONTRIBUTOR for every relay contributor's first PR
+//     to a repo (#12344: #12195, #12290 sat green and approved for 15h+ on it);
 //   - the diff does not touch CI workflow/action definitions and does not
 //     delete or gut test files;
 //   - no excluded/hold/sentinel label, not draft, mergeable, base not under a
@@ -100,13 +105,20 @@ const (
 const contributorLaneReasonRegistryTrusted = contributorLaneReasonPrefix + "registry-trusted"
 
 // contributorLaneTrustedAssociations are the GitHub author_association
-// values the tier accepts. NONE, FIRST_TIMER, FIRST_TIME_CONTRIBUTOR,
-// MANNEQUIN and a missing value all skip.
+// values the tier accepts for an author that neither a verified claim
+// marker nor a registry tier admitted. NONE, FIRST_TIMER,
+// FIRST_TIME_CONTRIBUTOR, MANNEQUIN and a missing value all skip.
 var contributorLaneTrustedAssociations = map[string]bool{
 	"OWNER":        true,
 	"MEMBER":       true,
 	"COLLABORATOR": true,
 	"CONTRIBUTOR":  true,
+}
+
+// contributorLaneAssociationTrusted reports whether GitHub's own
+// author_association for the PR is one the tier accepts on its own.
+func contributorLaneAssociationTrusted(pr *gh.PullRequest) bool {
+	return contributorLaneTrustedAssociations[strings.ToUpper(strings.TrimSpace(pr.GetAuthorAssociation()))]
 }
 
 // contributorLaneWorkflowPaths are CI definitions a contributor PR must not
@@ -371,9 +383,9 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 	if _, ok := c.sweepLaneForAuthor(author); ok {
 		return contributorLaneReasonAppAuthored
 	}
-	if !contributorLaneTrustedAssociations[strings.ToUpper(strings.TrimSpace(pr.GetAuthorAssociation()))] {
-		return contributorLaneReasonAuthorAssociation
-	}
+	// author_association is deliberately not checked here: a verified claim
+	// marker or registry tier admits a FIRST_TIME_CONTRIBUTOR, and only
+	// admitContributor can tell. See trySweepContributorLanePR.
 	labels := labelNames(pr.Labels)
 	// trusted=false so the sentinel label blocks outright: a contributor PR
 	// gets the label, not the trusted-author courtesy comment.
@@ -614,6 +626,12 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return AutoMergeSweepEvent{}, claim.Reason, err
 	}
 	if claim.Reason != "" {
+		// Neither this hive's registry nor an App-authored marker vouches
+		// for the author, so GitHub's association is the only evidence left;
+		// an untrusted one outranks the marker-path reason (#12195, #12290).
+		if !contributorLaneAssociationTrusted(pr) {
+			return AutoMergeSweepEvent{}, contributorLaneReasonAuthorAssociation, nil
+		}
 		return AutoMergeSweepEvent{}, claim.Reason, nil
 	}
 	if claim.admittedByRegistry() {
