@@ -2594,6 +2594,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.preShutdownHooks.add("close-contribute-hub", func() {
 		b.dashSrv.CloseContributeHub()
 	})
+	// Monthly per-repo complexity/static-analysis snapshot (RFC #12062,
+	// #12363). Report-only: it writes evidence files and never touches merge
+	// eligibility.
+	b.startComplexityRunner(newComplexityRunner(b.cfg, b.currentGitHubClient, b.logger))
 
 	// Wire ioscan input enforcement (opt-in via ioscan.enabled) to the dashboard
 	// audit log so a blocked/redacted issue title surfaces in the existing

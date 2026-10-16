@@ -2,14 +2,18 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/evidence/complexity"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 func evSummaryBundle(repo string, n int, kind string, created time.Time, merged bool, verdicts []evidence.Verdict, sentinel int, ci bool) *evidence.Bundle {
@@ -280,5 +284,75 @@ func TestBuildEvidenceSummaryClaimVsVerdict(t *testing.T) {
 	}
 	if e := buildEvidenceSummary(nil, now, 24, "", "").ClaimVsVerdict; e == nil || len(e) != 0 {
 		t.Errorf("empty input must yield an empty (non-null) slice, got %#v", e)
+	}
+}
+
+func TestHandleEvidenceSummaryComplexityByRepo(t *testing.T) {
+	reviewEvidenceTestEnv(t)
+	root := ghpkg.ReviewEvidenceRoot
+	// A bundle plus two monthly snapshots; the snapshots must neither count
+	// as unreadable bundles nor be dropped from the summary.
+	seedReviewEvidenceBundle(t, "abc1234", "", time.Now().UTC(), true)
+	for i, m := range []string{"2026-03", "2026-04"} {
+		snap := complexity.Snapshot{
+			SchemaVersion: complexity.SchemaVersion, Repo: "acme/widget", Month: m, Ref: "main",
+			Functions: 10 + i, MeanCyclo: 2.5, MedianCyclo: 2, P90Cyclo: 7 + i, MaxCyclo: 12,
+			OverThreshold: i, Threshold: complexity.DefaultThreshold,
+			Warnings: 3, WarningsByTool: map[string]int{"go vet": 3},
+			Hotspots: []complexity.Function{{File: "a.go", Name: "F", Cyclo: 12}},
+		}
+		if _, err := complexity.Write(root, snap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := &Server{}
+	w := httptest.NewRecorder()
+	s.handleEvidenceSummary(w, httptest.NewRequest(http.MethodGet, "/api/evidence/summary", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var resp EvidenceSummary
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.N != 1 || resp.Missing.RecordsUnreadable != 0 {
+		t.Errorf("snapshots must not be counted as bundles: n=%d unreadable=%d", resp.N, resp.Missing.RecordsUnreadable)
+	}
+	if len(resp.ComplexityByRepo) != 1 || resp.ComplexityByRepo[0].Repo != "acme/widget" {
+		t.Fatalf("complexity_by_repo = %+v", resp.ComplexityByRepo)
+	}
+	months := resp.ComplexityByRepo[0].Months
+	if len(months) != 2 || months[0].Month != "2026-03" || months[1].Month != "2026-04" {
+		t.Fatalf("months = %+v", months)
+	}
+	last := months[1]
+	if last.Functions != 11 || last.P90Cyclomatic != 8 || last.FunctionsOverThreshold != 1 || last.StaticWarningsByTool["go vet"] != 3 || last.Ref != "main" {
+		t.Errorf("month = %+v", last)
+	}
+	if strings.Contains(w.Body.String(), `"hotspots"`) {
+		t.Error("summary must not carry hotspot lists")
+	}
+}
+
+func TestLoadEvidenceComplexityCapsMonths(t *testing.T) {
+	root := t.TempDir()
+	for i := 1; i <= evidenceComplexityMonths+2; i++ {
+		snap := complexity.Snapshot{SchemaVersion: complexity.SchemaVersion, Repo: "o/r", Month: fmt.Sprintf("2024-%02d", i%12+1), Functions: i}
+		if i > 12 {
+			snap.Month = fmt.Sprintf("2025-%02d", i-12)
+		}
+		if _, err := complexity.Write(root, snap); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := loadEvidenceComplexity(root)
+	if len(got) != 1 || len(got[0].Months) != evidenceComplexityMonths {
+		t.Fatalf("got %+v", got)
+	}
+	if got[0].Months[evidenceComplexityMonths-1].Month != "2025-02" {
+		t.Errorf("latest month = %s", got[0].Months[evidenceComplexityMonths-1].Month)
+	}
+	if loadEvidenceComplexity(filepath.Join(root, "absent")) != nil {
+		t.Error("missing root must yield nil")
 	}
 }

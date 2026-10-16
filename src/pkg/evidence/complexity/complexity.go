@@ -28,16 +28,20 @@ const SchemaVersion = "v1"
 
 // Snapshot is one repo's maintainability reading for one month.
 type Snapshot struct {
-	SchemaVersion  string         `json:"schema_version"`
-	Repo           string         `json:"repo"`
-	Month          string         `json:"month"`
-	Ref            string         `json:"ref,omitempty"`
-	CapturedAt     time.Time      `json:"captured_at"`
-	Files          int            `json:"files"`
-	Functions      int            `json:"functions"`
-	TotalCyclo     int            `json:"total_cyclomatic"`
-	MaxCyclo       int            `json:"max_cyclomatic"`
-	MeanCyclo      float64        `json:"mean_cyclomatic"`
+	SchemaVersion string    `json:"schema_version"`
+	Repo          string    `json:"repo"`
+	Month         string    `json:"month"`
+	Ref           string    `json:"ref,omitempty"`
+	CapturedAt    time.Time `json:"captured_at"`
+	Files         int       `json:"files"`
+	Functions     int       `json:"functions"`
+	TotalCyclo    int       `json:"total_cyclomatic"`
+	MaxCyclo      int       `json:"max_cyclomatic"`
+	MeanCyclo     float64   `json:"mean_cyclomatic"`
+	// MedianCyclo and P90Cyclo are the 50th and 90th percentile function
+	// complexities (nearest-rank); 0 when the repo has no functions.
+	MedianCyclo    int            `json:"median_cyclomatic"`
+	P90Cyclo       int            `json:"p90_cyclomatic"`
 	OverThreshold  int            `json:"functions_over_threshold"`
 	Threshold      int            `json:"threshold"`
 	Warnings       int            `json:"static_warnings"`
@@ -57,6 +61,11 @@ type Function struct {
 const DefaultThreshold = 15
 
 const maxHotspots = 10
+
+// DirName is the per-repo directory under <root>/<org>/<repo> that holds
+// the monthly snapshots; readers walking the evidence root for review
+// bundles skip it.
+const DirName = "complexity"
 
 // Month formats t as the snapshot key, YYYY-MM in UTC.
 func Month(t time.Time) string { return t.UTC().Format("2006-01") }
@@ -149,6 +158,7 @@ func Measure(root string, threshold int) (Snapshot, error) {
 	if s.Functions > 0 {
 		s.MeanCyclo = float64(s.TotalCyclo*100/s.Functions) / 100
 	}
+	s.MedianCyclo, s.P90Cyclo = percentiles(funcs)
 	sort.Slice(funcs, func(i, j int) bool {
 		if funcs[i].Cyclo != funcs[j].Cyclo {
 			return funcs[i].Cyclo > funcs[j].Cyclo
@@ -163,6 +173,27 @@ func Measure(root string, threshold int) (Snapshot, error) {
 	}
 	s.Hotspots = funcs
 	return s, nil
+}
+
+// percentiles returns the nearest-rank p50 and p90 of the functions' cyclomatic
+// values; both 0 for an empty slice.
+func percentiles(funcs []Function) (p50, p90 int) {
+	if len(funcs) == 0 {
+		return 0, 0
+	}
+	vals := make([]int, len(funcs))
+	for i, f := range funcs {
+		vals[i] = f.Cyclo
+	}
+	sort.Ints(vals)
+	rank := func(pct int) int {
+		i := (len(vals)*pct + 99) / 100
+		if i < 1 {
+			i = 1
+		}
+		return vals[i-1]
+	}
+	return rank(50), rank(90)
 }
 
 func funcName(fn *ast.FuncDecl) string {
@@ -230,7 +261,7 @@ func Path(root, repo, month string) (string, error) {
 	if _, err := time.Parse("2006-01", month); err != nil {
 		return "", fmt.Errorf("complexity: invalid month %q", month)
 	}
-	return filepath.Join(root, org, name, "complexity", month+".json"), nil
+	return filepath.Join(root, org, name, DirName, month+".json"), nil
 }
 
 // ErrExists is returned by Write when the month's snapshot already exists;

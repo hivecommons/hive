@@ -92,7 +92,7 @@ The two opt-in experimental arms of the study (RFC [#12062](https://github.com/h
 ## Downloading
 
 - **API:** `GET /api/review/evidence?repo=<owner/repo>&number=<n>[&head=<sha>][&format=json|zip]` for owner/merger roles. The default is the bundle for the PR's latest head; `head` takes a full SHA or a unique prefix of at least 7 characters (409 if it matches more than one). `format=json` returns the bundle bytes exactly as stored, so its hash and signature verify offline; add `download=1` for an attachment. `format=zip` returns `bundle.json`, `verdicts.json` (the matching verdict reports), `review-links.json` (the PR's review-links slice) and `manifest.json` (SHA-256 of each file, plus the signing public key when the bundle is signed and the key is readable). A missing bundle is a 404 whose body has `status: "expired"` and `expired: true` when retention removed it, otherwise `status: "not_found"`. `GET /api/review/evidence/list?repo=&number=` lists every retained bundle id and head for the PR.
-- **Aggregate:** `GET /api/evidence/summary` reports read-only aggregates over stored bundles, including per-tier proxy `write_counters` (`{attempted, blocked}`, omitted when the counter file is absent) and per-tier `intent_counters` (below); see [API reference](api-reference.md).
+- **Aggregate:** `GET /api/evidence/summary` reports read-only aggregates over stored bundles, including per-tier proxy `write_counters` (`{attempted, blocked}`, omitted when the counter file is absent) per-tier `intent_counters` (below), and `complexity_by_repo` (the newest 12 [monthly complexity snapshots](#monthly-complexity-snapshot-report-only) per repo, omitted when none exist); see [API reference](api-reference.md).
 - **Outcome by author kind (panel 1):** `outcomes_by_author_kind` in the summary counts, over the latest bundle per PR in the window, `n`, `merged`, `closed`, `open` and `reverted_14d` (merged and then linked by `reverted_by` within 14 days) for `human`, `agent` and `bot` authors. The Evidence sub-panel draws it as the **Outcome by author kind** panel: one grouped bar per kind for merged / closed / reverted, with `n=` and the merged and reverted rates (open PRs excluded) in the tooltip. `closed` reads 0 until bundles record a close without merge, and a revert only counts once the reverting PR is linked. Reporting only ([#12364](https://github.com/hivecommons/hive/issues/12364)).
 - **Intent counters:** every intent evaluation — the merge-eligible lane's `writeIntentVerdicts` pass and the App self-merge sweep's gate, whether or not `intent.enforce` or `intent.shadow` is on — increments an in-memory counter keyed by tier (`tier0`..`tier3`) and writes one audit-log line, action `intent_evaluated`, detail `lane=<merge-eligible|self-merge> tier=<tierN> would_block=<bool> enforce=<bool> [reason=<code>]` ([#12362](https://github.com/hivecommons/hive/issues/12362)). `would_block` is what `BlocksMerge(true)` reports, so with enforcement off it is the shadow answer; reason codes are `tier1_needs_issue`, `tier2_needs_plan`, `tier3_needs_approval`, `alignment_misaligned`, `evidence_unavailable` or `unknown`. The counters flush once a minute (and on shutdown) into `/var/run/hive-metrics/intent-counters.json`, beside the proxy's `write-counters.json` and in the same shape: cumulative `totals` per tier (`attempted` = evaluations, `blocked` = would-block, `blocked_by_reason`) and `weeks` keyed by the UTC Monday of each ISO week. The summary API exposes `totals` as `intent_counters` (`{attempted, blocked}` per tier), omitted when the file is absent. Record-only: the counters are never read back into eligibility.
 - **Shadow gates (panel 8):** `shadow_gate` in the summary counts, over the latest bundle per PR in the window, the PRs with any shadow observation (`n`), `would_have_held` (review gate) and `would_have_blocked` (intent), and for each gate (`review_gate`, `intent`) splits the evaluated PRs into `held` and `passed`, each with how they actually turned out: `merged`, `open`, `reverted` (merged and later linked by `reverted_by`) and `closed` (0 until bundles record a close without merge). The Throughput section's Evidence sub-panel draws it as the **Shadow gates** panel, with a zero state while shadow mode is off. Reporting only; nothing reads it to decide a merge ([#12068](https://github.com/hivecommons/hive/issues/12068)).
@@ -166,7 +166,32 @@ A bundle shows what Hive recorded. It does not prove who a reviewer's identity i
 
 `pkg/evidence/complexity` writes one maintainability snapshot per repo per
 month to `/data/evidence/<org>/<repo>/complexity/<YYYY-MM>.json`: Go
-cyclomatic complexity (total, mean, max, functions over a threshold, top
-hotspots) plus static-analysis finding counts per tool. An existing month is
-never overwritten. It is report-only and never blocks a merge (RFC #12062,
-#12072); it feeds the dashboard maintainability panel and the study.
+cyclomatic complexity (total, mean, median, p90, max, functions over a
+threshold, top hotspots) plus static-analysis finding counts per tool. An
+existing month is never overwritten. It is report-only and never blocks a
+merge (RFC #12062, #12072, #12363); it feeds the dashboard maintainability
+panel and the study.
+
+- **Schedule:** the hive runs the snapshot itself (spoke side; nothing is
+  added to the managed repos' CI). A background loop checks hourly which
+  managed repos have no file for the current month and snapshots only those,
+  so a pass in a month that is already covered is a `stat` per repo. The first
+  check happens at boot. The loop stops with the process and a shutdown waits
+  for an in-flight pass.
+- **Source:** the repo's default branch, fetched as a GitHub tarball through
+  the App (no `git` on the spoke, no clone cache). The archive is extracted
+  into a temporary directory that is removed after measuring; `ref` in the
+  snapshot is the default-branch name.
+- **Defaults:** `evidence.complexity.enabled` is on (it needs `evidence.enabled`
+  too) because a monthly archive download plus an AST pass is cheap.
+  `evidence.complexity.static_analysis` is off because `go vet` / `staticcheck`
+  compile the repo and download its modules; turn it on where that cost is
+  acceptable. Analyzer failures are logged and the snapshot is still written
+  without that tool's count.
+- **Retention:** the newest 24 monthly files are kept per repo; older ones are
+  removed after a new month is written. `GET /api/evidence/summary` returns
+  the newest 12 per repo as `complexity_by_repo` (hotspot lists are left on
+  disk). The review-bundle walkers skip the `complexity/` directory.
+- **Failures:** a repo whose snapshot fails (no GitHub client yet, archive
+  error, invalid repo name) is logged and retried on the next hourly check;
+  other repos are unaffected.

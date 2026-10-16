@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/evidence"
+	"github.com/hivecommons/hive/pkg/evidence/complexity"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -53,7 +54,11 @@ type EvidenceSummary struct {
 	// not intent.enforce was on. Omitted when the counter file is absent or
 	// unreadable. Record-only; it never feeds back into eligibility.
 	IntentCounters map[string]EvidenceWriteCount `json:"intent_counters,omitempty"`
-	Missing        EvidenceMissing               `json:"missing"`
+	// ComplexityByRepo is the latest evidenceComplexityMonths monthly
+	// complexity snapshots per managed repo (#12363), oldest first; omitted
+	// when no repo has a snapshot yet.
+	ComplexityByRepo []EvidenceComplexityRepo `json:"complexity_by_repo,omitempty"`
+	Missing          EvidenceMissing          `json:"missing"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
@@ -94,6 +99,58 @@ func evidenceVerdictNotApprove(b *evidence.Bundle) bool {
 		}
 	}
 	return false
+}
+
+// evidenceComplexityMonths caps how many monthly snapshots per repo the
+// summary carries; the full retention (complexity.RetainMonths) stays on disk.
+const evidenceComplexityMonths = 12
+
+// EvidenceComplexityRepo is one repo's monthly complexity series.
+type EvidenceComplexityRepo struct {
+	Repo   string                    `json:"repo"`
+	Months []EvidenceComplexityMonth `json:"months"`
+}
+
+// EvidenceComplexityMonth is one monthly snapshot without its hotspot list.
+type EvidenceComplexityMonth struct {
+	Month                  string         `json:"month"`
+	Ref                    string         `json:"ref,omitempty"`
+	CapturedAt             time.Time      `json:"captured_at"`
+	Files                  int            `json:"files"`
+	Functions              int            `json:"functions"`
+	MeanCyclomatic         float64        `json:"mean_cyclomatic"`
+	MedianCyclomatic       int            `json:"median_cyclomatic"`
+	P90Cyclomatic          int            `json:"p90_cyclomatic"`
+	MaxCyclomatic          int            `json:"max_cyclomatic"`
+	FunctionsOverThreshold int            `json:"functions_over_threshold"`
+	Threshold              int            `json:"threshold"`
+	StaticWarnings         int            `json:"static_warnings"`
+	StaticWarningsByTool   map[string]int `json:"static_warnings_by_tool,omitempty"`
+}
+
+// loadEvidenceComplexity reads the per-repo monthly series under root; any
+// failure yields nil (the summary omits the field rather than failing).
+func loadEvidenceComplexity(root string) []EvidenceComplexityRepo {
+	series, err := complexity.LoadSeries(root, evidenceComplexityMonths)
+	if err != nil || len(series) == 0 {
+		return nil
+	}
+	out := make([]EvidenceComplexityRepo, 0, len(series))
+	for _, rs := range series {
+		r := EvidenceComplexityRepo{Repo: rs.Repo, Months: make([]EvidenceComplexityMonth, 0, len(rs.Snapshots))}
+		for _, s := range rs.Snapshots {
+			r.Months = append(r.Months, EvidenceComplexityMonth{
+				Month: s.Month, Ref: s.Ref, CapturedAt: s.CapturedAt,
+				Files: s.Files, Functions: s.Functions,
+				MeanCyclomatic: s.MeanCyclo, MedianCyclomatic: s.MedianCyclo,
+				P90Cyclomatic: s.P90Cyclo, MaxCyclomatic: s.MaxCyclo,
+				FunctionsOverThreshold: s.OverThreshold, Threshold: s.Threshold,
+				StaticWarnings: s.Warnings, StaticWarningsByTool: s.WarningsByTool,
+			})
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // EvidenceWriteCount is one tier's attempted and proxy-blocked write counts.
@@ -268,6 +325,7 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	resp.Missing.RecordsUnreadable = unreadable
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
 	resp.IntentCounters = loadEvidenceWriteCounters(intentCountersPath)
+	resp.ComplexityByRepo = loadEvidenceComplexity(ghpkg.ReviewEvidenceRoot)
 
 	days := (hours + 23) / 24
 	if days < 1 || days > reviewerAccuracyMaxWindowDays {
@@ -302,7 +360,15 @@ func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 			}
 			return err
 		}
-		if d.IsDir() || filepath.Ext(path) != ".json" {
+		if d.IsDir() {
+			// Monthly complexity snapshots (#12363) share the root but are
+			// not review bundles.
+			if d.Name() == complexity.DirName && path != root {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".json" {
 			return nil
 		}
 		b, lerr := ghpkg.LoadReviewEvidence(path)
