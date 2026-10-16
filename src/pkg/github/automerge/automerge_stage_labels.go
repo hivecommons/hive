@@ -131,8 +131,9 @@ type stageDetail struct {
 	Author       stagelabels.Author
 	// RedChecks names the completed-red, non-required checks the CI gate
 	// walked past on RedChecksHead (sorted). The lane ignores them by
-	// design; the stage engine must not call the PR merge-queued while the
-	// rollup on its head shows a red check (hivecommons/hive#12457).
+	// design; the stage engine must not call the PR merge-queued or
+	// awaiting admission while the rollup on its head shows a red check
+	// (hivecommons/hive#12538, seen on #12457).
 	RedChecks     []string
 	RedChecksHead string
 }
@@ -146,7 +147,7 @@ func (d stageDetail) redCheck(head string) string {
 }
 
 // stageReasonOptionalCheckFailing prefixes the recorded reason when a red
-// non-required check kept the PR out of the merge-queue stage.
+// non-required check put the PR in its repair stage.
 const stageReasonOptionalCheckFailing = "optional-check-failing:"
 
 // stageObservation is one lane's view of one PR in one cycle.
@@ -500,6 +501,9 @@ func classifyStage(o stageObservation) stageVerdict {
 	if o.Err {
 		// The lane tripped before deciding. If every author-side gate is
 		// already satisfied the PR is waiting on the hive, not the author.
+		if name := o.Detail.redCheck(o.HeadSHA); name != "" {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
+		}
 		if authorSideDone(o) {
 			return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}
 		}
@@ -537,23 +541,25 @@ func classifyStage(o stageObservation) stageVerdict {
 		// (CI pending, no-verdict, …) is not what the author has to act on.
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
 	}
+	if classifyCIReason(reason) == ciReasonRed {
+		// A red required check is the lane's own diagnosis; it outranks a
+		// red optional one in the recorded reason.
+		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+	}
+	if name := o.Detail.redCheck(o.HeadSHA); name != "" {
+		// The lane gates on required checks only, so it soaks (and merges)
+		// past a red optional check and its reason reads as queued or
+		// pending. A red check on the head is red CI to its author: the
+		// repair stage, with the check named, never 080 or 100.
+		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
+	}
 	if strings.HasPrefix(reason, contributorLaneReasonSoaking) || stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
-		// The lane gates on required checks only, so it soaks and merges
-		// past a red optional check. 100 reads as "all green, queued" to a
-		// person looking at the rollup: hold the PR at 080 and name the
-		// check in the recorded reason (hence the stall note) instead.
-		if name := o.Detail.redCheck(o.HeadSHA); name != "" {
-			return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
-		}
 		return stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}
 	}
 	if reason == contributorLaneReasonNoVerdict {
 		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 	}
-	switch classifyCIReason(reason) {
-	case ciReasonRed:
-		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
-	case ciReasonPending:
+	if classifyCIReason(reason) == ciReasonPending {
 		if o.Detail.VerdictKnown && o.Detail.Verdict.Approved {
 			return stageVerdict{Stage: stagelabels.Reviewed, Rank: stageRankOwned}
 		}

@@ -1,0 +1,1 @@
+- Owner-triggered spoke backups now preserve the default `bead-synth-wiki` vault's markdown facts and restore them with the synthesizer's own permissions, even when repository publishing is disabled; other vaults and attachments remain excluded.
