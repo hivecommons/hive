@@ -75,7 +75,8 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 		wantAction CloseOnMergeAction
 		wantPatch  bool
 	}{
-		{name: "plain open issue closes completed", wantAction: CloseOnMergeClosed, wantPatch: true},
+		{name: "plain open issue closes completed", prBody: "Fixes #7", wantAction: CloseOnMergeClosed, wantPatch: true},
+		{name: "refs-only PR on a plain issue is partially addressed, not closed", wantAction: CloseOnMergeSkipped},
 		{name: "needs confirmation marker gets likely done comment", body: "body\n\nhive: needs-confirmation", labels: []string{"bug"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
 		{name: "needs reporter gets likely done comment", labels: []string{"needs-reporter-confirmation"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
 		{name: "needs human gets likely done comment", labels: []string{"needs-human"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
