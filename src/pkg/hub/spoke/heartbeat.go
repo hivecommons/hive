@@ -1187,8 +1187,8 @@ type HeartbeatEvidence struct {
 	// the real look-back. Lifetime values (AutomergeSelfAuthored,
 	// WriteCounters) and Windows itself are left empty inside a window. An
 	// old spoke omits it and the hub shows "not reported for this window".
-	Windows map[string]*HeartbeatEvidence `json:"windows,omitempty"`
-	HiveState             *hivestate.Trends                                            `json:"hive_state,omitempty"`
+	Windows   map[string]*HeartbeatEvidence `json:"windows,omitempty"`
+	HiveState *hivestate.Trends             `json:"hive_state,omitempty"`
 }
 
 // HeartbeatEvidenceWindowKeys are the trailing windows a spoke reports in
