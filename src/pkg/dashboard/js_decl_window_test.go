@@ -18,11 +18,11 @@ const jsDeclWindow = 512
 // contains the literal name — but runs in microseconds instead of seconds.
 //
 // Those regexps start with an alternation or a `(?m)^\s*` anchor, so Go's
-// matcher has no literal prefix to jump to and walks the whole 3 MB page once
-// per name; under -race that was ~4 s per name and ~140 s per shard across
-// the five UI tests, a quarter of pkg/dashboard's 10-minute budget. Limiting
-// the match to a window around each strings.Index hit keeps the regexp and
-// the assertion unchanged while skipping the pages of text that cannot match.
+// matcher has no literal prefix to jump to and walks the whole page once
+// per name. The full-page regexp scan per name was slow enough that the
+// shard approached its CI budget. Limiting the match to a window around each
+// strings.Index hit keeps the regexp and the assertion unchanged while
+// skipping the pages of text that cannot match.
 func jsDeclaredNear(html, name string, decl *regexp.Regexp) bool {
 	for from := 0; from < len(html); {
 		i := strings.Index(html[from:], name)
