@@ -14,8 +14,9 @@ import (
 )
 
 // featuresOpsBody is the part of the Features PUT that covers the operational
-// hive.yaml blocks issues.*, jev.*, duplicate_sweep.*, policies.* and the
-// turn.pr_follow_up / turn.reentrant knobs. Every field is a pointer so an
+// hive.yaml blocks issues.*, jev.*, duplicate_sweep.*, policies.*, the
+// turn.pr_follow_up / turn.reentrant knobs, good_first_issue.*, and the
+// governor claim-mirroring and rotation headroom-source keys. Every field is a pointer so an
 // absent key leaves the config untouched. Durations travel as Go duration
 // strings ("10m", "24h"); an empty string means the built-in default.
 type featuresOpsBody struct {
@@ -62,6 +63,16 @@ type featuresOpsBody struct {
 	GoodFirstIssueReselectCooldown *string `json:"goodFirstIssueReselectCooldown"`
 	GoodFirstIssueDocsURL          *string `json:"goodFirstIssueDocsUrl"`
 	GoodFirstIssueCommentTemplate  *string `json:"goodFirstIssueCommentTemplate"`
+
+	// governor.claims GitHub mirroring and the stall gate. The claim hooks
+	// and the escalation gate are wired at boot, so these apply after a
+	// restart. Escalate: 0 means the default, negative turns the gate off.
+	ClaimsComment             *bool `json:"claimsComment"`
+	ClaimsLabel               *bool `json:"claimsLabel"`
+	ClaimsEscalateAfterClaims *int  `json:"claimsEscalateAfterClaims"`
+	// governor.rotation.headroom_source: builtin (default) or ccleft. The
+	// rotation manager builds its probers at boot, so this needs a restart.
+	RotationHeadroomSource *string `json:"rotationHeadroomSource"`
 }
 
 // envVarNamePattern is the shape of a POSIX environment variable name.
@@ -315,6 +326,33 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 		steps = append(steps, func(c *config.Config) { c.GoodFirstIssue = g })
 	}
 
+	if b.ClaimsComment != nil {
+		v := *b.ClaimsComment
+		steps = append(steps, func(c *config.Config) { c.Governor.Claims.Comment = &v })
+	}
+	if b.ClaimsLabel != nil {
+		v := *b.ClaimsLabel
+		steps = append(steps, func(c *config.Config) { c.Governor.Claims.Label = &v })
+	}
+	if b.ClaimsEscalateAfterClaims != nil {
+		v := *b.ClaimsEscalateAfterClaims
+		if v < 0 {
+			v = -1
+		}
+		steps = append(steps, func(c *config.Config) { c.Governor.Claims.EscalateAfterClaims = v })
+	}
+	if b.RotationHeadroomSource != nil {
+		v := strings.ToLower(strings.TrimSpace(*b.RotationHeadroomSource))
+		switch v {
+		case "", config.RotationHeadroomSourceBuiltin:
+			v = ""
+		case config.RotationHeadroomSourceCCLeft:
+		default:
+			return nil, fmt.Errorf("rotation headroom_source must be %s or %s", config.RotationHeadroomSourceBuiltin, config.RotationHeadroomSourceCCLeft)
+		}
+		steps = append(steps, func(c *config.Config) { c.Governor.Rotation.HeadroomSource = v })
+	}
+
 	return func(c *config.Config) {
 		for _, step := range steps {
 			step(c)
@@ -339,6 +377,13 @@ func containsDotDotSegment(p string) bool {
 func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 	jevDefaults := config.JevConfig{Provider: cfg.Jev.Provider}
 	return map[string]interface{}{
+		"claimsComment":                cfg.Governor.Claims.CommentEnabled(),
+		"claimsLabel":                  cfg.Governor.Claims.LabelEnabled(),
+		"claimsEscalateAfterClaims":    cfg.Governor.Claims.EscalateAfterClaims,
+		"claimsEscalateAfterDefault":   config.DefaultClaimEscalateAfter,
+		"rotationHeadroomSource":       cfg.Governor.Rotation.EffectiveHeadroomSource(),
+		"rotationHeadroomSourceValues": []string{config.RotationHeadroomSourceBuiltin, config.RotationHeadroomSourceCCLeft},
+
 		"issuesCloseOnMerge":                 cfg.Issues.CloseOnMergeEnabled(),
 		"issuesCloseOnMergeInterval":         settingsDurationString(cfg.Issues.CloseOnMergeInterval),
 		"issuesCloseOnMergeBackfillInterval": settingsDurationString(cfg.Issues.CloseOnMergeBackfillInterval),

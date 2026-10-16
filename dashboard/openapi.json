@@ -6985,6 +6985,22 @@
                   },
                   "planFromLabel": {
                     "type": "boolean"
+                  },
+                  "claimsComment": {
+                    "type": "boolean",
+                    "description": "governor.claims.comment; requires restart"
+                  },
+                  "claimsLabel": {
+                    "type": "boolean",
+                    "description": "governor.claims.label; requires restart"
+                  },
+                  "claimsEscalateAfterClaims": {
+                    "type": "integer",
+                    "description": "governor.claims.escalate_after_claims; 0 = default, negative turns the gate off; requires restart"
+                  },
+                  "rotationHeadroomSource": {
+                    "type": "string",
+                    "description": "governor.rotation.headroom_source: builtin or ccleft; requires restart"
                   }
                 }
               }
@@ -8588,7 +8604,7 @@
           "Governor"
         ],
         "summary": "General-tab advanced settings",
-        "description": "Returns the governor eval interval, attribution-trailer resolved state, and explain-mode configured/effective/source values. Requires owner role.",
+        "description": "Returns the governor eval interval and loop pacing (max/webhook interval, conserve multiplier, optional-sweep cadence, provider spend-limit probe interval, read-only thresholds_source), attribution-trailer resolved state, and explain-mode configured/effective/source values. Requires owner role.",
         "responses": {
           "200": {
             "description": "General advanced config",
@@ -8612,6 +8628,34 @@
                     },
                     "explain_mode_source": {
                       "type": "string"
+                    },
+                    "eval_interval_max_s": {
+                      "type": "integer",
+                      "description": "0 restores the default (1800); must be >= eval_interval_s"
+                    },
+                    "eval_interval_webhook_s": {
+                      "type": "integer",
+                      "description": "0 restores the default (900)"
+                    },
+                    "conserve_interval_multiplier": {
+                      "type": "integer",
+                      "description": "0 restores the default (2)"
+                    },
+                    "optional_sweep_every_n_cycles": {
+                      "type": "integer",
+                      "description": "0 restores the default (1)"
+                    },
+                    "provider_budget_probe_interval_s": {
+                      "type": "integer",
+                      "description": "governor.provider_budget.probe_interval_s; 0 uses the default (1800)"
+                    },
+                    "thresholds_source": {
+                      "type": "string",
+                      "description": "Read-only: \"pack\" when an ACMM pack seeded the thresholds, empty when operator-owned"
+                    },
+                    "loop_defaults": {
+                      "type": "object",
+                      "description": "Defaults a zero loop field restores"
                     }
                   }
                 }
@@ -8628,7 +8672,7 @@
           "Governor"
         ],
         "summary": "Update general-tab advanced settings",
-        "description": "Updates the governor eval interval, attribution-trailer toggle, and hive-wide explain-mode default. Fields are pointer-typed; absent fields are left unchanged. An explicit empty explain_mode clears the hive default. Requires owner role.",
+        "description": "Updates the governor eval interval and loop pacing, attribution-trailer toggle, and hive-wide explain-mode default. Loop pacing is validated with the boot bounds (0 restores the default; max must be >= eval_interval_s) and applies from the next eval cycle. Fields are pointer-typed; absent fields are left unchanged. An explicit empty explain_mode clears the hive default. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -8650,6 +8694,26 @@
                       "full",
                       ""
                     ]
+                  },
+                  "eval_interval_max_s": {
+                    "type": "integer",
+                    "description": "0 restores the default (1800); must be >= eval_interval_s"
+                  },
+                  "eval_interval_webhook_s": {
+                    "type": "integer",
+                    "description": "0 restores the default (900)"
+                  },
+                  "conserve_interval_multiplier": {
+                    "type": "integer",
+                    "description": "0 restores the default (2)"
+                  },
+                  "optional_sweep_every_n_cycles": {
+                    "type": "integer",
+                    "description": "0 restores the default (1)"
+                  },
+                  "provider_budget_probe_interval_s": {
+                    "type": "integer",
+                    "description": "governor.provider_budget.probe_interval_s; 0 uses the default (1800)"
                   }
                 }
               }
@@ -8668,7 +8732,7 @@
             }
           },
           "400": {
-            "description": "Out-of-range eval_interval_s or invalid explain_mode"
+            "description": "Out-of-range eval_interval_s or loop pacing field, or invalid explain_mode"
           },
           "403": {
             "description": "Requires owner role"
@@ -9010,7 +9074,7 @@
           "Governor"
         ],
         "summary": "Update exempt and required issue labels",
-        "description": "Updates the exempt-labels list (governor.labels) and/or the require-labels gate (project.issue_filter.require_labels). Pointer-typed fields: an absent key leaves that list unchanged. Permanent hold/exempt labels cannot be removed via the exempt list. Requires owner role.",
+        "description": "Updates the exempt-labels list (governor.labels) and/or the require-labels gate (project.issue_filter.require_labels), and the auto-merge queue label (governor.labels.automerge). Pointer-typed fields: an absent key leaves that list unchanged. Permanent hold/exempt labels cannot be removed via the exempt list. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -9029,6 +9093,10 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "automerge": {
+                    "type": "string",
+                    "description": "governor.labels.automerge: the merger queue label; empty restores the default (lgtm). Requires restart."
                   }
                 }
               }
