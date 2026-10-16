@@ -16,6 +16,10 @@ const (
 	defaultRESTBudgetFloor      = 500
 	lowValueRESTBudgetFloor     = defaultRESTBudgetFloor
 	githubCoreRateLimitResource = "core"
+	// unauthenticatedCoreRateLimit is GitHub's per-IP core limit for requests
+	// without credentials; any authenticated bucket is far larger.
+	unauthenticatedCoreRateLimit = 60
+	agentRESTCallerPrefix        = "agent:"
 )
 
 type RESTConsumer struct {
@@ -46,6 +50,7 @@ type restAccountingStore struct {
 	events        []restAccountingEvent
 	now           func() time.Time
 	coreRemaining int
+	coreLimit     int
 	coreReset     time.Time
 	coreObserved  time.Time
 }
@@ -118,6 +123,9 @@ func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header) {
 	s.events = append(s.events, ev)
 	s.pruneLocked(ev.at)
 	if strings.EqualFold(h.Get("X-RateLimit-Resource"), githubCoreRateLimitResource) || h.Get("X-RateLimit-Resource") == "" {
+		if !s.sameCoreBucketLocked(ev.caller, h) {
+			return
+		}
 		if rem, err := strconv.Atoi(h.Get("X-RateLimit-Remaining")); err == nil {
 			s.coreRemaining = rem
 			s.coreObserved = ev.at
@@ -126,6 +134,35 @@ func (s *restAccountingStore) record(ev restAccountingEvent, h http.Header) {
 			s.coreReset = time.Unix(reset, 0)
 		}
 	}
+}
+
+// sameCoreBucketLocked reports whether a response's rate-limit headers
+// describe the hive's own core bucket, so only those may move the shared
+// snapshot that drives API budget mode and the agent reserve-floor 429.
+//
+// Agent traffic relayed by the proxy is recorded here too, and an agent whose
+// gh/curl runs without the App token (or with a credential GitHub rejects)
+// gets the per-IP unauthenticated bucket back: X-RateLimit-Limit 60 with a
+// few dozen remaining. Taken at face value that reading put the hive into
+// "critical" budget mode and refused every agent read for up to an hour
+// right after each restart, even though the real bucket had ~14k left.
+func (s *restAccountingStore) sameCoreBucketLocked(caller string, h http.Header) bool {
+	limitHeader := strings.TrimSpace(h.Get("X-RateLimit-Limit"))
+	if limitHeader == "" {
+		return true
+	}
+	limit, err := strconv.Atoi(limitHeader)
+	if err != nil {
+		return true
+	}
+	if limit <= unauthenticatedCoreRateLimit {
+		return false
+	}
+	if strings.HasPrefix(caller, agentRESTCallerPrefix) {
+		return s.coreLimit <= 0 || limit == s.coreLimit
+	}
+	s.coreLimit = limit
+	return true
 }
 
 func (s *restAccountingStore) top(limit int) []RESTConsumer {

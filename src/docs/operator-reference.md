@@ -771,7 +771,11 @@ loops, so the proxy enforces two safeguards:
   When the latest rate-limit reading shows `core.remaining` below the floor,
   agent read requests receive the same proxy `429` even if the agent has not
   reached its personal cap. This keeps daemon merge/scan work from being
-  starved by agent polling.
+  starved by agent polling. Only readings from the hive's own bucket update
+  that snapshot: responses whose `X-RateLimit-Limit` is 60 (GitHub's per-IP
+  unauthenticated bucket, e.g. an agent's `gh` call without a token) or whose
+  limit differs from the daemon's are ignored, so they cannot trip the floor
+  or the API budget mode.
 
 The proxy returns JSON shaped for the GitHub CLI:
 
