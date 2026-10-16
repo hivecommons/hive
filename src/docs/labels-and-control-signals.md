@@ -283,11 +283,15 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
    Failures with the same cause are coalesced into one task; a queued PR
    whose adoption grace expires goes to 074 instead of interrupting — the
    hive absorbs the overflow, not the human.
-6. **Fix what you broke before taking new work**: at a task boundary (the
-   relay session finishes its current task or asks to claim a new issue) the
-   server hands out queued `fix-pr` tasks first, oldest first, and serves a
-   fresh issue only when the contributor's fix queue is empty. Preemption of
-   in-progress work still obeys the single-preempt + focus-window rule.
+6. Governing rule of the contributor fix scheduler, verbatim from the
+   operator: **"contributors should clean up their mess before taking on new
+   stuff."** Every ordering decision — task boundary, dequeue, a new-issue
+   claim via the relay or the contribute page — checks the contributor's
+   red-PR queue first: queued `fix-pr` tasks are handed out oldest first and a
+   fresh issue is served only when that queue is empty. The contribute UI
+   shows "You have N PRs to fix first" and offers those PRs before new
+   issues. Preemption of in-progress work still obeys the single-preempt +
+   focus-window rule.
 7. Capacity ≥ 2: fixes are dispatched immediately as parallel sub-sessions,
    up to capacity − 1 so the primary session keeps going and is never
    preempted; further failures queue, and each finished fix session frees a
