@@ -27135,9 +27135,7 @@ function burnAreaChart() {
       return m ? m[1] : String(stage || '');
     }
     function reviewQueueHopTime(at) {
-      var t = new Date(at);
-      if (isNaN(t.getTime())) return String(at || '');
-      return t.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return formatDashboardDateTime(at, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }, String(at || ''));
     }
     function reviewQueueAgeLabel(hours) {
       var h = Number(hours) || 0;
