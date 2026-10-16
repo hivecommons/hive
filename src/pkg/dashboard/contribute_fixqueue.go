@@ -197,6 +197,38 @@ func isRelayContributor(username string) bool {
 	return err == nil && p != nil && p.GitHubUsername != "" && p.TrustTier != "revoked"
 }
 
+var _ automerge.ContributorPresenceSource = (*ContributeWSHub)(nil)
+
+// Presence implements automerge.ContributorPresenceSource: whether username
+// has a contributor profile here, whether a relay heartbeat is within the
+// presence window now, and the freshest heartbeat seen on any live
+// connection (falls back to the profile's last_active for a relay that has
+// since disconnected).
+func (h *ContributeWSHub) Presence(_ context.Context, username string) automerge.ContributorPresence {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return automerge.ContributorPresence{}
+	}
+	now := time.Now()
+	conns, online := h.liveConnectionsFor(username, now)
+	out := automerge.ContributorPresence{Online: online, Registered: len(conns) > 0}
+	for _, c := range conns {
+		c.mu.Lock()
+		pong := c.lastPong
+		c.mu.Unlock()
+		if pong.After(out.LastSeen) {
+			out.LastSeen = pong
+		}
+	}
+	if p, err := loadContributorProfile(username); err == nil && p != nil && p.GitHubUsername != "" && p.TrustTier != "revoked" {
+		out.Registered = true
+		if t, err := time.Parse(time.RFC3339, strings.TrimSpace(p.LastActive)); err == nil && t.After(out.LastSeen) {
+			out.LastSeen = t
+		}
+	}
+	return out
+}
+
 // Nudge implements automerge.ContributorNudgeSink.
 func (h *ContributeWSHub) Nudge(_ context.Context, n automerge.ContributorNudge) automerge.ContributorNudgeOutcome {
 	out := automerge.ContributorNudgeOutcome{Mode: string(fixqueue.ModeComment)}

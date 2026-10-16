@@ -487,13 +487,22 @@ within `governor.labels.stage.presence_window` (default 15m), pushes a `fix-pr`
 interrupt to their relay session, bounded by the per-contributor fix budget
 (`contribute.max_parallel_fixes` / `contribute.min_focus_window`).
 `governor.labels.stage.contributor_nudge.enabled: false` turns the nudge and
-the relay task off. A PR still red `governor.labels.stage.contributor_grace_online`
-(default 2h; `contributor_grace_offline`, default 1h, after a comment-only nudge)
-after the first nudge is adopted (`governor.labels.stage.adoption.enabled`,
-default on): the hive pushes `hive/adopt-<n>` at the contributor head, opens a
-superseding App PR that preserves the author's commits, moves the original to
-`stage/074-adopted-by-hive` and closes it once the superseder merges; the
-scanner's red-PR fix-first kick finishes the superseder. Whether that rework reaches each agent is visible per row
+the relay task off. The nudge and the adoption below apply to `author/clanker`
+PRs only; human- and hive-authored PRs just wait at 072. A red PR whose author
+is unavailable is adopted (`governor.labels.stage.adoption.enabled`, default
+on) — judged against live hub presence each sweep: relay offline for
+`governor.labels.stage.adoption.after_offline` (default 30m) since its last
+heartbeat, no contributor profile here for `adoption.after_unregistered`
+(default 2h) since the first nudge, or online but silent for
+`contributor_grace_online` (default 2h; `contributor_grace_offline`, 1h, when
+the hub reports no presence). `hold`/`do-not-merge` blocks adoption. When the
+PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
+it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
+`ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR
+fix-first kick, handed back if the contributor pushes. Otherwise the hive
+pushes `hive/adopt-<n>` at the contributor head, opens a superseding App PR
+that preserves the author's commits, moves the original to 074 and closes it
+once the superseder merges. Whether that rework reaches each agent is visible per row
 on Operations → Connected contributor agents: the relay's parallel capacity
 (`capacity N · spawn|preempt`, or *not advertised*), one line per in-flight
 item tagged **NEW** / **REWORK** with its stage label, and a red *N PRs

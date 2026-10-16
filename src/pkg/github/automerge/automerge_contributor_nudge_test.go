@@ -17,6 +17,28 @@ type fakeNudgeSink struct {
 	nudges   []ContributorNudge
 	resolved []int
 	outcome  ContributorNudgeOutcome
+	// presence overrides the default (a registered relay whose online state
+	// mirrors outcome.Online) returned by Presence.
+	presence *ContributorPresence
+}
+
+func (f *fakeNudgeSink) Presence(_ context.Context, _ string) ContributorPresence {
+	if f.presence != nil {
+		return *f.presence
+	}
+	return ContributorPresence{Registered: true, Online: f.outcome.Online}
+}
+
+// nudgeOnlySink is a sink without live presence (the pre-presence hub, or
+// hivecommons/hive#12561's lazy wrapper before it forwards Presence).
+type nudgeOnlySink struct{ inner *fakeNudgeSink }
+
+func (s nudgeOnlySink) Nudge(ctx context.Context, n ContributorNudge) ContributorNudgeOutcome {
+	return s.inner.Nudge(ctx, n)
+}
+
+func (s nudgeOnlySink) Resolve(ctx context.Context, owner, repo string, number int) {
+	s.inner.Resolve(ctx, owner, repo, number)
 }
 
 func (f *fakeNudgeSink) Nudge(_ context.Context, n ContributorNudge) ContributorNudgeOutcome {
@@ -35,6 +57,9 @@ func nudgePR(number int, head string, labels ...string) *gh.PullRequest {
 	pr.Title = gh.Ptr("fix: widget")
 	pr.HTMLURL = gh.Ptr("https://github.com/acme/widget/pull/7")
 	pr.CreatedAt = &gh.Timestamp{Time: time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)}
+	// A contributor's hive posted it (author/clanker): the 072 interrupt
+	// machinery applies even when the sink has no presence to consult.
+	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: mallory-hive\n")
 	return pr
 }
 

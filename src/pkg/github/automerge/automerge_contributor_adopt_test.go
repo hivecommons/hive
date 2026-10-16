@@ -23,10 +23,11 @@ type adoptAPI struct {
 	nextPR      int
 	superseders map[int]map[string]any // number → GET payload
 	prEdits     []string
+	commits     map[string]string // sha → GitHub login of author/committer
 }
 
 func newAdoptAPI() *adoptAPI {
-	return &adoptAPI{refs: map[string]string{}, nextPR: 90, superseders: map[int]map[string]any{}}
+	return &adoptAPI{refs: map[string]string{}, nextPR: 90, superseders: map[int]map[string]any{}, commits: map[string]string{}}
 }
 
 func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
@@ -79,6 +80,15 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		}
 		_ = json.NewEncoder(w).Encode(payload)
 		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/commits/"):
+		sha := strings.TrimPrefix(path, "/repos/acme/widget/commits/")
+		login, ok := a.commits[sha]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": map[string]any{"login": login}, "committer": map[string]any{"login": login}})
+		return true
 	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/pulls/"):
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -101,6 +111,19 @@ func sscanInt(s string, n *int) (int, error) {
 	return 1, nil
 }
 
+// allowMaintainerEdits makes GET pulls/n report maintainer_can_modify.
+func (a *adoptAPI) allowMaintainerEdits(n int, allow bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.superseders[n] = map[string]any{"number": n, "state": "open", "merged": false, "maintainer_can_modify": allow}
+}
+
+func (a *adoptAPI) setCommitAuthor(sha, login string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.commits[sha] = login
+}
+
 func (a *adoptAPI) setSuperseder(n int, state string, merged bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -111,7 +134,7 @@ func adoptPR(number int, head string, labels ...string) *gh.PullRequest {
 	pr := nudgePR(number, head, labels...)
 	pr.Base = &gh.PullRequestBranch{Ref: gh.Ptr("v5")}
 	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("mallory/widget")}
-	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n")
+	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n\n— hive: mallory-hive\n")
 	return pr
 }
 
@@ -136,13 +159,19 @@ type adoptHarness struct {
 
 func newAdoptHarness(t *testing.T, outcome ContributorNudgeOutcome, policy StageLabelPolicy) (*adoptHarness, func()) {
 	t.Helper()
+	sink := &fakeNudgeSink{outcome: outcome}
+	return newAdoptHarnessWith(t, sink, sink, policy)
+}
+
+// newAdoptHarnessWith wires an arbitrary sink (wrapping fake) into the engine.
+func newAdoptHarnessWith(t *testing.T, fake *fakeNudgeSink, sink ContributorNudgeSink, policy StageLabelPolicy) (*adoptHarness, func()) {
+	t.Helper()
 	api, closeAPI := seededStageAPI(t)
 	adopt := newAdoptAPI()
 	api.extra = adopt.handle
 	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
-	sink := &fakeNudgeSink{outcome: outcome}
 	e := newNudgeEngine(t, apiURLOf(t, api), clock, sink, policy)
-	return &adoptHarness{t: t, api: api, adopt: adopt, clock: clock, sink: sink, e: e}, closeAPI
+	return &adoptHarness{t: t, api: api, adopt: adopt, clock: clock, sink: fake, e: e}, closeAPI
 }
 
 func (h *adoptHarness) observe(pr *gh.PullRequest, reason string) StageLabelResult {
@@ -165,7 +194,7 @@ func (h *adoptHarness) addedLabels() []string {
 }
 
 func adoptPolicy() StageLabelPolicy {
-	return StageLabelPolicy{Enabled: true, ContributorNudge: true, Adoption: true, GraceOnline: 2 * time.Hour, GraceOffline: time.Hour}
+	return StageLabelPolicy{Enabled: true, ContributorNudge: true, Adoption: true, GraceOnline: 2 * time.Hour, GraceOffline: time.Hour, HiveID: "acme-hive"}
 }
 
 func TestAdoptionGraceSelection(t *testing.T) {
@@ -181,18 +210,56 @@ func TestAdoptionGraceSelection(t *testing.T) {
 	}
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	rec := stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1, FirstNudgeAt: now}
-	if adoptionDue(rec, "aaa", p, now.Add(59*time.Minute)) {
+	none := ContributorPresence{}
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(59*time.Minute), none, false); due {
 		t.Fatal("due before grace")
 	}
-	if !adoptionDue(rec, "aaa", p, now.Add(time.Hour)) {
-		t.Fatal("not due at grace")
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(time.Hour), none, false); !due || reason != AdoptReasonGrace {
+		t.Fatalf("not due at grace: %v %q", due, reason)
 	}
-	if adoptionDue(rec, "bbb", p, now.Add(2*time.Hour)) {
+	if due, _ := adoptionDue(rec, "bbb", p, now.Add(2*time.Hour), none, false); due {
 		t.Fatal("due for a head that was never nudged")
 	}
+	// Live presence: online relay keeps the online grace; an offline relay is
+	// adopted AdoptAfterOffline after its last heartbeat (not the nudge);
+	// an unregistered author after AdoptAfterUnregistered.
+	online := ContributorPresence{Registered: true, Online: true}
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(time.Hour), online, true); due {
+		t.Fatal("online relay adopted before the online grace")
+	}
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(2*time.Hour), online, true); !due || reason != AdoptReasonGrace {
+		t.Fatalf("online relay at grace: %v %q", due, reason)
+	}
+	offline := ContributorPresence{Registered: true, LastSeen: now.Add(10 * time.Minute)}
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(39*time.Minute), offline, true); due {
+		t.Fatal("offline relay adopted before 30m since its last heartbeat")
+	}
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(40*time.Minute), offline, true); !due || reason != AdoptReasonOffline {
+		t.Fatalf("offline relay: %v %q", due, reason)
+	}
+	p.AdoptAfterOffline = 5 * time.Minute
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(15*time.Minute), offline, true); !due {
+		t.Fatal("after_offline knob ignored")
+	}
+	unregistered := ContributorPresence{}
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(119*time.Minute), unregistered, true); due {
+		t.Fatal("unregistered author adopted before 2h")
+	}
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(2*time.Hour), unregistered, true); !due || reason != AdoptReasonUnregistered {
+		t.Fatalf("unregistered author: %v %q", due, reason)
+	}
+	p.AdoptAfterUnregistered = time.Hour
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(time.Hour), unregistered, true); !due {
+		t.Fatal("after_unregistered knob ignored")
+	}
 	rec.AdoptedHead = "aaa"
-	if adoptionDue(rec, "aaa", p, now.Add(3*time.Hour)) {
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(3*time.Hour), none, false); due {
 		t.Fatal("due twice for one head")
+	}
+	rec.AdoptedHead = ""
+	rec.AdoptMode = stagelabels.AdoptModeInPlace
+	if due, _ := adoptionDue(rec, "ccc", p, now.Add(3*time.Hour), none, false); due {
+		t.Fatal("due while adopted in place")
 	}
 	if got := adoptionCloses("Closes #12\nfixes acme/other#3\nnot closes #9 here\n"); len(got) != 2 || got[0] != "Closes #12" || got[1] != "fixes acme/other#3" {
 		t.Fatalf("closes lines %q", got)
@@ -243,7 +310,7 @@ func TestAdoptionOnlineGraceThenAdopt(t *testing.T) {
 		}
 	}
 	comments := adoptionComments(h.api)
-	if len(comments) != 1 || !strings.Contains(comments[0], "by=90 head=aaa") || !strings.Contains(comments[0], "@mallory") ||
+	if len(comments) != 1 || !strings.Contains(comments[0], "by=acme-hive reason=grace-elapsed mode=supersede superseded_by=90 head=aaa") || !strings.Contains(comments[0], "@mallory") ||
 		!strings.Contains(comments[0], "red for 2h") || !strings.Contains(comments[0], "relay nudge went unanswered") || !strings.Contains(comments[0], "#90") {
 		t.Fatalf("adoption comment: %v", h.api.comments)
 	}
@@ -272,7 +339,10 @@ func TestAdoptionOnlineGraceThenAdopt(t *testing.T) {
 // Offline / external author: comment-only nudge, 1h grace, then 074 and the
 // superseding PR. Once the superseder merges the original is closed.
 func TestAdoptionOfflineGraceThenSupersederMergedClosesOriginal(t *testing.T) {
-	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	// A sink without Presence: the nudge-time graces apply (the author's
+	// `— hive:` trailer still makes the PR a clanker's).
+	fake := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}
+	h, done := newAdoptHarnessWith(t, fake, nudgeOnlySink{fake}, adoptPolicy())
 	defer done()
 
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
@@ -339,6 +409,8 @@ func TestAdoptionSupersederClosedUnmergedReturnsTo072(t *testing.T) {
 func TestAdoptionNewHeadFromAuthorNotAdopted(t *testing.T) {
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
 	defer done()
+	// The author is pushing, so their relay is online: the 2h online grace.
+	h.sink.presence = &ContributorPresence{Registered: true, Online: true}
 	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
 	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
 	h.clock.advance(50 * time.Minute)
@@ -389,7 +461,7 @@ func TestAdoptionDisabledStaysReturned(t *testing.T) {
 func TestAdoptionSkipsSelfAuthored(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	rec := stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1, FirstNudgeAt: now.Add(-5 * time.Hour)}
-	if !adoptionDue(rec, "aaa", adoptPolicy(), now) {
+	if due, _ := adoptionDue(rec, "aaa", adoptPolicy(), now, ContributorPresence{}, false); !due {
 		t.Fatal("precondition")
 	}
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
@@ -411,5 +483,215 @@ func TestAdoptionSkipsSelfAuthored(t *testing.T) {
 	}
 	if len(h.adopt.pulls) != 0 || len(h.api.comments) != 0 {
 		t.Fatalf("self PR touched: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+}
+
+// hivecommons/hive#12527: the contributor's relay registered here, answered
+// nothing and dropped off. Adoption follows AdoptAfterOffline (30m default)
+// counted from its last heartbeat — not the 1h/2h nudge-time graces.
+func TestAdoptionRelayOfflineAdoptsAfterOfflineWindow(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	start := h.clock.at
+	h.sink.presence = &ContributorPresence{Registered: true, Online: true}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	if len(nudgeComments(h.api)) != 1 {
+		t.Fatalf("nudge: %v", h.api.comments)
+	}
+	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
+
+	// Relay went away 20m after the nudge.
+	h.sink.presence = &ContributorPresence{Registered: true, LastSeen: start.Add(20 * time.Minute)}
+	h.api.reset()
+	h.clock.advance(49 * time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if h.api.writes() != 0 || len(h.adopt.pulls) != 0 {
+		t.Fatalf("adopted before 30m offline: added=%v comments=%v", h.api.added, h.api.comments)
+	}
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	comments := adoptionComments(h.api)
+	if len(h.adopt.pulls) != 1 || len(comments) != 1 ||
+		!strings.Contains(comments[0], "by=acme-hive reason=contributor-offline mode=supersede superseded_by=90 head=aaa") ||
+		!strings.Contains(comments[0], "your hive has been offline since the nudge") {
+		t.Fatalf("offline adoption: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" {
+		t.Fatalf("074: %v", h.api.added)
+	}
+}
+
+// An author with no contributor profile here (another hive posted the PR)
+// is adopted after AdoptAfterUnregistered.
+func TestAdoptionUnregisteredAuthor(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptAfterUnregistered = 90 * time.Minute
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.sink.presence = &ContributorPresence{}
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
+	h.api.reset()
+	h.clock.advance(89 * time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 {
+		t.Fatal("adopted before after_unregistered")
+	}
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "reason=contributor-unregistered") || !strings.Contains(c[0], "no hive of yours is registered here") {
+		t.Fatalf("unregistered adoption: %v", h.api.comments)
+	}
+}
+
+// In-place adoption: the PR allows maintainer edits, so the hive takes over
+// the PR's own branch (no superseding PR), flips to 074, keeps the adoption
+// across its own pushes and yields when the contributor pushes.
+func TestAdoptionInPlaceWhenMaintainerCanModify(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
+	h.api.reset()
+	h.clock.advance(30 * time.Minute)
+	res := h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 || len(h.adopt.refs) != 0 {
+		t.Fatalf("superseded instead of adopting in place: pulls=%v refs=%v", h.adopt.pulls, h.adopt.refs)
+	}
+	comments := adoptionComments(h.api)
+	if len(comments) != 1 || res.Comments != 1 ||
+		!strings.Contains(comments[0], "by=acme-hive reason=contributor-offline mode=in-place head=aaa") ||
+		!strings.Contains(comments[0], "@mallory") || !strings.Contains(comments[0], "stage/074-adopted-by-hive") {
+		t.Fatalf("in-place comment: %v", h.api.comments)
+	}
+	rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !rec.AdoptedInPlace() || rec.AdoptReason != AdoptReasonOffline || rec.AdoptedBy != 0 {
+		t.Fatalf("record: %+v", rec)
+	}
+	h.api.reset()
+	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/074-adopted-by-hive" || len(h.api.removed) != 1 || h.api.removed[0] != "stage/072-returned-to-contributor" {
+		t.Fatalf("074 transition: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if len(h.sink.resolved) != 1 || h.sink.resolved[0] != 7 {
+		t.Fatalf("fix queue not resolved: %v", h.sink.resolved)
+	}
+	adopted := []string{"stage/074-adopted-by-hive", "author/contributor"}
+
+	// The hive's fixer pushes: still red, adoption follows the new head, no churn.
+	h.adopt.setCommitAuthor("bbb", testHiveAppBotLogin)
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", adopted...), "check-failing:unit")
+	if h.api.writes() != 0 {
+		t.Fatalf("churn after hive push: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bbb" {
+		t.Fatalf("adoption did not follow the hive's head: %+v", rec)
+	}
+
+	// The contributor is back and pushes: one yield note, adoption forgotten,
+	// the ordinary 072 flow (fresh nudge for the new head) resumes.
+	h.adopt.setCommitAuthor("ccc", "mallory")
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	res = h.observe(adoptPR(7, "ccc", adopted...), "check-failing:unit")
+	var yields int
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, AdoptionYieldMarker) {
+			yields++
+		}
+	}
+	if yields != 1 || len(nudgeComments(h.api)) != 1 || res.Comments != 2 {
+		t.Fatalf("yield: comments=%v res=%+v", h.api.comments, res)
+	}
+	if added := h.addedLabels(); len(added) != 1 || added[0] != "stage/072-returned-to-contributor" {
+		t.Fatalf("back to 072: added=%v removed=%v", h.api.added, h.api.removed)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); rec.AdoptedInPlace() || rec.YieldedHead != "ccc" {
+		t.Fatalf("adoption not released: %+v", rec)
+	}
+	// Same head again: the yield note is not repeated.
+	h.api.reset()
+	h.observe(adoptPR(7, "ccc", labels...), "check-failing:unit")
+	if len(h.api.comments) != 0 {
+		t.Fatalf("yield repeated: %v", h.api.comments)
+	}
+}
+
+// In-place requested but the fork forbids maintainer edits: supersede.
+func TestAdoptionInPlaceFallsBackToSupersede(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, false)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	h.clock.advance(30 * time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "author/contributor"), "check-failing:unit")
+	if len(h.adopt.pulls) != 1 {
+		t.Fatalf("expected superseding PR: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+	if c := adoptionComments(h.api); len(c) != 1 || !strings.Contains(c[0], "mode=supersede") {
+		t.Fatalf("comment: %v", h.api.comments)
+	}
+}
+
+// hold / do-not-merge parks the PR: adoption is due but never performed.
+func TestAdoptionBlockedByHold(t *testing.T) {
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+	defer done()
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	h.api.reset()
+	h.clock.advance(5 * time.Hour)
+	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "author/contributor", "hold"), "check-failing:unit")
+	if len(h.adopt.pulls) != 0 || len(adoptionComments(h.api)) != 0 {
+		t.Fatalf("adopted a held PR: pulls=%d comments=%v", len(h.adopt.pulls), h.api.comments)
+	}
+	if got := adoptionBlocked([]string{"size/L", "do-not-merge/hold"}); got != "do-not-merge/hold" {
+		t.Fatalf("adoptionBlocked=%q", got)
+	}
+}
+
+// The 072 interrupt is for author/clanker only: a human's PR (no hive
+// trailer, no profile) and a hive-authored PR (agent/* lane label) wait at
+// 072 with neither nudge nor adoption.
+func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(pr *gh.PullRequest)
+	}{
+		{"human", func(pr *gh.PullRequest) { pr.Body = gh.Ptr("Fixes the widget.\n") }},
+		{"hive", func(pr *gh.PullRequest) {
+			pr.Labels = append(pr.Labels, &gh.Label{Name: gh.Ptr("agent/scanner")})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
+			defer done()
+			h.sink.presence = &ContributorPresence{}
+			pr := adoptPR(7, "aaa")
+			tc.mutate(pr)
+			h.observe(pr, "check-failing:unit")
+			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/072-returned-to-contributor") {
+				t.Fatalf("072: %v", h.api.added)
+			}
+			if len(h.api.comments) != 0 || len(h.sink.nudges) != 0 {
+				t.Fatalf("interrupt fired for %s author: comments=%v nudges=%d", tc.name, h.api.comments, len(h.sink.nudges))
+			}
+			h.api.reset()
+			h.clock.advance(6 * time.Hour)
+			pr = adoptPR(7, "aaa", "stage/072-returned-to-contributor", "author/contributor")
+			tc.mutate(pr)
+			h.observe(pr, "check-failing:unit")
+			if len(h.api.comments) != 0 || len(h.adopt.pulls) != 0 || strings.Contains(strings.Join(h.addedLabels(), " "), "stage/074") {
+				t.Fatalf("adopted a %s PR: added=%v comments=%v pulls=%d", tc.name, h.api.added, h.api.comments, len(h.adopt.pulls))
+			}
+		})
 	}
 }

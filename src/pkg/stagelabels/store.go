@@ -83,6 +83,19 @@ type Record struct {
 	// at entry. The dashboard's Hive activity monitor renders it as the
 	// item's tracker trail; nothing in the reconciler reads it back.
 	History []Hop `json:"history,omitempty"`
+	// AdoptMode is how the hive adopted the PR: AdoptModeSupersede (an App
+	// PR from hive/adopt-<n> carries the head) or AdoptModeInPlace (the
+	// hive's fix lane pushes to the PR's own branch, maintainer_can_modify).
+	// Empty on records written before in-place adoption existed, which were
+	// all supersessions.
+	AdoptMode string `json:"adopt_mode,omitempty"`
+	// AdoptReason is why the hive adopted ("contributor-offline",
+	// "contributor-unregistered", "grace-elapsed").
+	AdoptReason string `json:"adopt_reason,omitempty"`
+	// YieldedHead is the contributor head the hive yielded an in-place
+	// adoption on (the author pushed again); the yield note is posted once
+	// per head.
+	YieldedHead string `json:"yielded_head,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -420,9 +433,66 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 	s.dirty = true
 }
 
+// Adoption modes (Record.AdoptMode).
+const (
+	AdoptModeSupersede = "supersede"
+	AdoptModeInPlace   = "in-place"
+)
+
 // Adopted reports whether head is the head the hive adopted (stage 074).
 func (r Record) Adopted(head string) bool {
 	return head != "" && r.AdoptedHead == head
+}
+
+// AdoptedInPlace reports whether the hive adopted this PR in place (its fix
+// lane owns the PR's own branch) and the adoption is still live. The head is
+// not compared: the hive's own pushes move it (see Store.MarkAdoptedHead).
+func (r Record) AdoptedInPlace() bool {
+	return r.AdoptedHead != "" && r.AdoptMode == AdoptModeInPlace
+}
+
+// MarkAdoptedInPlace records an in-place adoption of head for reason.
+func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, 0, now, now
+	r.AdoptMode, r.AdoptReason = AdoptModeInPlace, reason
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkAdoptedHead moves a live adoption to a new head the hive itself
+// pushed, so the record keeps reading as adopted.
+func (s *Store) MarkAdoptedHead(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptedHead == "" || head == "" {
+		return
+	}
+	r.AdoptedHead = head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkYielded forgets an in-place adoption because the contributor pushed
+// head themselves, remembering the head so the yield note posts once.
+func (s *Store) MarkYielded(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
+	r.AdoptMode, r.AdoptReason = "", ""
+	r.YieldedHead = head
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkAdopted records the stage-074 adoption of head by superseding PR `by`
@@ -435,6 +505,7 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
+	r.AdoptMode = AdoptModeSupersede
 	s.items[key] = r
 	s.dirty = true
 }
@@ -461,6 +532,7 @@ func (s *Store) ClearAdoption(key string) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
+	r.AdoptMode, r.AdoptReason = "", ""
 	s.items[key] = r
 	s.dirty = true
 }

@@ -5399,8 +5399,8 @@ function clankerIdleLine(c){
 function clankerPendingReworkLine(c){
   var pend=c.pending_rework|0;
   if(pend<=0)return '';
-  var prs=(c.pending_rework_prs||[]).map(function(p){return (p.repo||'')+'#'+(p.number||'')+(p.cause?(' ('+p.cause+')'):'');}).join(', ');
-  var links=(c.pending_rework_prs||[]).map(clankerWorkRef).join(', ');
+  var prs=(c.pending_rework_prs||[]).map(function(p){return (p.repo||'')+'#'+(p.number||'')+(p.cause?(' ('+p.cause+')'):'')+(p.state?(' — '+p.state):'');}).join(', ');
+  var links=(c.pending_rework_prs||[]).map(function(p){return clankerWorkRef(p)+(p.state?(' <i class="clanker-rework-state">'+esc(p.state)+'</i>'):'');}).join(', ');
   var depth=c.fix_queue_depth|0;
   var q=depth>0?(' &middot; fix queue '+depth):'';
   return '<div class="clanker-sub clanker-rework-pending" title="'+esc(prs)+'">'+pend+' PR'+(pend===1?'':'s')+' awaiting rework (not yet dispatched)'+q+(links?(': '+links):'')+'</div>';

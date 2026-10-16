@@ -585,3 +585,47 @@ func TestStoreHistoryTrail(t *testing.T) {
 		t.Fatalf("history not persisted: %+v", rec2.History)
 	}
 }
+
+// Stage-074 in-place adoption bookkeeping: MarkAdoptedInPlace / MarkAdoptedHead
+// keep the hive's ownership across its own pushes; MarkYielded releases it and
+// remembers the contributor's head so the yield note is posted once.
+func TestStoreAdoptInPlaceAndYield(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	key := Key("acme/widget", 7)
+	s.MarkAdoptedInPlace("missing", "a", "contributor-offline", now)
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("MarkAdoptedInPlace created a record")
+	}
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
+	r, _ := s.Get(key)
+	if r.AdoptedInPlace() || r.Adopted("a") {
+		t.Fatalf("fresh record adopted: %+v", r)
+	}
+	s.MarkAdoptedInPlace(key, "a", "contributor-offline", now)
+	r, _ = s.Get(key)
+	if !r.AdoptedInPlace() || r.AdoptMode != AdoptModeInPlace || r.AdoptReason != "contributor-offline" || r.AdoptedHead != "a" || !r.AdoptedAt.Equal(now) || r.AdoptedBy != 0 {
+		t.Fatalf("in place: %+v", r)
+	}
+	s.MarkAdoptedHead(key, "b")
+	r, _ = s.Get(key)
+	if !r.AdoptedInPlace() || r.AdoptedHead != "b" {
+		t.Fatalf("head moved: %+v", r)
+	}
+	s.MarkYielded(key, "c")
+	r, _ = s.Get(key)
+	if r.AdoptedInPlace() || r.AdoptedHead != "" || r.AdoptMode != "" || r.AdoptReason != "" || r.YieldedHead != "c" {
+		t.Fatalf("yielded: %+v", r)
+	}
+	// Supersede path tags its mode too; ClearAdoption wipes everything.
+	s.MarkAdopted(key, "c", 90, now)
+	r, _ = s.Get(key)
+	if r.AdoptMode != AdoptModeSupersede || !r.Adopted("c") || r.AdoptedInPlace() {
+		t.Fatalf("supersede: %+v", r)
+	}
+	s.ClearAdoption(key)
+	r, _ = s.Get(key)
+	if r.AdoptMode != "" || r.AdoptReason != "" || r.AdoptedHead != "" {
+		t.Fatalf("cleared: %+v", r)
+	}
+}
