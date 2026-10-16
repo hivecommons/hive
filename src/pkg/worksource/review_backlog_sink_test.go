@@ -145,7 +145,7 @@ func TestLinearBacklogSinkCreatesInStateAndComments(t *testing.T) {
 			}
 			_, _ = io.WriteString(w, `{"data":{"teams":{"nodes":[{"id":"team-1","key":"ENG",
 				"states":{"nodes":[{"id":"st-todo","name":"Todo"},{"id":"st-backlog","name":"Backlog"}]},
-				"labels":{"nodes":[{"id":"lb-nit","name":"nit"},{"id":"lb-fr","name":"from-review"}]}}]}}}`)
+				"labels":{"nodes":[{"id":"lb-nit","name":"nit"},{"id":"lb-fr","name":"origin/review"}]}}]}}}`)
 		case strings.Contains(c.Query, "issueCreate"):
 			created, _ = c.Variables["input"].(map[string]any)
 			_, _ = io.WriteString(w, `{"data":{"issueCreate":{"success":true,"issue":{"id":"uuid-1","identifier":"ENG-12","number":12,"url":"https://linear.test/ENG-12","title":"t"}}}}`)

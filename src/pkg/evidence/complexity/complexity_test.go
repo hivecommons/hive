@@ -71,6 +71,10 @@ func TestMeasure(t *testing.T) {
 	if s.TotalCyclo != 13 || s.MeanCyclo != 2.6 || s.OverThreshold != 1 || s.Threshold != 2 {
 		t.Fatalf("%+v", s)
 	}
+	// Sorted cyclomatics are 1,1,1,1,9: nearest-rank p50 is the 3rd, p90 the 5th.
+	if s.MedianCyclo != 1 || s.P90Cyclo != 9 {
+		t.Fatalf("median=%d p90=%d", s.MedianCyclo, s.P90Cyclo)
+	}
 	names := map[string]bool{}
 	for _, h := range s.Hotspots {
 		names[h.Name] = true

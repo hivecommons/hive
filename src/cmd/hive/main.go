@@ -48,6 +48,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inference"
+	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -2290,6 +2291,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
+		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
 
@@ -2593,6 +2595,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.preShutdownHooks.add("close-contribute-hub", func() {
 		b.dashSrv.CloseContributeHub()
 	})
+	// Monthly per-repo complexity/static-analysis snapshot (RFC #12062,
+	// #12363). Report-only: it writes evidence files and never touches merge
+	// eligibility.
+	b.startComplexityRunner(newComplexityRunner(b.cfg, b.currentGitHubClient, b.logger))
 
 	// Wire ioscan input enforcement (opt-in via ioscan.enabled) to the dashboard
 	// audit log so a blocked/redacted issue title surfaces in the existing
@@ -2678,6 +2684,14 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			b.logger.Warn("sla history flush on shutdown failed", "error", err)
 		}
 	})
+
+	// Intent evaluation counters (#12362): one audit-log line per evaluation
+	// and a durable weekly file beside write-counters.json. Record-only;
+	// nothing reads these back into merge eligibility.
+	intent.SetEvaluationAuditSink(func(o intent.Observation) {
+		b.dashSrv.AuditLogRecord("system", intentEvaluatedAuditAction, intentEvaluatedAuditDetail(o), "", o.Repo, o.Number)
+	})
+	b.preShutdownHooks.add("flush-intent-counters", intent.StartEvaluationCounterPersistence(intent.CountersPath, b.logger))
 
 	// The scheduler's classifier pass records KindClassified journeys the
 	// moment lane routing decides an issue's lane — same store, no extra work.
@@ -5865,6 +5879,12 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
 		}
+		// Provenance-only rename (from-review → origin/review). Nothing reads
+		// either label as a gate, so a failure here only leaves old names on
+		// open items; the marker is not written and the next boot retries.
+		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
+			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyFromReviewLabel, "error", err)
+		}
 	}
 	b.evalCycles++
 	deps.runEval(b, nil)
@@ -8607,6 +8627,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
+		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
@@ -8672,6 +8693,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 				logger.Info("contributor-lane automerge sweep complete", "seen", laneResult.Seen, "merged", len(laneResult.Merged), "skipped", laneResult.Skipped)
 			}
 		}
+	}
+	// Stage labels (#12429): the lanes above each recorded their per-PR
+	// reason into the process-shared tracker; one pass writes the labels.
+	if stageResult, stageErr := automerge.ApplyStageLabels(ctx, ghClient, opts); stageErr != nil {
+		logger.Warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
+	} else if stageResult.Writes+stageResult.Comments > 0 {
+		logger.Info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -9110,17 +9138,23 @@ func applyDuplicatePRGuard(
 		return
 	}
 	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
-	// hive/in-progress runs after the PR-claim guard so an issue whose PR just
-	// opened sheds the start mark here, and a lapsed mark frees the issue
-	// before kicks are built. Independent of governor.claims: the label is
-	// read from the issue, the marker from the comment, on every hive.
+	// The in-progress sweep runs after the PR-claim guard so an issue whose
+	// PR just opened sheds the start mark here, and a lapsed mark frees the
+	// issue before kicks are built. Independent of governor.claims: the
+	// label is read from the issue, the marker from the comment, on every hive.
 	if withheld := github.SweepInProgressIssues(ctx, ghClient, actionable, time.Now(), logger); withheld > 0 {
 		logger.Info("in-progress guard applied", "withheld", withheld)
+	}
+	// hivecommons/hive#12436: with every bucket final, mirror the cycle's
+	// decision about each open issue onto its stage/NNN label (and strip the
+	// retired claimed / hive/in-progress / 🐝 covered by PR labels).
+	if res := github.SyncIssueStageLabels(ctx, ghClient, actionable, nil, time.Now(), logger); res.Writes+res.Comments > 0 {
+		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments)
 	}
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
 }
 
-// inProgressSetting resolves the hive/in-progress label setting from config.
+// inProgressSetting resolves the pr-in-progress stage label setting from config.
 // The label follows the claims label mirror: an operator who set
 // governor.claims.label: false asked for no hive-managed claim labels, and
 // gets none here either; otherwise the start signal is always labelled. The
@@ -9303,6 +9337,12 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		return cfg.Governor.Claims.Enabled, cfg.Governor.Claims.EffectiveTTL()
 	})
 	client.SetInProgress(func() github.InProgressSetting { return inProgressSetting(cfg) })
+	// hivecommons/hive#12436: the issue stage reconciler follows the same
+	// governor.labels.stage policy as the PR one, read live.
+	client.SetIssueStageLabels(func() github.IssueStagePolicy {
+		p := stageLabelPolicyFunc(cfg)()
+		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell}
+	})
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -19,11 +20,15 @@ const (
 
 var (
 	defaultIssueWaitingLabels = []string{"blocked", "needs-decision", "2-discussing", "Epic", "needs-human", "needs-triage"}
-	defaultIssueDoneLabels    = []string{"hive/already-done", "🐝 covered by PR", "hive/covered-by-pr", "hive/likely-done"}
-	prHumanGateLabels         = []string{"needs-human", "needs-decision", "2-discussing"}
-	issueBandOrder            = []string{"ready", "in-progress", "agent-filed", "waiting", "done"}
-	prBandOrder               = []string{"waiting", "eligible", "blocked", "in-review", "open", "draft"}
-	holdLabelSpellings        = []string{"hold", "on-hold", "hold/review"}
+	// The retired `🐝 covered by PR` / `hive/covered-by-pr` spellings stay
+	// here for one migration cycle (hivecommons/hive#12436); their stage
+	// successor, stage/040-covered-by-pr and every PR stage past it, is
+	// matched structurally by issueStageCovered.
+	defaultIssueDoneLabels = []string{"hive/already-done", "🐝 covered by PR", "hive/covered-by-pr", "hive/likely-done"}
+	prHumanGateLabels      = []string{"needs-human", "needs-decision", "2-discussing"}
+	issueBandOrder         = []string{"ready", "in-progress", "agent-filed", "waiting", "done"}
+	prBandOrder            = []string{"waiting", "eligible", "blocked", "in-review", "open", "draft"}
+	holdLabelSpellings     = []string{"hold", "on-hold", "hold/review"}
 )
 
 type Signal struct {
@@ -105,7 +110,7 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	role := issueAgentRole(issue.Labels)
 	acknowledged := issue.HumanAcknowledged || labels["approved-direction"]
 	linked := issueLinkedPRState(issue)
-	done := hasAnyLabel(labels, norm.DoneLabels) || linked.merged
+	done := hasAnyLabel(labels, norm.DoneLabels) || linked.merged || issueStageCovered(issue.Labels)
 	waiting := hasAnyLabel(labels, norm.WaitingLabels)
 	inProgress := len(issue.Assignees) > 0 || issueClaimed(issue.Labels) || linked.open
 	selfAuthorizationHeld := true
@@ -406,10 +411,61 @@ func issueAgentRole(labels []string) string {
 	return ""
 }
 
+// Stage-family ordinals the band logic needs (hivecommons/hive#12436). The
+// numbers are the `stage/NNN-` prefix of the labels pkg/stagelabels emits;
+// bands_inprogress_test.go pins them to that table so pkg/dashboard does not
+// import the package.
+const (
+	stageNumberClaimed      = 20
+	stageNumberPRInProgress = 30
+	stageNumberCoveredByPR  = 40
+	stageLabelPrefix        = "stage/"
+)
+
+// stageNumber returns the ordinal of a `stage/NNN-slug` label, or 0 for any
+// other label (including the health markers stage/stalled|regressed).
+func stageNumber(label string) int {
+	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(label)), stageLabelPrefix)
+	if !ok {
+		return 0
+	}
+	digits, _, found := strings.Cut(rest, "-")
+	if !found || digits == "" {
+		return 0
+	}
+	n := 0
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		n = n*10 + int(r-'0')
+	}
+	return n
+}
+
+// issueStageCovered reports whether the issue carries stage/040-covered-by-pr
+// or a mirrored PR stage past it — the stage successor of the retired
+// covered-by-PR labels, so the issue files under "done" the same way.
+func issueStageCovered(labels []string) bool {
+	for _, label := range labels {
+		if stageNumber(label) >= stageNumberCoveredByPR {
+			return true
+		}
+	}
+	return false
+}
+
+// issueClaimed reports whether labels say someone holds the issue: the
+// stage/020-claimed and stage/030-pr-in-progress stages, the
+// `hive/claimed-by-<who>` modifier, or (migration cycle only) the retired
+// `claimed` / `hive/in-progress` labels.
 func issueClaimed(labels []string) bool {
 	for _, label := range labels {
 		lower := strings.ToLower(label)
-		if lower == "claimed" || lower == "hive/in-progress" || strings.HasPrefix(lower, "hive/claimed-by-") {
+		if lower == claims.LegacyLabelClaimed || lower == claims.LegacyLabelInProgress || strings.HasPrefix(lower, "hive/claimed-by-") {
+			return true
+		}
+		if n := stageNumber(lower); n == stageNumberClaimed || n == stageNumberPRInProgress {
 			return true
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -63,6 +64,8 @@ type Bundle struct {
 	RevertedBy       []string          `json:"reverted_by,omitempty"`
 	FollowedUpBy     []string          `json:"followed_up_by,omitempty"`
 	Shadow           *Shadow           `json:"shadow,omitempty"`
+	Backfilled       bool              `json:"backfilled,omitempty"`
+	Backfill         *Backfill         `json:"backfill,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
 	Signed           bool              `json:"signed"`
@@ -149,11 +152,15 @@ type Action struct {
 }
 
 // MergeEvent records who or what merged the PR. It is nil until merge.
+// OpenedAt is when the PR was opened on GitHub, so At minus OpenedAt is its
+// time to merge; zero on bundles recorded before it was captured. It is not
+// the bundle's CreatedAt, which for a live bundle is when review started.
 type MergeEvent struct {
-	Actor  string    `json:"actor"`
-	Method string    `json:"method"`
-	At     time.Time `json:"at"`
-	SHA    string    `json:"sha"`
+	Actor    string    `json:"actor"`
+	Method   string    `json:"method"`
+	At       time.Time `json:"at"`
+	SHA      string    `json:"sha"`
+	OpenedAt time.Time `json:"opened_at,omitzero"`
 }
 
 // Shadow records what shadow-mode gates would have done for the head SHA.
@@ -173,6 +180,47 @@ type ShadowGate struct {
 	Tier             string    `json:"tier,omitempty"`
 	Confidence       float64   `json:"confidence"`
 	EvaluatedAt      time.Time `json:"evaluated_at"`
+}
+
+// Backfill states, as reconstructed from forge history.
+const (
+	BackfillStateOpen   = "open"
+	BackfillStateClosed = "closed"
+	BackfillStateMerged = "merged"
+)
+
+// Backfill exclusion flags (hivecommons/hive#12371). They mirror the
+// pre-registration's population rules: a flagged bundle is kept on disk and
+// every reader decides whether to exclude or annotate it. Nothing is dropped
+// silently.
+const (
+	BackfillFlagPlaceholderHive = "placeholder_hive"
+	BackfillFlagHiveOnHive      = "hive_on_hive"
+	BackfillFlagUnderMinMerged  = "under_min_merged"
+)
+
+// BackfillFlags is every valid Backfill.Flags value.
+var BackfillFlags = []string{BackfillFlagPlaceholderHive, BackfillFlagHiveOnHive, BackfillFlagUnderMinMerged}
+
+// Backfill describes a bundle reconstructed after the fact from forge
+// history rather than recorded live (hivecommons/hive#12371). Such a bundle
+// has Backfilled set and carries only what the forge still knows: author,
+// outcome, timestamps and change links. Verdicts, CI, sentinel and shadow
+// observations are absent, never fabricated; policy.acmm_level is 0 unless
+// the operator stamped a known level for the window.
+type Backfill struct {
+	// Source names the history the bundle was built from, e.g. "github-api".
+	Source string `json:"source"`
+	// At is when the backfill ran.
+	At time.Time `json:"at"`
+	// State is the PR's outcome at At: open, closed (without merge) or merged.
+	State string `json:"state,omitempty"`
+	// ClosedAt is when a closed PR was closed; zero when open or merged.
+	ClosedAt time.Time `json:"closed_at,omitzero"`
+	// AuthorKindRule names the heuristic that decided author.kind.
+	AuthorKindRule string `json:"author_kind_rule,omitempty"`
+	// Flags are the pre-registration exclusion flags that apply to the repo.
+	Flags []string `json:"flags,omitempty"`
 }
 
 // BundleID returns the canonical bundle identifier owner/repo#number@head.
@@ -261,6 +309,9 @@ func (b *Bundle) Validate() error {
 	if m := b.Merge; m != nil && (m.Actor == "" || m.Method == "" || m.SHA == "") {
 		bad("merge: actor, method and sha are required")
 	}
+	if m := b.Merge; m != nil && !m.OpenedAt.IsZero() && m.OpenedAt.After(m.At) {
+		bad("merge.opened_at must not be after merge.at")
+	}
 	if sh := b.Shadow; sh != nil {
 		if g := sh.ReviewGate; g != nil {
 			if g.WouldHaveHeld == nil || g.WouldHaveBlocked != nil {
@@ -273,6 +324,27 @@ func (b *Bundle) Validate() error {
 				bad("shadow.intent: exactly would_have_blocked is required")
 			}
 			validateShadowGate("shadow.intent", g, bad)
+		}
+	}
+	if bf := b.Backfill; bf != nil {
+		if !b.Backfilled {
+			bad("backfill: present but backfilled is false")
+		}
+		if bf.Source == "" {
+			bad("backfill.source is required")
+		}
+		if bf.At.IsZero() {
+			bad("backfill.at is required")
+		}
+		switch bf.State {
+		case "", BackfillStateOpen, BackfillStateClosed, BackfillStateMerged:
+		default:
+			bad("backfill.state %q must be open, closed or merged", bf.State)
+		}
+		for i, f := range bf.Flags {
+			if !slices.Contains(BackfillFlags, f) {
+				bad("backfill.flags[%d]: unknown flag %q", i, f)
+			}
 		}
 	}
 	for _, l := range []struct {

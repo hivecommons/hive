@@ -4,13 +4,21 @@ The spoke dashboard is the operator UI served from
 `src/pkg/dashboard/static/index.html`. For the behavior behind the labels the repository cards show or mutate, see [Hive Labels and Control Signals](labels-and-control-signals.md). Its FAQ panel (`#faq-section` /
 `#faq-panel`) is intentionally static HTML: it is not ACMM-gated, does not
 fetch data, and is visible to confused L1/L2 users before they understand the
-rest of the UI.
+rest of the UI. Its only script is a client-side filter box (`faqFilter`) that
+hides non-matching questions.
 
-The FAQ is a summary surface for the current v5 hive. It groups answers by
-getting started (L1/L2), the L3-L6 trust ladder, runs and inception,
-contributors and relays, issue claims and GitHub footprint, cost/cadence/models,
-and where to get help. Each answer links back to the relevant `src/docs/*.md`
-source of truth rather than becoming a second spec.
+The FAQ is a summary surface for the current v5 hive. Each question is a
+collapsible `<details class="faq-q">` with a `<summary>`, grouped under
+getting started (L1/L2), the L3-L6 trust ladder (including `hold` labels and
+shadow mode), evidence/releases/upgrades, runs/inception/Experiment Lab,
+contributors/relays/models, issue claims/attribution/audit log,
+cost/cadence/pausing, and where to get help. Each answer links back to the
+relevant `src/docs/*.md` source of truth rather than becoming a second spec,
+and a footer points to Discord, the in-dashboard feedback form and the issue
+tracker when an answer is missing. `pkg/dashboard/faq_ui_test.go` guards the
+structure: section ids, one `<summary>` per question, at least one link per
+answer, the filter input, and no inline `style=` inside the panel (styling is
+the token-based `.faq-*` class set).
 
 Contributor cards use a client-side “album cover” tint: the dashboard samples each GitHub avatar in a tiny canvas, ignores low-saturation/near-black/near-white pixels, picks dominant and secondary accent colours, and applies them only as subtle background, border, avatar-ring, and role-pill washes. When avatar sampling fails, a deterministic hue derived from the login keeps the card distinct; results are cached in browser storage for seven days.
 
@@ -338,8 +346,10 @@ in exactly one band, while non-winning states remain as badges on the pill:
 1. **Unclaimed** (`unclaimed`) — no other band matched: nobody is assigned,
    nothing claimed it, and no human gate applies. This does not by itself mean
    agents will pick it up.
-2. **Claimed** (`claimed`) — a claim is a comment; the `claimed` label is a
-   mirror Hive keeps in sync. The display band also recognises assignees and
+2. **Claimed** (`claimed`) — a claim is a comment; the `stage/020-claimed` /
+   `stage/030-pr-in-progress` label is a mirror Hive keeps in sync (the retired
+   `claimed` and `hive/in-progress` spellings are still recognised for the
+   migration cycle). The display band also recognises assignees and
    `hive/claimed-by-*`.
 3. **Needs triage** (`triage`) — an `agent/<role>` label and no human has
    acknowledged the proposal under #5117: no `approved-direction` label and no
@@ -351,8 +361,9 @@ in exactly one band, while non-winning states remain as badges on the pill:
    `2-discussing`, `Epic`, `needs-human`, or `needs-triage`. Note that the
    `needs-triage` *label* lands here, not in the Needs triage band.
 5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
-   `🐝 covered by PR` (formerly `hive/covered-by-pr`), and `hive/likely-done`: an agent believes the work
-   landed; verify and close.
+   `stage/040-covered-by-pr` (and any later mirrored PR stage; formerly
+   `🐝 covered by PR` / `hive/covered-by-pr`), and `hive/likely-done`: an agent
+   believes the work landed; verify and close.
 
 Precedence is confirm & close → needs human → claimed → needs triage → unclaimed,
 so a human gate beats an assignment and done beats all other display states.
@@ -366,7 +377,7 @@ Operators can tune only the display taxonomy under `dashboard.issue_bands`:
 dashboard:
   issue_bands:
     waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
-    done_labels: [hive/already-done, "🐝 covered by PR", hive/covered-by-pr, hive/likely-done]
+    done_labels: [hive/already-done, stage/040-covered-by-pr, "🐝 covered by PR", hive/covered-by-pr, hive/likely-done]
     stale_days: 14
 ```
 
@@ -401,7 +412,7 @@ queueing.
 
 ## Linked PR issue signals
 
-Repository issue pills show a `🔗` badge when Hive has verified a pull request related to that issue. Open PRs apply `🐝 covered by PR`; merged PRs on still-open issues apply `hive/likely-done`. The badge's tooltip grades the claim: "closes via PR #N" (the PR carries a closing keyword, or Hive linked it from the branch name), "covered by PR #N (partial)" (the PR says `Refs #N` / `Part of #N` and merging it will not close the issue), or "merged via PR #N". These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage.
+Repository issue pills show a `🔗` badge when Hive has verified a pull request related to that issue. Open PRs apply `stage/040-covered-by-pr` (the retired `🐝 covered by PR`); merged PRs on still-open issues apply `hive/likely-done`. The badge's tooltip grades the claim: "closes via PR #N" (the PR carries a closing keyword, or Hive linked it from the branch name), "covered by PR #N (partial)" (the PR says `Refs #N` / `Part of #N` and merging it will not close the issue), or "merged via PR #N". These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage.
 
 The badge is derived from Hive's own PR-claim evidence — the same source that applies the label — not from GitHub's closing-link data, so it is present for every covered issue whether the claim is closing or partial, and whether the issue is actionable or suppressed into the card's "covered by PR" group ([#12144](https://github.com/hivecommons/hive/issues/12144)). One badge renders per issue; when several PRs cover it the closing PR is primary, the count is appended (`🔗×2`), and the tooltip lists the rest. The status payload exposes the evidence as `linked_prs: [{number, state, merged, url, closing, reference}]` plus `claim_context` on each actionable `github.Issue` and on each `claimed_by_pr` entry in `nonActionableIssues`.
 

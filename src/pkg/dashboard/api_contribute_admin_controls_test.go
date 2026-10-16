@@ -746,3 +746,70 @@ func TestGovernorHubExplicitEmptySnapshotURLClears(t *testing.T) {
 		t.Errorf("snapshot_url = %q, want cleared by explicit empty string", got)
 	}
 }
+
+func TestGovernorHubSnapshotURLValidation(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Hub.SnapshotURL = "https://snap.example.com"
+
+	// Valid URL with trailing slash is normalized
+	putGovernorHub(t, s, `{"snapshot_url":"https://preview.example.com/snapshot/"}`)
+	if got := deps.Config.Hub.SnapshotURL; got != "https://preview.example.com/snapshot" {
+		t.Errorf("snapshot_url = %q, want trailing slash trimmed", got)
+	}
+
+	// Invalid URL is rejected with 400 and does not mutate existing value
+	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/hub", strings.NewReader(`{"snapshot_url":"ftp://bad.example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	markOwnerRequest(req)
+	w := httptest.NewRecorder()
+	s.handleGovernorHub(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("governor hub update got %d, want 400 (body: %s)", w.Code, w.Body.String())
+	}
+	if got := deps.Config.Hub.SnapshotURL; got != "https://preview.example.com/snapshot" {
+		t.Errorf("snapshot_url = %q, want unchanged after failed validation", got)
+	}
+}
+
+// A PUT mixing valid fields with an invalid snapshot_url or
+// snapshot_frame_ancestors must reject the whole save: nothing is applied
+// before every field has been validated.
+func TestGovernorHubInvalidSnapshotFieldsRejectWholeSave(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "bad snapshot_url", body: `{"enabled":true,"url":"https://hub.example.com","dashboard_url":"https://dash.example.com","snapshot_url":"ftp://bad.example.com"}`},
+		{name: "bad snapshot_frame_ancestors", body: `{"enabled":true,"url":"https://hub.example.com","dashboard_url":"https://dash.example.com","snapshot_frame_ancestors":["not a url"]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, deps := apiServer(t)
+			deps.Config.Hub.Enabled = false
+			deps.Config.Hub.URL = "https://old-hub.example.com"
+			deps.Config.Hub.DashboardURL = "https://old-dash.example.com"
+			deps.Config.Hub.SnapshotURL = "https://snap.example.com"
+
+			req := httptest.NewRequest(http.MethodPut, "/api/config/governor/hub", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			markOwnerRequest(req)
+			w := httptest.NewRecorder()
+			s.handleGovernorHub(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("governor hub update got %d, want 400 (body: %s)", w.Code, w.Body.String())
+			}
+			if deps.Config.Hub.Enabled {
+				t.Error("hub.enabled was applied despite the 400")
+			}
+			if got := deps.Config.Hub.URL; got != "https://old-hub.example.com" {
+				t.Errorf("hub.url = %q, want unchanged", got)
+			}
+			if got := deps.Config.Hub.DashboardURL; got != "https://old-dash.example.com" {
+				t.Errorf("hub.dashboard_url = %q, want unchanged", got)
+			}
+			if got := deps.Config.Hub.SnapshotURL; got != "https://snap.example.com" {
+				t.Errorf("hub.snapshot_url = %q, want unchanged", got)
+			}
+		})
+	}
+}

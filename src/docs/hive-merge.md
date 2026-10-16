@@ -407,6 +407,31 @@ unattended (for example `mrbobbytables`):
 A claim keeps the tier the contributor held when it was taken, so grant the
 tier before the issue is leased.
 
+### Stage labels
+
+Every sweep cycle also writes the hive-owned `stage/NNN-*` label for each PR
+it evaluated, derived from the same per-lane reason it logs
+(`contributor-lane:no-verdict` → `stage/050-review-pending`,
+`contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
+green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
+(a stall there is logged on the PR with the lane's last skip reason), red CI on a
+contributor PR → `stage/072-returned-to-contributor`, hold / untrusted author →
+`stage/090-needs-human`, merged → no stage), plus one `author/*` label saying
+which admission tier the lane actually used and `stage/stalled` /
+`stage/regressed` when the progression is disrupted. Writes happen only when
+the planned set differs from the labels already on the PR, under the
+`hive:stage_labels` REST caller, and the whole family is switched by
+`governor.labels.stage.enabled`. The mapping table, numbering rules, dwell
+thresholds, the mermaid state machine and the off-happy-path flow
+(072 → nudge → 074 → takeover) are in
+[labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine);
+the code is `src/pkg/stagelabels` and
+`src/pkg/github/automerge/automerge_stage_labels.go`. The issues a PR covers
+follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
+writes the same stage on each linked issue (`stage/040-covered-by-pr` until
+then), so the issue list and the PR list read the same
+([#12436](https://github.com/hivecommons/hive/issues/12436)).
+
 ## Usage
 
 ```sh
@@ -490,6 +515,7 @@ A malformed request file (invalid JSON) is renamed `.bad`.
 | `/var/run/hive-metrics/merge-requests` | request files the watcher consumes |
 | `/var/run/hive-metrics/gh-app-token.cache` | cached App token, used to auto-resolve `--expect-sha` |
 | `/var/run/hive/uid-map.json` | UID → agent-name map, used for a nicer log line |
+| `/data/stage-labels.json` | persisted stage timing for `stage/stalled` / `stage/regressed` |
 
 The UID map is **informational only** here. The watcher re-derives ownership
 from the file's UID regardless.

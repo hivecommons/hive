@@ -90,6 +90,20 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 	}
 }
 
+// stageLabelPolicyFunc reads governor.labels.stage live so a config reload
+// turns the stage reconciler on/off and re-times dwell without a restart.
+func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy {
+	return func() automerge.StageLabelPolicy {
+		if cfg == nil {
+			return automerge.StageLabelPolicy{}
+		}
+		return automerge.StageLabelPolicy{
+			Enabled: cfg.Governor.Labels.Stage.IsEnabled(),
+			Dwell:   cfg.Governor.Labels.Stage.DwellOverrides(),
+		}
+	}
+}
+
 // contributorRegistryTierFunc answers the contributor-lane registry
 // admission path from the contributor registry on the hive's PVC
 // (dashboard.ContributorTrustTierByLogin), so an operator-granted trusted

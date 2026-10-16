@@ -35,7 +35,7 @@ Nous state lives in three places, none of which is `hive.yaml`:
 |---|---|---|
 | Experiment ledger | `/var/run/nous/governor/ledger.json` | experiment loop, read at boot (the path is historical; it holds repo experiments) |
 | Learned principles | `/var/run/nous/governor/principles.json` | experiment loop, read at boot |
-| Baseline snapshots | `/data/nous/snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` |
+| Hive state snapshots | `/data/nous/snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` → `pkg/hivestate`; see [Hive state time series](#hive-state-time-series) |
 | Mode, goals, output mode, repo targets, fast-fail bounds, schedule | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard config dialog or direct API calls |
 
 The in-memory `Config` map (goals/repos/output/fast_fail/schedule/
@@ -44,6 +44,33 @@ across a process restart** — it is rebuilt from defaults each time the hive
 boots, while `loadNousState()` in `cmd/hive/main.go` reseeds only the ledger,
 principles, and snapshot count from the files above. Re-apply dashboard
 configuration after a restart if you rely on non-default values.
+
+## Hive state time series
+
+The per-cycle snapshots are recorded on every governor evaluation cycle
+regardless of Nous mode or scope, and are read by `pkg/hivestate` as a
+general hive-state time series ([#12339](https://github.com/hivecommons/hive/issues/12339)):
+
+- **Retention.** Raw `<epoch-ms>.json` snapshots are kept for 24 h; older ones
+  are rolled into hourly `hour-<epoch-ms>.json` buckets (every queue-depth
+  sample of the hour is kept, so quantiles stay exact), and anything older
+  than 30 days is deleted. Compaction runs at most once an hour from the
+  snapshot write path, so the directory is bounded (~720 raw files plus at
+  most 720 hourly buckets at the default 120 s cadence).
+- **Trends.** `hivestate.Store.Trends()` summarizes the last 24 h and 7 d:
+  median and p90 of `queue_issues`, `queue_prs` and `queue_hold`;
+  `sla_violation_rate` (fraction of samples with at least one SLA violation);
+  `agent_idle_ratio` (idle ÷ idle + running agent-samples; stopped and paused
+  agents are excluded); `kicks_per_day`; `tokens_per_day` (sum of positive
+  `total_tokens` deltas); plus `samples` and `coverage_hours`. Per-day rates
+  are scaled by the hours the samples actually cover and stay `0` below one
+  hour. The summary is cached for five minutes.
+- **Consumers.** The trends ride on fleet self-reports as `hive_state` (see
+  [Fleet self-reporting](fleet-report.md)) and on the hub heartbeat's
+  `evidence.hive_state` (see [Evidence summary heartbeat](fleet-health.md#evidence-summary-heartbeat-12114)).
+
+Because compaction turns many raw files into one bucket, the dashboard's
+`snapshots` / `baseline_pct` count is a file count, not a sample count.
 
 ## Experiment lifecycle
 

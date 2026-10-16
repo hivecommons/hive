@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/evidence"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -17,9 +18,10 @@ const evidenceHeartbeatWindow = 90 * 24 * time.Hour
 
 // EvidenceHeartbeat builds the evidence block of the hub heartbeat (#12114):
 // a 90-day summary of the review-evidence bundles behind
-// GET /api/evidence/summary plus the self-authored auto-merge posture. It is
-// read-only. It returns nil when the bundles cannot be read, so the hub keeps
-// the summary it already stored instead of seeing a false zero.
+// GET /api/evidence/summary, the self-authored auto-merge posture, and the
+// 24 h / 7 d hive state trends (#12339). It is read-only. It returns nil when
+// the bundles cannot be read, so the hub keeps the summary it already stored
+// instead of seeing a false zero.
 func (s *Server) EvidenceHeartbeat() *spoke.HeartbeatEvidence {
 	bundles, _, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot)
 	if err != nil {
@@ -31,14 +33,55 @@ func (s *Server) EvidenceHeartbeat() *spoke.HeartbeatEvidence {
 		v := cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel)
 		selfMerge = &v
 	}
-	return buildHeartbeatEvidence(bundles, time.Now().UTC(), selfMerge)
+	out := buildHeartbeatEvidence(bundles, time.Now().UTC(), selfMerge)
+	out.WriteCounters = heartbeatWriteCounters(loadEvidenceWriteCounters(writeCountersPath))
+	out.HiveState = s.hiveStateTrends()
+	return out
+}
+
+// heartbeatWriteCounters converts the proxy's per-tier totals (#12069) into
+// the heartbeat shape; nil when the counter file is absent, so the hub shows
+// "not reported" rather than zero attempts.
+func heartbeatWriteCounters(totals map[string]EvidenceWriteCount) map[string]spoke.HeartbeatEvidenceWriteCount {
+	if len(totals) == 0 {
+		return nil
+	}
+	out := make(map[string]spoke.HeartbeatEvidenceWriteCount, len(totals))
+	for tier, c := range totals {
+		out[tier] = spoke.HeartbeatEvidenceWriteCount{Attempted: int(c.Attempted), Blocked: int(c.Blocked)}
+	}
+	return out
+}
+
+// hiveStateTrends is the 24 h / 7 d summary of the hive state time series
+// (#12339); nil when no series is configured or no sample is recent.
+func (s *Server) hiveStateTrends() *hivestate.Trends {
+	if s == nil || s.deps == nil {
+		return nil
+	}
+	return s.deps.Nous.HiveState().Trends()
 }
 
 // buildHeartbeatEvidence aggregates the newest bundle per PR created within
-// evidenceHeartbeatWindow of now. Same-PR dedup matches buildEvidenceSummary.
+// evidenceHeartbeatWindow of now, plus the same counts for each shorter
+// window in spoke.HeartbeatEvidenceWindowKeys. Same-PR dedup matches
+// buildEvidenceSummary.
 func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge *bool) *spoke.HeartbeatEvidence {
-	out := &spoke.HeartbeatEvidence{AutomergeSelfAuthored: selfMerge}
-	cutoff := now.Add(-evidenceHeartbeatWindow)
+	out := buildHeartbeatEvidenceWindow(bundles, now, evidenceHeartbeatWindow)
+	out.AutomergeSelfAuthored = selfMerge
+	out.Windows = make(map[string]*spoke.HeartbeatEvidence, len(spoke.HeartbeatEvidenceWindowKeys))
+	for key, hours := range spoke.HeartbeatEvidenceWindowKeys {
+		out.Windows[key] = buildHeartbeatEvidenceWindow(bundles, now, time.Duration(hours)*time.Hour)
+	}
+	return out
+}
+
+// buildHeartbeatEvidenceWindow is buildHeartbeatEvidence for one trailing
+// window; it leaves the lifetime fields (auto-merge posture, write counters,
+// Windows) empty.
+func buildHeartbeatEvidenceWindow(bundles []*evidence.Bundle, now time.Time, window time.Duration) *spoke.HeartbeatEvidence {
+	out := &spoke.HeartbeatEvidence{}
+	cutoff := now.Add(-window)
 
 	latest := map[string]*evidence.Bundle{}
 	for _, b := range bundles {
@@ -53,6 +96,9 @@ func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge
 
 	reviewers := map[string]bool{}
 	authors := map[string]bool{}
+	outcomes := map[string]spoke.HeartbeatEvidenceOutcome{}
+	var shadow spoke.HeartbeatEvidenceShadow
+	shadowSeen := false
 	for _, b := range latest {
 		merged := b.Merge != nil
 		failed := merged && (len(b.RevertedBy) > 0 || len(b.FollowedUpBy) > 0)
@@ -61,6 +107,20 @@ func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge
 		}
 		if failed {
 			out.Reverted14d90d++
+		}
+		switch b.Author.Kind {
+		case evidence.AuthorHuman, evidence.AuthorAgent, evidence.AuthorBot:
+			outcomes[b.Author.Kind] = addHeartbeatOutcome(outcomes[b.Author.Kind], merged, failed)
+		}
+		if sh := b.Shadow; sh != nil {
+			if sh.ReviewGate != nil && sh.ReviewGate.WouldHaveHeld != nil {
+				shadowSeen = true
+				addHeartbeatShadow(&shadow.ReviewGate, *sh.ReviewGate.WouldHaveHeld, merged, failed)
+			}
+			if sh.Intent != nil && sh.Intent.WouldHaveBlocked != nil {
+				shadowSeen = true
+				addHeartbeatShadow(&shadow.Intent, *sh.Intent.WouldHaveBlocked, merged, failed)
+			}
 		}
 		if f := knownModelFamily(b.Author.Model); f != "" {
 			authors[f] = true
@@ -92,7 +152,32 @@ func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge
 	}
 	out.ReviewerFamilies = sortedEvidenceFamilies(reviewers)
 	out.AuthorFamilies = sortedEvidenceFamilies(authors)
+	if len(outcomes) > 0 {
+		out.OutcomesByAuthorKind = outcomes
+	}
+	if shadowSeen {
+		out.ShadowGate = &shadow
+	}
 	return out
+}
+
+func addHeartbeatOutcome(o spoke.HeartbeatEvidenceOutcome, merged, failed bool) spoke.HeartbeatEvidenceOutcome {
+	o.N++
+	if merged {
+		o.Merged++
+	}
+	if failed {
+		o.Reverted++
+	}
+	return o
+}
+
+func addHeartbeatShadow(g *spoke.HeartbeatEvidenceShadowGate, stopped, merged, failed bool) {
+	if stopped {
+		g.Held = addHeartbeatOutcome(g.Held, merged, failed)
+	} else {
+		g.Passed = addHeartbeatOutcome(g.Passed, merged, failed)
+	}
 }
 
 // evidenceCalibrationBucket maps a confidence in [0,1] to bucket 0–5.

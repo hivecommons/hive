@@ -5048,6 +5048,7 @@ function burnAreaChart() {
       const dirty = _configState.dirty;
       if (Object.keys(dirty).length === 0) {
         showToast('No changes to save', 'info');
+        closeConfigDialog();
         return;
       }
       const base = _configState.type === 'governor' ? '/api/config/governor' : `/api/config/agent/${_configState.agent}`;

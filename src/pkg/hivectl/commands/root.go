@@ -77,6 +77,7 @@ func NewRootCommand(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(newUnclaimCommand(env))
 	root.AddCommand(newClaimsCommand(env))
 	root.AddCommand(newReviewCommand(env))
+	root.AddCommand(newEvidenceCommand(env))
 	root.AddCommand(newTUICommand(env))
 	root.AddCommand(newLoginCommand(env))
 	root.AddCommand(newLogoutCommand(env))

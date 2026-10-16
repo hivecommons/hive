@@ -206,8 +206,9 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 		return ghpkg.ErrNoGitHubClient
 	}
 	if !claim.MergedPR {
-		// EnsureCoveredByPRLabel also renames the legacy spelling in place
-		// on first use (hivecommons/hive#11888).
+		// CoveredByPRLabel is the stage/040-covered-by-pr stage label
+		// (hivecommons/hive#12436); the issue stage reconciler keeps it in
+		// step (and mirrors the PR's stage) from the next enumeration on.
 		if err := h.server.deps.GHClient.EnsureCoveredByPRLabel(ctx, repo); err != nil {
 			return err
 		}

@@ -18,7 +18,7 @@ func TestReviewSeverityBacklogDefaults(t *testing.T) {
 	if got := rc.Backlog.EffectiveDestination(""); got != ReviewBacklogGitHubIssue {
 		t.Fatalf("destination default = %q", got)
 	}
-	if got := rc.Backlog.EffectiveLabels(); !reflect.DeepEqual(got, []string{"from-review"}) {
+	if got := rc.Backlog.EffectiveLabels(); !reflect.DeepEqual(got, []string{"origin/review"}) {
 		t.Fatalf("labels default = %v", got)
 	}
 	if got := rc.Backlog.EffectiveMaxPerPRPerDay(); got != 10 {
@@ -121,6 +121,53 @@ review:
 	}
 	if b.Destination != "linear" || b.LinearState != "Triage" || !reflect.DeepEqual(b.Labels, []string{"from-review", "nit"}) || b.EffectiveMaxPerPRPerDay() != 5 {
 		t.Fatalf("backlog = %+v", b)
+	}
+	// The retired name still loads, but filing uses the origin/* replacement.
+	if got := b.EffectiveLabels(); !reflect.DeepEqual(got, []string{"origin/review", "nit"}) {
+		t.Fatalf("effective labels = %v, want from-review mapped to origin/review", got)
+	}
+}
+
+func TestCanonicalOriginLabelRenameMapping(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    string
+		renamed bool
+	}{
+		{"from-review", "origin/review", true},
+		{" From-Review ", "origin/review", true},
+		{"origin/review", "origin/review", false},
+		{"nit", "nit", false},
+		{"agent/reviewer", "agent/reviewer", false},
+	}
+	for _, tc := range cases {
+		got, renamed := CanonicalOriginLabel(tc.in)
+		if got != tc.want || renamed != tc.renamed {
+			t.Errorf("CanonicalOriginLabel(%q) = (%q, %v), want (%q, %v)", tc.in, got, renamed, tc.want, tc.renamed)
+		}
+	}
+	if DefaultReviewBacklogLabel != OriginReviewLabel || OriginReviewLabel != "origin/review" {
+		t.Fatalf("default backlog label = %q, origin review = %q", DefaultReviewBacklogLabel, OriginReviewLabel)
+	}
+}
+
+func TestReviewBacklogEffectiveLabelsNeverDoubleLabels(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"legacy plus new", []string{"from-review", "origin/review", "nit"}, []string{"origin/review", "nit"}},
+		{"new plus legacy", []string{"origin/review", "from-review"}, []string{"origin/review"}},
+		{"case duplicates", []string{"Nit", "nit", "FROM-REVIEW"}, []string{"Nit", "origin/review"}},
+		{"only legacy", []string{"from-review"}, []string{"origin/review"}},
+		{"empty slice keeps no default", []string{}, []string{}},
+	}
+	for _, tc := range cases {
+		got := ReviewBacklogConfig{Labels: tc.in}.EffectiveLabels()
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: EffectiveLabels(%v) = %v, want %v", tc.name, tc.in, got, tc.want)
+		}
 	}
 }
 

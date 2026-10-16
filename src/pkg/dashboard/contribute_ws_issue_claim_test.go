@@ -316,7 +316,7 @@ func TestIssueClaim_AgentClaimPostedOnlyAtCommentCapableTier(t *testing.T) {
 					t.Fatalf("expected one claim comment on %s#%d, got %+v", issueClaimRepoFull, claimedNumber, posts)
 				}
 				labels := recorder.allLabels()
-				if len(labels) != 1 || labels[0].repo != issueClaimRepoFull || labels[0].number != claimedNumber || strings.Join(labels[0].labels, ",") != "claimed" {
+				if len(labels) != 1 || labels[0].repo != issueClaimRepoFull || labels[0].number != claimedNumber || strings.Join(labels[0].labels, ",") != claims.LabelClaimed {
 					t.Fatalf("expected claimed label mirror on %s#%d, got %+v", issueClaimRepoFull, claimedNumber, labels)
 				}
 				parsed, ok := issueclaim.ParseMarker(posts[0].body)
@@ -434,7 +434,7 @@ func TestIssueClaim_LegacyClaimLabelRemovedWithLease(t *testing.T) {
 
 	hub.releaseClaimForLease(identityOf(c), issueClaimRepoFull+"#353", "done")
 	removed := recorder.allRemovedLabels()
-	if len(removed) != 1 || removed[0].repo != issueClaimRepoFull || removed[0].number != claimedNumber || removed[0].label != "claimed" {
+	if len(removed) != 1 || removed[0].repo != issueClaimRepoFull || removed[0].number != claimedNumber || removed[0].label != claims.LabelClaimed {
 		t.Fatalf("legacy claimed label removals = %+v", removed)
 	}
 }
@@ -482,7 +482,7 @@ func TestIssueClaim_SelectTaskPostsClaimForAssignedIssue(t *testing.T) {
 	if len(posts) != 1 || posts[0].repo != issueClaimRepoFull || posts[0].number != claimedNumber {
 		t.Fatalf("expected one claim comment on the assigned issue, got %+v", posts)
 	}
-	if labels := recorder.allLabels(); len(labels) != 1 || strings.Join(labels[0].labels, ",") != "claimed" {
+	if labels := recorder.allLabels(); len(labels) != 1 || strings.Join(labels[0].labels, ",") != claims.LabelClaimed {
 		t.Fatalf("expected claimed label mirror on the assigned issue, got %+v", labels)
 	}
 	parsed, ok := issueclaim.ParseMarker(posts[0].body)

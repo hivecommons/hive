@@ -27,6 +27,7 @@ import (
 type evidenceContextFixture struct {
 	mu          sync.Mutex
 	head        string
+	opened      string
 	checksFail  bool
 	reviewsFail bool
 	eventsFail  bool
@@ -49,10 +50,14 @@ func newEvidenceContextServer(t *testing.T, f *evidenceContextFixture) *httptest
 		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			pr := map[string]any{
 				"number": 7, "head": map[string]any{"sha": f.head},
 				"merged_by": map[string]any{"login": "hive-app[bot]"},
-			})
+			}
+			if f.opened != "" {
+				pr["created_at"] = f.opened
+			}
+			_ = json.NewEncoder(w).Encode(pr)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/commits/"+f.head+"/check-runs":
 			f.checkHits++
 			if !fail(f.checksFail) {

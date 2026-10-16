@@ -3,7 +3,6 @@ package github
 import (
 	"crypto/ed25519"
 	"log/slog"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -20,40 +19,16 @@ import (
 // change failure rate, recorded best-effort and never consulted by a merge.
 
 // reviewEvidenceLinkWindow is how far back a referenced PR's merge may lie.
-const reviewEvidenceLinkWindow = 14 * 24 * time.Hour
+const reviewEvidenceLinkWindow = evidence.LinkWindow
 
 // reviewEvidenceMaxLinkRefs bounds how many referenced PRs one merge looks up.
-const reviewEvidenceMaxLinkRefs = 10
-
-// A reference is a keyword, then "#N" or "owner/repo#N" (optionally preceded
-// by "PR" or "pull request"). GitHub's Revert button writes "Reverts
-// owner/repo#N" into the body, which the revert pattern matches.
-var (
-	reviewEvidenceRevertRef   = regexp.MustCompile(`(?i)\b(?:reverts?|reverting|revert\s+of)\b[\s:]+(?:(?:pr|pull\s+request)\s+)?([\w.-]+/[\w.-]+)?#(\d+)\b`)
-	reviewEvidenceFollowupRef = regexp.MustCompile(`(?i)\b(?:fix(?:es|ed)?|follow[\s-]?up\s+(?:to|of|for)|regression\s+(?:from|in|of))\b[\s:]+(?:(?:pr|pull\s+request)\s+)?([\w.-]+/[\w.-]+)?#(\d+)\b`)
-)
+const reviewEvidenceMaxLinkRefs = evidence.MaxLinkRefs
 
 // reviewEvidenceChangeRefs returns the PR numbers text names as reverted and
-// as followed up, each in first-mention order. References to another repo
-// and to the PR itself are dropped, and a PR named as both is a revert.
+// as followed up. The rules live in evidence.ChangeRefs so the history
+// backfill (hivectl evidence backfill) links exactly as the live recorder.
 func reviewEvidenceChangeRefs(repo string, number int, text string) (reverts, followups []int) {
-	collect := func(re *regexp.Regexp, skip []int) []int {
-		var out []int
-		for _, m := range re.FindAllStringSubmatch(text, -1) {
-			if m[1] != "" && !strings.EqualFold(m[1], strings.TrimSpace(repo)) {
-				continue
-			}
-			n, err := strconv.Atoi(m[2])
-			if err != nil || n <= 0 || n == number || slices.Contains(out, n) || slices.Contains(skip, n) {
-				continue
-			}
-			out = append(out, n)
-		}
-		return out
-	}
-	reverts = collect(reviewEvidenceRevertRef, nil)
-	followups = collect(reviewEvidenceFollowupRef, reverts)
-	return reverts, followups
+	return evidence.ChangeRefs(repo, number, text)
 }
 
 // linkReviewEvidenceChanges sets b.RevertOf and b.FollowupOf from the PRs text

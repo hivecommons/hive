@@ -382,9 +382,33 @@ same store behind `GET /api/evidence/summary`):
   level (`AutoMerge.SelfAuthoredAutoMergeAllowed`).
 - `reviewer_families` / `author_families` — model families (`claude`, `gpt`,
   …) seen on verdicts and agent-authored PRs; unknown models are omitted.
+- Fleet-panel aggregates (#12370), each optional and omitted when the spoke
+  has nothing to report: `outcomes_by_author_kind` (`human`/`agent`/`bot` →
+  `{n, merged, reverted}` PRs, `reverted` ⊆ `merged`), `write_counters`
+  (intent tier → `{attempted, blocked}` agent writes seen by the proxy since it
+  started — not a 90-day window), and `shadow_gate` (`review_gate` / `intent`
+  → `{held, passed}`, each `{n, merged, reverted}`: what the shadow gate would
+  have done versus how the PR turned out). A spoke predating #12370 sends none
+  of them and the hub shows "not reported", never zero.
+- `windows` ([RFC #12062](https://github.com/hivecommons/hive/issues/12062)) —
+  the same counts (verdicts, false approves/blocks, merged, reverted,
+  calibration, author-kind outcomes, shadow gates) re-counted over trailing
+  windows keyed `24h`, `7d` and `30d`, so the hub evidence view can switch
+  between windows. The field names keep their `_90d` suffix for wire
+  compatibility; `write_counters` (lifetime) and `automerge_self_authored`
+  are not repeated. A spoke predating windows sends none and the hub lists it
+  as "not reported for this window" when a shorter window is selected.
+- `hive_state` — the spoke's 24 h / 7 d hive state trends
+  ([#12339](https://github.com/hivecommons/hive/issues/12339)): per window
+  (`24h`, `7d`) `samples`, `coverage_hours`, median/p90 `queue_issues`,
+  `queue_prs` and `queue_hold`, `sla_violation_rate`, `agent_idle_ratio`,
+  `kicks_per_day` and `tokens_per_day`. Omitted when the spoke has no snapshot
+  in the last 7 days. See
+  [Hive state time series](strategy-lab.md#hive-state-time-series).
 
 The hub clamps every count (subset counts never exceed their total), caps and
-de-duplicates the family lists, and stores the result with the other per-hive
+de-duplicates the family lists, bounds `hive_state` (ratios to `[0, 1]`,
+coverage to the window, p90 never below the median), and stores the result with the other per-hive
 quadrant inputs. A beat without the block (an older spoke, a minimal upgrade
 beat, or a spoke whose evidence directory was unreadable that cycle) keeps the
 last stored summary. Reporting only: nothing here gates a merge.

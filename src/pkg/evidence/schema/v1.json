@@ -60,7 +60,8 @@
         "actor": {"type": "string", "minLength": 1},
         "method": {"type": "string", "minLength": 1},
         "at": {"type": "string", "format": "date-time"},
-        "sha": {"type": "string", "minLength": 1}
+        "sha": {"type": "string", "minLength": 1},
+        "opened_at": {"type": "string", "format": "date-time"}
       }
     },
     "revert_of": {"$ref": "#/$defs/bundle_ids"},
@@ -73,6 +74,20 @@
       "properties": {
         "review_gate": {"$ref": "#/$defs/shadow_review_gate"},
         "intent": {"$ref": "#/$defs/shadow_intent"}
+      }
+    },
+    "backfilled": {"type": "boolean"},
+    "backfill": {
+      "type": "object",
+      "required": ["source", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "at": {"type": "string", "format": "date-time"},
+        "state": {"type": "string", "enum": ["open", "closed", "merged"]},
+        "closed_at": {"type": "string", "format": "date-time"},
+        "author_kind_rule": {"type": "string"},
+        "flags": {"type": "array", "items": {"type": "string", "enum": ["placeholder_hive", "hive_on_hive", "under_min_merged"]}}
       }
     },
     "created_at": {"type": "string", "format": "date-time"},

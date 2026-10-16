@@ -18,6 +18,25 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 )
 
+// Lane names recorded on intent evaluation counters (#12362).
+const (
+	intentLaneMergeEligible = "merge-eligible"
+)
+
+// intentEvaluatedAuditAction is the audit-log action written once per intent
+// evaluation (#12362). Observation only.
+const intentEvaluatedAuditAction = "intent_evaluated"
+
+// intentEvaluatedAuditDetail renders the audit-log detail for one counted
+// evaluation: lane, tier, would-block and reason code, enforce state.
+func intentEvaluatedAuditDetail(o intent.Observation) string {
+	d := fmt.Sprintf("lane=%s tier=%s would_block=%t enforce=%t", o.Lane, o.Tier, o.WouldBlock, o.Enforced)
+	if o.ReasonCode != "" {
+		d += " reason=" + o.ReasonCode
+	}
+	return d
+}
+
 func writeIntentVerdicts(
 	ctx context.Context,
 	cfg *config.Config,
@@ -59,6 +78,7 @@ func writeIntentVerdicts(
 		if !agentPR {
 			class := intent.Classify(intent.PR{Title: pr.Title, Labels: pr.Labels, Author: pr.Author, AgentAuthor: false}, intentCfg)
 			verdict := intent.Evaluate(class, intent.Evidence{})
+			intent.RecordEvaluation(intentLaneMergeEligible, fullRepo, pr.Number, verdict, cfg.Intent.Enforce)
 			verdicts[key] = verdict
 			record.Verdict = verdict
 			record.Classify = class.Reason
@@ -73,6 +93,7 @@ func writeIntentVerdicts(
 				Reason:     "intent evidence unavailable: " + err.Error(),
 				AgentPR:    true,
 			}
+			intent.RecordEvaluation(intentLaneMergeEligible, fullRepo, pr.Number, verdict, cfg.Intent.Enforce)
 			verdicts[key] = verdict
 			record.Verdict = verdict
 			record.FetchError = err.Error()
@@ -115,6 +136,9 @@ func writeIntentVerdicts(
 			}
 		}
 		verdict.Alignment = &alignment
+		// Record-only counter (#12362): counted after alignment so the
+		// would-block reason matches what BlocksMerge would report.
+		intent.RecordEvaluation(intentLaneMergeEligible, fullRepo, pr.Number, verdict, cfg.Intent.Enforce)
 		verdicts[key] = verdict
 		record.Verdict = verdict
 		record.Classify = class.Reason

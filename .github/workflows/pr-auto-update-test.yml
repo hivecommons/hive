@@ -13,12 +13,17 @@ on:
       - '.github/scripts/test_pr-auto-update.sh'
       - '.github/workflows/pr-auto-update*.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+
 permissions:
   contents: read
 
 jobs:
   shell-tests:
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Exercise push and shared-CI incident recovery with mocked APIs

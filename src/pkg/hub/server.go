@@ -1680,6 +1680,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
 	s.mux.HandleFunc("GET "+complianceRollupPath, s.requireAdmin(s.handleComplianceRollup))
 	s.mux.HandleFunc("GET "+evidencePath, s.requireAdmin(s.handleEvidence))
+	s.mux.HandleFunc("GET "+evidenceReportPath, s.requireAdmin(s.handleEvidenceReport))
 	s.mux.HandleFunc("GET /api/gh-rate-limits", s.requireAdmin(s.handleGHRateLimits))
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
 	// Delegation-chain verification material (JWKS-equivalent). Registered
