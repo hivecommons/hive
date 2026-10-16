@@ -48,9 +48,9 @@ func (c *Client) notifyAgentStart(agent, repo string, number int, signal string)
 	}
 }
 
-// blockerRef is an issue or pull-request reference as an agent writes a
+// commentBlockerRefPattern is an issue or pull-request reference as an agent writes a
 // blocker: "#N", "owner/repo#N", or a GitHub issue/pull URL.
-const blockerRef = `(?:#\d+|[\w.-]+/[\w.-]+#\d+|https?://github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d+)`
+const commentBlockerRefPattern = `(?:#\d+|[\w.-]+/[\w.-]+#\d+|https?://github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d+)`
 
 // commentDeferral matches a comment that parks the issue instead of starting
 // it (#12387): one that opens (after markdown and an optional "Status:" or
@@ -65,7 +65,7 @@ var commentDeferral = regexp.MustCompile(`(?i)` +
 	`^\W*(?:(?:status|update)\s*:\W*)?(?:` +
 	`deferr(?:ed|ing)\b` +
 	`|(?:not|never|won't|can't|cannot)\s+start` +
-	`|(?:(?:this|it)\s+is\s+)?(?:still\s+|currently\s+)?(?:blocked\s+(?:by|on)|waiting\s+(?:on|for))\s+` + blockerRef +
+	`|(?:(?:this|it)\s+is\s+)?(?:still\s+|currently\s+)?(?:blocked\s+(?:by|on)|waiting\s+(?:on|for))\s+` + commentBlockerRefPattern +
 	`)` +
 	`|\bdeferred\s+this\s+cycle\b` +
 	`|\bpick(?:s|ing)?\s+(?:this\s+|it\s+)?up\s+(?:once|when)\b` +
