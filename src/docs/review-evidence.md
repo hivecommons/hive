@@ -197,34 +197,100 @@ A push changes `head_sha`, so earlier verdicts no longer describe the code. Hive
 
 Hub admins reach the fleet evidence view from the **Fleet quadrant** card on
 the hub dashboard (click the chart or its **🔬 Evidence** button). It is
-`GET /api/hub/evidence` rendered as one table per section, each with a sticky
-title and column heads, a **window** selector (24h · 7d · 30d · 90d · custom
-date range — spokes report fixed windows in their heartbeat, so a custom range
-is served from the smallest window that covers it and the view says so) and an
-ⓘ button that opens a plain-language explainer with four headings: **What is
-measured · Why it matters · How it is measured · How to read our numbers**.
-The last one is computed from the numbers on screen and ends with a grade.
+`GET /api/hub/evidence` rendered findings-first: a **What this says** block
+of three to six plain sentences generated from the data, then one table per
+section — each with a one-line plain finding under its title, a sticky title
+and column heads — a **window** selector (24h · 7d · 30d · 90d · custom
+date range — hives report fixed windows in their heartbeat, so a custom range
+is served from the smallest window that covers it and the view says so), hive
+and autonomy-level filters, a **📄 Report / ⬇ Markdown** pair (see
+*Downloadable report* below) and an ⓘ button per section that opens a
+plain-language explainer with four headings: **What is measured · Why it
+matters · How it is measured · How to read our numbers**. The last one is
+computed from the numbers on screen and ends with a grade.
 
-Two terms used everywhere:
+### Findings first
 
-- **95% CI** — the range after a percentage is a 95% confidence interval: with
-  this many cases, the true rate is very likely inside that band. Fewer cases
-  mean a wider band.
-- **Minimum sample** — below 10 cases a rate prints as `—`, never 0%, because
-  a percentage from so few cases is mostly luck. The count is still shown.
+Every sentence in **What this says**, and every one-line finding under a
+section title, is generated from the response fields (`findings[]` on the
+API; regenerated client-side by the same rules when a filter is active) and
+never typed in. Each has an explicit fallback when the data is not there
+("No autonomy level has 10 merged PRs yet, so revert rates cannot be
+reported") so no number is ever invented. Sections no selected hive reports
+are not drawn as empty tables; they are listed once under **Waiting on
+hives** at the bottom, in user-facing words ("hives report this once upgraded
+to the Oct 16 build or later"). The technical pointer — which heartbeat field,
+which issue — lives only in that item's ⓘ explainer and in this document.
+Visible modal copy never cites an issue number
+(`TestEvidenceModalNoIssueNumbers`).
 
-Grades and their thresholds (named constants in `dashboard.html`;
-`Not enough data` whenever the graded rate is below the minimum sample,
-`Not graded` where there is no "good" value):
+### Plain labels
+
+| On screen | Means |
+|---|---|
+| **All selected hives** | the pooled row — every hive the filter currently selects (the whole fleet with no filter). When exactly one hive is selected its own row reads *(same hive as above)* instead of repeating the numbers. |
+| **Merged PRs** | the number of pull requests GitHub says were merged in the last 90 days (the denominator for coverage). |
+| **X% of N** | the rate and how many cases it is computed from, in one cell. |
+| **margin lo – hi** (muted line under a rate) | the **margin (95%)**: with this many cases, the true value is very likely inside this range. Fewer cases, wider range. |
+| **—** | below the **minimum sample** of 10 cases a rate prints as a dash, never 0%, because a percentage from so few cases is mostly luck; the count is still shown. |
+| **Reviewer confidence** | how sure the AI reviewer said it was, as one of four ranges (below). |
+| **False approve** | the reviewer approved, but the PR was never merged or was reverted. |
+| **False block** | the reviewer blocked, but the PR merged anyway after a human override. |
+| **Autonomy level** | the ACMM level the hive runs at, L1 (advice only) to L6 (merges on green CI without a human). |
+
+### Reviewer-confidence ranges
+
+Spokes report calibration as six equal-width heartbeat buckets
+(`int(confidence × 6)`, 0–5). The spoke's own Evidence card shows four ranges.
+The hub view, the findings and the report fold the six buckets into those
+four ranges and label each with both the name and the numeric range:
+
+| Hub label | Heartbeat buckets | Spoke card range |
+|---|---|---|
+| Not confident (0.0–0.5) | 0, 1, 2 | 0.0–0.5 |
+| Somewhat confident (0.5–0.67) | 3 | 0.5–0.7 |
+| Confident (0.67–0.83) | 4 | 0.7–0.9 |
+| Very confident (0.83–1.0) | 5 | 0.9–1.0 |
+
+The bucket edges are sixths, so the hub's 0.67 / 0.83 boundaries approximate
+the spoke card's 0.7 / 0.9; the mapping is in `evidenceConfidenceRanges`
+(`pkg/hub/evidence_findings.go`) and its JS mirror `EVIDENCE_CONFIDENCE_RANGES`.
+Pooled buckets carry `bad` (wrong calls) as well as `n` so the hub can
+regroup them without re-deriving counts from a rounded rate.
+
+### Downloadable report
+
+The **📄 Report** link in the window row opens the current view — same window,
+same hive / level filter — as a standalone plain-language page in a new tab;
+**⬇ Markdown** downloads the same report as a `.md` file. Both are
+`GET /api/hub/evidence/report` (hub admin / owner only, like
+`/api/hub/evidence`): `?hive=<id>[,<id>…]`, `?level=<n>`, the same
+`hours=` / `from=` / `to=` window parameters, `format=md` (default) or
+`format=html`, and `download=1` to receive it as an attachment named
+`hive-evidence-<hive|fleet>-<from>-<to>.md|html`. It is rendered server-side in
+Go from the same `EvidenceView` the modal uses, so every figure reconciles with
+what is on screen. Sections, in order: **Summary** (the *What this says*
+sentences) · **What we measured and why** · **The numbers** (each section's
+table with the plain labels) · **How to read these** (margin of error, merged
+≠ correct, open PRs count as not merged, recording since 2026-10-08, backfilled
+bundles carry no verdicts) · **What is not reported yet and why** · **Grade per
+section** with the thresholds spelled out · a footer linking back here. The
+HTML variant is a single page with inline CSS and no scripts or external
+assets; hive names are escaped. Golden files live in
+`pkg/hub/testdata/evidence_report_*.golden`.
+
+Grades and their thresholds (named constants in `dashboard.html` and mirrored
+in `pkg/hub/evidence_report.go`; `Not enough data` whenever the graded rate is
+below the minimum sample, `Not graded` where there is no "good" value):
 
 | Section | Graded on | Strong | Fair | Constants |
 |---|---|---|---|---|
 | Evidence coverage | share of merged PRs (90d) with a record, higher is better | ≥ 80% | ≥ 40% | `EVIDENCE_COVERAGE_STRONG/FAIR` |
-| Calibration curve | bad-outcome rate in the most-confident measurable bucket, lower is better (needs ≥ 2 measurable buckets) | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
+| Reviewer confidence | wrong-call rate in the most-confident measurable range, lower is better (needs ≥ 2 measurable ranges) | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
 | Outcome by author kind | revert rate of agent authors (human if no agents), lower is better | ≤ 5% | ≤ 15% | `EVIDENCE_REVERT_STRONG/FAIR` |
-| ACMM level × outcome | revert rate of the highest level with enough data, lower is better | ≤ 5% | ≤ 15% | `EVIDENCE_REVERT_STRONG/FAIR` |
+| Autonomy level × outcome | revert rate of the highest level with enough data, lower is better | ≤ 5% | ≤ 15% | `EVIDENCE_REVERT_STRONG/FAIR` |
 | Boundary enforcement | — (not graded: no block rate is "good" on its own) | | | |
-| Same- vs cross-family | false-approve rate of the mix with most verdicts, lower is better | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
+| Same- vs cross-family review | false-approve rate of the mix with most verdicts, lower is better | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
 | Per-hive evidence | share of hives reporting for the window, higher is better (no minimum sample) | ≥ 80% | ≥ 40% | `EVIDENCE_REPORTING_STRONG/FAIR` |
 | Shadow gates × outcome | false-alarm rate (would-have-held PRs that merged and stuck) of the gate with most held PRs, lower is better | ≤ 25% | ≤ 50% | `EVIDENCE_SHADOW_FALSE_ALARM_STRONG/FAIR` |
 
@@ -232,7 +298,7 @@ Limits every explainer repeats: merged is not the same as correct; open PRs
 are not failures; closed-without-merge is not recorded and counts as not
 merged; reverts are only linked since 2026-10-15 (`EVIDENCE_REVERTS_SINCE`)
 and evidence records only exist since 2026-10-08 (`EVIDENCE_DATA_SINCE`).
-Nothing in this view is read by any merge decision.
+Nothing in this view or the report is read by any merge decision.
 
 ## Not covered
 

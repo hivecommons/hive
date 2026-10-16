@@ -2,7 +2,9 @@ package hub
 
 import (
 	"encoding/json"
+	"net/url"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -40,6 +42,13 @@ func evidenceHarness(t *testing.T) string {
 		countryJSDecl(t, "EVIDENCE_REVERTS_SINCE"),
 		countryJSDecl(t, "EVIDENCE_GRADE_LABELS"),
 		countryJSDecl(t, "EVIDENCE_CI_NOTE"),
+		countryJSDecl(t, "EVIDENCE_UPGRADE_BUILD"),
+		countryJSDecl(t, "EVIDENCE_UPGRADE_NOTE"),
+		countryJSDecl(t, "EVIDENCE_CONFIDENCE_RANGES"),
+		countryJSDecl(t, "EVIDENCE_MARGIN_TIP"),
+		countryJSDecl(t, "EVIDENCE_GLOSS_FALSE_APPROVE"),
+		countryJSDecl(t, "EVIDENCE_GLOSS_FALSE_BLOCK"),
+		countryJSDecl(t, "EVIDENCE_FINDINGS_ORDER"),
 		countryJSDecl(t, "EVIDENCE_WINDOWS"),
 		countryJSDecl(t, "EVIDENCE_WINDOW_DEFAULT"),
 		countryJSDecl(t, "EVIDENCE_WINDOW_STORAGE_KEY"),
@@ -75,6 +84,21 @@ func evidenceHarness(t *testing.T) string {
 		jsFunc(t, "evidenceRateCells"),
 		jsFunc(t, "evidenceRateHeads"),
 		jsFunc(t, "evidenceTable"),
+		jsFunc(t, "evidenceFindingLine"),
+		jsFunc(t, "evidenceConfidenceLabel"),
+		jsFunc(t, "evidenceConfidenceRows"),
+		jsFunc(t, "evidencePlural"),
+		jsFunc(t, "evidenceRateCount"),
+		jsFunc(t, "evidenceWindowText"),
+		jsFunc(t, "evidenceHiveName"),
+		jsFunc(t, "evidenceLevelName"),
+		jsFunc(t, "evidenceFindingsByKey"),
+		jsFunc(t, "evidenceFindings"),
+		jsFunc(t, "evidenceWaiting"),
+		jsFunc(t, "evidenceFindingsHTML"),
+		jsFunc(t, "evidenceWaitingHTML"),
+		jsFunc(t, "evidenceReportQuery"),
+		jsFunc(t, "evidenceReportLinksHTML"),
 		jsFunc(t, "evidenceHiveLabel"),
 		jsFunc(t, "evidenceWilson"),
 		jsFunc(t, "evidenceRateOf"),
@@ -266,24 +290,41 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 
 	for _, want := range []string{
 		"2 of 3 hives report evidence",
-		// Sections #12117 lists that spokes do not report yet are disclosed in place.
-		"Median time-to-merge is not reported by spokes yet.",
-		"Revert rate by author kind is not reported by spokes yet.",
-		"The per-axis criteria table is not reported by spokes yet (tracked in #12080).",
-		"Evidence coverage", "Calibration curve", "ACMM level × outcome",
-		"Same- vs cross-family false approve", "Per-hive evidence",
-		// n, rate and Wilson interval for a measured cell.
-		"<td>40</td><td>10.0%</td><td class=\"evidence-ci\">4.0% – 23.0%</td>",
-		// Fleet coverage row.
-		"<tr><td>Fleet</td><td>50</td><td>80.0%</td><td class=\"evidence-ci\">67.0% – 89.0%</td></tr>",
+		// Findings first (#12456): plain sentences above every table, then one
+		// per section under its title.
+		`<section class="evidence-findings" aria-labelledby="evidence-findings-title"><h3 id="evidence-findings-title">What this says</h3>`,
+		"<li>2 of 3 selected hives report evidence for the last 90d.</li>",
+		"<li>Of the 50 merged PRs in the last 90 days across the selected hives, 40 (80.0%) have an evidence record — recording began 2026-10-08, so this will rise.</li>",
+		`<p class="evidence-finding">Of the 50 merged PRs in the last 90 days`,
+		// Sections #12117 lists that spokes do not report yet are collapsed
+		// into one "Waiting on hives" list at the bottom, with no issue numbers.
+		"Waiting on hives",
+		"<li>Median time-to-merge per autonomy level — not reported by any hive build yet.</li>",
+		"<li>Revert rate by author kind per hive — not reported by any hive build yet.</li>",
+		"<li>Per-axis criteria table — not reported by any hive build yet.</li>",
+		"Evidence coverage", "Reviewer confidence", "Autonomy level × outcome",
+		"Same- vs cross-family review", "Per-hive evidence",
+		// Plain labels replace the jargon.
+		"<th>Scope</th><th>Merged PRs</th>", "With an evidence record", "<th>Reviewer confidence</th><th>Verdicts</th>",
+		"All selected hives — went wrong", "<th>Autonomy level</th>",
+		// Rate cells fold n into the cell with the margin as a muted second line.
+		`<td class="evidence-rate"><span class="evidence-rate-main">5.0% of 20</span><span class="evidence-rate-margin" title="Margin (95%): the true value is very likely inside this range. Fewer cases, wider range.">margin 0.9% – 23.6%</span></td>`,
+		// Six heartbeat buckets fold into four ranges: buckets 0–2 (40 + 4 verdicts) pool.
+		`<tr><td>Not confident (0.0–0.5)</td><td>44</td><td class="evidence-rate"><span class="evidence-rate-main">9.1% of 44</span>`,
+		// All-selected-hives coverage row.
+		`<tr><td>All selected hives</td><td>50</td><td class="evidence-rate"><span class="evidence-rate-main">80.0% of 50</span>`,
 		// A below-minimum sample shows its n but a dash, never 0%.
-		"<td>4</td><td>—</td><td class=\"evidence-ci\">—</td>",
-		"<tr><td>cross</td><td>3</td><td>—</td><td class=\"evidence-ci\">—</td></tr>",
-		"<td>L4</td><td>2</td><td>30</td><td>30</td><td>10.0%</td>",
+		`<span class="evidence-rate-main">— (3, below the minimum of 10)</span>`,
+		`<tr><td>different families</td><td>3</td><td class="evidence-rate"><span class="evidence-rate-main">— (3, below the minimum of 10)</span></td></tr>`,
+		`<td>L4</td><td>2</td><td>30</td><td class="evidence-rate"><span class="evidence-rate-main">10.0% of 30</span>`,
+		// Confidence ranges carry both the plain label and the numeric range.
+		"<td>Not confident (0.0–0.5)</td>", "<td>Very confident (0.83–1.0)</td>",
 		// Per-hive calibration overlay: one column per reporting hive.
-		"<th>Alpha &lt;b&gt;</th><th>beta</th>",
+		`<th title="This hive alone">Alpha &lt;b&gt;</th><th title="This hive alone">beta</th>`,
+		// Per-hive table: 7 columns, sticky hive column, horizontally scrollable.
+		`<div class="table-wrap evidence-table-scroll">`, `<th class="evidence-sticky-col">Hive</th><th>Autonomy</th><th>Family mix</th>`,
 		// A hive that never reported is listed, not dropped.
-		"<tr><td>gamma</td><td>L2</td><td colspan=\"12\" class=\"evidence-empty\">No evidence reported</td></tr>",
+		`<tr><td class="evidence-sticky-col">gamma</td><td>L2</td><td colspan="5" class="evidence-empty">No evidence reported</td></tr>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("evidence panel is missing %q", want)
@@ -292,15 +333,21 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 	if strings.Contains(html, "Alpha <b>") {
 		t.Error("hive names are not escaped in the evidence panel")
 	}
-	// Fleet panels (#12370) disclose their absence when no spoke reports them.
+	// Fleet panels (#12370) no selected hive reports are listed once under
+	// "Waiting on hives" in user-facing words; the ⓘ keeps the pointer.
 	for _, want := range []string{
-		"Outcome by author kind is not reported by any selected hive yet",
-		"Write counters are not reported by any selected hive yet",
-		"Shadow-gate observations are not reported by any selected hive yet",
-		"Claim-vs-verdict totals are not reported by spokes yet.",
+		"<li>Outcome by author kind — hives report this once upgraded to the Oct 16 build or later. <button",
+		"<li>Boundary enforcement (agent writes the guardrail proxy blocked) — hives report this once upgraded to the Oct 16 build or later. <button",
+		"<li>Shadow gates — shadow mode is off on every selected hive, or none has reported it yet (hives report this once upgraded to the Oct 16 build or later). <button",
+		"<li>Claim-vs-verdict totals — not reported by any hive build yet.</li>",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("evidence panel is missing %q", want)
+		}
+	}
+	for _, reject := range []string{"<h3 class=\"evidence-title\"><span>Outcome by author kind</span>", "<h3 class=\"evidence-title\"><span>Boundary enforcement</span>", "<h3 class=\"evidence-title\"><span>Shadow gates"} {
+		if strings.Contains(html, reject) {
+			t.Errorf("absent panel still rendered as a section: %q", reject)
 		}
 	}
 	if strings.Contains(html, "<svg") {
@@ -431,8 +478,19 @@ func TestEvidenceModalMarkup(t *testing.T) {
 // the same code that renders the unfiltered view.
 func evidenceFleetFixtureJSON(t *testing.T) (string, EvidenceView) {
 	t.Helper()
+	view := buildEvidenceView(evidenceFleetFixtureRegistry())
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw), view
+}
+
+// evidenceFleetFixtureRegistry is the registry behind evidenceFleetFixtureJSON,
+// exposed so filtered views can be built server-side for parity checks.
+func evidenceFleetFixtureRegistry() []RegistryEntry {
 	merged := func(v int) *int { return &v }
-	view := buildEvidenceView([]RegistryEntry{
+	return []RegistryEntry{
 		{ID: "alpha", Name: "Alpha <b>", ACMMLevel: 4, PRsMerged90d: merged(40), Evidence: &HeartbeatEvidence{
 			Verdicts90d: 25, FalseApprove90d: 3, FalseBlock90d: 1, Merged90d: 30, Reverted14d90d: 3,
 			ReviewerFamilies: []string{"claude"}, AuthorFamilies: []string{"claude"},
@@ -453,12 +511,7 @@ func evidenceFleetFixtureJSON(t *testing.T) (string, EvidenceView) {
 		}},
 		{ID: "old", ACMMLevel: 3, Evidence: &HeartbeatEvidence{Verdicts90d: 4, Merged90d: 2}},
 		{ID: "gamma", ACMMLevel: 2},
-	})
-	raw, err := json.Marshal(view)
-	if err != nil {
-		t.Fatal(err)
 	}
-	return string(raw), view
 }
 
 // evidencePooledJS extracts the pooled sections of a view body so the server
@@ -525,17 +578,20 @@ func TestEvidenceFleetPanelsRender(t *testing.T) {
 	for _, want := range []string{
 		"Outcome by author kind", `aria-label="Outcome by author kind: merged, reverted and open PRs for human, agent and bot authors"`,
 		// agent: 32 PRs over two hives, 25 merged (78.1%), 3 reverted of 25 (12.0%).
-		"<tr><td>agent</td><td>2</td><td>32</td><td>32</td><td>78.1%</td>",
-		"<td>25</td><td>12.0%</td>",
+		`<tr><td>agent</td><td>2</td><td>32</td><td class="evidence-rate"><span class="evidence-rate-main">78.1% of 32</span>`,
+		`<span class="evidence-rate-main">12.0% of 25</span>`,
 		// bot: zero row, never a missing kind.
-		"<tr><td>bot</td><td>0</td><td>0</td><td>0</td><td>—</td>",
+		`<tr><td>bot</td><td>0</td><td>0</td><td class="evidence-rate"><span class="evidence-rate-main">— (0, below the minimum of 10)</span>`,
 		"Boundary enforcement", `aria-label="Boundary enforcement: attempted and proxy-blocked agent writes per intent tier"`,
-		"<tr><td>guarded</td><td>2</td><td>50</td><td>5</td><td>50</td><td>10.0%</td>",
-		"<tr><td>sandbox</td><td>1</td><td>3</td><td>0</td><td>3</td><td>—</td>",
+		`<tr><td>guarded</td><td>2</td><td>50</td><td class="evidence-rate"><span class="evidence-rate-main">10.0% of 50</span>`,
+		`<tr><td>sandbox</td><td>1</td><td>3</td><td class="evidence-rate"><span class="evidence-rate-main">— (3, below the minimum of 10)</span>`,
 		`class="evidence-bar blocked"`, `class="evidence-bar attempted"`,
-		"Shadow gates × outcome", "1 hive(s) report shadow gates",
+		"Shadow gates × outcome", "1 hive reports shadow gates",
 		"<tr><td>Review gate</td><td>would have held</td><td>10</td><td>8</td><td>2</td>",
-		"<tr><td>Review gate</td><td>would have passed</td><td>15</td><td>12</td><td>3</td><td>12</td><td>0.0%</td>",
+		`<tr><td>Review gate</td><td>would have passed</td><td>15</td><td>12</td><td>3</td><td class="evidence-rate"><span class="evidence-rate-main">0.0% of 12</span>`,
+		// Findings generated from the fleet fixture, one per panel with data.
+		"<li>AI agents wrote 32 PRs: 25 merged (78.1%) and 3 of those were reverted within 14 days. Humans wrote 12 PRs: 10 merged (83.3%) and 1 of those was reverted within 14 days.</li>",
+		`<p class="evidence-finding">Agents attempted 53 writes to GitHub through the guardrail proxy and 5 (9.4%) were blocked; a blocked write never reached GitHub.</p>`,
 		`class="evidence-bar merged"`, `class="evidence-bar reverted"`, `class="evidence-bar open"`,
 		"no merge was held or blocked anywhere in the fleet",
 	} {
@@ -574,11 +630,16 @@ func TestEvidenceFilterChips(t *testing.T) {
 		"1 of 1 hives report evidence in this selection (3 of 4 fleet-wide)",
 		`class="evidence-chip on" aria-pressed="true" data-hive="beta"`,
 		`class="evidence-chip" aria-pressed="false" onclick="evidenceClearHives()">All</button>`,
-		"<tr><td>Selection</td><td>10</td><td>90.0%</td>",
-		"<tr><td>agent</td><td>1</td><td>12</td><td>12</td><td>75.0%</td>",
-		"<tr><td>guarded</td><td>1</td><td>10</td><td>1</td><td>10</td><td>10.0%</td>",
-		"Shadow-gate observations are not reported by any selected hive yet",
+		`<tr><td>All selected hives</td><td>10</td><td class="evidence-rate"><span class="evidence-rate-main">90.0% of 10</span>`,
+		// Exactly one hive selected: no duplicate per-hive coverage row.
+		`<tr><td>beta</td><td colspan="2" class="evidence-same-hive">(same hive as above)</td></tr>`,
+		`<tr><td>agent</td><td>1</td><td>12</td><td class="evidence-rate"><span class="evidence-rate-main">75.0% of 12</span>`,
+		`<tr><td>guarded</td><td>1</td><td>10</td><td class="evidence-rate"><span class="evidence-rate-main">10.0% of 10</span>`,
+		"<li>Shadow gates — shadow mode is off on every selected hive, or none has reported it yet",
 		"<tr><td>L3</td><td>1</td><td>9</td>",
+		// Findings are regenerated client-side for the selection.
+		"<li>beta reports evidence for the last 90d.</li>",
+		"<li>AI agents wrote 12 PRs: 9 merged (75.0%) and 1 of those was reverted within 14 days.</li>",
 	} {
 		if !strings.Contains(got.Beta, want) {
 			t.Errorf("beta selection is missing %q", want)
@@ -593,8 +654,8 @@ func TestEvidenceFilterChips(t *testing.T) {
 	for _, want := range []string{
 		"1 of 1 hives report evidence in this selection",
 		`class="evidence-chip on" aria-pressed="true" data-level="4"`,
-		"<tr><td>Selection</td><td>40</td><td>75.0%</td>",
-		"<tr><td>human</td><td>1</td><td>12</td><td>12</td><td>83.3%</td>",
+		`<tr><td>All selected hives</td><td>40</td><td class="evidence-rate"><span class="evidence-rate-main">75.0% of 40</span>`,
+		`<tr><td>human</td><td>1</td><td>12</td><td class="evidence-rate"><span class="evidence-rate-main">83.3% of 12</span>`,
 		"<tr><td>Review gate</td><td>would have held</td><td>10</td>",
 	} {
 		if !strings.Contains(got.Level4, want) {
@@ -602,7 +663,7 @@ func TestEvidenceFilterChips(t *testing.T) {
 		}
 	}
 	// beta ∩ L4 is empty: the panels disclose, never NaN.
-	for _, want := range []string{"0 of 0 hives report evidence in this selection", "Outcome by author kind is not reported by any selected hive yet"} {
+	for _, want := range []string{"0 of 0 hives report evidence in this selection", "<li>No hives are selected.</li>", "<li>Outcome by author kind — hives report this once upgraded to the Oct 16 build or later."} {
 		if !strings.Contains(got.Both, want) {
 			t.Errorf("empty selection is missing %q", want)
 		}
@@ -611,7 +672,7 @@ func TestEvidenceFilterChips(t *testing.T) {
 		t.Errorf("empty selection leaked NaN/undefined:\n%s", got.Both)
 	}
 	// Clearing both filters returns to the server's fleet view.
-	if !strings.Contains(got.Cleared, "3 of 4 hives report evidence for last 90d. Rates show") || !strings.Contains(got.Cleared, "<tr><td>Fleet</td><td>50</td>") {
+	if !strings.Contains(got.Cleared, "3 of 4 hives report evidence for last 90d. Each percentage") || !strings.Contains(got.Cleared, "<tr><td>All selected hives</td><td>50</td>") {
 		t.Errorf("cleared filter did not restore the fleet view:\n%s", got.Cleared[:400])
 	}
 }
@@ -717,15 +778,15 @@ result = evidencePanelHTML(200, data);`
 	for _, want := range []string{
 		"so Oct 1 – Oct 15 is served from the smallest window that covers it: last 30d.",
 		"Record coverage is only computed for the 90-day window",
-		"(1 report only the 90-day block)",
-		"Not reported for this window (spoke predates per-window reporting)",
-		"<th>Merged (range)</th>", "<th>Verdicts (range)</th>",
+		"(1 report only the 90-day figures)",
+		"Not reported for this window (older build)",
+		"<th>Merged (range)</th>",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("approximate view is missing %q", want)
 		}
 	}
-	if strings.Contains(html, "<tr><td>Fleet</td><td>50</td>") {
+	if strings.Contains(html, "<tr><td>All selected hives</td><td>50</td>") {
 		t.Error("record coverage row rendered although coverage_available is false")
 	}
 }
@@ -799,10 +860,10 @@ result = {html: html, exp: exp, afterOpen: afterOpen, afterSecond: afterSecond, 
 		// Sticky head markup: title, ⓘ, one-line note, explainer, then the table.
 		`<div class="evidence-head"><h3 class="evidence-title"><span>Evidence coverage</span><button type="button" class="evidence-info"`,
 		// Live text from the fixture: fleet coverage 80.0% of 50, 2 of 3 hives.
-		"Fleet: 80.0% of 50 (95% CI 67.0% – 89.0%) merged PRs (90d) have an evidence record. 2 of 3 hives report today.",
+		"All selected hives: 80.0% of 50 (margin 67.0% – 89.0%) merged PRs (90d) have an evidence record. 2 of 3 hives report today.",
 		`<span class="evidence-grade evidence-grade-strong">Strong</span>`,
 		// Plain-language definitions on first use.
-		"95% confidence interval (CI)", "minimum sample (10)", "“Calibration” means", "A “bad outcome” is a false approve",
+		"margin (95%)", "minimum sample (10)", "reviewer-confidence range", "A “wrong call” is a false approve",
 		// Honest limits.
 		"Merged is not the same as correct", "reverts are only recorded since 2026-10-15", "evidence records only exist since 2026-10-08",
 	} {
@@ -854,6 +915,138 @@ func TestEvidenceStickyHeadings(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("dashboardHTML is missing %q", want)
+		}
+	}
+}
+
+// TestEvidenceModalNoIssueNumbers (#12456): nothing a hub admin reads in the
+// modal may cite an issue number or an internal flag name; those live in the
+// ⓘ explainer's "Technically:" sentence or in the docs. Checked on the fleet
+// fixture, the small fixture, a single-hive selection and an empty selection.
+func TestEvidenceModalNoIssueNumbers(t *testing.T) {
+	fixture, _ := evidenceFleetFixtureJSON(t)
+	var got map[string]string
+	runEvidenceJS(t, evidenceHarness(t)+"\nvar fleet = "+fixture+";\n"+
+		"result = {fleet: evidencePanelHTML(200, fleet), small: evidencePanelHTML(200, "+evidenceFixtureJS+"),"+
+		" beta: evidenceViewHTML(fleet, {hives: ['beta'], level: null}), none: evidenceViewHTML(fleet, {hives: ['beta'], level: 4})};", &got)
+	issue := regexp.MustCompile(`#\d{4,}`)
+	internal := []string{"review.shadow", "intent shadow mode", "spoke predates", "spokes yet", "#12"}
+	for name, html := range got {
+		// Strip the explainer regions: the technical pointer is allowed there.
+		visible := regexp.MustCompile(`(?s)<div id="evidence-exp-[^"]*" class="evidence-explainer".*?</p></div>`).ReplaceAllString(html, "")
+		if m := issue.FindString(visible); m != "" {
+			t.Errorf("%s: visible modal copy cites an issue number %q", name, m)
+		}
+		for _, bad := range internal {
+			if strings.Contains(visible, bad) {
+				t.Errorf("%s: visible modal copy contains internal wording %q", name, bad)
+			}
+		}
+		if strings.Contains(html, "NaN") || strings.Contains(html, "undefined") {
+			t.Errorf("%s: leaked NaN/undefined", name)
+		}
+	}
+}
+
+// TestEvidenceFindingsParity: the client-side findings generator (used for a
+// filtered selection) must reproduce the server's sentences byte for byte,
+// for the unfiltered fleet and for a hive-filtered re-pool.
+func TestEvidenceFindingsParity(t *testing.T) {
+	fixture, view := evidenceFleetFixtureJSON(t)
+	betaView := buildEvidenceView(filterEvidenceRegistry(evidenceFleetFixtureRegistry(), url.Values{"hive": {"beta"}}))
+	l3View := buildEvidenceView(filterEvidenceRegistry(evidenceFleetFixtureRegistry(), url.Values{"level": {"3"}}))
+	var got struct {
+		Fleet, Beta, L3            []string
+		FleetKeys, BetaKeys        map[string]string
+		FleetWait, BetaWait, Small []string
+	}
+	runEvidenceJS(t, evidenceHarness(t)+"\nvar data = "+fixture+";\n"+
+		"function sel(f) { var hs = evidenceFilterHives(data.hives, f); var v = evidenceRepool(data, hs); v.window = data.window; return v; }\n"+
+		"var beta = sel({hives: ['beta'], level: null}), l3 = sel({hives: null, level: 3});\n"+
+		"result = {Fleet: evidenceFindings(data), Beta: evidenceFindings(beta), L3: evidenceFindings(l3), FleetKeys: evidenceFindingsByKey(data), BetaKeys: evidenceFindingsByKey(beta),"+
+		" FleetWait: evidenceWaiting(data), BetaWait: evidenceWaiting(beta), Small: evidenceFindings("+evidenceFixtureJS+")};", &got)
+	same := func(name string, js, goSide []string) {
+		t.Helper()
+		if strings.Join(js, "\n") != strings.Join(goSide, "\n") {
+			t.Errorf("%s findings differ\nJS: %q\nGo: %q", name, js, goSide)
+		}
+	}
+	same("fleet", got.Fleet, view.Findings)
+	same("beta", got.Beta, betaView.Findings)
+	same("level 3", got.L3, l3View.Findings)
+	same("fleet waiting", got.FleetWait, evidenceWaiting(view))
+	same("beta waiting", got.BetaWait, evidenceWaiting(betaView))
+	for k, v := range evidenceFindingsByKey(view) {
+		if got.FleetKeys[k] != v {
+			t.Errorf("fleet finding %s: JS %q, Go %q", k, got.FleetKeys[k], v)
+		}
+	}
+	for k, v := range evidenceFindingsByKey(betaView) {
+		if got.BetaKeys[k] != v {
+			t.Errorf("beta finding %s: JS %q, Go %q", k, got.BetaKeys[k], v)
+		}
+	}
+	if len(got.Fleet) < 3 || len(got.Fleet) > 6 {
+		t.Errorf("fleet findings: %d sentences, want 3–6", len(got.Fleet))
+	}
+	if len(got.Small) < 3 {
+		t.Errorf("small fixture findings: %d sentences, want at least 3 (with fallbacks)", len(got.Small))
+	}
+}
+
+// TestEvidenceReportLinks: the 📄 Report / ⬇ Markdown links sit in the window
+// row and carry the current window and filter so the download reconciles
+// with what is on screen.
+func TestEvidenceReportLinks(t *testing.T) {
+	fixture, _ := evidenceFleetFixtureJSON(t)
+	var got struct{ Fleet, Beta, Custom string }
+	runEvidenceJS(t, evidenceHarness(t)+"\nvar data = "+fixture+";\n"+
+		"var fleet = evidenceWindowControlsHTML(data);\n"+
+		"_evidenceFilter = {hives: ['beta'], level: 4}; _evidenceWindow = {key: '7d'}; var beta = evidenceWindowControlsHTML(data);\n"+
+		"_evidenceFilter = {hives: null, level: null}; _evidenceWindow = {key: 'custom', from: '2026-10-01', to: '2026-10-15'}; var custom = evidenceWindowControlsHTML(data);\n"+
+		"result = {Fleet: fleet, Beta: beta, Custom: custom};", &got)
+	for _, want := range []string{
+		// The default 90d window is the server default, so no hours= is sent.
+		`<a class="evidence-report-link" href="/api/hub/evidence/report?format=html" target="_blank" rel="noopener"`,
+		`📄 Report</a>`,
+		`<a class="evidence-report-link" href="/api/hub/evidence/report?format=md&amp;download=1" download`,
+		`⬇ Markdown</a>`,
+	} {
+		if !strings.Contains(got.Fleet, want) {
+			t.Errorf("fleet window row is missing %q\n%s", want, got.Fleet)
+		}
+	}
+	if !strings.Contains(got.Beta, `href="/api/hub/evidence/report?hours=168&amp;hive=beta&amp;level=4&amp;format=html"`) {
+		t.Errorf("filtered report link lacks hive/level:\n%s", got.Beta)
+	}
+	if !strings.Contains(got.Custom, `href="/api/hub/evidence/report?from=2026-10-01&amp;to=2026-10-15&amp;format=html"`) {
+		t.Errorf("custom-window report link lacks from/to:\n%s", got.Custom)
+	}
+	// The window row must still carry the 24h/7d/30d/90d/custom pills.
+	for _, want := range []string{`data-window="24h"`, `data-window="90d"`, `data-window="custom"`} {
+		if !strings.Contains(got.Fleet, want) {
+			t.Errorf("window pills missing %q", want)
+		}
+	}
+}
+
+// TestEvidenceLayoutClasses: the layout fix is class-based (TestStyleRatchet
+// forbids inline styles): wide modal, scrollable per-hive table with a sticky
+// hive column, and the muted margin line under each rate.
+func TestEvidenceLayoutClasses(t *testing.T) {
+	html := dashScript(t)
+	for _, want := range []string{
+		"max-width: min(96vw, 1600px)",
+		".evidence-table-scroll { overflow-x: auto;",
+		".evidence-table-scroll td.evidence-sticky-col { position: sticky; left: 0;",
+		".evidence-rate-margin {",
+		".evidence-findings {",
+		".evidence-waiting {",
+		".evidence-same-hive {",
+		".evidence-report-link {",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboardHTML CSS is missing %q", want)
 		}
 	}
 }
