@@ -73,8 +73,20 @@ func TestFoldPRsLiveAndBackfilled(t *testing.T) {
 	if p3 := prs[PRKey("o/r", 3)]; p3.Closed || p3.Merge != merged3.Merge {
 		t.Errorf("PR 3: a merge on any record clears a backfilled close: %+v", p3)
 	}
-	if p4 := prs[PRKey("o/r", 4)]; p4.Bundle != b4 {
+	p4 := prs[PRKey("o/r", 4)]
+	if p4.Bundle != b4 {
 		t.Errorf("PR 4: equal created_at must fall back to updated_at, got head %s", p4.HeadSHA)
+	}
+	// Outcome is known from a merge (PR 3) or any backfilled record (PR 2);
+	// a live-only bundle with no merge (PR 4) says nothing about the PR's fate.
+	if !p1.OutcomeKnown() || !p1.Backfilled || !prs[PRKey("o/r", 2)].OutcomeKnown() || !prs[PRKey("o/r", 3)].OutcomeKnown() {
+		t.Errorf("merged or backfilled PRs must report a known outcome")
+	}
+	if p4.OutcomeKnown() || p4.Backfilled {
+		t.Errorf("PR 4 is live-only with no merge: outcome must be unknown, got %+v", p4)
+	}
+	if (*PR)(nil).OutcomeKnown() {
+		t.Error("nil PR must not report a known outcome")
 	}
 
 	// A merge.opened_at earlier than created_at is the open time even when

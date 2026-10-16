@@ -28,6 +28,22 @@ type PR struct {
 	RevertedBy   []string
 	FollowedUpBy []string
 	Closed       bool
+	// Backfilled is true when at least one record of the PR was reconstructed
+	// from forge history (hivecommons/hive#12371). Such a record states the
+	// PR's outcome (merged, closed or still open at backfill time); a live
+	// bundle only ever states a merge the hive itself performed.
+	Backfilled bool
+}
+
+// OutcomeKnown reports whether the folded records state what happened to
+// the PR. A merge or a backfilled record is a known outcome; a live-only
+// bundle with no merge event is not: the PR may be open, merged by someone
+// other than this hive, or closed by hand, and nothing on disk says which.
+// Readers that compute rates against an outcome must leave these PRs out of
+// the denominator and report them as unknown rather than count them as
+// "not merged" (hivecommons/hive#12514 follow-up).
+func (p *PR) OutcomeKnown() bool {
+	return p != nil && (p.Merge != nil || p.Backfilled)
 }
 
 // PRKey is the case-insensitive owner/name#number key FoldPRs groups by.
@@ -73,6 +89,9 @@ func FoldPRs(bundles []*Bundle, repo, kind string) map[string]*PR {
 		p.FollowedUpBy = longerLinks(p.FollowedUpBy, b.FollowedUpBy)
 		if bundleClosed(b) {
 			p.Closed = true
+		}
+		if b.Backfilled || b.Backfill != nil {
+			p.Backfilled = true
 		}
 	}
 	for _, p := range prs {

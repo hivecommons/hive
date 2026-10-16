@@ -59,10 +59,10 @@ func TestBuildEvidenceSummary(t *testing.T) {
 	if o := got.Outcomes["agent"]; o.N != 1 || o.Merged != 1 || o.Open != 0 {
 		t.Errorf("agent outcomes = %+v", o)
 	}
-	if o := got.Outcomes["human"]; o.N != 1 || o.Open != 1 {
-		t.Errorf("human outcomes = %+v", o)
+	if o := got.Outcomes["human"]; o.N != 1 || o.Open != 0 || o.Unknown != 1 {
+		t.Errorf("live-only bundle without a merge is an unknown outcome, not open: %+v", o)
 	}
-	if got.Missing.VerdictsModelUnknown != 1 || got.Missing.RecordsEmptyCI != 1 {
+	if got.Missing.VerdictsModelUnknown != 1 || got.Missing.RecordsEmptyCI != 1 || got.Missing.PRsOutcomeUnknown != 1 {
 		t.Errorf("missing = %+v", got.Missing)
 	}
 	if got.SentinelPerWeek.N != 2 || len(got.SentinelPerWeek.Weeks) != 1 || got.SentinelPerWeek.Weeks[0].Week != "2026-W42" {
@@ -72,8 +72,11 @@ func TestBuildEvidenceSummary(t *testing.T) {
 		t.Fatalf("calibration = %+v", got.Calibration)
 	}
 	bk := got.Calibration[0].Buckets
-	if bk[0].N != 1 || bk[0].Blocks != 1 || bk[1].N != 1 || bk[3].N != 1 || bk[3].Merged != 1 {
+	if bk[0].N != 1 || bk[0].Blocks != 1 || bk[1].N != 1 || bk[1].Unknown != 1 || bk[3].N != 1 || bk[3].Merged != 1 || bk[3].Unknown != 0 {
 		t.Errorf("buckets = %+v", bk)
+	}
+	if m1 := got.ReviewerModels[0]; m1.Model != "m1" || m1.ByAuthor["human"].Approvals != 1 || m1.ByAuthor["human"].ApprovedNotMerged != 0 || m1.ByAuthor["human"].ApprovedUnknown != 1 {
+		t.Errorf("approval on an unknown-outcome PR is unknown, not a false approve: %+v", m1)
 	}
 	if len(got.ReviewerModels) != 2 {
 		t.Fatalf("models = %+v", got.ReviewerModels)
@@ -215,7 +218,9 @@ func TestBuildEvidenceSummaryShadowGate(t *testing.T) {
 	if sg.N != 3 || sg.WouldHaveHeld != 2 || sg.WouldHaveBlocked != 1 {
 		t.Fatalf("shadow gate = %+v", sg)
 	}
-	if want := (EvidenceShadowOutcome{N: 2, Merged: 1, Open: 1, Reverted: 1}); sg.ReviewGate.Held != want || sg.ReviewGate.N != 3 {
+	// PR 2 is a live bundle without a merge record: its outcome is unknown,
+	// not "open", so it is counted but never enters a rate.
+	if want := (EvidenceShadowOutcome{N: 2, Merged: 1, Unknown: 1, Reverted: 1}); sg.ReviewGate.Held != want || sg.ReviewGate.N != 3 {
 		t.Errorf("review gate = %+v", sg.ReviewGate)
 	}
 	if want := (EvidenceShadowOutcome{N: 1, Merged: 1}); sg.ReviewGate.Passed != want {
@@ -250,6 +255,18 @@ func TestBuildEvidenceSummaryClaimVsVerdict(t *testing.T) {
 		b.CI.Checks = append(b.CI.Checks, evidence.Check{Name: "lint", Conclusion: "failure"})
 		return b
 	}
+	skippedCI := func(b *evidence.Bundle) *evidence.Bundle {
+		b.CI.Checks = append(b.CI.Checks, evidence.Check{Name: "e2e", Conclusion: "skipped"}, evidence.Check{Name: "docs", Conclusion: "neutral"})
+		return b
+	}
+	pendingCI := func(b *evidence.Bundle) *evidence.Bundle {
+		b.CI.Checks = append(b.CI.Checks, evidence.Check{Name: "e2e", Conclusion: "in_progress"})
+		return b
+	}
+	gateCI := func(b *evidence.Bundle, status string) *evidence.Bundle {
+		b.CI.Status = status
+		return skippedCI(b)
+	}
 	bundles := []*evidence.Bundle{
 		// W42: CI green, swarm approve → claimed only
 		evSummaryBundle("a/b", 1, evidence.AuthorAgent, wk42, true, approve, 0, true),
@@ -265,14 +282,23 @@ func TestBuildEvidenceSummaryClaimVsVerdict(t *testing.T) {
 		evSummaryBundle("a/b", 6, evidence.AuthorAgent, wk41, true, nil, 0, true),
 		// W41: superseded bundle for #6 with red CI must not count
 		redCI(evSummaryBundle("a/b", 6, evidence.AuthorAgent, wk41.Add(-time.Hour), false, nil, 0, true)),
+		// W41: a skipped job beside a passing one is green for the gate
+		skippedCI(evSummaryBundle("a/b", 7, evidence.AuthorAgent, wk41, false, approve, 0, true)),
+		// W41: a check still running when captured is pending: in neither column
+		pendingCI(evSummaryBundle("a/b", 8, evidence.AuthorAgent, wk41, false, approve, 0, true)),
+		// W41: the gate's own verdict wins over a skipped-looking check list
+		gateCI(evSummaryBundle("a/b", 9, evidence.AuthorAgent, wk41, false, approve, 0, true), "failure"),
 	}
 
 	got := buildEvidenceSummary(bundles, now, 24*14, "", "")
 	if len(got.ClaimVsVerdict) != 2 {
 		t.Fatalf("claim_vs_verdict = %+v", got.ClaimVsVerdict)
 	}
-	if want := (EvidenceClaimWeek{Week: "2026-W41", N: 1, Claimed: 1, CICaptured: 1}); got.ClaimVsVerdict[0] != want {
-		t.Errorf("W41 = %+v, want %+v", got.ClaimVsVerdict[0], want)
+	if want := (EvidenceClaimWeek{Week: "2026-W41", N: 4, Claimed: 4, CICaptured: 3, CINotGreen: 1, CIPending: 1}); got.ClaimVsVerdict[0] != want {
+		t.Errorf("W41 = %+v, want %+v (skipped/neutral are green, in_progress is pending, ci.status wins)", got.ClaimVsVerdict[0], want)
+	}
+	if got.Missing.RecordsCIPending != 1 {
+		t.Errorf("records_ci_pending = %d, want 1", got.Missing.RecordsCIPending)
 	}
 	if want := (EvidenceClaimWeek{Week: "2026-W42", N: 4, Claimed: 4, CICaptured: 3, CINotGreen: 2, VerdictNotApprove: 2, Both: 1}); got.ClaimVsVerdict[1] != want {
 		t.Errorf("W42 = %+v, want %+v", got.ClaimVsVerdict[1], want)
@@ -468,8 +494,11 @@ func TestBuildEvidenceSummaryBackfilledWindows(t *testing.T) {
 	if o := got.Outcomes["human"]; o.N != 1 || o.Closed != 1 || o.Open != 0 {
 		t.Errorf("backfilled close-without-merge must count as closed: %+v", o)
 	}
-	if len(got.ReviewerModels) != 1 || got.ReviewerModels[0].ByAuthor["agent"].ApprovedNotMerged != 0 || got.ReviewerModels[0].ByAuthor["agent"].Approvals != 1 {
+	if len(got.ReviewerModels) != 1 || got.ReviewerModels[0].ByAuthor["agent"].ApprovedNotMerged != 0 || got.ReviewerModels[0].ByAuthor["agent"].ApprovedUnknown != 0 || got.ReviewerModels[0].ByAuthor["agent"].Approvals != 1 {
 		t.Errorf("approval on a PR the forge says merged is not a false approve: %+v", got.ReviewerModels)
+	}
+	if got.Missing.PRsOutcomeUnknown != 0 || got.Outcomes["agent"].Unknown != 0 || got.Outcomes["human"].Unknown != 0 {
+		t.Errorf("every PR here has a recorded outcome: %+v", got.Outcomes)
 	}
 	if len(got.Calibration) != 1 || got.Calibration[0].Buckets[3].Merged != 1 {
 		t.Errorf("calibration must see the merge: %+v", got.Calibration)
@@ -529,5 +558,86 @@ func TestHandleEvidenceSummaryAvailableWindows(t *testing.T) {
 	}
 	if got.N != 0 || got.AvailableWindows["24"] != 0 || got.AvailableWindows["720"] != 1 || got.AvailableWindows["all"] != 1 {
 		t.Errorf("n=%d available_windows=%v", got.N, got.AvailableWindows)
+	}
+}
+
+// TestBuildEvidenceSummaryUnknownOutcome pins the denominator policy behind
+// every outcome rate the Evidence card draws (hivecommons/hive#12514
+// follow-up). A PR that has only live bundles and no merge event has an
+// unknown outcome: the hive records a merge only when it merged itself and
+// never records a close, so such a PR may be open, merged by someone else
+// or closed by hand. It must be reported as unknown — in
+// outcomes_by_author_kind, per calibration bucket, per reviewer model and in
+// missing.prs_outcome_unknown — and never counted as "not merged" against a
+// reviewer or as "open". A backfilled record that says the PR was still open
+// is a known outcome and stays Open.
+func TestBuildEvidenceSummaryUnknownOutcome(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-3 * time.Hour)
+	approve := []evidence.Verdict{{Perspective: "security", Model: "m", Verdict: "approve", Confidence: 0.95}}
+	block := []evidence.Verdict{{Perspective: "security", Model: "m", Verdict: "changes_requested", Confidence: 0.95}}
+	held := true
+	shadow := func(b *evidence.Bundle) *evidence.Bundle {
+		b.Shadow = &evidence.Shadow{ReviewGate: &evidence.ShadowGate{WouldHaveHeld: &held}}
+		return b
+	}
+	// Live-only, reviewed, no merge event: outcome unknown.
+	unknownApproved := shadow(evSummaryBundle("a/b", 1, evidence.AuthorAgent, recent, false, approve, 0, false))
+	unknownBlocked := evSummaryBundle("a/b", 2, evidence.AuthorAgent, recent, false, block, 0, false)
+	// Live, merged by this hive: known.
+	mergedApproved := evSummaryBundle("a/b", 3, evidence.AuthorAgent, recent, true, approve, 0, true)
+	// Live review plus a backfilled record that says closed without merge:
+	// the one genuine false approve.
+	closedLive := evSummaryBundle("a/b", 4, evidence.AuthorAgent, recent, false, approve, 0, false)
+	closedBF := evSummaryBundle("a/b", 4, evidence.AuthorAgent, recent.Add(-time.Hour), false, nil, 0, false)
+	closedBF.HeadSHA = "bf"
+	closedBF.Backfilled = true
+	closedBF.Backfill = &evidence.Backfill{Source: "github-api", At: now, State: evidence.BackfillStateClosed}
+	// Backfilled record that found the PR still open: known, Open.
+	openBF := evSummaryBundle("a/b", 5, evidence.AuthorHuman, recent, false, nil, 0, false)
+	openBF.Backfilled = true
+	openBF.Backfill = &evidence.Backfill{Source: "github-api", At: now, State: evidence.BackfillStateOpen}
+
+	got := buildEvidenceSummary([]*evidence.Bundle{unknownApproved, unknownBlocked, mergedApproved, closedLive, closedBF, openBF}, now, 24, "", "")
+	if got.N != 5 {
+		t.Fatalf("n = %d, want 5", got.N)
+	}
+	if o := got.Outcomes["agent"]; o != (EvidenceOutcomes{N: 4, Merged: 1, Closed: 1, Open: 0, Unknown: 2}) {
+		t.Errorf("agent outcomes = %+v, want merged 1 / closed 1 / unknown 2", o)
+	}
+	if o := got.Outcomes["human"]; o != (EvidenceOutcomes{N: 1, Open: 1}) {
+		t.Errorf("a backfilled still-open record is a known Open, got %+v", o)
+	}
+	if got.Missing.PRsOutcomeUnknown != 2 {
+		t.Errorf("missing.prs_outcome_unknown = %d, want 2", got.Missing.PRsOutcomeUnknown)
+	}
+
+	if len(got.ReviewerModels) != 1 {
+		t.Fatalf("models = %+v", got.ReviewerModels)
+	}
+	st := got.ReviewerModels[0].ByAuthor["agent"]
+	want := EvidenceModelStat{N: 4, Approvals: 3, Blocks: 1, ApprovedNotMerged: 1, ApprovedUnknown: 1, BlockedUnknown: 1}
+	if st != want {
+		t.Errorf("model stat = %+v, want %+v", st, want)
+	}
+	// The false-approve denominator the card uses is approvals with a known
+	// outcome: 1 false approve over 2, not 2 over 3.
+	if known := st.Approvals - st.ApprovedUnknown; known != 2 || st.ApprovedNotMerged != 1 {
+		t.Errorf("false-approve = %d/%d, want 1/2", st.ApprovedNotMerged, known)
+	}
+	if known := st.Blocks - st.BlockedUnknown; known != 0 || st.MergedAfterBlock != 0 {
+		t.Errorf("false-block must have no denominator when every block is on an unknown-outcome PR: %+v", st)
+	}
+
+	if len(got.Calibration) != 1 {
+		t.Fatalf("calibration = %+v", got.Calibration)
+	}
+	top := got.Calibration[0].Buckets[3]
+	if top.N != 4 || top.Merged != 1 || top.Unknown != 2 {
+		t.Errorf("top bucket = %+v, want n 4 / merged 1 / unknown 2 (merged rate 1 of 2 known, not 1 of 4)", top)
+	}
+
+	if h := got.ShadowGate.ReviewGate.Held; h.N != 1 || h.Open != 0 || h.Unknown != 1 {
+		t.Errorf("shadow held outcome must be unknown, not open: %+v", h)
 	}
 }
