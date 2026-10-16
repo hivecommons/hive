@@ -123,45 +123,87 @@ func newStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock) (*
 func TestClassifyStageMapping(t *testing.T) {
 	approve := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}}
 	reject := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}}
+	incomplete := stageDetail{VerdictKnown: true, Verdict: ContributorLaneVerdict{Configured: true, Verdict: "incomplete"}}
 	cases := []struct {
-		name string
-		obs  stageObservation
-		want stagelabels.Stage
-		rank int
-		term bool
+		name   string
+		obs    stageObservation
+		want   stagelabels.Stage
+		rank   int
+		term   bool
+		reason string
 	}{
-		{"merged", stageObservation{Lane: stageLaneSelf, Merged: true}, stagelabels.None, 2, true},
-		{"closed", stageObservation{Lane: stageLaneSelf, Reason: "closed"}, stagelabels.None, 2, true},
-		{"draft", stageObservation{Lane: stageLaneSelf, Reason: "draft"}, stagelabels.None, 2, false},
-		{"handoff", stageObservation{Lane: stageLaneSelf, Reason: "not-app-authored"}, stagelabels.None, 0, false},
-		{"error", stageObservation{Lane: stageLaneSelf, Reason: "fetch-pr", Err: true}, stagelabels.None, 0, false},
-		{"review pending", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict}, stagelabels.ReviewPending, 2, false},
-		{"ci pending no verdict", stageObservation{Lane: stageLaneSelf, Reason: "check-pending"}, stagelabels.ReviewPending, 2, false},
-		{"required check pending no verdict", stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test"}, stagelabels.ReviewPending, 2, false},
-		{"required check pending approved", stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test", Detail: approve}, stagelabels.Reviewed, 2, false},
-		{"ci pending approved", stageObservation{Lane: stageLaneSelf, Reason: "required-check-missing:unit", Detail: approve}, stagelabels.Reviewed, 2, false},
-		{"self ci red", stageObservation{Lane: stageLaneSelf, Reason: "check-failing:unit"}, stagelabels.Fixing, 2, false},
-		{"contributor ci red", stageObservation{Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, stagelabels.ReturnedToContributor, 2, false},
-		{"trusted conflicting", stageObservation{Lane: stageLaneTrusted, Reason: "conflicting"}, stagelabels.ReturnedToContributor, 2, false},
-		{"self changes requested", stageObservation{Lane: stageLaneSelf, Reason: "check-pending", Detail: reject}, stagelabels.Fixing, 2, false},
-		{"contributor changes requested", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, stagelabels.ReturnedToContributor, 2, false},
-		{"soaking", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(30m)"}, stagelabels.MergeQueue, 2, false},
-		{"merge pool", stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, stagelabels.MergeQueue, 2, false},
-		{"hold", stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, stagelabels.NeedsHuman, 2, false},
-		{"needs-rebase hold", stageObservation{Lane: stageLaneSelf, Reason: "excluded-label:needs-rebase", Labels: []string{"needs-rebase"}}, stagelabels.Fixing, 2, false},
-		{"no claim", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, stagelabels.NeedsHuman, 2, false},
-		{"untrusted role weak", stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, stagelabels.NeedsHuman, 1, false},
-		{"human merge path", stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, stagelabels.NeedsHuman, 2, false},
-		{"approved green unclassified reason", stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: approve}, stagelabels.AwaitingMergeAdmission, 1, false},
-		{"approved green lane error", stageObservation{Lane: stageLaneContributor, Reason: "review-state-check", Err: true, Detail: approve}, stagelabels.AwaitingMergeAdmission, 1, false},
-		{"unapproved unclassified reason", stageObservation{Lane: stageLaneContributor, Reason: "something-new"}, stagelabels.None, 0, false},
-		{"approved but ci pending stays reviewed", stageObservation{Lane: stageLaneContributor, Reason: "check-pending", Detail: approve}, stagelabels.Reviewed, 2, false},
-		{"approved soaking is merge queue", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(5m)", Detail: approve}, stagelabels.MergeQueue, 2, false},
+		{name: "merged", obs: stageObservation{Lane: stageLaneSelf, Merged: true}, rank: stageRankOwned, term: true},
+		{name: "closed", obs: stageObservation{Lane: stageLaneSelf, Reason: "closed"}, rank: stageRankOwned, term: true},
+		{name: "draft", obs: stageObservation{Lane: stageLaneSelf, Reason: "draft"}, rank: stageRankOwned},
+		{name: "handoff", obs: stageObservation{Lane: stageLaneSelf, Reason: "not-app-authored"}},
+		{name: "error", obs: stageObservation{Lane: stageLaneSelf, Reason: "fetch-pr", Err: true}},
+		{name: "review pending", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "incomplete verdict is still pending", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: incomplete}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "ci pending no verdict", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-pending"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "required check pending no verdict", obs: stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "required check pending approved", obs: stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test", Detail: approve}, want: stagelabels.Reviewed, rank: stageRankOwned},
+		{name: "ci pending approved", obs: stageObservation{Lane: stageLaneSelf, Reason: "required-check-missing:unit", Detail: approve}, want: stagelabels.Reviewed, rank: stageRankOwned},
+		{name: "tide pending is not red", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-pending:tide"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "head too young is pending", obs: stageObservation{Lane: stageLaneContributor, Reason: "pending: head pushed 33s ago (< min_head_age)"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
+		{name: "self ci red", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-failing:unit"}, want: stagelabels.Fixing, rank: stageRankOwned},
+		{name: "contributor ci red", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "trusted conflicting", obs: stageObservation{Lane: stageLaneTrusted, Reason: "conflicting"}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "self changes requested", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-pending", Detail: reject}, want: stagelabels.Fixing, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
+		{name: "changes requested while head too young", obs: stageObservation{Lane: stageLaneContributor, Reason: "pending: head pushed 1m0s ago (< min_head_age)", Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
+		{name: "changes requested behind no-verdict", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
+		{name: "contributor changes requested", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "soaking", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(30m)"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
+		{name: "merge pool", obs: stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
+		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.NeedsHuman, rank: stageRankOwned},
+		{name: "sentinel blocked", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked}, want: stagelabels.NeedsHuman, rank: stageRankOwned},
+		{name: "needs-rebase hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "excluded-label:needs-rebase", Labels: []string{"needs-rebase"}}, want: stagelabels.Fixing, rank: stageRankOwned},
+		{name: "no claim is a weak admission opinion", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, want: stagelabels.NeedsHuman, rank: stageRankAdmission},
+		{name: "claim tier below require_tiers", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier}, want: stagelabels.NeedsHuman, rank: stageRankAdmission},
+		{name: "no claim but needs-rebase", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Labels: []string{"needs-rebase"}}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "untrusted role weak", obs: stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, want: stagelabels.NeedsHuman, rank: stageRankRole},
+		{name: "human merge path", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, want: stagelabels.NeedsHuman, rank: stageRankOwned},
+		{name: "approved green unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
+		{name: "approved green lane error", obs: stageObservation{Lane: stageLaneContributor, Reason: "review-state-check", Err: true, Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
+		{name: "unapproved unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new"}},
+		{name: "approved but ci pending stays reviewed", obs: stageObservation{Lane: stageLaneContributor, Reason: "check-pending", Detail: approve}, want: stagelabels.Reviewed, rank: stageRankOwned},
+		{name: "approved soaking is merge queue", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(5m)", Detail: approve}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 	}
 	for _, tc := range cases {
 		got := classifyStage(tc.obs)
-		if got.Stage != tc.want || got.Rank != tc.rank || got.Terminal != tc.term {
-			t.Errorf("%s: got %+v want stage=%v rank=%d terminal=%v", tc.name, got, tc.want, tc.rank, tc.term)
+		if got.Stage != tc.want || got.Rank != tc.rank || got.Terminal != tc.term || got.Reason != tc.reason {
+			t.Errorf("%s: got %+v want stage=%v rank=%d terminal=%v reason=%q", tc.name, got, tc.want, tc.rank, tc.term, tc.reason)
+		}
+	}
+}
+
+// TestClassifyCIReasonNeverRedForPendingOrInconclusive pins the CI reason
+// classes: a pending, missing, too-young or inconclusive (neutral/skipped)
+// check is waiting, never failing (hivecommons/hive#12403: 54/55 checks
+// green with `tide` pending must not read as red).
+func TestClassifyCIReasonNeverRedForPendingOrInconclusive(t *testing.T) {
+	cases := map[string]ciReasonKind{
+		"":                                      ciReasonNone,
+		"required-check-pending:tide":           ciReasonPending,
+		"required-check-pending:build-and-test": ciReasonPending,
+		"required-check-missing:build-and-test": ciReasonPending,
+		"status-pending":                        ciReasonPending,
+		"check-pending":                         ciReasonPending,
+		"ci-unverified":                         ciReasonPending,
+		"pending: head pushed 33s ago (< min_head_age)": ciReasonPending,
+		"pending: unit has not started":                 ciReasonPending,
+		"check-neutral":                                 ciReasonPending,
+		"check-skipped":                                 ciReasonPending,
+		"required-check-failing:tide":                   ciReasonRed,
+		"check-failing:unit":                            ciReasonRed,
+		"status-failure":                                ciReasonRed,
+		"status-error":                                  ciReasonRed,
+		"check-cancelled":                               ciReasonRed,
+		"check-timed_out":                               ciReasonRed,
+		"contributor-lane:no-claim":                     ciReasonNone,
+	}
+	for reason, want := range cases {
+		if got := classifyCIReason(reason); got != want {
+			t.Errorf("%q: got %d want %d", reason, got, want)
 		}
 	}
 }
@@ -187,6 +229,84 @@ func TestResolveStageLanePrecedence(t *testing.T) {
 	})
 	if v.Stage != stagelabels.Fixing {
 		t.Fatalf("self lane got %v", v.Stage)
+	}
+}
+
+// TestResolveStageAdmissionOpinions covers the weak "cannot vouch for the
+// author" opinions (hivecommons/hive#12403, #12497): a lane that does not
+// admit the author only says needs-human when no lane admits them.
+func TestResolveStageAdmissionOpinions(t *testing.T) {
+	trusted := stageDetail{Author: stagelabels.AuthorTrusted}
+	cases := []struct {
+		name   string
+		list   []stageObservation
+		stage  stagelabels.Stage
+		rank   int
+		author stagelabels.Author
+		lane   string
+	}{
+		{
+			// #12403: registry-trusted author; the trusted-author lane's role
+			// check must not flip the PR to 090 while the contributor lane has
+			// no classified opinion (unmapped reason, transient error).
+			name: "registry-trusted author with role check and no contributor opinion",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
+				{Lane: stageLaneContributor, Reason: "something-new", Detail: trusted},
+			},
+			rank: stageRankNone, author: stagelabels.AuthorTrusted, lane: stageLaneTrusted,
+		},
+		{
+			// #12497: maintainer PR; the trusted-author lane owns it, the
+			// contributor lane's no-claim is only its own inability to admit.
+			name: "maintainer with trusted lane error and contributor no-claim",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "fetch-pr", Err: true, Detail: trusted},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Author: stagelabels.AuthorUntrusted}},
+			},
+			rank: stageRankNone, author: stagelabels.AuthorTrusted, lane: stageLaneTrusted,
+		},
+		{
+			name: "maintainer ci pending beats contributor no-claim",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "required-check-pending:golangci-lint", Detail: trusted},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: trusted},
+			},
+			stage: stagelabels.ReviewPending, rank: stageRankOwned, author: stagelabels.AuthorTrusted, lane: stageLaneTrusted,
+		},
+		{
+			// Contributor tier below require_tiers: nobody admits, 090 is right
+			// and the contributor lane's reason is the one to show.
+			name: "contributor tier is needs-human from the contributor lane",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier, Detail: stageDetail{Author: stagelabels.AuthorContributor}},
+			},
+			stage: stagelabels.NeedsHuman, rank: stageRankAdmission, author: stagelabels.AuthorContributor, lane: stageLaneContributor,
+		},
+		{
+			name: "unknown author with no claim is needs-human untrusted",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Author: stagelabels.AuthorUntrusted}},
+			},
+			stage: stagelabels.NeedsHuman, rank: stageRankAdmission, author: stagelabels.AuthorUntrusted, lane: stageLaneContributor,
+		},
+		{
+			// A hold-class reason applies whoever the author is.
+			name: "trusted author sentinel-blocked stays needs-human",
+			list: []stageObservation{
+				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
+				{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked, Detail: trusted},
+			},
+			stage: stagelabels.NeedsHuman, rank: stageRankOwned, author: stagelabels.AuthorTrusted, lane: stageLaneContributor,
+		},
+	}
+	for _, tc := range cases {
+		v, author, obs := resolveStage(tc.list)
+		if v.Stage != tc.stage || v.Rank != tc.rank || author != tc.author || obs.Lane != tc.lane {
+			t.Errorf("%s: got stage=%v rank=%d author=%v lane=%s; want stage=%v rank=%d author=%v lane=%s", tc.name, v.Stage, v.Rank, author, obs.Lane, tc.stage, tc.rank, tc.author, tc.lane)
+		}
 	}
 }
 
@@ -420,5 +540,43 @@ func TestApplyStageLabelsDisabledIsSilent(t *testing.T) {
 	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(1), "check-failing:x", false, nil)
 	if res, err := e.ApplyStageLabels(context.Background()); err != nil || res.Items != 0 {
 		t.Fatalf("disabled: %+v %v", res, err)
+	}
+}
+
+// TestApplyStageLabelsRecordsVerdictReason reproduces hivecommons/hive#12403:
+// the swarm requested changes at the head while the lane's own reason was a
+// CI wait, so the PR is 072 — and the stored reason, the regression
+// comment and the log must say so rather than quoting the CI wait.
+func TestApplyStageLabelsRecordsVerdictReason(t *testing.T) {
+	api := &stageAPI{}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	reject := ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}
+
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12403), "head-changed-since-eval", false, nil)
+	e.noteStageAuthor("acme", "widget", 12403, stagelabels.AuthorTrusted)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	api.reset()
+	e.recordStage(stageLaneTrusted, "acme", "acme", "widget", stagePR(12403, "stage/100-merge-queue", "author/trusted"), "untrusted-author-role", false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12403, "stage/100-merge-queue", "author/trusted"), "pending: head pushed 1m0s ago (< min_head_age)", false, nil)
+	e.noteStageAuthor("acme", "widget", 12403, stagelabels.AuthorTrusted)
+	e.noteStageVerdict("acme", "widget", 12403, reject)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor", "stage/regressed"}}) {
+		t.Fatalf("added=%v", api.added)
+	}
+	rec, _ := store.Get(stageKey("acme", "widget", 12403))
+	if rec.Reason != "reviewer-verdict:changes_requested" {
+		t.Fatalf("stored reason %q", rec.Reason)
+	}
+	if len(api.comments) == 0 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 072-returned-to-contributor: reviewer-verdict:changes_requested") {
+		t.Fatalf("comments=%v", api.comments)
 	}
 }

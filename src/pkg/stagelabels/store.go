@@ -208,7 +208,10 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 		next.RegressedAt = now
 		next.RegressionCommented = false
 		tr.Regressed = true
-	case prev.Regressed() && !stage.Before(prev.RegressedFrom):
+	case prev.Regressed() && (!stage.Before(prev.RegressedFrom) || !IsRegression(prev.RegressedFrom, stage)):
+		// Back at (or past) the high-water mark, or the mark was a stage a
+		// fall from is no longer counted (records written before the rule
+		// changed heal here).
 		next.RegressedFrom = None
 		next.RegressedAt = time.Time{}
 		next.RegressionCommented = false
@@ -224,7 +227,11 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 // IsRegression reports whether moving from → to is a backward transition
 // worth flagging. A lower number is backward, except leaving a repair stage
 // (fixing, returned-to-contributor, adopted-by-hive) for review of the new
-// head, which is the repair route itself, not a second regression.
+// head, which is the repair route itself, not a second regression, and
+// leaving needs-human: 090 is a parking stage ("the hive cannot act"), not
+// progress, so moving out of it means the blocker cleared, whatever the
+// destination (hivecommons/hive#12403 carried stage/regressed through
+// 090 → 050 → 072 churn that was never a step backwards for the author).
 func IsRegression(from, to Stage) bool {
 	if !to.Before(from) {
 		return false
@@ -232,6 +239,8 @@ func IsRegression(from, to Stage) bool {
 	switch from {
 	case Fixing, ReturnedToContributor, AdoptedByHive:
 		return to != ReviewPending && to != Reviewed
+	case NeedsHuman:
+		return false
 	}
 	return true
 }

@@ -18,7 +18,10 @@
 //   - `stage/stalled` / `stage/regressed`: health markers. stalled means the
 //     item sat in its stage longer than the stage's expected dwell;
 //     regressed means the stage number went down (new head went red, PR
-//     closed unmerged). At most one per item; both clear automatically.
+//     closed unmerged) — except out of a repair stage into review of the
+//     new head, or out of 090-needs-human at all: 090 is a parking stage,
+//     so leaving it is the blocker clearing. At most one per item; both
+//     clear automatically.
 //
 // `hold`, `needs-human`, `needs-decision`, `needs-rebase`, `blocked` and
 // `author/*` are stage MODIFIERS, not stages: they stay whatever the stage

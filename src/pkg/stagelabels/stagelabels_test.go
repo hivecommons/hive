@@ -385,3 +385,36 @@ func TestStoreMarkNudged(t *testing.T) {
 		t.Fatalf("stage change dropped nudge memory: %+v", r)
 	}
 }
+
+// TestNeedsHumanIsNotAHighWaterMark: 090 is a parking stage, so leaving it
+// is never a regression, and a record that regressed "from 090" under the
+// old rule heals on its next observation (hivecommons/hive#12403).
+func TestNeedsHumanIsNotAHighWaterMark(t *testing.T) {
+	for _, to := range []Stage{ReviewPending, Reviewed, Fixing, ReturnedToContributor, AwaitingMergeAdmission} {
+		if IsRegression(NeedsHuman, to) {
+			t.Errorf("090 → %v flagged as regression", to)
+		}
+	}
+	if !IsRegression(MergeQueue, NeedsHuman) || !IsRegression(AwaitingMergeAdmission, ReviewPending) {
+		t.Fatal("ordinary falls must still be regressions")
+	}
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
+	key := Key("o/r", 12403)
+	st.Observe(key, NeedsHuman, "untrusted-author-role")
+	if tr := st.Observe(key, ReviewPending, "contributor-lane:no-verdict"); tr.Regressed {
+		t.Fatalf("090 → 050 regressed: %+v", tr)
+	}
+	if rec, _ := st.Get(key); rec.Regressed() {
+		t.Fatalf("record regressed: %+v", rec)
+	}
+	// A record persisted by the old rule.
+	st.items[key] = Record{Stage: ReviewPending, EnteredAt: now, RegressedFrom: NeedsHuman, RegressedAt: now, RegressionCommented: true}
+	tr := st.Observe(key, ReturnedToContributor, "reviewer-verdict:changes_requested")
+	if !tr.Recovered || tr.Regressed {
+		t.Fatalf("stale 090 mark did not heal: %+v", tr)
+	}
+	if rec, _ := st.Get(key); rec.Regressed() || rec.RegressionCommented {
+		t.Fatalf("record after heal: %+v", rec)
+	}
+}

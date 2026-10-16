@@ -235,14 +235,29 @@ func (c *Engine) noteStageAuthor(owner, repo string, number int, a stagelabels.A
 // stageVerdict is a lane's opinion about a PR's stage.
 type stageVerdict struct {
 	Stage stagelabels.Stage
-	// Rank orders competing opinions: 0 none (hand-off, transient error),
-	// 1 weak (the trusted-author lane's "not a trusted author", which the
-	// contributor lane refines), 2 owned.
+	// Rank orders competing opinions; see the stageRank* constants.
 	Rank int
 	// Terminal means the PR left the pipeline (merged/closed/gone): remove
 	// every hive-owned label and forget its timing.
 	Terminal bool
+	// Reason, when set, replaces the lane's skip reason as the explanation
+	// recorded with the stage (store, regression/stall comments, log): the
+	// lane's reason may be a CI state while the stage was really decided
+	// by the reviewer verdict.
+	Reason string
 }
+
+// Opinion ranks. A lane that cannot vouch for the author has only a weak
+// opinion ("needs a human, as far as this lane can tell"): another lane may
+// admit the same author, and its owned opinion wins. The contributor lane's
+// admission reasons name the registry/claim tier, so they outrank the
+// trusted-author lane's bare role check when both are weak.
+const (
+	stageRankNone      = 0
+	stageRankRole      = 1
+	stageRankAdmission = 2
+	stageRankOwned     = 3
+)
 
 // ciReasonKind classifies a commitGreenForPR reason.
 type ciReasonKind int
@@ -258,13 +273,31 @@ func classifyCIReason(reason string) ciReasonKind {
 	case reason == "":
 		return ciReasonNone
 	case hgithub.CommitCIReasonIsPending(reason), reason == "ci-unverified", reason == "check-pending",
-		strings.HasPrefix(reason, "required-check-pending:"):
+		strings.HasPrefix(reason, "required-check-pending:"), ciReasonInconclusive(reason):
 		return ciReasonPending
 	case strings.HasPrefix(reason, "required-check-failing:"), strings.HasPrefix(reason, "check-failing:"),
 		strings.HasPrefix(reason, "status-"), strings.HasPrefix(reason, "check-"), reason == "check-runs":
 		return ciReasonRed
 	}
 	return ciReasonNone
+}
+
+// ciReasonInconclusive matches a check that finished without a verdict
+// (neutral, skipped). commitGreenForPR never blocks on these, but should a
+// reason ever carry one it is "not red": the PR is waiting, not failing.
+func ciReasonInconclusive(reason string) bool {
+	for _, c := range []string{"neutral", "skipped"} {
+		if strings.HasSuffix(reason, "-"+c) {
+			return true
+		}
+	}
+	return false
+}
+
+// stageVerdictReason is the recorded reason when the reviewer verdict, not
+// the lane's skip reason, decided the stage.
+func stageVerdictReason(d stageDetail) string {
+	return "reviewer-verdict:" + strings.ToLower(strings.TrimSpace(d.Verdict.Verdict))
 }
 
 // verdictBlocks reports whether a known reviewer verdict asks for changes.
@@ -283,12 +316,26 @@ var stageHandoffReasons = map[string]bool{
 	"fetch-pr": true, "fetch-pr-recheck": true,
 }
 
+// stageAdmissionReasons are reasons that mean "this lane cannot vouch for
+// the author": the trusted-author lane's role check and the contributor
+// lane's registry/claim admission. They yield a WEAK needs-human opinion
+// (stageRankRole / stageRankAdmission): another lane that admits the author
+// owns the stage, and when the resolved tier is trusted the opinion is
+// dropped altogether (hivecommons/hive#12403 was flipped to 090 by the
+// trusted-author lane's role check whenever the contributor lane — which
+// admitted the author from the registry — had no classified opinion).
+var stageAdmissionReasons = map[string]int{
+	"untrusted-author-role":      stageRankRole,
+	contributorLaneReasonNoClaim: stageRankAdmission, contributorLaneReasonClaimAuthor: stageRankAdmission,
+	contributorLaneReasonClaimOtherHive: stageRankAdmission, contributorLaneReasonNoLinkedIssue: stageRankAdmission,
+	contributorLaneReasonClaimTier: stageRankAdmission, contributorLaneReasonClaimUnverified: stageRankAdmission,
+	contributorLaneReasonAuthorAssociation: stageRankAdmission,
+}
+
 // stageNeedsHumanReasons are reasons that mean the hive will not merge this
-// PR unattended and a person must act.
+// PR unattended and a person must act, whoever the author is.
 var stageNeedsHumanReasons = map[string]bool{
-	contributorLaneReasonNoClaim: true, contributorLaneReasonClaimAuthor: true, contributorLaneReasonClaimOtherHive: true,
-	contributorLaneReasonNoLinkedIssue: true, contributorLaneReasonClaimTier: true, contributorLaneReasonClaimUnverified: true,
-	contributorLaneReasonAuthorAssociation: true, contributorLaneReasonWorkflowPath: true, contributorLaneReasonTestsRemoved: true,
+	contributorLaneReasonWorkflowPath: true, contributorLaneReasonTestsRemoved: true,
 	contributorLaneReasonNoReviewer: true, contributorLaneReasonReporterTrustHold: true, contributorLaneReasonSentinelBlocked: true,
 	contributorLaneReasonNoAppBotLogin: true, contributorLaneReasonFilesEvidence: true,
 	autoMergeReasonHumanMergePath: true, autoMergeReasonHumanMergePathEvidence: true,
@@ -327,56 +374,65 @@ func classifyStage(o stageObservation) stageVerdict {
 	reason := o.Reason
 	fixing := fixingStage(o)
 	if o.Merged && reason == "" {
-		return stageVerdict{Terminal: true, Rank: 2}
+		return stageVerdict{Terminal: true, Rank: stageRankOwned}
 	}
 	if o.Err {
 		// The lane tripped before deciding. If every author-side gate is
 		// already satisfied the PR is waiting on the hive, not the author.
 		if authorSideDone(o) {
-			return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: 1}
+			return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}
 		}
 		return stageVerdict{}
 	}
 	switch reason {
 	case "closed", "gone", "label-removed":
-		return stageVerdict{Terminal: true, Rank: 2}
+		return stageVerdict{Terminal: true, Rank: stageRankOwned}
 	case "draft":
 		// Not in the pipeline yet: no stage, but clear a stale one.
-		return stageVerdict{Stage: stagelabels.None, Rank: 2}
-	case "untrusted-author-role":
-		return stageVerdict{Stage: stagelabels.NeedsHuman, Rank: 1}
+		return stageVerdict{Stage: stagelabels.None, Rank: stageRankOwned}
 	}
 	if stageHandoffReasons[reason] {
 		return stageVerdict{}
 	}
+	if rank := stageAdmissionReasons[reason]; rank != stageRankNone {
+		if hasLabelFold(o.Labels, "needs-rebase") {
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+		}
+		return stageVerdict{Stage: stagelabels.NeedsHuman, Rank: rank}
+	}
 	if strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {
 		if hasLabelFold(o.Labels, "needs-rebase") {
-			return stageVerdict{Stage: fixing, Rank: 2}
+			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
-		return stageVerdict{Stage: stagelabels.NeedsHuman, Rank: 2}
+		return stageVerdict{Stage: stagelabels.NeedsHuman, Rank: stageRankOwned}
 	}
-	if stageFixingReasons[reason] || strings.HasPrefix(reason, "label:") && strings.Contains(reason, "rebase") || verdictBlocks(o.Detail) {
-		return stageVerdict{Stage: fixing, Rank: 2}
+	if stageFixingReasons[reason] || strings.HasPrefix(reason, "label:") && strings.Contains(reason, "rebase") {
+		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
+	}
+	if verdictBlocks(o.Detail) {
+		// The swarm asked for changes at this head; the lane's own reason
+		// (CI pending, no-verdict, …) is not what the author has to act on.
+		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
 	}
 	if strings.HasPrefix(reason, contributorLaneReasonSoaking) || stageMergeQueueReasons[reason] || strings.HasPrefix(reason, "release-hold") {
-		return stageVerdict{Stage: stagelabels.MergeQueue, Rank: 2}
+		return stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}
 	}
 	if reason == contributorLaneReasonNoVerdict {
-		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: 2}
+		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 	}
 	switch classifyCIReason(reason) {
 	case ciReasonRed:
-		return stageVerdict{Stage: fixing, Rank: 2}
+		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 	case ciReasonPending:
 		if o.Detail.VerdictKnown && o.Detail.Verdict.Approved {
-			return stageVerdict{Stage: stagelabels.Reviewed, Rank: 2}
+			return stageVerdict{Stage: stagelabels.Reviewed, Rank: stageRankOwned}
 		}
-		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: 2}
+		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 	}
 	if authorSideDone(o) {
 		// Green CI and an approve verdict, yet the lane stopped for a reason
 		// no stage claims: admission is pending on the hive's side.
-		return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: 1}
+		return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: stageRankRole}
 	}
 	return stageVerdict{}
 }
@@ -413,10 +469,17 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Author, st
 		// trusted-author "trusted" is kept but its absence is refined.
 		author = author.Merge(o.Detail.Author)
 	}
-	if best.Rank == 1 && author == stagelabels.AuthorNone {
-		author = stagelabels.AuthorUntrusted
+	if best.Rank < stageRankOwned {
+		switch {
+		case author == stagelabels.AuthorNone:
+			author = stagelabels.AuthorUntrusted
+		case best.Stage == stagelabels.NeedsHuman && author == stagelabels.AuthorTrusted:
+			// Some lane admits this author; a lane that cannot vouch for
+			// them has nothing to say about the stage. Leave it as is.
+			best = stageVerdict{}
+		}
 	}
-	if best.Rank == 0 {
+	if best.Rank == stageRankNone {
 		bestObs = list[0]
 	}
 	return best, author, bestObs
@@ -455,9 +518,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		result.Items++
 		verdict, author, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
-		if verdict.Rank == 0 {
+		if verdict.Rank == stageRankNone {
 			result.Skipped++
 			continue
+		}
+		if verdict.Reason != "" {
+			obs.Reason = verdict.Reason
 		}
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
