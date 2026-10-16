@@ -38660,9 +38660,9 @@ function burnAreaChart() {
           <div class="mt-4">${securityPostureStripHtml()}</div>
         </div>
         <div class="config-field" style="margin-top:14px">
-          <label>Eval interval (seconds) ${yamlHint('governor.eval_interval_s')} ${settingHelpMark('settings', 'general', 'Eval interval (seconds)', `How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 60. Lower = more responsive, more API calls.`)}</label>
-          <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="60" data-change-action="gh70" style="width:140px">
-          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Changes take effect on next restart.</span>
+          <label>Eval interval (seconds) ${yamlHint('governor.eval_interval_s')} ${settingHelpMark('settings', 'general', 'Eval interval (seconds)', `How often the governor evaluates the hive (sensing, mode ladder, agent kicks). Default 300. Lower = more responsive, more API calls.`)}</label>
+          <input type="number" min="10" max="86400" value="${evalInterval || ''}" placeholder="300" data-change-action="gh70" style="width:140px">
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:var(--sp-2);display:block">Applies from the next eval cycle.</span>
         </div>
         <div class="config-field" style="margin-top:14px">
           <label>Default explain mode ${yamlHint('governor.explain_mode')} ${settingHelpMark('agent-configuration', 'fleet-wide-default', 'Default explain mode', `Hive-wide default for agents that leave their own Explain Mode unset. Asks agents to say WHY they made each tool call, on EXPLAIN: lines alongside the work &mdash; they still act, they do not narrate instead. Costs extra tokens on every kick, so leave it off unless you are debugging. An agent with its own explicit value, including &quot;off&quot;, keeps it. Takes precedence over the HIVE_EXPLAIN_MODE deployment environment variable.`)}</label>
