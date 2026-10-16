@@ -2481,6 +2481,17 @@ func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, descri
 // AddLabels adds labels to an issue or PR (no-op for an empty list), mirroring
 // forge.Forge.AddLabels for the same swap-in reason as CreateIssueComment.
 func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
+	return c.addLabelsObserved(ctx, repo, number, labels, "")
+}
+
+// addLabelsObserved is AddLabels keyed to the item state the caller just
+// read. The mutation journal treats an effect with the same inputs as
+// applied forever, which is right for a merge but not for a label another
+// writer can put back: a stage label removed once could never be removed
+// again (hivecommons/hive#12512). Carrying the observed updated_at in the
+// claim makes "remove X as of state T" a new effect each time the item
+// changed, while a crash-retry within the same state still dedupes.
+func (c *Client) addLabelsObserved(ctx context.Context, repo string, number int, labels []string, observed string) error {
 	if c == nil {
 		return ErrNoGitHubClient
 	}
@@ -2492,7 +2503,7 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,
 		Target: strconv.Itoa(number),
-		Inputs: map[string]string{"labels": strings.Join(labels, ",")},
+		Inputs: labelMutationInputs(map[string]string{"labels": strings.Join(labels, ",")}, observed),
 	}, func(ctx context.Context) (effects.Result, error) {
 		_, _, apiErr := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, labels)
 		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
@@ -2503,6 +2514,12 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 // RemoveLabel removes one label from an issue or PR. A label that is not
 // present (404) is not an error — the desired end state already holds.
 func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label string) error {
+	return c.removeLabelObserved(ctx, repo, number, label, "")
+}
+
+// removeLabelObserved is RemoveLabel keyed to observed item state; see
+// addLabelsObserved.
+func (c *Client) removeLabelObserved(ctx context.Context, repo string, number int, label string, observed string) error {
 	if c == nil {
 		return ErrNoGitHubClient
 	}
@@ -2514,7 +2531,7 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,
 		Target: strconv.Itoa(number),
-		Inputs: map[string]string{"remove_label": label},
+		Inputs: labelMutationInputs(map[string]string{"remove_label": label}, observed),
 	}, func(ctx context.Context) (effects.Result, error) {
 		_, apiErr := c.client.Issues.RemoveLabelForIssue(ctx, owner, repoName, number, url.PathEscape(label))
 		if githubStatusError(apiErr, http.StatusNotFound) {
@@ -2523,6 +2540,15 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label
 		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
 	})
 	return err
+}
+
+// labelMutationInputs adds the observed item state to a label mutation's
+// journal inputs when the caller has one.
+func labelMutationInputs(inputs map[string]string, observed string) map[string]string {
+	if observed != "" {
+		inputs["observed_at"] = observed
+	}
+	return inputs
 }
 
 func extractLabels(labels []*gh.Label) []string {

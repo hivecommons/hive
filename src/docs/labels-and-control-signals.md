@@ -130,6 +130,11 @@ fresh label set, so a stage another writer placed since the cycle's snapshot
 `stage/NNN-*` labels is healed on the spot (`healed` in the reconcile log
 lines). The claim hooks always re-read: they know the stage a claim implies
 but not what the lanes think of the author tier or health, which they keep.
+The hub's label writes are also journaled against the item's `updated_at`
+from that read: the mutation journal otherwise treats "remove `stage/020`
+from #N" as applied forever, so a label another writer put back could never
+come off again — the reconciler kept logging the remove while GitHub kept
+the label (hivecommons/hive#12443).
 
 ### Numbering rules
 

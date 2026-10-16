@@ -2,15 +2,25 @@ package github
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // stageLabeler adapts Client to stagelabels.Labeler so every stage write the
 // hub makes — reconciler or claim hook — goes through stagelabels.Enforce.
-type stageLabeler struct{ c *Client }
+// It remembers the updated_at of each item it read so the writes that
+// follow are journaled against that state (see addLabelsObserved): a stage
+// label another writer put back after the hub removed it once is removable
+// again, which the plain label mutation claim did not allow.
+type stageLabeler struct {
+	c        *Client
+	mu       sync.Mutex
+	observed map[int]string
+}
 
-func (s stageLabeler) Labels(ctx context.Context, owner, repo string, number int) ([]string, error) {
+func (s *stageLabeler) Labels(ctx context.Context, owner, repo string, number int) ([]string, error) {
 	if s.c == nil || s.c.client == nil {
 		return nil, ErrNoGitHubClient
 	}
@@ -18,19 +28,31 @@ func (s stageLabeler) Labels(ctx context.Context, owner, repo string, number int
 	if err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
+	s.observed[number] = issue.GetUpdatedAt().UTC().Format(time.RFC3339Nano)
+	s.mu.Unlock()
 	return extractLabels(issue.Labels), nil
 }
 
-func (s stageLabeler) AddLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
-	return s.c.AddLabels(ctx, owner+"/"+repo, number, labels)
+func (s *stageLabeler) observedAt(number int) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.observed[number]
 }
 
-func (s stageLabeler) RemoveLabel(ctx context.Context, owner, repo string, number int, label string) error {
-	return s.c.RemoveLabel(ctx, owner+"/"+repo, number, label)
+func (s *stageLabeler) AddLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
+	return s.c.addLabelsObserved(ctx, owner+"/"+repo, number, labels, s.observedAt(number))
 }
 
-// StageLabeler exposes the client as a stagelabels.Labeler.
-func (c *Client) StageLabeler() stagelabels.Labeler { return stageLabeler{c} }
+func (s *stageLabeler) RemoveLabel(ctx context.Context, owner, repo string, number int, label string) error {
+	return s.c.removeLabelObserved(ctx, owner+"/"+repo, number, label, s.observedAt(number))
+}
+
+// StageLabeler exposes the client as a stagelabels.Labeler. Each call returns
+// a fresh adapter; use one per Enforce so the read and its writes pair up.
+func (c *Client) StageLabeler() stagelabels.Labeler {
+	return &stageLabeler{c: c, observed: map[int]string{}}
+}
 
 // SetStageLabel puts exactly stage on an issue or PR, keeping whatever
 // author/health labels it carries (hivecommons/hive#12512). It is the entry
