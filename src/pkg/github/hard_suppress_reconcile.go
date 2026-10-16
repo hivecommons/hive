@@ -189,7 +189,7 @@ func (c *Client) prMergedSinceForIssue(ctx context.Context, owner, repo string, 
 		if resp == nil || resp.NextPage == 0 {
 			return "", nil
 		}
-		opts.ListOptions.Page = resp.NextPage
+		opts.Page = resp.NextPage
 	}
 }
 
