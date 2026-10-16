@@ -3792,7 +3792,7 @@
     .nous-new-exp .nous-lab-chips { margin-top: var(--sp-1); }
     .nous-new-exp-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; flex-wrap: wrap; }
     /* In-app scope-conflict warning: never window.alert/confirm. */
-    .nous-conflict-warn { background: rgba(210,153,34,0.12); border: 1px solid var(--yellow); border-radius: var(--r); padding: var(--sp-4); font-size: var(--fs-sm); display: grid; gap: var(--sp-2); }
+    .nous-conflict-warn { background: color-mix(in srgb, var(--yellow) 12%, transparent); border: 1px solid var(--yellow); border-radius: var(--r); padding: var(--sp-4); font-size: var(--fs-sm); display: grid; gap: var(--sp-2); }
     .nous-conflict-warn strong { color: var(--text); }
     .nous-conflict-warn .nous-new-exp-actions { justify-content: flex-start; }
 
@@ -6525,7 +6525,7 @@
 
         <details class="faq-q" id="faq-multiple-experiments">
           <summary>Can I run more than one experiment at once?</summary>
-          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, the same way the Inception section lists its campaigns. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/strategy-lab.md#running-several-experiments-at-once" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
+          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, the same way the Inception section lists its campaigns. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
           <p>Each card also says where it is: <em>collecting baseline</em>, <em>ready — generate proposals</em> (one button; the lab switches to Suggest for you), <em>proposals awaiting your review</em>, <em>running</em> or <em>concluded</em>. Entering a question is what creates the card — you never have to find a mode switch first.</p>
         </details>
         </section>
