@@ -23555,6 +23555,96 @@
         }
       }
     },
+    "/api/evidence/write-counters": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Durable attempted vs blocked agent write counters",
+        "description": "Owner or merger role. Serves the proxy's persisted agent write counters (/var/run/hive-metrics/write-counters.json, #12069): cumulative totals keyed by intent tier (ACMM mode) with blocked counts by refusal reason, plus a weekly series keyed by the UTC Monday of each ISO week. Observation only; nothing here gates a write or a merge. Returns empty totals and weeks when the file does not exist yet.",
+        "responses": {
+          "200": {
+            "description": "Durable write counters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "updated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "totals": {
+                      "type": "object",
+                      "description": "Intent tier (ACMM mode) -> cumulative counts.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "attempted": {
+                            "type": "integer"
+                          },
+                          "blocked": {
+                            "type": "integer"
+                          },
+                          "blocked_by_reason": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "integer"
+                            },
+                            "description": "Blocked count keyed by the machine-readable DenyReason* code."
+                          }
+                        }
+                      }
+                    },
+                    "weeks": {
+                      "type": "object",
+                      "description": "UTC Monday (YYYY-MM-DD) -> counts for that ISO week.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "attempted": {
+                            "type": "integer"
+                          },
+                          "blocked": {
+                            "type": "integer"
+                          },
+                          "tiers": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "object",
+                              "properties": {
+                                "attempted": {
+                                  "type": "integer"
+                                },
+                                "blocked": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          },
+                          "blocked_by_reason": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller lacks the owner or merger role"
+          },
+          "500": {
+            "description": "Counters file unreadable or corrupt"
+          }
+        }
+      }
+    },
     "/api/review/pipeline": {
       "get": {
         "tags": [
