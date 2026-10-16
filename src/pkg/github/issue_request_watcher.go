@@ -648,7 +648,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		slog.Int("number", resp.Number), slog.Bool("reused", resp.AlreadyExisted),
 		slog.Bool("consolidated", resp.Consolidated),
 		slog.String("start_signal", startSignal),
-		slog.Bool("deferral", kind == "comment" && commentIsDeferral(req.Body)),
+		slog.Bool("deferral", kind == "comment" && startSignal == ""),
 		slog.String("agent", req.Agent))
 }
 

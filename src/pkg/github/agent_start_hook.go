@@ -84,9 +84,10 @@ var commentDeferral = regexp.MustCompile(`(?i)(?:` + strings.Join([]string{
 // comment such as "Previously blocked by #N; that merged, starting now."
 // still records the claim that keeps a second agent off the issue (#10527).
 // The historical form stops at the same clause punctuation as
-// commentDeferral's opening forms (including ':' and ','), so a time word in
-// the reason of "Deferred this cycle: #N opened yesterday …" does not make
-// the deferral historical.
+// commentDeferral's opening forms plus ':' (which those forms deliberately
+// do not stop at, so "Status: still blocked by #N" stays a deferral), so a
+// time word in the reason of "Deferred this cycle: #N opened yesterday …"
+// does not make the deferral historical.
 // Occurrences that commentNonStart matches are removed before this runs, so
 // a start word inside the deferral clause does not override it. A past
 // "started" only overrides with an explicit "now", not a third-party start

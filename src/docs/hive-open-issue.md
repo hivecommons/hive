@@ -159,7 +159,8 @@ starting or resuming now ("that merged, starting now", "picking this up",
 "unblocked", "working on it now"); a third party's start ("#N is starting the same refactor",
 "scanner is picking this up in #N", "the scanner picked this up in #N") or a start conditional on the blocker
 ("will resume once it merges", "picking this up once #N merges") does not count as yours. The opening-clause
-forms stop at the first `,` `:` `.` `;` or newline, so a work comment with a
+forms stop at the first `,` `.` `;` `!` `?` or newline (a leading `Status:`
+or `Update:` label does not end them), so a work comment with a
 deferral aside ("Opened PR #N, waiting on #N CI.", "Implementing now.
 Deferring the rename until #N lands.") still records the claim
 ([#12387](https://github.com/hivecommons/hive/issues/12387)). To park an
