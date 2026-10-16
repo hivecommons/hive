@@ -376,6 +376,37 @@ func resetRequiredChecksForbiddenCacheForTest(now func() time.Time, ttl time.Dur
 	return func() { sharedRequiredChecksForbiddenCache = old }
 }
 
+// HeadCommitPushedAt is the CommitCIOptions.HeadPushedAt source for the
+// min_head_age gate (hivecommons/hive#12557): the committer date of the head
+// commit sha, never the PR's updated_at. updated_at bumps on every label,
+// comment and review — including the hive's own stage-regressed comments — so
+// measuring head age from it let the gate reset its own clock forever.
+//
+// A committer date can predate the push (an old branch opened as a PR), so
+// the result is clamped to no earlier than the PR's created_at. A lookup
+// failure or a commit without a committer date returns an error and the zero
+// time; callers choose their own fallback.
+func HeadCommitPushedAt(ctx context.Context, client *gh.Client, owner, repo, sha string, pr *gh.PullRequest) (time.Time, error) {
+	if client == nil {
+		return time.Time{}, ErrNoGitHubClient
+	}
+	if strings.TrimSpace(sha) == "" {
+		return time.Time{}, errors.New("head commit time: empty head SHA")
+	}
+	commit, _, err := client.Git.GetCommit(ctx, owner, repo, sha)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("head commit time for %s/%s@%s: %w", owner, repo, shortSHA(sha), err)
+	}
+	at := commit.GetCommitter().GetDate().Time
+	if at.IsZero() {
+		return time.Time{}, fmt.Errorf("head commit time for %s/%s@%s: commit has no committer date", owner, repo, shortSHA(sha))
+	}
+	if created := pr.GetCreatedAt().Time; at.Before(created) {
+		at = created
+	}
+	return at, nil
+}
+
 // EvaluateCommitCI walks every commit status and check run on sha and reports
 // the CommitCIState. required/requiredKnown come from
 // RequiredStatusCheckContexts. When requiredKnown is false and
