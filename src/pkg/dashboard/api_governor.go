@@ -153,6 +153,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// stageLabelsEnabled/Dwell are governor.labels.stage (#12429).
 		"stageLabelsEnabled": cfg.Governor.Labels.Stage.IsEnabled(),
 		"stageLabelsDwell":   formatStageDwell(cfg.Governor.Labels.Stage.Dwell),
+		// governor.labels.stage.contributor_nudge.* and presence_window
+		// (hivecommons/hive#12436): the stage-072 contributor nudge.
+		"stageNudgeEnabled":   cfg.Governor.Labels.Stage.ContributorNudge.IsEnabled(),
+		"stageNudgeRenudge":   cfg.Governor.Labels.Stage.ContributorNudge.RenudgeInterval,
+		"stagePresenceWindow": cfg.Governor.Labels.Stage.PresenceWindow,
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -284,15 +289,19 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// switch state; contribute_cooldown_hours is the EFFECTIVE period (the
 			// 168h default surfaces when unset) so the number input shows the value
 			// actually in force.
-			"contribute_cooldown_enabled":  cfg.Hub.IsContributeCooldownEnabled(),
-			"contribute_cooldown_hours":    cfg.Hub.ContributeCooldownHoursOrDefault(),
-			"contribute_delegatable_roles": normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
-			"contribute_announcement":      s.activeContributeAnnouncement(),
-			"contribute_help_links":        s.contributeHelpLinks(),
-			"disabled_repos":               s.normalizedHubDisabledRepos(),
-			"disabled_repos_raw":           cfg.Hub.DisabledRepos,
-			"disabled_tiers":               cfg.Hub.DisabledTiers,
-			"tier_limits":                  cfg.Hub.TierLimits,
+			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
+			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
+			// contribute.max_parallel_fixes / contribute.min_focus_window
+			// (hivecommons/hive#12436): the per-contributor red-PR fix budget.
+			"contribute_max_parallel_fixes": cfg.Contribute.EffectiveMaxParallelFixes(),
+			"contribute_min_focus_window":   cfg.Contribute.MinFocusWindow,
+			"contribute_delegatable_roles":  normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
+			"contribute_announcement":       s.activeContributeAnnouncement(),
+			"contribute_help_links":         s.contributeHelpLinks(),
+			"disabled_repos":                s.normalizedHubDisabledRepos(),
+			"disabled_repos_raw":            cfg.Hub.DisabledRepos,
+			"disabled_tiers":                cfg.Hub.DisabledTiers,
+			"tier_limits":                   cfg.Hub.TierLimits,
 			// available_repos is the READ-ONLY list of repo full-names the hive knows
 			// about (from the live status snapshot), so the Management tab can render
 			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
@@ -674,6 +683,13 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		// automerge sweep so no restart is needed.
 		StageEnabled *bool   `json:"stage_enabled"`
 		StageDwell   *string `json:"stage_dwell"`
+		// Stage-072 contributor nudge (hivecommons/hive#12436):
+		// governor.labels.stage.contributor_nudge.enabled / .renudge_interval
+		// and governor.labels.stage.presence_window (Go durations; empty
+		// restores the default).
+		StageNudgeEnabled   *bool   `json:"stage_nudge_enabled"`
+		StageNudgeRenudge   *string `json:"stage_nudge_renudge_interval"`
+		StagePresenceWindow *string `json:"stage_presence_window"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -769,6 +785,18 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	for name, v := range map[string]*string{
+		"stage_nudge_renudge_interval": body.StageNudgeRenudge,
+		"stage_presence_window":        body.StagePresenceWindow,
+	} {
+		if v == nil || strings.TrimSpace(*v) == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(strings.TrimSpace(*v)); err != nil || d <= 0 {
+			jsonError(w, name+" must be a positive Go duration such as 15m or 24h", http.StatusBadRequest)
+			return
+		}
+	}
 	if body.WritingGuide != nil {
 		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
@@ -846,6 +874,16 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.StageDwell != nil {
 		s.deps.Config.Governor.Labels.Stage.Dwell = stageDwell
+	}
+	if body.StageNudgeEnabled != nil {
+		v := *body.StageNudgeEnabled
+		s.deps.Config.Governor.Labels.Stage.ContributorNudge.Enabled = &v
+	}
+	if body.StageNudgeRenudge != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorNudge.RenudgeInterval = strings.TrimSpace(*body.StageNudgeRenudge)
+	}
+	if body.StagePresenceWindow != nil {
+		s.deps.Config.Governor.Labels.Stage.PresenceWindow = strings.TrimSpace(*body.StagePresenceWindow)
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)
@@ -1349,6 +1387,8 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeSkipAssignedToOthers *bool                                  `json:"contribute_skip_assigned_to_others"`
 		ContributeCooldownEnabled      *bool                                  `json:"contribute_cooldown_enabled"`
 		ContributeCooldownHours        *int                                   `json:"contribute_cooldown_hours"`
+		ContributeMaxParallelFixes     *int                                   `json:"contribute_max_parallel_fixes"`
+		ContributeMinFocusWindow       *string                                `json:"contribute_min_focus_window"`
 		ContributeDelegatableRoles     []string                               `json:"contribute_delegatable_roles"`
 		ContributeAnnouncement         *config.ContributeAnnouncement         `json:"contribute_announcement"`
 		ContributeHelpLinks            []config.ContributeHelpLink            `json:"contribute_help_links"`
@@ -1396,6 +1436,21 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.DashboardURL != "" && body.DashboardURL != cfg.Hub.DashboardURL && s.hubOwnsDashboardURL() {
 		jsonError(w, "hub.dashboard_url is owned by the hub on this spoke and is set from its heartbeat; to serve the dashboard from a different host set dashboard.public_url instead", http.StatusConflict)
 		return
+	}
+	// hivecommons/hive#12436: validate the fix-budget leaves before any field
+	// is applied (same refuse-whole-save rule as dashboard_url above).
+	if body.ContributeMaxParallelFixes != nil &&
+		(*body.ContributeMaxParallelFixes < 1 || *body.ContributeMaxParallelFixes > maxParallelFixesCeiling) {
+		jsonError(w, fmt.Sprintf("contribute_max_parallel_fixes must be between 1 and %d", maxParallelFixesCeiling), http.StatusBadRequest)
+		return
+	}
+	if body.ContributeMinFocusWindow != nil {
+		if v := strings.TrimSpace(*body.ContributeMinFocusWindow); v != "" {
+			if d, err := time.ParseDuration(v); err != nil || d <= 0 {
+				jsonError(w, "contribute_min_focus_window must be a positive Go duration such as 30m", http.StatusBadRequest)
+				return
+			}
+		}
 	}
 	if body.Enabled != nil {
 		cfg.Hub.Enabled = *body.Enabled
@@ -1500,6 +1555,12 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	// issue forever. A client sending 0 means "use the default".
 	if body.ContributeCooldownHours != nil {
 		cfg.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
+	}
+	if body.ContributeMaxParallelFixes != nil {
+		cfg.Contribute.MaxParallelFixes = *body.ContributeMaxParallelFixes
+	}
+	if body.ContributeMinFocusWindow != nil {
+		cfg.Contribute.MinFocusWindow = strings.TrimSpace(*body.ContributeMinFocusWindow)
 	}
 	if body.ContributeDelegatableRoles != nil {
 		cfg.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)

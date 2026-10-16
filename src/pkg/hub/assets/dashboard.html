@@ -383,6 +383,35 @@
       font-size: 0.72rem; line-height: 1.4; color: var(--text);
     }
     .quadrant-cell:hover .quadrant-hover, .quadrant-cell:focus-within .quadrant-hover { display: block; }
+    /* Per-axis explainers: the ⓘ beside each axis label opens one popover
+       (fleet card and per-hive hover share the renderer). Classes + tokens
+       only — the style ratchet forbids new inline sizing here. */
+    .quadrant-axes { display: flex; gap: var(--sp-4); }
+    .quadrant-axis { display: flex; flex-direction: column; align-items: center; gap: var(--sp-0); min-width: 3.5em; position: relative; }
+    .quadrant-axis-label { display: inline-flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+    .quadrant-axis-score { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+    .quadrant-axis-score.is-unscored { color: var(--muted); }
+    .quadrant-info { background: none; border: 1px solid var(--border); border-radius: var(--r-pill); color: var(--muted); width: 1.4em; height: 1.4em; padding: var(--sp-0); font: inherit; font-size: var(--fs-2xs); line-height: 1; cursor: pointer; flex-shrink: 0; text-transform: none; letter-spacing: 0; }
+    .quadrant-info:hover, .quadrant-info:focus-visible, .quadrant-info[aria-expanded="true"] { color: var(--hub-dashboard-accent); border-color: var(--hub-dashboard-accent); outline: none; }
+    .quadrant-explainer { position: absolute; left: 0; top: 100%; z-index: 70; width: max-content; max-width: 26rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-4) var(--sp-5); font-size: var(--fs-xs); color: var(--text); line-height: 1.45; box-shadow: var(--shadow-lg, 0 8px 24px var(--overlay-scrim)); text-align: left; text-transform: none; letter-spacing: 0; font-weight: 400; cursor: default; }
+    .quadrant-explainer[hidden] { display: none; }
+    .quadrant-explainer h4 { margin: var(--sp-3) 0 var(--sp-1); font-size: var(--fs-2xs); color: var(--hub-dashboard-accent); text-transform: uppercase; letter-spacing: 0.5px; }
+    .quadrant-explainer h4:first-child { margin-top: 0; }
+    .quadrant-explainer p { margin: 0; }
+    .quadrant-explainer-close { float: right; background: none; border: 0; color: var(--muted); font: inherit; cursor: pointer; padding: var(--sp-0) var(--sp-2); }
+    .quadrant-criteria { list-style: none; margin: 0; padding: 0; }
+    .quadrant-criteria li { display: flex; gap: var(--sp-2); align-items: baseline; padding: var(--sp-0) 0; }
+    .quadrant-criteria .quadrant-criterion-label { flex: 1 1 auto; }
+    .quadrant-criteria .quadrant-criterion-value { color: var(--muted); white-space: nowrap; }
+    .quadrant-criteria .quadrant-criterion-score { font-weight: 600; min-width: 2.5em; text-align: right; }
+    .quadrant-criteria .quadrant-criterion-weight { color: var(--muted); font-size: var(--fs-2xs); }
+    .quadrant-criteria li.is-unmeasured { color: var(--muted); }
+    .quadrant-criteria li.is-unmeasured .quadrant-criterion-reason { font-style: italic; }
+    .quadrant-summary { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-1); max-width: 28rem; }
+    .quadrant-summary strong { color: var(--text); font-weight: 600; }
+    .quadrant-hover .quadrant-axes { justify-content: center; flex-wrap: wrap; margin-top: var(--sp-2); }
+    .quadrant-hover .quadrant-explainer { left: auto; right: 0; }
+    .fleet-quadrant-n { color: var(--muted); }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: var(--fs-sm); color: var(--muted); }
 
@@ -442,6 +471,28 @@
     .evidence-note { font-size: var(--fs-sm); color: var(--muted); margin: 0 0 var(--sp-3); }
     .evidence-table td, .evidence-table th { padding: var(--sp-3) var(--sp-4); }
     .evidence-ci { color: var(--muted); white-space: nowrap; }
+    /* A rate cell folds its n and margin in: "10.0% of 40" over a muted
+       "margin 4.0% – 23.0%" line, so a table is one column per rate. */
+    .evidence-rate { white-space: nowrap; }
+    .evidence-rate-main { display: block; }
+    .evidence-rate-margin { display: block; color: var(--muted); font-size: var(--fs-2xs); }
+    /* Findings-first (#12456): the plain-language block above every table
+       and the one-line finding under each section title. */
+    .evidence-findings { border: 1px solid var(--border); border-left: 4px solid var(--hub-dashboard-accent); border-radius: var(--r-lg); padding: var(--sp-4) var(--sp-6); margin: 0 0 var(--sp-6); }
+    .evidence-findings h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-base); color: var(--hub-dashboard-accent); }
+    .evidence-findings ul { margin: 0; padding-left: var(--sp-6); }
+    .evidence-findings li { margin: 0 0 var(--sp-1); line-height: 1.45; }
+    .evidence-finding { font-size: var(--fs-sm); color: var(--text); margin: 0 0 var(--sp-3); line-height: 1.45; }
+    .evidence-waiting { margin: 0 0 var(--sp-4); padding-left: var(--sp-6); font-size: var(--fs-sm); color: var(--muted); }
+    .evidence-waiting li { margin: 0 0 var(--sp-1); }
+    .evidence-same-hive { color: var(--muted); font-style: italic; }
+    .evidence-report-link { border: 1px solid var(--border); color: var(--hub-dashboard-accent); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-sm); text-decoration: none; white-space: nowrap; }
+    .evidence-report-link:hover, .evidence-report-link:focus-visible { border-color: var(--hub-dashboard-accent); outline: none; }
+    .evidence-report-sep { flex: 1; }
+    /* Wide tables scroll inside the section; the hive column stays put. */
+    .evidence-table-scroll { overflow-x: auto; }
+    .evidence-table-scroll th.evidence-sticky-col, .evidence-table-scroll td.evidence-sticky-col { position: sticky; left: 0; z-index: 1; background: var(--surface); }
+    .evidence-table-scroll thead th.evidence-sticky-col { z-index: 3; }
     .evidence-empty { color: var(--muted); text-align: center; }
     .evidence-msg { font-size: var(--fs-base); color: var(--muted); }
     .evidence-error { color: var(--red); }
@@ -452,7 +503,7 @@
     /* The evidence modal shares the layout of the other hub overlays but is
        class-driven so the inline-style ratchet stays at baseline. */
     .evidence-modal { display: none; position: fixed; inset: 0; background: var(--overlay-scrim); z-index: 100; align-items: center; justify-content: center; }
-    .evidence-modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); max-width: 1100px; width: 95%; max-height: 86vh; display: flex; flex-direction: column; }
+    .evidence-modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); max-width: min(96vw, 1600px); width: 96vw; max-height: 86vh; display: flex; flex-direction: column; }
     .evidence-modal-title { font-size: var(--fs-xl); padding: var(--sp-9) var(--sp-9) var(--sp-4); margin: var(--sp-0); color: var(--hub-dashboard-accent); flex-shrink: 0; }
     .evidence-modal-scroll { flex: 1; overflow: auto; padding: var(--sp-0) var(--sp-9) var(--sp-8); }
     .evidence-modal-foot { display: flex; justify-content: flex-end; padding: var(--sp-6) var(--sp-9); border-top: 1px solid var(--border); flex-shrink: 0; }
@@ -471,6 +522,7 @@
        one-line note is ellipsised and repeated in full inside the explainer. */
     .evidence-section { --evidence-head-h: 2.9rem; position: relative; }
     .evidence-section .table-wrap { overflow: visible; }
+    .evidence-section .table-wrap.evidence-table-scroll { overflow-x: auto; overflow-y: visible; }
     .evidence-head { position: sticky; top: 0; z-index: 3; background: var(--surface); height: var(--evidence-head-h); box-sizing: border-box; padding-top: var(--sp-2); }
     .evidence-head .evidence-title { display: flex; align-items: center; gap: var(--sp-2); }
     .evidence-head .evidence-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -962,6 +1014,7 @@
        QuadrantAxisOrder and the two must not drift. */
     var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];
     var QUADRANT_AXIS_LABELS = { trust: 'Trust', productivity: 'Prod', satisfaction: 'Satis', efficiency: 'Effic' };
+    var QUADRANT_AXIS_FULL = { trust: 'Trust', productivity: 'Productivity', satisfaction: 'Satisfaction', efficiency: 'Efficiency' };
     /* Angles clockwise from north, index-aligned with QUADRANT_AXES. */
     var QUADRANT_ANGLES = [0, 90, 180, 270];
 
@@ -1092,6 +1145,102 @@
       return pill + fw;
     }
 
+    /* ---- Per-axis explainers ---------------------------------------------
+       Every axis carries its criteria from the server (quadrant.go
+       CriterionScore): label, current value, sub-score, weight, and for an
+       unmeasured criterion the reason it is excluded from the axis average.
+       The popover has four sections — what this covers, how it is scored,
+       what good looks like, what ours shows — mirroring the evidence
+       explainers so one learned pattern serves both surfaces. Rendered
+       hidden alongside the ⓘ; quadrantToggleExplainer shows one at a time. */
+    var _quadrantExplainerSeq = 0;
+    function quadrantExplainerId(prefix, axis) {
+      _quadrantExplainerSeq++;
+      return 'quadrant-explainer-' + prefix + '-' + axis + '-' + _quadrantExplainerSeq;
+    }
+
+    function quadrantCriteriaListHTML(crits) {
+      if (!crits || !crits.length) return '<p class="text-muted">No criteria reported for this axis yet.</p>';
+      return '<ul class="quadrant-criteria">' + crits.map(function(c) {
+        var w = c.weight ? '<span class="quadrant-criterion-weight">×' + esc(String(c.weight)) + '</span>' : '';
+        if (c.measured) {
+          return '<li class="is-measured"><span class="quadrant-criterion-label">' + esc(c.label || c.name) + '</span>' +
+            '<span class="quadrant-criterion-value">' + esc(c.display || String(c.value)) + '</span>' +
+            '<span class="quadrant-criterion-score">' + esc(String(c.score)) + '</span>' + w + '</li>';
+        }
+        return '<li class="is-unmeasured"><span class="quadrant-criterion-label">' + esc(c.label || c.name) + '</span>' +
+          '<span class="quadrant-criterion-reason">' + esc(c.reason || 'Not measured yet') + '</span>' + w + '</li>';
+      }).join('') + '</ul>';
+    }
+
+    function quadrantExplainerHTML(a, id) {
+      if (!a) return '';
+      var label = QUADRANT_AXIS_FULL[a.axis] || a.axis;
+      var crits = a.criteria || [];
+      var measured = crits.filter(function(c) { return c.measured; });
+      var how = measured.length ? measured.map(function(c) { return c.how; }).filter(Boolean) : crits.map(function(c) { return c.how; }).filter(Boolean);
+      var good = measured.length ? measured.map(function(c) { return c.good; }).filter(Boolean) : crits.map(function(c) { return c.good; }).filter(Boolean);
+      var ours = a.scored ? (a.summary || (label + ' ' + a.score)) : (a.reason || 'Not measured yet');
+      var scaleNote = 'Each criterion maps to 0–100 on a fixed, documented curve; the axis is the weighted mean of the measured criteria only. ' +
+        'Criteria marked "not measured yet" are left out of the average rather than counted as zero.';
+      return '<div id="' + escAttr(id) + '" class="quadrant-explainer" role="region" aria-label="' + escAttr('About the ' + label + ' axis') + '" hidden onclick="event.stopPropagation()">' +
+        '<button type="button" class="quadrant-explainer-close" aria-label="Close explanation" onclick="event.stopPropagation();quadrantCloseExplainers()">\u00D7</button>' +
+        '<h4>What this covers</h4>' + quadrantCriteriaListHTML(crits) +
+        '<h4>How it\'s scored</h4><p>' + esc(scaleNote) + (how.length ? ' ' + esc(how.join(' ')) : '') + '</p>' +
+        '<h4>What good looks like</h4><p>' + (good.length ? esc(good.join(' ')) : esc('No measured criteria yet, so there is nothing to compare against.')) + '</p>' +
+        '<h4>What ours shows</h4><p>' + esc(ours) + '</p></div>';
+    }
+
+    function quadrantInfoButtonHTML(a, id) {
+      var label = QUADRANT_AXIS_FULL[a.axis] || a.axis;
+      return '<button type="button" class="quadrant-info" aria-expanded="false" aria-controls="' + escAttr(id) + '"' +
+        ' aria-label="' + escAttr('What the ' + label + ' axis covers') + '" title="' + escAttr('What the ' + label + ' axis covers') + '"' +
+        ' onclick="event.stopPropagation();quadrantToggleExplainer(this, \'' + escAttr(id) + '\')">i</button>';
+    }
+
+    /* quadrantAxisTileHTML is one labelled axis (label + ⓘ + score) with its
+       hidden explainer; shared by the fleet card and the per-hive hover. */
+    function quadrantAxisTileHTML(a, prefix) {
+      var id = quadrantExplainerId(prefix, a.axis);
+      var val = a.scored ? String(a.score) : '—';
+      return '<div class="quadrant-axis">' +
+        '<span class="quadrant-axis-label">' + esc(QUADRANT_AXIS_LABELS[a.axis] || a.axis) + quadrantInfoButtonHTML(a, id) + '</span>' +
+        '<span class="quadrant-axis-score' + (a.scored ? '' : ' is-unscored') + '">' + esc(val) + '</span>' +
+        quadrantExplainerHTML(a, id) +
+        '</div>';
+    }
+
+    /* quadrantSummaryHTML is the one-line plain reading under the glyph:
+       the strongest and weakest measured criteria of the weakest scored axis,
+       or the first axis summary the server sent. */
+    function quadrantSummaryHTML(q) {
+      if (!q) return '';
+      var scored = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
+        .filter(function(a) { return a.scored && a.summary; });
+      if (!scored.length) return '';
+      scored.sort(function(x, y) { return x.score - y.score; });
+      return '<div class="quadrant-summary">' + esc(scored[0].summary) + '</div>';
+    }
+
+    function quadrantCloseExplainers() {
+      if (!document.querySelectorAll) return false;
+      var any = false;
+      document.querySelectorAll('.quadrant-explainer:not([hidden])').forEach(function(el) { el.hidden = true; any = true; });
+      document.querySelectorAll('.quadrant-info[aria-expanded="true"]').forEach(function(b) { b.setAttribute('aria-expanded', 'false'); });
+      return any;
+    }
+
+    function quadrantToggleExplainer(btn, id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var open = !el.hidden;
+      quadrantCloseExplainers();
+      if (!open) {
+        el.hidden = false;
+        if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', 'true');
+      }
+    }
+
     /* quadrantCell is the table column: the small kite plus its own hover
        panel, so a lopsided shape can be diagnosed without leaving the row.
        Renders nothing at all for a hive with no quadrant — the server omits it
@@ -1125,10 +1274,13 @@
           return '<div class="text-muted mt-1">' +
             esc(QUADRANT_AXIS_LABELS[a.axis]) + ': ' + esc(a.reason) + '</div>';
         }).join('');
+      var tiles = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'hive'); }).join('');
       return '<div style="display:flex;flex-direction:column;align-items:center;gap:var(--sp-3)">' +
           quadrantSVG(q, _fleetQuadrant, 170, true) +
           '<div style="font-size:0.7rem;color:var(--muted)">Composite <span style="color:var(--text);font-weight:600">' +
             (q.scored_axes ? q.composite : '—') + '</span> · ' + (q.scored_axes || 0) + ' of 4 axes scored</div>' +
+          '<div class="quadrant-axes">' + tiles + '</div>' +
+          quadrantSummaryHTML(q) +
         '</div>' +
         (nudges ? '<div style="font-size:0.7rem;margin-top:var(--sp-3);border-top:1px solid var(--line);padding-top:var(--sp-3)">' + nudges + '</div>' : '') +
         (reasons ? '<div style="font-size:0.65rem;margin-top:var(--sp-2)">' + reasons + '</div>' : '');
@@ -1155,15 +1307,10 @@
     function fleetQuadrantHeaderHTML() {
       var q = _fleetQuadrant;
       if (!q || !q.scored_axes) return '';
-      var axes = QUADRANT_AXES.map(function(name) {
-        var a = quadrantAxis(q, name);
-        var val = a.scored ? String(a.score) : '—';
-        return '<div style="display:flex;flex-direction:column;align-items:center;gap:1px;min-width:52px">' +
-          '<span style="font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">' +
-            esc(QUADRANT_AXIS_LABELS[name]) + '</span>' +
-          '<span style="font-size:0.95rem;font-weight:600;color:' + (a.scored ? 'var(--text)' : 'var(--muted)') + '">' +
-            esc(val) + '</span></div>';
-      }).join('');
+      var axes = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet'); }).join('');
+      /* n is the number of hives the median was taken over; it can be smaller
+         than the rows in view because unscored hives do not enter the median. */
+      var agg = (q.aggregate || 'median') + (q.n ? ' of ' + q.n : '');
       /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
          against itself would render two identical overlaid polygons. */
       return '<div' + fleetQuadrantDrillAttrs() + ' style="display:flex;align-items:center;gap:var(--sp-6);margin:0 auto 12px;padding:10px 14px;' +
@@ -1171,8 +1318,9 @@
           quadrantSVG(q, null, 78, false) +
           '<div>' +
             '<div class="fleet-quadrant-head" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-2)">' +
-              '<span>Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view</span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
-            '<div style="display:flex;gap:14px">' + axes + '</div>' +
+              '<span>Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view <span class="fleet-quadrant-n">· ' + esc(agg) + '</span></span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
+            '<div class="quadrant-axes">' + axes + '</div>' +
+            quadrantSummaryHTML(q) +
             fleetQuadrantHintHTML() +
           '</div>' +
         '</div>';
@@ -1244,24 +1392,40 @@
       return (v === null || v === undefined) ? EVIDENCE_NULL : esc(String(v));
     }
 
-    /* Three cells per rate: n, the rate, and its 95% Wilson interval. */
+    /* One cell per rate: "10.0% of 40" with the margin (95%) as a muted
+       second line, so a table is one column per rate instead of three. */
+    var EVIDENCE_MARGIN_TIP = 'Margin (95%): the true value is very likely inside this range. Fewer cases, wider range.';
     function evidenceRateCells(r) {
       r = r || {};
-      return '<td>' + evidenceCount(r.n) + '</td><td>' + evidencePct(r.rate) + '</td><td class="evidence-ci">' + evidenceInterval(r) + '</td>';
+      var main = typeof r.rate === 'number' ? evidencePct(r.rate) + ' of ' + evidenceCount(r.n) :
+        EVIDENCE_NULL + ' (' + evidenceCount(r.n) + ', below the minimum of ' + EVIDENCE_MIN_N + ')';
+      var margin = evidenceInterval(r);
+      return '<td class="evidence-rate"><span class="evidence-rate-main">' + main + '</span>' +
+        (margin !== EVIDENCE_NULL ? '<span class="evidence-rate-margin" title="' + escAttr(EVIDENCE_MARGIN_TIP) + '">margin ' + margin + '</span>' : '') + '</td>';
     }
 
-    function evidenceRateHeads(label) {
-      return '<th>' + esc(label) + ' n</th><th>' + esc(label) + '</th><th>95% CI</th>';
+    /* `gloss` is the plain first-use meaning shown as the header tooltip. */
+    function evidenceRateHeads(label, gloss) {
+      return '<th title="' + escAttr((gloss ? gloss + ' ' : '') + 'Shown as rate of cases; the muted line under it is the margin (95%).') + '">' + esc(label) + '</th>';
     }
+    var EVIDENCE_GLOSS_FALSE_APPROVE = 'False approve: the reviewer approved, but the PR was never merged or was reverted.';
+    var EVIDENCE_GLOSS_FALSE_BLOCK = 'False block: the reviewer blocked, but the PR merged anyway after a human override.';
 
     /* evidenceTable renders one section. `key` names its plain-language
        explainer (evidenceExplainer); `view` is the pooled view the live
        "How to read our numbers" paragraph is computed from. */
-    function evidenceTable(title, head, rows, note, key, view) {
+    function evidenceTable(title, head, rows, note, key, view, scroll) {
       return '<section class="evidence-section">' + evidenceSectionHead(key, title, note, view) +
-        '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr>' + head + '</tr></thead><tbody>' +
+        '<div class="table-wrap' + (scroll ? ' evidence-table-scroll' : '') + '"><table class="hive-table evidence-table"><thead><tr>' + head + '</tr></thead><tbody>' +
         (rows || '<tr><td colspan="99" class="evidence-empty">No data reported yet.</td></tr>') +
         '</tbody></table></div></section>';
+    }
+
+    /* evidenceFindingLine is the one-line plain finding under a section
+       title (#12456), from the same generator as the "What this says" block. */
+    function evidenceFindingLine(key, view) {
+      var f = evidenceFindingsByKey(view || {})[key];
+      return f ? '<p class="evidence-finding">' + esc(f) + '</p>' : '';
     }
 
     /* evidenceSectionHead is the sticky title block: title, info button, the
@@ -1274,10 +1438,10 @@
         ' onclick="evidenceToggleExplainer(this, \'' + escAttr(id) + '\')">\u24D8</button>' : '';
       return '<div class="evidence-head"><h3 class="evidence-title"><span>' + esc(title) + '</span>' + info + '</h3>' +
         (note ? '<p class="evidence-note" title="' + escAttr(note) + '">' + esc(note) + '</p>' : '') +
-        (key ? evidenceExplainerHTML(key, id, title, note, view) : '') + '</div>';
+        (key ? evidenceExplainerHTML(key, id, title, note, view) : '') + '</div>' + evidenceFindingLine(key, view);
     }
 
-    /* ---- Plain-language explainers (RFC #12062) ---------------------------
+    /* ---- Plain-language explainers (RFC #12062, #12456) -------------------
        Every section gets the same four headings. The last one is computed
        from the data on screen, never typed in, and carries a grade whose
        thresholds are the named constants below (documented in
@@ -1295,7 +1459,13 @@
     var EVIDENCE_DATA_SINCE = '2026-10-08';
     var EVIDENCE_REVERTS_SINCE = '2026-10-15';
     var EVIDENCE_GRADE_LABELS = { strong: 'Strong', fair: 'Fair', weak: 'Weak', na: 'Not enough data', none: 'Not graded' };
-    var EVIDENCE_CI_NOTE = 'The range after each % is a 95% confidence interval (CI): with this many cases, the true rate is very likely inside that band — fewer cases, wider band. Below the minimum sample (' + EVIDENCE_MIN_N + ') we print "' + EVIDENCE_NULL + '" instead of a rate, because a percentage from so few cases is mostly luck.';
+    var EVIDENCE_CI_NOTE = 'The muted range under each % is its margin (95%): with this many cases, the true value is very likely inside that range — fewer cases, wider range. Below the minimum sample (' + EVIDENCE_MIN_N + ') we print "' + EVIDENCE_NULL + '" instead of a rate, because a percentage from so few cases is mostly luck.';
+    var EVIDENCE_UPGRADE_BUILD = 'Oct 16 build';
+    var EVIDENCE_UPGRADE_NOTE = 'Not reported yet — hives report this once upgraded to the ' + EVIDENCE_UPGRADE_BUILD + ' or later.';
+    /* Spoke heartbeats carry six integer confidence buckets of width 1/6;
+       the view regroups them into the spoke card's four ranges (same table
+       as evidenceConfidenceRanges in pkg/hub/evidence_findings.go). */
+    var EVIDENCE_CONFIDENCE_RANGES = [{ name: 'Not confident', range: '0.0\u20130.5', from: 0, to: 2 }, { name: 'Somewhat confident', range: '0.5\u20130.67', from: 3, to: 3 }, { name: 'Confident', range: '0.67\u20130.83', from: 4, to: 4 }, { name: 'Very confident', range: '0.83\u20131.0', from: 5, to: 5 }];
 
     function evidenceGradeHTML(level) {
       var label = EVIDENCE_GRADE_LABELS[level] || EVIDENCE_GRADE_LABELS.na;
@@ -1317,7 +1487,7 @@
     function evidenceRateText(r) {
       r = r || {};
       if (typeof r.rate !== 'number') return EVIDENCE_NULL + ' (' + evidenceCount(r.n) + ' cases, below the minimum sample of ' + EVIDENCE_MIN_N + ')';
-      return evidencePct(r.rate) + ' of ' + evidenceCount(r.n) + ' (95% CI ' + evidenceInterval(r) + ')';
+      return evidencePct(r.rate) + ' of ' + evidenceCount(r.n) + ' (margin ' + evidenceInterval(r) + ')';
     }
 
     function evidenceWinShort(view) {
@@ -1343,37 +1513,37 @@
           if (view.window && view.window.coverage_available === false) {
             ours = 'Record coverage is only computed for the 90-day window, because the denominator (GitHub\u2019s merged PR count) is a 90-day figure. Switch the window to 90d to see it.';
           } else {
-            ours = 'Fleet: ' + evidenceRateText(cov) + ' merged PRs (90d) have an evidence record. ' + reporting + ' of ' + spokes + ' hives report today. Expected to climb toward 100% as spokes upgrade; records only exist since ' + EVIDENCE_DATA_SINCE + '.';
+            ours = 'All selected hives: ' + evidenceRateText(cov) + ' merged PRs (90d) have an evidence record. ' + reporting + ' of ' + spokes + ' hives report today. Expected to climb toward 100% as hives upgrade; records only exist since ' + EVIDENCE_DATA_SINCE + '.';
             grade = evidenceGradeHigh(cov, EVIDENCE_COVERAGE_STRONG, EVIDENCE_COVERAGE_FAIR);
           }
           return {
             measured: 'Of all pull requests GitHub says were merged in the last 90 days, how many have an evidence record \u2014 a saved file of the AI reviews, their verdicts and what happened to the PR afterwards.',
             why: 'Every other number in this view only counts PRs that have a record. Low coverage means the rest of the view describes a small slice of the fleet, not the fleet.',
-            how: 'Each spoke counts the evidence records it still holds for merged PRs; the hub divides that by GitHub\u2019s merged-PR count for the same 90 days. ' + EVIDENCE_CI_NOTE + ' Good looks like: close to 100% with a narrow band.',
+            how: 'Each hive counts the evidence records it still holds for merged PRs; the hub divides that by GitHub\u2019s merged-PR count for the same 90 days. ' + EVIDENCE_CI_NOTE + ' Good looks like: close to 100% with a narrow band.',
             ours: ours, grade: grade
           };
         }
         case 'calibration': {
-          var cal = Array.isArray(view.calibration) ? view.calibration : [];
+          var cal = evidenceConfidenceRows(view.calibration);
           var top = null, low = null;
           cal.forEach(function(b) { if (b && Number(b.n) >= EVIDENCE_MIN_N) { if (!low) low = b; top = b; } });
           if (top) {
-            ours = 'In the most-confident bucket we can measure (bucket ' + evidenceCount(top.bucket) + '), ' + evidenceRateText(top) + ' verdicts went badly';
-            if (low && low !== top) ours += '; in the least-confident one (bucket ' + evidenceCount(low.bucket) + ') it was ' + evidenceRateText(low);
-            ours += '. A well-calibrated reviewer is near 0% in the top bucket and clearly higher in the low ones.';
+            ours = 'In the most-confident range we can measure (' + evidenceConfidenceLabel(top) + '), ' + evidenceRateText(top) + ' verdicts went wrong';
+            if (low && low !== top) ours += '; in the least-confident one (' + evidenceConfidenceLabel(low) + ') it was ' + evidenceRateText(low);
+            ours += '. A well-calibrated reviewer is near 0% when very confident and clearly higher when not.';
             if (low === top) {
-              ours += ' Only one bucket has enough verdicts, so there is nothing to compare it against yet.';
+              ours += ' Only one range has enough verdicts, so there is nothing to compare it against yet.';
             } else {
               grade = evidenceGradeLow(top, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR);
             }
             ours += limits;
           } else {
-            ours = 'No confidence bucket has reached the minimum sample of ' + EVIDENCE_MIN_N + ' verdicts in ' + winText + ', so calibration cannot be judged yet.' + limits;
+            ours = 'No confidence range has reached the minimum sample of ' + EVIDENCE_MIN_N + ' verdicts in ' + winText + ', so calibration cannot be judged yet.' + limits;
           }
           return {
-            measured: '\u201CCalibration\u201D means: when a reviewer says it is 90% sure, is it right about 90% of the time? Each verdict is filed into a \u201Cconfidence bucket\u201D (0 = least sure \u2026 5 = most sure) and we count how often that bucket\u2019s calls went badly.',
-            why: 'If confidence means something you can trust the high-confidence approvals and double-check the low ones. If every bucket goes wrong equally often, the confidence number is decoration.',
-            how: 'A \u201Cbad outcome\u201D is a false approve (the reviewer approved, the PR merged and was reverted) or a false block (the reviewer blocked, the PR merged anyway). Rate = bad outcomes \u00F7 verdicts in the bucket, pooled across the selected hives; the overlay columns show each hive alone. ' + EVIDENCE_CI_NOTE + ' Good looks like: the bad-outcome rate falls as the bucket number rises.',
+            measured: 'When the AI reviewer says it is very sure, is it right more often than when it is unsure? Each verdict is filed under a reviewer-confidence range (not confident 0.0\u20130.5, somewhat 0.5\u20130.67, confident 0.67\u20130.83, very confident 0.83\u20131.0) and we count how often that range\u2019s calls went wrong.',
+            why: 'If confidence means something you can trust the high-confidence approvals and double-check the low ones. If every range goes wrong equally often, the confidence number is decoration.',
+            how: 'A \u201Cwrong call\u201D is a false approve (the reviewer approved, but the PR was never merged or was reverted) or a false block (the reviewer blocked, but the PR merged anyway after a human override). Rate = wrong calls \u00F7 verdicts in the range, pooled across the selected hives; the extra columns show each hive alone. Technically: hives report six confidence buckets of width 1/6 in their heartbeat and the hub regroups them into these four ranges, so the upper three boundaries sit at 0.67 and 0.83 rather than the spoke card\u2019s 0.7 and 0.9. ' + EVIDENCE_CI_NOTE + ' Good looks like: the wrong-call rate falls as confidence rises.',
             ours: ours, grade: grade
           };
         }
@@ -1391,7 +1561,7 @@
             ours = parts.join('; ') + '. Good looks like: agent PRs merging and sticking about as often as human ones.' + limits;
             grade = evidenceGradeLow((agent || human).revert_rate, EVIDENCE_REVERT_STRONG, EVIDENCE_REVERT_FAIR);
           } else {
-            ours = 'No selected hive reports outcomes by author kind yet (needs a spoke with #12370).';
+            ours = EVIDENCE_UPGRADE_NOTE + ' Technically: the heartbeat block outcomes_by_author_kind is absent.';
           }
           return {
             measured: 'For PRs written by humans, by AI agents and by bots: how many merged, how many were reverted after merging, and how many are still open.',
@@ -1429,7 +1599,7 @@
             ours = 'Across ' + wh + ' reporting hive' + (wh === 1 ? '' : 's') + ': ' + att + ' agent write attempts, ' + blk + ' blocked (' + (att ? evidencePct(blk / att) : EVIDENCE_NULL) + ') over ' + wrows.length + ' tier' + (wrows.length === 1 ? '' : 's') + '. Not graded: there is no \u201Cgood\u201D block rate \u2014 it depends on what agents attempt. Zero blocks with many attempts means agents stayed inside their lane; many blocks means the guardrail did its job.';
             grade = 'none';
           } else {
-            ours = 'No selected hive reports write counters yet (needs a spoke with #12370 and proxy write counters).';
+            ours = EVIDENCE_UPGRADE_NOTE + ' Technically: the heartbeat block write_counters is absent (the proxy write counters feed it).';
           }
           return {
             measured: 'Every write (push, comment, label, merge\u2026) an agent tried to make through the proxy, per intent tier, and how many the proxy refused.',
@@ -1458,7 +1628,7 @@
         }
         case 'perhive': {
           ours = reporting + ' of ' + spokes + ' hives report evidence for ' + winText +
-            (unreported ? ' (' + unreported + ' report only the 90-day block: their spoke predates per-window reporting)' : '') + '.';
+            (unreported ? ' (' + unreported + ' report only the 90-day figures: they run an older build than per-window reporting)' : '') + '.';
           var fa = null;
           hives.forEach(function(h) { if (h && h.reported && h.false_approve_rate && h.false_approve_rate.rate !== null && h.false_approve_rate.rate !== undefined && (!fa || h.false_approve_rate.rate > fa.r)) fa = { r: h.false_approve_rate.rate, h: h }; });
           if (fa) ours += ' Highest false-approve rate: ' + esc((fa.h.name || fa.h.id) || '') + ' at ' + evidenceRateText(fa.h.false_approve_rate) + '.';
@@ -1469,7 +1639,7 @@
           return {
             measured: 'Each hive on its own: verdicts, false-approve and false-block rates, merged PRs and revert rate for ' + winText + '.',
             why: 'Fleet totals hide a single hive going wrong. This is the table to look at when a fleet number moves.',
-            how: 'Straight from each spoke\u2019s heartbeat, no pooling. \u201CNo evidence reported\u201D means the spoke never sent evidence; \u201Cnot reported for this window\u201D means it runs software older than per-window reporting. ' + EVIDENCE_CI_NOTE,
+            how: 'Straight from each hive\u2019s heartbeat, no pooling. False approve = approved but never merged or reverted; false block = blocked but merged anyway after a human override. \u201CNo evidence reported\u201D means the hive never sent evidence; \u201Cnot reported for this window\u201D means it runs an older build than per-window reporting. ' + EVIDENCE_CI_NOTE,
             ours: ours, grade: grade
           };
         }
@@ -1488,7 +1658,7 @@
             ours = sparts.join('. ') + '. Good looks like: few false alarms and few misses. Graded on the gate with the most held PRs.' + limits;
             grade = evidenceGradeLow(gbest.alarm, EVIDENCE_SHADOW_FALSE_ALARM_STRONG, EVIDENCE_SHADOW_FALSE_ALARM_FAIR);
           } else {
-            ours = sg ? 'The selected hives report shadow gates but no gate has evaluated a PR yet.' : 'No selected hive reports shadow-gate observations yet (needs a spoke with #12370 and shadow mode on).';
+            ours = sg ? 'The selected hives report shadow gates but no gate has evaluated a PR yet.' : 'Shadow mode is off on every selected hive, or none has reported it yet. ' + EVIDENCE_UPGRADE_NOTE + ' Technically: the heartbeat block shadow_gate is absent; review.shadow and intent shadow mode populate it.';
           }
           return {
             measured: 'What the review gate and intent verification would have done \u2014 hold or pass a PR \u2014 if they were enforcing, set against what actually happened to that PR.',
@@ -1598,10 +1768,29 @@
         ' data-window="' + escAttr(key) + '" onclick="evidenceSetWindow(this.dataset.window)">' + esc(label) + '</button>';
     }
 
+    /* evidenceReportQuery is the report endpoint's query for the current
+       window and hive / ACMM selection, so the download matches the modal. */
+    function evidenceReportQuery(format, download) {
+      var q = evidenceWindowQuery();
+      var f = _evidenceFilter || {};
+      if (Array.isArray(f.hives) && f.hives.length) q += (q ? '&' : '?') + 'hive=' + encodeURIComponent(f.hives.join(','));
+      if (f.level !== null && f.level !== undefined) q += (q ? '&' : '?') + 'level=' + encodeURIComponent(String(f.level));
+      q += (q ? '&' : '?') + 'format=' + format + (download ? '&download=1' : '');
+      return q;
+    }
+
+    function evidenceReportLinksHTML() {
+      return '<span class="evidence-report-sep"></span>' +
+        '<a class="evidence-report-link" href="' + escAttr('/api/hub/evidence/report' + evidenceReportQuery('html', false)) + '" target="_blank" rel="noopener"' +
+        ' title="Open a plain-language report of this view (current window and hive selection) in a new tab">\uD83D\uDCC4 Report</a>' +
+        '<a class="evidence-report-link" href="' + escAttr('/api/hub/evidence/report' + evidenceReportQuery('md', true)) + '" download' +
+        ' title="Download the same report as Markdown">\u2B07 Markdown</a>';
+    }
+
     function evidenceWindowControlsHTML(data) {
       var w = _evidenceWindow || {};
       var out = '<div class="evidence-chips" role="group" aria-label="Time window"><span class="evidence-chips-label">Window</span>' +
-        EVIDENCE_WINDOWS.map(function(p) { return evidenceWindowChip(p[0], p[0]); }).join('') + evidenceWindowChip('custom', 'custom') + '</div>';
+        EVIDENCE_WINDOWS.map(function(p) { return evidenceWindowChip(p[0], p[0]); }).join('') + evidenceWindowChip('custom', 'custom') + evidenceReportLinksHTML() + '</div>';
       if (w.key === 'custom' || _evidenceCustomOpen) {
         var today = new Date().toISOString().slice(0, 10);
         out += '<div class="evidence-chips evidence-range" role="group" aria-label="Custom date range">' +
@@ -1612,7 +1801,7 @@
       }
       var sw = data && data.window;
       if (sw && sw.approximate) {
-        out += '<p class="evidence-note">Spokes report fixed 24h / 7d / 30d / 90d windows, so ' + esc(evidenceWindowLabel()) +
+        out += '<p class="evidence-note">Hives report fixed 24h / 7d / 30d / 90d windows, so ' + esc(evidenceWindowLabel()) +
           ' is served from the smallest window that covers it: ' + esc(sw.label || ('last ' + sw.key)) + '. The counts below are for that window, not the exact dates.</p>';
       }
       return out;
@@ -1762,7 +1951,7 @@
         }
       });
       out.record_coverage = evidenceRateOf(covered, mergedTotal);
-      out.calibration = pooled.map(function(b, j) { var r = evidenceRateOf(b.bad, b.n); r.bucket = j; return r; });
+      out.calibration = pooled.map(function(b, j) { var r = evidenceRateOf(b.bad, b.n); r.bucket = j; r.bad = b.bad; return r; });
       out.family_false_approve_rate = {};
       Object.keys(fam).forEach(function(k) { out.family_false_approve_rate[k] = evidenceRateOf(fam[k].bad, fam[k].n); });
       out.by_acmm_level = Object.keys(acmm).map(Number).sort(function(x, y) { return x - y; }).map(function(l) {
@@ -1837,6 +2026,181 @@
       if (el && _evidenceLast) el.innerHTML = evidenceViewHTML(_evidenceLast, _evidenceFilter);
     }
 
+    /* ---- Plain-language findings (#12456) --------------------------------
+       A sentence-for-sentence mirror of pkg/hub/evidence_findings.go, used
+       for a client-side hive / ACMM selection (the server ships `findings`
+       for the unfiltered view). TestEvidenceFindingsParity keeps the two in
+       step. Returns raw text; callers esc() it. */
+    function evidenceConfidenceLabel(r) { return r.name + ' (' + r.range + ')'; }
+
+    /* evidenceConfidenceRows regroups six heartbeat buckets ({n, bad} by
+       index, or pooled rows carrying `bucket`) into the four ranges. */
+    function evidenceConfidenceRows(buckets) {
+      buckets = Array.isArray(buckets) ? buckets : [];
+      return EVIDENCE_CONFIDENCE_RANGES.map(function(rg) {
+        var n = 0, bad = 0;
+        buckets.forEach(function(b, j) {
+          if (!b) return;
+          var idx = (b.bucket !== undefined && b.bucket !== null) ? Number(b.bucket) : j;
+          if (idx < rg.from || idx > rg.to) return;
+          n += Number(b.n) || 0;
+          /* Server buckets carry bad; derive it from the rate for any older payload. */
+          bad += (b.bad !== undefined && b.bad !== null) ? (Number(b.bad) || 0) : evidenceRateCount(b);
+        });
+        var r = evidenceRateOf(bad, n);
+        r.name = rg.name; r.range = rg.range; r.bad = bad;
+        return r;
+      });
+    }
+
+    function evidencePlural(n, one, many) { return Number(n) === 1 ? one : many; }
+    function evidenceRateCount(r) { return (r && typeof r.rate === 'number') ? Math.round(r.rate * (Number(r.n) || 0)) : 0; }
+    function evidenceWindowText(w) {
+      if (w && w.approximate) return 'the chosen date range';
+      return 'the ' + ((w && w.label) || 'last 90d');
+    }
+    function evidenceHiveName(h) { return (h && (h.name || h.id)) || ''; }
+    function evidenceLevelName(level) { return Number(level) === 6 ? 'full autonomy (L6)' : 'autonomy level L' + evidenceCount(level); }
+
+    function evidenceFindingsByKey(v) {
+      v = v || {};
+      var out = {}, win = evidenceWindowText(v.window);
+      var hives = Array.isArray(v.hives) ? v.hives : [];
+      var spokes = Number(v.spokes) || 0, reporting = Number(v.reporting) || 0, unreported = Number(v.window_unreported) || 0;
+      var firstName = '';
+      hives.some(function(h) { if (h && h.reported) { firstName = evidenceHiveName(h); return true; } return false; });
+      if (spokes === 0) out.perhive = 'No hives are selected.';
+      else if (reporting === 0) out.perhive = 'None of the ' + spokes + ' selected ' + evidencePlural(spokes, 'hive', 'hives') + ' has reported evidence for ' + win + ' yet.';
+      else if (reporting === 1 && spokes > 1) out.perhive = 'Only ' + firstName + ' reports evidence so far (1 of ' + spokes + ' hives).';
+      else if (reporting === spokes && spokes === 1) out.perhive = firstName + ' reports evidence for ' + win + '.';
+      else if (reporting === spokes) out.perhive = 'All ' + spokes + ' selected hives report evidence for ' + win + '.';
+      else out.perhive = reporting + ' of ' + spokes + ' selected hives report evidence for ' + win + '.';
+      if (unreported > 0) out.perhive += ' ' + unreported + ' ' + evidencePlural(unreported, 'reports', 'report') + ' only the 90-day figures because ' + evidencePlural(unreported, 'it runs', 'they run') + ' an older build.';
+
+      var cov = v.record_coverage || {}, covN = Number(cov.n) || 0;
+      if (v.window && v.window.coverage_available === false) out.coverage = 'Record coverage is only computed for the 90-day window, because the count of merged PRs it is compared against is a 90-day figure.';
+      else if (typeof cov.rate === 'number') out.coverage = 'Of the ' + covN + ' merged PRs in the last 90 days across the selected hives, ' + evidenceRateCount(cov) + ' (' + evidencePct(cov.rate) + ') have an evidence record \u2014 recording began ' + EVIDENCE_DATA_SINCE + ', so this will rise.';
+      else if (covN === 0) out.coverage = 'No merged PRs are counted yet, so we cannot say how much of the work has an evidence record.';
+      else out.coverage = 'Only ' + covN + ' merged ' + evidencePlural(covN, 'PR is', 'PRs are') + ' counted, fewer than the ' + EVIDENCE_MIN_N + ' needed to say what share has an evidence record.';
+
+      var levels = Array.isArray(v.by_acmm_level) ? v.by_acmm_level : [], best = null;
+      levels.forEach(function(a) { if (a && a.revert_rate && typeof a.revert_rate.rate === 'number' && (!best || Number(a.level) > Number(best.level))) best = a; });
+      if (best) {
+        var rev = evidenceRateCount(best.revert_rate), bh = Number(best.hives) || 0;
+        var tail = rev === 0 ? 'none were reverted or needed a follow-up fix within 14 days' : rev + ' (' + evidencePct(best.revert_rate.rate) + ') were reverted or needed a follow-up fix within 14 days';
+        out.acmm = 'At ' + evidenceLevelName(best.level) + ', ' + bh + ' ' + evidencePlural(bh, 'hive', 'hives') + ' merged ' + (Number(best.revert_rate.n) || 0) + ' PRs and ' + tail + '.';
+      } else if (levels.length === 0) out.acmm = 'No selected hive reports merges for ' + win + ' yet.';
+      else out.acmm = 'No autonomy level has ' + EVIDENCE_MIN_N + ' merged PRs yet, so revert rates cannot be reported.';
+
+      var rows = evidenceConfidenceRows(v.calibration), low = null, top = null;
+      rows.forEach(function(r) { if (typeof r.rate === 'number') { if (!low) low = r; top = r; } });
+      if (!top) out.calibration = 'No confidence range has ' + EVIDENCE_MIN_N + " verdicts yet, so we cannot tell whether the reviewer's confidence means anything.";
+      else if (low === top) out.calibration = 'Only one confidence range (' + evidenceConfidenceLabel(top) + ', ' + top.n + ' verdicts, ' + evidencePct(top.rate) + ' went wrong) has enough verdicts to measure, so there is nothing to compare it with yet.';
+      else {
+        var lead = top.rate > low.rate ? "The reviewer's confidence does not track reality yet" : "The reviewer's confidence tracks reality";
+        var topPhrase = evidenceRateCount(top) === 0 ? 'nothing went wrong' : evidencePct(top.rate) + ' went wrong';
+        var lowPhrase = evidenceRateCount(low) === 0 ? 'none did' : evidencePct(low.rate) + ' did';
+        out.calibration = lead + ': when ' + top.name.toLowerCase() + ' (' + top.range + ', ' + top.n + ' verdicts) ' + topPhrase + '; when ' + low.name.toLowerCase() + ' (' + low.range + ', ' + low.n + ' verdicts) ' + lowPhrase + '.';
+      }
+
+      if (Array.isArray(v.outcomes_by_author_kind)) {
+        var byKind = {};
+        v.outcomes_by_author_kind.forEach(function(o) { if (o && o.kind) byKind[o.kind] = o; });
+        var parts = [];
+        [['agent', 'AI agents'], ['human', 'Humans'], ['bot', 'Bots']].forEach(function(k) {
+          var o = byKind[k[0]]; if (!o || !(Number(o.n) > 0)) return;
+          var n = Number(o.n) || 0, m = Number(o.merged) || 0, r = Number(o.reverted) || 0;
+          var str = k[1] + ' wrote ' + n + ' ' + evidencePlural(n, 'PR', 'PRs') + ': ' + m + ' merged';
+          if (o.merge_rate && typeof o.merge_rate.rate === 'number') str += ' (' + evidencePct(o.merge_rate.rate) + ')';
+          str += ' and ' + r + ' of those ' + evidencePlural(r, 'was', 'were') + ' reverted within 14 days';
+          parts.push(str);
+        });
+        out.outcomes = parts.length ? parts.join('. ') + '.' : 'No PRs with a known author kind were recorded for ' + win + '.';
+      } else out.outcomes = '';
+
+      if (Array.isArray(v.write_counters)) {
+        var att = 0, blk = 0;
+        v.write_counters.forEach(function(t) { att += Number(t.attempted) || 0; blk += Number(t.blocked) || 0; });
+        out.writes = att === 0 ? 'No agent write attempts have been recorded by the guardrail proxy yet.' :
+          'Agents attempted ' + att + ' writes to GitHub through the guardrail proxy and ' + blk + ' (' + evidencePct(blk / att) + ') ' + evidencePlural(blk, 'was', 'were') + ' blocked; a blocked write never reached GitHub.';
+      } else out.writes = '';
+
+      var fam = v.family_false_approve_rate || {}, fparts = [];
+      if (fam.same && typeof fam.same.rate === 'number') fparts.push('when reviewer and author come from the same AI family the false-approve rate is ' + evidencePct(fam.same.rate) + ' (' + fam.same.n + ' verdicts)');
+      if (fam.cross && typeof fam.cross.rate === 'number') fparts.push('across different families it is ' + evidencePct(fam.cross.rate) + ' (' + fam.cross.n + ' verdicts)');
+      if (fam.mixed && typeof fam.mixed.rate === 'number') fparts.push('for a mix of both it is ' + evidencePct(fam.mixed.rate) + ' (' + fam.mixed.n + ' verdicts)');
+      if (!fparts.length) out.family = 'No family mix has ' + EVIDENCE_MIN_N + ' verdicts yet, so same- vs cross-family review cannot be compared.';
+      else { var fs = fparts.join('; '); out.family = fs.charAt(0).toUpperCase() + fs.slice(1) + '.'; }
+
+      var sg = v.shadow_gate && typeof v.shadow_gate === 'object' ? v.shadow_gate : null;
+      if (sg) {
+        var sparts = [];
+        [['The review gate', 'held', sg.review_gate], ['Intent verification', 'blocked', sg.intent]].forEach(function(g) {
+          var gate = g[2]; if (!gate || !(Number(gate.n) > 0)) return;
+          var held = gate.held || {}, passed = gate.passed || {};
+          var hn = Number(held.n) || 0, ok = Math.max(0, (Number(held.merged) || 0) - (Number(held.reverted) || 0));
+          var pn = Number(passed.n) || 0, pr = Number(passed.reverted) || 0;
+          sparts.push(g[0] + ' would have ' + g[1] + ' ' + hn + ' ' + evidencePlural(hn, 'PR', 'PRs') + '; ' + ok + ' of those merged and stuck (false alarms). It would have passed ' + pn + ', of which ' + pr + ' ' + evidencePlural(pr, 'was', 'were') + ' reverted (misses)');
+        });
+        out.shadow = sparts.length ? sparts.join('. ') + '.' : 'The selected hives have shadow mode on but no gate has evaluated a PR yet.';
+      } else out.shadow = '';
+      return out;
+    }
+
+    var EVIDENCE_FINDINGS_ORDER = ['perhive', 'coverage', 'acmm', 'calibration', 'outcomes', 'shadow'];
+    function evidenceFindings(v) {
+      var byKey = evidenceFindingsByKey(v);
+      return EVIDENCE_FINDINGS_ORDER.map(function(k) { return byKey[k]; }).filter(function(x) { return !!x; });
+    }
+
+    /* evidenceWaiting mirrors pkg/hub's evidenceWaiting: what the selected
+       hives do not report yet, in user terms. */
+    function evidenceWaiting(v) {
+      v = v || {};
+      var upgrade = 'hives report this once upgraded to the ' + EVIDENCE_UPGRADE_BUILD + ' or later';
+      var out = [];
+      if (!Array.isArray(v.outcomes_by_author_kind)) out.push('Outcome by author kind \u2014 ' + upgrade + '.');
+      if (!Array.isArray(v.write_counters)) out.push('Boundary enforcement (agent writes the guardrail proxy blocked) \u2014 ' + upgrade + '.');
+      if (!(v.shadow_gate && typeof v.shadow_gate === 'object')) out.push('Shadow gates \u2014 shadow mode is off on every selected hive, or none has reported it yet (' + upgrade + ').');
+      return out.concat([
+        'Per-axis criteria table \u2014 not reported by any hive build yet.',
+        'Claim-vs-verdict totals \u2014 not reported by any hive build yet.',
+        'Median time-to-merge per autonomy level \u2014 not reported by any hive build yet.',
+        'Revert rate by author kind per hive \u2014 not reported by any hive build yet.']);
+    }
+
+    /* The "What this says" block: server findings for the unfiltered view,
+       regenerated here for a selection. */
+    function evidenceFindingsHTML(view, active) {
+      var list = (!active && Array.isArray(view.findings) && view.findings.length) ? view.findings : evidenceFindings(view);
+      return '<section class="evidence-findings" aria-labelledby="evidence-findings-title"><h3 id="evidence-findings-title">What this says</h3><ul>' +
+        list.map(function(f) { return '<li>' + esc(f) + '</li>'; }).join('') + '</ul></section>';
+    }
+
+    /* Absent panels keep their \u24D8 explainer here so the technical pointer
+       (which heartbeat field, which build) stays one click away without
+       putting it in the list copy. */
+    function evidenceWaitingHTML(view) {
+      view = view || {};
+      var titles = { outcomes: 'Outcome by author kind', writes: 'Boundary enforcement', shadow: 'Shadow gates' };
+      var absent = [];
+      if (!Array.isArray(view.outcomes_by_author_kind)) absent.push('outcomes');
+      if (!Array.isArray(view.write_counters)) absent.push('writes');
+      if (!(view.shadow_gate && typeof view.shadow_gate === 'object')) absent.push('shadow');
+      var items = evidenceWaiting(view).map(function(f, i) {
+        var key = absent[i];
+        if (!key) return '<li>' + esc(f) + '</li>';
+        var id = 'evidence-exp-' + key;
+        return '<li>' + esc(f) + ' <button type="button" class="evidence-info" aria-expanded="false" aria-controls="' + escAttr(id) + '"' +
+          ' aria-label="About ' + escAttr(titles[key]) + '" title="What this measures and how to read it"' +
+          ' onclick="evidenceToggleExplainer(this, \'' + escAttr(id) + '\')">\u24D8</button>' +
+          evidenceExplainerHTML(key, id, titles[key], '', view) + '</li>';
+      });
+      return '<section class="evidence-section"><div class="evidence-head"><h3 class="evidence-title"><span>Waiting on hives</span></h3>' +
+        '<p class="evidence-note">Things this view will show once the selected hives report them.</p></div><ul class="evidence-waiting">' +
+        items.join('') + '</ul></section>';
+    }
+
     /* ---- Fleet panels (#12370): inline SVG like the spoke evidence card ---- */
     function evidenceSvgLabel(s, max) { return esc(String(s).slice(0, max)); }
 
@@ -1865,17 +2229,14 @@
 
     function evidenceOutcomesPanel(view) {
       var rows = Array.isArray(view.outcomes_by_author_kind) ? view.outcomes_by_author_kind : null;
-      if (!rows) {
-        return '<section class="evidence-section">' + evidenceSectionHead('outcomes', 'Outcome by author kind',
-          'Outcome by author kind is not reported by any selected hive yet (needs a spoke with #12370).', view) + '</section>';
-      }
+      if (!rows) return '';
       var svg = evidenceOutcomeBarsSvg(rows.map(function(o) {
         return { label: (o.kind || '') + ' authors', n: Number(o.n) || 0, merged: Number(o.merged) || 0, reverted: Number(o.reverted) || 0 };
       }), 'Outcome by author kind: merged, reverted and open PRs for human, agent and bot authors');
       return '<section class="evidence-section">' + evidenceSectionHead('outcomes', 'Outcome by author kind',
         'PRs (latest evidence bundle per PR, ' + evidenceWinShort(view) + ') by author kind, pooled across the selected hives. Merged is not the same as correct; closed-without-merge is not recorded, so it counts as not merged.', view) +
         svg + '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr><th>Author kind</th><th>Hives</th><th>PRs</th>' +
-        evidenceRateHeads('Merge rate') + evidenceRateHeads('Revert rate') + '</tr></thead><tbody>' +
+        evidenceRateHeads('Merged', 'Share of these PRs that merged.') + evidenceRateHeads('Reverted within 14 days', 'Share of the merged PRs that were reverted or needed a follow-up fix within 14 days.') + '</tr></thead><tbody>' +
         rows.map(function(o) {
           return '<tr><td>' + esc(o.kind || '') + '</td><td>' + evidenceCount(o.hives) + '</td><td>' + evidenceCount(o.n) + '</td>' +
             evidenceRateCells(o.merge_rate) + evidenceRateCells(o.revert_rate) + '</tr>';
@@ -1902,26 +2263,20 @@
 
     function evidenceWriteCountersPanel(view) {
       var rows = Array.isArray(view.write_counters) ? view.write_counters : null;
-      if (!rows) {
-        return '<section class="evidence-section">' + evidenceSectionHead('writes', 'Boundary enforcement',
-          'Write counters are not reported by any selected hive yet (needs a spoke with #12370 and proxy write counters).', view) + '</section>';
-      }
+      if (!rows) return '';
       var norm = rows.map(function(r) { return { tier: String(r.tier || ''), hives: Number(r.hives) || 0, attempted: Number(r.attempted) || 0, blocked: Number(r.blocked) || 0, block_rate: r.block_rate }; });
       return '<section class="evidence-section">' + evidenceSectionHead('writes', 'Boundary enforcement',
         'Agent write attempts the proxy saw per intent tier and how many it blocked, pooled across the selected hives. Totals run since each spoke\u2019s proxy started, not over a time window. A blocked write records nothing about merge eligibility.', view) +
         evidenceWriteCountersSvg(norm) +
-        '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr><th>Tier</th><th>Hives</th><th>Attempted</th><th>Blocked</th>' + evidenceRateHeads('Block rate') + '</tr></thead><tbody>' +
+        '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr><th>Intent tier</th><th>Hives</th><th>Attempted</th>' + evidenceRateHeads('Blocked', 'Share of attempted writes the proxy refused; a blocked write never reached GitHub.') + '</tr></thead><tbody>' +
         norm.map(function(r) {
-          return '<tr><td>' + esc(r.tier) + '</td><td>' + evidenceCount(r.hives) + '</td><td>' + evidenceCount(r.attempted) + '</td><td>' + evidenceCount(r.blocked) + '</td>' + evidenceRateCells(r.block_rate) + '</tr>';
+          return '<tr><td>' + esc(r.tier) + '</td><td>' + evidenceCount(r.hives) + '</td><td>' + evidenceCount(r.attempted) + '</td>' + evidenceRateCells(r.block_rate) + '</tr>';
         }).join('') + '</tbody></table></div></section>';
     }
 
     function evidenceShadowPanel(view) {
       var sg = view.shadow_gate && typeof view.shadow_gate === 'object' ? view.shadow_gate : null;
-      if (!sg) {
-        return '<section class="evidence-section">' + evidenceSectionHead('shadow', 'Shadow gates × outcome',
-          'Shadow-gate observations are not reported by any selected hive yet (needs a spoke with #12370 and review.shadow / intent shadow mode on).', view) + '</section>';
-      }
+      if (!sg) return '';
       var bars = [], cells = '';
       EVIDENCE_SHADOW_GATES.forEach(function(g) {
         var gate = sg[g[0]] || {};
@@ -1937,8 +2292,8 @@
       var body = bars.length ? evidenceOutcomeBarsSvg(bars, 'Shadow gates: PRs the review gate or intent verification would have stopped or passed, by actual outcome') :
         '<p class="evidence-note">The selected hives report a shadow block but no gate has evaluated a PR yet.</p>';
       return '<section class="evidence-section">' + evidenceSectionHead('shadow', 'Shadow gates × outcome',
-        evidenceCount(sg.hives) + ' hive(s) report shadow gates. Shadow mode only records; no merge was held or blocked anywhere in the fleet.', view) +
-        body + '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr><th>Gate</th><th>Decision</th><th>PRs</th><th>Merged</th><th>Not merged</th>' + evidenceRateHeads('Revert rate') + '</tr></thead><tbody>' +
+        evidenceCount(sg.hives) + ' ' + (Number(sg.hives) === 1 ? 'hive reports' : 'hives report') + ' shadow gates. Shadow mode only records; no merge was held or blocked anywhere in the fleet.', view) +
+        body + '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr><th>Gate</th><th>Decision</th><th>PRs</th><th>Merged</th><th>Not merged</th>' + evidenceRateHeads('Reverted within 14 days', 'Share of the merged PRs that were reverted or needed a follow-up fix within 14 days.') + '</tr></thead><tbody>' +
         (cells || '<tr><td colspan="99" class="evidence-empty">No data reported yet.</td></tr>') + '</tbody></table></div></section>';
     }
 
@@ -1955,77 +2310,86 @@
       }
       var win = evidenceWinShort(view);
       var reported = hives.filter(function(h) { return h && h.reported; });
+      var scopeLabel = 'All selected hives';
       var out = evidenceWindowControlsHTML(data) + evidenceChipsHTML(data, filter) +
         '<p class="evidence-note">' + evidenceCount(view.reporting) + ' of ' + evidenceCount(view.spokes) +
         ' hives report evidence' + (active ? ' in this selection (' + evidenceCount(data.reporting) + ' of ' + evidenceCount(data.spokes) + ' fleet-wide)' : '') +
         ' for ' + esc(evidenceWindowLabel()) +
-        (Number(view.window_unreported) > 0 ? ' (' + evidenceCount(view.window_unreported) + ' report only the 90-day block)' : '') +
-        '. Rates show "' + EVIDENCE_NULL + '" below the minimum sample. Click \u24D8 on any section for what it measures and how to read it.</p>' +
-        /* #12117 also lists a per-axis criteria table; GET /api/hub/evidence
-           does not carry that data yet, so the gap is disclosed here rather
-           than silently omitted. Tracked under #12080. */
-        '<p class="evidence-note">The per-axis criteria table is not reported by spokes yet (tracked in #12080).</p>' +
-        '<p class="evidence-note">Claim-vs-verdict totals are not reported by spokes yet.</p>';
+        (Number(view.window_unreported) > 0 ? ' (' + evidenceCount(view.window_unreported) + ' report only the 90-day figures)' : '') +
+        '. Each percentage reads \u201Crate of cases\u201D; the muted line under it is the margin (95%): the true value is very likely inside that range. Rates show "' + EVIDENCE_NULL + '" below the minimum sample of ' + EVIDENCE_MIN_N + '. Click \u24D8 on any section for what it measures and how to read it.</p>' +
+        evidenceFindingsHTML(view, active);
 
+      /* Sections with data first, in a fixed order; panels no selected hive
+         reports are listed once under "Waiting on hives" at the bottom. */
       var cov = view.record_coverage || {};
       var covAvail = !(data.window && data.window.coverage_available === false);
-      out += evidenceTable('Evidence coverage', '<th>Scope</th>' + evidenceRateHeads('Coverage'),
-        covAvail ? '<tr><td>' + (active ? 'Selection' : 'Fleet') + '</td>' + evidenceRateCells(cov) + '</tr>' +
-        hives.map(function(h) {
-          return '<tr><td>' + evidenceHiveLabel(h) + '</td>' + evidenceRateCells(h.record_coverage) + '</tr>';
-        }).join('') : '<tr><td colspan="99" class="evidence-empty">Record coverage is only computed for the 90-day window (GitHub\u2019s merged count is a 90-day figure).</td></tr>',
-        'Merged PRs with an evidence record over merged PRs (90 days).', 'coverage', view);
+      var covRows = '';
+      if (covAvail) {
+        covRows = '<tr><td>' + esc(scopeLabel) + '</td><td>' + evidenceCount(cov.n) + '</td>' + evidenceRateCells(cov) + '</tr>';
+        if (hives.length === 1) {
+          covRows += '<tr><td>' + evidenceHiveLabel(hives[0]) + '</td><td colspan="2" class="evidence-same-hive">(same hive as above)</td></tr>';
+        } else {
+          covRows += hives.map(function(h) {
+            return '<tr><td>' + evidenceHiveLabel(h) + '</td><td>' + evidenceCount(h.record_coverage && h.record_coverage.n) + '</td>' + evidenceRateCells(h.record_coverage) + '</tr>';
+          }).join('');
+        }
+      } else {
+        covRows = '<tr><td colspan="99" class="evidence-empty">Record coverage is only computed for the 90-day window (the merged-PR count it is compared against is a 90-day figure).</td></tr>';
+      }
+      out += evidenceTable('Evidence coverage', '<th>Scope</th><th>Merged PRs</th>' + evidenceRateHeads('With an evidence record', 'Share of the merged PRs (90 days) that have a saved evidence record.'),
+        covRows, 'Merged PRs with an evidence record, out of all merged PRs (90 days).', 'coverage', view);
 
-      var cal = Array.isArray(view.calibration) ? view.calibration : [];
-      var calHead = '<th>Bucket</th>' + evidenceRateHeads(active ? 'Selection' : 'Fleet') +
-        reported.map(function(h) { return '<th>' + evidenceHiveLabel(h) + '</th>'; }).join('');
-      var calRows = cal.map(function(b, i) {
-        var bucket = (b && b.bucket !== undefined) ? b.bucket : i;
-        return '<tr><td>' + esc(String(bucket)) + '</td>' + evidenceRateCells(b) +
-          reported.map(function(h) {
-            var r = (Array.isArray(h.calibration) && h.calibration[bucket]) || null;
-            var title = r ? 'n=' + r.n + ', 95% CI ' + evidenceInterval(r) : 'no data';
-            return '<td title="' + escAttr(title) + '">' + (r ? evidencePct(r.rate) : EVIDENCE_NULL) + '</td>';
-          }).join('') + '</tr>';
+      var calRows = evidenceConfidenceRows(view.calibration);
+      var calHead = '<th>Reviewer confidence</th><th>Verdicts</th>' + evidenceRateHeads(scopeLabel + ' \u2014 went wrong', 'Share of verdicts in this confidence range that were a false approve or a false block.') +
+        (hives.length === 1 ? '' : reported.map(function(h) { return '<th title="This hive alone">' + evidenceHiveLabel(h) + '</th>'; }).join(''));
+      var calBody = calRows.map(function(r) {
+        return '<tr><td>' + esc(evidenceConfidenceLabel(r)) + '</td><td>' + evidenceCount(r.n) + '</td>' + evidenceRateCells(r) +
+          (hives.length === 1 ? '' : reported.map(function(h) {
+            var hr = evidenceConfidenceRows(h.counts && h.counts.calibration).filter(function(x) { return x.name === r.name; })[0];
+            var title = hr && typeof hr.rate === 'number' ? hr.n + ' verdicts, margin ' + evidenceInterval(hr) : (hr ? hr.n + ' verdicts, below the minimum sample' : 'no data');
+            return '<td title="' + escAttr(title) + '">' + (hr && typeof hr.rate === 'number' ? evidencePct(hr.rate) : EVIDENCE_NULL) + '</td>';
+          }).join('')) + '</tr>';
       }).join('');
-      out += evidenceTable('Calibration curve', calHead, calRows,
-        'Bad-outcome rate per reviewer confidence bucket (0–5), pooled across the fleet with each reporting hive overlaid.', 'calibration', view);
+      out += evidenceTable('Reviewer confidence', calHead, calBody,
+        'How often the reviewer\u2019s calls went wrong, by how confident it said it was, pooled across the selected hives' + (hives.length === 1 ? '.' : ' with each reporting hive alongside.'), 'calibration', view);
 
       out += evidenceOutcomesPanel(view);
 
       var acmm = Array.isArray(view.by_acmm_level) ? view.by_acmm_level : [];
-      out += evidenceTable('ACMM level × outcome', '<th>Level</th><th>Hives</th><th>Merged (' + esc(win) + ')</th>' + evidenceRateHeads('Revert rate'),
+      out += evidenceTable('Autonomy level \u00D7 outcome', '<th>Autonomy level</th><th>Hives</th><th>Merged (' + esc(win) + ')</th>' + evidenceRateHeads('Reverted within 14 days', 'Share of the merged PRs that were reverted or needed a follow-up fix within 14 days.'),
         acmm.map(function(a) {
           return '<tr><td>L' + evidenceCount(a.level) + '</td><td>' + evidenceCount(a.hives) + '</td><td>' + evidenceCount(a.merged_90d) + '</td>' +
             evidenceRateCells(a.revert_rate) + '</tr>';
         }).join(''),
-        'Median time-to-merge is not reported by spokes yet.', 'acmm', view);
+        'Each hive files under the autonomy level it runs at, from L1 (advice only) to L6 (merges on green CI without a human).', 'acmm', view);
 
       out += evidenceWriteCountersPanel(view);
 
       var fam = view.family_false_approve_rate || {};
-      out += evidenceTable('Same- vs cross-family false approve', '<th>Family mix</th>' + evidenceRateHeads('False approve'),
+      var famLabels = { same: 'same family', cross: 'different families', mixed: 'mix of both' };
+      out += evidenceTable('Same- vs cross-family review', '<th>Reviewer vs author AI family</th><th>Verdicts</th>' + evidenceRateHeads('False approve', EVIDENCE_GLOSS_FALSE_APPROVE),
         EVIDENCE_FAMILY_MIXES.map(function(k) {
-          return '<tr><td>' + esc(k) + '</td>' + evidenceRateCells(fam[k]) + '</tr>';
+          return '<tr><td>' + esc(famLabels[k] || k) + '</td><td>' + evidenceCount(fam[k] && fam[k].n) + '</td>' + evidenceRateCells(fam[k]) + '</tr>';
         }).join(''),
-        'Hives classed by their reviewer vs author model families.', 'family', view);
+        'Hives classed by whether their reviewing AI and authoring AI come from the same model family.', 'family', view);
 
       out += evidenceTable('Per-hive evidence',
-        '<th>Hive</th><th>ACMM</th><th>Family mix</th><th>Verdicts (' + esc(win) + ')</th>' +
-          evidenceRateHeads('False approve') + evidenceRateHeads('False block') +
-          '<th>Merged (' + esc(win) + ')</th>' + evidenceRateHeads('Revert rate'),
+        '<th class="evidence-sticky-col">Hive</th><th>Autonomy</th><th>Family mix</th>' +
+          evidenceRateHeads('False approve', EVIDENCE_GLOSS_FALSE_APPROVE) + evidenceRateHeads('False block', EVIDENCE_GLOSS_FALSE_BLOCK) +
+          '<th>Merged (' + esc(win) + ')</th>' + evidenceRateHeads('Reverted within 14 days', 'Share of the merged PRs that were reverted or needed a follow-up fix within 14 days.'),
         hives.map(function(h) {
           if (!h.reported) {
-            return '<tr><td>' + evidenceHiveLabel(h) + '</td><td>L' + evidenceCount(h.acmm_level) + '</td>' +
-              '<td colspan="12" class="evidence-empty">' + (h.window_unreported ? 'Not reported for this window (spoke predates per-window reporting)' : 'No evidence reported') + '</td></tr>';
+            return '<tr><td class="evidence-sticky-col">' + evidenceHiveLabel(h) + '</td><td>L' + evidenceCount(h.acmm_level) + '</td>' +
+              '<td colspan="5" class="evidence-empty">' + (h.window_unreported ? 'Not reported for this window (older build)' : 'No evidence reported') + '</td></tr>';
           }
-          return '<tr><td>' + evidenceHiveLabel(h) + '</td><td>L' + evidenceCount(h.acmm_level) + '</td><td>' + esc(h.family_mix || EVIDENCE_NULL) + '</td>' +
-            '<td>' + evidenceCount(h.verdicts_90d) + '</td>' + evidenceRateCells(h.false_approve_rate) + evidenceRateCells(h.false_block_rate) +
+          return '<tr><td class="evidence-sticky-col">' + evidenceHiveLabel(h) + '</td><td>L' + evidenceCount(h.acmm_level) + '</td><td>' + esc(h.family_mix || '') + '</td>' +
+            evidenceRateCells(h.false_approve_rate) + evidenceRateCells(h.false_block_rate) +
             '<td>' + evidenceCount(h.merged_90d) + '</td>' + evidenceRateCells(h.revert_rate) + '</tr>';
         }).join(''),
-        'Revert rate by author kind is not reported by spokes yet.', 'perhive', view);
+        'Each hive on its own: false approve = approved but never merged or reverted; false block = blocked but merged anyway after a human override. Verdict counts are the \u201Cof N\u201D in each cell.', 'perhive', view, true);
 
       out += evidenceShadowPanel(view);
+      out += evidenceWaitingHTML(view);
       return out;
     }
 
@@ -2660,6 +3024,7 @@
       var tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
       if (tag === 'select') return;
       if (typeof evidenceCloseExplainers === 'function' && evidenceCloseExplainers()) { e.preventDefault(); e.stopPropagation(); return; }
+      if (typeof quadrantCloseExplainers === 'function' && quadrantCloseExplainers()) { e.preventDefault(); e.stopPropagation(); return; }
       if (!hiveHubDismissTopModal()) return;
       e.preventDefault();
       e.stopPropagation();
@@ -3372,14 +3737,23 @@
         'inference auth</span>';
     }
 
+    /* The 24h restart count behind a storm badge. Prefer the verdict's ledger;
+       fall back to the count the hub already wrote into restartProblem
+       ("agent restarts: guide ×23/24h (...)") so a hub that omits the ledger
+       can never render ×0 beside a storm (#12466). */
+    function restartStormCount(a) {
+      var n = Number(((a && a.restarts) || {}).last_24h);
+      if (n > 0) return n;
+      var m = /×(\d+)\/24h/.exec((a && a.restartProblem) || '');
+      return m ? Number(m[1]) : 0;
+    }
     function restartStormSummary(h) {
       var agents = (h && h.agentVerdicts) || [];
       var bad = agents.filter(function(a) { return a && a.restartProblem; });
       if (!bad.length) return '';
       var first = bad[0];
       var title = bad.map(function(a) { return a.restartProblem; }).join('\n');
-      var count = ((first.restarts || {}).last_24h) || 0;
-      var label = 'agent restarts: ' + first.name + ' ×' + count + '/24h';
+      var label = 'agent restarts: ' + first.name + ' ×' + restartStormCount(first) + '/24h';
       if (bad.length > 1) label = bad.length + ' restart storms';
       var reset = roleAtLeast(h.role, 'owner')
         /* Inline text action, not a full hv-btn: a padded button nested inside
@@ -4188,8 +4562,10 @@
        v5: rows carry the fleet-divergence view (fleetRollup + agentVerdicts:
        expected/actual/able per agent); a v4 cache would omit the new per-agent
        drill-down until the first poll landed.
-       v6: agent verdicts carry restart-storm telemetry and reset markers. */
-    var HIVES_CACHE_VERSION = 6;
+       v6: agent verdicts carry restart-storm telemetry and reset markers.
+       v7: quadrant axes carry criteria, summaries and the fleet median n that
+       the per-axis explainers render; a v6 cache would paint empty ⓘ popovers. */
+    var HIVES_CACHE_VERSION = 7;
     /* v5/v6 only added optional per-row telemetry. Rendering tolerates those
        fields being absent, so keep accepting a recent cache instead of showing
        the spinner for the whole /api/saas/my-hives round-trip after a deploy. */
@@ -4660,21 +5036,30 @@
                            the operator's target bucket.
              ''          — neither: up to date, or behind with auto-upgrade off
                            and no pending action.
-           Map each to a human-readable header. '' is rendered as its own
-           "Up to date" group rather than falling through to Unspecified, since
-           for this dimension "no pending upgrade" is a meaningful, expected
-           bucket rather than missing data. */
-        var st = hiveUpgradeState(h);
-        if (st === UPGRADE_FILTER_QUEUED) return HIVE_UPGRADE_GROUP_QUEUED;
-        if (st === UPGRADE_FILTER_UPGRADING) return HIVE_UPGRADE_GROUP_UPGRADING;
-        return HIVE_UPGRADE_GROUP_UPTODATE;
+           Map each to a human-readable header via hiveUpgradeGroupLabel. */
+        return hiveUpgradeGroupLabel(h);
       }, sort: function(a, b) {
         /* Queued first — it is why this dimension exists (systems READY for an
            upgrade that have not triggered) — then Upgrading (in flight), then
-           Up to date. Any unexpected label sorts last. */
+           Behind, then Up to date. Any unexpected label sorts last. */
         return _upgradeGroupOrder(a) - _upgradeGroupOrder(b);
       }}
     ];
+
+    /* Group header for the Upgrade-state dimension. The '' state covers two
+       very different hives: genuinely current ones, and ones 100+ commits
+       behind whose auto-upgrade is off (or whose channel has not promoted).
+       Splitting on commitsBehindTarget keeps "Up to date" honest — #12466 saw
+       an "Up to date (6)" header over six rows each reading "107–161 behind".
+       '' is still rendered as a named group rather than Unspecified, since
+       "no pending upgrade" is a meaningful bucket rather than missing data. */
+    function hiveUpgradeGroupLabel(h) {
+      var st = hiveUpgradeState(h);
+      if (st === UPGRADE_FILTER_QUEUED) return HIVE_UPGRADE_GROUP_QUEUED;
+      if (st === UPGRADE_FILTER_UPGRADING) return HIVE_UPGRADE_GROUP_UPGRADING;
+      if (Number((h || {}).commitsBehindTarget) > 0) return HIVE_UPGRADE_GROUP_BEHIND;
+      return HIVE_UPGRADE_GROUP_UPTODATE;
+    }
 
     /* Header labels for the Upgrade-state dimension. Named constants so the
        of() grouper and the sort comparator can never drift on a string typo.
@@ -4682,16 +5067,18 @@
        three surfaces, one wording. */
     var HIVE_UPGRADE_GROUP_QUEUED = 'Queued for auto-upgrade (not yet upgrading)';
     var HIVE_UPGRADE_GROUP_UPGRADING = 'Upgrading';
+    var HIVE_UPGRADE_GROUP_BEHIND = 'Behind target (no upgrade pending)';
     var HIVE_UPGRADE_GROUP_UPTODATE = 'Up to date';
 
     /* Sort weight for an upgrade-state group header. Queued (the actionable
-       "ready but not triggered" bucket) sorts first, then Upgrading, then Up to
-       date; anything else sorts last. */
+       "ready but not triggered" bucket) sorts first, then Upgrading, then
+       Behind, then Up to date; anything else sorts last. */
     var UPGRADE_GROUP_UNKNOWN_ORDER = Number.MAX_SAFE_INTEGER;
     function _upgradeGroupOrder(label) {
       if (label === HIVE_UPGRADE_GROUP_QUEUED) return 0;
       if (label === HIVE_UPGRADE_GROUP_UPGRADING) return 1;
-      if (label === HIVE_UPGRADE_GROUP_UPTODATE) return 2;
+      if (label === HIVE_UPGRADE_GROUP_BEHIND) return 2;
+      if (label === HIVE_UPGRADE_GROUP_UPTODATE) return 3;
       return UPGRADE_GROUP_UNKNOWN_ORDER;
     }
 
@@ -8787,7 +9174,7 @@
         /* QUADRANT folds the four axis sorts plus the composite. Sorting by a
            single axis is the point of the column: "weakest efficiency" turns
            the table into a worklist rather than a picture. */
-        '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored against the hives in the current view. Hover a kite for the numbers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: autonomy level, governor posture, merge acceptance and enrolled scope') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: token burn rate, spend per merged PR, rework and output per agent') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merged PRs, relay throughput, work-source autonomy and work stalled on a human')) + '</th>' +
+        '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored 0–100 on fixed curves from the hive's own evidence; the fleet shape behind each kite is the median. Hover a kite for the numbers and ⓘ for what each axis covers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: revert rate, false-approve rate, autonomy level, delegation, merge acceptance, evidence coverage and boundary blocks') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: tokens per merged PR, burn rate, rework, output per agent and agent idle time') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merge throughput per active repo, relay throughput, contributor engagement, work-source autonomy and work stalled on a human')) + '</th>' +
         '<th class="th-mid" title="Compliance framework profiles and the pass rate of the latest posture-check run; click the pill to open the hive&#39;s Compliance settings">Compliance</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is

@@ -85,6 +85,9 @@ const (
 var DefaultExcludeLabels = []string{
 	"kind/epic", "epic", "meta", "meta-tracker", "tracker", "roadmap", "security", "kind/security",
 	"blocked", "hold", "do-not-merge", "wontfix", "duplicate", "invalid",
+	// Claimed / in-progress / PR-covered issues, under the stage labels
+	// (hivecommons/hive#12436) and the retired spellings they replaced.
+	"stage/020-claimed", "stage/030-pr-in-progress", "stage/040-covered-by-pr",
 	"hive/in-progress", "hive/already-done", "hive/covered-by-pr", "🐝 covered by pr",
 	// The hive's own reports to itself are never a newcomer's first issue.
 	"hive/advisory", "hive/selfreport", "hive/sentinel", "hive/fleet", "fleet",

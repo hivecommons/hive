@@ -3999,6 +3999,55 @@ type StageLabelsConfig struct {
 	// it is marked stage/stalled, keyed by stage slug (e.g. "review-pending":
 	// "1h"). Unset slugs keep the built-in table default; "0" means never.
 	Dwell map[string]string `yaml:"dwell,omitempty"`
+	// ContributorNudge configures the comment + relay interrupt the hive
+	// sends a contributor whose PR entered stage/072-returned-to-contributor
+	// (hivecommons/hive#12436).
+	ContributorNudge ContributorNudgeConfig `yaml:"contributor_nudge"`
+	// PresenceWindow is how recent a relay heartbeat must be for the
+	// contributor to count as online (default 15m). Online contributors get
+	// the fix-pr relay interrupt immediately; offline ones only the comment.
+	PresenceWindow string `yaml:"presence_window,omitempty"`
+}
+
+// ContributorNudgeConfig is governor.labels.stage.contributor_nudge.
+type ContributorNudgeConfig struct {
+	// Enabled turns the nudge on. nil = true.
+	Enabled *bool `yaml:"enabled"`
+	// RenudgeInterval is how long after the first nudge the hive nudges once
+	// more (the documented cap is 2 nudges per head). Default: the stage's
+	// dwell (24h), i.e. the re-nudge coincides with stage/stalled.
+	RenudgeInterval string `yaml:"renudge_interval,omitempty"`
+}
+
+// IsEnabled reports whether the contributor nudge runs (default on).
+func (c ContributorNudgeConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
+
+// DefaultPresenceWindow is governor.labels.stage.presence_window's default.
+const DefaultPresenceWindow = 15 * time.Minute
+
+// EffectiveRenudgeInterval parses RenudgeInterval; unset/invalid returns 0
+// (the caller falls back to the stage dwell).
+func (c ContributorNudgeConfig) EffectiveRenudgeInterval() time.Duration {
+	return parseDurationOr(c.RenudgeInterval, 0)
+}
+
+// EffectivePresenceWindow parses PresenceWindow with the 15m default.
+func (s StageLabelsConfig) EffectivePresenceWindow() time.Duration {
+	return parseDurationOr(s.PresenceWindow, DefaultPresenceWindow)
+}
+
+// parseDurationOr parses a config duration string; empty, unparsable or
+// non-positive values return def.
+func parseDurationOr(raw string, def time.Duration) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }
 
 // IsEnabled reports whether the stage reconciler runs (default on).
@@ -5150,6 +5199,35 @@ type ContributeAnnouncement struct {
 // are not admission/queue controls.
 type ContributeConfig struct {
 	HelpLinks []ContributeHelpLink `yaml:"help_links,omitempty" json:"help_links,omitempty"`
+	// MaxParallelFixes caps how many red-PR fix sessions the hive dispatches
+	// to one contributor at a time, regardless of what their relay advertises
+	// (hivecommons/hive#12436). 0/unset = DefaultMaxParallelFixes. A relay
+	// that advertises no parallel capability always gets capacity 1.
+	MaxParallelFixes int `yaml:"max_parallel_fixes,omitempty" json:"max_parallel_fixes,omitempty"`
+	// MinFocusWindow is the minimum uninterrupted time a preempted primary
+	// task runs after resuming before the hive may preempt it again
+	// (default 30m). Only applies to relays without parallel sessions.
+	MinFocusWindow string `yaml:"min_focus_window,omitempty" json:"min_focus_window,omitempty"`
+}
+
+// DefaultMaxParallelFixes is contribute.max_parallel_fixes's default.
+const DefaultMaxParallelFixes = 2
+
+// DefaultMinFocusWindow is contribute.min_focus_window's default.
+const DefaultMinFocusWindow = 30 * time.Minute
+
+// EffectiveMaxParallelFixes returns the server-side ceiling on per-contributor
+// fix sessions.
+func (c ContributeConfig) EffectiveMaxParallelFixes() int {
+	if c.MaxParallelFixes <= 0 {
+		return DefaultMaxParallelFixes
+	}
+	return c.MaxParallelFixes
+}
+
+// EffectiveMinFocusWindow parses MinFocusWindow with the 30m default.
+func (c ContributeConfig) EffectiveMinFocusWindow() time.Duration {
+	return parseDurationOr(c.MinFocusWindow, DefaultMinFocusWindow)
 }
 
 type ContributeHelpLink struct {

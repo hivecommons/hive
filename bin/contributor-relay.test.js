@@ -13614,6 +13614,141 @@ test('#9063 readiness before a no-work response waits for the tracked retry', ()
 // failure before it was an unhandled rejection the exit pre-empted. The
 // readiness callback under test for #7732 (armCLIReadyWait's .then) IS a
 // microtask, so it can only be observed by a test that yields to it.
+// ---------------------------------------------------------------------------
+// hivecommons/hive#12436 — stage-072 `fix-pr` interrupts: spawn a parallel fix
+// session when capacity allows, preempt the interactive primary otherwise,
+// defer behind a headless primary, and run deferred fixes before `ready`.
+// ---------------------------------------------------------------------------
+const FIX_PR_TASK = (id, extra = {}) => ({
+  type: 'task_assign', task_id: id, task_gen: 7, kind: 'fix-pr', priority: 'interrupt', mode: 'spawn',
+  repo: 'foo/bar', number: 99, title: 'red pr', url: 'https://github.com/foo/bar/pull/99',
+  fix_prs: [{ repo: 'foo/bar', number: 99, head_sha: 'abc', failing_checks: ['build'] }],
+  prompt: 'Fix PR foo/bar#99 on its existing branch', ...extra,
+});
+
+test('#12436 relay advertises fix_pr_interrupt_v1, and parallel_sessions only with a headless backend', () => {
+  const headless = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '2' } });
+  try {
+    const caps = headless.detectCapabilities();
+    assert.ok(caps.relay_capabilities.includes('fix_pr_interrupt_v1'));
+    assert.ok(caps.relay_capabilities.includes('parallel_sessions'));
+    assert.strictEqual(caps.max_parallel_fixes, 2);
+    assert.ok(headless.relaySupportsParallelFixes());
+  } finally { teardown(headless); }
+  const noParallel = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '0' } });
+  try {
+    const caps = noParallel.detectCapabilities();
+    assert.ok(caps.relay_capabilities.includes('fix_pr_interrupt_v1'));
+    assert.ok(!caps.relay_capabilities.includes('parallel_sessions'));
+    assert.strictEqual(caps.max_parallel_fixes, undefined);
+  } finally { teardown(noParallel); }
+});
+
+test('#12436 spawn: a fix-pr interrupt runs as a parallel child and never replaces the primary task', () => {
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '1' }, execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    const primary = { task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' };
+    relay.setCurrentTask(primary);
+    const before = relay.__execFileCalls.length;
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-1')), hub);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary', 'primary task must stay current');
+    assert.ok(sent.some(m => m.type === 'task_accepted' && m.task_id === 'fix-1'), `fix must be accepted: ${JSON.stringify(sent)}`);
+    assert.ok(!sent.some(m => m.type === 'task_failed'), 'a fix interrupt is not "Already has active task"');
+    assert.strictEqual(relay.__execFileCalls.length, before + 1, 'one parallel child spawned');
+    assert.deepStrictEqual(relay.fixPRState().parallel, ['fix-1']);
+    // Cap reached: a second spawn-mode fix is NOT spawned; in interactive mode it
+    // preempts the primary pane instead (hub-side budget normally prevents this).
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-2')), hub);
+    assert.strictEqual(relay.__execFileCalls.length, before + 1, 'cap of 1 parallel fix respected');
+    assert.strictEqual(relay.fixPRState().preempting, 'fix-2');
+    // Child exits 0 → task_complete for the fix id, primary untouched.
+    relay.__completeDeferredExecFile(null, 'pushed\n');
+    const done = sent.find(m => m.type === 'task_complete' && m.task_id === 'fix-1');
+    assert.ok(done, `task_complete for the fix expected: ${JSON.stringify(sent)}`);
+    assert.strictEqual(done.task_gen, 7);
+    assert.deepStrictEqual(relay.fixPRState().parallel, []);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#12436 spawn: a non-zero child exit reports task_failed for the fix only', () => {
+  const relay = loadRelay({ backend: 'claude', env: { HIVE_MAX_PARALLEL_FIXES: '1' }, execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.setCurrentTask({ task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' });
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-9')), hub);
+    relay.__completeDeferredExecFile(Object.assign(new Error('exit'), { code: 2 }), '', 'boom');
+    const failed = sent.find(m => m.type === 'task_failed' && m.task_id === 'fix-9');
+    assert.ok(failed, JSON.stringify(sent));
+    assert.ok(/exited 2/.test(failed.reason), failed.reason);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#12436 preempt: the interactive primary is told to park, fix and resume; the pane marker settles the fix', () => {
+  const relay = loadRelay({ backend: 'copilot', env: { HIVE_MAX_PARALLEL_FIXES: '0' } });
+  const log = console.log; console.log = () => {};
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.setCliReady(true);
+    relay.setCurrentTask({ task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' });
+    const sendsBefore = relay.__tmuxSends().length;
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-p', { mode: 'preempt' })), hub);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary', 'preempt keeps the primary lease');
+    assert.strictEqual(relay.fixPRState().preempting, 'fix-p');
+    assert.ok(sent.some(m => m.type === 'task_accepted' && m.task_id === 'fix-p'));
+    const typed = relay.__tmuxSends().slice(sendsBefore).join('\n');
+    assert.ok(/INTERRUPT \(hive fix-pr, preempt mode\)/.test(typed), `preempt prompt must reach the pane: ${typed}`);
+    assert.ok(/Park foo\/bar#1/.test(typed) && /resume foo\/bar#1/.test(typed), typed);
+    // A second fix while one preempts queues behind it.
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-q', { mode: 'preempt' })), hub);
+    assert.deepStrictEqual(relay.fixPRState().deferred, ['fix-q']);
+    // The echoed instruction must not count as the marker.
+    relay.scanPaneForFixMarkers([`3. When the fix is pushed, print exactly this line on its own: ${relay.FIX_PR_DONE_MARKER} fix-p`]);
+    assert.strictEqual(relay.fixPRState().preempting, 'fix-p');
+    relay.scanPaneForFixMarkers(['working…', `${relay.FIX_PR_DONE_MARKER} fix-p`, '']);
+    assert.ok(sent.some(m => m.type === 'task_complete' && m.task_id === 'fix-p' && m.task_gen === 7), JSON.stringify(sent));
+    // The queued fix now preempts in turn.
+    assert.strictEqual(relay.fixPRState().preempting, 'fix-q');
+    assert.deepStrictEqual(relay.fixPRState().deferred, []);
+    relay.scanPaneForFixMarkers([`${relay.FIX_PR_FAILED_MARKER} fix-q cannot reproduce`]);
+    const failed = sent.find(m => m.type === 'task_failed' && m.task_id === 'fix-q');
+    assert.ok(failed && /cannot reproduce/.test(failed.reason), JSON.stringify(sent));
+    assert.strictEqual(relay.fixPRState().preempting, null);
+    assert.strictEqual(relay.getCurrentTask().task_id, 't-primary');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#12436 headless primary: a preempt fix is deferred and runs before the next ready', () => {
+  const relay = loadRelay({ backend: 'claude', mode: 'headless', env: { HIVE_MAX_PARALLEL_FIXES: '0', HIVE_CONTRIBUTOR_QUOTA_GUARD: 'off' }, execFileResult: { defer: true } });
+  const log = console.log; console.log = () => {};
+  try {
+    const hub = relay.getHubs()[0];
+    const sent = [];
+    hub.ws = { readyState: 1, send: p => sent.push(JSON.parse(p)) };
+    relay.setCurrentTask({ task_id: 't-primary', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 1, title: 'primary' });
+    relay.handleMessage(JSON.stringify(FIX_PR_TASK('fix-d', { mode: 'preempt' })), hub);
+    assert.deepStrictEqual(relay.fixPRState().deferred, ['fix-d']);
+    assert.ok(sent.some(m => m.type === 'task_accepted' && m.task_id === 'fix-d'));
+    // Primary finishes; the relay asks for work → the deferred fix is dispatched instead of `ready`.
+    relay.setCurrentTask(null);
+    const took = relay.requestWork(hub, 'headless_task_complete');
+    assert.strictEqual(took, false, 'requestWork must not send ready while a fix is deferred');
+    assert.ok(!sent.some(m => m.type === 'ready'), `no ready while a fix waits: ${JSON.stringify(sent.map(m => m.type))}`);
+    assert.strictEqual(relay.getCurrentTask() && relay.getCurrentTask().task_id, 'fix-d', 'deferred fix becomes the current task');
+    assert.deepStrictEqual(relay.fixPRState().deferred, []);
+  } finally { console.log = log; teardown(relay); }
+});
+
 (async () => {
   for (const [name, fn] of only ? tests.filter(([n]) => n.includes(only)) : tests) {
     try {

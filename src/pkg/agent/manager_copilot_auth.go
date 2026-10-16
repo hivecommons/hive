@@ -47,6 +47,21 @@ const (
 	// terminal and the others need a nudge), so the cap only engages on a
 	// theory that has now failed repeatedly.
 	tokenRestartMaxAttempts = 3
+	// tokenRestartWindow / tokenRestartWindowMax bound token-triggered restarts
+	// ACROSS cap re-arms. The per-boot cap above is re-armed whenever the
+	// pane shows a CLI marker past the boot grace (shouldResetTokenRestartCap),
+	// and a Copilot CLI whose credential is present but REJECTED satisfies
+	// that on every boot: it paints a clean ready prompt, only the first kick
+	// surfaces "Authorization error … Run /login", the pane flips back to the
+	// login screen and the heal fires again as attempt 1 of 3 — observed on
+	// six hosted hives at 5–17 restarts/24h, every one logged as attempt 1
+	// (hivecommons/hive#12466). The rolling window is the hub's own
+	// restart-storm window and the budget sits below its 5/24h storm bar
+	// (pkg/hub/spoke.DefaultAgentRestartProblemThreshold), so a login the
+	// restart cannot fix can never be reported as a storm by itself. Cleared
+	// only by an operator reset/resume, exactly like the per-boot cap.
+	tokenRestartWindow    = 24 * time.Hour
+	tokenRestartWindowMax = tokenRestartMaxAttempts
 	// tokenRestartKickGrace suppresses token-triggered restarts after a kick
 	// delivery so the restart can never destroy just-delivered work.
 	tokenRestartKickGrace = 10 * time.Minute

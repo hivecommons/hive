@@ -558,9 +558,12 @@ func (p *evidencePool) shadowView() *EvidenceShadowView {
 		Intent:     newEvidenceShadowGateView(p.intentHives, p.intentGate)}
 }
 
-// EvidenceCalibrationBucket is one pooled fleet calibration bucket.
+// EvidenceCalibrationBucket is one pooled fleet calibration bucket. Bad is
+// the pooled bad-outcome count so the view layer can regroup the six
+// heartbeat buckets into the spoke card's confidence ranges (#12456).
 type EvidenceCalibrationBucket struct {
 	Bucket int `json:"bucket"`
+	Bad    int `json:"bad"`
 	EvidenceRate
 }
 
@@ -591,7 +594,11 @@ type EvidenceView struct {
 	Reporting int            `json:"reporting"`
 	// WindowUnreported counts hives that report the 90-day block but not
 	// the selected shorter window (spoke predates windows).
-	WindowUnreported       int                         `json:"window_unreported"`
+	WindowUnreported int `json:"window_unreported"`
+	// Findings are the plain-language sentences the view leads with
+	// (#12456), generated from the numbers below by evidenceFindings and
+	// reproduced client-side for a filtered selection.
+	Findings               []string                    `json:"findings"`
 	Calibration            []EvidenceCalibrationBucket `json:"calibration"`
 	ByACMMLevel            []EvidenceACMMLevel         `json:"by_acmm_level"`
 	FamilyFalseApproveRate EvidenceFamilyFalseApprove  `json:"family_false_approve_rate"`
@@ -783,7 +790,7 @@ func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) Evidence
 	}
 	out.Calibration = make([]EvidenceCalibrationBucket, 0, EvidenceCalibrationBuckets)
 	for i, b := range pooled {
-		out.Calibration = append(out.Calibration, EvidenceCalibrationBucket{Bucket: i, EvidenceRate: newEvidenceRate(b.Bad, b.N)})
+		out.Calibration = append(out.Calibration, EvidenceCalibrationBucket{Bucket: i, Bad: b.Bad, EvidenceRate: newEvidenceRate(b.Bad, b.N)})
 	}
 	out.ByACMMLevel = make([]EvidenceACMMLevel, 0, len(acmm))
 	for level, a := range acmm {
@@ -803,6 +810,42 @@ func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) Evidence
 	}
 	out.RecordCoverage = newEvidenceRate(covered, mergedTotal)
 	sort.Slice(out.Hives, func(i, j int) bool { return out.Hives[i].ID < out.Hives[j].ID })
+	out.Findings = evidenceFindings(out)
+	return out
+}
+
+// filterEvidenceRegistry narrows the registry to the hives named by
+// `hive=` (repeatable or comma-separated ids) and/or `level=` (ACMM level),
+// the same selection the drill-down's chips make client-side. Unknown ids
+// simply match nothing; an absent filter returns every hive.
+func filterEvidenceRegistry(hives []RegistryEntry, q url.Values) []RegistryEntry {
+	ids := map[string]bool{}
+	for _, raw := range q["hive"] {
+		for _, id := range strings.Split(raw, ",") {
+			if id = strings.TrimSpace(id); id != "" {
+				ids[id] = true
+			}
+		}
+	}
+	level, hasLevel := -1, false
+	if raw := strings.TrimSpace(q.Get("level")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			level, hasLevel = n, true
+		}
+	}
+	if len(ids) == 0 && !hasLevel {
+		return hives
+	}
+	out := make([]RegistryEntry, 0, len(hives))
+	for _, h := range hives {
+		if len(ids) > 0 && !ids[h.ID] {
+			continue
+		}
+		if hasLevel && h.ACMMLevel != level {
+			continue
+		}
+		out = append(out, h)
+	}
 	return out
 }
 
@@ -815,7 +858,7 @@ func (s *HubServer) handleEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.RLock()
-	view := buildEvidenceViewWindow(s.registry.Hives, win)
+	view := buildEvidenceViewWindow(filterEvidenceRegistry(s.registry.Hives, r.URL.Query()), win)
 	s.mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(view)
