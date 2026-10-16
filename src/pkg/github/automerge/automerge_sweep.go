@@ -119,6 +119,9 @@ type Options struct {
 	// ContributorNudge receives stage-072 nudges (hivecommons/hive#12436);
 	// nil posts the GitHub comment only.
 	ContributorNudge ContributorNudgeSink
+	// CheckSummary reads a head's check digest for human-stage routing
+	// (hivecommons/hive#12528); nil uses the GitHub client.
+	CheckSummary CheckSummarizer
 }
 
 // Engine owns the automerge sweep policy state.
@@ -174,6 +177,7 @@ type Engine struct {
 	stageTracker     *StageTracker
 	stageStore       *stagelabels.Store
 	contributorNudge ContributorNudgeSink
+	checkSummary     CheckSummarizer
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -212,6 +216,7 @@ func New(transport Transport, opts Options) *Engine {
 		stageTracker:                      opts.StageTracker,
 		stageStore:                        opts.StageStore,
 		contributorNudge:                  opts.ContributorNudge,
+		checkSummary:                      opts.CheckSummary,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}

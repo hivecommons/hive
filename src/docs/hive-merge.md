@@ -415,8 +415,11 @@ it evaluated, derived from the same per-lane reason it logs
 `contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
-contributor PR → `stage/072-returned-to-contributor`, hold / untrusted author →
-`stage/090-needs-human`, merged → no stage), plus one `author/*` label saying
+contributor PR → `stage/072-returned-to-contributor`, hold / sentinel alert →
+`stage/085-needs-decision`, untrusted author with an approve verdict at the
+current head, green checks, DCO and soak done →
+`stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
+missing), merged → no stage), plus one `author/*` label saying
 which admission tier the lane actually used and `stage/stalled` /
 `stage/regressed` when the progression is disrupted. Writes happen only when
 the planned set differs from the labels already on the PR, under the

@@ -173,6 +173,10 @@ type stageObservation struct {
 	Body    string
 	// HeadRepo is the head's owner/repo (differs from Display on a fork).
 	HeadRepo string
+	// Route is set by ApplyStageLabels when the lane handed the PR to a
+	// human and the evidence routed it (feeds the entry comments and the
+	// 072 nudge diagnosis).
+	Route *stagelabels.Route
 }
 
 // StageTracker accumulates observations across the lanes of one cycle. One
@@ -183,11 +187,12 @@ type StageTracker struct {
 	obs     map[string]map[string]stageObservation // key → lane → observation
 	details map[string]stageDetail                 // key → detail noted by trySweep*
 	ensured map[string]bool                        // repo → labels provisioned this process
+	checks  map[string]humanChecksEntry            // key → head check digest (human routing)
 }
 
 // NewStageTracker returns an empty tracker.
 func NewStageTracker() *StageTracker {
-	return &StageTracker{obs: map[string]map[string]stageObservation{}, details: map[string]stageDetail{}, ensured: map[string]bool{}}
+	return &StageTracker{obs: map[string]map[string]stageObservation{}, details: map[string]stageDetail{}, ensured: map[string]bool{}, checks: map[string]humanChecksEntry{}}
 }
 
 var sharedStageTracker = NewStageTracker()
@@ -356,6 +361,10 @@ type stageVerdict struct {
 	// lane's reason may be a CI state while the stage was really decided
 	// by the reviewer verdict.
 	Reason string
+	// Human marks a hand-off to a person (085/090 candidate) that
+	// ApplyStageLabels refines against the head's evidence
+	// (stagelabels.RouteHuman) before it is written.
+	Human bool
 }
 
 // Opinion ranks. A lane that cannot vouch for the author has only a weak
@@ -444,7 +453,8 @@ var stageAdmissionReasons = map[string]int{
 }
 
 // stageNeedsHumanReasons are reasons that mean the hive will not merge this
-// PR unattended and a person must act, whoever the author is.
+// PR unattended whoever the author is: a person owes a DECISION (stage
+// 085), not merely a merge click.
 var stageNeedsHumanReasons = map[string]bool{
 	contributorLaneReasonWorkflowPath: true, contributorLaneReasonTestsRemoved: true,
 	contributorLaneReasonNoReviewer: true, contributorLaneReasonReporterTrustHold: true, contributorLaneReasonSentinelBlocked: true,
@@ -509,13 +519,15 @@ func classifyStage(o stageObservation) stageVerdict {
 		if hasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
-		return stageVerdict{Stage: stagelabels.NeedsHuman, Rank: rank}
+		// Trust is the only thing this lane holds against the PR: a 090
+		// candidate, refined by ApplyStageLabels against the head's evidence.
+		return stageVerdict{Stage: stagelabels.ReadyForHumanMerge, Rank: rank, Human: true}
 	}
 	if strings.HasPrefix(reason, "excluded-label:") || stageNeedsHumanReasons[reason] {
 		if hasLabelFold(o.Labels, "needs-rebase") {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned}
 		}
-		return stageVerdict{Stage: stagelabels.NeedsHuman, Rank: stageRankOwned}
+		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
 	if stageFixingReasons[reason] || strings.HasPrefix(reason, "label:") && strings.Contains(reason, "rebase") {
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned}
@@ -591,7 +603,7 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Author, st
 		switch {
 		case author == stagelabels.AuthorNone:
 			author = stagelabels.AuthorUntrusted
-		case best.Stage == stagelabels.NeedsHuman && author == stagelabels.AuthorTrusted:
+		case best.Stage == stagelabels.ReadyForHumanMerge && author == stagelabels.AuthorTrusted:
 			// Some lane admits this author; a lane that cannot vouch for
 			// them has nothing to say about the stage. Leave it as is.
 			best = stageVerdict{}
@@ -644,6 +656,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
+		}
+		var route stagelabels.Route
+		if verdict.Human && !verdict.Terminal {
+			route = c.routeHuman(ctx, tracker, key, obs, verdict.Stage, now)
+			verdict.Stage = route.Stage
+			if route.LaneReason != "" {
+				obs.Reason = route.LaneReason
+			}
+			obs.Route = &route
 		}
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
@@ -726,6 +747,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 		}
+		if obs.Route != nil && (want.Stage == stagelabels.ReadyForHumanMerge || want.Stage == stagelabels.NeedsDecision) {
+			n, err := c.postHumanEntry(ctx, store, key, obs, author, *obs.Route)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
 		if want.Stage == stagelabels.ReturnedToContributor && policy.ContributorNudge {
 			n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
 			result.Comments += n
@@ -799,6 +827,23 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 			break
 		}
 		opts.Page = resp.NextPage
+	}
+	for old, stage := range stagelabels.Renames {
+		// Rename in place so every item carrying the old spelling keeps its
+		// stage; a repo that already has the new name just drops the old.
+		cur, hadOld := existing[strings.ToLower(old)]
+		if _, hasNew := existing[strings.ToLower(stage.Label())]; !hadOld || hasNew {
+			continue
+		}
+		renamed, _, err := c.gh.Issues.EditLabel(ctx, owner, repo, cur.GetName(), &gh.Label{Name: gh.Ptr(stage.Label()), Color: gh.Ptr(stagelabels.StageColor), Description: gh.Ptr(stage.Description())})
+		if err != nil {
+			return fmt.Errorf("renaming label %s to %s in %s: %w", old, stage.Label(), full, err)
+		}
+		delete(existing, strings.ToLower(old))
+		if renamed == nil {
+			renamed = &gh.Label{Name: gh.Ptr(stage.Label()), Color: gh.Ptr(stagelabels.StageColor)}
+		}
+		existing[strings.ToLower(stage.Label())] = renamed
 	}
 	for _, def := range stagelabels.AllLabelDefs() {
 		cur, ok := existing[strings.ToLower(def.Name)]

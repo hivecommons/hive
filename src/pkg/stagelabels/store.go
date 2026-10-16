@@ -67,6 +67,11 @@ type Record struct {
 	AdoptedAt   time.Time `json:"adopted_at,omitempty"`
 	// AdoptCheckedAt is the last time the superseding PR's state was polled.
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
+	// EntryCommented records that the stage's entry comment (085 "needs a
+	// decision", 090 "ready for a human merge") was posted for the current
+	// stage visit; reset on every stage change so each transition explains
+	// itself exactly once (hivecommons/hive#12528).
+	EntryCommented bool `json:"entry_commented,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -216,6 +221,7 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 	if !had || prev.Stage != stage {
 		next.EnteredAt = now
 		next.StallCommented = false
+		next.EntryCommented = false
 		tr.Changed = true
 	}
 	switch {
@@ -248,10 +254,12 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 // worth flagging. A lower number is backward, except leaving a repair stage
 // (fixing, returned-to-contributor, adopted-by-hive) for review of the new
 // head, which is the repair route itself, not a second regression, and
-// leaving needs-human: 090 is a parking stage ("the hive cannot act"), not
-// progress, so moving out of it means the blocker cleared, whatever the
-// destination (hivecommons/hive#12403 carried stage/regressed through
-// 090 → 050 → 072 churn that was never a step backwards for the author).
+// leaving the two human stages: 085 and 090 are parking stages ("the hive
+// cannot act"), not progress, so moving out of them means the picture
+// changed, whatever the destination — 090 → 072 is the hive learning the
+// head is red, not the author losing ground (hivecommons/hive#12403 carried
+// stage/regressed through 090 → 050 → 072 churn that was never a step
+// backwards for the author).
 func IsRegression(from, to Stage) bool {
 	if !to.Before(from) {
 		return false
@@ -266,7 +274,7 @@ func IsRegression(from, to Stage) bool {
 		return to != ReviewPending && to != Reviewed
 	case Fixing, ReturnedToContributor:
 		return to != ReviewPending && to != Reviewed
-	case NeedsHuman:
+	case ReadyForHumanMerge, NeedsDecision:
 		return false
 	}
 	return true
@@ -281,6 +289,20 @@ func (s *Store) MarkRegressionCommented(key string) {
 		return
 	}
 	r.RegressionCommented = true
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkEntryCommented records that the entry comment for the current stage
+// visit was posted.
+func (s *Store) MarkEntryCommented(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.EntryCommented {
+		return
+	}
+	r.EntryCommented = true
 	s.items[key] = r
 	s.dirty = true
 }

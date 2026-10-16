@@ -67,6 +67,9 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 		case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/labels/"):
 			var body map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			if old := strings.TrimPrefix(path, "/repos/acme/widget/labels/"); old != body["name"] {
+				delete(api.labels, old) // rename in place
+			}
 			api.labels[body["name"]] = body["color"]
 			api.edits = append(api.edits, body["name"]+"="+body["color"])
 			_ = json.NewEncoder(w).Encode(body)
@@ -145,6 +148,13 @@ func stagePR(number int, labels ...string) *gh.PullRequest {
 	return pr
 }
 
+// greenChecks is the default head digest for stage-engine tests: every
+// gating check green, DCO signed. Tests that need another picture swap
+// Engine.checkSummary.
+func greenChecks(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
+	return hgithub.CommitChecksSummary{Total: 3, Green: 3, DCO: 1}, nil
+}
+
 func newStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock) (*Engine, *StageTracker, *stagelabels.Store) {
 	t.Helper()
 	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, apiURL)
@@ -156,6 +166,7 @@ func newStageEngine(t *testing.T, apiURL string, clock *contributorLaneClock) (*
 		StageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
 		StageTracker:     tracker,
 		StageStore:       store,
+		CheckSummary:     greenChecks,
 	})
 	return e, tracker, store
 }
@@ -194,14 +205,14 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "contributor changes requested", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
 		{name: "soaking", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(30m)"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "merge pool", obs: stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
-		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.NeedsHuman, rank: stageRankOwned},
-		{name: "sentinel blocked", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked}, want: stagelabels.NeedsHuman, rank: stageRankOwned},
+		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
+		{name: "sentinel blocked", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
 		{name: "needs-rebase hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "excluded-label:needs-rebase", Labels: []string{"needs-rebase"}}, want: stagelabels.Fixing, rank: stageRankOwned},
-		{name: "no claim is a weak admission opinion", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, want: stagelabels.NeedsHuman, rank: stageRankAdmission},
-		{name: "claim tier below require_tiers", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier}, want: stagelabels.NeedsHuman, rank: stageRankAdmission},
+		{name: "no claim is a weak admission opinion", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},
+		{name: "claim tier below require_tiers", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},
 		{name: "no claim but needs-rebase", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Labels: []string{"needs-rebase"}}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
-		{name: "untrusted role weak", obs: stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, want: stagelabels.NeedsHuman, rank: stageRankRole},
-		{name: "human merge path", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, want: stagelabels.NeedsHuman, rank: stageRankOwned},
+		{name: "untrusted role weak", obs: stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, want: stagelabels.ReadyForHumanMerge, rank: stageRankRole},
+		{name: "human merge path", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
 		{name: "approved green unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
 		{name: "approved green lane error", obs: stageObservation{Lane: stageLaneContributor, Reason: "review-state-check", Err: true, Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
 		{name: "unapproved unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new"}},
@@ -259,7 +270,7 @@ func TestResolveStageLanePrecedence(t *testing.T) {
 	}
 	// Only the weak opinion: needs-human + author/untrusted.
 	v, author, _ = resolveStage([]stageObservation{{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}})
-	if v.Stage != stagelabels.NeedsHuman || author != stagelabels.AuthorUntrusted {
+	if v.Stage != stagelabels.ReadyForHumanMerge || author != stagelabels.AuthorUntrusted {
 		t.Fatalf("weak-only got %v/%v", v.Stage, author)
 	}
 	// Self lane outranks the contributor lane's hand-off.
@@ -322,7 +333,7 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
 				{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier, Detail: stageDetail{Author: stagelabels.AuthorContributor}},
 			},
-			stage: stagelabels.NeedsHuman, rank: stageRankAdmission, author: stagelabels.AuthorContributor, lane: stageLaneContributor,
+			stage: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission, author: stagelabels.AuthorContributor, lane: stageLaneContributor,
 		},
 		{
 			name: "unknown author with no claim is needs-human untrusted",
@@ -330,7 +341,7 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
 				{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Detail: stageDetail{Author: stagelabels.AuthorUntrusted}},
 			},
-			stage: stagelabels.NeedsHuman, rank: stageRankAdmission, author: stagelabels.AuthorUntrusted, lane: stageLaneContributor,
+			stage: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission, author: stagelabels.AuthorUntrusted, lane: stageLaneContributor,
 		},
 		{
 			// A hold-class reason applies whoever the author is.
@@ -339,7 +350,7 @@ func TestResolveStageAdmissionOpinions(t *testing.T) {
 				{Lane: stageLaneTrusted, Reason: "untrusted-author-role"},
 				{Lane: stageLaneContributor, Reason: contributorLaneReasonSentinelBlocked, Detail: trusted},
 			},
-			stage: stagelabels.NeedsHuman, rank: stageRankOwned, author: stagelabels.AuthorTrusted, lane: stageLaneContributor,
+			stage: stagelabels.ReadyForHumanMerge, rank: stageRankOwned, author: stagelabels.AuthorTrusted, lane: stageLaneContributor,
 		},
 	}
 	for _, tc := range cases {
@@ -429,26 +440,37 @@ func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 		t.Fatalf("idempotent pass: res=%+v err=%v writes=%d lists=%d", res, err, api.writes(), api.lists)
 	}
 
-	// Hold applied by a human → needs-human replaces review-pending; the
-	// human's hold label is left alone.
+	// Hold applied by a human → needs-decision (085) replaces review-pending
+	// (no reviewer is configured here, which is itself a decision); the
+	// human's hold label is left alone and the entry comment names both.
 	api.reset()
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "author/contributor", "stage/050-review-pending"), "excluded-label:hold", false, nil)
 	e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
 	if _, err = e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/090-needs-human"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending"}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending"}) {
 		t.Fatalf("hold transition added=%v removed=%v", api.added, api.removed)
+	}
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) || !strings.Contains(api.comments[0], "the `hold` label is set") || !strings.Contains(api.comments[0], "no reviewer agent is configured") {
+		t.Fatalf("085 entry comments = %q", api.comments)
+	}
+	// Same state again: no second entry comment.
+	api.reset()
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "author/contributor", "stage/085-needs-decision"), "excluded-label:hold", false, nil)
+	e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+	if _, err = e.ApplyStageLabels(ctx); err != nil || len(api.comments) != 0 || api.writes() != 0 {
+		t.Fatalf("085 dedupe: err=%v comments=%q writes=%d", err, api.comments, api.writes())
 	}
 
 	// Merged → every owned label removed, record forgotten.
 	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "author/contributor", "stage/090-needs-human", "stage/stalled"), "", true, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(7, "bug", "hold", "author/contributor", "stage/085-needs-decision", "stage/stalled"), "", true, nil)
 	if _, err = e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
 	sort.Strings(api.removed)
-	if len(api.added) != 0 || !reflect.DeepEqual(api.removed, []string{"author/contributor", "stage/090-needs-human", "stage/stalled"}) {
+	if len(api.added) != 0 || !reflect.DeepEqual(api.removed, []string{"author/contributor", "stage/085-needs-decision", "stage/stalled"}) {
 		t.Fatalf("terminal added=%v removed=%v", api.added, api.removed)
 	}
 	if _, ok := store.Get(stageKey("acme", "widget", 7)); ok {

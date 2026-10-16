@@ -170,7 +170,8 @@ the label (hivecommons/hive#12443).
 | `stage/072-returned-to-contributor` | PR | contributor PR (relay or external): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the author's court | 24h |
 | `stage/074-adopted-by-hive` | PR | the author was unavailable past the grace (see below); the hive pushed `hive/adopt-<n>` at the contributor's head, opened a superseding App PR that keeps the author's commits, and the scanner's red-PR fix kick is finishing it. The original closes automatically when the superseder merges | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green, verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
-| `stage/090-needs-human` | PR | cannot auto-merge; a person must act. Always read with the `author/*` label and any `hold`/`needs-human`/`needs-decision` modifier | none |
+| `stage/085-needs-decision` | PR | a person owes a **decision**, not a merge: `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
+| `stage/090-ready-for-human-merge` | PR | the hive would merge this itself but trust/role blocks it: reviewer verdict approve at the **current** head, required checks green (tide excluded), DCO yes, no sentinel alert, no conflicts, soak elapsed, no hold — and the only remaining lane reason is the author's tier/role. A maintainer's `/lgtm` `/approve` is the only missing step. One `<!-- hive:stage-ready-for-human-merge -->` comment on entry carries the evidence. Always read with the `author/*` label. (Was `stage/090-needs-human` before [#12528](https://github.com/hivecommons/hive/issues/12528); the engine renames the GitHub label in place) | none |
 | `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window — and every check on the head is green (tide excluded). A red optional check holds the PR at 080 instead | 3h |
 
 Dwell thresholds are overridable per slug under `governor.labels.stage.dwell`
@@ -192,7 +193,8 @@ stateDiagram-v2
     s072: 072 returned-to-contributor
     s074: 074 adopted-by-hive
     s080: 080 awaiting-merge-admission
-    s090: 090 needs-human
+    s085: 085 needs-decision
+    s090: 090 ready-for-human-merge
     s100: 100 merge-queue
     s010 --> s020: scanner / relay claim
     s020 --> s030: kick running
@@ -211,8 +213,14 @@ stateDiagram-v2
     s072 --> s074: grace expired, superseding App PR opened
     s074 --> [*]: superseder merged (original closed)
     s074 --> s072: superseder closed unmerged (handed back)
-    s050 --> s090: untrusted author, hold, human merge path
-    s090 --> s050: hold lifted
+    s050 --> s085: hold / sentinel / human-only lane rule
+    s060 --> s090: untrusted tier, head otherwise mergeable, soak elapsed
+    s085 --> s090: hold lifted / alert cleared, head mergeable
+    s090 --> s085: hold or sentinel alert added
+    s090 --> s050: new head pushed (verdict pending)
+    s090 --> s072: head red / DCO missing / conflicts
+    s085 --> s072: head red / DCO missing / conflicts
+    s090 --> [*]: maintainer lgtm+approve → merged
     s100 --> [*]: merged (labels removed)
 ```
 
@@ -266,13 +274,40 @@ used to admit the PR:
 | CI red (`check-failing:*`, `required-check-failing:*`, `status-*`), `conflicting`, `not-mergeable`, `changes-requested`, verdict changes_requested/reject, `needs-rebase` present | `070-fixing` (self-authored lane) / `072-returned-to-contributor` (trusted-author or contributor lane) |
 | `contributor-lane:soaking(...)`, `head-changed-since-eval`, `merge-failed`, `required-checks-expected`, `behind`, `updated-branch`, `release-hold*` — and no red check on the head | `100-merge-queue` |
 | any of the above while a **non-required** check on the current head is red (the lane gates on required checks only, so it still soaks and merges; a reader of the rollup sees ✗) | `080-awaiting-merge-admission`, reason `optional-check-failing:<check>` (so the stall note names the check); a red *required* check is the lane's `required-check-failing:*` → 072 ([#12457](https://github.com/hivecommons/hive/pull/12457)) |
-| `label:hold`, `held`, `label:needs-human`, `exempt-label`, `excluded-label:*`, `sentinel`, `human-merge-path*`, `intent-*`, `contributor-lane:no-claim` / `claim-*` / `author-association` / `no-linked-issue` / `workflow-path` / `tests-removed` / `no-reviewer`, `untrusted-author-role`, `author-permission-missing` | `090-needs-human` |
+| `label:hold`, `held`, `label:needs-human`, `exempt-label`, `excluded-label:*`, `sentinel`, `human-merge-path*`, `intent-*`, `contributor-lane:workflow-path` / `tests-removed` / `no-reviewer` / `reporter-trust-hold` | human hand-off, **decision** cause → routed by the head's evidence (below); lands at `085-needs-decision` when the head is otherwise clean |
+| `contributor-lane:no-claim` / `claim-*` / `author-association` / `no-linked-issue`, `untrusted-author-role`, `author-permission-missing` | human hand-off, **trust** cause → routed by the head's evidence (below); lands at `090-ready-for-human-merge` when the head is otherwise clean |
 | hand-offs (`not-app-authored`, `trusted-bot-lane`, `contributor-lane:app-authored`), transient fetch errors | no opinion — the owning lane decides; nothing is written |
 
 When several lanes see the same PR the self-authored lane outranks the
 trusted-author lane, which outranks the contributor lane; the trusted-author
 lane's bare `untrusted-author-role` is a weak opinion the contributor lane
 refines.
+
+#### Human hand-offs: 072 / 050 / 085 / 060 / 090
+
+A lane stops at admission or at a hold before it looks at CI, so "a human
+must act" alone says nothing about whether the merge button is safe. For
+every such hand-off the engine gathers what the lane skipped — the reviewer
+verdict for the **current** head, a digest of the head's checks (tide and
+the other merge-metadata contexts excluded) and its DCO context, the
+`sentinel-alert` / `hold` / `do-not-merge*` / `needs-decision` labels, the
+conflict reason and the contributor lane's soak — and
+`stagelabels.RouteHuman` decides, in this order
+([#12528](https://github.com/hivecommons/hive/issues/12528)):
+
+| Evidence | Stage |
+|---|---|
+| verdict changes_requested at the head, any red gating check, DCO sign-off missing, merge conflict (`conflicting` / `needs-rebase`) | `072-returned-to-contributor` (`070-fixing` when self-authored); the 072 nudge lists every reason. Moving 085/090 → 072 is not a regression |
+| no verdict for this head yet, or nothing has reported on the head (just pushed) | `050-review-pending` — never 090 without a current-head approve |
+| sentinel alert, hold-class label, no reviewer configured, or a non-trust human-only lane rule | `085-needs-decision` + one entry comment naming the decision ("Needs a decision, not a merge: a sentinel alert is open on this PR.") |
+| checks still running / unreadable, or the lane's soak not yet elapsed | `060-reviewed` |
+| everything above clean and only trust in the way | `090-ready-for-human-merge` + one entry comment: "Ready for a human merge: verdict approved @abc1234, 55/55 checks green, DCO yes, soak 1h0m0s elapsed. Blocked only by `author/newcomer` (below require_tiers)." |
+
+The entry comments are posted once per stage visit (a flip 085 ↔ 090 is a
+new visit) and never as a GitHub review: the hive does not approve on a
+maintainer's behalf, so prow/tide see nothing until a person acts. The
+check digest costs two REST calls per head and is cached 10 minutes; it is
+read only for human-routed PRs.
 
 ### `author/*` — would the hive auto-merge this?
 
