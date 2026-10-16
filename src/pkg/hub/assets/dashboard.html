@@ -1102,7 +1102,7 @@
        point and evidence can exist before any quadrant axis is scored. */
     function fleetQuadrantHeaderHTML() {
       var q = _fleetQuadrant;
-      if (!q || !q.scored_axes) return evidenceFallbackLinkHTML();
+      if (!q || !q.scored_axes) return '';
       var axes = QUADRANT_AXES.map(function(name) {
         var a = quadrantAxis(q, name);
         var val = a.scored ? String(a.score) : '—';
@@ -7984,6 +7984,7 @@
       }
       document.getElementById('hives-container').innerHTML =
         fleetQuadrantHeaderHTML() +
+        ((_fleetQuadrant && _fleetQuadrant.scored_axes) ? '' : evidenceFallbackLinkHTML()) +
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
