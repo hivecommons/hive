@@ -95,6 +95,9 @@ type Options struct {
 	// ContributorSoak overrides the process-wide soak tracker. nil shares
 	// the package default so one-shot engines still soak across ticks.
 	ContributorSoak *ContributorSoakTracker
+	// HeadFirstSeen overrides the process-wide head-age tracker. nil shares
+	// the package default so one-shot engines keep a head's pinned age.
+	HeadFirstSeen *HeadFirstSeenTracker
 	// SentinelLabel returns the configured sentinel alert label. The label also
 	// travels through the transport's hold-label set, but the sweep names this
 	// skip distinctly so operators can tell a sentinel block from an ordinary
@@ -151,6 +154,7 @@ type Engine struct {
 	contributorRegistryTier           ContributorRegistryTierFunc
 	contributorLaneVerdict            ContributorLaneVerdictFunc
 	contributorSoak                   *ContributorSoakTracker
+	headFirstSeen                     *HeadFirstSeenTracker
 	sentinelLabel                     func() string
 	minHeadAge                        time.Duration
 	now                               func() time.Time
@@ -200,6 +204,7 @@ func New(transport Transport, opts Options) *Engine {
 		contributorLaneVerdict:            opts.ContributorLaneVerdict,
 		contributorRegistryTier:           opts.ContributorRegistryTier,
 		contributorSoak:                   opts.ContributorSoak,
+		headFirstSeen:                     opts.HeadFirstSeen,
 		sentinelLabel:                     opts.SentinelLabel,
 		minHeadAge:                        opts.MinHeadAge,
 		now:                               opts.Now,
@@ -215,6 +220,9 @@ func New(transport Transport, opts Options) *Engine {
 	}
 	if e.contributorSoak == nil {
 		e.contributorSoak = sharedContributorSoak
+	}
+	if e.headFirstSeen == nil {
+		e.headFirstSeen = sharedHeadFirstSeen
 	}
 
 	if e.mutation == nil {

@@ -67,7 +67,11 @@ func (t *HeadFirstSeenTracker) observe(key string, candidate, now time.Time) tim
 // headPushedAt is the HeadPushedAt fed to the min_head_age gate for pr at
 // sha: the time first recorded for this head, not the PR's live updated_at.
 func (c *Engine) headPushedAt(owner, repo string, number int, sha string, pr *gh.PullRequest) time.Time {
-	return c.headPushedAtWith(sharedHeadFirstSeen, owner, repo, number, sha, pr)
+	tracker := sharedHeadFirstSeen
+	if c != nil && c.headFirstSeen != nil {
+		tracker = c.headFirstSeen
+	}
+	return c.headPushedAtWith(tracker, owner, repo, number, sha, pr)
 }
 
 func (c *Engine) headPushedAtWith(tracker *HeadFirstSeenTracker, owner, repo string, number int, sha string, pr *gh.PullRequest) time.Time {
