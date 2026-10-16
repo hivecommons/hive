@@ -17,11 +17,13 @@ import (
 
 	"github.com/hivecommons/hive/pkg/adminmcp"
 	"github.com/hivecommons/hive/pkg/hivectl"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
 	defaultTimeout  = 15 * time.Second
+	skewTimeout     = 3 * time.Second
 	envHives        = "HIVE_ADMIN_MCP_HIVES"
 	envActiveHive   = "HIVE_ADMIN_MCP_ACTIVE"
 	envEnableWrites = "HIVE_ADMIN_MCP_ENABLE_WRITES"
@@ -75,6 +77,35 @@ func buildSkew(stdioShort, hubShort string) bool {
 	return !strings.EqualFold(a[:n], b[:n])
 }
 
+// serverVersion is serverInfo.version: the catalogue version plus this build's
+// short SHA. The User-Agent carries the same value so the hub can tell which
+// stdio build is calling it.
+func serverVersion() string {
+	return adminmcp.ServerVersion + "+" + buildInfo().Short
+}
+
+func userAgent() string {
+	return "hive-admin-mcp/" + serverVersion()
+}
+
+// hubShort reads the hub's short SHA from an /api/version body.
+func hubShort(m map[string]any) string {
+	short, _ := m["short"].(string)
+	if short == "" {
+		short, _ = m["currentCommit"].(string)
+	}
+	return short
+}
+
+// skewNotice is the one-line hint carried by initialize instructions and by
+// errors the binary raises itself; empty unless buildSkew reports skew.
+func skewNotice(stdioShort, hubShort, hive string) string {
+	if !buildSkew(stdioShort, hubShort) {
+		return ""
+	}
+	return fmt.Sprintf("hive-admin-mcp build %s differs from hub build %s on hive %q, so tools added or changed since may be missing or fail; update the binary (extract it from the hub image or go build ./cmd/hive-admin-mcp, see \"Getting the binary\" in src/docs/admin-mcp.md)", strings.TrimSpace(stdioShort), strings.TrimSpace(hubShort), hive)
+}
+
 type hiveConfig struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
@@ -89,6 +120,9 @@ type roster struct {
 	// clients caches one hivectl.Client per roster entry: each client owns its
 	// own transport, so building one per call would discard the connection pool.
 	clients map[string]*hivectl.Client
+	// notice is the skew notice for the active hive, refreshed at startup and
+	// on select_hive; empty when builds match or either SHA is unknown.
+	notice string
 }
 
 type readProvider struct {
@@ -103,8 +137,24 @@ func main() {
 		log.Printf("hive-admin-mcp configuration error: %v", err)
 		os.Exit(2)
 	}
-	server := mcp.NewServer(&mcp.Implementation{Name: adminmcp.ServerName, Version: adminmcp.ServerVersion + "+" + buildInfo().Short}, nil)
-	provider := readProvider{roster: r, writesEnabled: adminMCPWritesEnabled(), pendingStore: adminmcp.NewFilePendingStore(adminMCPPendingPath())}
+	r.refreshSkew(context.Background())
+	server := newServer(readProvider{roster: r, writesEnabled: adminMCPWritesEnabled(), pendingStore: adminmcp.NewFilePendingStore(adminMCPPendingPath())})
+	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		log.Printf("hive-admin-mcp server failed: %v", err)
+		os.Exit(1)
+	}
+}
+
+// newServer builds the stdio MCP server. Instructions are fixed at initialize,
+// so a skew notice known at startup goes there; skew found later reaches the
+// agent only through the error hints.
+func newServer(provider readProvider) *mcp.Server {
+	var opts *mcp.ServerOptions
+	if notice := provider.roster.skewNotice(); notice != "" {
+		opts = &mcp.ServerOptions{Instructions: notice}
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: adminmcp.ServerName, Version: serverVersion()}, opts)
+	server.AddReceivingMiddleware(provider.roster.unknownToolMiddleware)
 	for _, def := range adminmcp.ToolsWithWritesEnabled(provider.writesEnabled) {
 		name, _ := def["name"].(string)
 		desc, _ := def["description"].(string)
@@ -112,9 +162,23 @@ func main() {
 		server.AddTool(tool, provider.handler(name))
 	}
 	server.AddTool(&mcp.Tool{Name: "select_hive", Description: "Select the single active hive after verifying reachability and dashboard-token authentication.", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}}, "required": []string{"name"}, "additionalProperties": false}}, provider.selectHive)
-	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
-		log.Printf("hive-admin-mcp server failed: %v", err)
-		os.Exit(1)
+	return server
+}
+
+// unknownToolMiddleware appends the skew notice to the SDK's "unknown tool"
+// error, which a stale binary returns for every tool added since it was built.
+func (r *roster) unknownToolMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+		res, err := next(ctx, method, req)
+		var wire *jsonrpc.Error
+		if method == "tools/call" && errors.As(err, &wire) && strings.HasPrefix(wire.Message, "unknown tool ") {
+			if notice := r.skewNotice(); notice != "" {
+				annotated := *wire
+				annotated.Message += "; " + notice
+				return res, &annotated
+			}
+		}
+		return res, err
 	}
 }
 
@@ -171,10 +235,34 @@ func (p readProvider) handler(name string) mcp.ToolHandler {
 		}
 		data, err := p.Read(ctx, name, args)
 		if err != nil {
-			return textResult(map[string]any{"error": adminmcp.Scrub(err.Error())}, true)
+			return textResult(map[string]any{"error": adminmcp.Scrub(p.roster.annotateSkew(err).Error())}, true)
 		}
 		return dataResult(data, false)
 	}
+}
+
+// unsupportedToolError is raised by the binary itself for a tool its compiled
+// catalogue cannot route.
+type unsupportedToolError struct{ tool string }
+
+func (e *unsupportedToolError) Error() string {
+	return fmt.Sprintf("unsupported admin MCP read tool %q", e.tool)
+}
+
+// annotateSkew appends the skew notice to read errors a build mismatch can
+// explain: tools this binary cannot route, and hub 404s. Other errors, and all
+// errors without skew, are returned unchanged.
+func (r *roster) annotateSkew(err error) error {
+	notice := r.skewNotice()
+	if notice == "" {
+		return err
+	}
+	var unsupported *unsupportedToolError
+	var api *hivectl.APIError
+	if errors.As(err, &unsupported) || (errors.As(err, &api) && api.StatusCode == http.StatusNotFound) {
+		return fmt.Errorf("%w; %s", err, notice)
+	}
+	return err
 }
 
 func (p readProvider) callWrite(ctx context.Context, tool string, args map[string]any) (any, error) {
@@ -262,7 +350,7 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	}
 	path, ok := readPath(tool, args)
 	if !ok {
-		return nil, fmt.Errorf("unsupported admin MCP read tool %q", tool)
+		return nil, &unsupportedToolError{tool: tool}
 	}
 	client, _, err := p.roster.activeClient()
 	if err != nil {
@@ -281,12 +369,8 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 	if tool == adminmcp.ToolVersionRead {
 		if m, ok := data.(map[string]any); ok {
 			b := buildInfo()
-			hubShort, _ := m["short"].(string)
-			if hubShort == "" {
-				hubShort, _ = m["currentCommit"].(string)
-			}
 			m["stdio_build"] = map[string]any{"version": b.Version, "sha": b.SHA, "short": b.Short, "branch": b.Branch}
-			m["skew"] = buildSkew(b.Short, hubShort)
+			m["skew"] = buildSkew(b.Short, hubShort(m))
 		}
 	}
 	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
@@ -341,6 +425,7 @@ func (r *roster) clientLocked(h hiveConfig) (*hivectl.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	client.SetUserAgent(userAgent())
 	if r.clients == nil {
 		r.clients = map[string]*hivectl.Client{}
 	}
@@ -373,7 +458,43 @@ func (r *roster) selectHive(ctx context.Context, name string) (hiveConfig, error
 	r.mu.Lock()
 	r.active = idx
 	r.mu.Unlock()
+	r.refreshSkewFor(ctx, client, h.Name)
 	return h, nil
+}
+
+func (r *roster) skewNotice() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.notice
+}
+
+// refreshSkew recomputes the skew notice for the active hive. It never fails
+// startup: an unreachable hub or unreadable version leaves no notice.
+func (r *roster) refreshSkew(ctx context.Context) {
+	client, h, err := r.activeClient()
+	if err != nil {
+		r.setNotice("")
+		return
+	}
+	r.refreshSkewFor(ctx, client, h.Name)
+}
+
+func (r *roster) refreshSkewFor(ctx context.Context, client *hivectl.Client, hive string) {
+	ctx, cancel := context.WithTimeout(ctx, skewTimeout)
+	defer cancel()
+	notice := ""
+	if data, err := client.Do(ctx, http.MethodGet, "/api/version", nil, nil); err == nil {
+		if m, ok := data.(map[string]any); ok {
+			notice = skewNotice(buildInfo().Short, hubShort(m), hive)
+		}
+	}
+	r.setNotice(notice)
+}
+
+func (r *roster) setNotice(notice string) {
+	r.mu.Lock()
+	r.notice = notice
+	r.mu.Unlock()
 }
 
 func diagnoseSelectionError(err error) error {

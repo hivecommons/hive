@@ -104,6 +104,31 @@ Or build it from a checkout of the `v6` branch: `cd src && go build -o hive-admi
 
 The tool catalogue is compiled into the binary, so re-extract or rebuild it after each hub upgrade. `version_read` shows the binary's own `stdio_build` and a `skew` flag next to the hub build, and `initialize` reports `serverInfo.version` as `<version>+<short sha>`.
 
+### Skew notice
+
+The binary also tells the agent when it is out of step with the hub, so a stale
+binary no longer fails tools with no hint. At startup it fetches
+`/api/version` from the active hive (3-second timeout), and again whenever
+`select_hive` switches hives. When its short SHA differs from the hub's, it
+builds a one-line notice that names both SHAs and points here: re-extract or
+rebuild the binary as described in [Getting the binary](#getting-the-binary).
+
+- **`initialize`:** if skew is found at startup, the notice is sent as the
+  server `instructions`, which MCP clients put into the agent's context.
+  Instructions are fixed at `initialize`, so skew found after `select_hive`
+  only shows up in errors.
+- **Tool errors:** the notice is appended to errors the binary raises itself
+  (`unsupported admin MCP read tool`, `unknown tool`) and to hub 404s on read
+  tools. Other errors are not changed.
+
+There is no notice when either SHA is `unknown`, when the hub cannot be
+reached, or when the builds match; errors are then exactly as before. Binaries
+built before this notice existed cannot warn, so keep re-extracting or
+rebuilding after each hub upgrade.
+
+Requests from the binary send `User-Agent: hive-admin-mcp/<version>+<short sha>`
+(the same value as `serverInfo.version`) instead of hivectl's `hivectl/0.1`.
+
 ### Environment variables
 
 | Variable | Required | Meaning |
