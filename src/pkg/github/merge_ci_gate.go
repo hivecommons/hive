@@ -178,9 +178,22 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 	if !requiredKnown {
 		expected, _ = ExpectedCommitChecksFromLatestMergedPR(ctx, c.client, owner, name, baseBranch)
 	}
+	// headPushedAt feeds requiredCheckNeverCreated, whose terminal verdict
+	// must never age a head early, so it stays the never-earlier-than-push
+	// updated_at. updated_at also bumps on every label/comment write, so while
+	// it would hold min_head_age the head commit's committer date is consulted
+	// and wins when earlier (#12557); a failed lookup keeps updated_at, which
+	// can only over-hold.
 	var headPushedAt time.Time
 	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
 		headPushedAt = updatedAt.Time
+	}
+	minHeadAge := c.configuredAutoMergeMinHeadAge()
+	minHeadAgeFrom := headPushedAt
+	if minHeadAge > 0 && !headPushedAt.IsZero() && now.Sub(headPushedAt) < minHeadAge {
+		if at, err := HeadCommitPushedAt(ctx, c.client, owner, name, sha, pr); err == nil && at.Before(minHeadAgeFrom) {
+			minHeadAgeFrom = at
+		}
 	}
 	st, err := EvaluateCommitCI(ctx, c.client, owner, name, sha, CommitCIOptions{
 		Required:                required,
@@ -188,8 +201,8 @@ func (c *Client) verifyMergeRequestCI(ctx context.Context, repo string, number i
 		RequiredKnownFromConfig: fromConfig,
 		FailOnAnyFailedCheck:    true,
 		ExpectedChecks:          expected,
-		MinHeadAge:              c.configuredAutoMergeMinHeadAge(),
-		HeadPushedAt:            headPushedAt,
+		MinHeadAge:              minHeadAge,
+		HeadPushedAt:            minHeadAgeFrom,
 	})
 	if err != nil {
 		return mergeCIUnverified, "ci gate: " + st.Reason, fmt.Errorf("ci gate: %s for %s/%s@%s: %w", st.Reason, owner, name, shortSHA(sha), err)

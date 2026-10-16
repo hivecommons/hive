@@ -488,3 +488,42 @@ func TestStoreNoteAuthorAndByAuthor(t *testing.T) {
 		t.Fatalf("after recovery ByAuthor(072) = %+v", got)
 	}
 }
+
+// hivecommons/hive#12557: a gate flapping 100 → 060 → 100 → 060 on one head
+// used to re-arm the regression comment on every recover. The comment is
+// due once per head SHA; a new head re-arms it.
+func TestRegressionCommentOncePerHeadAcrossFlaps(t *testing.T) {
+	now := time.Date(2026, 10, 16, 20, 45, 0, 0, time.UTC)
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
+	key := Key("o/r", 12423)
+
+	st.Observe(key, MergeQueue, "contributor-lane:soaking")
+	if tr := st.Observe(key, Reviewed, "pending: head pushed 54s ago (< min_head_age)"); !tr.Regressed {
+		t.Fatalf("first fall not a regression: %+v", tr)
+	}
+	rec, _ := st.Get(key)
+	if !rec.RegressionCommentDue("73708b4") {
+		t.Fatal("first regression on a head must be due")
+	}
+	st.MarkRegressionCommentedForHead(key, "73708b4")
+
+	for i := 0; i < 3; i++ {
+		if tr := st.Observe(key, MergeQueue, "contributor-lane:soaking"); !tr.Recovered {
+			t.Fatalf("flap %d: recover not reported: %+v", i, tr)
+		}
+		if tr := st.Observe(key, Reviewed, "pending: head pushed 1m15s ago (< min_head_age)"); !tr.Regressed {
+			t.Fatalf("flap %d: fall not a regression: %+v", i, tr)
+		}
+		rec, _ = st.Get(key)
+		if rec.RegressionCommentDue("73708b4") {
+			t.Fatalf("flap %d: regression comment due again on the same head: %+v", i, rec)
+		}
+	}
+	if !rec.RegressionCommentDue("690a729") {
+		t.Fatal("a new head must re-arm the regression comment")
+	}
+	// Items without a head keep the per-regression behaviour.
+	if !rec.RegressionCommentDue("") {
+		t.Fatal("empty head must fall back to the per-regression flag")
+	}
+}
