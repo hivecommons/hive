@@ -30,7 +30,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
+
+func init() { config.RegisterStageSlugs(Slugs()) }
 
 // Stage is the pipeline position. The zero value None means "no stage":
 // the item is terminal, out of the pipeline, or the hive has no opinion.

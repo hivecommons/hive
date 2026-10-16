@@ -21,7 +21,6 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hooks"
-	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request) {
@@ -3254,8 +3253,8 @@ func parseStageDwell(raw string) (map[string]string, error) {
 		if !ok || slug == "" || dur == "" {
 			return nil, fmt.Errorf("stage dwell %q must be slug=duration", part)
 		}
-		if _, known := stagelabels.StageBySlug(slug); !known {
-			return nil, fmt.Errorf("stage dwell: unknown stage %q (known: %s)", slug, strings.Join(stagelabels.Slugs(), ", "))
+		if !config.KnownStageSlug(slug) {
+			return nil, fmt.Errorf("stage dwell: unknown stage %q (known: %s)", slug, strings.Join(config.KnownStageSlugs(), ", "))
 		}
 		if d, err := time.ParseDuration(dur); err != nil || d < 0 {
 			return nil, fmt.Errorf("stage dwell %q: invalid duration", part)
