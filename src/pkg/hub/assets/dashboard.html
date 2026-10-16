@@ -433,12 +433,23 @@
     .fleet-quadrant-drill:hover, .fleet-quadrant-drill:focus-visible { border-color: var(--hub-dashboard-accent) !important; outline: none; }
     .evidence-section { margin-bottom: var(--sp-8); }
     .evidence-title { font-size: var(--fs-base); color: var(--text); margin: 0 0 var(--sp-2); }
-    .evidence-note { font-size: 0.75rem; color: var(--muted); margin: 0 0 var(--sp-3); }
-    .evidence-table td, .evidence-table th { padding: 6px 8px; }
+    .evidence-note { font-size: var(--fs-sm); color: var(--muted); margin: 0 0 var(--sp-3); }
+    .evidence-table td, .evidence-table th { padding: var(--sp-3) var(--sp-4); }
     .evidence-ci { color: var(--muted); white-space: nowrap; }
     .evidence-empty { color: var(--muted); text-align: center; }
-    .evidence-msg { font-size: 0.85rem; color: var(--muted); }
+    .evidence-msg { font-size: var(--fs-base); color: var(--muted); }
     .evidence-error { color: var(--red); }
+    /* Fallback entry point when no quadrant axis is scored and the card is
+       therefore not rendered: admins still need a path to the evidence view. */
+    .evidence-fallback { font-size: var(--fs-2xs); color: var(--muted); margin: 0 auto 12px; width: fit-content; }
+    .evidence-fallback-link { background: none; border: 0; padding: 0; font: inherit; color: var(--hub-dashboard-accent); text-decoration: underline; cursor: pointer; }
+    /* The evidence modal shares the layout of the other hub overlays but is
+       class-driven so the inline-style ratchet stays at baseline. */
+    .evidence-modal { display: none; position: fixed; inset: 0; background: var(--overlay-scrim); z-index: 100; align-items: center; justify-content: center; }
+    .evidence-modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); max-width: 1100px; width: 95%; max-height: 86vh; display: flex; flex-direction: column; }
+    .evidence-modal-title { font-size: var(--fs-xl); padding: var(--sp-9) var(--sp-9) var(--sp-4); margin: var(--sp-0); color: var(--hub-dashboard-accent); flex-shrink: 0; }
+    .evidence-modal-scroll { flex: 1; overflow: auto; padding: var(--sp-0) var(--sp-9) var(--sp-8); }
+    .evidence-modal-foot { display: flex; justify-content: flex-end; padding: var(--sp-6) var(--sp-9); border-top: 1px solid var(--border); flex-shrink: 0; }
     .th-mid { vertical-align: middle; }
     .journey-snoozed { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
     /* The relay badge marks a hive satisfying stage 2 through human
@@ -1086,10 +1097,12 @@
 
        Renders nothing when nothing scored, rather than an empty chart: at that
        point there is no finding to show, and a collapsed aggregate would read
-       as a fleet failing on every axis. */
+       as a fleet failing on every axis. Admins still get a one-line link into
+       the evidence view (#12117), since the card is otherwise its only entry
+       point and evidence can exist before any quadrant axis is scored. */
     function fleetQuadrantHeaderHTML() {
       var q = _fleetQuadrant;
-      if (!q || !q.scored_axes) return '';
+      if (!q || !q.scored_axes) return evidenceFallbackLinkHTML();
       var axes = QUADRANT_AXES.map(function(name) {
         var a = quadrantAxis(q, name);
         var val = a.scored ? String(a.score) : '—';
@@ -1122,6 +1135,15 @@
       return ' class="fleet-quadrant-drill" role="button" tabindex="0" aria-haspopup="dialog" aria-controls="evidence-modal"' +
         ' title="Open the fleet evidence details" aria-label="Fleet quadrant — open the evidence details"' +
         ' onclick="openEvidenceModal()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openEvidenceModal();}"';
+    }
+
+    /* evidenceFallbackLinkHTML is the admin-only path into the evidence view
+       when the quadrant card is not drawn (no axis scored yet). Members get
+       nothing, exactly as with the card. */
+    function evidenceFallbackLinkHTML() {
+      if (!_isAdmin) return '';
+      return '<div class="evidence-fallback">Fleet quadrant: not enough data · ' +
+        '<button type="button" class="evidence-fallback-link" aria-haspopup="dialog" aria-controls="evidence-modal" onclick="openEvidenceModal()">Open the fleet evidence details</button></div>';
     }
 
     /* ---- Evidence details view (#12117) --------------------------------
@@ -1172,7 +1194,11 @@
       var hives = Array.isArray(data.hives) ? data.hives : [];
       var reported = hives.filter(function(h) { return h && h.reported; });
       var out = '<p class="evidence-note">' + evidenceCount(data.reporting) + ' of ' + evidenceCount(data.spokes) +
-        ' hives report evidence. Rates show "' + EVIDENCE_NULL + '" below the minimum sample.</p>';
+        ' hives report evidence. Rates show "' + EVIDENCE_NULL + '" below the minimum sample.</p>' +
+        /* #12117 also lists a per-axis criteria table; GET /api/hub/evidence
+           does not carry that data yet, so the gap is disclosed here rather
+           than silently omitted. Tracked under #12080. */
+        '<p class="evidence-note">The per-axis criteria table is not reported by spokes yet (tracked in #12080).</p>';
 
       var cov = data.record_coverage || {};
       out += evidenceTable('Evidence coverage', '<th>Scope</th>' + evidenceRateHeads('Coverage'),
@@ -12793,13 +12819,13 @@
     </div>
   </div>
 
-  <div id="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:1100px;width:95%;max-height:86vh;display:flex;flex-direction:column">
-      <h2 id="evidence-modal-title" style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-4);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Fleet evidence</h2>
-      <div style="flex:1;overflow:auto;padding:var(--sp-0) var(--sp-9) var(--sp-8)">
+  <div id="evidence-modal" class="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title">
+    <div class="evidence-modal-box">
+      <h2 id="evidence-modal-title" class="evidence-modal-title">Fleet evidence</h2>
+      <div class="evidence-modal-scroll">
         <div id="evidence-body"><div class="loading">Loading...</div></div>
       </div>
-      <div style="display:flex;justify-content:flex-end;padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border);flex-shrink:0">
+      <div class="evidence-modal-foot">
         <button class="hv-btn btn-primary" id="evidence-close" onclick="closeEvidenceModal()">Close</button>
       </div>
     </div>

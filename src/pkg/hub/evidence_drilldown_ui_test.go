@@ -99,6 +99,46 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 	}
 }
 
+// TestFleetQuadrantFallbackLinkWhenNothingScored: the card is the only entry
+// point to the evidence view, and it is not drawn until an axis is scored, so
+// admins get a one-line link in its place; members still get nothing.
+func TestFleetQuadrantFallbackLinkWhenNothingScored(t *testing.T) {
+	src := strings.Join([]string{
+		"function esc(s) { return String(s == null ? '' : s); }",
+		"var _fleetQuadrant = {scored_axes: 0};",
+		"var _isAdmin = true;",
+		jsFunc(t, "fleetQuadrantDrillAttrs"),
+		jsFunc(t, "evidenceFallbackLinkHTML"),
+		jsFunc(t, "fleetQuadrantHeaderHTML"),
+		"var admin = fleetQuadrantHeaderHTML();",
+		"_fleetQuadrant = null; var adminNull = fleetQuadrantHeaderHTML();",
+		"_isAdmin = false; var member = fleetQuadrantHeaderHTML();",
+		"result = {admin: admin, adminNull: adminNull, member: member};",
+	}, "\n")
+	var got struct{ Admin, AdminNull, Member string }
+	runEvidenceJS(t, src, &got)
+
+	for _, html := range []string{got.Admin, got.AdminNull} {
+		for _, want := range []string{
+			`class="evidence-fallback"`,
+			`<button type="button" class="evidence-fallback-link"`,
+			`aria-controls="evidence-modal"`,
+			`onclick="openEvidenceModal()"`,
+			"not enough data",
+		} {
+			if !strings.Contains(html, want) {
+				t.Errorf("admin fallback link is missing %q:\n%s", want, html)
+			}
+		}
+		if strings.Contains(html, "<svg") || strings.Contains(html, "fleet-quadrant-drill") {
+			t.Errorf("fallback must not draw the quadrant card:\n%s", html)
+		}
+	}
+	if got.Member != "" {
+		t.Errorf("member must get nothing when no axis is scored, got:\n%s", got.Member)
+	}
+}
+
 const evidenceFixtureJS = `{
   spokes: 3, reporting: 2,
   calibration: [
@@ -141,6 +181,10 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 
 	for _, want := range []string{
 		"2 of 3 hives report evidence",
+		// Sections #12117 lists that spokes do not report yet are disclosed in place.
+		"Median time-to-merge is not reported by spokes yet.",
+		"Revert rate by author kind is not reported by spokes yet.",
+		"The per-axis criteria table is not reported by spokes yet (tracked in #12080).",
 		"Evidence coverage", "Calibration curve", "ACMM level × outcome",
 		"Same- vs cross-family false approve", "Per-hive evidence",
 		// n, rate and Wilson interval for a measured cell.
@@ -256,7 +300,8 @@ done = openEvidenceModal().then(function() {
 func TestEvidenceModalMarkup(t *testing.T) {
 	html := dashScript(t)
 	for _, want := range []string{
-		`<div id="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title"`,
+		`<div id="evidence-modal" class="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title"`,
+		`.evidence-modal { display: none;`,
 		`<div id="evidence-body">`,
 		`onclick="closeEvidenceModal()"`,
 		"fetch('/api/hub/evidence')",
