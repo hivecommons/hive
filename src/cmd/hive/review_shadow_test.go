@@ -163,7 +163,12 @@ func TestRecordReviewShadowSigningKeyUnusable(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	cfg := &config.Config{Review: config.ReviewConfig{Shadow: true}}
-	cfg.Evidence.SigningKeyFile = filepath.Join(root, "missing-key.pem")
+	// A present-but-malformed key is "unusable"; a missing file means
+	// "unsigned" to LoadSigningKey and would not exercise the guard.
+	cfg.Evidence.SigningKeyFile = filepath.Join(root, "bad-key.pem")
+	if err := os.WriteFile(cfg.Evidence.SigningKeyFile, []byte("not a key!\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	recordReviewShadow(cfg, logger, pr, "org/repo", mergeGates{shadowReview: true, reviewLoaded: true}, at)
 
