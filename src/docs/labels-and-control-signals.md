@@ -170,7 +170,7 @@ the label (hivecommons/hive#12443).
 | `stage/072-returned-to-contributor` | PR | contributor PR (relay or external): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the author's court | 24h |
 | `stage/074-adopted-by-hive` | PR | the author was unavailable past the grace (see below); the hive pushed `hive/adopt-<n>` at the contributor's head, opened a superseding App PR that keeps the author's commits, and the scanner's red-PR fix kick is finishing it. The original closes automatically when the superseder merges | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green, verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
-| `stage/090-needs-human` | PR | cannot auto-merge; a person must act. Always read with the `author/*` label and any `hold`/`needs-human`/`needs-decision` modifier | none |
+| `stage/090-needs-human` | PR | cannot auto-merge; a person must act (including a `requires_human` swarm verdict, recorded as `reviewer-verdict:requires_human`). Always read with the `author/*` label and any `hold`/`needs-human`/`needs-decision` modifier | none |
 | `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window — and every check on the head is green (tide excluded). A red optional check holds the PR at 080 instead | 3h |
 
 Dwell thresholds are overridable per slug under `governor.labels.stage.dwell`
@@ -203,6 +203,7 @@ stateDiagram-v2
     s080 --> s100: lane admits (soak / merge-eligible)
     s050 --> s070: hive PR red / changes requested
     s050 --> s072: contributor PR red / changes requested
+    s050 --> s090: swarm requires_human (reason reviewer-verdict:requires_human)
     s060 --> s070: new head red
     s100 --> s070: new head red (regressed)
     s100 --> s072: contributor head red (regressed)

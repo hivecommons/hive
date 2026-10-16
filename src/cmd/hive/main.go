@@ -2294,9 +2294,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
-	if hub := b.dashSrv.ContributeHub(); hub != nil {
-		autoMergeOpts.ContributorNudge = hub
-	}
+	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
+	// here (see lateContributorNudgeSink).
+	autoMergeOpts.ContributorNudge = lateContributorNudgeSink{hub: func() *dashboard.ContributeWSHub { return b.dashSrv.ContributeHub() }}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
 	// automerge_sweep.go): install the operator-declared
@@ -5996,6 +5996,43 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	}
 	b.startReviewEvents()
 
+	// Continuous re-kick wake: a continuous agent's NextKick (set when its
+	// kick turn ends, + cooldown) was only consumed by the cadence eval tick,
+	// so with eval_interval_webhook_s=900 the reviewer sat idle at its prompt
+	// for up to 15 minutes after every "kick turn ended". The wake fires an
+	// early tick when the earliest NextKick elapses, bounded by
+	// continuousWakeMinGap, and otherwise re-checks every continuousWakePoll.
+	var (
+		wakeTimer    loopTicker
+		wakeCh       <-chan time.Time
+		lastWake     time.Time
+		wakeArmedFor time.Time
+	)
+	armContinuousWake := func() {
+		if deps.newWakeTimer == nil || b.gov == nil {
+			return
+		}
+		next, _ := b.gov.NextContinuousKickAt()
+		delay, _ := continuousWakeDecision(next, time.Now(), lastWake)
+		if delay <= 0 {
+			delay = continuousWakeMinDelay
+		}
+		if wakeTimer == nil {
+			wakeTimer = deps.newWakeTimer(delay)
+			wakeCh = wakeTimer.Chan()
+		} else {
+			wakeTimer.Stop()
+			wakeTimer.Reset(delay)
+		}
+		wakeArmedFor = next
+	}
+	armContinuousWake()
+	defer func() {
+		if wakeTimer != nil {
+			wakeTimer.Stop()
+		}
+	}()
+
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -6004,9 +6041,25 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			return
 		case <-ticker.Chan():
 			tick()
+			armContinuousWake()
 		case <-b.reviewWake:
 			b.logger.Info("review webhook wake: running an early eval cycle")
 			tick()
+			armContinuousWake()
+		case <-wakeCh:
+			next, who := b.gov.NextContinuousKickAt()
+			if _, due := continuousWakeDecision(next, time.Now(), lastWake); due {
+				idleFor := time.Duration(0)
+				if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
+					idleFor = time.Since(st.LastKickEnd).Round(time.Second)
+				}
+				b.logger.Info("continuous re-kick wake: running an early eval cycle",
+					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
+					"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
+				lastWake = time.Now()
+				tick()
+			}
+			armContinuousWake()
 		case <-agentTickCh:
 			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()

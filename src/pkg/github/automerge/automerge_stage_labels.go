@@ -365,6 +365,16 @@ func verdictBlocks(d stageDetail) bool {
 	return v == "changes_requested" || v == "reject" || v == "rejected" || v == "request_changes"
 }
 
+// verdictNeedsHuman reports whether a known reviewer verdict defers the PR to
+// a human (requires_human) rather than approving or asking for changes.
+func verdictNeedsHuman(d stageDetail) bool {
+	if !d.VerdictKnown || d.Verdict.Approved {
+		return false
+	}
+	v := strings.ToLower(strings.TrimSpace(d.Verdict.Verdict))
+	return v == "requires_human" || v == "needs_human" || v == "human"
+}
+
 // stageHandoffReasons are reasons that mean "not this lane's PR".
 var stageHandoffReasons = map[string]bool{
 	"not-app-authored": true, trustedBotLaneSkipReason: true, "repo-auto-merge-disabled": true,
@@ -481,6 +491,13 @@ func classifyStage(o stageObservation) stageVerdict {
 		return stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}
 	}
 	if reason == contributorLaneReasonNoVerdict {
+		if verdictNeedsHuman(o.Detail) {
+			// The reviewer DID answer — requires_human — but the lane folds
+			// every non-approve verdict into "no-verdict", so the PR sat at
+			// 050-review-pending for hours (hive #12417/#12438) while the
+			// reviewer skipped it as already reviewed. Hand it to a person.
+			return stageVerdict{Stage: stagelabels.NeedsHuman, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
+		}
 		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 	}
 	switch classifyCIReason(reason) {

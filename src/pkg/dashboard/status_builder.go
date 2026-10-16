@@ -1072,6 +1072,8 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 				ContinuousModes:   continuousModes,
 				ContinuousKicks:   continuousState.Kicks,
 				ContinuousTokens:  continuousState.TokensConsumed,
+				LastKickEnd:       formatOptionalTime(continuousState.LastKickEnd),
+				IdleSince:         formatOptionalTime(continuousIdleSince(continuousNow, busy, continuousState.LastKickEnd, continuousState.NextKick)),
 			},
 			KicksUndeliverable:     proc.KicksUndeliverable,
 			BusySince:              formatOptionalTime(proc.BusySince),
