@@ -29,6 +29,7 @@ type stageAPI struct {
 	edits    []string
 	creates  []string
 	lists    int
+	url      string
 }
 
 func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
@@ -36,7 +37,7 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 	if api.labels == nil {
 		api.labels = map[string]string{}
 	}
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		api.mu.Lock()
 		defer api.mu.Unlock()
 		path := r.URL.Path
@@ -80,6 +81,8 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 			w.WriteHeader(http.StatusTeapot)
 		}
 	}))
+	api.url = srv.URL
+	return srv
 }
 
 func (a *stageAPI) writes() int {

@@ -432,6 +432,18 @@ writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same
 ([#12436](https://github.com/hivecommons/hive/issues/12436)).
 
+A PR entering `stage/072-returned-to-contributor` also triggers the
+contributor nudge: the sweep posts one `<!-- hive:contributor-nudge head=…
+-->` comment per head naming the failing checks / review asks (re-nudged
+once at the stall threshold, cap 2) and hands the diagnosis to the contribute
+hub, which — when the author's relay heartbeat is fresh — pushes a `fix-pr`
+interrupt task into their relay session (parallel sub-session or preempt,
+per the relay's declared capability) under a per-contributor fix budget;
+queued fixes are served before new work ("contributors should clean up their
+mess before taking on new stuff"). Code:
+`src/pkg/github/automerge/automerge_contributor_nudge.go`, `src/pkg/fixqueue`
+and `src/pkg/dashboard/contribute_fixqueue.go`.
+
 ## Usage
 
 ```sh

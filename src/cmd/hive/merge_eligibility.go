@@ -97,9 +97,12 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 		if cfg == nil {
 			return automerge.StageLabelPolicy{}
 		}
+		stage := cfg.Governor.Labels.Stage
 		return automerge.StageLabelPolicy{
-			Enabled: cfg.Governor.Labels.Stage.IsEnabled(),
-			Dwell:   cfg.Governor.Labels.Stage.DwellOverrides(),
+			Enabled:          stage.IsEnabled(),
+			Dwell:            stage.DwellOverrides(),
+			ContributorNudge: stage.ContributorNudge.IsEnabled(),
+			RenudgeInterval:  stage.ContributorNudge.EffectiveRenudgeInterval(),
 		}
 	}
 }

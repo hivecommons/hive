@@ -113,6 +113,9 @@ type Options struct {
 	// StageStore persists stage timing (stalled/regressed); nil shares the
 	// package default at stagelabels.StatePath.
 	StageStore *stagelabels.Store
+	// ContributorNudge receives stage-072 nudges (hivecommons/hive#12436);
+	// nil posts the GitHub comment only.
+	ContributorNudge ContributorNudgeSink
 }
 
 // Engine owns the automerge sweep policy state.
@@ -166,6 +169,7 @@ type Engine struct {
 	stageLabelPolicy func() StageLabelPolicy
 	stageTracker     *StageTracker
 	stageStore       *stagelabels.Store
+	contributorNudge ContributorNudgeSink
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -202,6 +206,7 @@ func New(transport Transport, opts Options) *Engine {
 		stageLabelPolicy:                  opts.StageLabelPolicy,
 		stageTracker:                      opts.StageTracker,
 		stageStore:                        opts.StageStore,
+		contributorNudge:                  opts.ContributorNudge,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}

@@ -33895,6 +33895,8 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
       { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled regressed author tier governor.labels.stage.enabled' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
+      { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
+      { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
@@ -37919,6 +37921,16 @@ function burnAreaChart() {
         </div>
 
         <div class="config-field">
+          <label for="hub-max-parallel-fixes">Fix budget: parallel fix sessions ${yamlHint('contribute.max_parallel_fixes')} ${settingHelpMark('contributor-relay', 'fix-pr-tasks', 'Fix budget', `Ceiling on how many red-PR fix-pr sub-sessions one contributor's relay may run beside its primary session (the relay advertises its own count; the hub clamps to this). Default 2; 1 forces preempt mode. Queued fixes beyond capacity are served before new work ("contributors should clean up their mess before taking on new stuff").`)}</label>
+          <input type="number" id="hub-max-parallel-fixes" min="1" max="16" value="${hub.contribute_max_parallel_fixes || 2}" data-change-action="markDirty" data-arg0="hub" data-arg1="contribute_max_parallel_fixes" data-arg-types="s,s,N">
+        </div>
+        <div class="config-field">
+          <label for="hub-min-focus-window">Fix budget: minimum focus window ${yamlHint('contribute.min_focus_window')}</label>
+          <input type="text" id="hub-min-focus-window" value="${esc(hub.contribute_min_focus_window || '')}" placeholder="30m" data-change-action="markDirty" data-arg0="hub" data-arg1="contribute_min_focus_window" data-arg-types="s,s,w">
+          <div class="config-help">In preempt mode, after a fix preempted the primary task, the hive will not preempt again until the resumed task has run uninterrupted for this long. Go duration; default 30m.</div>
+        </div>
+
+        <div class="config-field">
           <label>Contributor Agent Roles ${settingHelpMark('contributor-trust-and-roles', 'delegated-clanker-agent-roles', 'Contributor Agent Roles', `Default roles scanner, quality, and outreach are always delegatable. Check privileged roles to let owners assign them from a Contributor agent (ClankeR) card; supervisor is never delegatable.`)}</label>
           <div style="display:flex;flex-direction:column;gap:var(--sp-3)">
             ${['scanner','quality','outreach'].map(function(r) {
@@ -40567,6 +40579,15 @@ function burnAreaChart() {
       const stageDwell = (_configState.dirty.labels && _configState.dirty.labels.stage_dwell !== undefined)
         ? _configState.dirty.labels.stage_dwell
         : (_configState.data.stageLabelsDwell || '');
+      const stageNudgeOn = (_configState.dirty.labels && _configState.dirty.labels.stage_nudge_enabled !== undefined)
+        ? _configState.dirty.labels.stage_nudge_enabled
+        : (_configState.data.stageNudgeEnabled !== false);
+      const stageNudgeRenudge = (_configState.dirty.labels && _configState.dirty.labels.stage_nudge_renudge_interval !== undefined)
+        ? _configState.dirty.labels.stage_nudge_renudge_interval
+        : (_configState.data.stageNudgeRenudge || '');
+      const stagePresenceWindow = (_configState.dirty.labels && _configState.dirty.labels.stage_presence_window !== undefined)
+        ? _configState.dirty.labels.stage_presence_window
+        : (_configState.data.stagePresenceWindow || '');
       return `
         ${renderOutsideBucketsPanel(labels, requireLabels)}
         <h4 style="margin:var(--sp-0) var(--sp-0) var(--sp-3)">Exempt labels (deny-list)</h4>
@@ -40602,6 +40623,17 @@ function burnAreaChart() {
           <label for="cfg-stage-dwell">Dwell overrides ${yamlHint('governor.labels.stage.dwell.<key>')}</label>
           <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">
           <div class="config-help">How long an item may sit in a stage before it gets <code>stage/stalled</code>; comma-separated <code>slug=duration</code>, <code>0</code> = never. Unset stages use the built-in table.</div>
+        </div>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageNudgeOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_nudge_enabled"></div><span class="config-toggle-label">Contributor nudge on returned-to-contributor ${yamlHint('governor.labels.stage.contributor_nudge.enabled')} ${settingHelpMark('settings', 'labels', 'Contributor nudge', `When a contributor's PR enters stage/072-returned-to-contributor (red CI, changes requested, conflicts) the hive posts ONE @-mention comment per head with the failing checks / review asks and, for relay contributors, pushes a fix-pr task to their relay session (parallel sub-session when the relay advertises parallel_sessions, otherwise preempting the current task). Re-nudged once at the stall threshold; cap 2 per head. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-field">
+          <label for="cfg-stage-nudge-renudge">Re-nudge interval ${yamlHint('governor.labels.stage.contributor_nudge.renudge_interval')}</label>
+          <input type="text" id="cfg-stage-nudge-renudge" value="${esc(stageNudgeRenudge)}" placeholder="24h (stage dwell)" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_nudge_renudge_interval" data-arg-types="s,s,w">
+          <div class="config-help">Go duration before the single re-nudge; empty = the returned-to-contributor dwell.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-presence-window">Contributor presence window ${yamlHint('governor.labels.stage.presence_window')}</label>
+          <input type="text" id="cfg-stage-presence-window" value="${esc(stagePresenceWindow)}" placeholder="15m" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_presence_window" data-arg-types="s,s,w">
+          <div class="config-help">A contributor counts as online when their relay heartbeat is within this window; online contributors get the fix-pr interrupt immediately, offline ones only the comment (their fix waits in the queue).</div>
         </div>
         ${renderReporterTrustBlock()}
         <h4>Writing guide</h4>

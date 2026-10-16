@@ -2294,6 +2294,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
+	if hub := b.dashSrv.ContributeHub(); hub != nil {
+		autoMergeOpts.ContributorNudge = hub
+	}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
 	// automerge_sweep.go): install the operator-declared
@@ -8628,6 +8631,12 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
 		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
+	}
+	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink
+	// (relay fix-pr tasks). Guarded so a nil hub never becomes a typed-nil
+	// interface.
+	if hub := dashSrv.ContributeHub(); hub != nil {
+		opts.ContributorNudge = hub
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }

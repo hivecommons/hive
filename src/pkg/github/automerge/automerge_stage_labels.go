@@ -35,6 +35,12 @@ type StageLabelPolicy struct {
 	Enabled bool
 	// Dwell overrides the stage table's expected dwell per stage slug.
 	Dwell map[string]time.Duration
+	// ContributorNudge turns the stage-072 nudge comment + relay interrupt
+	// on (governor.labels.stage.contributor_nudge.enabled, default true).
+	ContributorNudge bool
+	// RenudgeInterval is the delay before the single re-nudge; 0 uses the
+	// stage's dwell (the stall threshold).
+	RenudgeInterval time.Duration
 }
 
 // stageRESTCaller tags the label/comment writes for /api/gh-rate-limits.
@@ -73,6 +79,11 @@ type stageObservation struct {
 	Merged  bool
 	Err     bool
 	Detail  stageDetail
+	// Author, Title, URL and OpenedAt feed the stage-072 contributor nudge.
+	Author   string
+	Title    string
+	URL      string
+	OpenedAt time.Time
 }
 
 // StageTracker accumulates observations across the lanes of one cycle. One
@@ -191,6 +202,10 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	if pr.GetHead() != nil {
 		obs.HeadSHA = pr.GetHead().GetSHA()
 	}
+	obs.Author = hgithub.SafeGetLogin(pr.GetUser())
+	obs.Title = pr.GetTitle()
+	obs.URL = pr.GetHTMLURL()
+	obs.OpenedAt = pr.GetCreatedAt().Time
 	c.stageTrackerOrShared().record(obs)
 }
 
@@ -444,10 +459,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
+		prevRec, hadPrev := store.Get(key)
 		if verdict.Terminal {
 			store.Forget(key)
+			c.resolveNudge(ctx, prevRec, hadPrev, obs)
 		} else {
 			tr = store.Observe(key, verdict.Stage, obs.Reason)
+			if verdict.Stage != stagelabels.ReturnedToContributor {
+				c.resolveNudge(ctx, prevRec, hadPrev, obs)
+			}
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{
 				Stage:     verdict.Stage,
@@ -501,6 +521,13 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					store.MarkStallCommented(key)
 					result.Comments++
 				}
+			}
+		}
+		if want.Stage == stagelabels.ReturnedToContributor && policy.ContributorNudge {
+			n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
+			result.Comments += n
+			if err != nil && firstErr == nil {
+				firstErr = err
 			}
 		}
 		if tr.Regressed {

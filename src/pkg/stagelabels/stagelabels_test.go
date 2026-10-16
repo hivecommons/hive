@@ -334,3 +334,32 @@ func TestClaimLabelConstantsMatchStages(t *testing.T) {
 		t.Fatal("claimed / no stage must not count as covered")
 	}
 }
+
+func TestStoreMarkNudged(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := NewStore("", func() time.Time { return now })
+	s.MarkNudged("missing", "a", 1, now) // unknown key: no-op
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("MarkNudged created a record")
+	}
+	key := Key("acme/widget", 7)
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
+	s.MarkNudged(key, "a", 1, now)
+	r, _ := s.Get(key)
+	if r.NudgeHead != "a" || r.NudgeCount != 1 || !r.LastNudgeAt.Equal(now) {
+		t.Fatalf("after first: %+v", r)
+	}
+	s.MarkNudged(key, "a", 0, now.Add(time.Hour)) // n <= count increments
+	if r, _ = s.Get(key); r.NudgeCount != 2 {
+		t.Fatalf("increment: %+v", r)
+	}
+	s.MarkNudged(key, "b", 1, now.Add(2*time.Hour)) // new head restarts
+	if r, _ = s.Get(key); r.NudgeHead != "b" || r.NudgeCount != 1 {
+		t.Fatalf("new head: %+v", r)
+	}
+	// A stage change keeps the nudge memory (same head, no re-nudge).
+	s.Observe(key, ReviewPending, "")
+	if r, _ = s.Get(key); r.NudgeHead != "b" {
+		t.Fatalf("stage change dropped nudge memory: %+v", r)
+	}
+}

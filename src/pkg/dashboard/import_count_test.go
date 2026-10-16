@@ -26,8 +26,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// plus pkg/evidence for the schema-v1 bundle types behind the read-only
 	// GET /api/evidence/summary aggregate (hivecommons/hive#12063), plus
 	// pkg/hivestate for the state-snapshot time series behind the nous
-	// self-report and fleet report (hivecommons/hive#12339).
-	const maxDashboardInternalImports = 47
+	// self-report and fleet report (hivecommons/hive#12339), plus pkg/fixqueue
+	// for the per-contributor red-PR fix budget the contribute hub schedules
+	// stage-072 fix-pr interrupts through (hivecommons/hive#12436).
+	const maxDashboardInternalImports = 48
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
