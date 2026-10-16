@@ -166,6 +166,8 @@ Every lane that can comment or file issues carries this rule in its policy (ci-m
 `--repo`, a number or URL, and `--body` are all required, or the script exits
 `2`.
 
+A comment posted via `hive-open-issue comment` is recorded as an agent start signal on the issue ([#10527](https://github.com/hivecommons/hive/issues/10527)). It records an agent claim in the hub's worker-claim ledger, marking the agent as active on that issue and preventing other agents or contributors from being offered the same work while the claim is live. The claim applies the `hive/claimed-by-<agent>` label and posts a bot comment with a timestamped marker so maintainers can see when work began.
+
 ### `claim`
 
 `--repo` and a number or URL are required; no body or title needed. A claim
