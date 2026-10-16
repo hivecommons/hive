@@ -808,10 +808,14 @@ func TestApplyStageLabelsRedOptionalCheckDisplacesMergeQueue(t *testing.T) {
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/080-awaiting-merge-admission", "stage/regressed"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
+	// Retired label: the backward hop is recorded as history + comment, never as stage/regressed.
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/080-awaiting-merge-admission"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
 	rec, _ := store.Get(key)
+	if n := len(rec.History); n == 0 || !rec.History[n-1].Regressed {
+		t.Fatalf("expected a regressed history hop, got %+v", rec.History)
+	}
 	if rec.Reason != "optional-check-failing:relative links and anchors resolve" {
 		t.Fatalf("stored reason %q", rec.Reason)
 	}
@@ -821,7 +825,7 @@ func TestApplyStageLabelsRedOptionalCheckDisplacesMergeQueue(t *testing.T) {
 
 	// Same head, check re-run green: the lane's soaking reason is now 100.
 	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12457, "stage/080-awaiting-merge-admission", "stage/regressed", "author/trusted"), soaking, false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12457, "stage/080-awaiting-merge-admission", "author/trusted"), soaking, false, nil)
 	e.noteStageAuthor("acme", "widget", 12457, stagelabels.AuthorTrusted)
 	e.noteStageVerdict("acme", "widget", 12457, approve)
 	e.noteStageRedChecks("acme", "widget", 12457, "sha", nil)
