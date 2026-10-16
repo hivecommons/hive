@@ -1077,6 +1077,8 @@ jobs:
     if: ${{ always() && !cancelled() && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
     # Do not run this aggregate in concurrency-cancelled twin runs (#6293);
     # the surviving run still fail-closes on any non-success shard result.
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     needs: [required-context-scope, list-packages, test-hub, test-agent, test-rest, test-dashboard-shuffle]
@@ -1192,6 +1194,8 @@ jobs:
   # `? ... [no test files]` — both hard failures, as before.
   coverage:
     if: ${{ always() && github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-gate/') }}
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     needs: [required-context-scope, test-hub, test-agent, test-rest]

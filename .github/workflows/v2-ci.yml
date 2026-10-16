@@ -21,6 +21,10 @@ on:
     # Required contexts from this workflow must appear on every PR head. Keep
     # the trigger unfiltered and let required-context-scope below skip the
     # expensive build for out-of-scope diffs.
+  schedule:
+    # Nightly full run: harmless today, and preserves a safety net if the
+    # project later decides to skip duplicate post-merge push runs.
+    - cron: '17 6 * * *'
 
 
 permissions:
@@ -107,6 +111,8 @@ jobs:
     needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 50
     defaults:

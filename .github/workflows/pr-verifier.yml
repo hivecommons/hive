@@ -17,10 +17,10 @@ jobs:
   verify:
     name: verify PR contents
     if: github.actor != 'dependabot[bot]'
-    # Keep this pull_request_target verifier on GitHub-hosted runners; it is
-    # lightweight, uses only GHCR/GITHUB_TOKEN access, and avoids the saturated
-    # self-hosted pool.
-    runs-on: ubuntu-latest
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
+    # Fork PRs still fall back to GitHub-hosted for pull_request_target safety.
+    runs-on: ${{ (github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     env:
       PR_VERIFIER_IMAGE: ghcr.io/hivecommons/pr-verifier@sha256:8c2b63817c4bfa7de510ab699b154637f27a42f87826c98083903daf2a539943
