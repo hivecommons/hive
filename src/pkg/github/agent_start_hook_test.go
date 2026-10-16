@@ -148,6 +148,12 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"**Deferred this cycle**: #12322 is open and edits the same files. **Picks up once #12322 merges.**",
 		"Not starting yet; still blocked by #12322.",
 		"Can't start yet: waiting on #12322.",
+		"Picks up once #12322 merges and this is unblocked.",
+		"Deferring until #12322 merges. Resuming after that.",
+		"Deferred this cycle: blocked by #12322. Will resume once it merges; #12322 was started by scanner.",
+		"Deferred this cycle: #12322 already started this refactor; picks up once it merges.",
+		"Blocked on #12322; picks up when it merges.",
+		"Still blocked on #12322.",
 	} {
 		t.Run(body, func(t *testing.T) {
 			if got := issueRequestStartSignal("comment", body); got != "" {
@@ -171,6 +177,8 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"No longer blocked by #12322 - starting now",
 		"Unblocked: #12322 landed. Resuming.",
 		"Picking this up now that #12322 merged.",
+		"Deferred earlier, but #12322 merged, so starting now.",
+		"Still blocked on #12322 an hour ago; unblocked now, picking this up.",
 		"Done; cleanup deferred to #999.",
 		"Fixed; deferred the cleanup to #999.",
 	} {
