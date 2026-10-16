@@ -253,3 +253,84 @@ func TestNousCampaignForAssignsRowsByWindowAndRepo(t *testing.T) {
 		}
 	}
 }
+
+// A campaign card must always say where it is and what happens next
+// (#12532, kellya's "no defined experiments yet?" report): a question with a
+// complete baseline is "ready" and, in observe mode, carries the single
+// Generate proposals action; after the operator presses it the status
+// reports the live mode (not the boot-time one) and the card waits on the
+// experiment loop without asking anything more of the operator.
+func TestNousCampaignStageLifecycle(t *testing.T) {
+	unit := nousCampaignView{ID: 7, Status: nous.StatusActive, Snapshots: 3, Target: NousBaselineTarget}
+	nousCampaignStage(&unit, "observe", nil)
+	if unit.Stage != NousStageBaseline || unit.StageLabel != "collecting baseline 3 / 672" || unit.NextAction != "" {
+		t.Fatalf("baseline stage = %+v", unit)
+	}
+	unit.Complete = true
+	nousCampaignStage(&unit, "observe", nil)
+	if unit.Stage != NousStageReady || unit.NextAction != NousActionGenerateProposals || !strings.Contains(unit.StageDetail, "Observe mode") {
+		t.Fatalf("ready/observe stage = %+v", unit)
+	}
+	nousCampaignStage(&unit, "suggest", nil)
+	if unit.Stage != NousStageReady || unit.NextAction != "" || !strings.Contains(unit.StageDetail, "Suggest mode") {
+		t.Fatalf("ready/suggest stage = %+v", unit)
+	}
+	rows := []nousExperimentProgress{{CampaignID: 7, Status: "pending"}}
+	nousCampaignStage(&unit, "suggest", rows)
+	if unit.Stage != NousStageProposed || unit.StageLabel != "proposals awaiting your review" {
+		t.Fatalf("proposed stage = %+v", unit)
+	}
+	rows = []nousExperimentProgress{{CampaignID: 7, Status: "active", Phase: "experiment"}, {CampaignID: 7, Status: "pending"}}
+	nousCampaignStage(&unit, "suggest", rows)
+	if unit.Stage != NousStageRunning {
+		t.Fatalf("running beats proposed: %+v", unit)
+	}
+	rows = []nousExperimentProgress{{CampaignID: 7, Status: "judged", Phase: "judged"}, {CampaignID: 8, Status: "active"}}
+	nousCampaignStage(&unit, "suggest", rows)
+	if unit.Stage != NousStageConcluded || !strings.Contains(unit.StageDetail, "1 experiment(s) judged") {
+		t.Fatalf("concluded ignores other campaigns' rows: %+v", unit)
+	}
+	unit.Status = nous.StatusPaused
+	nousCampaignStage(&unit, "observe", rows)
+	if unit.Stage != NousStagePaused || unit.NextAction != "" {
+		t.Fatalf("paused stage = %+v", unit)
+	}
+	unit.Status = nous.StatusArchived
+	nousCampaignStage(&unit, "observe", nil)
+	if unit.Stage != NousStageConcluded || unit.StageLabel != "concluded" {
+		t.Fatalf("archived stage = %+v", unit)
+	}
+	nousCampaignStage(nil, "observe", nil)
+
+	// End to end: the screenshot scenario — a question, baseline past 672,
+	// zero principles, lab booted in observe.
+	s, deps, _ := nousCampaignServer(t, NousBaselineTarget+200)
+	deps.Nous.Mode = "observe"
+	deps.Nous.Status["mode"] = "observe"
+	deps.Nous.Principles = nil
+	deps.Nous.Ledger = nil
+	status := nousStatusJSON(t, s)
+	cards, _ := status["campaigns"].([]interface{})
+	if len(cards) != 1 {
+		t.Fatalf("campaigns = %v", status["campaigns"])
+	}
+	card := cards[0].(map[string]interface{})
+	if card["stage"] != NousStageReady || card["nextAction"] != NousActionGenerateProposals || card["snapshots"].(float64) < float64(NousBaselineTarget) || card["complete"] != true {
+		t.Fatalf("ready card = %v", card)
+	}
+	if status["principlesExplainer"] != NousPrinciplesExplainer || status["principleCount"] != nil && status["principleCount"] != float64(0) {
+		t.Fatalf("principles explainer missing: %v %v", status["principlesExplainer"], status["principleCount"])
+	}
+	// Generate proposals = PUT mode suggest; the status must report it live.
+	if rec := doPutOwner(s, "/api/nous/mode", map[string]interface{}{"mode": "suggest"}); rec.Code != http.StatusOK {
+		t.Fatalf("set mode = %d: %s", rec.Code, rec.Body.String())
+	}
+	status = nousStatusJSON(t, s)
+	if status["mode"] != "suggest" {
+		t.Fatalf("status.mode still %v after PUT /api/nous/mode (stale boot value)", status["mode"])
+	}
+	card = status["campaigns"].([]interface{})[0].(map[string]interface{})
+	if card["stage"] != NousStageReady || card["nextAction"] != nil || !strings.Contains(card["stageDetail"].(string), "experiment loop") {
+		t.Fatalf("card after switching to suggest = %v", card)
+	}
+}

@@ -3,6 +3,7 @@ package dashboard
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -36,6 +37,69 @@ type nousCampaignView struct {
 	Experiments     int                      `json:"experiments"`
 	Principles      int                      `json:"principles"`
 	Results         []map[string]interface{} `json:"results,omitempty"`
+	// Stage / StageLabel / StageDetail / NextAction describe where the
+	// campaign is in its lifecycle and what, if anything, the operator must
+	// do next (#12532). NextAction is empty when nothing is required.
+	Stage       string `json:"stage"`
+	StageLabel  string `json:"stageLabel"`
+	StageDetail string `json:"stageDetail,omitempty"`
+	NextAction  string `json:"nextAction,omitempty"`
+}
+
+// nousCampaignStage fills the lifecycle fields of v from the lab mode and the
+// experiment rows attributed to the campaign. Precedence: archived/paused →
+// running → proposed → concluded (results and nothing in flight) → baseline
+// → ready. The ready stage distinguishes "lab is in observe mode, press
+// Generate proposals" from "lab is in suggest/evolve mode, waiting for the
+// experiment loop", because the hive process itself designs no proposals.
+func nousCampaignStage(v *nousCampaignView, mode string, rows []nousExperimentProgress) {
+	if v == nil {
+		return
+	}
+	v.NextAction = ""
+	switch v.Status {
+	case nous.StatusArchived:
+		v.Stage, v.StageLabel, v.StageDetail = NousStageConcluded, "concluded", "Archived; baseline, hypotheses and results are frozen read-only."
+		return
+	case nous.StatusPaused:
+		v.Stage, v.StageLabel, v.StageDetail = NousStagePaused, "paused", "Paused; its scope is released and the baseline count stops until resumed."
+		return
+	}
+	var running, pending, judged int
+	for _, r := range rows {
+		if r.CampaignID != v.ID {
+			continue
+		}
+		switch {
+		case r.Status == "pending":
+			pending++
+		case r.Phase == "judged":
+			judged++
+		case r.Status == "active" || r.Phase == "experiment" || r.Phase == "cooldown" || r.Phase == "judging":
+			running++
+		}
+	}
+	switch {
+	case running > 0:
+		v.Stage, v.StageLabel = NousStageRunning, "running"
+		v.StageDetail = fmt.Sprintf("%d experiment(s) in flight; results land under Results when judged.", running)
+	case pending > 0:
+		v.Stage, v.StageLabel = NousStageProposed, "proposals awaiting your review"
+		v.StageDetail = fmt.Sprintf("%d proposal(s) are pending — approve or reject them under Pending Proposal.", pending)
+	case judged > 0:
+		v.Stage, v.StageLabel = NousStageConcluded, "concluded"
+		v.StageDetail = fmt.Sprintf("%d experiment(s) judged; archive this experiment or let the lab propose more.", judged)
+	case !v.Complete:
+		v.Stage, v.StageLabel = NousStageBaseline, fmt.Sprintf("collecting baseline %d / %d", v.Snapshots, v.Target)
+		v.StageDetail = "Proposals are designed only once the baseline is complete (" + NousBaselineTargetExplainer + ")."
+	case strings.EqualFold(mode, "observe") || mode == "":
+		v.Stage, v.StageLabel = NousStageReady, "ready — generate proposals"
+		v.StageDetail = "Baseline complete. The lab is in Observe mode (data collection only); Generate proposals switches it to Suggest so proposals can be designed for your review."
+		v.NextAction = NousActionGenerateProposals
+	default:
+		v.Stage, v.StageLabel = NousStageReady, "ready — generating proposals"
+		v.StageDetail = "Baseline complete and the lab is in " + strings.Title(strings.ToLower(mode)) + " mode. Proposals appear here as soon as the experiment loop designs them; nothing more is needed from you."
+	}
 }
 
 // nousCampaignScope is the wire form of nous.Scope. Label is "hive-wide" or

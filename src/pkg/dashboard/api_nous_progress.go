@@ -133,13 +133,17 @@ func (s *Server) addNousProgressStatus(status map[string]interface{}, config map
 	nousAssignCampaigns(results, open)
 	status["experiments"] = experiments
 	status["results"] = results
+	mode := stringFromAny(status["mode"])
 	if c, ok := status["campaign"].(nousCampaignView); ok {
 		c.Experiments = nousCountForCampaign(experiments, c.ID)
 		c.Principles = len(principles)
+		nousCampaignStage(&c, mode, experiments)
 		status["campaign"] = c
 	}
 	if views, ok := status["campaigns"].([]nousCampaignView); ok {
+		status["principlesExplainer"] = NousPrinciplesExplainer
 		for i := range views {
+			nousCampaignStage(&views[i], mode, experiments)
 			if views[i].Status == nous.StatusArchived {
 				continue
 			}

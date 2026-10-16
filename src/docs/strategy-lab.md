@@ -37,7 +37,7 @@ Nous state lives in three places, none of which is `hive.yaml`:
 | Experiment ledger | `/var/run/nous/governor/ledger.json` | experiment loop, read at boot (the path is historical; it holds repo experiments) |
 | Learned principles | `/var/run/nous/governor/principles.json` | experiment loop, read at boot |
 | Hive state snapshots | `/data/nous/snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` → `pkg/hivestate`; see [Hive state time series](#hive-state-time-series) |
-| Experiment campaigns | `/data/nous/campaigns.json` | `pkg/nous` campaign store, written when the research question changes or `POST /api/nous/campaign/start` is called; see [Campaigns and the per-campaign baseline](#campaigns-and-the-per-campaign-baseline) |
+| Experiment campaigns | `/data/nous/campaigns.json` | `pkg/nous` campaign store (file version 2), written by `POST/PATCH /api/nous/campaigns`, when the research question changes, or `POST /api/nous/campaign/start`; see [Campaigns and the per-campaign baseline](#campaigns-and-the-per-campaign-baseline) |
 | Mode, goals, output mode, repo targets, fast-fail bounds, schedule | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard config dialog or direct API calls |
 
 The in-memory `Config` map (goals/repos/output/fast_fail/schedule/
@@ -76,49 +76,127 @@ Because compaction turns many raw files into one bucket, the dashboard's
 
 ## Campaigns and the per-campaign baseline
 
-A **campaign** is one research question plus everything measured while it
-was active ([#12501](https://github.com/hivecommons/hive/issues/12501)).
-The hive-state snapshots above are question-independent observations of the
-hive — queue depth, SLA rate, kicks, tokens — and are never discarded, but an
-experiment's *baseline* is not question-independent: it must be a window not
-perturbed by a previous campaign's experiments, and hypotheses and judged
-results are answers to the question that was asked. So:
+A **campaign** (shown in the UI as an *experiment card*) is one research
+question plus everything measured while it was running
+([#12501](https://github.com/hivecommons/hive/issues/12501),
+[#12532](https://github.com/hivecommons/hive/issues/12532)). The hive-state
+snapshots above are question-independent observations of the hive — queue
+depth, SLA rate, kicks, tokens — and are never discarded, but an experiment's
+*baseline* is not question-independent: it must be a window not perturbed by
+another campaign's interventions, and hypotheses and judged results are
+answers to the question that was asked. So:
 
-- **Changing the research question starts a new campaign.**
-  `PUT /api/nous/config/goals` with a materially different `repoGoal`
-  (case and whitespace are ignored; clearing the field is not a change)
-  archives the active campaign and starts the next one with `started_at =
-  now`. The config dialog confirms first: *"Start a new experiment? Baseline
-  and hypotheses restart; previous campaign is archived."* The same dialog
-  has a **Start a new experiment** button (`POST /api/nous/campaign/start`)
-  for a fresh run of the same question.
-- **Baseline, hypotheses and results are scoped to the active campaign.**
-  `baseline.snapshots`, `baseline_pct`, the Experiment Lab's snapshot stat
-  tile, the Data Collection bar, `experiments` and `results` only count
-  snapshot files and ledger entries whose timestamp is at or after the
-  campaign's `started_at` — right after a new question they read **0 / 672**.
-  Principles are durable learnings and stay global.
+- **Entering a research question creates an experiment.** The card appears
+  in the Experiment Lab's *Experiments* list immediately, with its own
+  baseline starting at **0 / 672** and a stage line saying what happens next
+  (see [Experiment stages](#experiment-stages)). A lab with no card shows
+  *"Add an experiment: enter a research question and pick the repos it may
+  touch."* — never a bare "no experiments yet".
+- **Several experiments can run at once** — see
+  [Running several experiments at once](#running-several-experiments-at-once).
+- **Changing the research question in the config dialog rotates the oldest
+  running campaign.** `PUT /api/nous/config/goals` with a materially
+  different `repoGoal` (case and whitespace are ignored; clearing the field is
+  not a change) archives the oldest running campaign and starts a new one in
+  its place, inheriting its scope. The dialog confirms first: *"Start a new
+  experiment? Baseline and hypotheses restart; previous campaign is
+  archived."* Its **Start a new experiment** button
+  (`POST /api/nous/campaign/start`) does the same for a fresh run of the same
+  question. Other running campaigns are untouched.
+- **Baseline, hypotheses and results are scoped per campaign.** Each card's
+  baseline counts snapshot files at or after its `startedAt`, capped at the
+  target; ledger rows are attributed to the campaign whose window contains
+  their start time and whose scope includes the row's repo (oldest match
+  wins). `status.campaign`, `baseline.snapshots`, `baseline_pct`, the
+  *Baseline snapshots* tile and the Data Collection bar follow the **oldest
+  running** campaign for compatibility. Principles are durable learnings and
+  stay global.
 - **The observation history stays visible.** `snapshots` / `snapshotCount`
   keep reporting every snapshot file, and `GET /api/nous/status` publishes
   `observation` (`{snapshots, since}`), which the panel shows as the muted
   line *"Observation history: N snapshots since <date>"*.
-- **Previous campaigns are archived read-only.** `status.campaigns` lists
-  them newest first with their frozen outcome (snapshot count, hypotheses,
-  principles, judged results); the panel renders them under *Previous
-  experiments*.
+- **Archived campaigns are read-only.** They render under *Previous
+  experiments* with their frozen outcome (snapshot count, hypotheses, judged
+  results).
 - **Migration.** A hive upgraded from before campaigns has no
   `campaigns.json`; on first use the dashboard creates campaign 1 with an
   empty question whose `started_at` is the earliest snapshot on disk, so all
-  existing history is campaign 1. The first real research question then
-  starts campaign 2 at 0 / 672 (a hive with no snapshots yet simply fills the
-  question in on campaign 1). The active campaign also remembers the question
-  across a restart, which the in-memory `goals` section does not.
+  existing history is campaign 1. A `campaigns.json` written by the
+  single-campaign store (file version 1) is upgraded in place: its active
+  campaign becomes the first card (hive-wide scope) and its archived ones
+  become *Previous experiments*. The running campaign also remembers the
+  question across a restart, which the in-memory `goals` section does not.
 
-`status.campaign` is `{id, question, status, startedAt, snapshots, target,
-percent, complete, experiments, principles}`; archived entries add `endedAt`
-and `results`. Campaigns are only enabled when a snapshot directory is
-configured; without one the baseline stays global and no `campaign` block is
-published.
+`status.campaigns` lists **every** campaign in id order as `{id, question,
+hypothesis, scope: {repos, intervention, tags, hiveWide}, status, startedAt,
+endedAt, snapshots, target, targetExplainer, percent, complete, experiments,
+principles, results, stage, stageLabel, stageDetail, nextAction}`.
+`target` is `NousBaselineTarget` = 4 snapshots/hour × 24 h × 7 days = **672**
+and `targetExplainer` says so in words — *"≈ 7 days of observations
+(4/hour)"* — which the cards show next to an ⓘ. Campaigns are only enabled
+when a snapshot directory is configured; without one the baseline stays
+global and no `campaign`/`campaigns` block is published.
+
+### Running several experiments at once
+
+Experiments are first-class concurrent entities
+([#12532](https://github.com/hivecommons/hive/issues/12532)). The lab
+renders them exactly like the dashboard's Inception section renders its
+campaigns — one row per experiment with the question as title, scope pills,
+a status pill, the baseline bar and per-row **Pause / Resume / Archive**
+actions, plus **+ New experiment** which opens an inline form (research
+question, optional hypothesis, and the same Repo Targets pills as the config
+dialog for scope; no repo selected means *hive-wide*).
+
+| Call | Effect |
+|---|---|
+| `GET /api/nous/campaigns` | Every campaign with per-campaign baseline, results, scope and stage. |
+| `POST /api/nous/campaigns` `{question, hypothesis?, scope?}` | Starts a new experiment **alongside** the running ones (201). |
+| `PATCH /api/nous/campaigns/{id}` `{action: pause\|resume\|archive}` and/or `{question, hypothesis, scope}` | Pauses (releases the scope), resumes, archives (read-only) or edits a campaign. |
+
+**Confound guard.** Two *running* experiments may not share a repo target,
+and two may not both be hive-wide: concurrent interventions on the same scope
+confound each other's outcomes — neither baseline is a clean window any more
+and a judged delta cannot be attributed to either question. `POST` and
+`PATCH` (resume, or widening the scope) return **409** with
+`{code: "scope_conflict", shared: [repos], conflict: <campaign>}`; the UI
+renders an in-app warning on the form (never a browser `alert`) that names
+the other experiment and offers **Pause #N and start** or **Narrow scope**.
+A paused experiment holds no scope, so pausing is the quick way to hand a
+repo to another question. Because a lab migrated from the single-campaign
+store has one hive-wide card, the second experiment conflicts until that
+card is narrowed or paused — the warning says so.
+
+### Experiment stages
+
+Each card carries a server-derived `stage` so the operator never has to work
+out what the lab is waiting for (a user with a question and a 100 % baseline
+once saw *"No defined experiments yet — switch to Suggest…"*; that copy is
+gone):
+
+| `stage` | Card says | What moves it on |
+|---|---|---|
+| `baseline` | *collecting baseline N / 672* | snapshots accumulating, one per evaluation cycle |
+| `ready` + `nextAction: generate_proposals` | *ready — generate proposals* with a single **Generate proposals** button | pressing it sets the trust-ladder mode to `suggest` (`PUT /api/nous/mode`) — the mode knob stays as the safety gate but is no longer something to discover |
+| `ready` (mode already `suggest`/`evolve`) | *ready — generating proposals* | the external experiment loop writing a proposal to the ledger |
+| `proposed` | *proposals awaiting your review* | Apply / Reject under Pending Proposal |
+| `running` | *running* | the experiment's phases completing |
+| `concluded` | *concluded* | archive, or let the lab propose more |
+| `paused` | *paused* | Resume |
+
+Note that the hive process itself designs no proposals: `PUT /api/nous/mode`
+records the operator's trust level, and proposals, ledger rows and principles
+arrive from the experiment loop that writes the files in
+[State and storage](#state-and-storage) — on a hive without that loop a
+ready card waits indefinitely
+([#12541](https://github.com/hivecommons/hive/issues/12541) tracks an
+in-process designer). `GET /api/nous/status` reports the
+**live** mode (an earlier bug kept echoing the boot-time `observe`).
+
+**Principles** (the *Principles* tile, ⓘ) are durable lessons the lab distils
+from judged experiments into `principles.json`. A new lab legitimately shows
+0; none are needed to start an experiment, and the count grows as experiments
+conclude.
 
 ## Experiment lifecycle
 
@@ -285,9 +363,12 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 3. Open the Experiment Lab panel's gear icon to set the research question
    (`PUT /api/nous/config/goals`) describing what you want Nous to optimize
    in your repositories.
-4. Once the baseline progress bar reports sufficient coverage, switch mode to
-   `suggest` (`PUT /api/nous/mode {"mode": "suggest"}`). Review each proposal
-   that appears under "Pending Proposal" and Apply or Reject it.
+4. The question appears as an experiment card at 0 / 672. When its baseline
+   is complete the card reads *ready — generate proposals*; press **Generate
+   proposals** (equivalent to `PUT /api/nous/mode {"mode": "suggest"}`).
+   Review each proposal that appears under "Pending Proposal" and Apply or
+   Reject it. Add further questions with **+ New experiment**, each scoped
+   to its own repos.
 5. Only move to `evolve` once you're comfortable with the proposals Nous has
    made in `suggest` mode — `evolve` runs approved-pattern experiments without
    per-experiment approval.

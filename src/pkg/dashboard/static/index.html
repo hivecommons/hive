@@ -257,10 +257,6 @@
     .dashboard-section-hidden { display: none !important; }
     @media (hover: none), (pointer: coarse) { .oc-nav-drag-handle, .oc-nav-hide-toggle { opacity: 1; } }
     .oc-nav-emoji { display: inline-flex; width: 18px; font-size: 0.9rem; flex-shrink: 0; justify-content: center; }
-    .nous-research-question { display: block; flex: 1 1 16ch; min-width: 0; max-width: none; margin-left: var(--sp-4); font-weight: 400; text-transform: none; letter-spacing: normal; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; }
-    .nous-research-question[hidden] { display: none; }
-    .nous-research-question .nous-rq-label { color: var(--muted); font-weight: 600; margin-right: var(--sp-1); }
-    .nous-research-question .nous-rq-text { color: var(--text); font-weight: 400; }
     .oc-nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     .oc-nav-mode { flex-shrink: 0; font-size: 0.9rem; margin-left: var(--sp-1); transition: opacity 0.15s; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
     /* The hover-revealed row actions (⚙/✕) take the right edge — fade the
@@ -3771,6 +3767,34 @@
     .nous-lab-dialog .nous-trust-step.current[data-step="evolve"] { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--border)); }
     .nous-lab-dialog .nous-trust-step.current + .nous-trust-step { border-left-color: transparent; }
     .nous-lab-trust-note { margin-top: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
+    /* Experiment cards (#12532) reuse the Inception campaign list look:
+       .campaigns-card / .campaign-row / .campaign-pill / .campaign-row-actions. */
+    .nous-exp-row .campaign-row-title { white-space: normal; overflow-wrap: anywhere; }
+    .nous-exp-row[data-status="paused"] { opacity: 0.75; }
+    .nous-exp-pill[data-status="active"] { border-color: var(--green); color: var(--green); }
+    .nous-exp-pill[data-status="paused"] { border-color: var(--yellow); color: var(--yellow); }
+    .nous-exp-pill[data-status="archived"] { border-color: var(--border); color: var(--muted); }
+    .nous-scope-pill { background: var(--surface); color: var(--text); }
+    .nous-exp-baseline { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--muted); }
+    .nous-exp-baseline .nous-progress { margin: var(--sp-2) var(--sp-0); }
+    .nous-exp-baseline .config-info { margin-left: var(--sp-1); }
+    .nous-exp-hypothesis { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-1); }
+    .nous-exp-stage { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .nous-exp-stage .nous-exp-stage-label { font-weight: 600; }
+    .nous-exp-stage[data-stage="ready"] .nous-exp-stage-label { color: var(--green); }
+    .nous-exp-stage[data-stage="proposed"] .nous-exp-stage-label { color: var(--yellow); }
+    .nous-exp-stage[data-stage="running"] .nous-exp-stage-label { color: var(--accent); }
+    .nous-exp-stage-detail { color: var(--muted); }
+    .nous-stat .lbl .config-info { margin-left: var(--sp-1); }
+    .nous-new-exp { border: 1px dashed var(--border); border-radius: var(--r); padding: var(--sp-4); margin-bottom: var(--sp-4); display: grid; gap: var(--sp-3); }
+    .nous-new-exp label { font-size: var(--fs-sm); font-weight: 600; }
+    .nous-new-exp textarea, .nous-new-exp input[type="text"] { width: 100%; box-sizing: border-box; }
+    .nous-new-exp .nous-lab-chips { margin-top: var(--sp-1); }
+    .nous-new-exp-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; flex-wrap: wrap; }
+    /* In-app scope-conflict warning: never window.alert/confirm. */
+    .nous-conflict-warn { background: rgba(210,153,34,0.12); border: 1px solid var(--yellow); border-radius: var(--r); padding: var(--sp-4); font-size: var(--fs-sm); display: grid; gap: var(--sp-2); }
+    .nous-conflict-warn strong { color: var(--text); }
+    .nous-conflict-warn .nous-new-exp-actions { justify-content: flex-start; }
 
     /* Knowledge Panel */
     .public-knowledge-control { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
@@ -6270,7 +6294,7 @@
   </div>
 
   <div id="nous-section" data-dashboard-section="nous-section" data-feature="experiment_lab" hidden style="display:none; margin-top: var(--sp-6); margin-bottom: var(--sp-8);">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab <span id="nous-research-question" class="nous-research-question text-muted fs-sm" hidden></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="nous-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Experiment Lab section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🧪 Experiment Lab</h2>
     <div class="section-body">
       <div id="nous-panel"></div>
       <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
@@ -6497,6 +6521,12 @@
         <details class="faq-q" id="faq-experiment-lab">
           <summary>What is the Experiment Lab?</summary>
           <p>The Experiment Lab ("Nous" in the API) runs small, approved experiments against your repositories' code — tests, CI config, automation scripts — measures each against a recorded baseline, and keeps a ledger of results. It is <strong>repo-only</strong>: experiments on the hive's own cadences, models or thresholds are out of scope since <a href="https://github.com/hivecommons/hive/pull/12207" target="_blank" rel="noopener noreferrer">#12207</a>. The section appears only at L4+ with <code>dashboard.experiment_lab: true</code>, and you approve or stop every experiment. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">Experiment Lab section guide</a>, which links the full guide.</p>
+        </details>
+
+        <details class="faq-q" id="faq-multiple-experiments">
+          <summary>Can I run more than one experiment at once?</summary>
+          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, the same way the Inception section lists its campaigns. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/strategy-lab.md#running-several-experiments-at-once" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
+          <p>Each card also says where it is: <em>collecting baseline</em>, <em>ready — generate proposals</em> (one button; the lab switches to Suggest for you), <em>proposals awaiting your review</em>, <em>running</em> or <em>concluded</em>. Entering a question is what creates the card — you never have to find a mode switch first.</p>
         </details>
         </section>
 
@@ -7624,10 +7654,6 @@
       const actions = newHeader.querySelector('.dash-card-actions');
       const moveSource = oldHeader.parentElement === section ? oldHeader : oldHeader.parentElement;
       Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
-      // The Experiment Lab research question is prose, not a pill badge: it
-      // sits as its own flex item after the badges so it can take the rest of
-      // the header width and wrap instead of being clipped.
-      Array.from(moveSource.querySelectorAll('#nous-research-question')).forEach(el => badges.insertAdjacentElement('afterend', el));
       Array.from(moveSource.querySelectorAll('button[data-stop="1"], a[data-stop="1"], a[data-action]')).forEach(el => {
         if (el.matches('[data-dashboard-grip]')) return;
         el.setAttribute('data-stop', '1');
@@ -23333,8 +23359,12 @@ function burnAreaChart() {
       return links.length ? `<div class="nous-output-links">${links.join('')}</div>` : '';
     }
 
-    function nousExperimentProgressRows(experiments) {
-      if (!experiments || !experiments.length) return '<div class="nous-lab-empty">No defined experiments yet — switch to Suggest after baseline completes to review proposals.</div>';
+    function nousExperimentProgressRows(experiments, openCampaigns) {
+      if (!experiments || !experiments.length) {
+        const open = Array.isArray(openCampaigns) ? openCampaigns.length : 0;
+        if (open > 0) return `<div class="nous-lab-empty">No proposals yet for your ${open} experiment${open === 1 ? '' : 's'} — each card above shows its stage and what happens next.</div>`;
+        return '<div class="nous-lab-empty">Add an experiment: enter a research question and pick the repos it may touch.</div>';
+      }
       return `<div class="nous-exp-list">${experiments.map(exp => {
         const title = exp.title || exp.hypothesis || exp.id || 'experiment';
         const phase = exp.phase || exp.status || 'defined';
@@ -23365,7 +23395,7 @@ function burnAreaChart() {
     }
 
     // nousResearchQuestionText normalises a stored research question for the
-    // section header: a pasted YAML key ("research_question:") and folded /
+    // experiment cards: a pasted YAML key ("research_question:") and folded /
     // blockquote markers ("> ", "|") are dropped so only the question shows.
     function nousResearchQuestionText(raw) {
       let text = String(raw || '').trim();
@@ -23375,12 +23405,15 @@ function burnAreaChart() {
     }
 
     // nousSectionSummaryText is the collapsed Experiment Lab summary: lab mode
-    // plus experiment count. The research question itself stays in the header.
+    // plus experiment count. Research questions live on the experiment cards.
     function nousSectionSummaryText(cache) {
       const s = (cache && cache.status) || {};
       if (!cache || s.status === 'not_configured') return '—';
       const ledger = Array.isArray(cache.ledger) ? cache.ledger : [];
-      const n = ledger.length;
+      // With campaign cards (#12532) the count is the experiments that are
+      // running or paused; otherwise the ledger length as before.
+      const open = Array.isArray(s.campaigns) ? s.campaigns.filter(c => c && c.status !== 'archived') : null;
+      const n = open ? open.length : ledger.length;
       return `${s.mode || 'observe'} · ${n} experiment${n === 1 ? '' : 's'}`;
     }
 
@@ -23400,8 +23433,8 @@ function burnAreaChart() {
 
     function nousArchivedCampaigns(campaigns) {
       if (!campaigns || !campaigns.length) return '';
-      return `<div class="nous-card mt-5"><h3>Previous experiments <span class="nous-lab-h3-note">archived · read-only</span></h3><div class="nous-archived-list">${campaigns.map(c => {
-        const q = c.question || '(no research question)';
+      return `<div class="nous-card mt-5"><h3>Previous experiments <span class="nous-lab-h3-note">archived · read-only</span></h3><div class="nous-archived-list campaigns-list">${campaigns.map(c => {
+        const q = nousResearchQuestionText(c.question) || '(no research question)';
         const when = `${nousCampaignDate(c.startedAt)} → ${nousCampaignDate(c.endedAt)}`;
         const counts = `${Number(c.snapshots) || 0} snapshots · ${Number(c.experiments) || 0} hypotheses · ${Number(c.principles) || 0} principles`;
         const results = (c.results || []).map(r => {
@@ -23409,18 +23442,312 @@ function burnAreaChart() {
           const verdict = r.verdict || r.status || 'judged';
           return `<div class="nous-result-row"><div class="nous-result-head"><strong>${escapeHtml(title)}</strong><span class="nous-status-pill">${escapeHtml(verdict)}</span></div>${r.delta ? `<div class="nous-progress-copy">${escapeHtml(r.delta)}</div>` : ''}${nousOutputLinks(r.outputs)}</div>`;
         }).join('');
-        return `<div class="nous-archived-row" data-campaign-id="${Number(c.id) || 0}">
-          <div class="nous-exp-head"><div class="nous-exp-title">#${Number(c.id) || 0} · ${escapeHtml(q)}</div><span class="nous-status-pill">archived</span></div>
-          <div class="nous-exp-meta">${escapeHtml(when)} · ${escapeHtml(counts)}</div>
-          ${results ? `<div class="nous-results-list mt-2">${results}</div>` : '<div class="nous-progress-copy">No judged results.</div>'}
+        return `<div class="campaign-row nous-exp-row nous-archived-row" data-campaign-id="${Number(c.id) || 0}" data-status="archived">
+          <div>
+            <div class="campaign-row-title">#${Number(c.id) || 0} · ${escapeHtml(q)}</div>
+            <div class="campaign-row-meta"><span class="campaign-pill nous-exp-pill" data-status="archived">archived</span>${nousScopePills(c.scope)}<span>${escapeHtml(when)}</span><span>${escapeHtml(counts)}</span></div>
+            ${results ? `<div class="nous-results-list mt-2">${results}</div>` : '<div class="nous-progress-copy">No judged results.</div>'}
+          </div>
         </div>`;
       }).join('')}</div></div>`;
+    }
+
+    // What "672" means, said in the UI (#12532): one snapshot per governor
+    // cycle, 4/hour × 24 × 7 ≈ one week, so the baseline sees every weekday
+    // and weekend regime once.
+    const NOUS_BASELINE_TARGET_DEFAULT = 672;
+    const NOUS_BASELINE_TARGET_EXPLAINER = '≈ 7 days of observations (4/hour)';
+    function nousBaselineTargetTip(target, explainer) {
+      const t = Number(target) || NOUS_BASELINE_TARGET_DEFAULT;
+      return `${t} baseline snapshots ${explainer || NOUS_BASELINE_TARGET_EXPLAINER}: one hive-state snapshot per governor evaluation cycle, 4 an hour × 24 hours × 7 days, so the baseline covers every weekday and weekend regime once before experiments are judged against it.`;
+    }
+    function nousBaselineInfo(id, target, explainer) {
+      const tipId = `nous-baseline-tip-${escapeHtml(String(id))}`;
+      return `<span class="config-info overview-term-info" tabindex="0" data-action="gh3" data-stop="1" aria-describedby="${tipId}" aria-label="What the baseline target means">ⓘ<span id="${tipId}" class="config-tooltip" role="tooltip">${escapeHtml(nousBaselineTargetTip(target, explainer))}</span></span>`;
+    }
+
+    function nousScopePills(scope) {
+      const sc = scope || {};
+      const repos = Array.isArray(sc.repos) ? sc.repos : [];
+      let h = '';
+      if (!repos.length || sc.hiveWide) {
+        h += '<span class="campaign-pill nous-scope-pill" title="This experiment may touch every repo, so no other experiment can run beside it">hive-wide</span>';
+      } else {
+        for (const r of repos) {
+          const short = String(r).includes('/') ? String(r).split('/')[1] : String(r);
+          h += `<span class="campaign-pill nous-scope-pill" title="${escapeHtml(r)}">${escapeHtml(short)}</span>`;
+        }
+      }
+      if (sc.intervention) h += `<span class="campaign-pill nous-scope-pill" title="Intervention kind">${escapeHtml(sc.intervention)}</span>`;
+      for (const t of (Array.isArray(sc.tags) ? sc.tags : [])) h += `<span class="campaign-pill nous-scope-pill">#${escapeHtml(t)}</span>`;
+      return h;
+    }
+
+    // One running/paused experiment as an Inception-style campaign row:
+    // question, scope pills, its own baseline bar "N / 672 (≈ 7 days)",
+    // status and pause/resume/archive (#12532).
+    // nousExperimentStage renders the lifecycle line of a card from the
+    // server-derived stage (collecting baseline → ready → proposals awaiting
+    // review → running → concluded). Older servers without `stage` fall
+    // back to the baseline count so the card never goes blank.
+    function nousExperimentStage(c, status, n, target) {
+      let stage = c.stage || '';
+      let label = c.stageLabel || '';
+      if (!stage) {
+        if (status === 'paused') { stage = 'paused'; label = 'paused'; }
+        else if (c.complete) { stage = 'ready'; label = 'ready — generating proposals'; }
+        else { stage = 'baseline'; label = `collecting baseline ${n} / ${target}`; }
+      }
+      const detail = c.stageDetail ? `<span class="nous-exp-stage-detail">${escapeHtml(c.stageDetail)}</span>` : '';
+      return `<div class="nous-exp-stage" data-stage="${escapeHtml(stage)}"><span class="nous-exp-stage-label">${escapeHtml(label)}</span>${detail}</div>`;
+    }
+
+    const NOUS_PRINCIPLES_EXPLAINER = 'Principles are durable lessons the lab distils from judged experiments (principles.json). A new lab starts at 0 and the count grows as experiments conclude; none are needed to start an experiment.';
+
+    function nousPrinciplesInfo(explainer) {
+      return `<span class="config-info overview-term-info" tabindex="0" data-action="gh3" data-stop="1" aria-describedby="nous-principles-tip" aria-label="What principles are">ⓘ<span id="nous-principles-tip" class="config-tooltip" role="tooltip">${escapeHtml(explainer || NOUS_PRINCIPLES_EXPLAINER)}</span></span>`;
+    }
+
+    function nousExperimentCard(c) {
+      const id = Number(c.id) || 0;
+      const status = c.status === 'paused' ? 'paused' : 'active';
+      const target = Number(c.target) || NOUS_BASELINE_TARGET_DEFAULT;
+      const n = Math.min(Number(c.snapshots) || 0, target);
+      const pct = c.percent != null ? Number(c.percent) : (n * 100 / target);
+      const q = nousResearchQuestionText(c.question) || '(no research question)';
+      const hyp = c.hypothesis ? `<div class="nous-exp-hypothesis">Hypothesis: ${escapeHtml(c.hypothesis)}</div>` : '';
+      const toggle = status === 'paused'
+        ? `<button class="hv-btn btn-primary btn-sm" data-action="nousCampaignAction" data-arg0="${id}" data-arg1="resume" title="Resume observing and proposing for this experiment">Resume</button>`
+        : `<button class="hv-btn btn-secondary btn-sm" data-action="nousCampaignAction" data-arg0="${id}" data-arg1="pause" title="Pause this experiment; its scope is released for others">Pause</button>`;
+      // Single primary action when the server says one is needed: the
+      // baseline is complete but the lab is still in Observe mode, so the
+      // operator never has to discover the mode knob (#12532).
+      const primary = c.nextAction === 'generate_proposals'
+        ? `<button class="hv-btn btn-primary btn-sm" data-action="nousGenerateProposals" data-arg0="${id}" title="Switch the lab to Suggest so proposals can be designed for your review">Generate proposals</button>`
+        : '';
+      return `<div class="campaign-row nous-exp-row" data-campaign-id="${id}" data-status="${status}">
+        <div>
+          <div class="campaign-row-title">#${id} · ${escapeHtml(q)}</div>
+          ${hyp}
+          <div class="campaign-row-meta"><span class="campaign-pill nous-exp-pill" data-status="${status}">${status}</span>${nousScopePills(c.scope)}<span>started ${escapeHtml(nousCampaignDate(c.startedAt))}</span><span>${Number(c.experiments) || 0} hypotheses</span></div>
+          ${nousExperimentStage(c, status, n, target)}
+          <div class="nous-exp-baseline">Baseline ${n} / ${target} (${escapeHtml(c.targetExplainer || NOUS_BASELINE_TARGET_EXPLAINER)})${c.complete ? ' · complete' : ''}${nousBaselineInfo(id, target, c.targetExplainer)}${nousProgressBar(pct, `Baseline for experiment #${id}`)}</div>
+        </div>
+        <div class="campaign-row-actions">
+          ${primary}
+          ${toggle}
+          <button class="hv-btn btn-secondary btn-sm" data-action="nousCampaignAction" data-arg0="${id}" data-arg1="archive" title="End this experiment; its results stay readable under Previous experiments">Archive</button>
+        </div>
+      </div>`;
+    }
+
+    // Inline new-experiment form state: kept across status re-renders the
+    // way Inception carries its campaign filters (#11032).
+    let _nousNewExp = { open: false, conflict: null, pending: false };
+
+    function nousNewExperimentForm(projectRepos, repoTargets, conflict) {
+      const repos = Array.isArray(projectRepos) ? projectRepos : [];
+      const preset = Array.isArray(repoTargets) ? repoTargets : [];
+      let h = '<div class="nous-new-exp" id="nous-new-exp" role="form" aria-label="New experiment">';
+      h += '<div><label for="nous-ne-question">Research question</label><textarea id="nous-ne-question" rows="2" placeholder="Can we cut CI time by 20% by sharding the slowest test package?"></textarea></div>';
+      h += '<div><label for="nous-ne-hypothesis">Hypothesis <span class="nous-lab-h3-note">(optional)</span></label><input type="text" id="nous-ne-hypothesis" placeholder="What you expect to change, and by how much"></div>';
+      h += '<div><label>Scope <span class="nous-lab-h3-note">(repo targets; none selected = hive-wide)</span></label>';
+      if (repos.length === 0) {
+        h += '<div class="nous-lab-empty">No project repos available &mdash; the experiment will be hive-wide.</div>';
+      } else {
+        h += '<div class="nous-lab-chips" role="group" aria-label="Experiment scope">';
+        for (const repo of repos) {
+          const on = preset.includes(repo);
+          const short = repo.includes('/') ? repo.split('/')[1] : repo;
+          h += `<button type="button" class="${nousRepoPillClass(on)} nous-ne-pill" aria-pressed="${on}" data-repo="${escapeHtml(repo)}" data-action="toggleNousRepo" data-arg-types="t" title="${escapeHtml(nousRepoPillTitle(repo, on))}"><span>${escapeHtml(short)}</span></button>`;
+        }
+        h += '</div>';
+      }
+      h += '</div>';
+      if (conflict) h += nousConflictWarning(conflict);
+      h += '<div class="nous-new-exp-actions">';
+      h += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="nousCancelNewExperiment">Cancel</button>';
+      h += `<button type="button" class="hv-btn btn-primary btn-sm" data-action="nousSubmitNewExperiment"${_nousNewExp.pending ? ' disabled' : ''}>Start experiment</button>`;
+      h += '</div></div>';
+      return h;
+    }
+
+    // Styled in-app warning for a 409 scope_conflict: says why (concurrent
+    // interventions on the same scope confound each other's outcomes) and
+    // offers to pause the other experiment or narrow the scope.
+    function nousConflictWarning(conf) {
+      const other = conf.conflict || {};
+      const id = Number(other.id) || 0;
+      const shared = Array.isArray(conf.shared) && conf.shared.length ? conf.shared.join(', ') : 'hive-wide';
+      return `<div class="nous-conflict-warn" role="alert" data-conflict-id="${id}">
+        <div><strong>Scope conflict with experiment #${id}</strong> — ${escapeHtml(other.question || '(no research question)')}</div>
+        <div>Both would intervene on <strong>${escapeHtml(shared)}</strong>. Two experiments changing the same scope at the same time confound each other's outcomes, so only one may run there.</div>
+        <div class="nous-new-exp-actions">
+          <button type="button" class="hv-btn btn-secondary btn-sm" data-action="nousPauseConflictAndStart" data-arg0="${id}" title="Pause experiment #${id}, then start this one">Pause #${id} and start</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm" data-action="nousNarrowScope" title="Deselect the shared repos above and try again">Narrow scope</button>
+        </div>
+      </div>`;
+    }
+
+    // The experiments card list, Inception-style (#12532).
+    function nousExperimentCards(campaigns, s) {
+      const open = (campaigns || []).filter(c => c && c.status !== 'archived');
+      let h = '<div class="campaigns-card nous-exp-cards">';
+      h += '<div class="campaigns-head"><div><div class="campaigns-title">Experiments</div><div class="campaigns-subtitle">Each running experiment has its own research question, scope and baseline. Experiments may run side by side when their scopes do not overlap.</div></div>';
+      h += `<button class="hv-btn btn-primary btn-sm" data-action="nousOpenNewExperiment" title="Start another experiment with its own question, scope and baseline"${_nousNewExp.open ? ' disabled' : ''}>+ New experiment</button></div>`;
+      if (_nousNewExp.open) h += nousNewExperimentForm(s.projectRepos || s.availableRepos || [], s.repoTargets || [], _nousNewExp.conflict);
+      h += '<div class="campaigns-list" id="nous-exp-list">';
+      if (open.length === 0) {
+        h += '<div class="campaign-empty">Add an experiment: enter a research question and pick the repos it may touch.</div>';
+      } else {
+        h += open.map(nousExperimentCard).join('');
+      }
+      h += '</div></div>';
+      return h;
+    }
+
+    function nousNewExperimentValues() {
+      const form = document.getElementById('nous-new-exp');
+      if (!form) return null;
+      return {
+        question: (document.getElementById('nous-ne-question') || {}).value || '',
+        hypothesis: (document.getElementById('nous-ne-hypothesis') || {}).value || '',
+        repos: Array.from(form.querySelectorAll('.nous-ne-pill.is-on')).map(p => p.dataset.repo),
+      };
+    }
+
+    function nousRestoreNewExperimentValues(v) {
+      if (!v) return;
+      const q = document.getElementById('nous-ne-question');
+      const hy = document.getElementById('nous-ne-hypothesis');
+      if (q) q.value = v.question;
+      if (hy) hy.value = v.hypothesis;
+      document.querySelectorAll('#nous-new-exp .nous-ne-pill').forEach(p => nousRepoPillSetState(p, v.repos.includes(p.dataset.repo)));
+    }
+
+    function nousOpenNewExperiment() {
+      if (!experimentLabEnabled()) return;
+      _nousNewExp = { open: true, conflict: null, pending: false };
+      renderNous();
+      const q = document.getElementById('nous-ne-question');
+      if (q) q.focus();
+    }
+
+    function nousCancelNewExperiment() {
+      _nousNewExp = { open: false, conflict: null, pending: false };
+      renderNous();
+    }
+
+    function nousNarrowScope() {
+      const conf = _nousNewExp.conflict || {};
+      const shared = new Set((Array.isArray(conf.shared) ? conf.shared : []).map(r => String(r).toLowerCase()));
+      document.querySelectorAll('#nous-new-exp .nous-ne-pill').forEach(p => {
+        const repo = String(p.dataset.repo || '').toLowerCase();
+        if (shared.size === 0 || shared.has(repo)) nousRepoPillSetState(p, false);
+      });
+      const warn = document.querySelector('#nous-new-exp .nous-conflict-warn');
+      if (warn) warn.remove();
+      _nousNewExp.conflict = null;
+      const q = document.getElementById('nous-ne-question');
+      if (q) q.focus();
+    }
+
+    async function nousSubmitNewExperiment() {
+      if (!experimentLabEnabled()) return;
+      const v = nousNewExperimentValues();
+      if (!v) return;
+      if (!v.question.trim()) { showToast('Enter a research question first', 'error'); return; }
+      _nousNewExp.pending = true;
+      try {
+        const r = await fetch('/api/nous/campaigns', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ question: v.question, hypothesis: v.hypothesis, scope: { repos: v.repos } }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.status === 409 && j.code === 'scope_conflict') {
+          _nousNewExp.conflict = j;
+          _nousNewExp.pending = false;
+          renderNous();
+          nousRestoreNewExperimentValues(v);
+          return;
+        }
+        if (r.ok && j.ok) {
+          showToast(`Experiment #${(j.campaign && j.campaign.id) || ''} started — baseline starts at 0`, 'success');
+          _nousNewExp = { open: false, conflict: null, pending: false };
+          fetchNousStatus();
+          return;
+        }
+        showToast(j.error || 'Failed to start experiment', 'error');
+      } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+      _nousNewExp.pending = false;
+      renderNous();
+      nousRestoreNewExperimentValues(v);
+    }
+
+    async function nousPatchCampaign(id, body) {
+      const r = await fetch('/api/nous/campaigns/' + encodeURIComponent(id), {
+        method: 'PATCH', headers: _inceptionAuthHeaders(), body: JSON.stringify(body),
+      });
+      const j = await r.json().catch(() => ({}));
+      return { r, j };
+    }
+
+    async function nousPauseConflictAndStart(id) {
+      const v = nousNewExperimentValues();
+      try {
+        const { r, j } = await nousPatchCampaign(id, { action: 'pause' });
+        if (!r.ok || !j.ok) { showToast(j.error || `Failed to pause experiment #${id}`, 'error'); return; }
+        showToast(`Experiment #${id} paused`, 'info');
+      } catch (e) { showToast('Failed: ' + e.message, 'error'); return; }
+      _nousNewExp.conflict = null;
+      renderNous();
+      nousRestoreNewExperimentValues(v);
+      await nousSubmitNewExperiment();
+    }
+
+    const NOUS_CAMPAIGN_ACTION_CONFIRM = {
+      archive: 'Archive this experiment? It stops observing and its results become read-only under Previous experiments.',
+    };
+
+    async function nousCampaignAction(id, action) {
+      if (!experimentLabEnabled()) return;
+      if (NOUS_CAMPAIGN_ACTION_CONFIRM[action] && !(await hiveConfirm(NOUS_CAMPAIGN_ACTION_CONFIRM[action]))) return;
+      try {
+        const { r, j } = await nousPatchCampaign(id, { action });
+        if (r.status === 409 && j.code === 'scope_conflict') {
+          const other = j.conflict || {};
+          showToast(`Cannot resume #${id}: scope conflicts with running experiment #${other.id || '?'}. Pause it or narrow the scope first.`, 'error');
+          return;
+        }
+        if (r.ok && j.ok) {
+          showToast(`Experiment #${id} ${action === 'archive' ? 'archived' : action + 'd'}`, 'success');
+          fetchNousStatus();
+        } else {
+          showToast(j.error || `Failed to ${action} experiment`, 'error');
+        }
+      } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+    }
+
+    // nousGenerateProposals is the card's primary action once a baseline is
+    // complete in Observe mode: it moves the trust ladder to Suggest (never
+    // further) so the experiment loop may design proposals for review.
+    async function nousGenerateProposals(id) {
+      if (!experimentLabEnabled()) return;
+      try {
+        const r = await fetch('/api/nous/mode', {
+          method: 'PUT', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ mode: 'suggest' }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(j.error || 'Could not switch the lab to Suggest', 'error'); return; }
+        showToast(`Lab switched to Suggest — proposals for experiment #${id} appear here for review once designed`, 'success');
+        fetchNousStatus();
+      } catch (e) { showToast('Could not switch the lab to Suggest: ' + e.message, 'error'); }
     }
 
     function renderNous() {
       if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
-      const rqEl = document.getElementById('nous-research-question');
       if (!panel || !_nousCache) return;
       const s = _nousCache.status || {};
       const ledger = _nousCache.ledger || [];
@@ -23428,35 +23755,15 @@ function burnAreaChart() {
       const mode = s.mode || 'observe';
       const phases = s.phases || {};
 
-      const rq = nousResearchQuestionText(s.researchQuestion);
-      const setRq = (text) => {
-        if (!rqEl) return;
-        rqEl.textContent = '';
-        if (text) {
-          const label = document.createElement('span');
-          label.className = 'nous-rq-label';
-          label.textContent = 'Research question:';
-          const body = document.createElement('span');
-          body.className = 'nous-rq-text';
-          body.textContent = text;
-          rqEl.appendChild(label);
-          rqEl.appendChild(document.createTextNode(' '));
-          rqEl.appendChild(body);
-        }
-        rqEl.title = text;
-        rqEl.hidden = !text;
-        if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);
-      };
-
       // Not configured server-side: explain what the lab is instead of a
       // control surface whose actions would all fail.
       if (s.status === 'not_configured') {
-        setRq('');
         panel.innerHTML = _nousExplainerCard();
         return;
       }
-
-      setRq(rq);
+      // The research question lives on each experiment card, not in the
+      // section header (#12532); the header keeps the mode · N summary.
+      if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);
 
       // Update sidebar config — only show at ACMM L4+
       const NOUS_SIDEBAR_MIN_LEVEL = 4;
@@ -23519,15 +23826,18 @@ function burnAreaChart() {
       html += '<div class="nous-stat-grid">';
       if (camp) {
         html += `<div class="nous-stat"><div class="val">${Number(camp.snapshots) || 0}</div><div class="lbl">Baseline snapshots · experiment #${Number(camp.id) || 0}</div></div>`;
-        html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles</div></div>`;
+        html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles${nousPrinciplesInfo(s.principlesExplainer)}</div></div>`;
         html += `<div class="nous-stat"><div class="val">${Number(camp.experiments) || 0}</div><div class="lbl">Hypotheses this experiment</div></div>`;
       } else {
         html += `<div class="nous-stat"><div class="val">${s.snapshotCount || 0}</div><div class="lbl">State snapshots</div></div>`;
-        html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles</div></div>`;
+        html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles${nousPrinciplesInfo(s.principlesExplainer)}</div></div>`;
         html += `<div class="nous-stat"><div class="val">${ledger.length}</div><div class="lbl">Experiments</div></div>`;
       }
       html += '</div>';
       if (camp) html += nousObservationLine(obs, camp);
+
+      // Running experiments as Inception-style cards (#12532).
+      if (Array.isArray(s.campaigns)) html += nousExperimentCards(s.campaigns, s);
 
       // Snapshot summary — what's being collected
       const ss = s.snapshotSummary;
@@ -23585,12 +23895,12 @@ function burnAreaChart() {
       html += '<div class="nous-progress-summary">';
       html += `<div class="nous-progress-label"><strong>Baseline: ${baseCount} / ${baseTarget} snapshots (${basePct}%)</strong><span class="nous-progress-copy">${base.complete ? 'Complete — switch to Suggest when ready.' : `${base.remainingSnapshots || 0} remaining · ETA ${nousFmtDuration(base.etaSeconds)}`}</span></div>`;
       html += nousProgressBar(basePct, 'Baseline snapshot collection');
-      if (camp) html += `<div class="nous-progress-copy nous-campaign-meta">Experiment #${Number(camp.id) || 0} started ${escapeHtml(nousCampaignDate(camp.startedAt))}. Baseline and hypotheses restart with each research question; earlier observations stay in the history below.</div>`;
+      if (camp) html += `<div class="nous-progress-copy nous-campaign-meta">Experiment #${Number(camp.id) || 0} started ${escapeHtml(nousCampaignDate(camp.startedAt))}. Baseline and hypotheses restart with each research question; earlier observations stay in the history below. Each experiment card above carries its own baseline bar.</div>`;
       html += `<div class="nous-progress-copy">Collecting: ${escapeHtml(((base.collecting || ['queue issues','queue PRs','queue on hold','SLA violations','agents kicked','agent states','total tokens']).join(', ')))}. Retention: ${escapeHtml(base.retention || '24 h raw snapshots, then hourly buckets for 30 days')}.</div>`;
       html += '</div>';
       html += '<div class="nous-pending-params">Observe records the hive-state time series every governor evaluation cycle. Experiments wait for Suggest/Evolve and operator approval before repo changes run.</div>';
       html += '<h3 class="mt-5">Experiment Progress</h3>';
-      html += nousExperimentProgressRows(s.experiments || []);
+      html += nousExperimentProgressRows(s.experiments || [], (s.campaigns || []).filter(c => c && c.status !== 'archived'));
 
       // Show experiment proposals from ledger
       const dryRuns = ledger.filter(e => e.type === 'dry_run').slice(-5);
@@ -23649,7 +23959,7 @@ function burnAreaChart() {
       }
 
       html += nousResultsRows(s.results || []);
-      html += nousArchivedCampaigns(s.campaigns || []);
+      html += nousArchivedCampaigns((s.campaigns || []).filter(c => c && c.status === 'archived'));
 
       // Principles
       if (principles.length > 0) {
@@ -23705,7 +24015,10 @@ function burnAreaChart() {
         html += '</div>';
       }
 
+      // Carry the inline new-experiment draft across a re-render.
+      const draft = _nousNewExp.open ? nousNewExperimentValues() : null;
       setIfChanged(panel, html);
+      if (draft) nousRestoreNewExperimentValues(draft);
     }
 
     async function nousSetMode(mode) {
@@ -30198,6 +30511,13 @@ function burnAreaChart() {
         case 'switchConfigTab': switchConfigTab(el.dataset.tab || el.dataset.arg0); break;
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
         case 'nousStartCampaign': nousStartCampaign(); break;
+        case 'nousOpenNewExperiment': nousOpenNewExperiment(); break;
+        case 'nousGenerateProposals': nousGenerateProposals(el.dataset.arg0); break;
+        case 'nousCancelNewExperiment': nousCancelNewExperiment(); break;
+        case 'nousSubmitNewExperiment': nousSubmitNewExperiment(); break;
+        case 'nousNarrowScope': nousNarrowScope(); break;
+        case 'nousPauseConflictAndStart': nousPauseConflictAndStart(el.dataset.arg0); break;
+        case 'nousCampaignAction': nousCampaignAction(el.dataset.arg0, el.dataset.arg1); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleContributorPRBaseSync': toggleContributorPRBaseSync(el); break;
         case 'toggleSentinelEnabled': toggleSentinelEnabled(el); break;

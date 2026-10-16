@@ -7,49 +7,47 @@ import (
 	"testing"
 )
 
-// The Experiment Lab research question used to be capped at 40ch and
-// ellipsised in the section header even though the header had room for it.
-// It must now take the remaining header width and wrap instead of clipping.
-func TestNousResearchQuestionHeaderIsNotClipped(t *testing.T) {
+// hivecommons/hive#12498 put the research question in the Experiment Lab
+// section header; hivecommons/hive#12532 moved it onto the experiment cards
+// (several experiments, several questions) and returned the header to the
+// shape every other section has: title + ⓘ/⚙ + the collapsed
+// "mode · N experiments" summary. Nothing may put a question back there.
+func TestNousResearchQuestionIsNotInSectionHeader(t *testing.T) {
 	html := indexHTML(t)
-	rule := regexp.MustCompile(`\.nous-research-question\s*\{[^}]*\}`).FindString(html)
-	if rule == "" {
-		t.Fatal(".nous-research-question rule missing from index.html")
-	}
-	for _, banned := range []string{"max-width: 40ch", "text-overflow: ellipsis", "white-space: nowrap", "overflow: hidden"} {
-		if strings.Contains(rule, banned) {
-			t.Errorf(".nous-research-question still clips the question via %q: %s", banned, rule)
+	for _, banned := range []string{"nous-research-question", "nous-rq-label", "nous-rq-text", "const setRq"} {
+		if strings.Contains(html, banned) {
+			t.Errorf("index.html still references %q: the research question belongs on the experiment cards, not the section header", banned)
 		}
 	}
-	for _, want := range []string{"flex: 1 1", "min-width: 0", "white-space: normal", "overflow-wrap: anywhere"} {
-		if !strings.Contains(rule, want) {
-			t.Errorf(".nous-research-question lacks %q so it cannot fill and wrap the header: %s", want, rule)
-		}
+	header := regexp.MustCompile(`<h2[^>]*data-arg0="nous-section"[^>]*>.*?</h2>`).FindString(html)
+	if header == "" {
+		t.Fatal("Experiment Lab section header not found")
 	}
-
-	ensureBody := jsFunctionBody(t, html, "function ensureSectionCard(sectionId)")
-	badgeSelector := regexp.MustCompile(`querySelectorAll\('\[id\$="-badge"\][^']*'\)`).FindString(ensureBody)
-	if strings.Contains(badgeSelector, "#nous-research-question") {
-		t.Fatal("research question is still migrated into the pill-badge cluster, which forces nowrap/uppercase")
+	if !strings.Contains(header, "🧪 Experiment Lab</h2>") {
+		t.Fatalf("Experiment Lab header must end with the title and nothing else: %s", header)
 	}
-	if !strings.Contains(ensureBody, "querySelectorAll('#nous-research-question')") || !strings.Contains(ensureBody, "badges.insertAdjacentElement('afterend', el)") {
-		t.Fatal("research question is not placed as its own flex item after the header badges")
-	}
-
 	summaries := jsFunctionBody(t, html, "function refreshDashboardSectionSummaries(data)")
-	if strings.Contains(summaries, "nous-research-question") || !strings.Contains(summaries, "setSectionSummary('nous-section', nousSectionSummaryText(") {
-		t.Fatal("collapsed section summary must show lab mode/experiment count, not duplicate the research question already in the header")
+	if !strings.Contains(summaries, "setSectionSummary('nous-section', nousSectionSummaryText(") {
+		t.Fatal("collapsed section summary must keep showing lab mode · experiment count")
+	}
+	ensureBody := jsFunctionBody(t, html, "function ensureSectionCard(sectionId)")
+	if strings.Contains(ensureBody, "nous-research-question") {
+		t.Fatal("ensureSectionCard still migrates a header research question element")
+	}
+	// The question renders on each card, cleaned of pasted YAML markers.
+	card := extractJSFunction(t, html, "nousExperimentCard")
+	if !strings.Contains(card, "nousResearchQuestionText(c.question)") || !strings.Contains(card, `class="campaign-row-title"`) {
+		t.Fatalf("nousExperimentCard must render the cleaned question as the Inception-style row title: %s", card)
 	}
 }
 
 // A stored research question may carry a pasted YAML key and folded-scalar
-// marker ("research_question: > ..."). The header shows a muted
-// "Research question:" label followed by the full question only.
-func TestNousResearchQuestionHeaderRendersFullQuestionWithLabel(t *testing.T) {
+// marker ("research_question: > ..."). Cards show only the question.
+func TestNousResearchQuestionTextStripsYAMLMarkers(t *testing.T) {
 	html := indexHTML(t)
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node unavailable: research question header rendering was not executed")
+		t.Skip("node unavailable: research question normalisation was not executed")
 	}
 	script := `const assert = require('node:assert/strict');
 ` + jsFunctionBody(t, html, "function nousResearchQuestionText(raw)") + `
@@ -61,55 +59,8 @@ assert.equal(nousResearchQuestionText('Research Question: |\n  ' + question + '\
 assert.equal(nousResearchQuestionText(question), question);
 assert.equal(nousResearchQuestionText(''), '');
 assert.equal(nousResearchQuestionText(null), '');
-
-// Minimal DOM double covering what setRq() in renderNous() uses.
-function el(tag) {
-  return {
-    tagName: tag, className: '', children: [], _text: '', title: '', hidden: false,
-    get textContent() { return this._text || this.children.map(c => c.textContent).join(''); },
-    set textContent(v) { this._text = String(v); this.children = []; },
-    appendChild(c) { this.children.push(c); return c; },
-  };
-}
-const document = {
-  createElement: el,
-  createTextNode: (t) => ({ textContent: String(t) }),
-};
-const rqEl = el('span');
-` + nousSetRqSnippet(t, html) + `
-setRq(nousResearchQuestionText('research_question: > ' + question));
-assert.equal(rqEl.hidden, false);
-assert.equal(rqEl.title, question, 'title attribute keeps the full question as a fallback');
-assert.equal(rqEl.children.length, 3);
-assert.equal(rqEl.children[0].className, 'nous-rq-label');
-assert.equal(rqEl.children[0].textContent, 'Research question:');
-assert.equal(rqEl.children[2].className, 'nous-rq-text');
-assert.equal(rqEl.children[2].textContent, question, 'header carries the full question text');
-assert.equal(rqEl.textContent, 'Research question: ' + question);
-assert.doesNotMatch(rqEl.textContent, /research_question|>/, 'raw YAML key / marker must not render');
-setRq('');
-assert.equal(rqEl.hidden, true);
-assert.equal(rqEl.textContent, '');
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
-		t.Fatalf("node research question header rendering failed: %v\n%s", err, strings.TrimSpace(string(out)))
+		t.Fatalf("node research question normalisation failed: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
-}
-
-// nousSetRqSnippet extracts the setRq arrow function from renderNous() so the
-// node test exercises the real header rendering code.
-func nousSetRqSnippet(t *testing.T, html string) string {
-	t.Helper()
-	body := jsFunctionBody(t, html, "function renderNous()")
-	start := strings.Index(body, "const setRq = (text) => {")
-	if start < 0 {
-		t.Fatal("renderNous() no longer defines setRq")
-	}
-	end := strings.Index(body[start:], "\n      };")
-	if end < 0 {
-		t.Fatal("setRq arrow function end not found")
-	}
-	snippet := body[start : start+end+len("\n      };")]
-	// The real helper refreshes section summaries; the test has no dashboard.
-	return strings.Replace(snippet, "if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);", "", 1)
 }

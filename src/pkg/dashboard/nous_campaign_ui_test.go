@@ -22,7 +22,8 @@ func TestNousCampaignUIRendersPerCampaignBaseline(t *testing.T) {
 		"<div class=\"lbl\">Hypotheses this experiment</div>",
 		"if (camp) html += nousObservationLine(obs, camp);",
 		"Experiment #${Number(camp.id) || 0} started ${escapeHtml(nousCampaignDate(camp.startedAt))}. Baseline and hypotheses restart with each research question",
-		"html += nousArchivedCampaigns(s.campaigns || []);",
+		"if (Array.isArray(s.campaigns)) html += nousExperimentCards(s.campaigns, s);",
+		"html += nousArchivedCampaigns((s.campaigns || []).filter(c => c && c.status === 'archived'));",
 		"const NOUS_NEW_EXPERIMENT_CONFIRM = 'Start a new experiment? Baseline and hypotheses restart; previous campaign is archived.';",
 		"if (!(await hiveConfirm(NOUS_NEW_EXPERIMENT_CONFIRM))) { showToast('Research question not changed', 'info'); return; }",
 		"const r = await fetch('/api/nous/campaign/start', {",
@@ -51,6 +52,8 @@ func TestNousCampaignUIRendersPerCampaignBaseline(t *testing.T) {
 		extractJSFunction(t, html, "nousCampaignDate") + "\n    }\n" +
 		extractJSFunction(t, html, "nousObservationLine") + "\n    }\n" +
 		extractJSFunction(t, html, "nousOutputLinks") + "\n    }\n" +
+		extractJSFunction(t, html, "nousResearchQuestionText") + "\n    }\n" +
+		extractJSFunction(t, html, "nousScopePills") + "\n    }\n" +
 		extractJSFunction(t, html, "nousArchivedCampaigns") + "\n    }\n" +
 		extractJSFunction(t, html, "nousQuestionChanged") + "\n    }\n" +
 		`const out = {
