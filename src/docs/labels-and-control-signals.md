@@ -288,6 +288,10 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
    server hands out queued `fix-pr` tasks first, oldest first, and serves a
    fresh issue only when the contributor's fix queue is empty. Preemption of
    in-progress work still obeys the single-preempt + focus-window rule.
+7. Capacity ≥ 2: fixes are dispatched immediately as parallel sub-sessions,
+   up to capacity − 1 so the primary session keeps going and is never
+   preempted; further failures queue, and each finished fix session frees a
+   slot that is refilled automatically with the next queued `fix-pr`.
 
 Step 1's label and the regression comment ship with the stage engine; the
 nudge comment, relay `fix-pr` task, presence/grace timers and adoption kick
