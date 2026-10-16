@@ -71,6 +71,8 @@ func TestPersonPRReviewRequiresHumanClearedByNewHead12329(t *testing.T) {
 	}
 }
 
+// A Hive PR with no labels is no longer in this table: since #12377 a review
+// hold is your turn for every author (ownership_review_holds_12377_test.go).
 func TestReviewRequiresHumanDoesNotOverrideOtherRules12329(t *testing.T) {
 	verdictsFor := func(pr github.PullRequest) []review.Aggregate {
 		return []review.Aggregate{requiresHumanVerdict12329(pr.Repo, pr.Number, pr.HeadSHA)}
@@ -80,7 +82,6 @@ func TestReviewRequiresHumanDoesNotOverrideOtherRules12329(t *testing.T) {
 		pr   github.PullRequest
 		held bool
 	}{
-		{"hive PR, no labels", withHead12329(hivePR11565(), "h"), false},
 		{"hive PR with needs-human", withHead12329(hivePR11565("needs-human"), "h"), false},
 		{"hive PR with needs-human and reviewer-passed", withHead12329(hivePR11565("needs-human", "reviewer-passed"), "h"), false},
 		{"person PR with needs-human", withHead12329(personPR11565("needs-human"), "h"), false},

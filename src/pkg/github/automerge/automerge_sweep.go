@@ -60,6 +60,10 @@ type Options struct {
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
 	HumanMergePaths func(repo string) []string
+	// ReviewVerdictHold reports the review swarm's hold on a PR (#12374).
+	// The self-authored and trusted-author sweep refuse a held PR whatever
+	// review.require_approval says. nil means no verdict ever holds.
+	ReviewVerdictHold ReviewVerdictHoldFunc
 	// SelfAuthorizationHoldEnabled returns the live per-repo #5117 hold switch.
 	// nil preserves the default-on behavior.
 	SelfAuthorizationHoldEnabled      func(repo string) bool
@@ -132,6 +136,8 @@ type Engine struct {
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 
+	reviewVerdictHold ReviewVerdictHoldFunc
+
 	selfAuthorizationHoldEnabled      func(repo string) bool
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
@@ -177,6 +183,7 @@ func New(transport Transport, opts Options) *Engine {
 		mutation:                          opts.MutationBoundary,
 		intentGate:                        opts.IntentGate,
 		humanMergePaths:                   opts.HumanMergePaths,
+		reviewVerdictHold:                 opts.ReviewVerdictHold,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
@@ -1350,6 +1357,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// EvaluateForAppSelfMerge is ever asked.
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return AutoMergeSweepEvent{}, humanReason, err
+	}
+	// Review verdict hold (#12374): a requires_human or reject verdict stops
+	// this lane even with review.require_approval off, and survives a fix push.
+	if verdictReason, err := c.reviewVerdictGate(ctx, displayRepo, owner, repo, pr); err != nil || verdictReason != "" {
+		return AutoMergeSweepEvent{}, verdictReason, err
 	}
 	if intentReason, err := c.selfMergeIntentGate(ctx, displayRepo, owner, repo, pr, author, selfLabels); err != nil {
 		return AutoMergeSweepEvent{}, intentReason, err

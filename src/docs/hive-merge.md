@@ -166,8 +166,18 @@ auto_merge:
 
 The self-authored automerge sweep merges the App's own open, CI-green PRs. It
 also merges PRs from `auto_merge.trusted_bot_authors` through the identical
-gates (required checks green, mergeable, no hold/exempt label, intent tier,
-approval desk, head SHA re-verified at merge time). The default is
+gates (required checks green, mergeable, no hold/exempt label, no review
+verdict hold, intent tier, approval desk, head SHA re-verified at merge time).
+The review verdict hold applies whatever `review.require_approval` says: while
+the latest decisive review verdict on the PR is `requires_human` or `reject`,
+the sweep skips it as `review-verdict-requires-human` /
+`review-verdict-reject`. The hold belongs to the PR, not the head: a fix push
+after the verdict does not clear it. It is released by a merge-eligible
+`approve` verdict recorded after it (a fresh review of the new head), or by a
+person (not a bot) who submits an approving review or replies `/hive approve`
+on the PR after the verdict; a plain comment does not release it. If the
+reviews or comments cannot be listed the sweep fails closed
+(`review-verdict-hold-evidence`). The default is
 `dependabot[bot]` only; set an explicit empty list to keep the sweep App-only,
 or add other dependency bots you trust. Each merge is recorded with
 `lane=trusted-bot` so audits can tell it from `lane=self-authored`. Changing

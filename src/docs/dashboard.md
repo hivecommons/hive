@@ -526,7 +526,7 @@ so the reason text can change without breaking them.
 | `adjudicator_recommended_close` | `CLOSE` |
 | `adjudicator_reescalated` | `REVIEW` |
 | `person_pr_needs_human` | `REVIEW` |
-| `review_requires_human` | `REVIEW` |
+| `review_requires_human`, `review_rejected`, `review_dispatch_hold`, `review_loop_cap` | `REVIEW` |
 | `stale_safety_net` | `REVIEW` |
 | `run_checkpoint`, `run_stale_plan`, `run_stage_exhausted` | `REVIEW` |
 | `approval_pending` | `REVIEW` |
@@ -551,7 +551,7 @@ means the situation cannot occur at that level.
 | Hive PR with `needs-human`, adjudicator recommended close, PR still open | — | — (no adjudicator lane below L5) | Yours — `CLOSE` | same |
 | Hive PR re-escalated with `needs-human` after an adjudicator pass | — | — | Yours — `REVIEW` | same |
 | Person's PR with `needs-human` | Yours — `REVIEW` | same | same | same |
-| PR not written by Hive, no `needs-human` label, whose review verdict on the current head is `requires_human` (`review_requires_human`; a newer head with no verdict yet clears it) | Yours — `REVIEW` | same | same | same |
+| PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
 | Issue Hive verified as done but could not close | Yours — `CLOSE` | same | same | same |
 | Issue covered by an open PR | Not yours — the PR closes it on merge | same | same | same |

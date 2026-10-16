@@ -116,7 +116,7 @@ Out-of-scope findings follow `review.backlog` (destination, labels, per-PR daily
 |---|---|
 | `merged` | The PR merged. |
 | `abandoned` | The PR closed without merging. |
-| `human_hold` | A `hold`/`needs-human` label or held queue entry, a `requires_human` or `reject` verdict on the current head, a dispatch-state human hold, an escalated escalation entry, or a `changes_requested`/`fixing` PR whose loop counter reached the fix-cycle cap. |
+| `human_hold` | A `hold`/`needs-human` label or held queue entry, a `requires_human` or `reject` verdict on the current head (or on an earlier head with no merge-eligible `approve` recorded since), a dispatch-state human hold for the current head, an escalated escalation entry, or a `changes_requested`/`fixing` PR whose loop counter reached the fix-cycle cap. Every review-swarm reason (all but the labels, the held entry and the escalation) is also "Your turn" on the dashboard for any author (see [dashboard.md](dashboard.md)). |
 | `approved` | A merge-eligible `approve` verdict on the current head, an `lgtm`/`approved`/`reviewer-passed` label, the escalation ledger's reviewer-passed SHA on the head, or an approving hive review on the head. The next action is merge, fix CI or wait for CI depending on the CI rollup. |
 | `fixing` | A fix is dispatched for the current head. |
 | `changes_requested` | The current head's verdict (or, without one, the hive's posted review) requests changes. |
@@ -221,6 +221,8 @@ The confidence score also feeds the **PR review queue** (`GET /api/review/queue`
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
 
+A `requires_human` or `reject` verdict blocks the App's self-merge sweep (App-authored and trusted-bot PRs) whether or not `review.require_approval` is on, and a fix push does not clear it: the PR stays held until a merge-eligible `approve` aggregate is recorded after the blocking verdict, or a person approves the PR or replies `/hive approve` (hivecommons/hive#12374; see [hive-merge.md](hive-merge.md#trusted-bot-authors)). The review pipeline shows such a PR in `human_hold` with the reason `review verdict on an earlier head (…) required a human; no approving review since`.
+
 `review.fan_out` is separately defaulted to false. When both `require_approval` and `fan_out` are true, the governor eval cycle plans review kicks for agent-authored PRs that do not yet have a fresh aggregate verdict for their current head SHA.
 
 ## Reviewer selection
@@ -270,7 +272,7 @@ Phase 2 adds dispatch state in `/data/review-dispatch-state.json`. Pending revie
 
 A pending entry is the planner's only record that a perspective was asked, so a reviewer whose kick turn dies — model timeout, proxy read timeout, pod restart — leaves entries that post no verdict and, with no expiry, made every perspective look covered until someone pushed a new commit (hivecommons/hive#12045 and #12025 sat at queue position 1 for hours with CI green and the contributor lane stuck at `no-verdict`). Each cycle the planner therefore expires pending entries older than `pending_ttl` (Go duration string, default `45m`; a negative value disables expiry) whose head still has no verdict in the artifact: the expired perspectives are dropped from state and re-dispatched in the same cycle, the governor logs `review pending expired repo=… pr=… head=… perspective=… age=… expiries=N`, and the state file's `redispatches[]` counts expiries per head. Entries younger than the TTL are left alone, so a review genuinely in flight is never re-kicked, and a verdict for the head settles it however old the entries are. The same expiry releases a `revise_verdicts_before` revisit whose reviewer died.
 
-The retry is bounded. Once a head's expiry count reaches `max_redispatch` (default 3) the planner stops re-kicking it, leaves the entries in place, and records a `requires_human` hold whose reason starts `review-dispatch-exhausted`; `review.human_decision_label` is applied the same way as for a reviewer's own requires_human verdict, and the governor logs `review dispatch exhausted; holding PR for a human`. A new push clears the counter and the hold along with the head's pending entries.
+The retry is bounded. Once a head's expiry count reaches `max_redispatch` (default 3) the planner stops re-kicking it, leaves the entries in place, and records a `requires_human` hold whose reason starts `review-dispatch-exhausted`; like every other review hold it sends one `decision` escalation event per head, `review.human_decision_label` is applied the same way as for a reviewer's own requires_human verdict, the PR shows as "Your turn" (`review_dispatch_hold`), and the governor logs `review dispatch exhausted; holding PR for a human`. A new push clears the counter and the hold along with the head's pending entries.
 
 Expiry also covers a head whose aggregate is `incomplete`: the delivered perspectives are taken off the pending list (their reports exist) and only the undelivered ones expire and re-dispatch, against the same per-head budget.
 

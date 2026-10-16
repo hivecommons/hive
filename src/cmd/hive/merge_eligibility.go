@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -141,6 +142,31 @@ func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automer
 		}
 		approved := artifact.HasAggregateApproval(repo, number, headSHA)
 		return automerge.ContributorLaneVerdict{Configured: true, Approved: approved, Verdict: contributorLaneVerdictText(artifact, repo, number, headSHA)}
+	}
+}
+
+// reviewVerdictHoldFunc answers the self-merge sweep's review verdict gate
+// (#12374) from review-verdicts.json, whatever review.require_approval says.
+// A missing artifact means nothing was ever reviewed and holds nothing; an
+// unreadable one fails closed, because it may be hiding a requires_human
+// verdict.
+func reviewVerdictHoldFunc(logger *slog.Logger) automerge.ReviewVerdictHoldFunc {
+	return func(repo string, number int) automerge.ReviewVerdictHold {
+		artifact, err := review.LoadArtifact("")
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return automerge.ReviewVerdictHold{}
+			}
+			if logger != nil {
+				logger.Warn("review verdict gate: review-verdicts.json unreadable; failing closed", "repo", repo, "pr", number, "error", err)
+			}
+			return automerge.ReviewVerdictHold{Held: true, Verdict: string(review.VerdictRequiresHuman)}
+		}
+		hold, ok := artifact.VerdictHoldFor(repo, number)
+		if !ok {
+			return automerge.ReviewVerdictHold{}
+		}
+		return automerge.ReviewVerdictHold{Held: true, Verdict: string(hold.Verdict), HeadSHA: hold.HeadSHA, RecordedAt: hold.RecordedAt}
 	}
 }
 

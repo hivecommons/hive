@@ -232,8 +232,10 @@ var approvalLabels = []string{ghpkg.AutoMergeQueuedLabel, "approved", escalation
 //  1. merged — merge state is merged or MergedAt is set.
 //  2. abandoned — merge state is closed or ClosedAt is set.
 //  3. human_hold — a hold or needs-human label, the queue's held flag, a
-//     current-head verdict that requires a human or rejects, a dispatch-state
-//     human hold for the head, or an escalated escalation entry.
+//     current-head verdict that requires a human or rejects, an earlier such
+//     verdict no merge-eligible approve has cleared since (a fix push does
+//     not clear it, #12374), a dispatch-state human hold for the head, or an
+//     escalated escalation entry.
 //  4. approved — a merge-eligible approve verdict on the head, an approval
 //     label (lgtm, approved, reviewer-passed), the escalation ledger's
 //     reviewer-passed SHA equal to the head, or an approving hive review on
@@ -248,6 +250,13 @@ var approvalLabels = []string{ghpkg.AutoMergeQueuedLabel, "approved", escalation
 // A PR that would be fixing or changes_requested with its loop counter at or
 // over the cap is moved to human_hold: another automatic cycle is not coming.
 func Derive(in Inputs) Card {
+	card, _ := derive(in)
+	return card
+}
+
+// derive is Derive that also returns the review-swarm holds behind a
+// human_hold card (ReviewHolds).
+func derive(in Inputs) (Card, []ReviewHold) {
 	pr := in.PR
 	card := Card{
 		Repo:         pr.Repo,
@@ -283,21 +292,22 @@ func Derive(in Inputs) Card {
 		card.Since = in.Merge.MergedAt
 		card.Reasons = append(card.Reasons, "pull request merged")
 		card.NextAction = NextAction{Kind: ActionNone, Label: "Nothing to do", URL: pr.URL}
-		return card
+		return card, nil
 	case strings.EqualFold(in.Merge.State, MergeStateClosed) || !in.Merge.ClosedAt.IsZero():
 		card.Stage = StageAbandoned
 		card.Since = in.Merge.ClosedAt
 		card.Reasons = append(card.Reasons, "pull request closed without merging")
 		card.NextAction = NextAction{Kind: ActionReopen, Label: "Reopen if still wanted", URL: pr.URL}
-		return card
+		return card, nil
 	}
 
-	if reasons, since := holdReasons(in, current, humanHoldFor(in.Dispatch, pr)); len(reasons) > 0 {
+	swarmHolds := reviewSwarmHolds(in, current, humanHoldFor(in.Dispatch, pr))
+	if reasons, since := holdReasons(in, swarmHolds); len(reasons) > 0 {
 		card.Stage = StageHumanHold
 		card.Since = since
 		card.Reasons = append(card.Reasons, reasons...)
 		card.NextAction = NextAction{Kind: ActionHuman, Label: "Human decision needed", URL: pr.URL}
-		return card
+		return card, swarmHolds
 	}
 
 	if reasons, since := approvalReasons(in, current, link); len(reasons) > 0 {
@@ -305,7 +315,7 @@ func Derive(in Inputs) Card {
 		card.Since = since
 		card.Reasons = append(card.Reasons, reasons...)
 		card.NextAction = approvedAction(pr)
-		return card
+		return card, nil
 	}
 
 	switch {
@@ -351,13 +361,16 @@ func Derive(in Inputs) Card {
 		card.NextAction = NextAction{Kind: ActionReview, Label: "Dispatch review", URL: pr.URL}
 	}
 
+	var holds []ReviewHold
 	if (card.Stage == StageFixing || card.Stage == StageChangesRequested) && card.LoopCount >= card.LoopCap {
-		card.Reasons = append([]string{fmt.Sprintf("fix-cycle cap reached (%d/%d) while %s", card.LoopCount, card.LoopCap, card.Stage)}, card.Reasons...)
+		reason := fmt.Sprintf("fix-cycle cap reached (%d/%d) while %s", card.LoopCount, card.LoopCap, card.Stage)
+		holds = []ReviewHold{{Kind: ReviewHoldLoopCap, Reason: reason, Since: card.Since}}
+		card.Reasons = append([]string{reason}, card.Reasons...)
 		card.Stage = StageHumanHold
 		card.NextAction = NextAction{Kind: ActionHuman, Label: "Human decision needed", URL: pr.URL}
 	}
 	card.LoopWarning = loopWarning(in, card)
-	return card
+	return card, holds
 }
 
 // loopWarning reports the loop-safety state of an open PR that no human has
@@ -397,7 +410,7 @@ func loopWarning(in Inputs, card Card) *LoopWarning {
 	return nil
 }
 
-func holdReasons(in Inputs, current *review.Aggregate, hold *review.HumanReviewHold) ([]string, time.Time) {
+func holdReasons(in Inputs, swarm []ReviewHold) ([]string, time.Time) {
 	var reasons []string
 	var since time.Time
 	for _, l := range in.PR.Labels {
@@ -408,20 +421,10 @@ func holdReasons(in Inputs, current *review.Aggregate, hold *review.HumanReviewH
 	if in.PR.Held && len(reasons) == 0 {
 		reasons = append(reasons, "held in the review queue")
 	}
-	if current != nil {
-		switch {
-		case current.Verdict == review.VerdictReject:
-			reasons = append(reasons, "review verdict rejects the current head")
-			since = current.RecordedAt
-		case RequiresHuman(current):
-			reasons = append(reasons, "review verdict requires a human")
-			since = current.RecordedAt
-		}
-	}
-	if hold != nil {
-		reasons = append(reasons, "review dispatch parked for a human: "+nonEmpty(hold.Reason, "no reason recorded"))
+	for _, h := range swarm {
+		reasons = append(reasons, h.Reason)
 		if since.IsZero() {
-			since = hold.UpdatedAt
+			since = h.Since
 		}
 	}
 	if e := in.Escalation; e != nil && e.Escalated {

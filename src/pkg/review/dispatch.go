@@ -397,7 +397,7 @@ func PlanDispatch(prs []PullRequest, artifact Artifact, state DispatchState, opt
 						} else {
 							plan.withholdFix(pr, now)
 						}
-					case VerdictRequiresHuman:
+					case VerdictRequiresHuman, VerdictReject:
 						plan.holdForHuman(pr, agg, now)
 					}
 					continue
@@ -524,11 +524,11 @@ func reviewersForPR(reviewers []AgentCapability, authorAgent string) []AgentCapa
 	return out
 }
 
-// holdForHuman records a settled requires_human verdict as a human hold so the
-// operator's triage label is applied to the PR, not just written into the
-// review body. Before this, only fixer-side exhaustion produced a hold, so the
-// most common "a human must decide" outcome — the reviewer saying so — never
-// reached the label at all.
+// holdForHuman records a settled requires_human or reject verdict as a human
+// hold so the operator's triage label is applied to the PR, not just written
+// into the review body. Before this, only fixer-side exhaustion produced a
+// hold, so the most common "a human must decide" outcome — the reviewer saying
+// so — never reached the label at all.
 //
 // An aggregate with no perspectives means no report was ever collected; that
 // is an unreviewed PR, not one awaiting a decision, and must not be labelled.
@@ -603,7 +603,10 @@ func (p *DispatchPlan) expirePending(pr PullRequest, opts DispatchOptions, now t
 		hold := HumanReviewHold{Repo: pr.Repo, Number: pr.Number, HeadSHA: pr.HeadSHA,
 			Reason:    fmt.Sprintf("%s: %d review dispatches for this head ended without a verdict", HoldReasonDispatchExhausted, count),
 			UpdatedAt: now}
-		p.State.Human = upsertHuman(p.State.Human, hold)
+		// Through addHuman so the hold reaches NewHuman once per head: the
+		// escalation fan-out and the human-decision label see it like every
+		// other review hold, not only a log line (#12377).
+		p.addHuman(pr, hold.Reason, now)
 		p.Exhausted = append(p.Exhausted, hold)
 		return false
 	}
@@ -743,6 +746,9 @@ func (p *DispatchPlan) addHuman(pr PullRequest, reason string, now time.Time) {
 func humanReason(agg Aggregate) string {
 	if len(agg.Reasons) > 0 {
 		return strings.Join(agg.Reasons, "; ")
+	}
+	if agg.Verdict == VerdictReject {
+		return "review verdict reject"
 	}
 	return "review verdict requires_human"
 }

@@ -177,6 +177,15 @@ func TestPlanDispatchPendingTTL(t *testing.T) {
 			if len(plan.Exhausted) != wantExhausted {
 				t.Fatalf("exhausted this cycle = %d, want %d", len(plan.Exhausted), wantExhausted)
 			}
+			// The exhausted hold reaches NewHuman exactly once per head, so the
+			// escalation fan-out sends one decision event and none on the next
+			// cycle (#12377).
+			if len(plan.NewHuman) != wantExhausted {
+				t.Fatalf("new human holds this cycle = %d, want %d: %+v", len(plan.NewHuman), wantExhausted, plan.NewHuman)
+			}
+			if wantExhausted == 1 && !strings.HasPrefix(plan.NewHuman[0].Reason, HoldReasonDispatchExhausted) {
+				t.Fatalf("new human hold reason %q does not carry %q", plan.NewHuman[0].Reason, HoldReasonDispatchExhausted)
+			}
 		})
 	}
 }

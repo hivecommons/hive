@@ -383,6 +383,31 @@ func TestRequiresHumanVerdictProducesHold(t *testing.T) {
 	}
 }
 
+// A reject verdict is a human hold on the review pipeline, so the dispatcher
+// records it and fans it out once per head like requires_human (#12377).
+func TestRejectVerdictProducesHold(t *testing.T) {
+	pr := dispatchPR("sha1")
+	pr.Repo = "acme/hive"
+	opts := DispatchOptions{RequireApproval: true, FanOut: true, ProjectOrg: "acme", Agents: []AgentCapability{reviewer("r1")}}
+
+	agg := Aggregate{Repo: "acme/hive", Number: 7, HeadSHA: "sha1", Verdict: VerdictReject, CloseRecommended: true,
+		Perspectives: map[Perspective]Verdict{PerspectiveIntentAlignment: VerdictReject, PerspectiveSecurity: VerdictApprove}}
+	plan := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{agg}}, DispatchState{}, opts)
+	if len(plan.State.Human) != 1 || plan.State.Human[0].HeadSHA != "sha1" || plan.State.Human[0].Reason != "review verdict reject" {
+		t.Fatalf("reject verdict did not produce a hold: %+v", plan.State.Human)
+	}
+	if len(plan.NewHuman) != 1 {
+		t.Fatalf("reject hold not fanned out: new human = %+v", plan.NewHuman)
+	}
+	if len(plan.ReviewKicks) != 0 || len(plan.FixKicks) != 0 {
+		t.Fatalf("settled reject verdict should not kick anything: reviews=%d fixes=%d", len(plan.ReviewKicks), len(plan.FixKicks))
+	}
+	again := PlanDispatch([]PullRequest{pr}, Artifact{Items: []Aggregate{agg}}, plan.State, opts)
+	if len(again.State.Human) != 1 || len(again.NewHuman) != 0 {
+		t.Fatalf("re-plan duplicated the reject hold: human=%+v new=%+v", again.State.Human, again.NewHuman)
+	}
+}
+
 func TestReviewCapableUsesConfiguredSetOverNameToken(t *testing.T) {
 	set := ReviewerAgentSet([]string{" auditor ", "", "sec-check"})
 	if len(set) != 2 || !set["auditor"] || !set["sec-check"] {
