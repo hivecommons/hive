@@ -6,6 +6,7 @@ Amendments go in a new, dated file in this directory that references this one.
 **Registered by:** Andy Anderson (Hive owner/operator).
 **Collaborators:** Tamar Eilam, Fabio Oliveira (IBM Research).
 **Tracking:** RFC hivecommons/hive#12062 and its child issues.
+**Run plans (navigation only, not amendments):** [`ablation-plan-2026-10.md`](ablation-plan-2026-10.md) for §Experimental arms.
 
 ## Why pre-register
 

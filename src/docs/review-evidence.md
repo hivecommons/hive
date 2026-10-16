@@ -85,6 +85,10 @@ A proxy for the change failure rate, not a verdict on any change ([#12067](https
 
 A PR named both ways counts as a revert. A referenced number is linked only when its newest merged bundle records a merge in the 14 days before this one, so issue numbers and PRs Hive never reviewed link nothing. The merging bundle gets `revert_of` / `followup_of` (bundle ids) before it is sealed; then each linked bundle gets `reverted_by` / `followed_up_by` naming it and is re-sealed (and re-signed), so its `hash` differs from the one in its own merge comment. Commit messages are not scanned. A replayed merge adds nothing, and failures are logged and never affect the merge.
 
+### Shadow gates and cross-family review in the study
+
+The two opt-in experimental arms of the study (RFC [#12062](https://github.com/hivecommons/hive/issues/12062)) read these records: shadow-gate observations (`shadow`) and per-verdict reviewer model/backend. The run plan — consenting hives, 30-day periods, exact `review.shadow` / `intent.shadow` / `review_models.exclude_author_family` diffs, rollback — is [`research/ablation-plan-2026-10.md`](research/ablation-plan-2026-10.md). Auto-merge is unchanged everywhere in it.
+
 ## Downloading
 
 - **API:** `GET /api/review/evidence?repo=<owner/repo>&number=<n>[&head=<sha>][&format=json|zip]` for owner/merger roles. The default is the bundle for the PR's latest head; `head` takes a full SHA or a unique prefix of at least 7 characters (409 if it matches more than one). `format=json` returns the bundle bytes exactly as stored, so its hash and signature verify offline; add `download=1` for an attachment. `format=zip` returns `bundle.json`, `verdicts.json` (the matching verdict reports), `review-links.json` (the PR's review-links slice) and `manifest.json` (SHA-256 of each file, plus the signing public key when the bundle is signed and the key is readable). A missing bundle is a 404 whose body has `status: "expired"` and `expired: true` when retention removed it, otherwise `status: "not_found"`. `GET /api/review/evidence/list?repo=&number=` lists every retained bundle id and head for the PR.
