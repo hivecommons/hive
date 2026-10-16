@@ -1,0 +1,1 @@
+- The legacy dashboard settings footer button now labels the Save action as `Save & close` to match the Go dashboard ([#12333](https://github.com/hivecommons/hive/issues/12333)).
