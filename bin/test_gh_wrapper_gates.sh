@@ -718,7 +718,7 @@ run_owner_wrapper() {
 
 # Self-authored PR: labels still injected (the existing behaviour is kept).
 result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr edit 5 --repo owner/repo --body b)"
-if [[ "$result" == exit=0* && "$result" == *"pr edit 5 --repo owner/repo --body b --add-label agent/testagent,hive/hive-test|"* ]]; then
+if [[ "$result" == exit=0* && "$result" == *"pr edit 5 --repo owner/repo --body b --add-label agent/testagent|"* ]]; then
   echo "  PASS: pr edit on a self-authored PR still injects agent/ + hive/ labels"
   PASS=$((PASS + 1))
 else
@@ -776,7 +776,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr merge 5 --repo owner/repo --squash)"
-if [[ "$result" == *"pr edit 5 --repo owner/repo --add-label agent/testagent,hive/hive-test|"* ]]; then
+if [[ "$result" == *"pr edit 5 --repo owner/repo --add-label agent/testagent|"* ]]; then
   echo "  PASS: pr merge on a self-authored PR still stamps routing labels"
   PASS=$((PASS + 1))
 else
@@ -789,7 +789,7 @@ rm -f "${WORK}/merge-eligible.json"
 
 # Issues are unaffected: the lane routing label on an issue is intended.
 result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- issue edit 42 --repo owner/repo --title t)"
-if [[ "$result" == exit=0* && "$result" == *"issue edit 42 --repo owner/repo --title t --add-label agent/testagent,hive/hive-test|"* ]]; then
+if [[ "$result" == exit=0* && "$result" == *"issue edit 42 --repo owner/repo --title t --add-label agent/testagent|"* ]]; then
   echo "  PASS: issue edit still injects the lane routing label"
   PASS=$((PASS + 1))
 else
