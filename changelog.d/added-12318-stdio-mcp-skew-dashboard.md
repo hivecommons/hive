@@ -1,1 +1,1 @@
-- Hub records last-seen stdio `hive-admin-mcp` build and timestamp from `User-Agent` on admin MCP read paths and flags build skew on the dashboard (#12318).
+- Hub records the last-seen stdio `hive-admin-mcp` build and timestamp from a validated `hive-admin-mcp/<version>+<short>` `User-Agent` on `/api/version`, `/api/status`, `/api/status/summary` and admin MCP read calls, exposes them on `/api/version` and `version_read` next to `hub_build`, and flags build skew on the dashboard; other User-Agents (including `hivectl/0.1`) are never recorded (#12318).

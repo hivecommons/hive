@@ -4779,6 +4779,12 @@ func (s *Server) RecordStdioBuild(build string, at time.Time) {
 
 // RecordStdioFromRequest inspects the User-Agent header of an incoming request
 // and records the stdio build sighting if sent by a stdio client (#12318).
+// It is hooked into /api/version, /api/status and /api/status/summary because
+// the stdio hive-admin-mcp binary serves its read tools from those REST paths
+// through hivectl.Client and never calls /api/admin/mcp itself. Only a
+// validated hive-admin-mcp/<version>+<short> UA is recorded (see
+// parseStdioBuildFromUserAgent), so dashboard sessions and the hivectl CLI
+// polling the same paths cannot clobber a genuine sighting.
 func (s *Server) RecordStdioFromRequest(r *http.Request) {
 	if s == nil || r == nil {
 		return

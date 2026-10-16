@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,18 +29,34 @@ type dashboardAdminMCPProvider struct {
 	userAgent     string
 }
 
-// parseStdioBuildFromUserAgent extracts the stdio client build from incoming User-Agent header (#12318).
-// Returns the build (<version>+<short>), "unidentified stdio client" for legacy hivectl/0.1, or empty string.
+// stdioBuildMaxLen caps the recorded build string so a hostile User-Agent
+// cannot park a header-sized blob in /api/version (#12318).
+const stdioBuildMaxLen = 64
+
+// stdioBuildPattern is the shape hive-admin-mcp sends: <version>+<short sha>,
+// where <short> is a 7-40 hex short SHA or the literal "unknown" (see
+// cmd/hive-admin-mcp serverVersion).
+var stdioBuildPattern = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]*\+(?:[0-9a-fA-F]{7,40}|unknown)$`)
+
+// parseStdioBuildFromUserAgent extracts the stdio client build from an incoming
+// User-Agent header (#12318). Only `hive-admin-mcp/<version>+<short>` is
+// recognised; anything else (including hivectl's default `hivectl/0.1`, which
+// the regular CLI also sends to /api/status and /api/version) returns "" so it
+// never overwrites a genuine sighting. The build must match stdioBuildPattern
+// and fit in stdioBuildMaxLen bytes, or it is dropped.
 func parseStdioBuildFromUserAgent(ua string) string {
 	ua = strings.TrimSpace(ua)
-	if strings.HasPrefix(ua, "hive-admin-mcp/") {
-		build := strings.TrimPrefix(ua, "hive-admin-mcp/")
-		return strings.TrimSpace(build)
+	if !strings.HasPrefix(ua, "hive-admin-mcp/") {
+		return ""
 	}
-	if ua == "hivectl/0.1" || strings.HasPrefix(ua, "hivectl/0.1") {
-		return "unidentified stdio client"
+	build := strings.TrimPrefix(ua, "hive-admin-mcp/")
+	if i := strings.IndexAny(build, " \t"); i >= 0 {
+		build = build[:i]
 	}
-	return ""
+	if build == "" || len(build) > stdioBuildMaxLen || !stdioBuildPattern.MatchString(build) {
+		return ""
+	}
+	return build
 }
 
 func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {

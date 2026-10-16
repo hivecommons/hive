@@ -220,8 +220,20 @@ func TestParseStdioBuildFromUserAgent(t *testing.T) {
 	}{
 		{"hive-admin-mcp/0.1.0+abc1234", "0.1.0+abc1234"},
 		{"hive-admin-mcp/2.0.0+def5678", "2.0.0+def5678"},
-		{"hivectl/0.1", "unidentified stdio client"},
-		{"hivectl/0.1 (linux/amd64)", "unidentified stdio client"},
+		{"hive-admin-mcp/0.1.0+unknown", "0.1.0+unknown"},
+		{"hive-admin-mcp/0.1.0+abc1234 (linux/amd64)", "0.1.0+abc1234"},
+		// hivectl's default UA is also what the regular CLI sends to
+		// /api/status and /api/version; it must never be recorded.
+		{"hivectl/0.1", ""},
+		{"hivectl/0.1 (linux/amd64)", ""},
+		// Shape and length validation: only <version>+<7-40 hex|unknown>.
+		{"hive-admin-mcp/", ""},
+		{"hive-admin-mcp/0.1.0", ""},
+		{"hive-admin-mcp/0.1.0+abc", ""},
+		{"hive-admin-mcp/0.1.0+zzzzzzz", ""},
+		{"hive-admin-mcp/<script>+abc1234", ""},
+		{"hive-admin-mcp/0.1.0+" + strings.Repeat("a", 41), ""},
+		{"hive-admin-mcp/" + strings.Repeat("9", stdioBuildMaxLen) + "+abc1234", ""},
 		{"Mozilla/5.0", ""},
 		{"curl/8.0", ""},
 		{"", ""},
@@ -308,24 +320,50 @@ func TestAdminMCPRecordsStdioUserAgent(t *testing.T) {
 	}
 }
 
-func TestAdminMCPRecordsUnidentifiedStdioUserAgent(t *testing.T) {
+// TestHivectlUserAgentNeverOverwritesStdioSighting: the regular hivectl CLI
+// (default UA hivectl/0.1) hits /api/status, /api/status/summary and
+// /api/version, and dashboard sessions poll them too. None of those may clobber
+// a genuine hive-admin-mcp sighting, or the skew badge would vanish (#12318).
+func TestHivectlUserAgentNeverOverwritesStdioSighting(t *testing.T) {
 	s := &Server{mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version_read","arguments":{}}}`))
-	req.Header.Set("User-Agent", "hivectl/0.1")
-	s.handleAdminMCP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	req.Header.Set("User-Agent", "hive-admin-mcp/0.1.0+abc1234")
+	s.handleVersion(httptest.NewRecorder(), req)
+	if build, _ := s.LastSeenStdio(); build != "0.1.0+abc1234" {
+		t.Fatalf("seed sighting = %q", build)
+	}
+	_, seededAt := s.LastSeenStdio()
+
+	for _, ua := range []string{
+		"hivectl/0.1",
+		"hivectl/0.1 (linux/amd64)",
+		"Mozilla/5.0",
+		"hive-admin-mcp/not+a+build",
+		"hive-admin-mcp/0.1.0+" + strings.Repeat("f", 200),
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+		r.Header.Set("User-Agent", ua)
+		s.handleVersion(httptest.NewRecorder(), r)
+		// handleStatus / handleStatusSummary share this hook.
+		s.RecordStdioFromRequest(r)
+		mcp := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version_read","arguments":{}}}`))
+		mcp.Header.Set("User-Agent", ua)
+		s.handleAdminMCP(httptest.NewRecorder(), mcp)
+
+		build, at := s.LastSeenStdio()
+		if build != "0.1.0+abc1234" || !at.Equal(seededAt) {
+			t.Fatalf("UA %q overwrote sighting: build=%q at=%v (want 0.1.0+abc1234 at %v)", ua, build, at, seededAt)
+		}
 	}
 
-	build, at := s.LastSeenStdio()
-	if build != "unidentified stdio client" {
-		t.Fatalf("recorded build = %q, want 'unidentified stdio client'", build)
-	}
-	if at.IsZero() {
-		t.Fatal("recorded timestamp is zero")
+	// A newer genuine stdio build still replaces the earlier one.
+	req = httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	req.Header.Set("User-Agent", "hive-admin-mcp/0.2.0+def5678")
+	s.handleVersion(httptest.NewRecorder(), req)
+	if build, _ := s.LastSeenStdio(); build != "0.2.0+def5678" {
+		t.Fatalf("newer stdio build not recorded: %q", build)
 	}
 }
 
