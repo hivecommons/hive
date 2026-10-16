@@ -33015,6 +33015,7 @@ function burnAreaChart() {
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
+      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
       { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
@@ -34050,7 +34051,7 @@ function burnAreaChart() {
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
         if (tabId === 'Appearance') loadThemeConfig();
-        if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); }
+        if (tabId === 'Knowledge') { renderPublicKnowledgeControls(); loadKnowledgeConnectors(); loadKnowledgePipeline(); }
         if (tabId === 'Compliance') loadComplianceStatus();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
@@ -34254,9 +34255,10 @@ function burnAreaChart() {
     function renderGovKnowledgeSharing() {
       return '<div class="config-section">' +
         '<h3>Knowledge sharing</h3>' +
-        '<p class="text-muted fs-base">Control whether the read-only MCP endpoint can serve operational knowledge facts without dashboard credentials.</p>' +
+        '<p class="text-muted fs-base">Control whether the read-only MCP endpoint can serve operational knowledge facts without dashboard credentials. ' + yamlHint('knowledge.public.enabled') + ' Applies without a restart.</p>' +
         '<div id="public-knowledge-settings-control" data-public-knowledge-control="settings">' + renderPublicKnowledgeControl('settings') + '</div>' +
       '</div>' +
+        renderKnowledgePipelineSection() +
         renderKnowledgeConnectorsSection();
     }
 
@@ -34400,6 +34402,217 @@ function burnAreaChart() {
         + '<h3>Connectors</h3>'
         + '<p class="text-muted fs-base">External knowledge systems synced into the vault. Credentials are referenced by environment variable name or secret file path, never stored here.</p>'
         + '<div id="kc-connectors-root">' + renderKnowledgeConnectorsBody() + '</div></div>';
+    }
+
+    // ---- Settings → Knowledge → Knowledge pipeline ----
+    // The scalar knowledge.bead_synthesizer, curator, code_maps and primer
+    // keys, saved through PUT /api/config/knowledge/pipeline. The bead
+    // synthesizer switch applies at once; everything else is read at boot, so
+    // it applies after a restart. The engine, vault paths (directories the
+    // hive writes to) and primer merge strategy are display-only.
+    let _kpState = { loaded: false, error: '', data: {} };
+
+    async function loadKnowledgePipeline() {
+      try {
+        const r = await fetch('/api/config/knowledge/pipeline');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _kpState = { loaded: true, error: '', data: data };
+      } catch (e) {
+        _kpState = { loaded: true, error: e.message, data: {} };
+      }
+      const el = document.getElementById('kp-pipeline-root');
+      if (el) el.innerHTML = renderKnowledgePipelineBody();
+    }
+
+    function renderKnowledgePipelineSection() {
+      return '<div class="config-section" data-section="knowledge-pipeline">'
+        + '<h3>Knowledge pipeline</h3>'
+        + '<p class="text-muted fs-base">How completed beads become wiki facts, how facts are promoted between layers, generated repository code maps, and the size of the knowledge primer each kick receives.</p>'
+        + '<div id="kp-pipeline-root">' + renderKnowledgePipelineBody() + '</div></div>';
+    }
+
+    function renderKnowledgePipelineBody() {
+      if (!_kpState.loaded) return '<p class="text-muted fs-base">Loading knowledge pipeline settings…</p>';
+      if (_kpState.error) return '<p class="kc-error">Failed to load knowledge pipeline settings: ' + esc(_kpState.error) + '</p>';
+      const d = _kpState.data || {};
+      const bs = d.bead_synthesizer || {};
+      const rp = bs.retention_policy || {};
+      const cu = d.curator || {};
+      const cm = d.code_maps || {};
+      const pr = d.primer || {};
+      const def = d.defaults || {};
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const dis = owner ? '' : 'disabled';
+      const restart = ' Requires restart.';
+      const mark = (label, tip) => settingHelpMark('settings', 'knowledge', label, tip);
+      const num = (id, label, path, value, placeholder, step, max, help, tip) => `
+          <div class="config-field">
+            <label for="kp-${id}">${esc(label)} ${yamlHint(path)} ${mark(label, tip)}</label>
+            <input id="kp-${id}" type="number" min="0" ${max ? `max="${max}"` : ''} step="${step}" value="${value ? esc(String(value)) : ''}" placeholder="${esc(String(placeholder))}" ${dis}>
+            <div class="config-help">${help}${restart}</div>
+          </div>`;
+      const choice = (id, label, path, value, values, emptyLabel, help, tip) => `
+          <div class="config-field">
+            <label for="kp-${id}">${esc(label)} ${yamlHint(path)} ${mark(label, tip)}</label>
+            <select id="kp-${id}" ${dis}>
+              <option value="" ${value ? '' : 'selected'}>${esc(emptyLabel)}</option>
+              ${values.map(v => `<option value="${esc(v)}" ${value === v ? 'selected' : ''}>${esc(v)}</option>`).join('')}
+            </select>
+            <div class="config-help">${help}${restart}</div>
+          </div>`;
+      const toggle = (id, label, path, on, help, live, tip) => `
+          <div class="config-toggle mt-3">
+            <div id="kp-${id}" class="config-toggle-switch ${on ? 'on' : ''} ${owner ? '' : 'disabled'}" data-action="${owner ? 'kpToggle' : ''}" data-arg-types="t" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
+            <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} ${mark(label, tip)} <span class="text-muted">— ${help}${live ? ' Applies without a restart.' : restart}</span></span>
+          </div>`;
+      const roRow = (label, path, value, fallback) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm break-all">${value ? '<code>' + esc(String(value)) + '</code>' : '<span class="text-muted">' + esc(fallback) + '</span>'} <span class="text-muted">— set in hive.yaml; requires restart</span></div></div>`;
+      const schedules = d.schedules || ['hourly', 'daily'];
+      const layers = d.layers || ['personal', 'project', 'org', 'community'];
+      return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Bead synthesizer</div>
+          ${toggle('bs-enabled', 'Synthesize completed beads into wiki facts', 'knowledge.bead_synthesizer.enabled', bs.enabled, 'on by default; starts or stops the running synthesizer.', true, 'Turns completed beads (and their merged PRs) into wiki facts on a schedule. On unless set to false. Saving starts or stops the running synthesizer at once.')}
+          <div class="config-field-row">
+            ${choice('bs-schedule', 'Schedule', 'knowledge.bead_synthesizer.schedule', bs.schedule, schedules, 'Default (' + (def.bead_synthesizer_schedule || 'hourly') + ')', 'How often a synthesis cycle runs.', 'hourly or daily. Empty restores the default (hourly).')}
+            ${choice('bs-target_layer', 'Target layer', 'knowledge.bead_synthesizer.target_layer', bs.target_layer, layers, 'Default (' + (def.bead_synthesizer_target_layer || 'project') + ')', 'Layer the synthesizer vault is registered at with the primer.', 'The primer layer the synthesized facts are served from. Empty restores the default (project).')}
+            ${num('bs-min_confidence', 'Minimum confidence', 'knowledge.bead_synthesizer.min_confidence', bs.min_confidence, def.bead_synthesizer_min_confidence || 0.5, '0.05', '1', 'Facts classified below this confidence (0–1) are skipped.', 'Facts whose classification confidence falls below this are not written. Between 0 and 1; 0 restores the default (0.5).')}
+          </div>
+          <div class="config-field-row">
+            ${num('bs-max_facts_per_cycle', 'Max facts per cycle', 'knowledge.bead_synthesizer.max_facts_per_cycle', bs.max_facts_per_cycle, def.bead_synthesizer_max_facts_per_cycle || 20, '1', '', 'Cap on facts written per cycle after deduplication.', 'Cap on facts written per synthesis cycle after deduplication. 0 restores the default (20).')}
+            ${num('bs-max_api_calls_per_cycle', 'Max GitHub API calls per cycle', 'knowledge.bead_synthesizer.max_api_calls_per_cycle', bs.max_api_calls_per_cycle, def.bead_synthesizer_max_api_calls_per_cycle || 40, '1', '', 'Cap on charged PR GETs per cycle; HIVE_BEAD_SYNTH_MAX_API_CALLS still overrides.', 'Cap on charged GitHub PR GETs per synthesis cycle. PR reads are conditional, so a 304 reuses the cached PR and does not count. The HIVE_BEAD_SYNTH_MAX_API_CALLS environment variable overrides this. 0 restores the default (40).')}
+          </div>
+          ${roRow('Vault path', 'knowledge.bead_synthesizer.vault_path', bs.vault_path, 'default ' + (def.bead_synthesizer_vault_path || ''))}
+          <div class="settings-subsection-title mt-4">Bead retention</div>
+          <div class="config-field-row">
+            ${num('rp-max_beads', 'Max beads', 'knowledge.bead_synthesizer.retention_policy.max_beads', rp.max_beads, 5000, '1', '', 'Archiving starts above this many beads.', 'The bead lifecycle manager archives the lowest-scored beads once a store holds more than this, down to 80% of it. 0 uses the default (5000).')}
+            ${num('rp-archive_after_synth_days', 'Archive after synthesis (days)', 'knowledge.bead_synthesizer.retention_policy.archive_after_synth_days', rp.archive_after_synth_days, 7, '1', '', 'Synthesized beads older than this become archive candidates.', 'Days after a bead has been synthesized into a fact before it may be archived. 0 uses the default (7).')}
+            ${num('rp-high_priority_retain_days', 'Keep high-priority beads (days)', 'knowledge.bead_synthesizer.retention_policy.high_priority_retain_days', rp.high_priority_retain_days, 30, '1', '', 'High-priority beads are kept at least this long.', 'Days a high-priority bead is kept before it may be archived. 0 uses the default (30).')}
+          </div>
+          ${toggle('rp-preserve_with_deps', 'Never archive beads with open dependents', 'knowledge.bead_synthesizer.retention_policy.preserve_with_deps', rp.preserve_with_deps, 'on when the retention block is absent.', false, 'A bead that other open beads depend on is never archived. On when no retention_policy block is set.')}
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Curator (scheduled promotion)</div>
+          ${toggle('cu-enabled', 'Promote facts on a schedule', 'knowledge.curator.enabled', cu.enabled, 'off by default; promotes verified facts with no human review.', false, 'Opt-in. On each run, verified facts in the source layer whose confidence reaches the threshold are copied into the target layer without human review. A schedule alone does not start it.')}
+          <div class="config-field-row">
+            ${choice('cu-schedule', 'Schedule', 'knowledge.curator.schedule', cu.schedule, schedules, 'Default (' + (def.curator_schedule || 'daily') + ')', 'How often the promotion sweep runs.', 'hourly or daily. Empty uses daily once the curator is enabled.')}
+            ${num('cu-auto_promote_threshold', 'Auto-promote threshold', 'knowledge.curator.auto_promote_threshold', cu.auto_promote_threshold, def.curator_auto_promote_threshold || 0.9, '0.05', '1', 'Minimum confidence (0–1) a verified fact needs to be promoted.', 'A verified fact is promoted only when its confidence is at least this. Between 0 and 1; 0 restores the default (0.9).')}
+          </div>
+          <div class="config-field-row">
+            ${choice('cu-promote_from', 'Promote from', 'knowledge.curator.promote_from', cu.promote_from, layers, 'Default (' + (def.curator_promote_from || 'project') + ')', 'Source layer for the sweep.', 'The layer facts are promoted from. Must differ from the target layer. Empty uses project.')}
+            ${choice('cu-promote_to', 'Promote to', 'knowledge.curator.promote_to', cu.promote_to, layers, 'Default (' + (def.curator_promote_to || 'org') + ')', 'Target layer for the sweep.', 'The layer promoted facts are copied into. Must differ from the source layer. Empty uses org.')}
+          </div>
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Repository code maps</div>
+          ${toggle('cm-enabled', 'Generate repository code maps', 'knowledge.code_maps.enabled', cm.enabled, 'off by default; the repositories to map stay yaml-only.', false, 'Opt-in. Writes a generated, size-capped summary of each repository listed under knowledge.code_maps in hive.yaml and regenerates it when HEAD moves.')}
+          <div class="config-field-row">
+            ${choice('cm-schedule', 'Schedule', 'knowledge.code_maps.schedule', cm.schedule, schedules, 'Default (hourly)', 'How often HEAD is checked.', 'hourly or daily. Empty uses hourly.')}
+            ${choice('cm-layer', 'Layer', 'knowledge.code_maps.layer', cm.layer, layers, 'Default (project)', 'Knowledge layer recorded on each map.', 'The layer recorded on each generated map. Empty uses project.')}
+            ${num('cm-max_bytes', 'Max bytes per map', 'knowledge.code_maps.max_bytes', cm.max_bytes, 16384, '1', '', 'Cap on the rendered size of each map.', 'Cap on the rendered size of each map, in bytes. 0 uses the generator default (16384).')}
+          </div>
+          ${roRow('Vault path', 'knowledge.code_maps.vault_path', cm.vault_path, 'default /data/vaults/code-maps')}
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Kick primer</div>
+          <div class="config-field-row">
+            ${num('pr-max_facts', 'Max facts', 'knowledge.primer.max_facts', pr.max_facts, def.primer_max_facts || 25, '1', '', 'Most facts placed in one kick primer.', 'The most knowledge facts placed in one kick primer. 0 restores the default (25).')}
+            ${num('pr-max_bytes', 'Max bytes', 'knowledge.primer.max_bytes', pr.max_bytes, def.primer_max_bytes || 4096, '1', '', 'Cap on the rendered primer; facts past it are dropped whole.', 'Cap on the rendered knowledge primer per kick. Facts past it are dropped whole and a marker says so. 0 restores the default (4096).')}
+          </div>
+          ${roRow('Merge strategy', 'knowledge.primer.merge_strategy', pr.merge_strategy, 'default ' + (def.primer_merge_strategy || 'precedence'))}
+          ${roRow('Engine', 'knowledge.engine', d.engine, 'unset')}
+          ${owner ? '<button class="hv-btn btn-primary mt-4" id="kp-save-btn" data-action="saveKnowledgePipeline">Save</button>' : '<div class="config-help mt-3">Owner role required to change these settings.</div>'}
+        </div>`;
+    }
+
+    function kpToggle(el) {
+      if (!el || el.classList.contains('disabled')) return;
+      const on = el.classList.toggle('on');
+      el.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+
+    async function saveKnowledgePipeline() {
+      const d = _kpState.data || {};
+      const cur = {
+        bead_synthesizer: d.bead_synthesizer || {},
+        retention_policy: (d.bead_synthesizer || {}).retention_policy || {},
+        curator: d.curator || {},
+        code_maps: d.code_maps || {},
+        primer: d.primer || {}
+      };
+      const fields = [
+        ['bead_synthesizer', 'enabled', 'bs-enabled', 'bool'],
+        ['bead_synthesizer', 'schedule', 'bs-schedule', 'str'],
+        ['bead_synthesizer', 'target_layer', 'bs-target_layer', 'str'],
+        ['bead_synthesizer', 'min_confidence', 'bs-min_confidence', 'frac'],
+        ['bead_synthesizer', 'max_facts_per_cycle', 'bs-max_facts_per_cycle', 'int'],
+        ['bead_synthesizer', 'max_api_calls_per_cycle', 'bs-max_api_calls_per_cycle', 'int'],
+        ['retention_policy', 'max_beads', 'rp-max_beads', 'int'],
+        ['retention_policy', 'archive_after_synth_days', 'rp-archive_after_synth_days', 'int'],
+        ['retention_policy', 'high_priority_retain_days', 'rp-high_priority_retain_days', 'int'],
+        ['retention_policy', 'preserve_with_deps', 'rp-preserve_with_deps', 'bool'],
+        ['curator', 'enabled', 'cu-enabled', 'bool'],
+        ['curator', 'schedule', 'cu-schedule', 'str'],
+        ['curator', 'auto_promote_threshold', 'cu-auto_promote_threshold', 'frac'],
+        ['curator', 'promote_from', 'cu-promote_from', 'str'],
+        ['curator', 'promote_to', 'cu-promote_to', 'str'],
+        ['code_maps', 'enabled', 'cm-enabled', 'bool'],
+        ['code_maps', 'schedule', 'cm-schedule', 'str'],
+        ['code_maps', 'layer', 'cm-layer', 'str'],
+        ['code_maps', 'max_bytes', 'cm-max_bytes', 'int'],
+        ['primer', 'max_facts', 'pr-max_facts', 'int'],
+        ['primer', 'max_bytes', 'pr-max_bytes', 'int']
+      ];
+      const body = {};
+      const put = (group, key, v) => {
+        if (group === 'retention_policy') {
+          body.bead_synthesizer = body.bead_synthesizer || {};
+          body.bead_synthesizer.retention_policy = body.bead_synthesizer.retention_policy || {};
+          body.bead_synthesizer.retention_policy[key] = v;
+        } else {
+          body[group] = body[group] || {};
+          body[group][key] = v;
+        }
+      };
+      for (const [group, key, id, kind] of fields) {
+        const el = document.getElementById('kp-' + id);
+        if (!el) continue;
+        const was = cur[group][key];
+        if (kind === 'bool') {
+          const on = el.classList.contains('on');
+          if (on !== !!was) put(group, key, on);
+        } else if (kind === 'str') {
+          const v = (el.value || '').trim();
+          if (v !== (was || '')) put(group, key, v);
+        } else {
+          const raw = (el.value || '').trim();
+          const v = raw === '' ? 0 : (kind === 'frac' ? parseFloat(raw) : parseInt(raw, 10));
+          if (isNaN(v) || v < 0 || (kind === 'frac' && v > 1)) { showToast(key + (kind === 'frac' ? ' must be between 0 and 1' : ' must be a non-negative number'), 'error'); return; }
+          if (v !== (was || 0)) put(group, key, v);
+        }
+      }
+      if (!Object.keys(body).length) { showToast('Nothing to save', 'error'); return; }
+      const btn = document.getElementById('kp-save-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      try {
+        const res = await fetch('/api/config/knowledge/pipeline', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        _kpState = { loaded: true, error: '', data: data };
+        const bsKeys = Object.keys(body.bead_synthesizer || {});
+        const liveOnly = Object.keys(body).length === 1 && bsKeys.length === 1 && bsKeys[0] === 'enabled';
+        showToast(liveOnly ? 'Knowledge settings saved' : 'Knowledge settings saved — restart the hive to apply them', 'success');
+        const el = document.getElementById('kp-pipeline-root');
+        if (el) el.innerHTML = renderKnowledgePipelineBody();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      }
     }
 
     async function kcSave(list, extra) {

@@ -72,6 +72,99 @@ type BeadSynthesizerConfig struct {
 // DefaultBeadSynthMaxAPICallsPerCycle is the default per-cycle PR GET cap.
 const DefaultBeadSynthMaxAPICallsPerCycle = 40
 
+// Knowledge pipeline defaults that applyDefaults sets at Load; runtime editors
+// substitute the same values so a cleared field restores the default.
+const (
+	DefaultBeadSynthSchedule            = "hourly"
+	DefaultBeadSynthMinConfidence       = 0.5
+	DefaultBeadSynthTargetLayer         = "project"
+	DefaultBeadSynthMaxFactsPerCycle    = 20
+	DefaultBeadSynthVaultPath           = "/data/vaults/bead-synth-wiki"
+	DefaultCuratorSchedule              = "daily"
+	DefaultCuratorAutoPromoteThreshold  = 0.9
+	DefaultKnowledgePrimerMaxFacts      = 25
+	DefaultKnowledgePrimerMaxBytes      = 4096
+	DefaultKnowledgePrimerMergeStrategy = "precedence"
+)
+
+// KnowledgeSchedules are the schedule values the bead synthesizer, curator
+// and code map loops understand (knowledge.ParseSynthSchedule).
+var KnowledgeSchedules = []string{"hourly", "daily"}
+
+// ValidateKnowledgePipeline checks the scalar bead_synthesizer, curator,
+// code_maps and primer keys the dashboard edits: schedules must be hourly or
+// daily (empty uses the default), layers must be personal, project, org or
+// community, confidences lie in [0, 1], counts and byte caps are not
+// negative, and scheduled promotion may not promote a layer into itself.
+// Unset (zero) fields pass, so callers can validate just the keys they edit.
+func ValidateKnowledgePipeline(k KnowledgeConfig) error {
+	for _, s := range []struct{ field, v string }{
+		{"knowledge.bead_synthesizer.schedule", k.BeadSynthesizer.Schedule},
+		{"knowledge.curator.schedule", k.Curator.Schedule},
+		{"knowledge.code_maps.schedule", k.CodeMaps.Schedule},
+	} {
+		v := strings.ToLower(strings.TrimSpace(s.v))
+		if v != "" && v != "hourly" && v != "daily" {
+			return fmt.Errorf("%s %q must be hourly or daily", s.field, s.v)
+		}
+	}
+	for _, l := range []struct{ field, v string }{
+		{"knowledge.bead_synthesizer.target_layer", k.BeadSynthesizer.TargetLayer},
+		{"knowledge.curator.promote_from", k.Curator.PromoteFrom},
+		{"knowledge.curator.promote_to", k.Curator.PromoteTo},
+		{"knowledge.code_maps.layer", k.CodeMaps.Layer},
+	} {
+		if v := strings.TrimSpace(l.v); v != "" && !knowledgeLayerNames[v] {
+			return fmt.Errorf("%s %q must be personal, project, org or community", l.field, l.v)
+		}
+	}
+	from, to := strings.TrimSpace(k.Curator.PromoteFrom), strings.TrimSpace(k.Curator.PromoteTo)
+	if from == "" {
+		from = "project"
+	}
+	if to == "" {
+		to = "org"
+	}
+	if from == to {
+		return fmt.Errorf("knowledge.curator.promote_from and promote_to must name different layers (both %q)", from)
+	}
+	for _, f := range []struct {
+		field string
+		v     float64
+	}{
+		{"knowledge.bead_synthesizer.min_confidence", k.BeadSynthesizer.MinConfidence},
+		{"knowledge.curator.auto_promote_threshold", k.Curator.AutoPromoteThreshold},
+	} {
+		if f.v < 0 || f.v > 1 {
+			return fmt.Errorf("%s must be between 0 and 1", f.field)
+		}
+	}
+	type intField struct {
+		field string
+		v     int
+	}
+	ints := []intField{
+		{"knowledge.bead_synthesizer.max_facts_per_cycle", k.BeadSynthesizer.MaxFactsPerCycle},
+		{"knowledge.bead_synthesizer.max_api_calls_per_cycle", k.BeadSynthesizer.MaxAPICallsPerCycle},
+		{"knowledge.code_maps.max_bytes", k.CodeMaps.MaxBytes},
+		{"knowledge.primer.max_facts", k.Primer.MaxFacts},
+		{"knowledge.primer.max_bytes", k.Primer.MaxBytes},
+	}
+	if rp := k.BeadSynthesizer.RetentionPolicy; rp != nil {
+		ints = append(ints,
+			intField{"knowledge.bead_synthesizer.retention_policy.max_beads", rp.MaxBeads},
+			intField{"knowledge.bead_synthesizer.retention_policy.archive_after_synth_days", rp.ArchiveAfterSynthDays},
+			intField{"knowledge.bead_synthesizer.retention_policy.high_priority_retain_days", rp.HighPriorityRetainDays},
+		)
+	}
+	for _, f := range ints {
+		if f.v < 0 {
+			return fmt.Errorf("%s must be 0 (default) or greater", f.field)
+		}
+	}
+	return nil
+}
+
 // EffectiveMaxAPICallsPerCycle returns the configured cap or the default.
 func (b BeadSynthesizerConfig) EffectiveMaxAPICallsPerCycle() int {
 	if b.MaxAPICallsPerCycle <= 0 {

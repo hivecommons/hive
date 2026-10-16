@@ -6479,11 +6479,11 @@ const (
 	defaultGitHubAPIReserve       = DefaultGitHubAPIReserve
 	defaultGitHubAPICritical      = DefaultGitHubAPICritical
 	defaultPollIntervalMins       = 5
-	defaultKnowledgeMaxFacts      = 25
-	defaultKnowledgeMaxBytes      = 4096
+	defaultKnowledgeMaxFacts      = DefaultKnowledgePrimerMaxFacts
+	defaultKnowledgeMaxBytes      = DefaultKnowledgePrimerMaxBytes
 	defaultKnowledgeEngine        = "llm-wiki"
-	defaultCuratorSchedule        = "daily"
-	defaultPromoteThreshold       = 0.9
+	defaultCuratorSchedule        = DefaultCuratorSchedule
+	defaultPromoteThreshold       = DefaultCuratorAutoPromoteThreshold
 	defaultSensingTTLSeconds      = 900
 	defaultSensingPullbackSeconds = 900
 	defaultBudgetPeriodDays       = 7
@@ -6884,7 +6884,7 @@ func (c *Config) applyDefaults() {
 			c.Knowledge.Primer.MaxBytes = defaultKnowledgeMaxBytes
 		}
 		if c.Knowledge.Primer.MergeStrategy == "" {
-			c.Knowledge.Primer.MergeStrategy = "precedence"
+			c.Knowledge.Primer.MergeStrategy = DefaultKnowledgePrimerMergeStrategy
 		}
 		if len(c.Knowledge.Primer.Priority) == 0 {
 			c.Knowledge.Primer.Priority = []string{"regression", "gotcha", "test_scaffold", "pattern", "decision"}
@@ -6902,22 +6902,22 @@ func (c *Config) applyDefaults() {
 			c.Knowledge.Curator.AutoPromoteThreshold = defaultPromoteThreshold
 		}
 		if c.Knowledge.BeadSynthesizer.Schedule == "" {
-			c.Knowledge.BeadSynthesizer.Schedule = "hourly"
+			c.Knowledge.BeadSynthesizer.Schedule = DefaultBeadSynthSchedule
 		}
 		if c.Knowledge.BeadSynthesizer.MinConfidence == 0 {
-			c.Knowledge.BeadSynthesizer.MinConfidence = 0.5
+			c.Knowledge.BeadSynthesizer.MinConfidence = DefaultBeadSynthMinConfidence
 		}
 		if c.Knowledge.BeadSynthesizer.TargetLayer == "" {
-			c.Knowledge.BeadSynthesizer.TargetLayer = "project"
+			c.Knowledge.BeadSynthesizer.TargetLayer = DefaultBeadSynthTargetLayer
 		}
 		if c.Knowledge.BeadSynthesizer.MaxFactsPerCycle == 0 {
-			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = 20
+			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = DefaultBeadSynthMaxFactsPerCycle
 		}
 		if c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle == 0 {
 			c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle = DefaultBeadSynthMaxAPICallsPerCycle
 		}
 		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
-			c.Knowledge.BeadSynthesizer.VaultPath = "/data/vaults/bead-synth-wiki"
+			c.Knowledge.BeadSynthesizer.VaultPath = DefaultBeadSynthVaultPath
 		}
 	}
 }
