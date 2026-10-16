@@ -102,6 +102,29 @@ Because compaction turns many raw files into one bucket, the dashboard's
    A running experiment can be stopped early with the same Abort action,
    which withdraws the proposed repo change.
 
+## Progress and results on the dashboard
+
+The Experiment Lab card now surfaces both collection progress and experiment
+progress from `GET /api/nous/status`:
+
+- **Baseline progress** shows `Baseline: N / 672 snapshots`, the capped
+  percentage, remaining snapshots, and an ETA derived from the governor
+  evaluation interval. It also states exactly what each snapshot records:
+  queue issues, queue PRs, queue on hold, SLA violations, agents kicked, agent
+  states, and total tokens. Retention is the hive-state policy described
+  above: 24 h raw snapshots, then hourly buckets for 30 days.
+- **Experiment progress** rows are computed server-side for pending, approved,
+  running, and judged experiments. Each row reports the current phase
+  (`baseline`, `experiment`, `cooldown`, or `judging`/`judged`), phase end
+  time, elapsed/remaining time, snapshot counts per phase, and the next output
+  ETA. The metrics list compares baseline-window values with experiment-window
+  values as data becomes available.
+- **Results** lists judged experiments with their verdict/delta and any output
+  links Nous recorded on the experiment ledger entry, including pull requests,
+  issues, and learned principle entries. Output modes that open issues or PRs
+  should record those URLs into the ledger so the dashboard can link them
+  without making extra GitHub calls.
+
 ## Trust ladder (mode)
 
 Set with `PUT /api/nous/mode {"mode": "observe|suggest|evolve"}` (owner role
@@ -191,8 +214,9 @@ an unreinforced principle loses confidence over time.
   the recent-history view.
 - **`GET /api/nous/status`** is the aggregate the dashboard polls to render
   everything above in one call — mode, phase, repo phase detail, snapshot
-  counts, the `researchQuestion`, and any pending proposal or active
-  experiment. `scope` is always `"repo"`.
+  counts, the `researchQuestion`, baseline progress, per-experiment progress,
+  result links, and any pending proposal or active experiment. `scope` is
+  always `"repo"`.
 
 If `deps.Nous` is `nil` (nous state failed to initialize), `status` returns
 `{"status": "not_configured"}`, `ledger`/`principles` return empty arrays, and

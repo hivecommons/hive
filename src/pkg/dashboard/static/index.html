@@ -3591,7 +3591,7 @@
     .nous-mode-btn.active-evolve { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); font-weight: 700; }
     .nous-mode-btn:hover:not([class*="active-"]) { background: var(--panel-strong); }
     .nous-progress { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin: var(--sp-4) var(--sp-0); }
-    .nous-progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+    .nous-progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s; background: var(--amber); }
     .nous-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
     .nous-stat { text-align: center; }
     .nous-stat .val { font-size: 1.3rem; font-weight: 700; color: var(--fg); }
@@ -3612,6 +3612,14 @@
     .nous-btn-reject { margin-left: var(--sp-4); }
     .nous-experiment-live { background: var(--green-bg); border: 1px solid var(--green); border-radius: 8px; padding: var(--sp-5); margin-bottom: 10px; }
     .nous-experiment-live h4 { margin: var(--sp-0) var(--sp-0) var(--sp-3) var(--sp-0); font-size: var(--fs-base); color: var(--text); }
+    .nous-progress-summary, .nous-exp-list, .nous-results-list { display: grid; gap: var(--sp-3); }
+    .nous-progress-label, .nous-exp-head, .nous-result-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
+    .nous-progress-copy, .nous-exp-meta, .nous-exp-metrics, .nous-output-links { font-size: var(--fs-xs); color: var(--muted); }
+    .nous-exp-row, .nous-result-row { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: var(--panel); }
+    .nous-exp-title { font-size: var(--fs-sm); color: var(--text); font-weight: 700; min-width: var(--sp-0); overflow-wrap: anywhere; }
+    .nous-status-pill { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); color: var(--muted); background: var(--surface); white-space: nowrap; }
+    .nous-exp-metrics, .nous-output-links { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); margin-top: var(--sp-2); }
+    .nous-output-links a { color: var(--accent); }
 
     /* Nous Config Panel */
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
@@ -23215,6 +23223,73 @@ function burnAreaChart() {
         'To get started, leave it in Observe while it builds a baseline (it needs a few days of snapshots), then switch to Suggest to review its first proposals.');
     }
 
+    function nousFmtDuration(sec) {
+      const n = Number(sec) || 0;
+      if (n <= 0) return 'now';
+      const h = Math.ceil(n / 3600);
+      if (h >= 1) return `~${h}h`;
+      return `~${Math.max(1, Math.ceil(n / 60))}m`;
+    }
+
+    function nousProgressBar(pct, label) {
+      const w = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      return `<div class="nous-progress" role="progressbar" aria-label="${escapeHtml(label || 'Progress')}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${w}"><div class="nous-progress-fill" style="width:${w}%"></div></div>`;
+    }
+
+    function nousMetricValue(v, unit) {
+      if (v == null || Number.isNaN(Number(v))) return '—';
+      const n = Number(v);
+      const body = Math.abs(n) >= 10 ? String(Math.round(n)) : String(Math.round(n * 10) / 10);
+      return `${body}${unit || ''}`;
+    }
+
+    function nousMetricLine(m) {
+      const b = nousMetricValue(m.baseline, m.unit);
+      const e = nousMetricValue(m.experiment, m.unit);
+      const d = m.delta == null ? '' : ` Δ ${nousMetricValue(m.delta, m.unit)}`;
+      return `<span>${escapeHtml(m.label || m.name)}: ${escapeHtml(b)} → ${escapeHtml(e)}${escapeHtml(d)}</span>`;
+    }
+
+    function nousOutputLinks(outputs) {
+      const links = (outputs || []).map(o => {
+        const title = o.title || o.type || 'output';
+        if (o.url) return `<a href="${escapeHtml(o.url)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>`;
+        return `<span>${escapeHtml(title)}</span>`;
+      });
+      return links.length ? `<div class="nous-output-links">${links.join('')}</div>` : '';
+    }
+
+    function nousExperimentProgressRows(experiments) {
+      if (!experiments || !experiments.length) return '<div class="nous-lab-empty">No defined experiments yet — switch to Suggest after baseline completes to review proposals.</div>';
+      return `<div class="nous-exp-list">${experiments.map(exp => {
+        const title = exp.title || exp.hypothesis || exp.id || 'experiment';
+        const phase = exp.phase || exp.status || 'defined';
+        const eta = exp.nextOutputEta || (exp.nextOutputEtaSeconds ? nousFmtDuration(exp.nextOutputEtaSeconds) : '');
+        const counts = exp.snapshotCounts || {};
+        const countsText = ['baseline','experiment','cooldown','judging'].map(k => `${k} ${Number(counts[k]) || 0}`).join(' · ');
+        const metrics = (exp.metricsSoFar || []).slice(0, 4).map(nousMetricLine).join('');
+        const remaining = exp.remainingSeconds ? `${nousFmtDuration(exp.remainingSeconds)} left in ${phase}` : (phase === 'judged' ? 'output available' : 'waiting for timestamps');
+        return `<div class="nous-exp-row">
+          <div class="nous-exp-head"><div class="nous-exp-title">${escapeHtml(title)}</div><span class="nous-status-pill">${escapeHtml(phase)}</span></div>
+          ${exp.hypothesis && exp.hypothesis !== title ? `<div class="nous-progress-copy">${escapeHtml(exp.hypothesis)}</div>` : ''}
+          ${nousProgressBar(exp.progressPct, `${title} phase progress`)}
+          <div class="nous-exp-meta">${escapeHtml(remaining)} · snapshots: ${escapeHtml(countsText)}${eta ? ` · next output ${escapeHtml(eta)}` : ''}</div>
+          ${metrics ? `<div class="nous-exp-metrics">${metrics}</div>` : ''}
+          ${nousOutputLinks(exp.outputs)}
+        </div>`;
+      }).join('')}</div>`;
+    }
+
+    function nousResultsRows(results) {
+      if (!results || !results.length) return '';
+      return `<div class="nous-card mt-5"><h3>Results</h3><div class="nous-results-list">${results.map(r => {
+        const title = r.title || r.hypothesis || r.id || 'experiment';
+        const verdict = r.verdict || r.status || 'judged';
+        const delta = r.delta ? ` · ${r.delta}` : '';
+        return `<div class="nous-result-row"><div class="nous-result-head"><strong>${escapeHtml(title)}</strong><span class="nous-status-pill">${escapeHtml(verdict)}</span></div><div class="nous-progress-copy">${escapeHtml((r.hypothesis || '') + delta)}</div>${nousOutputLinks(r.outputs)}</div>`;
+      }).join('')}</div></div>`;
+    }
+
     function renderNous() {
       if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
@@ -23354,8 +23429,18 @@ function burnAreaChart() {
       // Data collection progress
       html += '<div class="nous-card mt-5">';
       html += '<h3>Data Collection</h3>';
-      html += `<div style="font-size:0.72rem;color:var(--muted)">${s.snapshotCount || 0} snapshots recorded \u00b7 one per governor evaluation cycle, kept 24 h raw then hourly for 30 days</div>`;
-      html += '<div class="nous-pending-params">Observe records a snapshot of hive state every governor evaluation cycle (the hive-state time series). No experiments run until you switch to Suggest/Evolve and approve proposals.</div>';
+      const base = s.baseline || {};
+      const basePct = base.percent != null ? Math.round(Number(base.percent)) : Math.round(Number(s.baseline_pct || 0));
+      const baseCount = Number(base.snapshots != null ? base.snapshots : (s.snapshotCount || 0));
+      const baseTarget = Number(base.target || s.snapshotTarget || 0);
+      html += '<div class="nous-progress-summary">';
+      html += `<div class="nous-progress-label"><strong>Baseline: ${baseCount} / ${baseTarget} snapshots (${basePct}%)</strong><span class="nous-progress-copy">${base.complete ? 'Complete — switch to Suggest when ready.' : `${base.remainingSnapshots || 0} remaining · ETA ${nousFmtDuration(base.etaSeconds)}`}</span></div>`;
+      html += nousProgressBar(basePct, 'Baseline snapshot collection');
+      html += `<div class="nous-progress-copy">Collecting: ${escapeHtml(((base.collecting || ['queue issues','queue PRs','queue on hold','SLA violations','agents kicked','agent states','total tokens']).join(', ')))}. Retention: ${escapeHtml(base.retention || '24 h raw snapshots, then hourly buckets for 30 days')}.</div>`;
+      html += '</div>';
+      html += '<div class="nous-pending-params">Observe records the hive-state time series every governor evaluation cycle. Experiments wait for Suggest/Evolve and operator approval before repo changes run.</div>';
+      html += '<h3 class="mt-5">Experiment Progress</h3>';
+      html += nousExperimentProgressRows(s.experiments || []);
 
       // Show experiment proposals from ledger
       const dryRuns = ledger.filter(e => e.type === 'dry_run').slice(-5);
@@ -23412,6 +23497,8 @@ function burnAreaChart() {
         html += '<button class="hv-btn btn-danger nous-btn nous-btn-reject" data-action="nousReject" title="Reject this experiment proposal. Nous will discard it and generate a new hypothesis based on collected data.">Reject</button>';
         html += '</div></div>';
       }
+
+      html += nousResultsRows(s.results || []);
 
       // Principles
       if (principles.length > 0) {

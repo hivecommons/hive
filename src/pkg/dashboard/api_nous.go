@@ -16,6 +16,12 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 		status[k] = v
 	}
 	goals := s.deps.Nous.Config["goals"]
+	config := make(map[string]interface{}, len(s.deps.Nous.Config))
+	for k, v := range s.deps.Nous.Config {
+		config[k] = v
+	}
+	ledger := append([]map[string]interface{}(nil), s.deps.Nous.Ledger...)
+	principles := append([]NousPrinciple(nil), s.deps.Nous.Principles...)
 	s.deps.Nous.Mu.Unlock()
 	// The Experiment Lab is repo-only: the reported scope is always "repo"
 	// and any governor phase block published by the experiment loop is
@@ -23,6 +29,7 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 	status["scope"] = NousScopeRepo
 	status["phases"] = nousRepoOnlyPhases(status["phases"])
 	status["researchQuestion"] = nousResearchQuestion(goals)
+	s.addNousProgressStatus(status, config, ledger, principles)
 	jsonResponse(w, status)
 }
 
