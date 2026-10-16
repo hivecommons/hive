@@ -197,7 +197,7 @@ func FleetMedian(qs []Quadrant) Quadrant {
 				cs.Display = spec.format(cs.Value)
 				cs.Score = medianOf(s.scores)
 				as.Measured++
-				facts = append(facts, fmt.Sprintf("%s %s (%d hives)", strings.ToLower(spec.label), cs.Display, cs.N))
+				facts = append(facts, fmt.Sprintf("%s %s (%s)", strings.ToLower(spec.label), cs.Display, pluralHives(cs.N)))
 			} else {
 				cs.Reason = "no hive in view reports this yet"
 				as.Unmeasured++
@@ -209,7 +209,7 @@ func FleetMedian(qs []Quadrant) Quadrant {
 			as.Scored = true
 			total += as.Score
 			scored++
-			summary := fmt.Sprintf("%s %d: median of %d hives", QuadrantAxisLabels[axis], as.Score, as.N)
+			summary := fmt.Sprintf("%s %d: median of %s", QuadrantAxisLabels[axis], as.Score, pluralHives(as.N))
 			if len(facts) > 0 {
 				summary += " · " + facts[0]
 			}
@@ -228,4 +228,12 @@ func FleetMedian(qs []Quadrant) Quadrant {
 		fleet.Composite = clampScore(int(math.Round(float64(total) / float64(scored))))
 	}
 	return fleet
+}
+
+// pluralHives renders "1 hive" / "n hives" for the fleet summaries.
+func pluralHives(n int) string {
+	if n == 1 {
+		return "1 hive"
+	}
+	return fmt.Sprintf("%d hives", n)
 }
