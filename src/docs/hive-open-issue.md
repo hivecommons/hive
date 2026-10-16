@@ -151,10 +151,11 @@ second agent is not kicked onto the same work
 is an explicit *deferral* is posted but records no claim: one opening with
 "Deferred"/"Deferring", "Blocked by/on #N", "Not starting", "is/still
 blocked by #N", "waiting on/for #N" or "deferring … until #N", or saying
-"Deferred this cycle" or "Picks up once/after/when #N merges" anywhere. The
+"Deferred this cycle" or "pick(s) [this/it] up once/after/when …" anywhere
+(the condition need not name an issue or a merge). The
 exemption is lost — the claim is recorded — if the comment also says work is
 starting or resuming now ("that merged, starting now", "picking this up",
-"unblocked"); a third party's start ("#N is starting the same refactor",
+"unblocked", "working on it now"); a third party's start ("#N is starting the same refactor",
 "scanner is picking this up in #N") or a start conditional on the blocker
 ("will resume once it merges") does not count as yours. The opening-clause
 forms stop at the first `,` `.` `;` or newline, so a work comment with a

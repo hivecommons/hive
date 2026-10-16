@@ -140,6 +140,11 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Deferring implementation until #12322 merges.",
 		"Picks up once #12322 merges.",
 		"Will pick up after #12322 merges.",
+		"I'll pick this up once #12322 merges.",
+		"Will pick it up after #12322 lands.",
+		"Picks up when the next sweep runs.",
+		"Deferred this cycle. Not working on it now.",
+		"Deferred this cycle. Once #12322 merges, working on it now will be possible.",
 		"BLOCKED BY #12322",
 		"This is blocked by #12322 until the schema lands.",
 		"Still blocked by #12322.",
@@ -185,6 +190,7 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 	// still a work comment.
 	for _, body := range []string{
 		"Starting work on this issue.",
+		"Working on it now.\n\nPicks up once #12322 merges for the second half.",
 		"verified on v5",
 		"Previously blocked by #12322; that merged, starting now.",
 		"Was blocked by #12322, now merged, starting.",
@@ -213,9 +219,11 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Was blocked by #12322 previously. Implementing now.",
 		"Tests pass.\nBlocked by #12322 for the last mile, pushing the rest.",
 	} {
-		if got := issueRequestStartSignal("comment", body); got != AgentStartSignalComment {
-			t.Errorf("work comment %q reported %q", body, got)
-		}
+		t.Run(body, func(t *testing.T) {
+			if got := issueRequestStartSignal("comment", body); got != AgentStartSignalComment {
+				t.Fatalf("work comment reported %q", got)
+			}
+		})
 	}
 }
 

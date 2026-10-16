@@ -1,6 +1,9 @@
 package github
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // Agent start signals (hivecommons/hive#10527).
 //
@@ -64,14 +67,16 @@ func (c *Client) notifyAgentStart(agent, repo string, number int, signal string)
 // claim, while a comment that opens with the wait ("Waiting for #N CI, then
 // merging.") does not. Explicit label, claim and PR requests remain start
 // signals independently of any accompanying comment.
-var commentDeferral = regexp.MustCompile(`(?i)(?:^\W*deferr(?:ed|ing)\b` +
-	`|^\W*blocked\s+(?:by|on)\s+#\d+` +
-	`|^\W*(?:not|never|won't|cannot|can't)\s+start\w*\b` +
-	`|^[^.,;!?\n]*?\b(?:is|am|are|still|currently|remains?)\s+blocked\s+(?:by|on)\s+#\d+` +
-	`|^[^.,;!?\n]*?\bwaiting\s+(?:on|for)\s+#\d+` +
-	`|^[^.,;!?\n]*?\bdeferr(?:ed|ing)\s+(?:\w+\s+){0,2}?(?:until|pending)\b` +
-	`|\bdeferred\s+this\s+cycle\b` +
-	`|\bpicks?\s+up\s+(?:once|after|when)\b)`)
+var commentDeferral = regexp.MustCompile(`(?i)(?:` + strings.Join([]string{
+	`^\W*deferr(?:ed|ing)\b`,                                                             // Opening deferral, with optional markdown emphasis.
+	`^\W*blocked\s+(?:by|on)\s+#\d+`,                                                     // Opening blocker, not a historical aside.
+	`^\W*(?:not|never|won't|cannot|can't)\s+start\w*\b`,                                  // Explicit non-start.
+	`^[^.,;!?\n]*?\b(?:is|am|are|still|currently|remains?)\s+blocked\s+(?:by|on)\s+#\d+`, // Opening-clause blocker.
+	`^[^.,;!?\n]*?\bwaiting\s+(?:on|for)\s+#\d+`,                                         // Opening-clause wait.
+	`^[^.,;!?\n]*?\bdeferr(?:ed|ing)\s+(?:\w+\s+){0,2}?(?:until|pending)\b`,              // Opening conditional deferral.
+	`\bdeferred\s+this\s+cycle\b`,                                                        // Explicit cycle-wide deferral anywhere.
+	`\bpicks?\s+(?:this\s+|it\s+)?up\s+(?:once|after|when)\b`,                            // Conditional pickup, with optional object.
+}, `|`) + `)`)
 
 // commentStartOverride matches an explicit statement that work is starting
 // or resuming, or that the blocker/deferral it opens with is in the past
@@ -82,8 +87,11 @@ var commentDeferral = regexp.MustCompile(`(?i)(?:^\W*deferr(?:ed|ing)\b` +
 // a start word inside the deferral clause does not override it. A past
 // "started" only overrides with an explicit "now", not a third-party start
 // or an old spike.
-var commentStartOverride = regexp.MustCompile(`(?i)(?:\b(?:starting|started\s+(?:work\s+)?now|resuming|resumed|picking\s+(?:this\s+|it\s+)?up|picked\s+(?:this\s+|it\s+)?up|back\s+on\s+(?:this|it)\b|no\s+longer\s+blocked|unblocked)\b` +
-	`|^\W*(?:was\s+|were\s+)?(?:blocked|deferred)\b[^.;!?\n]*?\b(?:earlier|previously|yesterday|last\s+(?:week|cycle|time|month))\b)`)
+var commentStartOverride = regexp.MustCompile(`(?i)(?:` + strings.Join([]string{
+	`\b(?:starting|started\s+(?:work\s+)?now|resuming|resumed|picking\s+(?:this\s+|it\s+)?up|picked\s+(?:this\s+|it\s+)?up|back\s+on\s+(?:this|it)|no\s+longer\s+blocked|unblocked)\b`, // Present start or explicit resume.
+	`\bworking\s+on\s+(?:this|it)\s+now\b`, // Current work, not "working on it means waiting".
+	`^\W*(?:was\s+|were\s+)?(?:blocked|deferred)\b[^.;!?\n]*?\b(?:earlier|previously|yesterday|last\s+(?:week|cycle|time|month))\b`, // Historical opening blocker.
+}, `|`) + `)`)
 
 // commentNonStart matches start words that do not describe work starting
 // now: a negated start ("not starting until #N merges"), a start conditional
@@ -95,12 +103,14 @@ var commentStartOverride = regexp.MustCompile(`(?i)(?:\b(?:starting|started\s+(?
 // up in #N", "#N is unblocked"). "am" is deliberately absent from the
 // present-tense form so a first-person "I am picking this up" stays a
 // start. Each match is blanked before commentStartOverride is evaluated.
-var commentNonStart = regexp.MustCompile(`(?i)(?:\b(?:not|never|won't|cannot|can't|before|without)\s+(?:be\s+)?(?:start|resum|pick|unblock)\w*` +
-	`|\b(?:once|after|when|until|while|unless|if|pending)\b[^.;!?\n]*?\b(?:start|resum|pick|unblock)\w*` +
-	`|\b(?:start|resum|unblock)\w*\s+(?:once|after|when|until|unless|if|pending)\b[^.;!?\n]*` +
-	`|\bpick\w*\s+(?:this\s+|it\s+)?up\s+(?:once|after|when|until|unless|if|pending)\b[^.;!?\n]*` +
-	`|\b(?:was|were|been|already|has|had|#\d+)\s+(?:started|resumed|picked\s+(?:this\s+|it\s+)?up)\b` +
-	`|\b(?:is|are)\s+(?:starting|resuming|picking\s+(?:this\s+|it\s+)?up|unblocked)\b)`)
+var commentNonStart = regexp.MustCompile(`(?i)(?:` + strings.Join([]string{
+	`\b(?:not|never|won't|cannot|can't|before|without)\s+(?:be\s+)?(?:start|resum|pick|unblock|work)\w*`,     // Negated start.
+	`\b(?:once|after|when|until|while|unless|if|pending)\b[^.;!?\n]*?\b(?:start|resum|pick|unblock|work)\w*`, // Condition before a start.
+	`\b(?:start|resum|unblock)\w*\s+(?:once|after|when|until|unless|if|pending)\b[^.;!?\n]*`,                 // Conditional start clause.
+	`\bpick\w*\s+(?:this\s+|it\s+)?up\s+(?:once|after|when|until|unless|if|pending)\b[^.;!?\n]*`,             // Conditional pickup clause.
+	`\b(?:was|were|been|already|has|had|#\d+)\s+(?:started|resumed|picked\s+(?:this\s+|it\s+)?up)\b`,         // Third-party past start.
+	`\b(?:is|are)\s+(?:starting|resuming|picking\s+(?:this\s+|it\s+)?up|unblocked|working)\b`,                // Third-party present start.
+}, `|`) + `)`)
 
 // commentIsDeferral reports whether a comment body is an explicit deferral
 // that carries no overriding statement of work starting.
