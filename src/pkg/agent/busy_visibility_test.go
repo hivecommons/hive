@@ -5,10 +5,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 func busyVisibilityTestManager() *Manager {
@@ -22,8 +24,8 @@ func TestBusyVisibilityCounterResetsOnDeliveryAndRestart(t *testing.T) {
 	agent := m.agents["scanner"]
 	now := time.Date(2026, 9, 29, 4, 16, 0, 0, time.UTC)
 
-	m.markKickUndeliverableLocked(agent, now)
-	m.markKickUndeliverableLocked(agent, now.Add(time.Minute))
+	m.markKickUndeliverableLocked(agent, now, "pane busy")
+	m.markKickUndeliverableLocked(agent, now.Add(time.Minute), "pane busy")
 	if agent.KicksUndeliverable != 2 {
 		t.Fatalf("kicks undeliverable = %d, want 2", agent.KicksUndeliverable)
 	}
@@ -36,7 +38,7 @@ func TestBusyVisibilityCounterResetsOnDeliveryAndRestart(t *testing.T) {
 		t.Fatalf("reset after delivery left busy state: %+v", agent)
 	}
 
-	m.markKickUndeliverableLocked(agent, now)
+	m.markKickUndeliverableLocked(agent, now, "pane busy")
 	m.invalidateKicksOnRestartLocked(agent, "test restart", false, false)
 	if agent.KicksUndeliverable != 0 || !agent.BusySince.IsZero() || agent.BusyCondition != "" {
 		t.Fatalf("restart reset left busy state: %+v", agent)
@@ -123,4 +125,26 @@ func writeEventsFile(t *testing.T, home, id string, mod time.Time) {
 	if err := os.Chtimes(path, mod, mod); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestKickUndeliverableSelfReportCarriesReason(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 3, 0, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
+	fleetreport.SetDefaultTrackerForTest(t, tr)
+
+	m := busyVisibilityTestManager()
+	agent := m.agents["scanner"]
+	for i := 0; i < 3; i++ {
+		m.markKickUndeliverableLocked(agent, clock, "pane not at a ready input prompt")
+	}
+	for _, ev := range tr.Evidence() {
+		if ev.Class != fleetreport.ClassKickFailedRepeatedly {
+			continue
+		}
+		if !strings.Contains(ev.Message, "(pane not at a ready input prompt)") {
+			t.Fatalf("message = %q, want the undeliverable reason in parentheses", ev.Message)
+		}
+		return
+	}
+	t.Fatal("no kick_failed_repeatedly evidence after 3 undeliverable kicks")
 }

@@ -1,0 +1,1 @@
+- The `kick_failed_repeatedly` self-report now states why a kick was undeliverable instead of an empty `()` ([#12268](https://github.com/hivecommons/hive/issues/12268)).

@@ -337,7 +337,7 @@ func (m *Manager) deliverKickAsync(name, message string) error {
 		}
 		m.mu.Lock()
 		if current, ok := m.agents[name]; ok && current == agent && agent.kickEpoch == epoch {
-			m.markKickUndeliverableLocked(agent, time.Now())
+			m.markKickUndeliverableLocked(agent, time.Now(), "CLI did not reach input prompt")
 		}
 		m.mu.Unlock()
 		return fmt.Errorf("agent %s CLI did not reach input prompt", name)
