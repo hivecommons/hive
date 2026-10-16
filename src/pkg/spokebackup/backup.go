@@ -112,6 +112,11 @@ const (
 
 	// beadsPrefix holds the agent work ledger.
 	beadsPrefix = "beads"
+
+	// beadSynthPrefix holds the flat markdown facts of the reserved
+	// bead-synthesizer vault (see bead_synth.go). It is also the vault's
+	// on-disk directory name under vaultsSubdir.
+	beadSynthPrefix = "bead-synth-wiki"
 )
 
 // Size guards. A backup is streamed through the dashboard to a browser, so it

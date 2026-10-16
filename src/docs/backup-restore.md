@@ -118,8 +118,8 @@ There are two verbs, and the difference matters:
 
 | | `hive-backup extract` | `hive-backup restore` |
 | --- | --- | --- |
-| Output | a plain directory still carrying the archive's `spoke/` and `beads/` prefixes | a populated spoke data directory |
-| Path mapping | none — prefixes preserved | `spoke/` → data-dir root, `beads/<agent>/` → `<data-dir>/beads/<agent>/` |
+| Output | a plain directory still carrying the archive's `spoke/`, `beads/` and `bead-synth-wiki/` prefixes | a populated spoke data directory |
+| Path mapping | none — prefixes preserved | `spoke/` → data-dir root, `beads/<agent>/` → `<data-dir>/beads/<agent>/`, `bead-synth-wiki/<slug>.md` → `<data-dir>/vaults/bead-synth-wiki/<slug>.md` |
 | Identity guard | none | refuses a destination that belongs to a different hive |
 | Use it for | inspecting an archive; a **hub** disaster-recovery archive, whose Secret/PVC reassembly is manual | putting a **spoke** archive back on a deployment |
 
@@ -136,7 +136,7 @@ The archive uses `spoke/` and `beads/` prefixes (`src/pkg/spokebackup/backup.go:
 | `spoke/hive-state.json` | `/data/hive-state.json` | `stateFile`, `backup.go:100` |
 | `spoke/gh-app-key*.pem` | `/data/gh-app-key*.pem` | `appKeyGlob`, `backup.go:105`, matched with `filepath.Glob` (`backup.go:256`) |
 | `beads/<agent>/**` | `/data/beads/<agent>/**` | `beadsSubdir`/`beadsPrefix`, `backup.go:58,114` — one subtree per agent, discovered from the archive rather than a fixed list |
-| `bead-synth-wiki/<slug>.md` | `/data/vaults/bead-synth-wiki/<slug>.md` | `addBeadSynthVault` in `pkg/spokebackup/bead_synth.go`; flat markdown facts only, restored at the synthesizer's own `0644` (not hardened to `0600`, since nothing re-applies ownership under `vaults/` at boot) |
+| `bead-synth-wiki/<slug>.md` | `/data/vaults/bead-synth-wiki/<slug>.md` | `beadSynthPrefix`, `backup.go:119`; `addBeadSynthVault` in `pkg/spokebackup/bead_synth.go`; flat markdown facts only, restored at the synthesizer's own `0644` (not hardened to `0600`, since nothing re-applies ownership under `vaults/` at boot) |
 | `MANIFEST.json` | (not restored — it is metadata, verified by `Extract`, not spoke state) | `hubbackup` manifest format |
 
 The mapping is a prefix rename (`spoke/` → data-dir root, `beads/` → data-dir `beads/`, `bead-synth-wiki/` → data-dir `vaults/bead-synth-wiki/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,586,879`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:1239-1248,1847-1853`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api_config.go:186`, `src/pkg/hub/cluster_app_key.go:393`).
@@ -298,7 +298,7 @@ Managing the key from the dashboard is also owner-only:
 - `PUT /api/config/governor/backup` — `{"encryptionKey":"<64 hex>","keyName":"escrowed in 1Password"}`.
 - `DELETE /api/config/governor/backup` — removes the stored key; backups are refused again.
 
-The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or the legacy `hive.yaml.bak`), `hive-id`, `hive-state.json`, the GitHub App private keys, and `beads/`. It is encrypted and sized for browser download, not nightly fleet DR.
+The archive contains the spoke config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or the legacy `hive.yaml.bak`), `hive-id`, `hive-state.json`, the GitHub App private keys, `beads/`, and the synthesized facts in `vaults/bead-synth-wiki/*.md`. It is encrypted and sized for browser download, not nightly fleet DR.
 
 ### Host-level backup pattern
 

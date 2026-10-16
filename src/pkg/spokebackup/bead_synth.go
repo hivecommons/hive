@@ -10,13 +10,15 @@ import (
 	"github.com/hivecommons/hive/pkg/hubbackup"
 )
 
-// The reserved automation vault contains flat markdown facts, not arbitrary
-// imported vaults or attachments. Preserve it even when repo publishing is off.
+// vaultsSubdir is the parent of all knowledge vaults, relative to the data
+// dir. Only the reserved automation vault (beadSynthPrefix) beneath it is
+// captured: it contains flat markdown facts, not arbitrary imported vaults or
+// attachments, and is preserved even when repo publishing is off.
 //
 // Only the default location (config.DefaultBeadSynthVaultPath) is captured; a
 // custom knowledge.bead_synthesizer.vault_path is not read here and is
 // documented as excluded in docs/backup-restore.md.
-const beadSynthVault = "bead-synth-wiki"
+const vaultsSubdir = "vaults"
 
 // beadSynthFactMode matches the 0644 the synthesizer itself writes
 // (knowledge.BeadSynthesizer). Facts are knowledge, not credentials, and the
@@ -26,10 +28,10 @@ const beadSynthVault = "bead-synth-wiki"
 const beadSynthFactMode = 0o644
 
 func addBeadSynthVault(b *hubbackup.Builder, dataDir string, res *Result, logger *slog.Logger) error {
-	relDir := filepath.Join("vaults", beadSynthVault)
+	relDir := filepath.Join(vaultsSubdir, beadSynthPrefix)
 	// Do not follow a symlink at either directory boundary into another vault
 	// or an agent credential directory.
-	for _, rel := range []string{"vaults", relDir} {
+	for _, rel := range []string{vaultsSubdir, relDir} {
 		info, err := os.Lstat(filepath.Join(dataDir, rel))
 		if os.IsNotExist(err) {
 			return nil // Older hives need not have synthesized any facts yet.
@@ -55,7 +57,7 @@ func addBeadSynthVault(b *hubbackup.Builder, dataDir string, res *Result, logger
 			res.Skipped[rel] = err.Error()
 			continue
 		}
-		if err := b.AddBytes(filepath.Join(beadSynthVault, entry.Name()), beadSynthFactMode, content); err != nil {
+		if err := b.AddBytes(filepath.Join(beadSynthPrefix, entry.Name()), beadSynthFactMode, content); err != nil {
 			return fmt.Errorf("archive bead synth fact: %w", err)
 		}
 	}

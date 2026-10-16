@@ -316,8 +316,8 @@ func planRestore(staging, dataDir string) (*restorePlan, error) {
 				dst:    filepath.Join(dataDir, name),
 				secret: true, // config, identity and App keys — all owner-only
 			})
-		case parts[0] == beadSynthVault && len(parts) == 2 && strings.HasSuffix(parts[1], ".md"):
-			relDst := filepath.Join("vaults", beadSynthVault, parts[1])
+		case parts[0] == beadSynthPrefix && len(parts) == 2 && strings.HasSuffix(parts[1], ".md"):
+			relDst := filepath.Join(vaultsSubdir, beadSynthPrefix, parts[1])
 			plan.moves = append(plan.moves, restoreMove{
 				rel: relDst,
 				src: path,

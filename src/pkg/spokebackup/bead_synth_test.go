@@ -11,7 +11,7 @@ import (
 func TestBeadSynthVaultBackupRestore(t *testing.T) {
 	dir := seedSpoke(t)
 	t.Setenv(EnvDataDir, dir)
-	fact := filepath.Join("vaults", beadSynthVault, "stable-fact.md")
+	fact := filepath.Join("vaults", beadSynthPrefix, "stable-fact.md")
 	body := "---\ntitle: Stable fact\n---\nPrivate learned knowledge.\n"
 	mustWrite(t, filepath.Join(dir, fact), body)
 	// Only the reserved vault's flat markdown files belong in this archive.
@@ -38,10 +38,10 @@ func TestBeadSynthVaultBackupRestore(t *testing.T) {
 	if _, err := hubbackup.Extract(testKey(), res.Sealed, extracted); err != nil {
 		t.Fatal(err)
 	}
-	if got := mustRead(t, filepath.Join(extracted, beadSynthVault, "stable-fact.md")); got != body {
+	if got := mustRead(t, filepath.Join(extracted, beadSynthPrefix, "stable-fact.md")); got != body {
 		t.Fatalf("archived fact = %q, want %q", got, body)
 	}
-	entries, err := os.ReadDir(filepath.Join(extracted, beadSynthVault))
+	entries, err := os.ReadDir(filepath.Join(extracted, beadSynthPrefix))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("vault archive entries = %v, err = %v; want only stable-fact.md", entries, err)
 	}
@@ -55,8 +55,19 @@ func TestBeadSynthVaultBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != beadSynthFactMode {
-		t.Fatalf("fact restored with permissions %o, want %o (the synthesizer's own mode)", got, beadSynthFactMode)
+	// Extract writes through os.WriteFile, so the restored mode is
+	// beadSynthFactMode less the process umask; compare against a file
+	// written the same way rather than the literal mode.
+	probe := filepath.Join(t.TempDir(), "probe.md")
+	if err := os.WriteFile(probe, []byte("x"), beadSynthFactMode); err != nil {
+		t.Fatal(err)
+	}
+	probeInfo, err := os.Stat(probe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), probeInfo.Mode().Perm(); got != want {
+		t.Fatalf("fact restored with permissions %o, want %o (the synthesizer's own mode under this umask)", got, want)
 	}
 	for _, rel := range excluded {
 		if _, err := os.Lstat(filepath.Join(dest, rel)); !os.IsNotExist(err) {
@@ -66,13 +77,13 @@ func TestBeadSynthVaultBackupRestore(t *testing.T) {
 }
 
 func TestBeadSynthVaultDoesNotFollowDirectorySymlinks(t *testing.T) {
-	for _, boundary := range []string{"vaults", filepath.Join("vaults", beadSynthVault)} {
+	for _, boundary := range []string{"vaults", filepath.Join("vaults", beadSynthPrefix)} {
 		t.Run(boundary, func(t *testing.T) {
 			dir := seedSpoke(t)
 			t.Setenv(EnvDataDir, dir)
 			outside := t.TempDir()
 			mustWrite(t, filepath.Join(outside, "secret.md"), "not a fact")
-			mustWrite(t, filepath.Join(outside, beadSynthVault, "secret.md"), "not a fact")
+			mustWrite(t, filepath.Join(outside, beadSynthPrefix, "secret.md"), "not a fact")
 			link := filepath.Join(dir, boundary)
 			if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
 				t.Fatal(err)
@@ -84,14 +95,14 @@ func TestBeadSynthVaultDoesNotFollowDirectorySymlinks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, ok := res.Skipped[filepath.Join("vaults", beadSynthVault)]; !ok {
+			if _, ok := res.Skipped[filepath.Join("vaults", beadSynthPrefix)]; !ok {
 				t.Fatal("unsafe vault directory not reported")
 			}
 			dest := t.TempDir()
 			if _, err := hubbackup.Extract(testKey(), res.Sealed, dest); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := os.Stat(filepath.Join(dest, beadSynthVault)); !os.IsNotExist(err) {
+			if _, err := os.Stat(filepath.Join(dest, beadSynthPrefix)); !os.IsNotExist(err) {
 				t.Fatalf("symlinked directory captured: %v", err)
 			}
 		})
