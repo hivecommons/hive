@@ -1120,6 +1120,16 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	// let the header polygon disagree with the rows it summarises.
 	fleetQuadrant := attachQuadrants(result, isAdmin, journeyNow)
 
+	// The raw evidence summary is owner/admin-only (#12080). It had to stay on
+	// the row until here because quadrantInputsFor reads it to score the
+	// Satisfaction/Trust/Efficiency criteria above; a read or read-write member
+	// gets the scored card, never the per-hive counts behind it.
+	for i := range result {
+		if result[i].Role != "owner" && !isAdmin {
+			result[i].Evidence = nil
+		}
+	}
+
 	// Cosmetic owner labels: resolve opaque OIDC owner identities to their
 	// stored display names so "Group by owner" headers and tooltips read like
 	// people. Memoized — a fleet shares a handful of owners.

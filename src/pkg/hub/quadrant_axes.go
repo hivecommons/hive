@@ -33,8 +33,8 @@ type subCriterion struct {
 // its throughput is modest. Mixing outcome quality in here would make the axis
 // a second productivity score.
 //
-// THE GOVERNOR CRITERION HAS BEEN REMOVED, and Trust now scores on three
-// criteria: autonomy, merge acceptance and breadth.
+// Trust scores on four criteria: autonomy, merge acceptance, breadth and
+// delegation. The former GOVERNOR CRITERION HAS BEEN REMOVED.
 //
 // It was built on a misreading of the governor, in two compounding ways.
 //
@@ -53,33 +53,19 @@ type subCriterion struct {
 // replace it with one that measures the wrong thing, which is strictly worse
 // because it would then look like it was working.
 //
-// No replacement is substituted, because the hub does not receive one. The
-// codebase has three genuine delegated-authority signals and ALL of them are
-// spoke-side configuration that never travels on the heartbeat:
-//
-//   - config.AutoMergeConfig.SelfAuthored (pkg/config/config.go) — the App
-//     merging its own PRs with no human approval. This is the strongest
-//     delegation bit in the product and would be the ideal trust criterion.
-//   - config.ReviewConfig.RequireApproval — the review gate.
-//   - config.AgentSandboxConfig / AgentConfig.Tools — sandbox and tool
-//     permissions.
-//
-// None appears on HeartbeatPayload or RegistryEntry; each is read only inside
-// cmd/hive/main.go. The hub therefore cannot see whether an operator granted or
-// revoked any of them, and acmmLevel — already the autonomy criterion below —
-// is the single delegation signal that does arrive.
-//
 // Recomputing a gate hub-side from acmmLevel (PlanAutoApproveForLevel,
 // SelfMergeMinACMMLevel) was considered and rejected: it is a pure function of
 // a value this axis ALREADY scores, so it would add no information while
 // double-weighting autonomy and looking like a second, independent criterion.
-// Inventing a proxy to keep the criterion count at three would repeat exactly
-// the mistake being fixed here.
 //
-// The real fix is to report the signal. Adding
-// AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel) to the heartbeat as a
-// *bool — nil for old spokes, matching every other quadrant pointer field —
-// would give Trust a true delegation criterion. Until then, three.
+// The replacement is a signal the spoke REPORTS rather than one the hub
+// invents: the evidence summary's automerge_self_authored (#12080) — whether
+// the App may merge its own PRs with no human approval, the strongest
+// delegation bit in the product. It is a *bool, nil for old spokes, matching
+// every other quadrant pointer field, so a spoke that does not report it
+// declines the criterion instead of scoring zero. The other spoke-side
+// delegation settings (config.ReviewConfig.RequireApproval, sandbox/tool
+// permissions) still never travel on the heartbeat and are not scored.
 func trustCriteria(in quadrantInputs) []subCriterion {
 	var out []subCriterion
 

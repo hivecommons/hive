@@ -9,8 +9,6 @@ import (
 )
 
 const (
-	evidencePath = "/api/hub/evidence"
-
 	// minEvidenceN is the smallest sample a rate is shown for; below it the
 	// hub reports "unknown" (null) rather than a rate a single PR can swing.
 	minEvidenceN = 10

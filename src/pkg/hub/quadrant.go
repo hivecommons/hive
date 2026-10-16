@@ -170,12 +170,13 @@ type quadrantInputs struct {
 	slaViolations  *int
 
 	// --- Satisfaction ----------------------------------------------------
-	// Intentionally empty. There is no satisfaction signal in the platform
-	// today. Operational hygiene (health checks, advisory depth, attention
-	// debt) is deliberately NOT substituted here: hygiene is not satisfaction,
-	// and padding the axis with a proxy would make every other axis less
-	// trustworthy by association. The axis renders collapsed until a real
-	// signal — e.g. a lightweight pulse on agent output — exists.
+	// Scored only from the spoke's evidence summary (the `evidence` field
+	// above): how often humans overrode a swarm block and how often they had
+	// to fix a swarm-approved PR. Operational hygiene (health checks, advisory
+	// depth, attention debt) is deliberately NOT substituted: hygiene is not
+	// satisfaction, and padding the axis with a proxy would make every other
+	// axis less trustworthy by association. The axis renders collapsed for a
+	// hive whose spoke reports no evidence or fewer than minEvidenceN verdicts.
 }
 
 // Sufficiency floors. Below these a sub-criterion contributes nothing and, if

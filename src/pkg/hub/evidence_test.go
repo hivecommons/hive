@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSanitizeEvidenceBounds(t *testing.T) {
@@ -100,5 +101,145 @@ func TestEvidenceEndpoint(t *testing.T) {
 	}
 	if got.Spokes != 2 || got.Reporting != 1 || len(got.Hives) != 2 || got.Hives[0].ID != "a" || !got.Hives[0].Reported {
 		t.Fatalf("view = %+v", got)
+	}
+}
+
+func storedEvidence(t *testing.T, s *HubServer, id string) *HeartbeatEvidence {
+	t.Helper()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, h := range s.registry.Hives {
+		if h.ID == id {
+			return h.Evidence
+		}
+	}
+	t.Fatalf("hive %q not in registry", id)
+	return nil
+}
+
+func TestHeartbeatEvidence_StoredSanitized(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+
+	body := `{"hive_id":"h1","org":"hivecommons","evidence":{"verdicts_90d":20,"false_approve_90d":99,"false_block_90d":-3,` +
+		`"merged_90d":5,"reverted_14d_90d":9,"automerge_self_authored":true,` +
+		`"reviewer_families":[" copilot ","copilot","","claude"],"calibration":[{"n":4,"bad":8}]}}`
+	if rec := postHeartbeat(t, s, body); rec.Code != http.StatusOK {
+		t.Fatalf("heartbeat status = %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	e := storedEvidence(t, s, "h1")
+	if e == nil {
+		t.Fatal("evidence not stored")
+	}
+	if e.FalseApprove90d != 20 || e.FalseBlock90d != 0 || e.Reverted14d90d != 5 || e.Calibration[0].Bad != 4 {
+		t.Fatalf("stored evidence not clamped to its totals: %+v", e)
+	}
+	if e.AutomergeSelfAuthored == nil || !*e.AutomergeSelfAuthored {
+		t.Fatalf("automerge_self_authored lost: %+v", e.AutomergeSelfAuthored)
+	}
+	if len(e.ReviewerFamilies) != 2 || e.ReviewerFamilies[0] != "copilot" || e.ReviewerFamilies[1] != "claude" {
+		t.Fatalf("families not trimmed/deduped: %v", e.ReviewerFamilies)
+	}
+}
+
+func TestHeartbeatEvidence_CarryForward(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	s := newHeartbeatHub()
+
+	postHeartbeat(t, s, `{"hive_id":"h1","org":"hivecommons","evidence":{"verdicts_90d":12,"false_block_90d":2,"merged_90d":7}}`)
+
+	// A beat with no evidence key (old spoke / minimal beat) keeps the summary.
+	postHeartbeat(t, s, `{"hive_id":"h1","org":"hivecommons"}`)
+	if e := storedEvidence(t, s, "h1"); e == nil || e.Verdicts90d != 12 || e.FalseBlock90d != 2 {
+		t.Fatalf("evidence not carried forward: %+v", e)
+	}
+
+	// A fresh summary replaces the stored one rather than merging with it.
+	postHeartbeat(t, s, `{"hive_id":"h1","org":"hivecommons","evidence":{"verdicts_90d":30,"merged_90d":9}}`)
+	if e := storedEvidence(t, s, "h1"); e == nil || e.Verdicts90d != 30 || e.FalseBlock90d != 0 {
+		t.Fatalf("evidence not replaced by the new beat: %+v", e)
+	}
+}
+
+// TestRegistryOmitsEvidence pins the owner/admin-only contract on the public,
+// unauthenticated registry: the per-hive counts must not leak there even
+// though they live on RegistryEntry so saveRegistryNow can persist them.
+func TestRegistryOmitsEvidence(t *testing.T) {
+	srv := newHubServerForTest(t)
+	yes := true
+	srv.mu.Lock()
+	srv.registry.Hives = []RegistryEntry{{
+		ID: "public-1", IsPublic: true, Online: true,
+		LastHeartbeat: time.Now().Format(time.RFC3339),
+		Evidence:      &HeartbeatEvidence{Verdicts90d: 20, FalseBlock90d: 5, AutomergeSelfAuthored: &yes},
+	}}
+	srv.mu.Unlock()
+
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/registry", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), `"evidence"`) {
+		t.Fatalf("public registry leaked the evidence summary: %s", w.Body.String())
+	}
+	// The strip is on the response copy only; the stored entry still has it.
+	if e := storedEvidence(t, srv, "public-1"); e == nil || e.Verdicts90d != 20 {
+		t.Fatalf("stored evidence was mutated by the handler: %+v", e)
+	}
+}
+
+// TestMyHivesEvidenceOwnerOnly pins the row-level rule on /api/saas/my-hives:
+// an owner sees their hive's evidence summary, a read-only member sees the
+// scored card but not the counts behind it.
+func TestMyHivesEvidenceOwnerOnly(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	cleanupOwner := helperSetupAuthUser(t, "ghp_evidence_owner", "evidence-owner")
+	defer cleanupOwner()
+	cleanupMember := helperSetupAuthUser(t, "ghp_evidence_member", "evidence-member")
+	defer cleanupMember()
+	saveSaaSUser(&SaaSUser{GitHubUsername: "evidence-member", Hives: map[string]string{"h-ev": "read"}})
+
+	srv := newHubServerForTest(t)
+	srv.mu.Lock()
+	srv.registry.Hives = []RegistryEntry{{
+		ID: "h-ev", Name: "acme/widget", Owner: "evidence-owner", Online: true,
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+		Evidence:      &HeartbeatEvidence{Verdicts90d: 20, FalseBlock90d: 5},
+	}}
+	srv.mu.Unlock()
+
+	fetch := func(token string) MyHiveEntry {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/api/saas/my-hives", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.handleMyHives(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("my-hives status = %d (body %s)", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Hives []MyHiveEntry `json:"hives"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		for _, h := range resp.Hives {
+			if h.ID == "h-ev" {
+				return h
+			}
+		}
+		t.Fatalf("hive h-ev missing from response: %s", rec.Body.String())
+		return MyHiveEntry{}
+	}
+
+	if got := fetch("ghp_evidence_owner"); got.Evidence == nil || got.Evidence.Verdicts90d != 20 {
+		t.Fatalf("owner must see the evidence summary: %+v", got.Evidence)
+	}
+	if got := fetch("ghp_evidence_member"); got.Evidence != nil {
+		t.Fatalf("read-only member must not see the evidence summary: %+v", got.Evidence)
 	}
 }

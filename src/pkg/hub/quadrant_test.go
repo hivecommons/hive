@@ -34,6 +34,9 @@ func fleetOf(n int, mut func(i int, in *quadrantInputs)) []quadrantInputs {
 // TestUnscoredIsNotZero is the single most important invariant in the package.
 // If an unmeasured axis ever scores 0 instead of reporting Scored=false, the
 // chart tells owners they are failing at something the platform never measured.
+// Satisfaction is the axis that exercises it: it scores ONLY from the spoke's
+// evidence summary (#12080), so a fleet that reports none must leave it
+// unscored with a reason.
 func TestUnscoredIsNotZero(t *testing.T) {
 	qs := ScoreFleet(fleetOf(10, nil))
 	for _, q := range qs {
@@ -42,7 +45,7 @@ func TestUnscoredIsNotZero(t *testing.T) {
 				continue
 			}
 			if a.Scored {
-				t.Fatalf("satisfaction must never be scored — no signal exists; got score=%d", a.Score)
+				t.Fatalf("satisfaction must not be scored without evidence; got score=%d", a.Score)
 			}
 			if a.Reason == "" {
 				t.Error("an unscored axis must carry a reason, or the hover shows a bare gap")
@@ -52,8 +55,9 @@ func TestUnscoredIsNotZero(t *testing.T) {
 }
 
 // TestCompositeExcludesUnscoredAxes guards the composite against counting a
-// missing signal as a zero. With satisfaction always unscored, a 4-axis mean
-// would cap every hive at 75 and make the whole fleet look mediocre.
+// missing signal as a zero. With satisfaction unscored (no evidence in this
+// fleet), a 4-axis mean would cap every hive at 75 and make the whole fleet
+// look mediocre.
 func TestCompositeExcludesUnscoredAxes(t *testing.T) {
 	in := fleetOf(10, func(i int, in *quadrantInputs) {
 		in.prsMerged90d = iptr(i)
@@ -76,8 +80,70 @@ func TestCompositeExcludesUnscoredAxes(t *testing.T) {
 				i, q.Composite, q.ScoredAxes, want)
 		}
 		if q.ScoredAxes > 3 {
-			t.Errorf("hive %d: %d axes scored, but satisfaction has no signal", i, q.ScoredAxes)
+			t.Errorf("hive %d: %d axes scored, but no hive reported evidence", i, q.ScoredAxes)
 		}
+	}
+}
+
+// TestEvidenceScoresSatisfaction is the positive control for the two tests
+// above: once enough hives report an evidence summary, Satisfaction (and the
+// evidence-backed Trust/Efficiency criteria) must actually score, and a hive
+// below minEvidenceN verdicts must stay unscored rather than flattering itself
+// with a rate a single PR could swing.
+func TestEvidenceScoresSatisfaction(t *testing.T) {
+	const thin = 9 // reports evidence, but under minEvidenceN verdicts
+	yes, no := true, false
+	in := fleetOf(10, func(i int, in *quadrantInputs) {
+		in.prsMerged90d = iptr(10 + i) // so Productivity scores and "all 4 axes" is observable
+		switch {
+		case i == thin:
+			in.evidence = &HeartbeatEvidence{Verdicts90d: minEvidenceN - 1, FalseBlock90d: 1, Merged90d: 3}
+			in.selfMergeAllowed = &no
+		case i < 6:
+			in.evidence = &HeartbeatEvidence{
+				Verdicts90d: 20 + i, FalseBlock90d: i, FalseApprove90d: i / 2,
+				Merged90d: 30 + i, Reverted14d90d: i,
+			}
+			if i%2 == 0 {
+				in.selfMergeAllowed = &yes
+			} else {
+				in.selfMergeAllowed = &no
+			}
+		}
+	})
+	qs := ScoreFleet(in)
+
+	axis := func(q Quadrant, name string) AxisScore {
+		for _, a := range q.Axes {
+			if a.Axis == name {
+				return a
+			}
+		}
+		t.Fatalf("axis %s missing", name)
+		return AxisScore{}
+	}
+
+	for i := 0; i < 6; i++ {
+		if a := axis(qs[i], AxisSatisfaction); !a.Scored {
+			t.Errorf("hive %d reported %d verdicts but satisfaction unscored (%q)", i, in[i].evidence.Verdicts90d, a.Reason)
+		}
+		if qs[i].ScoredAxes != 4 {
+			t.Errorf("hive %d: %d axes scored, want all 4 with evidence present", i, qs[i].ScoredAxes)
+		}
+	}
+	if a := axis(qs[thin], AxisSatisfaction); a.Scored || a.Reason == "" {
+		t.Errorf("hive with %d verdicts must be unscored with a reason, got %+v", minEvidenceN-1, a)
+	}
+	for i := 6; i < thin; i++ {
+		if a := axis(qs[i], AxisSatisfaction); a.Scored {
+			t.Errorf("hive %d has no evidence but satisfaction scored %d", i, a.Score)
+		}
+	}
+
+	// The evidence-bearing hives are ranked against each other: zero overrides
+	// (hive 0) must not score below the hive with the most (hive 5).
+	if lo, hi := axis(qs[5], AxisSatisfaction).Score, axis(qs[0], AxisSatisfaction).Score; lo > hi {
+		t.Errorf("more human overrides scored higher: hive5=%d hive0=%d", lo, hi)
 	}
 }
 
