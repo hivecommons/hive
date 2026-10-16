@@ -72,6 +72,18 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		ConfidenceScore    *bool   `json:"confidence_score"`
 		PriorityLabels     *bool   `json:"priority_labels"`
 		MaxReviewsPerHead  *int    `json:"max_reviews_per_head"`
+		PostComments       *bool   `json:"post_comments"`
+		// EventDrivenMode is review.event_driven as auto|on|off: the key is a
+		// *bool whose unset value means "on when signed webhooks arrive", which
+		// a JSON bool cannot express. auto clears it back to unset.
+		EventDrivenMode *string `json:"event_driven_mode"`
+		EventDebounceS  *int    `json:"event_debounce_s"`
+		// PendingTTL is a Go duration; empty or "0" uses the default and a
+		// negative value disables expiry, exactly as the loader reads it.
+		PendingTTL                 *string `json:"pending_ttl"`
+		MaxRedispatch              *int    `json:"max_redispatch"`
+		OutOfScopeBacklogDisabled  *bool   `json:"out_of_scope_backlog_disabled"`
+		MaxOutOfScopeBacklogIssues *int    `json:"max_out_of_scope_backlog_issues"`
 		// Perspectives and PerspectivePrompts travel together: a hive-defined
 		// perspective is only valid once its prompt exists, so validating one
 		// without the other would reject a correct pair sent in two requests.
@@ -128,6 +140,35 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	if body.MaxPerspectives != nil && *body.MaxPerspectives < 0 {
 		jsonError(w, "max_perspectives_per_pr must be >= 0", http.StatusBadRequest)
 		return
+	}
+
+	for _, f := range []struct {
+		v    *int
+		name string
+	}{
+		{body.MaxRedispatch, "max_redispatch"},
+		{body.MaxOutOfScopeBacklogIssues, "max_out_of_scope_backlog_issues"},
+	} {
+		if f.v != nil && *f.v < 0 {
+			jsonError(w, f.name+" must be >= 0", http.StatusBadRequest)
+			return
+		}
+	}
+
+	var eventDriven *bool
+	if body.EventDrivenMode != nil {
+		switch strings.ToLower(strings.TrimSpace(*body.EventDrivenMode)) {
+		case "", "auto":
+		case "on":
+			v := true
+			eventDriven = &v
+		case "off":
+			v := false
+			eventDriven = &v
+		default:
+			jsonError(w, "event_driven_mode must be auto, on or off", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// Normalized before any mutation so a bad value rejects the whole
@@ -207,6 +248,24 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := backlog.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Staged on a copy and checked with the loader's own validators so the
+	// dialog cannot save a value boot would reject.
+	dispatch := cfg.Review
+	if body.EventDebounceS != nil {
+		dispatch.EventDebounceS = *body.EventDebounceS
+	}
+	if body.PendingTTL != nil {
+		dispatch.PendingTTL = strings.TrimSpace(*body.PendingTTL)
+	}
+	if err := dispatch.ValidateReviewEventDispatch(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := dispatch.ValidatePendingReviewTTL(); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -328,6 +387,23 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.MaxReviewsPerHead != nil {
 		cfg.Review.MaxReviewsPerHead = *body.MaxReviewsPerHead
+	}
+	if body.PostComments != nil {
+		cfg.Review.PostComments = *body.PostComments
+	}
+	if body.EventDrivenMode != nil {
+		cfg.Review.EventDriven = eventDriven
+	}
+	cfg.Review.EventDebounceS = dispatch.EventDebounceS
+	cfg.Review.PendingTTL = dispatch.PendingTTL
+	if body.MaxRedispatch != nil {
+		cfg.Review.MaxRedispatch = *body.MaxRedispatch
+	}
+	if body.OutOfScopeBacklogDisabled != nil {
+		cfg.Review.OutOfScopeBacklogDisabled = *body.OutOfScopeBacklogDisabled
+	}
+	if body.MaxOutOfScopeBacklogIssues != nil {
+		cfg.Review.MaxOutOfScopeBacklogIssues = *body.MaxOutOfScopeBacklogIssues
 	}
 	// Repo names are trimmed but NOT validated against the watched set: a
 	// hive's repo list changes underneath a dialog that was opened minutes

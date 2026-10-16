@@ -1,0 +1,1 @@
+- Expose the review gate settings in the dashboard Settings dialog (Features → Review gate): post review comments, webhook-triggered dispatch and its debounce, the pending review TTL and re-dispatch cap, the per-head review cap, the re-review cutoff, and the out-of-scope finding backlog toggle and cap, with YAML-key hints on the existing review controls (#11854).
