@@ -170,6 +170,15 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Deferred this cycle: #12322 is unblocked and the scanner is resuming it; picks up once it merges.",
 		"Waiting for #500 CI, then merging.",
 		"Waiting on #12322, picks up when it merges.",
+		"Deferred this cycle: #12322 opened yesterday and touches the same files; picks up once it merges.",
+		"Deferred this cycle: #12322 was filed earlier and conflicts; picks up once it merges.",
+		"Deferred this cycle, #12322 landed last cycle but the follow-up is still open; picks up when it merges.",
+		"Blocked by #12322: the schema changed previously and the fix is not in yet.",
+		"Deferred this cycle: the scanner picked this up in #12322; picks up once it merges.",
+		"Deferred this cycle: hive-scanner picked this up in #12322; picks up once it merges.",
+		"Deferred this cycle: the quality agent resumed it in #12322; picks up once it merges.",
+		"Picking this up once #12322 merges.",
+		"Picking it up after #12322 lands.",
 	} {
 		t.Run(body, func(t *testing.T) {
 			if got := issueRequestStartSignal("comment", body); got != "" {
@@ -218,6 +227,10 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Blocked by #12322 earlier; when it merged I started implementing.",
 		"Was blocked by #12322 previously. Implementing now.",
 		"Tests pass.\nBlocked by #12322 for the last mile, pushing the rest.",
+		"Deferred earlier: #12322 blocked it, but that merged, so starting now.",
+		"I picked this up now that #12322 merged.",
+		"Picking this up now; #12322 merged yesterday.",
+		"I'm deferring the big rename until #999 lands, implementing the rest now.",
 	} {
 		t.Run(body, func(t *testing.T) {
 			if got := issueRequestStartSignal("comment", body); got != AgentStartSignalComment {

@@ -150,15 +150,16 @@ second agent is not kicked onto the same work
 ([#10527](https://github.com/hivecommons/hive/issues/10527)). A comment that
 is an explicit *deferral* is posted but records no claim: one opening with
 "Deferred"/"Deferring", "Blocked by/on #N", "Not starting", "is/still
-blocked by #N", "waiting on/for #N" or "deferring … until #N", or saying
-"Deferred this cycle" or "pick(s) [this/it] up once/after/when …" anywhere
-(the condition need not name an issue or a merge). The
+blocked by #N", "waiting on/for #N" or "deferring [up to two words]
+until/pending …" (e.g. "Deferring implementation until #N merges"), or
+saying "Deferred this cycle" or "pick(s/ing) [this/it] up once/after/when …"
+anywhere (the condition need not name an issue or a merge). The
 exemption is lost — the claim is recorded — if the comment also says work is
 starting or resuming now ("that merged, starting now", "picking this up",
 "unblocked", "working on it now"); a third party's start ("#N is starting the same refactor",
-"scanner is picking this up in #N") or a start conditional on the blocker
-("will resume once it merges") does not count as yours. The opening-clause
-forms stop at the first `,` `.` `;` or newline, so a work comment with a
+"scanner is picking this up in #N", "the scanner picked this up in #N") or a start conditional on the blocker
+("will resume once it merges", "picking this up once #N merges") does not count as yours. The opening-clause
+forms stop at the first `,` `:` `.` `;` or newline, so a work comment with a
 deferral aside ("Opened PR #N, waiting on #N CI.", "Implementing now.
 Deferring the rename until #N lands.") still records the claim
 ([#12387](https://github.com/hivecommons/hive/issues/12387)). To park an
