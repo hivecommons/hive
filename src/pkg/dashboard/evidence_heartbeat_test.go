@@ -234,3 +234,36 @@ func TestEvidenceHeartbeat(t *testing.T) {
 		t.Errorf("automerge_self_authored = %v, want %v", got.AutomergeSelfAuthored, want)
 	}
 }
+
+// TestBuildHeartbeatEvidenceWindows pins the trailing 24h / 7d / 30d blocks
+// the hub window selector reads (RFC #12062): each window re-counts the
+// bundles created inside it and leaves the lifetime fields empty.
+func TestBuildHeartbeatEvidenceWindows(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	mk := func(n int, age time.Duration) *evidence.Bundle {
+		return evSummaryBundle("a/b", n, evidence.AuthorAgent, now.Add(-age), true, []evidence.Verdict{
+			{Perspective: "security", Model: "claude-sonnet-5", Verdict: "approve", Confidence: 0.9},
+		}, 0, true)
+	}
+	yes := true
+	got := buildHeartbeatEvidence([]*evidence.Bundle{mk(1, 2*time.Hour), mk(2, 3*24*time.Hour), mk(3, 20*24*time.Hour), mk(4, 60*24*time.Hour)}, now, &yes)
+	if got.Merged90d != 4 || got.Verdicts90d != 4 {
+		t.Fatalf("90d = %+v", got)
+	}
+	want := map[string]int{"24h": 1, "7d": 2, "30d": 3}
+	if len(got.Windows) != len(want) {
+		t.Fatalf("windows = %v", got.Windows)
+	}
+	for key, n := range want {
+		w := got.Windows[key]
+		if w == nil || w.Merged90d != n || w.Verdicts90d != n || len(w.OutcomesByAuthorKind) != 1 || w.OutcomesByAuthorKind["agent"].N != n {
+			t.Errorf("%s = %+v, want %d PRs", key, w, n)
+		}
+		if w != nil && (w.Windows != nil || w.AutomergeSelfAuthored != nil || w.WriteCounters != nil) {
+			t.Errorf("%s carries lifetime fields: %+v", key, w)
+		}
+	}
+	if _, ok := spoke.HeartbeatEvidenceWindowKeys["7d"]; !ok || spoke.HeartbeatEvidenceWindowKeys["30d"] != 720 {
+		t.Errorf("window keys = %v", spoke.HeartbeatEvidenceWindowKeys)
+	}
+}

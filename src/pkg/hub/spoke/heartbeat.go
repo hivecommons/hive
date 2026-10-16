@@ -1176,7 +1176,20 @@ type HeartbeatEvidence struct {
 	OutcomesByAuthorKind map[string]HeartbeatEvidenceOutcome    `json:"outcomes_by_author_kind,omitempty"`
 	WriteCounters        map[string]HeartbeatEvidenceWriteCount `json:"write_counters,omitempty"`
 	ShadowGate           *HeartbeatEvidenceShadow               `json:"shadow_gate,omitempty"`
+
+	// Windows carries the same counts over shorter trailing windows, keyed by
+	// HeartbeatEvidenceWindowKeys ("24h", "7d", "30d"), so the hub can offer
+	// a window selector without a per-PR feed (RFC #12062). Field names keep
+	// their *90d suffix inside a window for wire compatibility; the key is
+	// the real look-back. Lifetime values (AutomergeSelfAuthored,
+	// WriteCounters) and Windows itself are left empty inside a window. An
+	// old spoke omits it and the hub shows "not reported for this window".
+	Windows map[string]*HeartbeatEvidence `json:"windows,omitempty"`
 }
+
+// HeartbeatEvidenceWindowKeys are the trailing windows a spoke reports in
+// HeartbeatEvidence.Windows, in hours.
+var HeartbeatEvidenceWindowKeys = map[string]int{"24h": 24, "7d": 7 * 24, "30d": 30 * 24}
 
 // HeartbeatEvidenceBucket is one calibration bucket: N verdicts, Bad of
 // which disagreed with the outcome (a false approve or a false block).

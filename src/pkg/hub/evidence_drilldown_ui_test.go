@@ -26,6 +26,49 @@ func evidenceHarness(t *testing.T) string {
 		countryJSDecl(t, "EVIDENCE_SHADOW_GATES"),
 		countryJSDecl(t, "_evidenceLast"),
 		countryJSDecl(t, "_evidenceFilter"),
+		countryJSDecl(t, "EVIDENCE_COVERAGE_STRONG"),
+		countryJSDecl(t, "EVIDENCE_COVERAGE_FAIR"),
+		countryJSDecl(t, "EVIDENCE_ERR_STRONG"),
+		countryJSDecl(t, "EVIDENCE_ERR_FAIR"),
+		countryJSDecl(t, "EVIDENCE_REVERT_STRONG"),
+		countryJSDecl(t, "EVIDENCE_REVERT_FAIR"),
+		countryJSDecl(t, "EVIDENCE_SHADOW_FALSE_ALARM_STRONG"),
+		countryJSDecl(t, "EVIDENCE_SHADOW_FALSE_ALARM_FAIR"),
+		countryJSDecl(t, "EVIDENCE_REPORTING_STRONG"),
+		countryJSDecl(t, "EVIDENCE_REPORTING_FAIR"),
+		countryJSDecl(t, "EVIDENCE_DATA_SINCE"),
+		countryJSDecl(t, "EVIDENCE_REVERTS_SINCE"),
+		countryJSDecl(t, "EVIDENCE_GRADE_LABELS"),
+		countryJSDecl(t, "EVIDENCE_CI_NOTE"),
+		countryJSDecl(t, "EVIDENCE_WINDOWS"),
+		countryJSDecl(t, "EVIDENCE_WINDOW_DEFAULT"),
+		countryJSDecl(t, "EVIDENCE_WINDOW_STORAGE_KEY"),
+		countryJSDecl(t, "EVIDENCE_WINDOW_MAX_DAYS"),
+		countryJSDecl(t, "EVIDENCE_MONTHS"),
+		countryJSDecl(t, "_evidenceWindow"),
+		countryJSDecl(t, "_evidenceCustomOpen"),
+		jsFunc(t, "evidenceSectionHead"),
+		jsFunc(t, "evidenceGradeHTML"),
+		jsFunc(t, "evidenceGradeLow"),
+		jsFunc(t, "evidenceGradeHigh"),
+		jsFunc(t, "evidenceRateText"),
+		jsFunc(t, "evidenceWinShort"),
+		jsFunc(t, "evidenceExplainer"),
+		jsFunc(t, "evidenceExplainerHTML"),
+		jsFunc(t, "evidenceCloseExplainers"),
+		jsFunc(t, "evidenceToggleExplainer"),
+		jsFunc(t, "evidenceWindowValid"),
+		jsFunc(t, "evidenceLoadWindow"),
+		jsFunc(t, "evidenceSaveWindow"),
+		jsFunc(t, "evidenceWindowQuery"),
+		jsFunc(t, "evidenceDateLabel"),
+		jsFunc(t, "evidenceWindowLabel"),
+		jsFunc(t, "evidenceWindowChip"),
+		jsFunc(t, "evidenceWindowControlsHTML"),
+		jsFunc(t, "evidenceSetWindow"),
+		jsFunc(t, "evidenceValidateRange"),
+		jsFunc(t, "evidenceApplyCustomRange"),
+		jsFunc(t, "evidenceSetTitle"),
 		jsFunc(t, "evidencePct"),
 		jsFunc(t, "evidenceInterval"),
 		jsFunc(t, "evidenceCount"),
@@ -92,6 +135,8 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		"var _fleetQuadrant = {scored_axes: 4};",
 		"var _isAdmin = false;",
 		jsFunc(t, "fleetQuadrantDrillAttrs"),
+		jsFunc(t, "fleetQuadrantEvidenceButtonHTML"),
+		jsFunc(t, "fleetQuadrantHintHTML"),
 		jsFunc(t, "fleetQuadrantHeaderHTML"),
 		"_isAdmin = true; var admin = fleetQuadrantHeaderHTML();",
 		"_isAdmin = false; var member = fleetQuadrantHeaderHTML();",
@@ -108,12 +153,20 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		`onclick="openEvidenceModal()"`,
 		"event.key==='Enter'",
 		`class="fleet-quadrant-drill"`,
+		// Explicit affordance beside the title (user feedback: the clickable
+		// chart alone was not discoverable), plus a hint line under the axes.
+		`<button type="button" class="fleet-quadrant-evidence-btn" aria-haspopup="dialog" aria-controls="evidence-modal"`,
+		`onclick="event.stopPropagation();openEvidenceModal()">🔬 Evidence</button>`,
+		`<div class="fleet-quadrant-hint">Click the chart or Evidence to open the fleet evidence details</div>`,
 	} {
 		if !strings.Contains(got.Admin, want) {
 			t.Errorf("admin fleet card is missing %q:\n%s", want, got.Admin)
 		}
 	}
-	for _, forbidden := range []string{"openEvidenceModal", `role="button"`, "tabindex", "fleet-quadrant-drill", "onkeydown"} {
+	if strings.Count(got.Admin, "openEvidenceModal()") != 3 {
+		t.Errorf("admin fleet card should wire the drill click, its keydown and the button, got:\n%s", got.Admin)
+	}
+	for _, forbidden := range []string{"openEvidenceModal", `role="button"`, "tabindex", "fleet-quadrant-drill", "onkeydown", "fleet-quadrant-evidence-btn", "fleet-quadrant-hint"} {
 		if strings.Contains(got.Member, forbidden) {
 			t.Errorf("member fleet card must stay unchanged but contains %q:\n%s", forbidden, got.Member)
 		}
@@ -287,6 +340,7 @@ var fetched = [];
 global.fetch = ` + fetchJS + `;
 ` + extractHubJSFunction(t, dashboardHTML, "hiveHubRememberModalOpen") +
 		"async " + extractHubJSFunction(t, dashboardHTML, "openEvidenceModal") +
+		"async " + extractHubJSFunction(t, dashboardHTML, "evidenceFetch") +
 		extractHubJSFunction(t, dashboardHTML, "closeEvidenceModal")
 }
 
@@ -361,7 +415,7 @@ func TestEvidenceModalMarkup(t *testing.T) {
 		`.evidence-modal { display: none;`,
 		`<div id="evidence-body">`,
 		`onclick="closeEvidenceModal()"`,
-		"fetch('/api/hub/evidence')",
+		"fetch('/api/hub/evidence' + evidenceWindowQuery())",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("dashboardHTML is missing %q", want)
@@ -557,7 +611,249 @@ func TestEvidenceFilterChips(t *testing.T) {
 		t.Errorf("empty selection leaked NaN/undefined:\n%s", got.Both)
 	}
 	// Clearing both filters returns to the server's fleet view.
-	if !strings.Contains(got.Cleared, "3 of 4 hives report evidence. Rates show") || !strings.Contains(got.Cleared, "<tr><td>Fleet</td><td>50</td>") {
+	if !strings.Contains(got.Cleared, "3 of 4 hives report evidence for last 90d. Rates show") || !strings.Contains(got.Cleared, "<tr><td>Fleet</td><td>50</td>") {
 		t.Errorf("cleared filter did not restore the fleet view:\n%s", got.Cleared[:400])
+	}
+}
+
+// TestEvidenceWindowSelector: the modal offers 24h / 7d / 30d / 90d / custom
+// (RFC #12062), persists the choice, builds the matching query and labels the
+// header; a custom range is validated client-side with the server's rules.
+func TestEvidenceWindowSelector(t *testing.T) {
+	src := evidenceModalHarness(t, `function(url) { fetched.push(url); return Promise.resolve({ok: true, status: 200, json: function() { return Promise.resolve(`+evidenceFixtureJS+`); }}); }`) + `
+var store = {};
+global.window = { localStorage: { getItem: function(k) { return store[k] === undefined ? null : store[k]; }, setItem: function(k, v) { store[k] = v; } } };
+els['evidence-modal-title'] = makeEl('evidence-modal-title');
+els['evidence-modal-title'].textContent = '';
+els['evidence-from'] = makeEl('evidence-from'); els['evidence-to'] = makeEl('evidence-to'); els['evidence-range-err'] = makeEl('evidence-range-err');
+var out = {};
+done = openEvidenceModal().then(function() {
+  out.defaultBody = els['evidence-body'].innerHTML;
+  out.defaultTitle = els['evidence-modal-title'].textContent;
+  out.defaultQuery = evidenceWindowQuery();
+  return evidenceSetWindow('7d');
+}).then(function() {
+  out.weekQuery = evidenceWindowQuery(); out.weekTitle = els['evidence-modal-title'].textContent; out.weekStored = store[EVIDENCE_WINDOW_STORAGE_KEY];
+  out.weekBody = els['evidence-body'].innerHTML;
+  evidenceSetWindow('custom');
+  out.customBody = els['evidence-body'].innerHTML;
+  els['evidence-from'].value = '2026-10-15'; els['evidence-to'].value = '2026-10-01';
+  evidenceApplyCustomRange(); out.errInverted = els['evidence-range-err'].textContent;
+  els['evidence-from'].value = '2025-01-01'; els['evidence-to'].value = '2026-10-01';
+  evidenceApplyCustomRange(); out.errSpan = els['evidence-range-err'].textContent;
+  els['evidence-from'].value = '2026-10-01'; els['evidence-to'].value = '2026-10-15';
+  return evidenceApplyCustomRange();
+}).then(function() {
+  out.customQuery = evidenceWindowQuery(); out.customTitle = els['evidence-modal-title'].textContent; out.customLabel = evidenceWindowLabel();
+  out.fetched = fetched;
+  out.reloaded = JSON.stringify(evidenceLoadWindow());
+  out.validate = [evidenceValidateRange('', '2026-01-01'), evidenceValidateRange('2026-01-01', ''), evidenceValidateRange('2026-01-01', '2026-01-01')];
+  result = out;
+});`
+	var got struct {
+		DefaultBody, DefaultTitle, DefaultQuery, WeekQuery, WeekTitle, WeekStored, WeekBody, CustomBody string
+		ErrInverted, ErrSpan, CustomQuery, CustomTitle, CustomLabel, Reloaded                           string
+		Fetched, Validate                                                                               []string
+	}
+	runEvidenceJS(t, src, &got)
+	for _, want := range []string{
+		`<div class="evidence-chips" role="group" aria-label="Time window"><span class="evidence-chips-label">Window</span>`,
+		`data-window="24h" onclick="evidenceSetWindow(this.dataset.window)">24h</button>`,
+		`data-window="7d" onclick="evidenceSetWindow(this.dataset.window)">7d</button>`,
+		`data-window="30d" onclick="evidenceSetWindow(this.dataset.window)">30d</button>`,
+		`class="evidence-chip on" aria-pressed="true" data-window="90d"`,
+		`data-window="custom" onclick="evidenceSetWindow(this.dataset.window)">custom</button>`,
+		"hives report evidence for last 90d",
+	} {
+		if !strings.Contains(got.DefaultBody, want) {
+			t.Errorf("default body is missing %q", want)
+		}
+	}
+	if got.DefaultQuery != "" || got.DefaultTitle != "Fleet evidence · last 90d" {
+		t.Errorf("default query=%q title=%q", got.DefaultQuery, got.DefaultTitle)
+	}
+	if got.WeekQuery != "?hours=168" || got.WeekTitle != "Fleet evidence · last 7d" || got.WeekStored != `{"key":"7d"}` {
+		t.Errorf("7d query=%q title=%q stored=%q", got.WeekQuery, got.WeekTitle, got.WeekStored)
+	}
+	if !strings.Contains(got.WeekBody, `class="evidence-chip on" aria-pressed="true" data-window="7d"`) {
+		t.Error("7d pill is not marked selected after the switch")
+	}
+	for _, want := range []string{`<input type="date" id="evidence-from"`, `<input type="date" id="evidence-to"`, `onclick="evidenceApplyCustomRange()">Apply</button>`, `id="evidence-range-err" role="alert"`} {
+		if !strings.Contains(got.CustomBody, want) {
+			t.Errorf("custom pill did not reveal %q", want)
+		}
+	}
+	if got.ErrInverted != "The end date must not be before the start date." || got.ErrSpan != "The range must not exceed 366 days." {
+		t.Errorf("range errors = %q / %q", got.ErrInverted, got.ErrSpan)
+	}
+	if got.CustomQuery != "?from=2026-10-01&to=2026-10-15" || got.CustomLabel != "Oct 1 – Oct 15" || got.CustomTitle != "Fleet evidence · Oct 1 – Oct 15" {
+		t.Errorf("custom query=%q label=%q title=%q", got.CustomQuery, got.CustomLabel, got.CustomTitle)
+	}
+	if got.Reloaded != `{"key":"custom","from":"2026-10-01","to":"2026-10-15"}` {
+		t.Errorf("custom range not persisted: %s", got.Reloaded)
+	}
+	wantFetched := []string{"/api/hub/evidence", "/api/hub/evidence?hours=168", "/api/hub/evidence?from=2026-10-01&to=2026-10-15"}
+	if strings.Join(got.Fetched, " ") != strings.Join(wantFetched, " ") {
+		t.Errorf("fetched %v, want %v", got.Fetched, wantFetched)
+	}
+	if got.Validate[0] == "" || got.Validate[1] == "" || got.Validate[2] != "" {
+		t.Errorf("validate = %v", got.Validate)
+	}
+}
+
+// TestEvidenceWindowApproximateDisclosure: when the server maps a custom
+// range onto a reported window it says so, and record coverage (a 90-day
+// ratio) is withheld with an explanation rather than shown as 0%.
+func TestEvidenceWindowApproximateDisclosure(t *testing.T) {
+	src := evidenceHarness(t) + `
+_evidenceWindow = {key: 'custom', from: '2026-10-01', to: '2026-10-15'};
+var data = ` + evidenceFixtureJS + `;
+data.window = {hours: 720, key: '30d', label: 'last 30d', from: '2026-10-01T00:00:00Z', to: '2026-10-16T00:00:00Z', approximate: true, coverage_available: false};
+data.window_unreported = 1;
+data.hives[2].window_unreported = true;
+result = evidencePanelHTML(200, data);`
+	var html string
+	runEvidenceJS(t, src, &html)
+	for _, want := range []string{
+		"so Oct 1 – Oct 15 is served from the smallest window that covers it: last 30d.",
+		"Record coverage is only computed for the 90-day window",
+		"(1 report only the 90-day block)",
+		"Not reported for this window (spoke predates per-window reporting)",
+		"<th>Merged (range)</th>", "<th>Verdicts (range)</th>",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("approximate view is missing %q", want)
+		}
+	}
+	if strings.Contains(html, "<tr><td>Fleet</td><td>50</td>") {
+		t.Error("record coverage row rendered although coverage_available is false")
+	}
+}
+
+// TestEvidenceExplainers: every section carries an accessible ⓘ button and a
+// popover with the four hub headings; the last section is computed from the
+// data on screen and graded with the named thresholds; Escape closes it.
+func TestEvidenceExplainers(t *testing.T) {
+	src := evidenceHarness(t) + `
+var html = evidencePanelHTML(200, ` + evidenceFixtureJS + `);
+var keys = ['coverage', 'calibration', 'outcomes', 'acmm', 'writes', 'family', 'perhive', 'shadow'];
+var exp = {};
+keys.forEach(function(k) { exp[k] = evidenceExplainer(k, ` + evidenceFixtureJS + `); });
+// Fake DOM for the toggle: two explainers, one button each.
+function fakeEl(id) { return {id: id, hidden: true, attrs: {}, setAttribute: function(k, v) { this.attrs[k] = v; }, getAttribute: function(k) { return this.attrs[k]; }}; }
+var a = fakeEl('evidence-exp-coverage'), b = fakeEl('evidence-exp-shadow'), ba = fakeEl('btn-a'), bb = fakeEl('btn-b');
+ba.attrs['aria-expanded'] = 'false'; bb.attrs['aria-expanded'] = 'false';
+var body = { querySelectorAll: function(sel) {
+  if (sel.indexOf('.evidence-explainer') === 0) return [a, b].filter(function(e) { return !e.hidden; });
+  return [ba, bb].filter(function(e) { return e.attrs['aria-expanded'] === 'true'; });
+} };
+global.document = { getElementById: function(id) { return ({'evidence-body': body, 'evidence-exp-coverage': a, 'evidence-exp-shadow': b})[id] || null; } };
+evidenceToggleExplainer(ba, 'evidence-exp-coverage');
+var afterOpen = {a: a.hidden, b: b.hidden, ba: ba.attrs['aria-expanded']};
+evidenceToggleExplainer(bb, 'evidence-exp-shadow');
+var afterSecond = {a: a.hidden, b: b.hidden, ba: ba.attrs['aria-expanded'], bb: bb.attrs['aria-expanded']};
+var closed = evidenceCloseExplainers();
+var afterEsc = {a: a.hidden, b: b.hidden, bb: bb.attrs['aria-expanded'], closed: closed, again: evidenceCloseExplainers()};
+result = {html: html, exp: exp, afterOpen: afterOpen, afterSecond: afterSecond, afterEsc: afterEsc,
+  grades: [evidenceGradeLow({n: 20, rate: 0.05}, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR), evidenceGradeLow({n: 20, rate: 0.2}, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR),
+    evidenceGradeLow({n: 20, rate: 0.5}, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR), evidenceGradeLow({n: 5, rate: 0}, EVIDENCE_ERR_STRONG, EVIDENCE_ERR_FAIR),
+    evidenceGradeHigh({n: 50, rate: 0.8}, EVIDENCE_COVERAGE_STRONG, EVIDENCE_COVERAGE_FAIR), evidenceGradeHigh({n: 50, rate: 0.3}, EVIDENCE_COVERAGE_STRONG, EVIDENCE_COVERAGE_FAIR)]};`
+	var got struct {
+		HTML string
+		Exp  map[string]struct {
+			Measured, Why, How, Ours, Grade string
+		}
+		AfterOpen struct {
+			A, B bool
+			Ba   string
+		}
+		AfterSecond struct {
+			A, B   bool
+			Ba, Bb string
+		}
+		AfterEsc struct {
+			A, B, Closed, Again bool
+			Bb                  string
+		}
+		Grades []string
+	}
+	runEvidenceJS(t, src, &got)
+
+	keys := []string{"coverage", "calibration", "outcomes", "acmm", "writes", "family", "perhive", "shadow"}
+	for _, k := range keys {
+		id := "evidence-exp-" + k
+		btn := `aria-expanded="false" aria-controls="` + id + `"`
+		if !strings.Contains(got.HTML, btn) || !strings.Contains(got.HTML, `onclick="evidenceToggleExplainer(this, '`+id+`')">ⓘ</button>`) {
+			t.Errorf("section %s lacks an accessible info button", k)
+		}
+		if !strings.Contains(got.HTML, `<div id="`+id+`" class="evidence-explainer" role="region" aria-label="About `) {
+			t.Errorf("section %s lacks its explainer region", k)
+		}
+		ex, ok := got.Exp[k]
+		if !ok || ex.Measured == "" || ex.Why == "" || ex.How == "" || ex.Ours == "" || ex.Grade == "" {
+			t.Errorf("explainer %s incomplete: %+v", k, ex)
+		}
+	}
+	for _, want := range []string{
+		"<h4>What is measured</h4>", "<h4>Why it matters</h4>", "<h4>How it is measured</h4>", "<h4>How to read our numbers</h4>",
+		// Sticky head markup: title, ⓘ, one-line note, explainer, then the table.
+		`<div class="evidence-head"><h3 class="evidence-title"><span>Evidence coverage</span><button type="button" class="evidence-info"`,
+		// Live text from the fixture: fleet coverage 80.0% of 50, 2 of 3 hives.
+		"Fleet: 80.0% of 50 (95% CI 67.0% – 89.0%) merged PRs (90d) have an evidence record. 2 of 3 hives report today.",
+		`<span class="evidence-grade evidence-grade-strong">Strong</span>`,
+		// Plain-language definitions on first use.
+		"95% confidence interval (CI)", "minimum sample (10)", "“Calibration” means", "A “bad outcome” is a false approve",
+		// Honest limits.
+		"Merged is not the same as correct", "reverts are only recorded since 2026-10-15", "evidence records only exist since 2026-10-08",
+	} {
+		if strings.Count(got.HTML, want) == 0 {
+			t.Errorf("explainers are missing %q", want)
+		}
+	}
+	if n := strings.Count(got.HTML, "<h4>How to read our numbers</h4>"); n != len(keys) {
+		t.Errorf("%d explainers rendered, want %d", n, len(keys))
+	}
+	if strings.Contains(got.HTML, "NaN") || strings.Contains(got.HTML, "undefined") {
+		t.Error("explainers leaked NaN/undefined")
+	}
+	// Only bucket 0 is measurable in the fixture: nothing to compare, so no grade.
+	if got.Exp["coverage"].Grade != "strong" || got.Exp["writes"].Grade != "na" || got.Exp["calibration"].Grade != "na" || got.Exp["perhive"].Grade != "fair" {
+		t.Errorf("grades: coverage=%s writes=%s calibration=%s perhive=%s", got.Exp["coverage"].Grade, got.Exp["writes"].Grade, got.Exp["calibration"].Grade, got.Exp["perhive"].Grade)
+	}
+	if want := []string{"strong", "fair", "weak", "na", "strong", "weak"}; strings.Join(got.Grades, ",") != strings.Join(want, ",") {
+		t.Errorf("grade thresholds = %v, want %v", got.Grades, want)
+	}
+	if got.AfterOpen.A || !got.AfterOpen.B || got.AfterOpen.Ba != "true" {
+		t.Errorf("open: %+v", got.AfterOpen)
+	}
+	if !got.AfterSecond.A || got.AfterSecond.B || got.AfterSecond.Ba != "false" || got.AfterSecond.Bb != "true" {
+		t.Errorf("second toggle must close the first: %+v", got.AfterSecond)
+	}
+	if !got.AfterEsc.A || !got.AfterEsc.B || got.AfterEsc.Bb != "false" || !got.AfterEsc.Closed || got.AfterEsc.Again {
+		t.Errorf("escape: %+v", got.AfterEsc)
+	}
+	if !strings.Contains(dashboardHTML, "if (typeof evidenceCloseExplainers === 'function' && evidenceCloseExplainers())") {
+		t.Error("document Escape handler does not close an open explainer first")
+	}
+}
+
+// TestEvidenceStickyHeadings guards the CSS that keeps a section's title and
+// column heads visible while its rows scroll inside the modal body.
+func TestEvidenceStickyHeadings(t *testing.T) {
+	html := dashScript(t)
+	for _, want := range []string{
+		// The scroll container is the modal body, an ancestor of every section.
+		`.evidence-modal-scroll { flex: 1; overflow: auto;`,
+		`<div class="evidence-modal-scroll">`,
+		`.evidence-section { --evidence-head-h: 2.9rem; position: relative; }`,
+		// table-wrap must not become its own scroll container or sticky breaks.
+		`.evidence-section .table-wrap { overflow: visible; }`,
+		`.evidence-head { position: sticky; top: 0; z-index: 3; background: var(--surface); height: var(--evidence-head-h);`,
+		`.evidence-section thead th { position: sticky; top: calc(var(--evidence-head-h) - 1px); z-index: 2; background: var(--surface); }`,
+		`.evidence-explainer[hidden] { display: none; }`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboardHTML is missing %q", want)
+		}
 	}
 }

@@ -390,6 +390,14 @@ same store behind `GET /api/evidence/summary`):
   → `{held, passed}`, each `{n, merged, reverted}`: what the shadow gate would
   have done versus how the PR turned out). A spoke predating #12370 sends none
   of them and the hub shows "not reported", never zero.
+- `windows` ([RFC #12062](https://github.com/hivecommons/hive/issues/12062)) —
+  the same counts (verdicts, false approves/blocks, merged, reverted,
+  calibration, author-kind outcomes, shadow gates) re-counted over trailing
+  windows keyed `24h`, `7d` and `30d`, so the hub evidence view can switch
+  between windows. The field names keep their `_90d` suffix for wire
+  compatibility; `write_counters` (lifetime) and `automerge_self_authored`
+  are not repeated. A spoke predating windows sends none and the hub lists it
+  as "not reported for this window" when a shorter window is selected.
 
 The hub clamps every count (subset counts never exceed their total), caps and
 de-duplicates the family lists, and stores the result with the other per-hive

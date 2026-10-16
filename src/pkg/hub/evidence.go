@@ -2,10 +2,15 @@ package hub
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -51,7 +56,23 @@ type HeartbeatEvidence struct {
 	OutcomesByAuthorKind map[string]EvidenceOutcome    `json:"outcomes_by_author_kind,omitempty"`
 	WriteCounters        map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
 	ShadowGate           *EvidenceShadow               `json:"shadow_gate,omitempty"`
+
+	// Windows holds the same counts over trailing 24h / 7d / 30d windows
+	// (keys of evidenceWindowHours), matching spoke.HeartbeatEvidence.Windows.
+	// Absent on old spokes; the hub then reports the hive as "not reported
+	// for this window" rather than reusing the 90-day block.
+	Windows map[string]*HeartbeatEvidence `json:"windows,omitempty"`
 }
+
+// evidenceWindowHours maps a selectable window key to its hours. The empty
+// key is the 90-day block every spoke reports.
+var evidenceWindowHours = map[string]int{"24h": 24, "7d": 7 * 24, "30d": 30 * 24}
+
+// evidenceDefaultWindowHours is the spoke heartbeat look-back (90 days).
+const evidenceDefaultWindowHours = 90 * 24
+
+// evidenceMaxRangeDays caps a custom ?from=&to= range, as on the spoke.
+const evidenceMaxRangeDays = 366
 
 // EvidenceOutcome counts PRs: N total, Merged merged, Reverted (a subset of
 // Merged) reverted or followed up within 14 days; N-Merged are open.
@@ -201,6 +222,18 @@ func sanitizeEvidence(in *HeartbeatEvidence) *HeartbeatEvidence {
 	out.OutcomesByAuthorKind = sanitizeEvidenceOutcomes(in.OutcomesByAuthorKind)
 	out.WriteCounters = sanitizeEvidenceWriteCounters(in.WriteCounters)
 	out.ShadowGate = sanitizeEvidenceShadow(in.ShadowGate)
+	for key := range evidenceWindowHours {
+		w := in.Windows[key]
+		if w == nil {
+			continue
+		}
+		// One level only: a window never carries windows or lifetime fields.
+		w.Windows, w.AutomergeSelfAuthored, w.WriteCounters = nil, nil, nil
+		if out.Windows == nil {
+			out.Windows = map[string]*HeartbeatEvidence{}
+		}
+		out.Windows[key] = sanitizeEvidence(w)
+	}
 	return out
 }
 
@@ -279,14 +312,17 @@ func evidenceFamilyMix(reviewers, authors []string) string {
 
 // EvidenceHive is one hive's row in the evidence view.
 type EvidenceHive struct {
-	ID                    string         `json:"id"`
-	Name                  string         `json:"name,omitempty"`
-	Online                bool           `json:"online"`
-	Reported              bool           `json:"reported"`
-	ACMMLevel             int            `json:"acmm_level"`
-	PRsMerged90d          *int           `json:"prs_merged_90d,omitempty"`
-	RecordCoverage        EvidenceRate   `json:"record_coverage"`
-	FamilyMix             string         `json:"family_mix,omitempty"`
+	ID             string       `json:"id"`
+	Name           string       `json:"name,omitempty"`
+	Online         bool         `json:"online"`
+	Reported       bool         `json:"reported"`
+	ACMMLevel      int          `json:"acmm_level"`
+	PRsMerged90d   *int         `json:"prs_merged_90d,omitempty"`
+	RecordCoverage EvidenceRate `json:"record_coverage"`
+	FamilyMix      string       `json:"family_mix,omitempty"`
+	// WindowUnreported is true when the hive reports evidence but not the
+	// selected shorter window (its spoke predates heartbeat windows).
+	WindowUnreported      bool           `json:"window_unreported,omitempty"`
 	Verdicts90d           int            `json:"verdicts_90d"`
 	Merged90d             int            `json:"merged_90d"`
 	FalseApproveRate      EvidenceRate   `json:"false_approve_rate"`
@@ -496,8 +532,13 @@ type EvidenceACMMLevel struct {
 
 // EvidenceView is the GET /api/hub/evidence body.
 type EvidenceView struct {
-	Spokes                 int                         `json:"spokes"`
-	Reporting              int                         `json:"reporting"`
+	// Window is the trailing window the counts cover (RFC #12062).
+	Window    EvidenceWindow `json:"window"`
+	Spokes    int            `json:"spokes"`
+	Reporting int            `json:"reporting"`
+	// WindowUnreported counts hives that report the 90-day block but not
+	// the selected shorter window (spoke predates windows).
+	WindowUnreported       int                         `json:"window_unreported"`
 	Calibration            []EvidenceCalibrationBucket `json:"calibration"`
 	ByACMMLevel            []EvidenceACMMLevel         `json:"by_acmm_level"`
 	FamilyFalseApproveRate EvidenceFamilyFalseApprove  `json:"family_false_approve_rate"`
@@ -511,10 +552,114 @@ type EvidenceView struct {
 	Hives                []EvidenceHive              `json:"hives"`
 }
 
-// buildEvidenceView pools the evidence summaries of every spoke. Spokes that
-// never sent one are listed with reported=false so missing data is visible.
+// EvidenceWindow describes the window a view covers. Hours is the trailing
+// window actually used (24, 168, 720 or 2160); Key is its spoke heartbeat
+// key ("" for the 90-day block). From/To echo a custom request; because
+// spokes report fixed windows, a custom range is served from the smallest
+// reported window that covers it and Approximate is then true. Coverage is
+// false when record coverage cannot be computed (its denominator, GitHub's
+// merged count, exists only for 90 days).
+type EvidenceWindow struct {
+	Hours       int    `json:"hours"`
+	Key         string `json:"key,omitempty"`
+	Label       string `json:"label"`
+	From        string `json:"from,omitempty"`
+	To          string `json:"to,omitempty"`
+	Approximate bool   `json:"approximate,omitempty"`
+	Coverage    bool   `json:"coverage_available"`
+}
+
+func evidenceWindowFor(hours int) EvidenceWindow {
+	for key, h := range evidenceWindowHours {
+		if h == hours {
+			return EvidenceWindow{Hours: hours, Key: key, Label: "last " + key}
+		}
+	}
+	return EvidenceWindow{Hours: evidenceDefaultWindowHours, Label: "last 90d", Coverage: true}
+}
+
+// parseEvidenceTime accepts RFC3339 or YYYY-MM-DD (UTC midnight).
+func parseEvidenceTime(raw string) (time.Time, bool) {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC(), true
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		return t.UTC(), true
+	}
+	return time.Time{}, false
+}
+
+// parseEvidenceWindow reads hours= (24, 168, 720; anything else or absent →
+// 90 days) or from=/to= from the query. A custom range maps onto the
+// smallest reported window that covers it, flagged Approximate; a date-only
+// `to` is inclusive and a missing `to` means now.
+func parseEvidenceWindow(q url.Values, now time.Time) (EvidenceWindow, error) {
+	fromRaw, toRaw := strings.TrimSpace(q.Get("from")), strings.TrimSpace(q.Get("to"))
+	if fromRaw == "" && toRaw != "" {
+		return EvidenceWindow{}, errors.New("to requires from")
+	}
+	if fromRaw != "" {
+		from, ok := parseEvidenceTime(fromRaw)
+		if !ok {
+			return EvidenceWindow{}, errors.New("from must be RFC3339 or YYYY-MM-DD")
+		}
+		to := now
+		if toRaw != "" {
+			t, ok := parseEvidenceTime(toRaw)
+			if !ok {
+				return EvidenceWindow{}, errors.New("to must be RFC3339 or YYYY-MM-DD")
+			}
+			if t.Before(from) {
+				return EvidenceWindow{}, errors.New("to must not be before from")
+			}
+			if len(toRaw) == len("2006-01-02") {
+				t = t.Add(24 * time.Hour)
+			}
+			to = t
+		}
+		if to.Before(from) {
+			return EvidenceWindow{}, errors.New("to must not be before from")
+		}
+		if to.Sub(from) > evidenceMaxRangeDays*24*time.Hour {
+			return EvidenceWindow{}, fmt.Errorf("range must not exceed %d days", evidenceMaxRangeDays)
+		}
+		// The window must reach back to `from` from now, not just span it.
+		need := int((now.Sub(from) + time.Hour - 1) / time.Hour)
+		best := evidenceDefaultWindowHours
+		for _, h := range evidenceWindowHours {
+			if h >= need && h < best {
+				best = h
+			}
+		}
+		win := evidenceWindowFor(best)
+		win.From, win.To, win.Approximate = from.Format(time.RFC3339), to.Format(time.RFC3339), true
+		return win, nil
+	}
+	hours := evidenceDefaultWindowHours
+	if raw := strings.TrimSpace(q.Get("hours")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return EvidenceWindow{}, errors.New("hours must be a non-negative integer")
+		}
+		if n > 0 {
+			hours = n
+		}
+	}
+	return evidenceWindowFor(hours), nil
+}
+
+// buildEvidenceView pools the 90-day evidence summaries of every spoke.
+// Spokes that never sent one are listed with reported=false so missing data
+// is visible.
 func buildEvidenceView(hives []RegistryEntry) EvidenceView {
-	out := EvidenceView{Hives: []EvidenceHive{}}
+	return buildEvidenceViewWindow(hives, evidenceWindowFor(evidenceDefaultWindowHours))
+}
+
+// buildEvidenceViewWindow is buildEvidenceView over one trailing window. For
+// a non-default window each hive's Windows[key] block is pooled instead of
+// its 90-day block; hives without it count toward WindowUnreported.
+func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) EvidenceView {
+	out := EvidenceView{Window: win, Hives: []EvidenceHive{}}
 	var pooled [EvidenceCalibrationBuckets]EvidenceBucket
 	family := map[string]*EvidenceBucket{
 		evidenceFamilySame: {}, evidenceFamilyCross: {}, evidenceFamilyMixed: {},
@@ -530,7 +675,14 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 		out.Spokes++
 		row := EvidenceHive{ID: h.ID, Name: h.Name, Online: h.Online, ACMMLevel: h.ACMMLevel,
 			PRsMerged90d: h.PRsMerged90d, Calibration: []EvidenceRate{}}
-		if e := h.Evidence; e != nil {
+		e := h.Evidence
+		if e != nil && win.Key != "" {
+			if e = e.Windows[win.Key]; e == nil {
+				out.WindowUnreported++
+				row.WindowUnreported = true
+			}
+		}
+		if e != nil {
 			out.Reporting++
 			row.Reported = true
 			counts := &EvidenceHiveCounts{Verdicts90d: e.Verdicts90d, FalseApprove90d: e.FalseApprove90d,
@@ -538,7 +690,7 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 				Calibration: e.Calibration[:], OutcomesByAuthorKind: e.OutcomesByAuthorKind,
 				WriteCounters: e.WriteCounters, ShadowGate: e.ShadowGate}
 			row.Counts = counts
-			if h.PRsMerged90d != nil {
+			if h.PRsMerged90d != nil && win.Coverage {
 				// Both counts are 90-day merged PRs; the record count comes from
 				// retained bundles so it is capped at the GitHub count.
 				recorded := clampInt(e.Merged90d, 0, *h.PRsMerged90d)
@@ -604,8 +756,13 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 // handleEvidence serves GET /api/hub/evidence (admin only): the read-only
 // cross-hive evidence drill-down behind the Fleet quadrant card.
 func (s *HubServer) handleEvidence(w http.ResponseWriter, r *http.Request) {
+	win, err := parseEvidenceWindow(r.URL.Query(), time.Now().UTC())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.mu.RLock()
-	view := buildEvidenceView(s.registry.Hives)
+	view := buildEvidenceViewWindow(s.registry.Hives, win)
 	s.mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(view)

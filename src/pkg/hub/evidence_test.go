@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSanitizeEvidenceBounds(t *testing.T) {
@@ -356,5 +358,118 @@ func TestSanitizeEvidenceFleetPanels(t *testing.T) {
 	}
 	if got := sanitizeEvidence(&HeartbeatEvidence{OutcomesByAuthorKind: map[string]EvidenceOutcome{"martian": {N: 1}}, WriteCounters: map[string]EvidenceWriteCount{"": {}}}); got.OutcomesByAuthorKind != nil || got.WriteCounters != nil {
 		t.Errorf("all-dropped blocks must collapse to nil: %+v", got)
+	}
+}
+
+// TestParseEvidenceWindow pins hours= / from= / to= handling for the hub
+// evidence window selector (RFC #12062). Custom ranges are served from the
+// smallest reported spoke window that reaches back to `from`.
+func TestParseEvidenceWindow(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	ok := []struct {
+		q                string
+		hours            int
+		key              string
+		approx, coverage bool
+	}{
+		{"", 2160, "", false, true},
+		{"hours=0", 2160, "", false, true},
+		{"hours=24", 24, "24h", false, false},
+		{"hours=168", 168, "7d", false, false},
+		{"hours=720", 720, "30d", false, false},
+		{"hours=100", 2160, "", false, true},
+		{"from=2026-10-16", 24, "24h", true, false},
+		{"from=2026-10-12&to=2026-10-14", 168, "7d", true, false},
+		{"from=2026-09-20T00:00:00Z", 720, "30d", true, false},
+		{"from=2026-05-01&to=2026-10-01", 2160, "", true, true},
+	}
+	for _, tc := range ok {
+		q, _ := url.ParseQuery(tc.q)
+		win, err := parseEvidenceWindow(q, now)
+		if err != nil {
+			t.Errorf("%q: %v", tc.q, err)
+			continue
+		}
+		if win.Hours != tc.hours || win.Key != tc.key || win.Approximate != tc.approx || win.Coverage != tc.coverage {
+			t.Errorf("%q = %+v, want hours=%d key=%q approx=%v coverage=%v", tc.q, win, tc.hours, tc.key, tc.approx, tc.coverage)
+		}
+		if tc.approx && (win.From == "" || win.To == "" || win.Label == "") {
+			t.Errorf("%q: custom window missing echo: %+v", tc.q, win)
+		}
+	}
+	bad := []string{"hours=x", "hours=-1", "to=2026-10-01", "from=yesterday", "from=2026-10-10&to=nope",
+		"from=2026-10-10&to=2026-10-09", "from=2025-01-01&to=2026-10-01"}
+	for _, q := range bad {
+		v, _ := url.ParseQuery(q)
+		if _, err := parseEvidenceWindow(v, now); err == nil {
+			t.Errorf("%q: want error", q)
+		}
+	}
+}
+
+// TestBuildEvidenceViewWindow pins per-window pooling: the selected spoke
+// window block replaces the 90-day block, hives lacking it are flagged, and
+// record coverage (a 90-day-only ratio) is withheld.
+func TestBuildEvidenceViewWindow(t *testing.T) {
+	merged := 40
+	hives := []RegistryEntry{
+		{ID: "new", PRsMerged90d: &merged, Evidence: &HeartbeatEvidence{Verdicts90d: 30, FalseApprove90d: 3, Merged90d: 20,
+			Windows: map[string]*HeartbeatEvidence{"7d": {Verdicts90d: 12, FalseApprove90d: 1, Merged90d: 5}}}},
+		{ID: "old", PRsMerged90d: &merged, Evidence: &HeartbeatEvidence{Verdicts90d: 50, Merged90d: 30}},
+		{ID: "none"},
+	}
+	all := buildEvidenceView(hives)
+	if all.Window.Hours != evidenceDefaultWindowHours || all.Reporting != 2 || all.WindowUnreported != 0 || all.RecordCoverage.N != 80 {
+		t.Fatalf("90d view = %+v", all)
+	}
+	week := buildEvidenceViewWindow(hives, evidenceWindowFor(168))
+	if week.Window.Key != "7d" || week.Reporting != 1 || week.WindowUnreported != 1 || week.RecordCoverage.N != 0 {
+		t.Fatalf("7d view = %+v", week)
+	}
+	byID := map[string]EvidenceHive{}
+	for _, h := range week.Hives {
+		byID[h.ID] = h
+	}
+	if h := byID["new"]; !h.Reported || h.WindowUnreported || h.Counts == nil || h.Counts.Verdicts90d != 12 || h.Counts.Merged90d != 5 || h.Counts.Recorded90d != nil {
+		t.Errorf("new = %+v counts=%+v", h, h.Counts)
+	}
+	if h := byID["old"]; h.Reported || !h.WindowUnreported {
+		t.Errorf("old = %+v", h)
+	}
+	if h := byID["none"]; h.Reported || h.WindowUnreported {
+		t.Errorf("none = %+v", h)
+	}
+
+	srv := newHubServerForTest(t)
+	srv.registry.Hives = hives
+	w := httptest.NewRecorder()
+	srv.handleEvidence(w, httptest.NewRequest("GET", evidencePath+"?hours=168", nil))
+	var got EvidenceView
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &got) != nil || got.Window.Key != "7d" || got.Window.Label != "last 7d" {
+		t.Fatalf("hours=168: %d %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	srv.handleEvidence(w, httptest.NewRequest("GET", evidencePath+"?from=2026-10-10&to=2026-10-01", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("inverted range status = %d", w.Code)
+	}
+}
+
+// TestSanitizeEvidenceWindows pins that nested windows are bounded like the
+// 90-day block and flattened to one level.
+func TestSanitizeEvidenceWindows(t *testing.T) {
+	in := &HeartbeatEvidence{Verdicts90d: 5, Windows: map[string]*HeartbeatEvidence{
+		"24h":   {Verdicts90d: -3, FalseApprove90d: 9, Windows: map[string]*HeartbeatEvidence{"7d": {}}},
+		"bogus": {Verdicts90d: 1},
+	}}
+	out := sanitizeEvidence(in)
+	if len(out.Windows) != 1 || out.Windows["24h"] == nil || out.Windows["24h"].Windows != nil {
+		t.Fatalf("windows = %+v", out.Windows)
+	}
+	if w := out.Windows["24h"]; w.Verdicts90d != 0 || w.FalseApprove90d != 0 {
+		t.Errorf("24h not bounded: %+v", w)
+	}
+	if sanitizeEvidence(&HeartbeatEvidence{}).Windows != nil {
+		t.Error("empty windows should stay nil")
 	}
 }

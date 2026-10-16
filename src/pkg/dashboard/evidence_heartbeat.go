@@ -51,10 +51,25 @@ func heartbeatWriteCounters(totals map[string]EvidenceWriteCount) map[string]spo
 }
 
 // buildHeartbeatEvidence aggregates the newest bundle per PR created within
-// evidenceHeartbeatWindow of now. Same-PR dedup matches buildEvidenceSummary.
+// evidenceHeartbeatWindow of now, plus the same counts for each shorter
+// window in spoke.HeartbeatEvidenceWindowKeys. Same-PR dedup matches
+// buildEvidenceSummary.
 func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge *bool) *spoke.HeartbeatEvidence {
-	out := &spoke.HeartbeatEvidence{AutomergeSelfAuthored: selfMerge}
-	cutoff := now.Add(-evidenceHeartbeatWindow)
+	out := buildHeartbeatEvidenceWindow(bundles, now, evidenceHeartbeatWindow)
+	out.AutomergeSelfAuthored = selfMerge
+	out.Windows = make(map[string]*spoke.HeartbeatEvidence, len(spoke.HeartbeatEvidenceWindowKeys))
+	for key, hours := range spoke.HeartbeatEvidenceWindowKeys {
+		out.Windows[key] = buildHeartbeatEvidenceWindow(bundles, now, time.Duration(hours)*time.Hour)
+	}
+	return out
+}
+
+// buildHeartbeatEvidenceWindow is buildHeartbeatEvidence for one trailing
+// window; it leaves the lifetime fields (auto-merge posture, write counters,
+// Windows) empty.
+func buildHeartbeatEvidenceWindow(bundles []*evidence.Bundle, now time.Time, window time.Duration) *spoke.HeartbeatEvidence {
+	out := &spoke.HeartbeatEvidence{}
+	cutoff := now.Add(-window)
 
 	latest := map[string]*evidence.Bundle{}
 	for _, b := range bundles {

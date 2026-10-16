@@ -157,6 +157,47 @@ Go users can call `evidence.Verify(&b, pub)` from `pkg/evidence`. The Python ske
 
 A push changes `head_sha`, so earlier verdicts no longer describe the code. Hive starts a new bundle for the new head with `previous_bundle_id` set, and re-reviews. The old bundle is left untouched and remains verifiable.
 
+## How to read the hub evidence view
+
+Hub admins reach the fleet evidence view from the **Fleet quadrant** card on
+the hub dashboard (click the chart or its **🔬 Evidence** button). It is
+`GET /api/hub/evidence` rendered as one table per section, each with a sticky
+title and column heads, a **window** selector (24h · 7d · 30d · 90d · custom
+date range — spokes report fixed windows in their heartbeat, so a custom range
+is served from the smallest window that covers it and the view says so) and an
+ⓘ button that opens a plain-language explainer with four headings: **What is
+measured · Why it matters · How it is measured · How to read our numbers**.
+The last one is computed from the numbers on screen and ends with a grade.
+
+Two terms used everywhere:
+
+- **95% CI** — the range after a percentage is a 95% confidence interval: with
+  this many cases, the true rate is very likely inside that band. Fewer cases
+  mean a wider band.
+- **Minimum sample** — below 10 cases a rate prints as `—`, never 0%, because
+  a percentage from so few cases is mostly luck. The count is still shown.
+
+Grades and their thresholds (named constants in `dashboard.html`;
+`Not enough data` whenever the graded rate is below the minimum sample,
+`Not graded` where there is no "good" value):
+
+| Section | Graded on | Strong | Fair | Constants |
+|---|---|---|---|---|
+| Evidence coverage | share of merged PRs (90d) with a record, higher is better | ≥ 80% | ≥ 40% | `EVIDENCE_COVERAGE_STRONG/FAIR` |
+| Calibration curve | bad-outcome rate in the most-confident measurable bucket, lower is better (needs ≥ 2 measurable buckets) | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
+| Outcome by author kind | revert rate of agent authors (human if no agents), lower is better | ≤ 5% | ≤ 15% | `EVIDENCE_REVERT_STRONG/FAIR` |
+| ACMM level × outcome | revert rate of the highest level with enough data, lower is better | ≤ 5% | ≤ 15% | `EVIDENCE_REVERT_STRONG/FAIR` |
+| Boundary enforcement | — (not graded: no block rate is "good" on its own) | | | |
+| Same- vs cross-family | false-approve rate of the mix with most verdicts, lower is better | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
+| Per-hive evidence | share of hives reporting for the window, higher is better (no minimum sample) | ≥ 80% | ≥ 40% | `EVIDENCE_REPORTING_STRONG/FAIR` |
+| Shadow gates × outcome | false-alarm rate (would-have-held PRs that merged and stuck) of the gate with most held PRs, lower is better | ≤ 25% | ≤ 50% | `EVIDENCE_SHADOW_FALSE_ALARM_STRONG/FAIR` |
+
+Limits every explainer repeats: merged is not the same as correct; open PRs
+are not failures; closed-without-merge is not recorded and counts as not
+merged; reverts are only linked since 2026-10-15 (`EVIDENCE_REVERTS_SINCE`)
+and evidence records only exist since 2026-10-08 (`EVIDENCE_DATA_SINCE`).
+Nothing in this view is read by any merge decision.
+
 ## Not covered
 
 A bundle shows what Hive recorded. It does not prove who a reviewer's identity is, does not make the operator's policy accept automated review, and is not a compliance claim of any kind.
