@@ -56,7 +56,7 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"reverted: Number(o.reverted_14d) || 0",
 		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}",
 		"no PRs with an evidence bundle in this window",
-		"Schema v1 bundles record a merge but not a close-without-merge, so closed may read 0.",
+		"A live bundle records a merge only when the hive merged, and never a close-without-merge, so without a backfill a PR merged or closed by hand reads as open.",
 		"Reverted means a reverted_by link to a revert PR within 14 d of merge",
 		"Open PRs are excluded from the merged and reverted rates.",
 		".ev-svg .ev-bar.or",
@@ -172,7 +172,7 @@ func TestEvidenceCardWindowSelector(t *testing.T) {
 	for _, snippet := range []string{
 		"const EV_WINDOWS = [[24, '24h'], [168, '7d'], [720, '30d']];",
 		"const EV_WINDOW_STORAGE_KEY = 'hive.evidence.window';",
-		"const EV_CUSTOM_MAX_DAYS = 366;",
+		"const EV_CUSTOM_MAX_DAYS = 3 * 366;",
 		"localStorage.setItem(EV_WINDOW_STORAGE_KEY, JSON.stringify(evWindow))",
 		"return evWindow.from ? `from=${encodeURIComponent(evWindow.from)}&to=${encodeURIComponent(evWindow.to)}` : `hours=${encodeURIComponent(evWindow.hours)}`;",
 		`data-action="setEvidenceWindow" data-arg0="${h}" data-stop="1"`,
@@ -234,7 +234,7 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"section('What ours shows', x.ours)",
 		"evGradeLine(x.grade, x.reason)",
 		"if (e.key !== 'Escape' || !evExplainOpen.size) return;",
-		"Merged is not the same as correct, and a PR that is still open counts as not merged. Evidence has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}.",
+		"Merged is not the same as correct, and a PR that is still open counts as not merged. Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.",
 		"A well-calibrated reviewer would be near 90–100% in the top bucket.",
 		".ev-explainer[hidden] { display:none; }",
 		".ev-grade.weak",
@@ -248,6 +248,40 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		key := m[1]
 		if !strings.Contains(html, "'"+key+"': (dto) => {") && !strings.Contains(html, "\n      "+key+": (dto) => {") {
 			t.Errorf("panel %q has no EV_EXPLAINERS entry", key)
+		}
+	}
+}
+
+// TestEvidenceCardWindowTooShortHint pins that a panel with too few samples
+// for a grade points at a longer preset window when the summary's
+// available_windows says one would hold more PRs, instead of a bare "Not
+// enough data"; and that the custom range accepts backfilled history.
+func TestEvidenceCardWindowTooShortHint(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		"const EV_AVAILABLE_KEYS = [['all', 'all time'], ['720', '30d'], ['168', '7d']];",
+		"function evWindowHint(dto) {",
+		"dto.available_windows",
+		"return ` — window too short: ${counts} PRs; switch to ${presets.length ? presets.join(' or ') : 'a custom range'}`;",
+		"`needs at least ${EV_GRADE_MIN_N} merged PRs${evWindowHint(dto)}`",
+		"`needs at least ${EV_GRADE_MIN_N} verdicts in the top bucket${evWindowHint(dto)}`",
+		"`needs at least ${EV_GRADE_MIN_N} verdicts${evWindowHint(dto)}`",
+		"`needs at least ${EV_GRADE_MIN_N} stopped-and-merged PRs${evWindowHint(dto)}`",
+		"`needs at least ${EV_GRADE_MIN_N} agent PRs with captured checks${evWindowHint(dto)}`",
+		`<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>`,
+		"by the PR\\u2019s open time, not when its record was written",
+		"PRs are placed in the window by their open time, never by when a record was written.",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("Evidence window hint missing snippet %q", snippet)
+		}
+	}
+	for _, stale := range []string{
+		"Closed-without-merge is not recorded yet, so a closed PR still shows as open.",
+		"so closed may read 0",
+	} {
+		if strings.Contains(html, stale) {
+			t.Errorf("stale closed-state copy still present: %q", stale)
 		}
 	}
 }

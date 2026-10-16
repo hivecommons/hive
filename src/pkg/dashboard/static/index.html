@@ -22255,7 +22255,7 @@ function burnAreaChart() {
     const EV_WINDOWS = [[24, '24h'], [168, '7d'], [720, '30d']];
     const EV_WINDOW_STORAGE_KEY = 'hive.evidence.window';
     const EV_WINDOW_DEFAULT_HOURS = 24;
-    const EV_CUSTOM_MAX_DAYS = 366; // mirrors evidenceSummaryMaxRangeDays server-side
+    const EV_CUSTOM_MAX_DAYS = 3 * 366; // mirrors evidenceSummaryMaxRangeDays server-side; backfilled history reaches back years
     const EV_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
     let evWindow = (() => {
       try {
@@ -22354,9 +22354,27 @@ function burnAreaChart() {
     const EV_BALANCE_FAIR = 0.5;            // ≥ → Fair, below → Weak
     const EV_BLOCKED_STRONG = 0.05;         // proxy-blocked share of attempted agent writes ≤ → Strong
     const EV_BLOCKED_FAIR = 0.15;           // ≤ → Fair, above → Weak
-    const EV_DATA_SINCE = '2026-10-08';     // first evidence bundles were written
+    const EV_DATA_SINCE = '2026-10-08';     // first live evidence bundles were written
     const EV_REVERTS_SINCE = '2026-10-15';  // reverted_by links recorded from this date
     const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };
+    // Preset windows, longest first, keyed as the server's available_windows.
+    const EV_AVAILABLE_KEYS = [['all', 'all time'], ['720', '30d'], ['168', '7d']];
+
+    // evWindowHint: when the current window holds too few PRs for a grade but
+    // a longer preset would hold more, say so instead of a bare "not enough
+    // data". Uses available_windows from the same summary response (same repo
+    // and author filter), so no second request is needed.
+    function evWindowHint(dto) {
+      const avail = dto && dto.available_windows && typeof dto.available_windows === 'object' ? dto.available_windows : null;
+      if (!avail) return '';
+      const hrs = evWindowHours();
+      const here = Number(dto.n) || 0;
+      const longer = EV_AVAILABLE_KEYS.filter(([k]) => k === 'all' || Number(k) > hrs).map(([k, label]) => ({ k, label, n: Number(avail[k]) || 0 })).filter((w) => w.n > here);
+      if (!longer.length) return '';
+      const counts = longer.slice().reverse().map((w) => `${w.label} ${w.n}`).join(', ');
+      const presets = longer.filter((w) => w.k !== 'all').map((w) => w.label).reverse();
+      return ` — window too short: ${counts} PRs; switch to ${presets.length ? presets.join(' or ') : 'a custom range'}`;
+    }
 
     // evGrade: lower is better unless higherIsBetter. value null or n below the
     // minimum → "none".
@@ -22368,7 +22386,7 @@ function burnAreaChart() {
     function evLimitsSentence() {
       const hrs = evWindowHours();
       const short = hrs <= EV_SHORT_WINDOW_HOURS ? ` Only ${hrs}h of data is in this window, so treat the grade as an early read.` : '';
-      return `Merged is not the same as correct, and a PR that is still open counts as not merged. Evidence has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}.${short}`;
+      return `Merged is not the same as correct, and a PR that is still open counts as not merged. Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.${short}`;
     }
     function evGradeLine(grade, why) {
       return `<span class="ev-grade ${grade}">Rated: ${EV_GRADES[grade]}</span>${why ? ` <span class="ev-grade-why">${escapeHtml(why)}</span>` : ''}`;
@@ -22391,10 +22409,10 @@ function burnAreaChart() {
         return {
           matters: 'If agent-written PRs merge far less often, or get reverted far more often, than human ones, the agents are making work rather than saving it.',
           measured: 'For every pull request (PR) that has an evidence record, who wrote it — a human, an AI agent, or a bot — and what happened to it: merged, closed without merging, still open, or merged and then undone ("reverted") within 14 days.',
-          how: 'We take the newest evidence record per PR in the chosen window and count outcomes per author kind. Bars are plain counts scaled to the biggest group. The revert share is reverts within 14 days ÷ merged. Closed-without-merge is not recorded yet, so a closed PR still shows as open.',
+          how: 'We take every PR opened in the chosen window (by the PR\u2019s open time, not when its record was written) and count outcomes per author kind, folding the newest live record with any backfilled record of the same PR. Bars are plain counts scaled to the biggest group. The revert share is reverts within 14 days ÷ merged. Closed-without-merge comes only from backfilled records; a PR the hive reviewed but did not merge, and nobody backfilled, still shows as open.',
           good: `Similar merged shares across author kinds, and a revert share at or below ${Math.round(EV_REVERT_STRONG * 100)}% (Strong). ${Math.round(EV_REVERT_FAIR * 100)}% or less is Fair; above that is Weak. A big gap between agent and human merged shares is worth a look either way.`,
           ours: `${parts.length ? parts.join(' · ') + '. ' : 'No PRs in this window. '}${merged} merged in total, ${reverted} reverted within 14 d (${evPct(rr)}). ${evLimitsSentence()}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} merged PRs` : `revert share ${evPct(rr)} of ${merged} merged`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} merged PRs${evWindowHint(dto)}` : `revert share ${evPct(rr)} of ${merged} merged`,
         };
       },
       calibration: (dto) => {
@@ -22413,7 +22431,7 @@ function burnAreaChart() {
           how: 'Verdicts are grouped into confidence buckets (0.0–0.5, 0.5–0.7, 0.7–0.9, 0.9–1.0). For each bucket we plot how often the PR ended up merged (filled dot) and how often the verdict was a block (hollow circle). Dot size shows how many verdicts are in the bucket; one line per reviewer perspective.',
           good: `Merged rate rising from left to right: low-confidence verdicts should merge less often, and the ${topName || '0.9–1.0'} bucket should be near 90–100% merged. ${Math.round(EV_CALIB_STRONG * 100)}% or more in the top bucket is Strong, ${Math.round(EV_CALIB_FAIR * 100)}% or more is Fair, below that Weak.`,
           ours: `At ${topName || 'top'} confidence, ${evPct(topRate)} of ${topN} PRs merged${lowN ? `; at the lowest bucket, ${evPct(lowRate)} of ${lowN} merged` : ''}. A well-calibrated reviewer would be near 90–100% in the top bucket. ${evLimitsSentence()}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} verdicts in the top bucket` : `${evPct(topRate)} merged at ${topName} confidence`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} verdicts in the top bucket${evWindowHint(dto)}` : `${evPct(topRate)} merged at ${topName} confidence`,
         };
       },
       'accuracy-by-model': (dto) => {
@@ -22437,7 +22455,7 @@ function burnAreaChart() {
           how: 'For each reviewer model and author kind we count approvals and blocks, then compare each verdict with the PR\u2019s outcome in the window: false-approve rate = approvals on unmerged PRs ÷ all approvals; false-block rate = blocks on merged PRs ÷ all blocks.',
           good: `Both bars short. ${Math.round(EV_ERR_STRONG * 100)}% or less on the worse of the two rates is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. Models should also look alike for human and agent authors; a model that only blocks agents is a bias, not accuracy.`,
           ours: `Across all models: false-approve ${evPct(faRate)} of ${approvals} approvals, false-block ${evPct(fbRate)} of ${blocks} blocks.${best ? ` Lowest false-approve rate: ${best.model} at ${evPct(best.fa)}.` : ''} ${evLimitsSentence()}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} verdicts` : `worse rate ${evPct(worst)}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} verdicts${evWindowHint(dto)}` : `worse rate ${evPct(worst)}`,
         };
       },
       'shadow-gates': (dto) => {
@@ -22456,7 +22474,7 @@ function burnAreaChart() {
           how: 'For each gate, PRs are split into "would have stopped" and "would have passed". Each bar shows how those PRs really turned out: merged, merged then reverted, or still open. A gate is useful when the PRs it would have stopped are the ones that later caused trouble.',
           good: `Reverts sitting mostly in the "would have stopped" bar and few in "would have passed". Of the stopped PRs that merged, ${Math.round(EV_SHADOW_FALSE_ALARM_STRONG * 100)}% or fewer merging cleanly (a false alarm) is Strong, ${Math.round(EV_SHADOW_FALSE_ALARM_FAIR * 100)}% or fewer is Fair, above that Weak.`,
           ours: `${Number(sg.n) || 0} PRs have a shadow observation. Would have stopped: ${heldN} (${heldMerged} merged, ${heldReverted} later reverted). Would have passed: ${passedN} (${passedReverted} later reverted). ${evLimitsSentence()}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} stopped-and-merged PRs` : `false alarms ${evPct(falseAlarm)} of ${heldMerged} stopped PRs that merged`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} stopped-and-merged PRs${evWindowHint(dto)}` : `false alarms ${evPct(falseAlarm)} of ${heldMerged} stopped PRs that merged`,
         };
       },
       'claim-vs-verdict': (dto) => {
@@ -22476,7 +22494,7 @@ function burnAreaChart() {
           how: 'We take the newest evidence record per agent-authored PR in the window and group by the week it was created. CI is read as captured when Hive checked merge eligibility, not the final run; a PR with no captured checks is left out of the CI count rather than counted as agreement. "Swarm not approve" is any verdict that is not an approve.',
           good: `Few disagreements: CI not green on ${Math.round(EV_ERR_STRONG * 100)}% or less of the PRs with captured checks is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. A non-approve verdict is not proof the agent was wrong, so the swarm column is shown but not graded.`,
           ours: `${claimed} agent PRs claimed done across ${weeks.length} week(s). Of ${ciCaptured} with captured checks, ${ciNotGreen} had CI not green (${evPct(ciRate)}); ${notApprove} got a non-approve verdict (${evPct(swarmRate)} of claimed); ${both} had both.${emptyCI ? ` ${emptyCI} record(s) had empty CI and are left out of the CI column.` : ''} ${evLimitsSentence()}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent PRs with captured checks` : `CI not green on ${evPct(ciRate)} of ${ciCaptured} PRs with checks`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent PRs with captured checks${evWindowHint(dto)}` : `CI not green on ${evPct(ciRate)} of ${ciCaptured} PRs with checks`,
         };
       },
       'work-balance': (dto) => {
@@ -22849,9 +22867,11 @@ function burnAreaChart() {
       const balanceN = balance.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
       const throttleNote = (dto.missing || {}).throttle_windows_unavailable === false ? 'Shaded weeks are governor issue-creation throttle windows.' : 'Throttle windows not reported by this hive, so no weeks are shaded.';
       const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
+      const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
+        + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
         + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),
-          'Reverted means a reverted_by link to a revert PR within 14 d of merge; reverts without a linked PR are missed. Schema v1 bundles record a merge but not a close-without-merge, so closed may read 0. Open PRs are excluded from the merged and reverted rates. Merged is not the same as correct.')
+          'PRs are placed in the window by their open time, never by when a record was written. Reverted means a reverted_by link to a revert PR within 14 d of merge; reverts without a linked PR are missed. A live bundle records a merge only when the hive merged, and never a close-without-merge, so without a backfill a PR merged or closed by hand reads as open. Open PRs are excluded from the merged and reverted rates. Merged is not the same as correct.')
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
           'Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. Merged is not the same as correct, and a PR that is still open counts as not merged.')
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
@@ -22863,7 +22883,7 @@ function burnAreaChart() {
         + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance),
           `Issues only, from this hive's audit log: issues humans or third-party bots open directly on GitHub are not observed, so the human column only counts hive-mediated opens. Nothing is weighted by size, and an agent-opened issue counts whether or not anyone acted on it. ${throttleNote}`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
-          'Shadow mode only records; no merge was held or blocked. Closed-without-merge is not recorded in bundles, so a closed PR counts as still open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
+          'Shadow mode only records; no merge was held or blocked. Closed-without-merge is known only from backfilled records, so a closed PR without one counts as still open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
 
     async function fetchEvidenceSummary() {

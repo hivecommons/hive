@@ -97,7 +97,7 @@ func TestBuildEvidenceSummary(t *testing.T) {
 func TestHandleEvidenceSummaryValidation(t *testing.T) {
 	s := &Server{}
 	for _, q := range []string{"hours=-1", "hours=x", "repo=nope", "author_kind=robot",
-		"to=2026-10-15", "from=yesterday", "from=2026-10-15&to=2026-10-01", "from=2025-01-01&to=2026-10-15", "from=2026-10-01&to=bogus"} {
+		"to=2026-10-15", "from=yesterday", "from=2026-10-15&to=2026-10-01", "from=2022-01-01&to=2026-10-15", "from=2026-10-01&to=bogus"} {
 		w := httptest.NewRecorder()
 		s.handleEvidenceSummary(w, httptest.NewRequest(http.MethodGet, "/api/evidence/summary?"+q, nil))
 		if w.Code != http.StatusBadRequest {
@@ -315,8 +315,12 @@ func TestParseEvidenceWindow(t *testing.T) {
 	if err != nil || !win.Custom || !win.To.Equal(now) || win.Hours != 30 {
 		t.Fatalf("rfc3339 open-ended: %+v %v", win, err)
 	}
-	if _, err := parseEvidenceWindow(q("from=2025-10-01&to=2026-10-15"), now); err == nil {
-		t.Error("range over 366 days must be rejected")
+	// Backfilled history reaches back years (#12371): a 21-month range is fine.
+	if win, err := parseEvidenceWindow(q("from=2025-01-01&to=2026-10-15"), now); err != nil || !win.Custom {
+		t.Errorf("from=2025-01-01: %+v %v", win, err)
+	}
+	if _, err := parseEvidenceWindow(q("from=2022-10-01&to=2026-10-15"), now); err == nil {
+		t.Errorf("range over %d days must be rejected", evidenceSummaryMaxRangeDays)
 	}
 	if _, err := parseEvidenceWindow(q("from=2026-10-15&to=2026-10-01"), now); err == nil {
 		t.Error("to before from must be rejected")
@@ -412,5 +416,118 @@ func TestLoadEvidenceComplexityCapsMonths(t *testing.T) {
 	}
 	if loadEvidenceComplexity(filepath.Join(root, "absent")) != nil {
 		t.Error("missing root must yield nil")
+	}
+}
+
+// TestBuildEvidenceSummaryBackfilledWindows pins how a PR with both a live
+// bundle (written when review started, no merge event because the hive did
+// not merge) and a backfilled bundle (#12371: PR open time, forge outcome)
+// is counted. Windows select on PR open time, never on when a record was
+// written; the outcome comes from whichever record knows it; a backfilled
+// close-without-merge is Closed, not Open; and available_windows reports
+// how many PRs each preset window would hold.
+func TestBuildEvidenceSummaryBackfilledWindows(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	opened := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
+	mergedAt := time.Date(2026, 9, 25, 9, 0, 0, 0, time.UTC)
+	backfilled := func(b *evidence.Bundle, state string) *evidence.Bundle {
+		b.Backfilled = true
+		b.Backfill = &evidence.Backfill{Source: "github-api", At: now.Add(-time.Hour), State: state}
+		b.UpdatedAt = now.Add(-time.Hour)
+		return b
+	}
+	bf1 := backfilled(evSummaryBundle("a/b", 1, evidence.AuthorAgent, opened, true, nil, 0, false), evidence.BackfillStateMerged)
+	bf1.Merge.At = mergedAt
+	bf1.Merge.OpenedAt = opened
+	bf1.RevertedBy = []string{"a/b#9"}
+	// Live record for the same PR, written yesterday when the swarm reviewed
+	// it: carries the verdict, knows nothing about the merge.
+	live1 := evSummaryBundle("a/b", 1, evidence.AuthorAgent, now.Add(-22*time.Hour), false, []evidence.Verdict{
+		{Perspective: "security", Model: "m1", Verdict: "approve", Confidence: 0.95},
+	}, 1, false)
+	live1.HeadSHA = "def5678"
+	held := true
+	live1.Shadow = &evidence.Shadow{ReviewGate: &evidence.ShadowGate{WouldHaveHeld: &held}}
+	closed2 := backfilled(evSummaryBundle("a/b", 2, evidence.AuthorHuman, time.Date(2026, 9, 28, 9, 0, 0, 0, time.UTC), false, nil, 0, false), evidence.BackfillStateClosed)
+	closed2.Backfill.ClosedAt = time.Date(2026, 9, 29, 9, 0, 0, 0, time.UTC)
+	old3 := backfilled(evSummaryBundle("a/b", 3, evidence.AuthorBot, time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC), true, nil, 0, false), evidence.BackfillStateMerged)
+	bundles := []*evidence.Bundle{live1, bf1, closed2, old3}
+
+	// 24h: the live record was written 22h ago but the PR opened in
+	// September, so nothing is in the window.
+	if got := buildEvidenceSummary(bundles, now, 24, "", ""); got.N != 0 {
+		t.Fatalf("24h n = %d, want 0 (window must use PR open time, not record write time): %+v", got.N, got.Outcomes)
+	}
+	got := buildEvidenceSummary(bundles, now, 720, "", "")
+	if got.N != 2 {
+		t.Fatalf("30d n = %d, want 2", got.N)
+	}
+	if o := got.Outcomes["agent"]; o.N != 1 || o.Merged != 1 || o.Open != 0 {
+		t.Errorf("agent outcome must take the merge from the backfilled record: %+v", o)
+	}
+	if o := got.Outcomes["human"]; o.N != 1 || o.Closed != 1 || o.Open != 0 {
+		t.Errorf("backfilled close-without-merge must count as closed: %+v", o)
+	}
+	if len(got.ReviewerModels) != 1 || got.ReviewerModels[0].ByAuthor["agent"].ApprovedNotMerged != 0 || got.ReviewerModels[0].ByAuthor["agent"].Approvals != 1 {
+		t.Errorf("approval on a PR the forge says merged is not a false approve: %+v", got.ReviewerModels)
+	}
+	if len(got.Calibration) != 1 || got.Calibration[0].Buckets[3].Merged != 1 {
+		t.Errorf("calibration must see the merge: %+v", got.Calibration)
+	}
+	if sg := got.ShadowGate; sg.N != 1 || sg.ReviewGate.Held.Merged != 1 || sg.ReviewGate.Held.Reverted != 1 || sg.ReviewGate.Held.Open != 0 {
+		t.Errorf("shadow gate must see the merge and revert: %+v", sg)
+	}
+	if len(got.ClaimVsVerdict) != 1 || got.ClaimVsVerdict[0].Week != "2026-W38" {
+		t.Errorf("claim week must follow PR open time: %+v", got.ClaimVsVerdict)
+	}
+	if got.SentinelPerWeek.N != 1 || got.SentinelPerWeek.Weeks[0].Week != "2026-W38" {
+		t.Errorf("sentinel week must follow PR open time: %+v", got.SentinelPerWeek)
+	}
+	if all := buildEvidenceSummary(bundles, now, 0, "", ""); all.N != 3 || all.Outcomes["bot"].Merged != 1 {
+		t.Errorf("all time: %+v", all)
+	}
+	win, err := parseEvidenceWindow(map[string][]string{"from": {"2025-01-01"}, "to": {"2026-10-16"}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom := buildEvidenceSummaryWindow(bundles, win, "", ""); custom.N != 3 {
+		t.Errorf("custom since 2025-01-01: n = %d, want 3", custom.N)
+	}
+	avail := evidenceAvailableWindows(bundles, now, "", "")
+	if avail["24"] != 0 || avail["168"] != 0 || avail["720"] != 2 || avail["all"] != 3 {
+		t.Errorf("available_windows = %v", avail)
+	}
+	if avail := evidenceAvailableWindows(bundles, now, "", evidence.AuthorBot); avail["720"] != 0 || avail["all"] != 1 {
+		t.Errorf("available_windows with author_kind = %v", avail)
+	}
+}
+
+// TestHandleEvidenceSummaryAvailableWindows pins that the handler surfaces
+// available_windows alongside n.
+func TestHandleEvidenceSummaryAvailableWindows(t *testing.T) {
+	root := filepath.Join(reviewEvidenceTestEnv(t), "evidence")
+	b := evSummaryBundle("a/b", 1, evidence.AuthorHuman, time.Now().UTC().Add(-20*24*time.Hour), true, nil, 0, true)
+	b.Backfilled = true
+	b.Backfill = &evidence.Backfill{Source: "github-api", At: time.Now().UTC(), State: evidence.BackfillStateMerged}
+	dir := filepath.Join(root, "a", "b", "1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(b)
+	if err := os.WriteFile(filepath.Join(dir, "abc1234.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{}
+	rec := httptest.NewRecorder()
+	s.handleEvidenceSummary(rec, httptest.NewRequest(http.MethodGet, "/api/evidence/summary?hours=24", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var got EvidenceSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.N != 0 || got.AvailableWindows["24"] != 0 || got.AvailableWindows["720"] != 1 || got.AvailableWindows["all"] != 1 {
+		t.Errorf("n=%d available_windows=%v", got.N, got.AvailableWindows)
 	}
 }

@@ -39,7 +39,11 @@ type EvidenceSummary struct {
 	Repo       string `json:"repo,omitempty"`
 	AuthorKind string `json:"author_kind,omitempty"`
 	// N is the number of PRs (latest bundle per PR) in the window.
-	N                int                             `json:"n"`
+	N int `json:"n"`
+	// AvailableWindows is the PR count the same repo/author_kind filter
+	// would yield for each preset window ("24", "168", "720" hours and
+	// "all"), so a client can tell "not enough data" from "window too short".
+	AvailableWindows map[string]int                  `json:"available_windows"`
 	Outcomes         map[string]EvidenceOutcomes     `json:"outcomes_by_author_kind"`
 	Calibration      []EvidencePerspectiveCalib      `json:"reviewer_calibration"`
 	ReviewerModels   []EvidenceModelAccuracy         `json:"reviewer_accuracy_by_model"`
@@ -183,9 +187,10 @@ func loadEvidenceWriteCounters(path string) map[string]EvidenceWriteCount {
 	return f.Totals
 }
 
-// EvidenceOutcomes counts PRs for one author kind. Closed is always 0 today:
-// a v1 bundle records a merge but not a close-without-merge. RevertedWithin14d
-// is nil because revert tracking is not recorded in bundles.
+// EvidenceOutcomes counts PRs for one author kind. Closed counts PRs whose
+// backfilled record says closed without merge (hivecommons/hive#12371); a
+// live-only v1 bundle records a merge but not a close, so such PRs stay Open.
+// RevertedWithin14d is nil because revert tracking is not recorded in bundles.
 type EvidenceOutcomes struct {
 	N                 int  `json:"n"`
 	Merged            int  `json:"merged"`
@@ -256,8 +261,9 @@ type EvidenceShadowGateSide struct {
 }
 
 // EvidenceShadowOutcome is how a set of PRs actually turned out. Reverted is
-// a subset of Merged (the bundle has reverted_by links). Closed is always 0
-// today because a v1 bundle does not record a close-without-merge.
+// a subset of Merged (the bundle has reverted_by links). Closed comes from a
+// backfilled record of the same PR; a live-only v1 bundle does not record a
+// close-without-merge.
 type EvidenceShadowOutcome struct {
 	N        int `json:"n"`
 	Merged   int `json:"merged"`
@@ -266,10 +272,14 @@ type EvidenceShadowOutcome struct {
 	Reverted int `json:"reverted"`
 }
 
-func (o *EvidenceShadowOutcome) add(b *evidence.Bundle) {
+func (o *EvidenceShadowOutcome) add(b *evidencePR) {
 	o.N++
 	if b.Merge == nil {
-		o.Open++
+		if b.Closed {
+			o.Closed++
+		} else {
+			o.Open++
+		}
 		return
 	}
 	o.Merged++
@@ -278,7 +288,7 @@ func (o *EvidenceShadowOutcome) add(b *evidence.Bundle) {
 	}
 }
 
-func (s *EvidenceShadowGateSide) add(b *evidence.Bundle, flag *bool) {
+func (s *EvidenceShadowGateSide) add(b *evidencePR, flag *bool) {
 	if flag == nil {
 		return
 	}
@@ -304,8 +314,11 @@ type EvidenceMissing struct {
 	ThrottleWindows bool `json:"throttle_windows_unavailable"`
 }
 
-// evidenceSummaryMaxRangeDays caps a custom ?from=&to= range.
-const evidenceSummaryMaxRangeDays = 366
+// evidenceSummaryMaxRangeDays caps a custom ?from=&to= range. Backfilled
+// history (hivecommons/hive#12371) reaches back years, so the cap is three
+// years rather than one; the summary is a single pass over the bundles either
+// way.
+const evidenceSummaryMaxRangeDays = 3 * 366
 
 // evidenceWindow is the time slice a summary covers. A zero From with Hours
 // 0 means all time; a custom range sets both From and To.
@@ -414,6 +427,7 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := buildEvidenceSummaryWindow(bundles, win, repo, kind)
+	resp.AvailableWindows = evidenceAvailableWindows(bundles, now, repo, kind)
 	resp.Missing.RecordsUnreadable = unreadable
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
 	resp.IntentCounters = loadEvidenceWriteCounters(intentCountersPath)
@@ -475,7 +489,131 @@ func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 	return out, unreadable, err
 }
 
-// buildEvidenceSummary aggregates the newest bundle per PR whose creation
+// evidencePR is one PR's bundles folded into a single view. Bundle is the
+// newest record (verdicts, CI, sentinel, shadow); OpenedAt, Merge, RevertedBy
+// and Closed come from whichever record of the same PR knows them. A live
+// bundle is created when review starts and only gains a merge event when the
+// hive itself merges, while a backfilled bundle (hivecommons/hive#12371) is
+// stamped with the PR's open time and its forge outcome; folding the two
+// keeps the verdicts and the outcome together, and windows select on PR
+// open time rather than on when any record happened to be written.
+type evidencePR struct {
+	*evidence.Bundle
+	OpenedAt   time.Time
+	Merge      *evidence.MergeEvent
+	RevertedBy []string
+	Closed     bool
+}
+
+// evidenceBundleClosed reports whether a bundle records a close without merge.
+func evidenceBundleClosed(b *evidence.Bundle) bool {
+	return b.Merge == nil && b.Backfill != nil && b.Backfill.State == evidence.BackfillStateClosed
+}
+
+// evidenceBundleOpenedAt is the PR open time a bundle knows: merge.opened_at
+// when captured, else the record's created_at (a backfilled record's
+// created_at is the PR's open time; a live record's is when review started).
+func evidenceBundleOpenedAt(b *evidence.Bundle) time.Time {
+	if b.Merge != nil && !b.Merge.OpenedAt.IsZero() && b.Merge.OpenedAt.Before(b.CreatedAt) {
+		return b.Merge.OpenedAt
+	}
+	return b.CreatedAt
+}
+
+// evidenceFoldPRs groups bundles by PR after the repo/author_kind filter.
+func evidenceFoldPRs(bundles []*evidence.Bundle, repo, kind string) map[string]*evidencePR {
+	prs := map[string]*evidencePR{}
+	for _, b := range bundles {
+		if repo != "" && !strings.EqualFold(b.Repo, repo) {
+			continue
+		}
+		if kind != "" && b.Author.Kind != kind {
+			continue
+		}
+		key := strings.ToLower(b.Repo) + "#" + strconv.Itoa(b.Number)
+		opened := evidenceBundleOpenedAt(b)
+		p := prs[key]
+		if p == nil {
+			p = &evidencePR{Bundle: b, OpenedAt: opened}
+			prs[key] = p
+		} else {
+			if b.CreatedAt.After(p.CreatedAt) || (b.CreatedAt.Equal(p.CreatedAt) && b.UpdatedAt.After(p.UpdatedAt)) {
+				p.Bundle = b
+			}
+			if opened.Before(p.OpenedAt) {
+				p.OpenedAt = opened
+			}
+		}
+		if b.Merge != nil && (p.Merge == nil || b.Merge.At.After(p.Merge.At)) {
+			p.Merge = b.Merge
+		}
+		if len(b.RevertedBy) > len(p.RevertedBy) {
+			p.RevertedBy = b.RevertedBy
+		}
+		if evidenceBundleClosed(b) {
+			p.Closed = true
+		}
+	}
+	for _, p := range prs {
+		if p.Merge != nil {
+			p.Closed = false
+		}
+	}
+	return prs
+}
+
+// evidenceWindowHas reports whether a PR opened inside the window.
+func evidenceWindowHas(win evidenceWindow, opened time.Time) bool {
+	bounded := win.Custom || win.Hours > 0
+	if bounded && opened.Before(win.From) {
+		return false
+	}
+	if win.Custom && !opened.Before(win.To) {
+		return false
+	}
+	return true
+}
+
+// evidenceLatestPerPR folds bundles per PR and keeps the PRs opened in win.
+func evidenceLatestPerPR(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) map[string]*evidencePR {
+	prs := evidenceFoldPRs(bundles, repo, kind)
+	for k, p := range prs {
+		if !evidenceWindowHas(win, p.OpenedAt) {
+			delete(prs, k)
+		}
+	}
+	return prs
+}
+
+// evidenceAvailableWindowHours are the preset windows reported in
+// available_windows; 0 is all time and is keyed "all".
+var evidenceAvailableWindowHours = []int{24, 168, 720, 0}
+
+// evidenceAvailableWindows counts PRs per preset window under the same
+// repo/author_kind filter, so the card can say "window too short" instead
+// of "not enough data" when a longer window would have samples.
+func evidenceAvailableWindows(bundles []*evidence.Bundle, now time.Time, repo, kind string) map[string]int {
+	prs := evidenceFoldPRs(bundles, repo, kind)
+	out := make(map[string]int, len(evidenceAvailableWindowHours))
+	for _, h := range evidenceAvailableWindowHours {
+		key := "all"
+		win := evidenceWindow{Hours: h, To: now}
+		if h > 0 {
+			key = strconv.Itoa(h)
+			win.From = now.Add(-time.Duration(h) * time.Hour)
+		}
+		n := 0
+		for _, p := range prs {
+			if evidenceWindowHas(win, p.OpenedAt) {
+				n++
+			}
+		}
+		out[key] = n
+	}
+	return out
+}
+
+// buildEvidenceSummary aggregates the newest bundle per PR whose open time
 // falls in the trailing window. hours==0 means all time.
 func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, repo, kind string) EvidenceSummary {
 	win := evidenceWindow{Hours: hours, To: now}
@@ -486,7 +624,7 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 }
 
 // buildEvidenceSummaryWindow is buildEvidenceSummary over an explicit window;
-// a custom range keeps bundles created in [From, To).
+// a custom range keeps PRs opened in [From, To).
 func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) EvidenceSummary {
 	hours := win.Hours
 	resp := EvidenceSummary{
@@ -506,28 +644,7 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		resp.From = win.From.Format(time.RFC3339)
 		resp.To = win.To.Format(time.RFC3339)
 	}
-	cutoff := win.From
-	bounded := win.Custom || hours > 0
-
-	latest := map[string]*evidence.Bundle{}
-	for _, b := range bundles {
-		if repo != "" && !strings.EqualFold(b.Repo, repo) {
-			continue
-		}
-		if kind != "" && b.Author.Kind != kind {
-			continue
-		}
-		if bounded && b.CreatedAt.Before(cutoff) {
-			continue
-		}
-		if win.Custom && !b.CreatedAt.Before(win.To) {
-			continue
-		}
-		key := strings.ToLower(b.Repo) + "#" + strconv.Itoa(b.Number)
-		if cur, ok := latest[key]; !ok || b.CreatedAt.After(cur.CreatedAt) {
-			latest[key] = b
-		}
-	}
+	latest := evidenceLatestPerPR(bundles, win, repo, kind)
 	keys := make([]string, 0, len(latest))
 	for k := range latest {
 		keys = append(keys, k)
@@ -549,9 +666,12 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		o := resp.Outcomes[b.Author.Kind]
 		o.N++
 		merged := b.Merge != nil
-		if merged {
+		switch {
+		case merged:
 			o.Merged++
-		} else {
+		case b.Closed:
+			o.Closed++
+		default:
 			o.Open++
 		}
 		resp.Outcomes[b.Author.Kind] = o
@@ -559,7 +679,7 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 			resp.Missing.RecordsEmptyCI++
 		}
 		if b.Author.Kind == evidence.AuthorAgent {
-			y, w := b.CreatedAt.UTC().ISOWeek()
+			y, w := b.OpenedAt.UTC().ISOWeek()
 			wk := fmt.Sprintf("%04d-W%02d", y, w)
 			c := claims[wk]
 			if c == nil {
@@ -571,9 +691,9 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 			ciBad := false
 			if len(b.CI.Checks) > 0 {
 				c.CICaptured++
-				ciBad = evidenceCINotGreen(b)
+				ciBad = evidenceCINotGreen(b.Bundle)
 			}
-			swarmBad := evidenceVerdictNotApprove(b)
+			swarmBad := evidenceVerdictNotApprove(b.Bundle)
 			if ciBad {
 				c.CINotGreen++
 			}
@@ -601,7 +721,7 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		}
 
 		for range b.Sentinel {
-			y, w := b.CreatedAt.UTC().ISOWeek()
+			y, w := b.OpenedAt.UTC().ISOWeek()
 			weeks[fmt.Sprintf("%04d-W%02d", y, w)]++
 			resp.SentinelPerWeek.N++
 		}
