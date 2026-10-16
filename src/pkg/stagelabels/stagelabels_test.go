@@ -31,7 +31,8 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 	want := map[Stage]string{
 		Actionable: "stage/010-actionable", Claimed: "stage/020-claimed", PRInProgress: "stage/030-pr-in-progress",
 		CoveredByPR: "stage/040-covered-by-pr", ReviewPending: "stage/050-review-pending", Reviewed: "stage/060-reviewed",
-		Fixing: "stage/070-fixing", ReturnedToContributor: "stage/072-returned-to-contributor", AdoptedByHive: "stage/074-adopted-by-hive",
+		AwaitingMergeAdmission: "stage/080-awaiting-merge-admission",
+		Fixing:                 "stage/070-fixing", ReturnedToContributor: "stage/072-returned-to-contributor", AdoptedByHive: "stage/074-adopted-by-hive",
 		MergeQueue: "stage/100-merge-queue", NeedsHuman: "stage/090-needs-human",
 	}
 	for s, l := range want {
@@ -44,6 +45,12 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 	}
 	if !Fixing.Before(MergeQueue) || MergeQueue.Before(Fixing) {
 		t.Fatal("Before() disagrees with table order")
+	}
+	if !Reviewed.Before(AwaitingMergeAdmission) || !AwaitingMergeAdmission.Before(NeedsHuman) || !AwaitingMergeAdmission.StallNote() || MergeQueue.StallNote() {
+		t.Fatal("awaiting-merge-admission must sit between reviewed and needs-human and be the only stall-note stage")
+	}
+	if got := StallComment(AwaitingMergeAdmission, 30*time.Minute, "review-state-check"); got != StallCommentMarker+"\nstage 080-awaiting-merge-admission stalled after 30m0s: review-state-check" {
+		t.Fatalf("StallComment = %q", got)
 	}
 }
 

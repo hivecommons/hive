@@ -148,12 +148,13 @@ written only when the planned set differs from the current one.
 | `stage/030-pr-in-progress` | issue | an agent kick / contributor session is actively working; no PR yet | 90m |
 | `stage/040-covered-by-pr` | issue | an open PR covers it (replaces `🐝 covered by PR`); from here the issue mirrors the PR's stage | n/a (mirrors) |
 | `stage/050-review-pending` | PR | review swarm requested/dispatched; awaiting a verdict for the current head (or CI still pending with no verdict) | 1h |
-| `stage/060-reviewed` | PR | swarm verdict complete (approve); CI still finishing | 30m |
+| `stage/060-reviewed` | PR | swarm verdict approve but a gate is still pending (CI running, soak not started) | 30m |
 | `stage/070-fixing` | PR | hive-authored (App/taken-over) PR: CI red, changes requested or needs-rebase; a hive agent is reworking it | 2h |
 | `stage/072-returned-to-contributor` | PR | contributor PR (relay or external): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the author's court | 24h |
 | `stage/074-adopted-by-hive` | PR | the author was unavailable (see below); the hive adopted the PR and is finishing it through the takeover/supersede path | 3h |
+| `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green, verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
 | `stage/090-needs-human` | PR | cannot auto-merge; a person must act. Always read with the `author/*` label and any `hold`/`needs-human`/`needs-decision` modifier | none |
-| `stage/100-merge-queue` | PR | every gate passed; soaking or waiting for tide / the merge window | 3h |
+| `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window | 3h |
 
 Dwell thresholds are overridable per slug under `governor.labels.stage.dwell`
 (`review-pending: 1h`, `0` = never). The whole family is switched by
@@ -173,6 +174,7 @@ stateDiagram-v2
     s070: 070 fixing
     s072: 072 returned-to-contributor
     s074: 074 adopted-by-hive
+    s080: 080 awaiting-merge-admission
     s090: 090 needs-human
     s100: 100 merge-queue
     s010 --> s020: scanner / relay claim
@@ -180,7 +182,8 @@ stateDiagram-v2
     s030 --> s040: PR opened
     s040 --> s050: issue mirrors PR
     s050 --> s060: swarm approve
-    s060 --> s100: CI green, gates pass
+    s060 --> s080: CI green, author side done
+    s080 --> s100: lane admits (soak / merge-eligible)
     s050 --> s070: hive PR red / changes requested
     s050 --> s072: contributor PR red / changes requested
     s060 --> s070: new head red
@@ -209,6 +212,7 @@ used to admit the PR:
 | `draft` | no stage (stale stage removed) |
 | `contributor-lane:no-verdict`, CI pending with no verdict | `050-review-pending` |
 | CI pending, verdict approve | `060-reviewed` |
+| CI green, verdict approve, no modifier, yet the lane stopped on a reason no stage claims or tripped on a transient error (`review-state-check`, …) | `080-awaiting-merge-admission` (weak opinion: any lane's definite stage wins) |
 | CI red (`check-failing:*`, `required-check-failing:*`, `status-*`), `conflicting`, `not-mergeable`, `changes-requested`, verdict changes_requested/reject, `needs-rebase` present | `070-fixing` (self-authored lane) / `072-returned-to-contributor` (trusted-author or contributor lane) |
 | `contributor-lane:soaking(...)`, `head-changed-since-eval`, `merge-failed`, `required-checks-expected`, `behind`, `updated-branch`, `release-hold*` | `100-merge-queue` |
 | `label:hold`, `held`, `label:needs-human`, `exempt-label`, `excluded-label:*`, `sentinel`, `human-merge-path*`, `intent-*`, `contributor-lane:no-claim` / `claim-*` / `author-association` / `no-linked-issue` / `workflow-path` / `tests-removed` / `no-reviewer`, `untrusted-author-role`, `author-permission-missing` | `090-needs-human` |
@@ -237,7 +241,9 @@ stage but written only on change:
 - **`stage/stalled`** — the item sat in its current stage longer than the
   table's dwell. "Entered stage at" is tracked in the hive's persisted state
   (`/data/stage-labels.json`), not GitHub's timeline, so no extra API calls.
-  Cleared automatically when the stage changes.
+  Cleared automatically when the stage changes. Only a stall in
+  `080-awaiting-merge-admission` is explained in a comment (the lane's last
+  skip reason), because that stall is the hive's fault, not the author's.
 - **`stage/regressed`** — the stage number went DOWN (e.g. `100 → 070`
   because a new head went red). On every backward transition the hive posts
   one short idempotent comment carrying `<!-- hive:stage-regressed -->`:

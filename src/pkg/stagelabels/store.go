@@ -36,6 +36,9 @@ type Record struct {
 	// RegressionCommented records that the one-line regression comment for
 	// the current regression was posted, so it is never posted twice.
 	RegressionCommented bool `json:"regression_commented,omitempty"`
+	// StallCommented records that the stall note for the current stage
+	// visit was posted (stages with StallNote only).
+	StallCommented bool `json:"stall_commented,omitempty"`
 	// Reason is the lane/CI/verdict reason behind the current stage.
 	Reason string `json:"reason,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
@@ -186,6 +189,7 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 	next.LastSeen = now
 	if !had || prev.Stage != stage {
 		next.EnteredAt = now
+		next.StallCommented = false
 		tr.Changed = true
 	}
 	switch {
@@ -235,6 +239,19 @@ func (s *Store) MarkRegressionCommented(key string) {
 		return
 	}
 	r.RegressionCommented = true
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkStallCommented records that the stall note for this stage visit was posted.
+func (s *Store) MarkStallCommented(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.StallCommented {
+		return
+	}
+	r.StallCommented = true
 	s.items[key] = r
 	s.dirty = true
 }
@@ -310,6 +327,20 @@ func RegressionComment(from, to Stage, reason string) string {
 	}
 	return RegressionCommentMarker + "\nstage " + from.String() + " → " + to.String() + ": " + reason
 }
+
+// StallComment is the one-line, idempotent note posted when an item stalls
+// in a StallNote stage: `stage 080-awaiting-merge-admission stalled after
+// 30m: <lane's last skip reason>`.
+func StallComment(stage Stage, dwell time.Duration, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "lane has not evaluated this head"
+	}
+	return StallCommentMarker + "\nstage " + stage.String() + " stalled after " + dwell.String() + ": " + reason
+}
+
+// StallCommentMarker tags the stall note.
+const StallCommentMarker = "<!-- hive:stage-stalled -->"
 
 // RegressionCommentMarker tags the regression comment so a reader (or a
 // later dedupe pass) can find it.

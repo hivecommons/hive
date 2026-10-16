@@ -51,6 +51,7 @@ const (
 	Fixing
 	ReturnedToContributor
 	AdoptedByHive
+	AwaitingMergeAdmission
 	NeedsHuman
 	MergeQueue
 )
@@ -92,6 +93,10 @@ type Definition struct {
 	// Dwell is how long an item is expected to sit in this stage before it
 	// is marked stalled. 0 means never (the stage is open-ended).
 	Dwell time.Duration
+	// StallNote asks the reconciler to post a one-line comment (with the
+	// lane's last skip reason) when the item stalls here: a stall in such a
+	// stage points at the hive, not the author, so it must be legible.
+	StallNote bool
 	// Issue/PR report which item kinds the stage is emitted for directly.
 	// An issue covered by a PR mirrors the PR's stage, so PR stages also
 	// appear on issues.
@@ -106,12 +111,13 @@ var Table = []Definition{
 	{Stage: PRInProgress, Number: 30, Slug: "pr-in-progress", Description: "An agent kick is running; no PR yet", Dwell: 90 * time.Minute, Issue: true},
 	{Stage: CoveredByPR, Number: 40, Slug: "covered-by-pr", Description: "An open PR covers this issue", Issue: true},
 	{Stage: ReviewPending, Number: 50, Slug: "review-pending", Description: "Review swarm requested; awaiting a verdict for the current head", Dwell: time.Hour, PR: true},
-	{Stage: Reviewed, Number: 60, Slug: "reviewed", Description: "Review swarm verdict complete (approve)", Dwell: 30 * time.Minute, PR: true},
+	{Stage: Reviewed, Number: 60, Slug: "reviewed", Description: "Review swarm verdict approve; a gate is still pending (CI running, soak not started)", Dwell: 30 * time.Minute, PR: true},
 	{Stage: Fixing, Number: 70, Slug: "fixing", Description: "Hive-authored PR: CI red, changes requested or needs rebase; a hive agent is fixing it", Dwell: 2 * time.Hour, PR: true},
 	{Stage: ReturnedToContributor, Number: 72, Slug: "returned-to-contributor", Description: "Contributor PR: CI red, changes requested or conflicting; diagnosis posted, author must act", Dwell: 24 * time.Hour, PR: true},
 	{Stage: AdoptedByHive, Number: 74, Slug: "adopted-by-hive", Description: "Contributor PR adopted: author unavailable after red CI; the hive is finishing it via the takeover path", Dwell: 3 * time.Hour, PR: true},
+	{Stage: AwaitingMergeAdmission, Number: 80, Slug: "awaiting-merge-admission", Description: "CI green, verdict approve, no modifiers; the automerge lane has not admitted it yet", Dwell: 30 * time.Minute, StallNote: true, PR: true},
 	{Stage: NeedsHuman, Number: 90, Slug: "needs-human", Description: "Cannot auto-merge; a person must act (see author/* and hold labels)", PR: true},
-	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "All gates passed; soaking or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
+	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted: soaking, merge-eligible or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
 }
 
 // MergeQueueNumber is fixed: the merge queue is always the top stage. New
@@ -175,6 +181,12 @@ func (s Stage) String() string {
 func (s Stage) Dwell() time.Duration {
 	d, _ := definition(s)
 	return d.Dwell
+}
+
+// StallNote reports whether a stall in s should be explained in a comment.
+func (s Stage) StallNote() bool {
+	d, _ := definition(s)
+	return d.StallNote
 }
 
 // Known reports whether s is a stage in the current table.

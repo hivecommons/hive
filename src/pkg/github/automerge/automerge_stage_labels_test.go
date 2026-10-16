@@ -3,6 +3,7 @@ package automerge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -146,6 +147,11 @@ func TestClassifyStageMapping(t *testing.T) {
 		{"no claim", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, stagelabels.NeedsHuman, 2, false},
 		{"untrusted role weak", stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, stagelabels.NeedsHuman, 1, false},
 		{"human merge path", stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, stagelabels.NeedsHuman, 2, false},
+		{"approved green unclassified reason", stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: approve}, stagelabels.AwaitingMergeAdmission, 1, false},
+		{"approved green lane error", stageObservation{Lane: stageLaneContributor, Reason: "review-state-check", Err: true, Detail: approve}, stagelabels.AwaitingMergeAdmission, 1, false},
+		{"unapproved unclassified reason", stageObservation{Lane: stageLaneContributor, Reason: "something-new"}, stagelabels.None, 0, false},
+		{"approved but ci pending stays reviewed", stageObservation{Lane: stageLaneContributor, Reason: "check-pending", Detail: approve}, stagelabels.Reviewed, 2, false},
+		{"approved soaking is merge queue", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(5m)", Detail: approve}, stagelabels.MergeQueue, 2, false},
 	}
 	for _, tc := range cases {
 		got := classifyStage(tc.obs)
@@ -308,6 +314,58 @@ func TestApplyStageLabelsStalledAndRegressed(t *testing.T) {
 	observe([]string{"stage/050-review-pending", "stage/regressed", "author/trusted"}, "head-changed-since-eval")
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending", "stage/regressed"}) {
 		t.Fatalf("recovery added=%v removed=%v", api.added, api.removed)
+	}
+}
+
+// A stall in awaiting-merge-admission points at the lane, so it earns one
+// comment carrying the lane's last skip reason; other stalls do not.
+func TestApplyStageLabelsAwaitingAdmissionStallNote(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}}
+	for _, d := range stagelabels.AllLabelDefs() {
+		api.labels[d.Name] = d.Color
+	}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, _ := newStageEngine(t, srv.URL, clock)
+	ctx := context.Background()
+	approve := ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
+	observe := func(labels []string, reason string, err error) {
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(11, labels...), reason, false, err)
+		e.noteStageVerdict("acme", "widget", 11, approve)
+		e.noteStageAuthor("acme", "widget", 11, stagelabels.AuthorTrusted)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	observe(nil, "review-state-check", errors.New("boom"))
+	if !reflect.DeepEqual(api.added, [][]string{{"author/trusted", "stage/080-awaiting-merge-admission"}}) {
+		t.Fatalf("added=%v", api.added)
+	}
+	api.reset()
+	clock.advance(30 * time.Minute)
+	observe([]string{"stage/080-awaiting-merge-admission", "author/trusted"}, "review-state-check", errors.New("boom"))
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/stalled"}}) {
+		t.Fatalf("stalled added=%v", api.added)
+	}
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 080-awaiting-merge-admission stalled after 30m0s: review-state-check") {
+		t.Fatalf("stall note=%v", api.comments)
+	}
+	api.reset()
+	clock.advance(time.Hour)
+	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "author/trusted"}, "review-state-check", errors.New("boom"))
+	if api.writes() != 0 || len(api.comments) != 0 {
+		t.Fatalf("stall note must be posted once: added=%v comments=%v", api.added, api.comments)
+	}
+	// Lane admits the PR: forward to the merge queue, stalled cleared, no note.
+	api.reset()
+	observe([]string{"stage/080-awaiting-merge-admission", "stage/stalled", "author/trusted"}, contributorLaneReasonSoaking+"(10m)", nil)
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) || len(api.comments) != 0 {
+		t.Fatalf("admission added=%v comments=%v", api.added, api.comments)
+	}
+	sort.Strings(api.removed)
+	if !reflect.DeepEqual(api.removed, []string{"stage/080-awaiting-merge-admission", "stage/stalled"}) {
+		t.Fatalf("admission removed=%v", api.removed)
 	}
 }
 

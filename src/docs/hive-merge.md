@@ -412,7 +412,9 @@ tier before the issue is leased.
 Every sweep cycle also writes the hive-owned `stage/NNN-*` label for each PR
 it evaluated, derived from the same per-lane reason it logs
 (`contributor-lane:no-verdict` → `stage/050-review-pending`,
-`contributor-lane:soaking(...)` → `stage/100-merge-queue`, red CI on a
+`contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
+green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
+(a stall there is logged on the PR with the lane's last skip reason), red CI on a
 contributor PR → `stage/072-returned-to-contributor`, hold / untrusted author →
 `stage/090-needs-human`, merged → no stage), plus one `author/*` label saying
 which admission tier the lane actually used and `stage/stalled` /

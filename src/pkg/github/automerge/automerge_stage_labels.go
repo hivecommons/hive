@@ -311,6 +311,11 @@ func classifyStage(o stageObservation) stageVerdict {
 		return stageVerdict{Terminal: true, Rank: 2}
 	}
 	if o.Err {
+		// The lane tripped before deciding. If every author-side gate is
+		// already satisfied the PR is waiting on the hive, not the author.
+		if authorSideDone(o) {
+			return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: 1}
+		}
 		return stageVerdict{}
 	}
 	switch reason {
@@ -349,7 +354,19 @@ func classifyStage(o stageObservation) stageVerdict {
 		}
 		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: 2}
 	}
+	if authorSideDone(o) {
+		// Green CI and an approve verdict, yet the lane stopped for a reason
+		// no stage claims: admission is pending on the hive's side.
+		return stageVerdict{Stage: stagelabels.AwaitingMergeAdmission, Rank: 1}
+	}
 	return stageVerdict{}
+}
+
+// authorSideDone reports whether the PR has nothing left for its author to
+// do: the reviewer verdict for this head is approve and the lane's reason
+// is not a CI state.
+func authorSideDone(o stageObservation) bool {
+	return o.Detail.VerdictKnown && o.Detail.Verdict.Approved && !verdictBlocks(o.Detail) && classifyCIReason(o.Reason) == ciReasonNone
 }
 
 func hasLabelFold(labels []string, want string) bool {
@@ -471,6 +488,20 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		}
 		if len(add)+len(remove) > 0 {
 			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "author", author.String(), "added", add, "removed", remove, "reason", obs.Reason, "lane", obs.Lane)
+		}
+		if want.Stalled && want.Stage.StallNote() {
+			if rec, ok := store.Get(key); ok && !rec.StallCommented {
+				body := stagelabels.StallComment(want.Stage, stagelabels.Dwell(want.Stage, policy.Dwell), obs.Reason)
+				if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+					c.warn("stage labels: stall note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+					if firstErr == nil {
+						firstErr = err
+					}
+				} else {
+					store.MarkStallCommented(key)
+					result.Comments++
+				}
+			}
 		}
 		if tr.Regressed {
 			if rec, ok := store.Get(key); ok && !rec.RegressionCommented {
