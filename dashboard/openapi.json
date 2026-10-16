@@ -18429,6 +18429,65 @@
         }
       }
     },
+    "/api/nous/campaign/start": {
+      "post": {
+        "tags": [
+          "Strategy Lab"
+        ],
+        "summary": "Start a new Nous experiment campaign",
+        "description": "Archives the active campaign (its baseline snapshot count, hypotheses and judged results are frozen read-only) and starts a new one whose baseline restarts at 0 / 672. The research question defaults to the active campaign's question. PUT /api/nous/config/goals with a materially different question does the same implicitly. Requires owner role.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "description": "Research question for the new campaign; empty keeps the active one."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "started"
+                    },
+                    "campaign": {
+                      "type": "object",
+                      "description": "The new active campaign: id, question, status, startedAt, snapshots, target, percent, complete, experiments, principles."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body"
+          },
+          "404": {
+            "description": "Nous not configured"
+          },
+          "409": {
+            "description": "Campaigns not enabled (no snapshot directory)"
+          }
+        }
+      }
+    },
     "/api/nous/principles/{id}": {
       "delete": {
         "tags": [

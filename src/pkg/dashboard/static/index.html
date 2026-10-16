@@ -3623,6 +3623,11 @@
     .nous-status-pill { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); color: var(--muted); background: var(--surface); white-space: nowrap; }
     .nous-exp-metrics, .nous-output-links { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); margin-top: var(--sp-2); }
     .nous-output-links a { color: var(--accent); }
+    .nous-observation-note { font-size: var(--fs-xs); margin-top: var(--sp-2); }
+    .nous-campaign-meta { margin-top: var(--sp-2); }
+    .nous-archived-list { display: grid; gap: var(--sp-3); }
+    .nous-archived-row { border: var(--line-width) solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: var(--panel); opacity: 0.85; }
+    .nous-campaign-actions { margin-top: var(--sp-4); }
 
     /* Nous Config Panel */
     /* .nous-config-overlay/.nous-config-dialog — modal overlay/panel recipes
@@ -23372,6 +23377,39 @@ function burnAreaChart() {
       return `${s.mode || 'observe'} · ${n} experiment${n === 1 ? '' : 's'}`;
     }
 
+    function nousCampaignDate(ts) {
+      if (!ts) return '—';
+      try { return formatDashboardDateTime(ts, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (_) { return String(ts); }
+    }
+
+    // Muted secondary line under the stat tiles: the question-independent
+    // hive-state history is never hidden by a campaign restart (#12501).
+    function nousObservationLine(obs, camp) {
+      const total = Number(obs && obs.snapshots) || 0;
+      const since = obs && obs.since ? ` since ${escapeHtml(nousCampaignDate(obs.since))}` : '';
+      const prior = camp ? Math.max(0, total - (Number(camp.snapshots) || 0)) : 0;
+      return `<div class="nous-observation-note text-muted">Observation history: ${total} snapshots${since}${prior ? ` (${prior} before this experiment)` : ''}.</div>`;
+    }
+
+    function nousArchivedCampaigns(campaigns) {
+      if (!campaigns || !campaigns.length) return '';
+      return `<div class="nous-card mt-5"><h3>Previous experiments <span class="nous-lab-h3-note">archived · read-only</span></h3><div class="nous-archived-list">${campaigns.map(c => {
+        const q = c.question || '(no research question)';
+        const when = `${nousCampaignDate(c.startedAt)} → ${nousCampaignDate(c.endedAt)}`;
+        const counts = `${Number(c.snapshots) || 0} snapshots · ${Number(c.experiments) || 0} hypotheses · ${Number(c.principles) || 0} principles`;
+        const results = (c.results || []).map(r => {
+          const title = r.title || r.hypothesis || r.id || 'experiment';
+          const verdict = r.verdict || r.status || 'judged';
+          return `<div class="nous-result-row"><div class="nous-result-head"><strong>${escapeHtml(title)}</strong><span class="nous-status-pill">${escapeHtml(verdict)}</span></div>${r.delta ? `<div class="nous-progress-copy">${escapeHtml(r.delta)}</div>` : ''}${nousOutputLinks(r.outputs)}</div>`;
+        }).join('');
+        return `<div class="nous-archived-row" data-campaign-id="${Number(c.id) || 0}">
+          <div class="nous-exp-head"><div class="nous-exp-title">#${Number(c.id) || 0} · ${escapeHtml(q)}</div><span class="nous-status-pill">archived</span></div>
+          <div class="nous-exp-meta">${escapeHtml(when)} · ${escapeHtml(counts)}</div>
+          ${results ? `<div class="nous-results-list mt-2">${results}</div>` : '<div class="nous-progress-copy">No judged results.</div>'}
+        </div>`;
+      }).join('')}</div></div>`;
+    }
+
     function renderNous() {
       if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
@@ -23466,12 +23504,23 @@ function burnAreaChart() {
         }
       }
 
-      // Stats row
+      // Stats row. With a campaign (#12501) the snapshot tile is the active
+      // campaign's baseline, not the whole observation history: a new
+      // research question starts a new experiment at 0 / 672.
+      const camp = s.campaign || null;
+      const obs = s.observation || null;
       html += '<div class="nous-stat-grid">';
-      html += `<div class="nous-stat"><div class="val">${s.snapshotCount || 0}</div><div class="lbl">State snapshots</div></div>`;
-      html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles</div></div>`;
-      html += `<div class="nous-stat"><div class="val">${ledger.length}</div><div class="lbl">Experiments</div></div>`;
+      if (camp) {
+        html += `<div class="nous-stat"><div class="val">${Number(camp.snapshots) || 0}</div><div class="lbl">Baseline snapshots · experiment #${Number(camp.id) || 0}</div></div>`;
+        html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles</div></div>`;
+        html += `<div class="nous-stat"><div class="val">${Number(camp.experiments) || 0}</div><div class="lbl">Hypotheses this experiment</div></div>`;
+      } else {
+        html += `<div class="nous-stat"><div class="val">${s.snapshotCount || 0}</div><div class="lbl">State snapshots</div></div>`;
+        html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles</div></div>`;
+        html += `<div class="nous-stat"><div class="val">${ledger.length}</div><div class="lbl">Experiments</div></div>`;
+      }
       html += '</div>';
+      if (camp) html += nousObservationLine(obs, camp);
 
       // Snapshot summary — what's being collected
       const ss = s.snapshotSummary;
@@ -23529,6 +23578,7 @@ function burnAreaChart() {
       html += '<div class="nous-progress-summary">';
       html += `<div class="nous-progress-label"><strong>Baseline: ${baseCount} / ${baseTarget} snapshots (${basePct}%)</strong><span class="nous-progress-copy">${base.complete ? 'Complete — switch to Suggest when ready.' : `${base.remainingSnapshots || 0} remaining · ETA ${nousFmtDuration(base.etaSeconds)}`}</span></div>`;
       html += nousProgressBar(basePct, 'Baseline snapshot collection');
+      if (camp) html += `<div class="nous-progress-copy nous-campaign-meta">Experiment #${Number(camp.id) || 0} started ${escapeHtml(nousCampaignDate(camp.startedAt))}. Baseline and hypotheses restart with each research question; earlier observations stay in the history below.</div>`;
       html += `<div class="nous-progress-copy">Collecting: ${escapeHtml(((base.collecting || ['queue issues','queue PRs','queue on hold','SLA violations','agents kicked','agent states','total tokens']).join(', ')))}. Retention: ${escapeHtml(base.retention || '24 h raw snapshots, then hourly buckets for 30 days')}.</div>`;
       html += '</div>';
       html += '<div class="nous-pending-params">Observe records the hive-state time series every governor evaluation cycle. Experiments wait for Suggest/Evolve and operator approval before repo changes run.</div>';
@@ -23592,6 +23642,7 @@ function burnAreaChart() {
       }
 
       html += nousResultsRows(s.results || []);
+      html += nousArchivedCampaigns(s.campaigns || []);
 
       // Principles
       if (principles.length > 0) {
@@ -23802,8 +23853,14 @@ function burnAreaChart() {
       h += nousLabCardHead('Hypothesis', '🎯 Goal Definition', 'What Nous should optimize through repo-scope experiments.');
       h += '<div class="nous-lab-field">';
       h += '<label for="nc-repo-goal" title="The hypothesis Nous will test through repo experiments (code changes). These always require approval regardless of trust level. Example: Can we cut CI time by 20% by sharding the slowest test package?">Research Question</label>';
-      h += `<textarea id="nc-repo-goal" rows="2" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(repoCamp.research_question || '')}</textarea>`;
+      const activeCamp = cfg.activeCampaign || null;
+      const currentQuestion = (cfg.goals && cfg.goals.repoGoal) || repoCamp.research_question || (activeCamp && activeCamp.question) || '';
+      h += `<textarea id="nc-repo-goal" rows="2" data-current-question="${escapeHtml(currentQuestion)}" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(currentQuestion)}</textarea>`;
       h += '</div>';
+      if (activeCamp) {
+        h += `<div class="nous-lab-trust-note nous-campaign-meta">Experiment #${Number(activeCamp.id) || 0} · started ${escapeHtml(nousCampaignDate(activeCamp.startedAt))} · ${Number(activeCamp.snapshots) || 0} / ${Number(activeCamp.target) || 0} baseline snapshots. Changing the question starts a new experiment: baseline and hypotheses restart and this one is archived.</div>`;
+        h += '<div class="nous-campaign-actions"><button type="button" class="hv-btn btn-secondary nous-config-btn" data-action="nousStartCampaign" title="Archive the current experiment and start a fresh one with the same question">Start a new experiment</button></div>';
+      }
       h += '</section>';
 
       // Output Mode
@@ -23936,12 +23993,45 @@ function burnAreaChart() {
       } catch (e) { showToast('Failed: ' + e.message, 'error'); }
     }
 
+    const NOUS_NEW_EXPERIMENT_CONFIRM = 'Start a new experiment? Baseline and hypotheses restart; previous campaign is archived.';
+
+    function nousQuestionChanged(prev, next) {
+      const norm = (q) => String(q || '').trim().toLowerCase().split(/\s+/).join(' ');
+      const n = norm(next);
+      return n !== '' && n !== norm(prev);
+    }
+
+    async function nousStartCampaign() {
+      if (!experimentLabEnabled()) return;
+      if (!(await hiveConfirm(NOUS_NEW_EXPERIMENT_CONFIRM))) return;
+      const question = document.getElementById('nc-repo-goal')?.value || '';
+      try {
+        const r = await fetch('/api/nous/campaign/start', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ question }),
+        });
+        const j = await r.json();
+        if (r.ok && j.ok) {
+          showToast(`Experiment #${(j.campaign && j.campaign.id) || ''} started — baseline restarts at 0`, 'success');
+          openNousConfig();
+          fetchNousStatus();
+        } else {
+          showToast(j.error || 'Failed to start a new experiment', 'error');
+        }
+      } catch (e) { showToast('Failed: ' + e.message, 'error'); }
+    }
+
     async function saveNousConfig() {
       if (!experimentLabEnabled()) return;
       const errors = [];
 
-      // Goals
-      const repoGoal = document.getElementById('nc-repo-goal')?.value;
+      // Goals. A materially different research question starts a new
+      // experiment server-side (#12501); confirm before saving it.
+      const goalEl = document.getElementById('nc-repo-goal');
+      const repoGoal = goalEl?.value;
+      if (goalEl && nousQuestionChanged(goalEl.dataset.currentQuestion || '', repoGoal || '')) {
+        if (!(await hiveConfirm(NOUS_NEW_EXPERIMENT_CONFIRM))) { showToast('Research question not changed', 'info'); return; }
+      }
       try {
         const r = await fetch('/api/nous/config/goals', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
@@ -30080,6 +30170,7 @@ function burnAreaChart() {
         case 'ocToggleSidebarGroup': ocToggleSidebarGroup(el); break;
         case 'switchConfigTab': switchConfigTab(el.dataset.tab || el.dataset.arg0); break;
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
+        case 'nousStartCampaign': nousStartCampaign(); break;
         case 'toggleConfigSwitch': toggleConfigSwitch(el, el.dataset.section, el.dataset.key); break;
         case 'toggleContributorPRBaseSync': toggleContributorPRBaseSync(el); break;
         case 'toggleSentinelEnabled': toggleSentinelEnabled(el); break;

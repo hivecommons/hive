@@ -30,6 +30,13 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 	status["scope"] = NousScopeRepo
 	status["phases"] = nousRepoOnlyPhases(status["phases"])
 	status["researchQuestion"] = nousResearchQuestion(goals)
+	if status["researchQuestion"] == "" {
+		// The goals section is in-memory only; after a restart the active
+		// campaign still knows the question.
+		if c, ok := s.deps.Nous.ActiveCampaign(); ok {
+			status["researchQuestion"] = c.Question
+		}
+	}
 	s.addNousProgressStatus(status, config, ledger, principles)
 	status["projectRepos"] = s.nousProjectRepos()
 	status["availableRepos"] = status["projectRepos"]
@@ -296,6 +303,16 @@ func (s *Server) handleNousConfigGet(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg["campaign"] = campaign
 
+	// Per-campaign baseline (hivecommons/hive#12501): expose the active
+	// experiment and fall back to its question when goals are unset
+	// (for example after a restart, when Config is in-memory only).
+	if c, ok := s.deps.Nous.ActiveCampaign(); ok {
+		cfg["activeCampaign"] = nousCampaignToView(s.deps.Nous, c)
+		if nousResearchQuestion(cfg["goals"]) == "" && c.Question != "" {
+			cfg["goals"] = map[string]interface{}{"repoGoal": c.Question}
+		}
+	}
+
 	repoCampaign := map[string]interface{}{}
 	if goals, ok := cfg["goals"].(map[string]interface{}); ok {
 		if rq, ok := goals["repoGoal"].(string); ok {
@@ -378,10 +395,6 @@ func (s *Server) nousRepoTargetsFrom(cfg map[string]interface{}, projectRepos []
 		}
 	}
 	return out
-}
-
-func (s *Server) handleNousConfigGoals(w http.ResponseWriter, r *http.Request) {
-	s.handleNousConfigSection(w, r, "goals")
 }
 
 func (s *Server) handleNousConfigRepos(w http.ResponseWriter, r *http.Request) {

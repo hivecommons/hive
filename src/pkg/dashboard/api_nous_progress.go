@@ -75,6 +75,26 @@ func (s *Server) addNousProgressStatus(status map[string]interface{}, config map
 	if count == 0 {
 		count = intFromAny(status["snapshots"])
 	}
+	// With a campaign store the baseline is the active campaign's window
+	// (#12501); snapshots/snapshotCount keep reporting the whole history,
+	// which is also published as "observation".
+	var since time.Time
+	var ns *NousState
+	if s != nil {
+		ns = s.deps.Nous
+	}
+	if active, ok := ns.ActiveCampaign(); ok {
+		since = active.StartedAt
+		count = ns.CampaignSnapshots(active)
+		status["campaign"] = nousCampaignToView(ns, active)
+		archived := []nousCampaignView{}
+		for _, c := range ns.Campaigns().Archived() {
+			archived = append(archived, nousCampaignToView(ns, c))
+		}
+		status["campaigns"] = archived
+		status["observation"] = ns.Observation()
+		status["baseline_pct"] = NousBaselinePct(count)
+	}
 	eval := 120
 	if s != nil && s.deps.Config != nil && s.deps.Config.Governor.EvalIntervalS > 0 {
 		eval = s.deps.Config.Governor.EvalIntervalS
@@ -97,12 +117,20 @@ func (s *Server) addNousProgressStatus(status map[string]interface{}, config map
 		},
 		Retention: "24 h raw snapshots, then hourly buckets for 30 days",
 	}
-	experiments, results := s.nousExperimentProgress(status, config, ledger, principles)
+	experiments, results := s.nousExperimentProgress(status, config, ledger, principles, since)
 	status["experiments"] = experiments
 	status["results"] = results
+	if c, ok := status["campaign"].(nousCampaignView); ok {
+		c.Experiments = len(experiments)
+		c.Principles = len(principles)
+		status["campaign"] = c
+	}
 }
 
-func (s *Server) nousExperimentProgress(status map[string]interface{}, config map[string]interface{}, ledger []map[string]interface{}, principles []NousPrinciple) ([]nousExperimentProgress, []nousExperimentProgress) {
+// nousExperimentProgress computes experiment rows; rows with a start time
+// before since (the active campaign's start) belong to an archived campaign
+// and are dropped. Rows without a timestamp are kept.
+func (s *Server) nousExperimentProgress(status map[string]interface{}, config map[string]interface{}, ledger []map[string]interface{}, principles []NousPrinciple, since time.Time) ([]nousExperimentProgress, []nousExperimentProgress) {
 	baseHours, expHours, coolHours := nousScheduleHours(config)
 	now := time.Now().UTC()
 	buckets := s.nousLoadBuckets(now.Add(-45 * 24 * time.Hour))
@@ -115,6 +143,9 @@ func (s *Server) nousExperimentProgress(status map[string]interface{}, config ma
 		row := nousExperimentRow(src, fallback, baseHours, expHours, coolHours, now, buckets, principles)
 		if row.ID == "" {
 			row.ID = fallback
+		}
+		if !since.IsZero() && row.StartedAt != "" && parseTime(row.StartedAt).Before(since) {
+			return
 		}
 		key := strings.ToLower(row.ID + ":" + row.Status)
 		if seen[key] {

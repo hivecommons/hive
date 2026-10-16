@@ -22,6 +22,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -250,10 +251,17 @@ type NousState struct {
 	GatePending  map[string]interface{}   `json:"gate_pending,omitempty"`
 	GateResponse map[string]interface{}   `json:"gate_response,omitempty"`
 	SnapshotDir  string                   `json:"-"`
-	Mu           sync.Mutex               `json:"-"`
+	// CampaignFile is the per-campaign baseline store (pkg/nous). Empty
+	// means "<dir of SnapshotDir>/campaigns.json"; with no SnapshotDir
+	// either, campaigns are disabled and the baseline is global.
+	CampaignFile string     `json:"-"`
+	Mu           sync.Mutex `json:"-"`
 
 	stateOnce  sync.Once
 	stateStore *hivestate.Store
+
+	campaignOnce  sync.Once
+	campaignStore *nous.Store
 }
 
 type NousPrinciple struct {
@@ -334,9 +342,15 @@ func (ns *NousState) refreshStatus() {
 		ns.Phase = "observing"
 	}
 
+	// snapshots/snapshotCount stay the whole observation history; the
+	// baseline percentage is scoped to the active campaign (#12501).
+	baselineCount := count
+	if c, ok := ns.ActiveCampaign(); ok {
+		baselineCount = ns.CampaignSnapshots(c)
+	}
 	ns.Status["snapshots"] = count
 	ns.Status["snapshotCount"] = count
-	ns.Status["baseline_pct"] = NousBaselinePct(count)
+	ns.Status["baseline_pct"] = NousBaselinePct(baselineCount)
 	ns.Status["baseline_target"] = NousBaselineTarget
 	ns.Status["snapshotTarget"] = NousBaselineTarget
 	ns.Status["phase"] = ns.Phase

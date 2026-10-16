@@ -437,11 +437,11 @@ An experimental planner that tries out code changes in your repositories and rec
 
 **What it tells you.** The Experiment Lab (formerly the Strategy Lab) runs small experiments on your repositories' code. It shows its goal, its plan and a ledger of results.
 
-**How the numbers are worked out.** The ledger lists each experiment and its result. The section has no other numbers.
+**How the numbers are worked out.** The ledger lists each experiment and its result. The **Baseline snapshots** tile and the **Data Collection** bar count the hive-state snapshots recorded since the current research question was set, out of a target of 672. Each research question is its own experiment: entering a new question (or choosing **Start a new experiment** in the configuration dialog, after a confirmation) starts the count again at 0 / 672, moves the previous question to **Previous experiments** with its results, and keeps the full history visible as the muted line *Observation history: N snapshots since <date>*.
 
 **What it is good for.** Try it only if you want Hive to propose code changes on its own. You approve or stop each experiment.
 
-**Example.** The lab proposes splitting a slow test package across two CI jobs. You approve it, and the ledger records the result.
+**Example.** The lab proposes splitting a slow test package across two CI jobs. You approve it, and the ledger records the result. Later you enter a different research question; the tile reads 0 / 672 again, the earlier question is listed under Previous experiments, and the observation history still shows every snapshot the hive has recorded.
 
 **When it appears.** Only when the Experiment Lab setting is on and the autonomy level is L4 or above. The autonomy level is how much Hive may do on its own, from L1 to L6.
 

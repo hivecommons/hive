@@ -36,6 +36,7 @@ Nous state lives in three places, none of which is `hive.yaml`:
 | Experiment ledger | `/var/run/nous/governor/ledger.json` | experiment loop, read at boot (the path is historical; it holds repo experiments) |
 | Learned principles | `/var/run/nous/governor/principles.json` | experiment loop, read at boot |
 | Hive state snapshots | `/data/nous/snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` → `pkg/hivestate`; see [Hive state time series](#hive-state-time-series) |
+| Experiment campaigns | `/data/nous/campaigns.json` | `pkg/nous` campaign store, written when the research question changes or `POST /api/nous/campaign/start` is called; see [Campaigns and the per-campaign baseline](#campaigns-and-the-per-campaign-baseline) |
 | Mode, goals, output mode, repo targets, fast-fail bounds, schedule | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard config dialog or direct API calls |
 
 The in-memory `Config` map (goals/repos/output/fast_fail/schedule/
@@ -71,6 +72,52 @@ general hive-state time series ([#12339](https://github.com/hivecommons/hive/iss
 
 Because compaction turns many raw files into one bucket, the dashboard's
 `snapshots` / `baseline_pct` count is a file count, not a sample count.
+
+## Campaigns and the per-campaign baseline
+
+A **campaign** is one research question plus everything measured while it
+was active ([#12501](https://github.com/hivecommons/hive/issues/12501)).
+The hive-state snapshots above are question-independent observations of the
+hive — queue depth, SLA rate, kicks, tokens — and are never discarded, but an
+experiment's *baseline* is not question-independent: it must be a window not
+perturbed by a previous campaign's experiments, and hypotheses and judged
+results are answers to the question that was asked. So:
+
+- **Changing the research question starts a new campaign.**
+  `PUT /api/nous/config/goals` with a materially different `repoGoal`
+  (case and whitespace are ignored; clearing the field is not a change)
+  archives the active campaign and starts the next one with `started_at =
+  now`. The config dialog confirms first: *"Start a new experiment? Baseline
+  and hypotheses restart; previous campaign is archived."* The same dialog
+  has a **Start a new experiment** button (`POST /api/nous/campaign/start`)
+  for a fresh run of the same question.
+- **Baseline, hypotheses and results are scoped to the active campaign.**
+  `baseline.snapshots`, `baseline_pct`, the Experiment Lab's snapshot stat
+  tile, the Data Collection bar, `experiments` and `results` only count
+  snapshot files and ledger entries whose timestamp is at or after the
+  campaign's `started_at` — right after a new question they read **0 / 672**.
+  Principles are durable learnings and stay global.
+- **The observation history stays visible.** `snapshots` / `snapshotCount`
+  keep reporting every snapshot file, and `GET /api/nous/status` publishes
+  `observation` (`{snapshots, since}`), which the panel shows as the muted
+  line *"Observation history: N snapshots since <date>"*.
+- **Previous campaigns are archived read-only.** `status.campaigns` lists
+  them newest first with their frozen outcome (snapshot count, hypotheses,
+  principles, judged results); the panel renders them under *Previous
+  experiments*.
+- **Migration.** A hive upgraded from before campaigns has no
+  `campaigns.json`; on first use the dashboard creates campaign 1 with an
+  empty question whose `started_at` is the earliest snapshot on disk, so all
+  existing history is campaign 1. The first real research question then
+  starts campaign 2 at 0 / 672 (a hive with no snapshots yet simply fills the
+  question in on campaign 1). The active campaign also remembers the question
+  across a restart, which the in-memory `goals` section does not.
+
+`status.campaign` is `{id, question, status, startedAt, snapshots, target,
+percent, complete, experiments, principles}`; archived entries add `endedAt`
+and `results`. Campaigns are only enabled when a snapshot directory is
+configured; without one the baseline stays global and no `campaign` block is
+published.
 
 ## Experiment lifecycle
 
@@ -109,7 +156,9 @@ progress from `GET /api/nous/status`:
 
 - **Baseline progress** shows `Baseline: N / 672 snapshots`, the capped
   percentage, remaining snapshots, and an ETA derived from the governor
-  evaluation interval. It also states exactly what each snapshot records:
+  evaluation interval. `N` is the active campaign's count (see
+  [Campaigns](#campaigns-and-the-per-campaign-baseline)); the muted
+  *Observation history* line underneath carries the whole-hive count. It also states exactly what each snapshot records:
   queue issues, queue PRs, queue on hold, SLA violations, agents kicked, agent
   states, and total tokens. Retention is the hive-state policy described
   above: 24 h raw snapshots, then hourly buckets for 30 days.
@@ -152,12 +201,15 @@ Experiment Lab is repo-only` and leaves state untouched.
 
 `GET /api/nous/config` returns the current in-memory config as JSON
 (`campaign`, `repoCampaign`, `output`, `projectRepos`, `repoTargets`,
-`principles`). Each section is written independently with its own `PUT`
+`principles`) plus `activeCampaign` (the per-campaign baseline block) and,
+when the in-memory `goals` section is empty, `goals.repoGoal` restored from
+the active campaign. Each section is written independently with its own `PUT`
 endpoint, all requiring owner role and all triggering `refreshAndPersist()`:
 
 | Endpoint | Section | Fields (dashboard defaults shown) |
 |---|---|---|
-| `PUT /api/nous/config/goals` | `goals` | `repoGoal` — the free-text research question (e.g. "Can we cut CI time by 20% by sharding the slowest test package?"). A legacy `governorGoal` field is accepted but ignored. |
+| `PUT /api/nous/config/goals` | `goals` | `repoGoal` — the free-text research question (e.g. "Can we cut CI time by 20% by sharding the slowest test package?"). A legacy `governorGoal` field is accepted but ignored. A materially different question archives the active campaign and starts a new one; the response carries `newCampaign` and the active `campaign`. |
+| `POST /api/nous/campaign/start` | — | Explicitly archive the active campaign and start a new experiment (`{"question": "..."}` optional; defaults to the active question). Baseline and hypotheses restart at 0; the previous campaign is kept read-only with its results. Owner role required. |
 | `PUT /api/nous/config/output` | `output` | Output mode — `state-only` (files + dashboard only), `issue` (opens a GitHub issue per proposal), or `issue+pr` (issue and PR pair); plus `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything Nous creates. |
 | `PUT /api/nous/config/repos` | `repos` | Which repos from `projectRepos` are eligible experiment targets. |
 | `PUT /api/nous/config/fast-fail` | `fast_fail` | `queue_depth_max` (default 30), `mttr_max_minutes` (default 180), `budget_burn_rate_max_pct` (default 110) — see below. |

@@ -488,3 +488,32 @@ func TestTrendsJSONShape(t *testing.T) {
 		}
 	}
 }
+
+func TestCountScopesFilesToWindow(t *testing.T) {
+	dir := t.TempDir()
+	if n, first := Count(filepath.Join(dir, "missing"), time.Time{}); n != 0 || !first.IsZero() {
+		t.Fatalf("missing dir: n=%d first=%v", n, first)
+	}
+	if n, first := Count(dir, time.Time{}); n != 0 || !first.IsZero() {
+		t.Fatalf("empty dir: n=%d first=%v", n, first)
+	}
+	t0 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 4; i++ {
+		writeRaw(t, dir, t0.Add(time.Duration(i)*time.Hour), Snapshot{QueueIssues: i})
+	}
+	// One hourly bucket before the raws and an unrelated file.
+	if err := os.WriteFile(filepath.Join(dir, bucketName(t0.Add(-2*time.Hour))), []byte(`{"samples":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n, first := Count(dir, time.Time{})
+	if n != 5 || !first.Equal(t0.Add(-2*time.Hour)) {
+		t.Fatalf("all: n=%d first=%v", n, first)
+	}
+	n, first = Count(dir, t0.Add(90*time.Minute))
+	if n != 2 || !first.Equal(t0.Add(-2*time.Hour)) {
+		t.Fatalf("windowed: n=%d first=%v", n, first)
+	}
+}
