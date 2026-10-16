@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -56,7 +57,23 @@ func nousResearchQuestion(goals interface{}) string {
 		return ""
 	}
 	repo, _ := m["repoGoal"].(string)
-	return strings.TrimSpace(repo)
+	return normalizeNousResearchQuestion(repo)
+}
+
+var (
+	nousResearchQuestionKeyRe    = regexp.MustCompile(`(?i)^research[_ -]?question\s*:\s*`)
+	nousResearchQuestionMarkerRe = regexp.MustCompile(`^(?:[>|][-+]?\s*)+`)
+	nousResearchQuestionSpaceRe  = regexp.MustCompile(`\s+`)
+)
+
+// normalizeNousResearchQuestion strips a pasted YAML key
+// ("research_question:") and folded-scalar / blockquote markers ("> ", "|")
+// from a stored research question so the dashboard shows only the question.
+func normalizeNousResearchQuestion(raw string) string {
+	text := strings.TrimSpace(raw)
+	text = nousResearchQuestionKeyRe.ReplaceAllString(text, "")
+	text = nousResearchQuestionMarkerRe.ReplaceAllString(text, "")
+	return strings.TrimSpace(nousResearchQuestionSpaceRe.ReplaceAllString(text, " "))
 }
 
 func (s *Server) handleNousLedger(w http.ResponseWriter, r *http.Request) {

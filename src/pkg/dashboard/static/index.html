@@ -257,7 +257,10 @@
     .dashboard-section-hidden { display: none !important; }
     @media (hover: none), (pointer: coarse) { .oc-nav-drag-handle, .oc-nav-hide-toggle { opacity: 1; } }
     .oc-nav-emoji { display: inline-flex; width: 18px; font-size: 0.9rem; flex-shrink: 0; justify-content: center; }
-    .nous-research-question { display: inline-block; max-width: 40ch; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: var(--sp-4); font-weight: 400; text-transform: none; letter-spacing: normal; }
+    .nous-research-question { display: block; flex: 1 1 16ch; min-width: 0; max-width: none; margin-left: var(--sp-4); font-weight: 400; text-transform: none; letter-spacing: normal; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; }
+    .nous-research-question[hidden] { display: none; }
+    .nous-research-question .nous-rq-label { color: var(--muted); font-weight: 600; margin-right: var(--sp-1); }
+    .nous-research-question .nous-rq-text { color: var(--text); font-weight: 400; }
     .oc-nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     .oc-nav-mode { flex-shrink: 0; font-size: 0.9rem; margin-left: var(--sp-1); transition: opacity 0.15s; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
     /* The hover-revealed row actions (⚙/✕) take the right edge — fade the
@@ -7604,7 +7607,11 @@
       const badges = newHeader.querySelector('.dash-card-badges');
       const actions = newHeader.querySelector('.dash-card-actions');
       const moveSource = oldHeader.parentElement === section ? oldHeader : oldHeader.parentElement;
-      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #nous-research-question, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
+      Array.from(moveSource.querySelectorAll('[id$="-badge"], #repos-host-badge, #repos-needs-human, #review-queue-count, #review-pipeline-count, #kb-status-badge, #contributors-status-badge')).forEach(el => badges.appendChild(el));
+      // The Experiment Lab research question is prose, not a pill badge: it
+      // sits as its own flex item after the badges so it can take the rest of
+      // the header width and wrap instead of being clipped.
+      Array.from(moveSource.querySelectorAll('#nous-research-question')).forEach(el => badges.insertAdjacentElement('afterend', el));
       Array.from(moveSource.querySelectorAll('button[data-stop="1"], a[data-stop="1"], a[data-action]')).forEach(el => {
         if (el.matches('[data-dashboard-grip]')) return;
         el.setAttribute('data-stop', '1');
@@ -8659,10 +8666,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('audit-section', `${auditToday} events today`);
       if (typeof updateReviewSectionSummary === 'function') updateReviewSectionSummary();
       else { const rq = document.getElementById('review-queue-count'); setSectionSummary('review-queue-section', textOrDash(rq && rq.textContent)); }
-      const nousRq = document.getElementById('nous-research-question');
-      const nousRqText = nousRq && !nousRq.hidden ? nousRq.textContent : '';
-      if (nousRqText) setSectionSummary('nous-section', nousRqText);
-      else { const nousSum = document.getElementById('nous-section-summary'); if (nousSum) { nousSum.innerHTML = ''; nousSum.title = ''; nousSum.removeAttribute('aria-label'); } }
+      // The research question stays visible in the header in both states, so
+      // the collapsed summary shows lab mode / experiment count instead of
+      // repeating it.
+      setSectionSummary('nous-section', nousSectionSummaryText(_nousCache));
       setSectionSummary('knowledge-section', kbFactsLabel(kbTotalFactsFromStats(window._kbCache || _kbCache || {})));
       const contrib = document.getElementById('contributors-status-badge');
       setSectionSummary('contributors-section', textOrDash(contrib && contrib.textContent));
@@ -23290,6 +23297,26 @@ function burnAreaChart() {
       }).join('')}</div></div>`;
     }
 
+    // nousResearchQuestionText normalises a stored research question for the
+    // section header: a pasted YAML key ("research_question:") and folded /
+    // blockquote markers ("> ", "|") are dropped so only the question shows.
+    function nousResearchQuestionText(raw) {
+      let text = String(raw || '').trim();
+      text = text.replace(/^research[_ -]?question\s*:\s*/i, '');
+      text = text.replace(/^(?:[>|][-+]?\s*)+/, '');
+      return text.replace(/\s+/g, ' ').trim();
+    }
+
+    // nousSectionSummaryText is the collapsed Experiment Lab summary: lab mode
+    // plus experiment count. The research question itself stays in the header.
+    function nousSectionSummaryText(cache) {
+      const s = (cache && cache.status) || {};
+      if (!cache || s.status === 'not_configured') return '—';
+      const ledger = Array.isArray(cache.ledger) ? cache.ledger : [];
+      const n = ledger.length;
+      return `${s.mode || 'observe'} · ${n} experiment${n === 1 ? '' : 's'}`;
+    }
+
     function renderNous() {
       if (!experimentLabEnabled()) return;
       const panel = document.getElementById('nous-panel');
@@ -23301,10 +23328,21 @@ function burnAreaChart() {
       const mode = s.mode || 'observe';
       const phases = s.phases || {};
 
-      const rq = String(s.researchQuestion || '').trim();
+      const rq = nousResearchQuestionText(s.researchQuestion);
       const setRq = (text) => {
         if (!rqEl) return;
-        rqEl.textContent = text;
+        rqEl.textContent = '';
+        if (text) {
+          const label = document.createElement('span');
+          label.className = 'nous-rq-label';
+          label.textContent = 'Research question:';
+          const body = document.createElement('span');
+          body.className = 'nous-rq-text';
+          body.textContent = text;
+          rqEl.appendChild(label);
+          rqEl.appendChild(document.createTextNode(' '));
+          rqEl.appendChild(body);
+        }
         rqEl.title = text;
         rqEl.hidden = !text;
         if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);
