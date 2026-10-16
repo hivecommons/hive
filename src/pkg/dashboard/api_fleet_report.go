@@ -76,6 +76,7 @@ func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string
 		Evidence:   s.buildFleetReportEvidence(status),
 		HiveSlug:   s.FleetReportHiveSlug(),
 		Cluster:    os.Getenv("HIVE_CLUSTER_ID"),
+		Repos:      s.FleetReportRepos(),
 		Now:        time.Now(),
 	}
 	res := fleetreport.Evaluate(obs, state, dryRun)
@@ -98,6 +99,16 @@ func (s *Server) FleetReportHiveSlug() string {
 		return ""
 	}
 	return strings.TrimSpace(s.deps.Config.HiveID)
+}
+
+// FleetReportRepos is the owner/repo list a self-report may name: the
+// project's watched repos when governor.fleet_report.include_repos is on
+// (the default), nil when the operator opted out (#12338).
+func (s *Server) FleetReportRepos() []string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || !s.deps.Config.Governor.FleetReport.IncludesRepos() {
+		return nil
+	}
+	return fleetreport.NormalizeRepos(s.deps.Config.Project.Repos)
 }
 
 // FleetReportFilesUpstream resolves governor.fleet_report against the

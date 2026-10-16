@@ -52,6 +52,11 @@ type Evidence struct {
 	Message     string    `json:"message,omitempty"`
 	Diagnostics string    `json:"diagnostics,omitempty"`
 	FirstSeen   time.Time `json:"first_seen,omitempty"`
+	// Repo and Ref name the item the error was scoped to, when the class
+	// carries one (owner/repo and e.g. "#123"). Rendered in the evidence
+	// table and merged into the affected-repos union; never fingerprinted.
+	Repo string `json:"repo,omitempty"`
+	Ref  string `json:"ref,omitempty"`
 }
 
 type Observation struct {
@@ -67,6 +72,11 @@ type Observation struct {
 	// the hive anonymous (instance digest only) in runtime-error reports.
 	HiveSlug string
 	Cluster  string
+	// Repos are the owner/repo names this hive watches (project.repos), as
+	// the operator's governor.fleet_report.include_repos policy allows them
+	// to leave the hive. They render in the evidence table and feed the
+	// affected-repos / affected-owners union on the fleet issue (#12338).
+	Repos []string
 	// Now is the evaluation clock; zero means time.Now().
 	Now time.Time
 }
@@ -117,6 +127,11 @@ type Report struct {
 	// Class and Hive are set for TriggerRuntimeError reports.
 	Class string `json:"class,omitempty"`
 	Hive  string `json:"hive,omitempty"`
+	// Repos are the owner/repo names this report attributes to the hive:
+	// its watched repos plus the triggering item's repo, already filtered by
+	// the operator's include_repos policy. Joining merges them into the
+	// issue's affected block.
+	Repos []string `json:"repos,omitempty"`
 }
 
 type Result struct {

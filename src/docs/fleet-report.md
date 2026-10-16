@@ -114,6 +114,8 @@ Each report carries:
 | error class | the classified error, not the raw message |
 | count + window | how many occurrences, over what window |
 | detected periodicity | if the failures look periodic |
+| repos, owners | `runtime-error` only: the `owner/repo` names this hive watches (`project.repos`) and the distinct owners derived from them, as `N: a/b, c/d` — see [Repositories and owners](#repositories-and-owners) |
+| repo, ref | `runtime-error` only: the item the error was scoped to, when the class carries one (today `advisory_post_failed` → the digest's repo); `—` otherwise |
 | self-recovered | `no` on a report, `yes` on a recovery |
 
 The same fields appear as issue labels (`fleet-report`, `component:…`,
@@ -157,7 +159,48 @@ hive adds itself to that issue instead of opening a new one:
   diagnostics excerpt — at most once per hive per 24h;
 - its `hive/<slug>` label (created if missing) and `hive/selfreport`;
 - a bump to the `Affected hives (N): …` block in the issue body, edited
-  idempotently between `<!-- hive:selfreport-affected -->` markers.
+  idempotently between `<!-- hive:selfreport-affected -->` markers, with the
+  joining hive's repos merged into the block's `Affected repos (N)` /
+  `Affected owners (N)` union (below).
+
+### Repositories and owners
+
+So a maintainer can tell whether a fleet issue is confined to one project or
+one org, a `runtime-error` report names the repositories the reporting hive
+serves (hivecommons/hive#12338). The evidence table carries the hive's own
+view; the affected block carries the union across every hive that has
+reported, re-derived idempotently on each join:
+
+```
+<!-- hive:selfreport-affected -->
+**Affected hives (2):** hosted-aslom, hosted-available-oke-11-placeholder-r05x
+**Affected repos (3):** acme/widgets, hivecommons/hive, hivecommons/pluk
+**Affected owners (2):** acme, hivecommons
+seen_count: 3
+<!-- /hive:selfreport-affected -->
+```
+
+- `Affected repos` is the sorted union of every reporting hive's watched repos
+  plus any triggering `repo`; `Affected owners` is always re-derived from it,
+  never parsed back. A hive that re-reports with nothing new leaves the body
+  untouched; a known hive bringing a new repo edits only the block.
+- Repo names are validated to exactly `owner/name` (lower-cased, GitHub-safe
+  characters) before they leave the hive; anything else is dropped.
+- **None of this enters the fingerprint.** The fingerprint stays class +
+  normalised message + version, so two hives watching different repos still
+  dedupe onto one issue.
+- The lines are omitted entirely (and the table cells render `—`) when no
+  reporting hive contributed repos, so pre-#12338 hives and opted-out hives
+  produce exactly the block they always did.
+
+**Privacy.** The report repo is public and `hive.yaml` does not record
+whether a watched repo is private, so the hive cannot filter private repos
+for you. `governor.fleet_report.include_repos` (default `true`; Settings →
+Governor → "Self-Reported Issues" → "Name the watched repositories in
+self-reports") turns the whole feature off for a hive whose `project.repos`
+include private repositories: the table shows `—`, the report carries no
+repos, and the hive's joins never add to the union. The hub relay forwards
+the body as built, so the switch governs relayed reports too.
 
 A new issue is opened only when nothing matches. Rate limits apply to **new**
 filings only: at most `max_per_day` per hive per 24h, at least 1h between

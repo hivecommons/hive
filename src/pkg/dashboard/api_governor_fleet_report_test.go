@@ -15,13 +15,14 @@ import (
 // /api/config/governor/fleet-report, hivecommons/hive#11868).
 
 type fleetReportSectionBody struct {
-	Enabled     bool                   `json:"enabled"`
-	Explicit    bool                   `json:"explicit"`
-	HubManaged  bool                   `json:"hub_managed"`
-	Repo        string                 `json:"repo"`
-	MaxPerDay   int                    `json:"max_per_day"`
-	HiveSlug    string                 `json:"hive_slug"`
-	OpenReports []FleetReportOpenEntry `json:"open_reports"`
+	Enabled      bool                   `json:"enabled"`
+	Explicit     bool                   `json:"explicit"`
+	HubManaged   bool                   `json:"hub_managed"`
+	Repo         string                 `json:"repo"`
+	MaxPerDay    int                    `json:"max_per_day"`
+	IncludeRepos bool                   `json:"include_repos"`
+	HiveSlug     string                 `json:"hive_slug"`
+	OpenReports  []FleetReportOpenEntry `json:"open_reports"`
 }
 
 func decodeFleetReportSection(t *testing.T, rec *httptest.ResponseRecorder) fleetReportSectionBody {
@@ -118,5 +119,29 @@ func TestGovernorFleetReportGet_ListsOpenReportsNewestFirst(t *testing.T) {
 	body := decodeFleetReportSection(t, doOwnerGet(s, "/api/config/governor/fleet-report"))
 	if len(body.OpenReports) != 2 || body.OpenReports[0].Number != 11 || !body.OpenReports[0].Joined || body.OpenReports[1].Number != 10 {
 		t.Fatalf("open_reports = %+v", body.OpenReports)
+	}
+}
+
+func TestGovernorFleetReportIncludeReposToggleGatesWatchedRepos(t *testing.T) {
+	SetFleetReportStatePathForTest(t, filepath.Join(t.TempDir(), "fleet-report-state.json"))
+	s := covApiServer(t)
+	s.deps.Config.Project.Repos = []string{"HiveCommons/hive", "acme/widgets", "hivecommons/hive"}
+	body := decodeFleetReportSection(t, doOwnerGet(s, "/api/config/governor/fleet-report"))
+	if !body.IncludeRepos {
+		t.Fatalf("include_repos should default to true: %+v", body)
+	}
+	if got := s.FleetReportRepos(); len(got) != 2 || got[0] != "acme/widgets" || got[1] != "hivecommons/hive" {
+		t.Fatalf("FleetReportRepos default = %v", got)
+	}
+
+	rec := doPut(s, "/api/config/governor/fleet-report", map[string]any{"include_repos": false})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT include_repos=false: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := decodeFleetReportSection(t, rec); body.IncludeRepos {
+		t.Fatalf("include_repos not persisted: %+v", body)
+	}
+	if got := s.FleetReportRepos(); got != nil {
+		t.Fatalf("opted-out hive still names repos: %v", got)
 	}
 }

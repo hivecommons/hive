@@ -43144,10 +43144,11 @@ function burnAreaChart() {
     // marked dirty under the 'fleet-report' section, which the generic Save
     // dispatcher PUTs to /api/config/governor/fleet-report. Keys:
     // governor.fleet_report.enabled, governor.fleet_report.repo,
-    // governor.fleet_report.max_per_day.
+    // governor.fleet_report.max_per_day, governor.fleet_report.include_repos.
     function renderGovFleetReportSection(fr) {
       fr = fr || {};
       const on = fr.enabled === true;
+      const reposOn = fr.include_repos !== false;
       const sourceNote = fr.explicit ? 'set in hive.yaml' : (fr.hub_managed ? 'default for hub-managed hives: on' : 'default for self-hosted hives: off (dry-run preview only)');
       const openReports = Array.isArray(fr.open_reports) ? fr.open_reports : [];
       const openHtml = openReports.length === 0
@@ -43163,6 +43164,10 @@ function burnAreaChart() {
           <div class="config-field-row qa-hours">
             <div class="config-field"><label>Report repo ${settingHelpMark('settings', 'features', 'Report repo', `owner/repo that receives self-reports. Default hivecommons/hive. Hub-managed hives without write access relay through the hub, which files under the App identity.`)}</label><input type="text" value="${esc(fr.repo || '')}" placeholder="hivecommons/hive" data-change-action="markDirty" data-arg0="fleet-report" data-arg1="repo" data-arg-types="s,s,v"></div>
             <div class="config-field"><label>Max new issues per day ${settingHelpMark('settings', 'features', 'Max new issues per day', `Cap on NEW issues this hive may open per 24h. Joining an existing issue never counts. 0 means the default (5).`)}</label><input type="number" min="0" step="1" value="${fr.max_per_day || 0}" placeholder="5" data-change-action="markDirty" data-arg0="fleet-report" data-arg1="max_per_day" data-arg-types="s,s,N"></div>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${reposOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="fleet-report" data-key="include_repos"></div>
+            <span class="config-toggle-label">Name the watched repositories in self-reports ${yamlHint('governor.fleet_report.include_repos')} ${settingHelpMark('settings', 'features', 'Name the watched repositories in self-reports', `When on (default), a self-report lists the owner/repo names this hive watches and the owners derived from them, and the fleet issue merges them into its Affected repos / Affected owners lines, so a maintainer can see which projects an error touches. The report repo is public: turn this off if the watched repos include private repositories — the fields then render as "—" and nothing about the repos leaves the hive.`)}</span>
           </div>
           <div class="qa-schedule">${fr.hive_slug ? `<span class="qa-note">Identified upstream as <code>hive/${esc(fr.hive_slug)}</code>. </span>` : ''}${openHtml}</div>
         </div>`;

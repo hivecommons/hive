@@ -2338,6 +2338,17 @@ type FleetReportConfig struct {
 	// MaxPerDay caps NEW issues this hive may open per 24h. 0 = default 5.
 	// Joining an existing issue does not count against it.
 	MaxPerDay int `yaml:"max_per_day,omitempty" json:"max_per_day,omitempty"`
+	// IncludeRepos controls whether a self-report names the repositories
+	// this hive watches (project.repos) and the owners derived from them
+	// (#12338). nil = true. The report repo is public and hive.yaml does not
+	// record repo visibility, so operators whose project.repos include
+	// private repositories set this to false; the fields then render as "—".
+	IncludeRepos *bool `yaml:"include_repos,omitempty" json:"include_repos,omitempty"`
+}
+
+// IncludesRepos resolves include_repos: nil defaults to true.
+func (f FleetReportConfig) IncludesRepos() bool {
+	return f.IncludeRepos == nil || *f.IncludeRepos
 }
 
 // DefaultFleetReportRepo is where self-reports land unless overridden.

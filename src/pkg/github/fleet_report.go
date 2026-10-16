@@ -182,7 +182,7 @@ func (c *Client) joinFleetReportIssue(ctx context.Context, repo string, existing
 				_ = c.AddLabels(ctx, repo, num, []string{fleetreport.LabelSelfReport})
 			}
 		}
-		if newBody, changed := fleetreport.UpdateAffectedBlock(existing.GetBody(), hive, opts.SeenCommentAllowed); changed {
+		if newBody, changed := fleetreport.UpdateAffectedBlockWithRepos(existing.GetBody(), hive, report.Repos, opts.SeenCommentAllowed); changed {
 			if _, _, err := c.client.Issues.Edit(ctx, owner, name, num, &gh.IssueRequest{Body: gh.Ptr(logscrub.ScrubString(newBody))}); err != nil {
 				c.logger.Warn("fleet report: could not update affected-hives block", "issue", num, "error", err)
 			} else {
