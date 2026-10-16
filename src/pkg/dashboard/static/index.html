@@ -1558,13 +1558,21 @@
     .prt-trend-svg .area.other { fill:var(--prt-actor-other); opacity:.52; }
     .prt-trend-svg .area.human { fill:var(--prt-actor-human); opacity:.62; }
     .prt-trend-svg .area.hive { fill:var(--prt-actor-hive); opacity:.72; }
-    .evidence-card { margin-top: var(--sp-4); }
-    .ev-panel { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); margin-top:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); }
+    /* Panels tile like .prt-attribution: side by side on wide screens, one
+       column on phones. The card's head row always spans the full width. */
+    .evidence-card { margin-top: var(--sp-4); display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap:var(--sp-3); }
+    .evidence-card > .prt-head { grid-column:1 / -1; margin-bottom:0; }
+    .ev-panel { border:1px solid var(--border); border-radius:var(--r-sm); padding:var(--sp-3); background:color-mix(in srgb, var(--bg) 85%, transparent); min-width:0; }
     .ev-panel > summary { cursor:pointer; font-size:var(--fs-xs); font-weight:600; color:var(--text); }
     .ev-n { display:inline-block; margin-left:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); font-weight:400; color:var(--muted); }
-    .ev-svg { display:block; width:100%; max-width:640px; height:auto; margin-top:var(--sp-2); }
+    /* Pinned to the viewBox width (EV_SVG_W) so one user unit is one CSS px
+       and <text> renders at the token size instead of scaling with the card;
+       it only shrinks below that on phones narrower than the chart. */
+    .ev-svg { display:block; width:320px; max-width:100%; height:auto; margin-top:var(--sp-2); }
     .ev-svg .ev-axis { stroke:var(--border); stroke-width:1; }
-    .ev-svg text { fill:var(--muted); font-size:var(--fs-2xs); }
+    .ev-svg text { fill:var(--muted); font-family:var(--font-ui); font-size:var(--fs-2xs); }
+    .ev-svg text.ev-lbl { fill:var(--text); font-size:var(--fs-xs); }
+    .ev-svg text.ev-val { font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
     .ev-svg .ev-line { fill:none; stroke:var(--ev-c); stroke-width:1.5; }
     .ev-svg .ev-pt { fill:var(--ev-c); opacity:.85; }
     .ev-svg .ev-pt-block { fill:none; stroke:var(--ev-c); stroke-width:1.5; }
@@ -22059,6 +22067,9 @@ function burnAreaChart() {
     // scaled against the largest kind so rows are comparable. Rates in the
     // tooltip exclude still-open PRs.
     const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];
+    // viewBox width of every .ev-svg; the stylesheet pins the rendered width
+    // to the same px so labels keep the dashboard's font size (1 unit = 1px).
+    const EV_SVG_W = 320;
     function evOutcomesSvg(outcomes) {
       outcomes = outcomes || {};
       const kinds = EV_AUTHOR_KINDS.concat(Object.keys(outcomes).filter((k) => !EV_AUTHOR_KINDS.includes(k)).sort());
@@ -22067,7 +22078,7 @@ function burnAreaChart() {
         return { kind, n: Number(o.n) || 0, merged: Number(o.merged) || 0, closed: Number(o.closed) || 0, open: Number(o.open) || 0, reverted: Number(o.reverted_14d) || 0 };
       }).filter((r) => r.n > 0);
       if (!rows.length) return '<div class="ev-empty">— no PRs with an evidence bundle in this window</div>';
-      const w = 320, label = 70, valW = 40, barH = 7, gap = 2, rowH = 3 * (barH + gap) + 8, t = 4;
+      const w = EV_SVG_W, label = 70, valW = 40, barH = 7, gap = 2, rowH = 3 * (barH + gap) + 8, t = 4;
       const barW = w - label - valW;
       const h = t + rows.length * rowH;
       const maxN = Math.max(1, ...rows.map((r) => r.n));
@@ -22078,9 +22089,9 @@ function burnAreaChart() {
         const tip = escapeHtml(`${row.kind} authors: merged ${row.merged} (${pct(row.merged, decided)} of decided) · closed ${row.closed} · reverted within 14 d ${row.reverted} (${pct(row.reverted, row.merged)} of merged) · open ${row.open} · n=${row.n}`);
         const bar = (cls, v, k) => {
           const yy = y0 + k * (barH + gap);
-          return `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${((v / maxN) * barW).toFixed(1)}" height="${barH}"><title>${tip}</title></rect><text x="${w - 2}" y="${yy + barH}" text-anchor="end">${v}</text>`;
+          return `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${((v / maxN) * barW).toFixed(1)}" height="${barH}"><title>${tip}</title></rect><text class="ev-val" x="${w - 2}" y="${yy + barH}" text-anchor="end">${v}</text>`;
         };
-        return `<g><text x="0" y="${y0 + 13}">${escapeHtml(row.kind)}<title>${tip}</title></text><text class="ev-sub" x="0" y="${y0 + 24}">n=${row.n}</text>${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}</g>`;
+        return `<g><text class="ev-lbl" x="0" y="${y0 + 13}">${escapeHtml(row.kind)}<title>${tip}</title></text><text class="ev-sub" x="0" y="${y0 + 24}">n=${row.n}</text>${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}</g>`;
       }).join('');
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="PR outcome by author kind: merged, closed and reverted within 14 days for human, agent and bot authors">${body}</svg><div class="ev-legend"><span><i class="om"></i>merged</span><span><i class="oc"></i>closed without merge</span><span><i class="or"></i>reverted within 14 d of merge</span></div>`;
     }
@@ -22089,7 +22100,7 @@ function burnAreaChart() {
       const rows = calib.filter((p) => p && Array.isArray(p.buckets) && p.buckets.length);
       if (!rows.length) return '<div class="ev-empty">— no reviewer verdicts with a confidence in this window</div>';
       const names = rows[0].buckets.map((b) => String((b && b.bucket) || ''));
-      const w = 320, h = 150, l = 32, r = 10, t = 8, b = 22;
+      const w = EV_SVG_W, h = 150, l = 32, r = 20, t = 8, b = 22;
       const pw = w - l - r, ph = h - t - b;
       const x = (i) => l + (names.length > 1 ? (i * pw) / (names.length - 1) : pw / 2);
       const y = (v) => t + ph - v * ph;
@@ -22130,15 +22141,15 @@ function burnAreaChart() {
         });
       });
       if (!rows.length) return '<div class="ev-empty">— no reviewer verdicts in this window</div>';
-      const w = 320, label = 130, valW = 34, rowH = 24, t = 4;
+      const w = EV_SVG_W, label = 140, valW = 34, rowH = 24, t = 4;
       const barW = w - label - valW;
       const h = t + rows.length * rowH;
       const pct = (v) => (v == null ? '—' : Math.round(v * 100) + '%');
       const body = rows.map((row, i) => {
         const y0 = t + i * rowH;
         const tip = escapeHtml(`${row.model} · ${row.kind} authors: false-approve ${pct(row.fa)} of ${row.approvals} approvals · false-block ${pct(row.fb)} of ${row.blocks} blocks · n=${row.n}`);
-        const bar = (cls, v, yy) => `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${v == null ? 0 : (v * barW).toFixed(1)}" height="8"><title>${tip}</title></rect><text x="${w - 2}" y="${yy + 7}" text-anchor="end">${pct(v)}</text>`;
-        return `<g class="${row.model === 'unknown' ? 'ev-unknown' : ''}"><text x="0" y="${y0 + 13}">${escapeHtml(`${row.model} · ${row.kind}`.slice(0, 26))}<title>${tip}</title></text>${bar('fa', row.fa, y0 + 2)}${bar('fb', row.fb, y0 + 12)}</g>`;
+        const bar = (cls, v, yy) => `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${v == null ? 0 : (v * barW).toFixed(1)}" height="8"><title>${tip}</title></rect><text class="ev-val" x="${w - 2}" y="${yy + 7}" text-anchor="end">${pct(v)}</text>`;
+        return `<g class="${row.model === 'unknown' ? 'ev-unknown' : ''}"><text class="ev-lbl" x="0" y="${y0 + 13}">${escapeHtml(`${row.model} · ${row.kind}`.slice(0, 24))}<title>${tip}</title></text>${bar('fa', row.fa, y0 + 2)}${bar('fb', row.fb, y0 + 12)}</g>`;
       }).join('');
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer accuracy by reviewer model and author kind: false-approve and false-block rates">${body}</svg><div class="ev-legend"><span><i class="fa"></i>false-approve (approved, not merged)</span><span><i class="fb"></i>false-block (blocked, merged anyway)</span><span><i class="unknown"></i>model unknown</span></div>`;
     }
@@ -22157,11 +22168,11 @@ function burnAreaChart() {
           const o = g[side] || {};
           const n = Number(o.n) || 0;
           const reverted = Number(o.reverted) || 0;
-          rows.push({ label: `${label} · ${sideLabel}`, n, merged: Math.max(0, (Number(o.merged) || 0) - reverted), reverted, open: Number(o.open) || 0 });
+          rows.push({ label: `${label} · ${sideLabel}`, gate: label, side: sideLabel, n, merged: Math.max(0, (Number(o.merged) || 0) - reverted), reverted, open: Number(o.open) || 0 });
         });
       });
       if (!rows.length) return '<div class="ev-empty">— no shadow-gate observations in this window (review.shadow / intent shadow mode is off, or no PR was evaluated)</div>';
-      const w = 320, label = 150, valW = 30, rowH = 18, t = 4;
+      const w = EV_SVG_W, label = 110, valW = 30, rowH = 26, t = 4;
       const barW = w - label - valW;
       const h = t + rows.length * rowH;
       const maxN = Math.max(1, ...rows.map((r) => r.n));
@@ -22171,11 +22182,11 @@ function burnAreaChart() {
         let x0 = label;
         const seg = (cls, v) => {
           const sw = (v / maxN) * barW;
-          const out = v > 0 ? `<rect class="ev-bar ${cls}" x="${x0.toFixed(1)}" y="${y0 + 2}" width="${sw.toFixed(1)}" height="10"><title>${tip}</title></rect>` : '';
+          const out = v > 0 ? `<rect class="ev-bar ${cls}" x="${x0.toFixed(1)}" y="${y0 + 7}" width="${sw.toFixed(1)}" height="10"><title>${tip}</title></rect>` : '';
           x0 += sw;
           return out;
         };
-        return `<g><text x="0" y="${y0 + 11}">${escapeHtml(row.label.slice(0, 34))}<title>${tip}</title></text>${seg('sm', row.merged)}${seg('sr', row.reverted)}${seg('so', row.open)}<text x="${w - 2}" y="${y0 + 11}" text-anchor="end">${row.n}</text></g>`;
+        return `<g><text class="ev-lbl" x="0" y="${y0 + 11}">${escapeHtml(row.gate)}<title>${tip}</title></text><text class="ev-sub" x="0" y="${y0 + 21}">${escapeHtml(row.side)}</text>${seg('sm', row.merged)}${seg('sr', row.reverted)}${seg('so', row.open)}<text class="ev-val" x="${w - 2}" y="${y0 + 16}" text-anchor="end">${row.n}</text></g>`;
       }).join('');
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Shadow gates: PRs the review gate or intent verification would have stopped or passed, by actual outcome">${body}</svg><div class="ev-legend"><span><i class="sm"></i>merged</span><span><i class="sr"></i>merged, later reverted</span><span><i class="so"></i>still open</span></div>`;
     }
@@ -22187,7 +22198,7 @@ function burnAreaChart() {
       const rows = (Array.isArray(weeks) ? weeks : []).filter((w) => w && Number(w.n) > 0);
       if (!rows.length) return '<div class="ev-empty">— no agent-authored PRs with evidence in this window</div>';
       const series = [['claimed', 'cv-claim', 'claimed done'], ['ci_not_green', 'cv-ci', 'CI not green'], ['verdict_not_approve', 'cv-swarm', 'swarm not approve'], ['both', 'cv-both', 'both']];
-      const w = 320, h = 150, l = 26, r = 6, t = 8, b = 22;
+      const w = EV_SVG_W, h = 150, l = 26, r = 6, t = 8, b = 22;
       const pw = w - l - r, ph = h - t - b;
       const groupW = pw / rows.length;
       const barW = Math.max(2, (groupW * 0.8) / series.length);

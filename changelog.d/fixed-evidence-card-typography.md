@@ -1,0 +1,1 @@
+- Dashboard: the 🔬 Evidence card's charts now use the dashboard's font tokens and render at 1:1 instead of scaling with the card width, so axis, row and value labels match the rest of the Throughput section; its panels tile side by side on wide screens and the shadow-gate labels no longer run into the bars.

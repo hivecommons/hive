@@ -68,10 +68,24 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"records_empty_ci",
 		"Only agent-authored PRs",
 		".ev-svg .ev-bar.cv-both",
+		// Typography / sizing (#evidence-card font bug): the chart is pinned to
+		// its viewBox width so SVG text renders 1:1 at the dashboard's font
+		// tokens, and panels tile in a grid instead of each spanning the card.
+		"const EV_SVG_W = 320;",
+		".ev-svg { display:block; width:320px; max-width:100%; height:auto;",
+		".ev-svg text { fill:var(--muted); font-family:var(--font-ui); font-size:var(--fs-2xs); }",
+		".ev-svg text.ev-lbl { fill:var(--text); font-size:var(--fs-xs); }",
+		".evidence-card { margin-top: var(--sp-4); display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr));",
+		".evidence-card > .prt-head { grid-column:1 / -1;",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("Evidence card missing snippet %q", snippet)
 		}
+	}
+	// Every SVG helper must draw at the shared width; a hard-coded 320 would
+	// silently drift from the CSS pin if the constant ever changes.
+	if m := regexp.MustCompile(`const w = 320\b`).FindString(html); m != "" {
+		t.Errorf("ev*Svg helpers must size from EV_SVG_W, found %q", m)
 	}
 	// Panel order follows the RFC numbering: 1 (outcome) renders first.
 	p1 := strings.Index(html, "evPanel('outcome-by-author'")
