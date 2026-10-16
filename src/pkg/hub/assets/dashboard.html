@@ -429,6 +429,16 @@
     .compliance-pill-warn { color: var(--yellow); border: 1px solid var(--yellow); }
     .compliance-pill-fail { color: var(--red); border: 1px solid var(--red); }
     .compliance-link { text-decoration: none; }
+    .fleet-quadrant-drill { cursor: pointer; }
+    .fleet-quadrant-drill:hover, .fleet-quadrant-drill:focus-visible { border-color: var(--hub-dashboard-accent) !important; outline: none; }
+    .evidence-section { margin-bottom: var(--sp-8); }
+    .evidence-title { font-size: var(--fs-base); color: var(--text); margin: 0 0 var(--sp-2); }
+    .evidence-note { font-size: 0.75rem; color: var(--muted); margin: 0 0 var(--sp-3); }
+    .evidence-table td, .evidence-table th { padding: 6px 8px; }
+    .evidence-ci { color: var(--muted); white-space: nowrap; }
+    .evidence-empty { color: var(--muted); text-align: center; }
+    .evidence-msg { font-size: 0.85rem; color: var(--muted); }
+    .evidence-error { color: var(--red); }
     .th-mid { vertical-align: middle; }
     .journey-snoozed { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
     /* The relay badge marks a hive satisfying stage 2 through human
@@ -1091,7 +1101,7 @@
       }).join('');
       /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
          against itself would render two identical overlaid polygons. */
-      return '<div style="display:flex;align-items:center;gap:var(--sp-6);margin:0 auto 12px;padding:10px 14px;' +
+      return '<div' + fleetQuadrantDrillAttrs() + ' style="display:flex;align-items:center;gap:var(--sp-6);margin:0 auto 12px;padding:10px 14px;' +
           'background:var(--bg-soft);border:1px solid var(--line);border-radius:8px;width:fit-content">' +
           quadrantSVG(q, null, 78, false) +
           '<div>' +
@@ -1100,6 +1110,168 @@
             '<div style="display:flex;gap:14px">' + axes + '</div>' +
           '</div>' +
         '</div>';
+    }
+
+    /* fleetQuadrantDrillAttrs makes the Fleet quadrant card the entry point to
+       the evidence drill-down (#12117). GET /api/hub/evidence is hub-admin only
+       (requireAdmin, the same gate as /api/hub/compliance), so the affordance is
+       gated on the same _isAdmin signal: everyone else keeps the plain card with
+       no role, tab stop, pointer or handler that would only lead to a 403. */
+    function fleetQuadrantDrillAttrs() {
+      if (!_isAdmin) return '';
+      return ' class="fleet-quadrant-drill" role="button" tabindex="0" aria-haspopup="dialog" aria-controls="evidence-modal"' +
+        ' title="Open the fleet evidence details" aria-label="Fleet quadrant — open the evidence details"' +
+        ' onclick="openEvidenceModal()" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();openEvidenceModal();}"';
+    }
+
+    /* ---- Evidence details view (#12117) --------------------------------
+       Renders the GET /api/hub/evidence body. Every rate is {n, rate, lo, hi}
+       and the server nulls rate/lo/hi below its minimum sample, so a null is
+       printed as "—": an unmeasured rate must never read as 0%. */
+    var EVIDENCE_NULL = '—';
+    var EVIDENCE_FAMILY_MIXES = ['same', 'cross', 'mixed'];
+
+    function evidencePct(v) {
+      if (v === null || v === undefined || typeof v !== 'number' || !isFinite(v)) return EVIDENCE_NULL;
+      return (Math.round(v * 1000) / 10).toFixed(1) + '%';
+    }
+
+    function evidenceInterval(r) {
+      if (!r || r.lo === null || r.lo === undefined || r.hi === null || r.hi === undefined) return EVIDENCE_NULL;
+      return evidencePct(r.lo) + ' – ' + evidencePct(r.hi);
+    }
+
+    function evidenceCount(v) {
+      return (v === null || v === undefined) ? EVIDENCE_NULL : esc(String(v));
+    }
+
+    /* Three cells per rate: n, the rate, and its 95% Wilson interval. */
+    function evidenceRateCells(r) {
+      r = r || {};
+      return '<td>' + evidenceCount(r.n) + '</td><td>' + evidencePct(r.rate) + '</td><td class="evidence-ci">' + evidenceInterval(r) + '</td>';
+    }
+
+    function evidenceRateHeads(label) {
+      return '<th>' + esc(label) + ' n</th><th>' + esc(label) + '</th><th>95% CI</th>';
+    }
+
+    function evidenceTable(title, head, rows, note) {
+      return '<section class="evidence-section"><h3 class="evidence-title">' + esc(title) + '</h3>' +
+        (note ? '<p class="evidence-note">' + esc(note) + '</p>' : '') +
+        '<div class="table-wrap"><table class="hive-table evidence-table"><thead><tr>' + head + '</tr></thead><tbody>' +
+        (rows || '<tr><td colspan="99" class="evidence-empty">No data reported yet.</td></tr>') +
+        '</tbody></table></div></section>';
+    }
+
+    function evidenceHiveLabel(h) {
+      return esc((h && (h.name || h.id)) || '');
+    }
+
+    function evidenceViewHTML(data) {
+      data = data || {};
+      var hives = Array.isArray(data.hives) ? data.hives : [];
+      var reported = hives.filter(function(h) { return h && h.reported; });
+      var out = '<p class="evidence-note">' + evidenceCount(data.reporting) + ' of ' + evidenceCount(data.spokes) +
+        ' hives report evidence. Rates show "' + EVIDENCE_NULL + '" below the minimum sample.</p>';
+
+      var cov = data.record_coverage || {};
+      out += evidenceTable('Evidence coverage', '<th>Scope</th>' + evidenceRateHeads('Coverage'),
+        '<tr><td>Fleet</td>' + evidenceRateCells(cov) + '</tr>' +
+        hives.map(function(h) {
+          return '<tr><td>' + evidenceHiveLabel(h) + '</td>' + evidenceRateCells(h.record_coverage) + '</tr>';
+        }).join(''),
+        'Merged PRs with an evidence record over merged PRs (90 days).');
+
+      var cal = Array.isArray(data.calibration) ? data.calibration : [];
+      var calHead = '<th>Bucket</th>' + evidenceRateHeads('Fleet') +
+        reported.map(function(h) { return '<th>' + evidenceHiveLabel(h) + '</th>'; }).join('');
+      var calRows = cal.map(function(b, i) {
+        var bucket = (b && b.bucket !== undefined) ? b.bucket : i;
+        return '<tr><td>' + esc(String(bucket)) + '</td>' + evidenceRateCells(b) +
+          reported.map(function(h) {
+            var r = (Array.isArray(h.calibration) && h.calibration[bucket]) || null;
+            var title = r ? 'n=' + r.n + ', 95% CI ' + evidenceInterval(r) : 'no data';
+            return '<td title="' + escAttr(title) + '">' + (r ? evidencePct(r.rate) : EVIDENCE_NULL) + '</td>';
+          }).join('') + '</tr>';
+      }).join('');
+      out += evidenceTable('Calibration curve', calHead, calRows,
+        'Bad-outcome rate per reviewer confidence bucket (0–5), pooled across the fleet with each reporting hive overlaid.');
+
+      var acmm = Array.isArray(data.by_acmm_level) ? data.by_acmm_level : [];
+      out += evidenceTable('ACMM level × outcome', '<th>Level</th><th>Hives</th><th>Merged (90d)</th>' + evidenceRateHeads('Revert rate'),
+        acmm.map(function(a) {
+          return '<tr><td>L' + evidenceCount(a.level) + '</td><td>' + evidenceCount(a.hives) + '</td><td>' + evidenceCount(a.merged_90d) + '</td>' +
+            evidenceRateCells(a.revert_rate) + '</tr>';
+        }).join(''),
+        'Median time-to-merge is not reported by spokes yet.');
+
+      var fam = data.family_false_approve_rate || {};
+      out += evidenceTable('Same- vs cross-family false approve', '<th>Family mix</th>' + evidenceRateHeads('False approve'),
+        EVIDENCE_FAMILY_MIXES.map(function(k) {
+          return '<tr><td>' + esc(k) + '</td>' + evidenceRateCells(fam[k]) + '</tr>';
+        }).join(''),
+        'Hives classed by their reviewer vs author model families.');
+
+      out += evidenceTable('Per-hive evidence',
+        '<th>Hive</th><th>ACMM</th><th>Family mix</th><th>Verdicts (90d)</th>' +
+          evidenceRateHeads('False approve') + evidenceRateHeads('False block') +
+          '<th>Merged (90d)</th>' + evidenceRateHeads('Revert rate'),
+        hives.map(function(h) {
+          if (!h.reported) {
+            return '<tr><td>' + evidenceHiveLabel(h) + '</td><td>L' + evidenceCount(h.acmm_level) + '</td>' +
+              '<td colspan="12" class="evidence-empty">No evidence reported</td></tr>';
+          }
+          return '<tr><td>' + evidenceHiveLabel(h) + '</td><td>L' + evidenceCount(h.acmm_level) + '</td><td>' + esc(h.family_mix || EVIDENCE_NULL) + '</td>' +
+            '<td>' + evidenceCount(h.verdicts_90d) + '</td>' + evidenceRateCells(h.false_approve_rate) + evidenceRateCells(h.false_block_rate) +
+            '<td>' + evidenceCount(h.merged_90d) + '</td>' + evidenceRateCells(h.revert_rate) + '</tr>';
+        }).join(''),
+        'Revert rate by author kind is not reported by spokes yet.');
+
+      /* Shadow gate vs outcome is only emitted once spokes report it. */
+      if (data.shadow_gate && typeof data.shadow_gate === 'object') {
+        out += evidenceTable('Shadow gate vs outcome', '<th>Outcome</th>' + evidenceRateHeads('Rate'),
+          Object.keys(data.shadow_gate).map(function(k) {
+            var r = data.shadow_gate[k];
+            return (r && typeof r === 'object') ? '<tr><td>' + esc(k) + '</td>' + evidenceRateCells(r) + '</tr>' : '';
+          }).join(''));
+      }
+      return out;
+    }
+
+    /* evidencePanelHTML maps a fetch result onto the panel body. A 403 is the
+       member path (the card never links for them, but a stale tab or a direct
+       call can still land here) and gets an explanation, not an error. */
+    function evidencePanelHTML(status, data) {
+      if (status === 403) {
+        return '<div class="evidence-msg" role="status">The evidence details are limited to hub admins.</div>';
+      }
+      if (status !== 200) {
+        return '<div class="evidence-msg evidence-error" role="alert">Could not load the evidence details (HTTP ' + esc(String(status)) + ').</div>';
+      }
+      return evidenceViewHTML(data);
+    }
+
+    async function openEvidenceModal() {
+      var modal = document.getElementById('evidence-modal');
+      var el = document.getElementById('evidence-body');
+      if (!modal || !el) return;
+      el.innerHTML = '<div class="loading">Loading...</div>';
+      modal.style.display = 'flex';
+      hiveHubRememberModalOpen(modal);
+      var closeBtn = document.getElementById('evidence-close');
+      if (closeBtn && closeBtn.focus) closeBtn.focus();
+      try {
+        var resp = await fetch('/api/hub/evidence');
+        var data = resp.ok ? await resp.json() : null;
+        el.innerHTML = evidencePanelHTML(resp.ok ? 200 : resp.status, data);
+      } catch (e) {
+        el.innerHTML = '<div class="evidence-msg evidence-error" role="alert">Failed to load the evidence details: ' + esc((e && e.message) || 'network error') + '</div>';
+      }
+    }
+
+    function closeEvidenceModal() {
+      var modal = document.getElementById('evidence-modal');
+      if (modal) modal.style.display = 'none';
     }
 
     /* ---- Clickable user avatars ---------------------------------------
@@ -1671,6 +1843,7 @@
       add(document.getElementById('banner-modal'), function() { document.getElementById('banner-modal').style.display = 'none'; }, 100);
       add(document.getElementById('create-modal'), function() { document.getElementById('create-modal').style.display = 'none'; }, 100);
       add(document.getElementById('timeline-modal'), function() { document.getElementById('timeline-modal').style.display = 'none'; }, 100);
+      add(document.getElementById('evidence-modal'), function() { closeEvidenceModal(); }, 100);
       add(document.getElementById('access-modal'), function() { document.getElementById('access-modal').style.display = 'none'; }, 100);
       if (!candidates.length) return false;
       candidates.sort(function(a, b) { return (b.rank - a.rank) || (b.order - a.order); });
@@ -12616,6 +12789,18 @@
       </div>
       <div style="display:flex;justify-content:flex-end;padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border);flex-shrink:0">
         <button class="hv-btn btn-primary" onclick="document.getElementById('timeline-modal').style.display='none'">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="evidence-modal" role="dialog" aria-modal="true" aria-labelledby="evidence-modal-title" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:1100px;width:95%;max-height:86vh;display:flex;flex-direction:column">
+      <h2 id="evidence-modal-title" style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-4);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Fleet evidence</h2>
+      <div style="flex:1;overflow:auto;padding:var(--sp-0) var(--sp-9) var(--sp-8)">
+        <div id="evidence-body"><div class="loading">Loading...</div></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border);flex-shrink:0">
+        <button class="hv-btn btn-primary" id="evidence-close" onclick="closeEvidenceModal()">Close</button>
       </div>
     </div>
   </div>
