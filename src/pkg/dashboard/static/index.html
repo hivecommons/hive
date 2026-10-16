@@ -22708,8 +22708,13 @@ function burnAreaChart() {
     // Panel 7 (#12369). Monthly observations are report-only and independent
     // of PR author kind. Missing tool measurements stay gaps, never zeroes.
     function evMaintainabilityRows(dto) {
-      const end = new Date().toISOString().slice(0, 7);
-      const start = Number(dto.hours) > 0 ? new Date(Date.now() - Number(dto.hours) * 3600000).toISOString().slice(0, 7) : '';
+      // Custom ranges carry from/to (to is exclusive) and hours is only the
+      // rounded span, so the month window must come from from/to when present.
+      const month = (ms) => new Date(ms).toISOString().slice(0, 7);
+      const fromMs = Date.parse(dto.from || ''), toMs = Date.parse(dto.to || '');
+      const custom = Number.isFinite(fromMs) && Number.isFinite(toMs) && toMs > fromMs;
+      const end = custom ? month(toMs - 1) : month(Date.now());
+      const start = custom ? month(fromMs) : Number(dto.hours) > 0 ? month(Date.now() - Number(dto.hours) * 3600000) : '';
       return (Array.isArray(dto.complexity_by_repo) ? dto.complexity_by_repo : [])
         .filter((r) => r && (!dto.repo || String(r.repo).toLowerCase() === String(dto.repo).toLowerCase()))
         .map((r) => ({ repo: String(r.repo), months: (Array.isArray(r.months) ? r.months : [])

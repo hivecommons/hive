@@ -164,6 +164,12 @@ assert.deepEqual(rows[1].months.map(m => m.month), ['2020-01', '2020-03']);
 assert.equal(rows.filter(r => r.months.length >= 2).length, 1);
 assert.equal(evMaintainabilityRows({...dto, repo: 'O/Z'}).length, 1);
 assert.equal(evMaintainabilityRows({...dto, hours: 24}).length, 0);
+// Custom range: from/to win over hours; To is exclusive so 2020-03 is out.
+const custom = evMaintainabilityRows({...dto, hours: 1440, from: '2020-01-15T00:00:00Z', to: '2020-03-01T00:00:00Z'});
+assert.deepEqual(custom.map(r => r.repo), ['o/<b>', 'o/z']);
+assert.deepEqual(custom[1].months.map(m => m.month), ['2020-01']);
+assert.deepEqual(evMaintainabilityRows({...dto, hours: 1440, from: '2019-01-01T00:00:00Z', to: '2019-12-31T00:00:00Z'}), []);
+assert.equal(evMaintainabilityRows({...dto, from: 'garbage', to: ''}).length, 2);
 assert.deepEqual(evMaintainabilityRows({}), []);
 assert.match(evMaintainabilitySvg([], []), /no monthly complexity snapshots/);
 const svg = evMaintainabilitySvg(rows, [
