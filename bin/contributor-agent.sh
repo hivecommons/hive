@@ -1192,7 +1192,16 @@ echo "  ClankeR: PID $RELAY_PID"
 if [[ -n "$QUOTA_PUBLISHER_PID" ]]; then
   echo "  Quota:   publisher PID $QUOTA_PUBLISHER_PID (HIVE_CONTRIBUTOR_QUOTA_PUBLISH=0 to opt out)"
 fi
-if [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
+# Interactive krun mode (#12202): the krun handler refuses exec, so the
+# launcher starts this container with a TTY and the session is shown on the
+# VM console instead, reached with `<runtime> attach`.
+KRUN_CONSOLE=false
+if [[ "$CONTRIBUTOR_MODE" == "interactive" && "${HIVE_ISOLATION_CLASS:-}" == "microvm-krun" && -t 0 ]]; then
+  KRUN_CONSOLE=true
+fi
+if [[ "$KRUN_CONSOLE" == "true" ]]; then
+  echo "  Console: $CONTAINER_RUNTIME attach $CONTAINER_NAME (detach: Ctrl-P Ctrl-Q)"
+elif [[ "$CONTRIBUTOR_MODE" == "interactive" ]]; then
   echo "  Tmux:    $CONTAINER_RUNTIME exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
 else
   # Headless: no pane to attach to. The relay drives a one-shot CLI per task and
@@ -1220,6 +1229,18 @@ forward_usr1() {
   kill -USR1 "$RELAY_PID" 2>/dev/null || true
 }
 trap forward_usr1 SIGUSR1
+
+# Keep a tmux client on the console for as long as the relay runs, so an
+# attach always lands in the session and a tmux detach just reattaches. It
+# runs in the background, so this script keeps handling signals; stdin is
+# redirected explicitly because a background job otherwise reads /dev/null.
+if [[ "$KRUN_CONSOLE" == "true" ]]; then
+  (
+    while kill -0 "$RELAY_PID" 2>/dev/null; do
+      tmux attach -t "$TMUX_SESSION" || sleep 2
+    done
+  ) <&0 &
+fi
 
 # A trapped signal makes `wait` return early (128+signal), so re-wait until the
 # relay has really exited and keep its exit code.

@@ -132,7 +132,15 @@ case "${1:-}" in
     fi
     exit 0
     ;;
-  logs|pull|stop) exit 0 ;;
+  # How the recipe follows the contributor: `logs -f` (relay logs) or, in
+  # interactive krun mode, `wait` (#12202).
+  logs|wait)
+    if [ -n "${RUNTIME_CAPTURE:-}" ]; then
+      printf '%s\n' "$*" >> "$RUNTIME_CAPTURE.follow"
+    fi
+    exit 0
+    ;;
+  pull|stop) exit 0 ;;
   *) exit 1 ;;
 esac
 EOF
@@ -213,7 +221,7 @@ done
 run_recipe() {
   local runtime="$1" args="$2"
   shift 2
-  rm -f "$CAPTURE" "$CAPTURE.smoke" "$CAPTURE.engine"
+  rm -f "$CAPTURE" "$CAPTURE.smoke" "$CAPTURE.engine" "$CAPTURE.follow"
   (
     cd "$ROOT" || exit 1
     # shellcheck disable=SC2086 # recipe args split on purpose
@@ -379,13 +387,6 @@ check "krun with local mode exits non-zero" "1" "$RC"
 contains "local refusal gives the reason" "$OUT" "cannot be combined with local mode"
 started_nothing "krun with local mode"
 
-OUT="$(run_krun "" codex CONTRIBUTOR_MODE=interactive)"; RC=$?
-check "krun interactive exits non-zero" "1" "$RC"
-contains "interactive refusal requires headless" "$OUT" "requires CONTRIBUTOR_MODE=headless"
-contains "interactive refusal explains exec" "$OUT" "refuses 'podman exec'"
-contains "interactive refusal points at #12202" "$OUT" "#12202"
-started_nothing "krun interactive"
-
 OUT="$(run_krun "" pi)"; RC=$?
 check "krun with pi exits non-zero" "1" "$RC"
 contains "pi refusal names the backend and reason" "$OUT" "does not support backend 'pi'"
@@ -395,6 +396,7 @@ started_nothing "krun with pi"
 OUT="$(run_krun "" omp)"; RC=$?
 check "krun with a backend without headless entry exits non-zero" "1" "$RC"
 contains "no-headless refusal names the backend" "$OUT" "no headless entry for 'omp'"
+contains "no-headless refusal points at interactive mode" "$OUT" "Unset CONTRIBUTOR_MODE"
 started_nothing "krun with omp"
 
 OUT="$(run_krun "" codex STUB_UNAME_S=Darwin)"; RC=$?
@@ -480,6 +482,13 @@ lacks "plain launch passes no host kernel release (#12200)" "$REFERENCE" "HIVE_T
 lacks "krun output has no exec attach command" "$OUT" "exec -it"
 contains "krun banner has the Isolation line" "$OUT" "Isolation: microVM (krun), guest kernel 6.12.68-krun-guest, 3072 MiB guest of a 4g container limit, 2 vCPUs"
 lacks "bare-metal host gets no nested warning" "$OUT" "nested krun is untested"
+lacks "headless krun launch gets no TTY (#12202)" "$(cat "$CAPTURE")" "--tty"
+lacks "headless krun launch keeps stdin closed (#12202)" "$(cat "$CAPTURE")" "--interactive"
+contains "headless krun output still says there is nothing to attach to" "$OUT" "Attach:    none in krun mode (headless; the krun handler refuses exec)."
+lacks "headless krun output has no console attach command (#12202)" "$OUT" "podman attach"
+lacks "headless krun output has no detach keys (#12202)" "$OUT" "Ctrl-P Ctrl-Q"
+contains "headless krun output still shows the relay logs" "$OUT" "Relay logs:"
+check "headless krun recipe follows the relay logs" "logs" "$(cut -d' ' -f1 "$CAPTURE.follow" 2>/dev/null)"
 
 OUT="$(run_krun "" codex HIVE_CONTAINER_CPUS=1.5)"; RC=$?
 check "krun with 1.5 CPUs succeeds" "0" "$RC"
@@ -507,6 +516,49 @@ contains "nested host gets the warning" "$OUT" "nested krun is untested and may 
 OUT="$(run_krun "" codex STUB_VIRT=unavailable)"; RC=$?
 check "krun with no virt check succeeds" "0" "$RC"
 lacks "unavailable virt check gives no warning" "$OUT" "nested krun is untested"
+
+echo ""
+echo "-- interactive krun mode through the VM console (#12202) --"
+for mode in interactive ""; do
+  OUT="$(run_krun "" codex CONTRIBUTOR_MODE="$mode")"; RC=$?
+  check "krun with CONTRIBUTOR_MODE='$mode' is no longer refused" "0" "$RC"
+  lacks "krun with CONTRIBUTOR_MODE='$mode' prints no headless refusal" "$OUT" "requires CONTRIBUTOR_MODE=headless"
+  check "krun with CONTRIBUTOR_MODE='$mode' still runs under krun" "krun" "$(arg_after --runtime)"
+  check "krun with CONTRIBUTOR_MODE='$mode' still uses podman" "podman" "$(cat "$CAPTURE.engine" 2>/dev/null)"
+done
+OUT="$(run_krun "" codex CONTRIBUTOR_MODE=interactive)"; RC=$?
+check "interactive krun launch succeeds" "0" "$RC"
+contains "interactive krun launch keeps stdin open" "$(cat "$CAPTURE")" "--interactive"
+contains "interactive krun launch gets a TTY" "$(cat "$CAPTURE")" "--tty"
+contains "interactive krun launch passes the isolation class" "$(cat "$CAPTURE")" "HIVE_ISOLATION_CLASS=microvm-krun"
+contains "interactive krun output has the attach command" "$OUT" "podman attach hive-contributor-codex-"
+contains "interactive krun output has the detach keys" "$OUT" "Ctrl-P Ctrl-Q"
+lacks "interactive krun output has no exec command" "$OUT" "exec -it"
+lacks "interactive krun output has no tmux attach hint" "$OUT" "tmux attach"
+lacks "interactive krun output does not stream the console as relay logs" "$OUT" "Relay logs:"
+check "interactive krun recipe waits on the container" "wait" "$(cut -d' ' -f1 "$CAPTURE.follow" 2>/dev/null)"
+contains "interactive krun keeps the Isolation line" "$OUT" "Isolation: microVM (krun)"
+
+OUT="$(run_krun "" omp CONTRIBUTOR_MODE=)"; RC=$?
+check "interactive-only omp launches in krun mode" "0" "$RC"
+check "omp in krun mode runs under krun" "krun" "$(arg_after --runtime)"
+contains "omp in krun mode gets a TTY" "$(cat "$CAPTURE")" "--tty"
+contains "omp in krun mode prints the attach command" "$OUT" "podman attach hive-contributor-omp-"
+lacks "omp in krun mode prints no exec command" "$OUT" "exec -it"
+
+# Interactive krun keeps every refusal: no docker, no local, no pi.
+OUT="$(run_krun docker codex CONTRIBUTOR_MODE=interactive)"; RC=$?
+check "interactive krun with docker exits non-zero" "1" "$RC"
+started_nothing "interactive krun with docker"
+OUT="$(run_krun "" "codex local" CONTRIBUTOR_MODE=interactive)"; RC=$?
+check "interactive krun with local mode exits non-zero" "1" "$RC"
+started_nothing "interactive krun with local mode"
+OUT="$(run_krun "" pi CONTRIBUTOR_MODE=interactive)"; RC=$?
+check "interactive krun with pi exits non-zero" "1" "$RC"
+started_nothing "interactive krun with pi"
+OUT="$(run_krun "" codex CONTRIBUTOR_MODE=interactive STUB_ROOTLESS=false)"; RC=$?
+check "interactive krun under rootful podman exits non-zero" "1" "$RC"
+started_nothing "interactive krun under rootful podman"
 
 echo ""
 echo "-- krun set only in contributor.env (#12199) --"

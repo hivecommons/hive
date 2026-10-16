@@ -891,7 +891,8 @@ contribute-move backend="claude": check-version (contribute-check-backend backen
 # Runtime: auto-detects docker then podman (discovery order, not posture —
 # see src/docs/podman-rootless-ci.md); force with HIVE_CONTAINER_RUNTIME=podman
 # Hardened mode (opt-in): HIVE_CONTAINER_OCI_RUNTIME=krun runs the container in a
-# krun microVM under rootless podman, headless only, failing closed (#12199).
+# krun microVM under rootless podman, failing closed (#12199); interactive
+# sessions are reached through the VM console with podman attach (#12202).
 contribute-hive backend="" mode="docker": check-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -949,27 +950,26 @@ contribute-hive backend="" mode="docker": check-version
         echo "  Drop 'local', or unset HIVE_CONTAINER_OCI_RUNTIME to run on the host."
         exit 1
       fi
-      if [[ "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then
-        echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) requires CONTRIBUTOR_MODE=headless."
-        echo "  krun mode has no way to attach to an interactive session yet: the krun handler"
-        echo "  refuses 'podman exec'. Interactive krun mode is tracked in #12202."
-        exit 1
-      fi
       if [[ "$BACKEND" == "pi" ]]; then
         echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) does not support backend 'pi'."
         echo "  pi needs host networking to find a local model server, which a microVM cannot share."
         exit 1
       fi
-      # The relay's own HEADLESS_BACKENDS table is the source of truth (same
-      # extraction bin/test_backend_smoke.sh uses). Empty means the table could
-      # not be read, which refuses rather than guesses.
-      KRUN_HEADLESS_BACKENDS="$(sed -n '/^const HEADLESS_BACKENDS = {$/,/^};$/p' bin/contributor-relay.js 2>/dev/null \
-        | grep -E '^  [a-z]+: \{' | sed -E 's/^  ([a-z]+):.*/\1/' | tr '\n' ' ' || true)"
-      if [[ " ${KRUN_HEADLESS_BACKENDS} " != *" ${BACKEND} "* ]]; then
-        echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) does not support backend '${BACKEND}'."
-        echo "  krun mode is headless only and the relay has no headless entry for '${BACKEND}'."
-        echo "  Headless backends: ${KRUN_HEADLESS_BACKENDS:-(could not read bin/contributor-relay.js)}"
-        exit 1
+      # Interactive krun mode (#12202) needs no headless entry: the session
+      # is reached through the VM console (podman attach), never exec.
+      if [[ "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
+        # The relay's own HEADLESS_BACKENDS table is the source of truth (same
+        # extraction bin/test_backend_smoke.sh uses). Empty means the table could
+        # not be read, which refuses rather than guesses.
+        KRUN_HEADLESS_BACKENDS="$(sed -n '/^const HEADLESS_BACKENDS = {$/,/^};$/p' bin/contributor-relay.js 2>/dev/null \
+          | grep -E '^  [a-z]+: \{' | sed -E 's/^  ([a-z]+):.*/\1/' | tr '\n' ' ' || true)"
+        if [[ " ${KRUN_HEADLESS_BACKENDS} " != *" ${BACKEND} "* ]]; then
+          echo "ERROR: krun mode (HIVE_CONTAINER_OCI_RUNTIME=krun) does not support backend '${BACKEND}' headless."
+          echo "  CONTRIBUTOR_MODE=headless and the relay has no headless entry for '${BACKEND}'."
+          echo "  Headless backends: ${KRUN_HEADLESS_BACKENDS:-(could not read bin/contributor-relay.js)}"
+          echo "  Unset CONTRIBUTOR_MODE to run '${BACKEND}' interactively through the VM console."
+          exit 1
+        fi
       fi
     fi
     # Bob has no headless credential other than its API key — without it the
@@ -1586,6 +1586,12 @@ contribute-hive backend="" mode="docker": check-version
         # --runtime krun (not the run.oci.handler annotation) is what makes
         # podman apply the container_kvm_t SELinux label.
         RUNTIME_FLAGS+=" --runtime krun"
+        # Interactive krun mode (#12202): the krun handler refuses exec, so the
+        # session is reached through the VM console. Keep stdin open and give
+        # the container a TTY so `podman attach` reaches it.
+        if [[ "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then
+          RUNTIME_FLAGS+=" --interactive --tty"
+        fi
         if ! podman --runtime=krun info >/dev/null 2>&1; then
           echo "ERROR: krun preflight failed: podman cannot resolve the 'krun' OCI runtime."
           echo "  'podman --runtime=krun info' failed. Install crun with krun support (Fedora: dnf install crun-krun)"
@@ -2161,11 +2167,20 @@ contribute-hive backend="" mode="docker": check-version
       fi
 
       # Open the CLI session in a new terminal window
-      if [[ "$KRUN_MODE" == "true" ]]; then
+      if [[ "$KRUN_MODE" == "true" && "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
         # The krun handler refuses `podman exec`, so there is nothing to
         # attach to; headless status arrives in the relay logs below.
         echo ""
         echo "Attach:    none in krun mode (headless; the krun handler refuses exec). Interactive krun mode: #12202."
+      elif [[ "$KRUN_MODE" == "true" ]]; then
+        # Interactive krun mode (#12202): the entrypoint puts the tmux session
+        # on the VM console, so attach to the container itself. No exec route
+        # and no tmux hint: the krun handler refuses exec.
+        echo ""
+        echo "Attach to the CLI session through the microVM console with:"
+        echo "  ${RUNTIME} attach ${CONTAINER_NAME}"
+        echo "Detach:    Ctrl-P Ctrl-Q (the contributor keeps running; attach again to return)."
+        echo "           Do not leave with Ctrl-C or Ctrl-D: those keys go to the session."
       elif [[ "${CONTRIBUTOR_MODE:-}" == "headless" ]]; then
         # Headless has no tmux session to attach to; the relay logs below are the view.
         echo ""
@@ -2214,11 +2229,18 @@ contribute-hive backend="" mode="docker": check-version
       fi
 
       echo ""
-      echo "Relay logs:"
-      # `logs -f` returns when the container stops. Don't let a non-zero
-      # status from it kill the recipe under `set -e` — we want to report the
-      # container's own exit code, which is the useful signal.
-      "$RUNTIME" logs -f "${CONTAINER_NAME}" 2>&1 || true
+      if [[ "$KRUN_MODE" == "true" && "${CONTRIBUTOR_MODE:-}" != "headless" ]]; then
+        # The console is a TTY drawn by tmux, so `logs -f` would replay the
+        # session's screen here; wait for the container instead.
+        echo "Waiting for the contributor to stop (Ctrl-C here stops and removes it)..."
+        "$RUNTIME" wait "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      else
+        echo "Relay logs:"
+        # `logs -f` returns when the container stops. Don't let a non-zero
+        # status from it kill the recipe under `set -e` — we want to report the
+        # container's own exit code, which is the useful signal.
+        "$RUNTIME" logs -f "${CONTAINER_NAME}" 2>&1 || true
+      fi
       FINAL_EXIT=$("$RUNTIME" inspect -f '{{ "{{" }}.State.ExitCode{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "unknown")
       if [[ "$FINAL_EXIT" != "0" && "$FINAL_EXIT" != "unknown" ]]; then
         echo ""

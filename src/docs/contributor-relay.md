@@ -127,6 +127,7 @@ contribute.
 ```bash
 export HIVE_CONTAINER_OCI_RUNTIME=krun   # or put it in ~/.config/hive/contributor.env
 CONTRIBUTOR_MODE=headless just contribute-hive claude
+just contribute-hive omp                 # interactive, through the VM console
 ```
 
 `HIVE_CONTAINER_OCI_RUNTIME` is honoured from the environment or from
@@ -166,13 +167,9 @@ Rootless-only mode avoids CVE-2026-84042, which affects rootful krun with
   `HIVE_CONTAINER_RUNTIME` unset, krun mode uses podman even when docker is
   installed (the docker-first detection is unchanged for everyone else);
 - **local mode** — krun mode is container mode;
-- **interactive mode** — krun mode needs `CONTRIBUTOR_MODE=headless`: the krun
-  handler refuses `podman exec`, so there is nothing to attach to yet
-  (interactive krun mode is tracked in #12202). The recipe prints no attach
-  command in krun mode;
 - the **`pi`** backend, which needs host networking to find a local model
-  server, and any backend with no headless entry in the relay (for example
-  `omp`);
+  server, and, with `CONTRIBUTOR_MODE=headless`, any backend with no headless
+  entry in the relay (for example `omp`, which runs interactively instead);
 - **macOS**, where podman's containers already run inside a Linux VM. Other
   hosts without usable hardware virtualisation (such as WSL2 without nested
   virtualisation) fail the preflight below.
@@ -215,6 +212,27 @@ metadata reports the host's kernel, not the guest's (#12200).
 ran under krun, which also ends the VMM and deletes the relay's token cache
 with the container, and deletes the relay PID record. `hivectl`'s relay
 controls report that they are not supported under krun.
+
+**Interactive sessions.** Without `CONTRIBUTOR_MODE=headless`, krun mode runs
+the backend interactively, which is how interactive-only backends such as
+`omp` run (#12202). The krun handler refuses `podman exec`, so the session is
+reached through the microVM's **console** rather than `exec ... tmux attach`:
+the recipe starts the container with `--interactive --tty`, the entrypoint
+keeps a tmux client on the console, and the recipe prints the attach command
+and the detach keys instead of an `exec` command or a tmux hint:
+
+```bash
+podman attach hive-contributor-omp-<id>   # reach the session
+# Ctrl-P Ctrl-Q                           # detach; the contributor keeps running
+```
+
+Attach from another terminal while the recipe waits for the container (it
+does not stream the console as relay logs, because the console is the
+session's screen). Leave with **Ctrl-P Ctrl-Q**: Ctrl-C and Ctrl-D go to the
+session. Attach again to return. Ctrl-C in the recipe's own terminal, or
+`just contribute-stop`, stops and removes the contributor. Relay log lines
+are also written to the console and can overlap the session's screen;
+tmux's `Ctrl-B r` redraws it.
 
 **Costs and caveats.**
 
