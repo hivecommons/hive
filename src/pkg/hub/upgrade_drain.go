@@ -10,8 +10,15 @@ func upgradeDrainActive(until, now time.Time) bool {
 
 // parseUpgradeDrainUntil parses the heartbeat's drain deadline. Empty or
 // malformed input (a spoke that is not draining, or is too old to report it)
-// yields the zero time, and the deadline is capped at maxUpgradeDrainDeadline.
-func parseUpgradeDrainUntil(raw string, now time.Time) time.Time {
+// yields the zero time.
+//
+// The deadline is capped at maxUpgradeDrainDeadline past the upgrade's START
+// (startedAt), not past now: a cap re-based on every heartbeat could be renewed
+// forever by a spoke that keeps reporting a far-future deadline, muting stuck
+// and orphan detection without bound. Anchoring to the start clock bounds the
+// total mute window per upgrade. A zero startedAt (no hub-armed clock yet)
+// falls back to now.
+func parseUpgradeDrainUntil(raw string, startedAt, now time.Time) time.Time {
 	if raw == "" {
 		return time.Time{}
 	}
@@ -19,7 +26,11 @@ func parseUpgradeDrainUntil(raw string, now time.Time) time.Time {
 	if err != nil {
 		return time.Time{}
 	}
-	if limit := now.Add(maxUpgradeDrainDeadline); t.After(limit) {
+	anchor := now
+	if !startedAt.IsZero() && startedAt.Before(now) {
+		anchor = startedAt
+	}
+	if limit := anchor.Add(maxUpgradeDrainDeadline); t.After(limit) {
 		return limit
 	}
 	return t

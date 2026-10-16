@@ -1030,7 +1030,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		s.mu.RLock()
 		var currentSHA, branch, upgradeTarget, imageRef, lastHeartbeat string
 		var alreadyUpgrading bool
-		var upgradeStartedAt time.Time
+		var upgradeStartedAt, upgradeDrainUntil time.Time
 		for _, reg := range s.registry.Hives {
 			if reg.ID == h.ID {
 				currentSHA = reg.GitHash
@@ -1038,6 +1038,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 				alreadyUpgrading = reg.Upgrading
 				upgradeTarget = reg.UpgradeTarget
 				upgradeStartedAt = reg.UpgradeStartedAt
+				upgradeDrainUntil = reg.UpgradeDrainUntil
 				imageRef = reg.ImageRef
 				lastHeartbeat = reg.LastHeartbeat
 				break
@@ -1125,7 +1126,18 @@ func (s *HubServer) triggerAutoUpgrades() {
 			// Zero UpgradeStartedAt means the timestamp was lost (heartbeats
 			// used to wipe it on rebuild) — treat as stale so already-stuck
 			// hives self-heal instead of upgrading forever.
-			isStale := upgradeStartedAt.IsZero() || upgradeAge > staleUpgradeTimeout
+			//
+			// A spoke that reported a drain deadline still in the future is
+			// WAITING, not stuck (#12442): it holds the restart until its
+			// agents' in-flight kicks finish. Re-arming it here logged
+			// "re-arming heartbeat fallback for stale upgrade" every poll and,
+			// for auto-upgrade hives, advanced the target mid-drain. Skip the
+			// recovery until the deadline passes; the not-stale branch below
+			// keeps re-confirming the same target so the spoke's drain latch
+			// stays open. The deadline is capped by parseUpgradeDrainUntil, so
+			// this gate cannot mute recovery indefinitely.
+			isStale := (upgradeStartedAt.IsZero() || upgradeAge > staleUpgradeTimeout) &&
+				!upgradeDrainActive(upgradeDrainUntil, time.Now())
 
 			if isStale {
 				// UNCOLLECTIBLE: abandon, do not re-arm. This is the branch that

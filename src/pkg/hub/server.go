@@ -2255,7 +2255,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if payload.Upgrading {
 		entry.Upgrading = true
 	}
-	entry.UpgradeDrainUntil = parseUpgradeDrainUntil(payload.UpgradeDrainUntil, time.Now())
+	// UpgradeDrainUntil is parsed below, once the entry's UpgradeStartedAt is
+	// settled, because its cap is anchored to the start clock.
 
 	// A spoke that explicitly reports a FAILED upgrade must not be left showing
 	// the "Upgrading" spinner, and must not be re-instructed on a loop. Record
@@ -2610,6 +2611,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// live clock would repeat the #2725 reset-every-retry bug — and
 			// stamp now only when no clock has ever existed.
 			stampObservedUpgrade(&entry, h.UpgradeStartedAt)
+			entry.UpgradeDrainUntil = parseUpgradeDrainUntil(payload.UpgradeDrainUntil, entry.UpgradeStartedAt, time.Now())
 			// Sparkline history: sample every 15 min, keep 7 days (672 points)
 			const sparkSampleInterval = 15 * 60 // seconds
 			const sparkMaxPoints = 672
@@ -2662,6 +2664,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// no previous beat to carry a clock from — stamp it now so the badge
 		// never renders without its elapsed counter.
 		stampObservedUpgrade(&entry, time.Time{})
+		entry.UpgradeDrainUntil = parseUpgradeDrainUntil(payload.UpgradeDrainUntil, entry.UpgradeStartedAt, time.Now())
 		s.registry.Hives = append(s.registry.Hives, entry)
 	}
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)

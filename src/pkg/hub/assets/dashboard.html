@@ -4961,8 +4961,9 @@
           var ms = upgradeElapsedMs(hives[i], now);
           /* null (unknown start time) is NOT counted as stuck — an unknown
              elapsed is not evidence of a fault, and inflating this number
-             would make the warning untrustworthy. */
-          if (ms !== null && ms >= UPGRADE_FACET_STUCK_MS) stuck++;
+             would make the warning untrustworthy. Nor is a spoke still inside
+             its reported drain window: it is waiting, not wedged. */
+          if (ms !== null && ms >= UPGRADE_FACET_STUCK_MS && !hiveUpgradeDraining(hives[i], now)) stuck++;
         }
       }
       var total = counts[UPGRADE_FILTER_UPGRADING] + counts[UPGRADE_FILTER_QUEUED];
@@ -8199,6 +8200,23 @@
        no genuine upgrade can legitimately fall before it. */
     var UPGRADE_STARTED_MIN_SANE_MS = Date.UTC(2020, 0, 1); // any earlier start time is a lost/zero timestamp
 
+    /* hiveUpgradeDraining reports whether the spoke has told the hub it is
+       knowingly DEFERRING this upgrade while its agents' in-flight kicks finish
+       (upgradeDrainUntil still in the future). Until that deadline passes the
+       upgrade is waiting, not stuck: the hub holds its stuck-upgrade alert for
+       exactly this window, so the row must hold its red escalation too, or the
+       two would disagree about the same hive. Go's zero time serialises as
+       year 0001, which is simply "in the past" here, so a non-draining spoke
+       needs no special case. */
+    function hiveUpgradeDraining(h, nowMs) {
+      if (!h) return false;
+      var until = h.upgradeDrainUntil;
+      if (!until || typeof until !== 'string') return false;
+      var t = Date.parse(until);
+      if (isNaN(t)) return false;
+      return t > (typeof nowMs === 'number' ? nowMs : Date.now());
+    }
+
     /* upgradeElapsedMs returns how long a hive has been upgrading, in ms, or
        null when that cannot be known — a MISSING, EMPTY, UNPARSEABLE or
        PRE-EPOCH (zero/lost) upgradeStartedAt, or a negative elapsed beyond the
@@ -8245,9 +8263,9 @@
     /* upgradeElapsedColor escalates the counter past the thresholds above.
        Muted while the rollout is plausibly healthy, amber as an early warning,
        red once the hub itself would call the upgrade stuck. */
-    function upgradeElapsedColor(ms) {
+    function upgradeElapsedColor(ms, draining) {
       if (typeof ms !== 'number' || isNaN(ms)) return 'var(--muted)';
-      if (ms >= UPGRADE_ELAPSED_RED_MS) return 'var(--red)';
+      if (ms >= UPGRADE_ELAPSED_RED_MS && !draining) return 'var(--red)';
       if (ms >= UPGRADE_ELAPSED_AMBER_MS) return 'var(--amber, #f59e0b)';
       return 'var(--muted)';
     }
@@ -8262,17 +8280,24 @@
       if (ms < UPGRADE_ELAPSED_MIN_SHOW_MS) return '';
       var label = formatUpgradeElapsed(ms);
       if (!label) return '';
-      var stuck = ms >= UPGRADE_ELAPSED_RED_MS;
+      var draining = hiveUpgradeDraining(h, nowMs);
+      var stuck = ms >= UPGRADE_ELAPSED_RED_MS && !draining;
       /* Past the red line the wording stops describing progress and names the
          fault, because at that point the hub has raised its stuck-upgrade
          alert and "still upgrading" would be the same misleading reassurance
-         the incident turned on. */
-      var tip = stuck
-        ? 'Upgrading for ' + label + ' — past the ' + Math.round(UPGRADE_ELAPSED_RED_MS / 60000) +
-          ' minute limit. This upgrade is almost certainly wedged, not slow; check the hive for a failed self-upgrade.'
-        : 'Upgrading for ' + label;
+         the incident turned on. A draining spoke is the one case where the
+         time is long but the hub has NOT called it stuck — say so. */
+      var tip;
+      if (stuck) {
+        tip = 'Upgrading for ' + label + ' — past the ' + Math.round(UPGRADE_ELAPSED_RED_MS / 60000) +
+          ' minute limit. This upgrade is almost certainly wedged, not slow; check the hive for a failed self-upgrade.';
+      } else if (draining) {
+        tip = 'Upgrading for ' + label + ' — waiting for in-flight agent kicks to finish before restarting (draining).';
+      } else {
+        tip = 'Upgrading for ' + label;
+      }
       return '<span title="' + escAttr(tip) + '" style="margin-left:var(--sp-2);font-variant-numeric:tabular-nums;color:' +
-        upgradeElapsedColor(ms) + (stuck ? ';font-weight:600' : '') + '">' + esc(label) + '</span>';
+        upgradeElapsedColor(ms, draining) + (stuck ? ';font-weight:600' : '') + '">' + esc(label) + '</span>';
     }
 
     /* Version and Location cells stack their contents vertically so neither
