@@ -1614,12 +1614,12 @@
        from/to row that opens under the head when "custom" is active. */
     .ev-window-controls { margin-left:auto; }
     .ev-custom-range { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2); width:100%; font-size:var(--fs-2xs); color:var(--muted); }
-    .ev-custom-range input[type="date"] { border:1px solid var(--border); border-radius:var(--r-sm); background:var(--bg); color:var(--text); font:inherit; font-size:var(--fs-2xs); padding:2px var(--sp-2); }
-    .ev-custom-range button { border:1px solid var(--amber); border-radius:var(--r-pill); background:color-mix(in srgb, var(--amber) 14%, transparent); color:var(--text); padding:2px var(--sp-3); font-size:var(--fs-2xs); cursor:pointer; }
+    .ev-custom-range input[type="date"] { border:1px solid var(--border); border-radius:var(--r-sm); background:var(--bg); color:var(--text); font:inherit; font-size:var(--fs-2xs); padding:var(--sp-1) var(--sp-2); }
+    .ev-custom-range button { border:1px solid var(--amber); border-radius:var(--r-pill); background:color-mix(in srgb, var(--amber) 14%, transparent); color:var(--text); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-2xs); cursor:pointer; }
     .ev-custom-range .ev-range-err { color:var(--red); }
     .ev-custom-range[hidden] { display:none; }
     /* Plain-language panel explainer: ⓘ toggle in the summary row, popover below. */
-    .ev-info { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:var(--sp-2); padding:0; border-radius:50%; background:color-mix(in srgb, var(--blue) 18%, var(--panel)); border:1px solid color-mix(in srgb, var(--blue) 60%, transparent); color:var(--blue); font-size:var(--fs-2xs); line-height:1; font-weight:700; cursor:pointer; vertical-align:middle; }
+    .ev-info { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; margin-left:var(--sp-2); padding:0; border-radius:var(--r-pill); background:color-mix(in srgb, var(--blue) 18%, var(--panel)); border:1px solid color-mix(in srgb, var(--blue) 60%, transparent); color:var(--blue); font-size:var(--fs-2xs); line-height:1; font-weight:700; cursor:pointer; vertical-align:middle; }
     .ev-info:hover, .ev-info:focus-visible, .ev-info[aria-expanded="true"] { background:var(--blue); border-color:var(--blue); color:var(--bg); outline:none; }
     .ev-explainer { margin-top:var(--sp-2); padding:var(--sp-3); border:1px solid var(--border); border-left:3px solid var(--blue); border-radius:var(--r-sm); background:var(--panel); font-size:var(--fs-2xs); font-weight:400; color:var(--text); line-height:1.45; }
     .ev-explainer[hidden] { display:none; }
