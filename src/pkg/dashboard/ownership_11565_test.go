@@ -678,7 +678,7 @@ func TestDefaultWaitingLabelsMatchBrowser11565(t *testing.T) {
 	if strings.Join(browser, ",") != strings.Join(defaultIssueWaitingLabels, ",") {
 		t.Fatalf("browser waiting labels %v != server %v", browser, defaultIssueWaitingLabels)
 	}
-	for _, label := range []string{"blocked", "2-discussing", "Epic", "needs-triage"} {
+	for _, label := range []string{"2-discussing", "Epic", "needs-triage"} {
 		info := IssueBand(github.Issue{Repo: "o/r", Number: 1, Labels: []string{label}}, false, config.DashboardIssueBandsConfig{}, ownershipNow11565)
 		if info.Band == "waiting" {
 			t.Fatalf("%s places an issue in the waiting band by default", label)

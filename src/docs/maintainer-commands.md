@@ -44,7 +44,11 @@ instructions.
 `needs-direction`, or a label the operator configured for one of those buckets
 in `project.issue_filter.hard_suppress_labels`; the sweep reads the same
 configured names as the dashboard's "Your turn" inbox, so a renamed label still
-gets the notice and is cleared by the commands. `needs-spec` (and its renamed
+gets the notice and is cleared by the commands. `blocked` parks an issue too
+([#12376](https://github.com/hivecommons/hive/issues/12376)): it is a gate
+only a person lifts, so the issue gets the notice, and `/hive approve` (lift it
+and re-offer the issue) or `/hive decision <text>` (lift it with instructions)
+removes it with the other parking labels. `needs-spec` (and its renamed
 labels) is never handled by these commands.
 
 The "What to reply" notice lists the lettered options (`Option A:`,

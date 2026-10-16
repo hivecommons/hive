@@ -5209,6 +5209,30 @@ function isToolingFailureBlockedReason(reason) {
   reason = String(reason || '').trim();
   return !!reason && BLOCKED_TOOLING_FAILURE_RE.test(reason);
 }
+// BLOCKED_ON_PERSON_RE (hivecommons/hive#12376): a blocked verdict whose
+// reason says a PERSON must act — an org admin must restore an app install, a
+// maintainer has to apply a change, only an owner can grant access — is not
+// waiting on another item. Labelled `blocked` it read the same as an external
+// dependency: no owner, no "What to reply", nothing in the inbox. Such a
+// verdict is routed to the parking path a person answers (NEEDS_HUMAN_LABEL).
+// BLOCKED_ON_ITEM_RE wins over it: a reason that names another issue/PR, an
+// upstream or a release is waiting on that item, so it keeps `blocked`.
+const BLOCKED_PERSON_ROLE = String.raw`(?:human|person|(?:org(?:anization)?\s+|repo(?:sitory)?\s+)?(?:admin(?:istrator)?|owner|maintainer|operator)s?)`;
+const BLOCKED_ON_PERSON_RE = new RegExp([
+  String.raw`\b${BLOCKED_PERSON_ROLE}\b.{0,40}\b(?:must|needs? to|has to|have to|is required to)\b`,
+  String.raw`\b(?:requires?|needs?|waiting (?:on|for))\s+(?:an?\s+|the\s+)?${BLOCKED_PERSON_ROLE}\b`,
+  String.raw`\bonly\s+(?:an?\s+|the\s+)?${BLOCKED_PERSON_ROLE}\b.{0,30}\bcan\b`,
+  String.raw`\bmanual(?:ly)?\s+(?:action|step|intervention|approval)\b`,
+].join('|'), 'i');
+const BLOCKED_ON_ITEM_RE = /\b[\w.-]+\/[\w.-]+#\d+\b|(?:^|[\s(])#\d+\b|\bupstream\b|\brelease[sd]?\b|\bpublish(?:es|ed|ing)?\b/i;
+
+// isPersonBlockedReason says whether a blocked verdict's reason waits on a
+// person rather than on another item. Tooling failures are classified first
+// (isToolingFailureBlockedReason) and never reach this.
+function isPersonBlockedReason(reason) {
+  reason = String(reason || '').trim();
+  return !!reason && BLOCKED_ON_PERSON_RE.test(reason) && !BLOCKED_ON_ITEM_RE.test(reason);
+}
 const NO_WORK_NEEDS_DECISION_REASON_RE = /^(?:decision|needs[_ -]?decision|maintainer[_ -]?decision)\s*[:—–-]\s*/i;
 const NATURAL_NEEDS_DECISION_REASON_RE = /(?:maintainer|design|policy|approval|\/approve).{0,80}(?:decision|approval|\/approve)|(?:decision|approval).{0,80}maintainer/i;
 const ALREADY_DONE_REASON_KIND = 'already_done';
@@ -6785,6 +6809,11 @@ function postUnaddressedNotesComment(prURL, notes) {
 // surface until a human removes it (blockedWorkflowLabel in
 // src/pkg/dashboard/contribute_admission.go). Keep the two spellings in sync.
 const BLOCKED_WORKFLOW_LABEL = 'blocked';
+// NEEDS_HUMAN_LABEL parks an issue on a person: the label a blocked verdict
+// that waits on a person applies instead of BLOCKED_WORKFLOW_LABEL
+// (hivecommons/hive#12376), so the your-turn inbox and the un-park "What to
+// reply" notice pick it up exactly as for any other needs-human issue.
+const NEEDS_HUMAN_LABEL = 'needs-human';
 
 // hubGrantsIssuesWrite reports whether the credential this hub mints for the
 // task can write to issues — the hub says so on auth_ok (`permissions`, per
@@ -6852,6 +6881,11 @@ function markIssueLabel(task, reason, label, description, issueTag) {
 function markIssueBlocked(task, reason) {
   if (isToolingFailureBlockedReason(reason)) {
     console.log(`Task ${task && task.task_id ? task.task_id : '(unknown)'}: blocked verdict describes this contributor's own tooling (${String(reason).trim().slice(0, 160)}) — not applying the '${BLOCKED_WORKFLOW_LABEL}' label; the hub re-offers the issue on the short cooldown (hivecommons/hive#11775)`);
+    return;
+  }
+  if (isPersonBlockedReason(reason)) {
+    console.log(`Task ${task && task.task_id ? task.task_id : '(unknown)'}: blocked verdict waits on a person (${String(reason).trim().slice(0, 160)}) — applying '${NEEDS_HUMAN_LABEL}' instead of '${BLOCKED_WORKFLOW_LABEL}' so it is that person's turn (hivecommons/hive#12376)`);
+    markIssueLabel(task, reason, NEEDS_HUMAN_LABEL, 'Waiting on a person (an admin, maintainer or operator) to act; not contributor work until a human clears the label', 'blocked');
     return;
   }
   markIssueLabel(task, reason, BLOCKED_WORKFLOW_LABEL, 'Waiting on something outside this repository; not contributor work until a human clears the label', 'blocked');
@@ -8924,6 +8958,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     isNoWorkVerdict,
     isAlreadyDoneNoWork,
     isToolingFailureBlockedReason,
+    isPersonBlockedReason,
+    NEEDS_HUMAN_LABEL,
     verdictWireFields,
     alreadyDoneVerdictFields,
     markIssueBlocked,

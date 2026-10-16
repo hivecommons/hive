@@ -14605,6 +14605,67 @@ test('#11775 markIssueBlocked refuses a tooling-failure reason even when called 
   } finally { console.log = log; teardown(relay); }
 });
 
+// hivecommons/hive#12376: a blocked verdict whose reason says a PERSON must
+// act (an admin restoring an app install, a maintainer applying a change) is
+// routed to the parking path a person answers — `needs-human` — so the
+// your-turn inbox and the "What to reply" notice pick it up. A reason that
+// names another item, an upstream or a release keeps `blocked`.
+
+const PERSON_BLOCKED_REASON = 'An org admin must restore the Mergeraptor app installation before the bot can run';
+
+test('#12376 isPersonBlockedReason separates a person-gate from a wait on another item', () => {
+  const relay = loadRelay({});
+  try {
+    for (const r of [
+      PERSON_BLOCKED_REASON,
+      'Needs an org administrator to reinstall the GitHub App',
+      'only a repository owner can enable GitHub Pages for this repo',
+      'requires manual action in the repository settings',
+      'A maintainer has to add the DEPLOY_KEY secret',
+    ]) assert.ok(relay.isPersonBlockedReason(r), `person: ${r}`);
+    for (const r of [
+      BLOCKED_REASON,
+      'waiting on projectbluefin/utah-packages to publish a factory image with the recipes',
+      'the upstream maintainer needs to cut a release',
+      'depends on hivecommons/hub#42 landing first',
+      'an admin must merge projectbluefin/.project#25 first',
+      'waiting on #25 which a maintainer must review',
+      '', null, undefined,
+    ]) assert.ok(!relay.isPersonBlockedReason(r), `item: ${r}`);
+  } finally { teardown(relay); }
+});
+
+test('#12376 markIssueBlocked applies needs-human for a person-gate and blocked for anything else', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    for (const [reason, want, notWant] of [
+      [PERSON_BLOCKED_REASON, relay.NEEDS_HUMAN_LABEL, relay.BLOCKED_WORKFLOW_LABEL],
+      [BLOCKED_REASON, relay.BLOCKED_WORKFLOW_LABEL, relay.NEEDS_HUMAN_LABEL],
+    ]) {
+      const before = relay.__commands.length;
+      relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, reason);
+      const edits = relay.__commands.slice(before).filter(c => /gh issue edit/.test(c));
+      assert.strictEqual(edits.length, 1, `one label call for ${reason}: ${JSON.stringify(edits)}`);
+      assert.ok(edits[0].includes(want), `${reason}: expected '${want}' in ${edits[0]}`);
+      assert.ok(!edits[0].includes(`'${notWant}'`), `${reason}: did not expect '${notWant}' in ${edits[0]}`);
+    }
+    assert.strictEqual(relay.NEEDS_HUMAN_LABEL, 'needs-human');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#12376 a tooling failure that also names a maintainer is still demoted, not routed to a person', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    const before = relay.__commands.length;
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'a maintainer must push it: the token lacks the workflow scope');
+    assert.strictEqual(relay.__commands.slice(before).filter(c => /gh /.test(c)).length, 0);
+  } finally { console.log = log; teardown(relay); }
+});
+
 test('#7924 a label the repository does not define is created once and the add retried once; a second failure costs only a log line', () => {
   const PANE = `HIVE_VERDICT: blocked — ${BLOCKED_REASON}\n${IDLE_PANE}`;
   // First add fails (label missing) → create → retry lands.

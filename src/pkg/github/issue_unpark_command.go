@@ -12,8 +12,9 @@ import (
 )
 
 // issueNeedsDecisionLabel is one of the parking labels a /hive command clears.
-// `needs-human`, `needs-decision` and ADR-0019's `needs-direction` are the
-// only labels this sweep removes: `hold` is deliberately untouched because it
+// `needs-human`, `needs-decision`, ADR-0019's `needs-direction` and `blocked`
+// (issueBlockedLabel) are the only labels this sweep removes: `hold` is
+// deliberately untouched because it
 // has several independent sources (the ACMM level gate, the SHA hold,
 // holdguard and a person), and clearing one of them from a comment would
 // silently clear all of them.
@@ -147,7 +148,8 @@ func (r *IssueUnparkSweepResult) actions() int {
 // SweepIssueUnparkCommands lets a maintainer re-queue a parked issue with a
 // one-line reply instead of editing labels (hivecommons/hive#9879).
 //
-// On every parked issue (`needs-human`, `needs-decision` or `needs-direction`)
+// On every parked issue (`needs-human`, `needs-decision`, `needs-direction` or
+// `blocked`)
 // the sweep keeps a "What to reply" comment listing the commands, because the
 // maintainer should never have to remember what to type. When an eligible
 // person replies:
@@ -521,7 +523,7 @@ func (c *Client) removeIssueLabel(ctx context.Context, owner, repo string, numbe
 
 func isIssueParkingLabel(label string) bool {
 	switch strings.ToLower(strings.TrimSpace(label)) {
-	case issueNeedsHumanLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel:
+	case issueNeedsHumanLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel, issueBlockedLabel:
 		return true
 	}
 	return false
@@ -534,7 +536,7 @@ func hasIssueParkingLabel(labels []string) bool {
 	}
 	for _, label := range labels {
 		switch strings.ToLower(strings.TrimSpace(label)) {
-		case issueNeedsDecisionLabel, issueNeedsDirectionLabel:
+		case issueNeedsDecisionLabel, issueNeedsDirectionLabel, issueBlockedLabel:
 			return true
 		}
 	}

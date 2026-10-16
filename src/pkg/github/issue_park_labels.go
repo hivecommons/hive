@@ -10,6 +10,14 @@ import "strings"
 // needs_decision bucket. needs_spec is deliberately outside the un-park
 // commands and never counts here.
 
+// issueBlockedLabel is the workflow gate a contributor's blocked verdict
+// applies (blockedWorkflowLabel in pkg/dashboard). It waits on a person to
+// lift it, so it parks the issue like the needs-* labels: the sweep posts the
+// "What to reply" notice and `/hive approve` / `/hive decision` lift it
+// (hivecommons/hive#12376). The dashboard's default waiting labels carry it
+// too (defaultIssueWaitingLabels).
+const issueBlockedLabel = "blocked"
+
 // isParkingLabel reports whether label parks an issue on a person, under the
 // built-in names or the operator's renamed ones.
 func (c *Client) isParkingLabel(label string) bool {

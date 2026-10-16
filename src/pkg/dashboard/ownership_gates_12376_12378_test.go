@@ -160,6 +160,7 @@ func TestPRGateLabelsAreYourTurn12378(t *testing.T) {
 		"2-discussing":     {OwnershipVerbDecide, OwnershipReasonParkedNeedsDecision},
 		"needs-direction":  {OwnershipVerbSteer, OwnershipReasonParkedNeedsDirection},
 		"needs-spec":       {OwnershipVerbSpec, OwnershipReasonParkedNeedsSpec},
+		"blocked":          {OwnershipVerbReview, OwnershipReasonPRGateLabel},
 		"waiting-on-legal": {OwnershipVerbReview, OwnershipReasonPRGateLabel},
 	}
 	seen := map[string]bool{}

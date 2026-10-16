@@ -392,10 +392,14 @@ in exactly one band, while non-winning states remain as badges on the pill:
    satisfies the PR-time gate and is not in the payload). Acknowledge it, or
    close it. Once acknowledged the issue falls through to Unclaimed/Claimed
    with the role badge still on the pill.
-4. **Parked** (`parked`) — the four parking labels by default:
-   `needs-human`, `needs-direction`, `needs-decision` and `needs-spec`.
-   `blocked`, `2-discussing`, `Epic` and `needs-triage` no longer place an
-   issue here by default; their row glyphs remain. Parked issues listed under
+4. **Parked** (`parked`) — the four parking labels and `blocked` by default:
+   `needs-human`, `needs-direction`, `needs-decision`, `needs-spec` and
+   `blocked`. `blocked` is a gate only a person lifts, so it is parked
+   whatever it waits on; the Your turn decision still tells a block on another
+   item (waiting elsewhere) from one nothing explains (`blocked_unexplained`)
+   ([#12376](https://github.com/hivecommons/hive/issues/12376)).
+   `2-discussing`, `Epic` and `needs-triage` do not place an issue here by
+   default; their row glyphs remain. Parked issues listed under
    `nonActionableIssues` carry band `waiting` too, and the card draws them as
    ordinary issue rows: the same plan, design, hold and linked-PR controls and
    the same stale dimming as an unclaimed row, and they stay listed when an
@@ -431,7 +435,7 @@ Operators can tune only the display taxonomy under `dashboard.issue_bands`:
 ```yaml
 dashboard:
   issue_bands:
-    waiting_labels: [needs-human, needs-direction, needs-decision, needs-spec]
+    waiting_labels: [needs-human, needs-direction, needs-decision, needs-spec, blocked]
     done_labels: [hive/already-done, hive/covered-by-pr, hive/likely-done]
     stale_days: 14
 ```
@@ -446,7 +450,9 @@ in exactly one band; held PRs are no longer appended after the actionable list.
 First match wins for classification:
 
 1. **Gated** — `needs-human`, held, `needs-decision`,
-   `2-discussing`, or configured `dashboard.issue_bands.waiting_labels`.
+   `2-discussing`, or configured `dashboard.issue_bands.waiting_labels`
+   (by default these include `blocked`, so a PR labelled `blocked` is Gated
+   and its Your turn row is `pr_gate_label`).
 2. **Merge-eligible** — merge verdict `eligible`, or queued for Hive
    auto-merge.
 3. **Blocked** — merge verdict `blocked`, conflicts (`mergeable: no`), or
