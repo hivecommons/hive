@@ -8907,6 +8907,46 @@
                   "tier_limits": {
                     "type": "object",
                     "description": "Map of tier name to rate limit object"
+                  },
+                  "contribute_wall_retention_days": {
+                    "type": "integer",
+                    "description": "Days contributor-wall posts are kept, 0-3650. 0 restores the default (90)."
+                  },
+                  "contribute_already_done_label": {
+                    "type": "string",
+                    "description": "Label applied to issues a contributor found already resolved. Empty restores the default (hive/already-done)."
+                  },
+                  "contribute_already_done_hold_days": {
+                    "type": "integer",
+                    "description": "Offer suppression after an already-done verdict, 0-365 days. 0 restores the default (30)."
+                  },
+                  "contribute_require_explicit_accept": {
+                    "type": "boolean",
+                    "description": "Withhold the scoped credential until the contributor accepts the task."
+                  },
+                  "nps_enabled": {
+                    "type": "boolean",
+                    "description": "Enable the dashboard NPS feedback prompt."
+                  },
+                  "snapshot_interval_min": {
+                    "type": "integer",
+                    "description": "Minutes before /snapshot is rebuilt: 0 (default 15) or 5-1440."
+                  },
+                  "task_status_push": {
+                    "type": "boolean",
+                    "description": "Run the separate hub task-status push loop. Requires restart."
+                  },
+                  "upgrade_drain_timeout_s": {
+                    "type": "integer",
+                    "description": "Seconds a self-upgrade waits for in-flight kicks, at most 86400. 0 restores the default (2700); negative disables draining."
+                  },
+                  "notifications_discord_requests_webhook_url": {
+                    "type": "string",
+                    "description": "Write-only hub.notifications.discord.requests_webhook_url (https). A masked echo is ignored; empty clears it."
+                  },
+                  "nps_relay_pull_secret": {
+                    "type": "string",
+                    "description": "Write-only hub.nps_relay_pull_secret. A masked echo is ignored; empty clears it."
                   }
                 }
               }

@@ -295,6 +295,10 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
 			// list. A repo is ENABLED unless it appears in disabled_repos.
 			"available_repos": s.contributeAvailableRepos(),
+			// settings backs the scalar hub keys (identity, already-done
+			// handling, NPS, task-status push, upgrade drain, hub-only
+			// secrets as set/not set). See hubSettingsResponse.
+			"settings": s.hubSettingsResponse(cfg),
 		},
 	})
 }
@@ -1305,7 +1309,6 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		AutoUpgrade                    *bool                                  `json:"auto_upgrade"`
 		ContributeSuspended            *bool                                  `json:"contribute_suspended"`
 		ContributeWallEnabled          *bool                                  `json:"contribute_wall_enabled"`
-		ContributeWallRetentionDays    *int                                   `json:"contribute_wall_retention_days"`
 		ContributeTitlesMode           *string                                `json:"contribute_titles_mode"`
 		ContributeAuthorsMode          *string                                `json:"contribute_authors_mode"`
 		ContributeLabelsMode           *string                                `json:"contribute_labels_mode"`
@@ -1329,12 +1332,19 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		DisabledRepos                  []string                               `json:"disabled_repos"`
 		DisabledTiers                  []string                               `json:"disabled_tiers"`
 		TierLimits                     map[string]config.TierRate             `json:"tier_limits"`
+		hubSettingsBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 	cfg := s.deps.Config
+	// The scalar hub keys are validated before any field is applied.
+	applyHubSettings, err := body.hubSettingsBody.prepare(body.ContributeAnnouncement)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	// #7451: on a hub-managed spoke the hub owns dashboard_url — the next
 	// heartbeat would revert an edit, and until it did the new value would
 	// be the OAuth callback origin (oauth_origin.go), so a typo locks the
@@ -1378,9 +1388,6 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeWallEnabled != nil {
 		cfg.Hub.ContributeWallEnabled = *body.ContributeWallEnabled
-	}
-	if body.ContributeWallRetentionDays != nil {
-		cfg.Hub.ContributeWallRetentionDays = *body.ContributeWallRetentionDays
 	}
 	if body.ContributeTitlesMode != nil {
 		cfg.Hub.ContributeTitlesMode = *body.ContributeTitlesMode
@@ -1495,6 +1502,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	cfg.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(cfg.Hub.ContributeAuthorsMode)
 	cfg.Hub.ContributeLabelsMode = config.NormalizeFilterMode(cfg.Hub.ContributeLabelsMode)
 	cfg.Hub.NormalizeContributeRepoFilters()
+	applyHubSettings(&cfg.Hub)
 	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
 	if announcementTouched {

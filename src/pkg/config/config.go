@@ -5327,8 +5327,8 @@ const (
 	// rounding to zero.
 	contributeCooldownMinHours        = 1
 	contributeCooldownMaxHours        = 8760
-	contributeAlreadyDoneLabelDefault = "hive/already-done"
-	contributeAlreadyDoneDefaultDays  = 30
+	contributeAlreadyDoneLabelDefault = DefaultContributeAlreadyDoneLabel
+	contributeAlreadyDoneDefaultDays  = DefaultContributeAlreadyDoneHoldDays
 	contributeAlreadyDoneMinDays      = 1
 	contributeAlreadyDoneMaxDays      = 365
 )
@@ -6708,8 +6708,8 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Hub.ContributeWallRetentionDays < 0 {
 		c.Hub.ContributeWallRetentionDays = 0
-	} else if c.Hub.ContributeWallRetentionDays > 3650 {
-		c.Hub.ContributeWallRetentionDays = 3650
+	} else if c.Hub.ContributeWallRetentionDays > MaxContributeWallRetentionDays {
+		c.Hub.ContributeWallRetentionDays = MaxContributeWallRetentionDays
 	}
 	if c.Hub.ContributeAlreadyDoneLabel != "" {
 		c.Hub.ContributeAlreadyDoneLabel = strings.TrimSpace(c.Hub.ContributeAlreadyDoneLabel)

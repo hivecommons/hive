@@ -37235,7 +37235,121 @@ function burnAreaChart() {
               '<input type="number" min="0" placeholder="max" value="' + mc + '" style="width:50px;padding:var(--sp-1) var(--sp-2);font-size:0.72rem;background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text)" data-change-action="setTierLimit" data-arg0="' + t + '" data-arg1="max_concurrent" data-arg-types="s,s,N">' +
               '<span style="font-size:0.65rem;color:var(--muted)">/hr · /day · max</span></div>';
           }).join('')}</div>
+        </div>
+        ${renderHubSettingsParity(hub)}`;
+    }
+
+    // ---- Settings → Hub → hub settings ----
+    // The scalar hub.* keys, saved with the rest of the Hub tab through
+    // PUT /api/config/governor/hub (owner-only; 0 or empty restores the
+    // default). cluster_id and hive_type are identity keys written by hub
+    // provisioning, and the two deprecated already-done aliases are no longer
+    // edited, so those are display-only. The hub-only secrets are write-only:
+    // only whether one is set is ever shown.
+    function renderHubSettingsParity(hub) {
+      const st = hub.settings || {};
+      const def = st.defaults || {};
+      const ann = st.contribute_announcement_config || {};
+      const owner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const dis = owner ? '' : 'disabled';
+      const restart = ' Requires restart.';
+      const live = ' Applies without a restart.';
+      const mark = (label, tip) => settingHelpMark('settings', 'hub', label, tip);
+      const managedNote = st.hub_managed
+        ? 'managed by the hub — change it from the hub dashboard'
+        : 'set in hive.yaml; requires restart';
+      const roRow = (label, path, valueHtml, note) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm break-all">${valueHtml} <span class="text-muted">— ${esc(note)}</span></div></div>`;
+      const shown = v => (v !== undefined && v !== null && v !== '') ? '<code>' + esc(String(v)) + '</code>' : '<span class="text-muted">unset</span>';
+      const num = (key, label, path, value, placeholder, min, max, help, tip) => `
+          <div class="config-field">
+            <label for="hub-set-${key}">${esc(label)} ${yamlHint(path)} ${mark(label, tip)}</label>
+            <input id="hub-set-${key}" type="number" ${min !== '' ? `min="${min}"` : ''} max="${max}" step="1" value="${value ? esc(String(value)) : ''}" placeholder="${esc(String(placeholder))}" data-change-action="markDirty" data-arg0="hub" data-arg1="${key}" data-arg-types="s,s,N" ${dis}>
+            <div class="config-help">${help}</div>
+          </div>`;
+      const text = (key, label, path, value, placeholder, help, tip) => `
+          <div class="config-field">
+            <label for="hub-set-${key}">${esc(label)} ${yamlHint(path)} ${mark(label, tip)}</label>
+            <input id="hub-set-${key}" type="text" value="${esc(value || '')}" placeholder="${esc(placeholder)}" data-change-action="markDirty" data-arg0="hub" data-arg1="${key}" data-arg-types="s,s,w" ${dis}>
+            <div class="config-help">${help}</div>
+          </div>`;
+      const toggle = (key, label, path, on, help, tip) => `
+          <div class="config-toggle mt-3">
+            <div id="hub-set-${key}" class="config-toggle-switch ${on ? 'on' : ''} ${owner ? '' : 'disabled'}" data-action="toggleConfigSwitch" data-section="hub" data-key="${key}" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
+            <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} ${mark(label, tip)} <span class="text-muted">— ${help}</span></span>
+          </div>`;
+      const secret = (key, label, path, isSet, help, tip) => `
+          <div class="config-field">
+            <label for="hub-set-${key}">${esc(label)} ${yamlHint(path)} ${mark(label, tip)} <span class="text-muted">${isSet ? 'set (hidden)' : 'not set'}</span></label>
+            <input id="hub-set-${key}" type="password" autocomplete="new-password" placeholder="${esc(isSet ? 'Configured — enter a new value to change, or save an empty value to clear.' : 'not set')}" data-change-action="markDirty" data-arg0="hub" data-arg1="${key}" data-arg-types="s,s,v" ${dis}>
+            <div class="config-help">${help}</div>
+          </div>`;
+      return `
+        <hr class="config-section-rule">
+        <h4 class="settings-subsection-title">Hub settings</h4>
+        <div class="card-inset mt-3">
+          <div class="settings-subsection-title">Hub identity</div>
+          ${roRow('Cluster ID', 'hub.cluster_id', shown(st.cluster_id), managedNote)}
+          ${roRow('Hive type', 'hub.hive_type', shown(st.hive_type), managedNote)}
+          <div class="config-help">Written by hub provisioning; a hive type of <code>hosted</code> turns the NPS prompt on by default.</div>
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Contributor queue</div>
+          ${toggle('contribute_require_explicit_accept', 'Require explicit task acceptance', 'hub.contribute_require_explicit_accept', st.contribute_require_explicit_accept, 'off by default (trusted auto-accept).' + live, 'Off (default): a task that passed admission is auto-accepted when assigned and the scoped GitHub credential is delivered right after. On: the hub withholds the credential until the contributor sends task_accepted; a task never accepted never receives a credential.')}
+          <div class="config-field-row">
+            ${text('contribute_already_done_label', 'Already-done label', 'hub.contribute_already_done_label', st.contribute_already_done_label, 'Default (' + (def.contribute_already_done_label || 'hive/already-done') + ')', 'Applied to issues a contributor found already resolved. Empty restores the default.' + live, 'Applied to issues a contributor found already resolved. It is also in the default contribute skip label set, so labelled issues stay out of the offer queue until a maintainer removes it. Empty restores the default (hive/already-done).')}
+            ${num('contribute_already_done_hold_days', 'Already-done hold (days)', 'hub.contribute_already_done_hold_days', st.contribute_already_done_hold_days, def.contribute_already_done_hold_days || 30, 0, 365, 'Offer suppression after an "already done" verdict, 1–365. 0 restores the default.' + live, 'The longer offer suppression for an already-done verdict while the label/comment path is pending or if cited evidence cannot be verified. Separate from the task cooldown. 0 restores the default (30).')}
+            ${num('contribute_wall_retention_days', 'Contributor wall retention (days)', 'hub.contribute_wall_retention_days', hub.contribute_wall_retention_days, def.contribute_wall_retention_days || 90, 0, 3650, 'Older wall posts are pruned, 0–3650. 0 restores the default.' + live, 'Bounds wall posts stored on the hub data volume next to contributor profiles. Older posts are pruned on load/write. 0 means the dashboard default (90 days).')}
+          </div>
+          ${roRow('Already-done unverified hold (days)', 'hub.contribute_already_done_unverified_hold_days', shown(st.contribute_already_done_unverified_hold_days || ''), 'deprecated alias of contribute_already_done_hold_days; set in hive.yaml')}
+          ${roRow('Close already-done issues', 'hub.contribute_close_already_done', shown(st.contribute_close_already_done ? 'true' : 'false'), 'deprecated compatibility key, no longer read; set in hive.yaml')}
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Contributor announcement</div>
+          <div class="config-field">
+            <label for="hub-set-ann-text">Text ${yamlHint('hub.contribute_announcement.text')} ${mark('Announcement text', 'Operator notice for contributors, shown on /contribute Operations/Profile, above the Onboarding command block, and in connected relay terminals. Server-sanitised plain text capped at 500 characters; empty clears the announcement.')}</label>
+            <textarea id="hub-set-ann-text" rows="2" maxlength="500" data-change-action="hubAnnouncementChanged" ${dis}>${esc(ann.text || '')}</textarea>
+            <div class="config-help">Empty clears the announcement.${live}</div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label for="hub-set-ann-level">Level ${yamlHint('hub.contribute_announcement.level')} ${mark('Announcement level', 'info or warning.')}</label>
+              <select id="hub-set-ann-level" data-change-action="hubAnnouncementChanged" ${dis}>
+                ${['info', 'warning'].map(v => `<option value="${v}" ${(ann.level || 'info') === v ? 'selected' : ''}>${v}</option>`).join('')}
+              </select>
+            </div>
+            <div class="config-field">
+              <label for="hub-set-ann-expires">Expires at ${yamlHint('hub.contribute_announcement.expires_at')} ${mark('Announcement expiry', 'Optional RFC3339 time after which the announcement is no longer shown, e.g. 2026-12-31T18:00:00Z. Empty never expires.')}</label>
+              <input id="hub-set-ann-expires" type="text" value="${esc(ann.expires_at || '')}" placeholder="2026-12-31T18:00:00Z" data-change-action="hubAnnouncementChanged" ${dis}>
+            </div>
+          </div>
+          ${roRow('Announcement ID', 'hub.contribute_announcement.id', shown(ann.id), 'minted by the dashboard whenever the text changes, so dismissed banners reappear')}
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Snapshots, upgrades and telemetry</div>
+          <div class="config-field-row">
+            ${num('snapshot_interval_min', 'Snapshot interval (minutes)', 'hub.snapshot_interval_min', hub.snapshot_interval_min, def.snapshot_interval_min || 15, 0, 1440, 'How stale /snapshot may get before it is rebuilt, 5–1440. 0 restores the default.' + live, 'The public /snapshot page is rebuilt when it is older than this. Values below 5 use the default (15 minutes).')}
+            ${num('upgrade_drain_timeout_s', 'Upgrade drain timeout (seconds)', 'hub.upgrade_drain_timeout_s', st.upgrade_drain_timeout_s, def.upgrade_drain_timeout_s || 2700, '', 86400, 'Self-upgrade waits up to this long for in-flight agent kicks. 0 restores the default; negative disables draining.' + restart, 'A hub-instructed self-upgrade waits up to this long for in-flight agent kicks to finish (new kicks are withheld meanwhile) before exiting anyway. 0/unset = 45 min; a negative value disables draining.')}
+          </div>
+          ${toggle('task_status_push', 'Push task status to the hub', 'hub.task_status_push', st.task_status_push, 'on by default; HIVE_HUB_TASK_STATUS_PUSH overrides.' + restart, 'Controls the separate task-status push loop, not the core heartbeat or hub-managed upgrade/config delivery. Off stops only the task-status loop.')}
+          ${toggle('nps_enabled', 'NPS feedback prompt', 'hub.nps_enabled', st.nps_enabled, 'on by default for hosted spokes, off otherwise; HIVE_NPS_ENABLED overrides.' + live, 'Enables the dashboard NPS feedback prompt, whose responses are forwarded to the hub over the spoke\'s authenticated hub link, without the user\'s identity, and are visible only to hub admins. A hive with no hub link sends nothing unless a relay is configured.')}
+        </div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Hub-only secrets</div>
+          <div class="config-help">Used only when this hive runs as a hub. Values are write-only and never shown.</div>
+          ${secret('notifications_discord_requests_webhook_url', 'Provision request Discord webhook', 'hub.notifications.discord.requests_webhook_url', st.notifications_discord_requests_webhook_set, 'Posts new hosted-hive provision requests to Discord. Must be https. Read by the hub on each request.', 'Discord webhook the hub posts new hosted-hive provision requests to. Wins over notifications.discord.requests_webhook_url. Must start with https:// and not target a private address.')}
+          ${secret('nps_relay_pull_secret', 'NPS relay pull secret', 'hub.nps_relay_pull_secret', st.nps_relay_pull_secret_set, 'The credential the hub uses to pull and ack NPS relay entries. HIVE_NPS_RELAY_PULL_SECRET overrides it; prefer the env var.', 'Secret, hub only. The credential the hub uses to pull and ack relay entries. Prefer the HIVE_NPS_RELAY_PULL_SECRET env var.')}
+          ${owner ? '' : '<div class="config-help mt-3">Owner role required to change these settings.</div>'}
         </div>`;
+    }
+
+    // The announcement is saved as one object; any field edit sends all three.
+    function hubAnnouncementChanged() {
+      const v = id => ((document.getElementById(id) || {}).value || '').trim();
+      markDirty('hub', 'contribute_announcement', {
+        text: v('hub-set-ann-text'),
+        level: v('hub-set-ann-level') || 'info',
+        expires_at: v('hub-set-ann-expires')
+      });
     }
 
     // HEARTBEAT_OMIT_CLASSES mirrors config.HeartbeatOmitAll; tradeoffs match docs/telemetry.md.
