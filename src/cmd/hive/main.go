@@ -4792,6 +4792,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Compliance profile + latest posture pass/fail (#11083); an
 				// empty block when compliance is not configured.
 				Compliance: b.dashSrv.ComplianceHeartbeat(),
+				// 90-day evidence-pipeline summary + self-authored auto-merge
+				// posture (#12114); nil when bundles are unreadable.
+				Evidence: b.dashSrv.EvidenceHeartbeat(),
 			}
 
 		}, heartbeatSendInterval, b.logger,
