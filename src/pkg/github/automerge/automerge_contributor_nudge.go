@@ -89,6 +89,14 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		checks = append(checks, strings.TrimPrefix(r, "required-check-failing:"))
 	case strings.HasPrefix(r, "check-failing:"):
 		checks = append(checks, strings.TrimPrefix(r, "check-failing:"))
+	case strings.HasPrefix(r, stageReasonOptionalCheckFailing):
+		// Every red optional check on the head, not just the first one
+		// the stage reason names (hivecommons/hive#12538).
+		if len(d.RedChecks) > 0 {
+			checks = append(checks, d.RedChecks...)
+		} else {
+			checks = append(checks, strings.TrimPrefix(r, stageReasonOptionalCheckFailing))
+		}
 	case classifyCIReason(r) == ciReasonRed:
 		checks = append(checks, r)
 	case r == "changes-requested":

@@ -621,44 +621,65 @@ func TestApplyStageLabelsRecordsVerdictReason(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#12457: the lane gates on required checks only, so it
-// soaks a PR whose rollup still shows a red optional check. The stage must
-// not read "merge queue" while any check on the head is red: a red required
-// check is 072 (lane reason), a red optional one holds at 080 with the check
-// named, and a note left for an older head does not bind the new one.
-func TestClassifyStageRedOptionalCheckHoldsAtAwaitingAdmission(t *testing.T) {
+// hivecommons/hive#12538 (seen on #12457): the lane gates on required
+// checks only, so it soaks a PR whose rollup still shows a red optional
+// check and its reason reads as queued/pending. Any red check on the head
+// is red CI: 070/072, never 080 or 100. A red required check is already the
+// lane's reason; a red optional one is named; a note left for an older head
+// does not bind the new one.
+func TestClassifyStageRedCheckIsRepairStageNever080Or100(t *testing.T) {
 	approve := stageDetail{Verdict: ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}, VerdictKnown: true}
 	red := approve
 	red.RedChecks, red.RedChecksHead = []string{"relative links and anchors resolve"}, "sha"
+	named := "optional-check-failing:relative links and anchors resolve"
 	cases := []struct {
 		name   string
 		obs    stageObservation
 		want   stagelabels.Stage
 		reason string
 	}{
-		{name: "soaking with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: red}, want: stagelabels.AwaitingMergeAdmission, reason: "optional-check-failing:relative links and anchors resolve"},
-		{name: "merge-failed with red optional", obs: stageObservation{Lane: stageLaneTrusted, HeadSHA: "sha", Reason: "merge-failed", Detail: red}, want: stagelabels.AwaitingMergeAdmission, reason: "optional-check-failing:relative links and anchors resolve"},
-		{name: "self-authored release-hold with red optional", obs: stageObservation{Lane: stageLaneSelf, HeadSHA: "sha", Reason: "release-hold", Detail: red}, want: stagelabels.AwaitingMergeAdmission, reason: "optional-check-failing:relative links and anchors resolve"},
+		// would be 100
+		{name: "soaking with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "merge-failed with red optional", obs: stageObservation{Lane: stageLaneTrusted, HeadSHA: "sha", Reason: "merge-failed", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "self-authored release-hold with red optional", obs: stageObservation{Lane: stageLaneSelf, HeadSHA: "sha", Reason: "release-hold", Detail: red}, want: stagelabels.Fixing, reason: named},
+		// would be 080
+		{name: "author side done with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "lane error with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Err: true, Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		// would be 050/060
+		{name: "pending with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-pending:lint", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "no verdict with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonNoVerdict, Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		// red required: the lane's own reason
+		{name: "red required", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: red}, want: stagelabels.ReturnedToContributor},
+		{name: "red required self-authored", obs: stageObservation{Lane: stageLaneSelf, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: approve}, want: stagelabels.Fixing},
+		// green
 		{name: "soaking all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: approve}, want: stagelabels.MergeQueue},
-		{name: "red required outranks optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: red}, want: stagelabels.ReturnedToContributor},
-		{name: "red optional while pending stays reviewed", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-pending:lint", Detail: red}, want: stagelabels.Reviewed},
+		{name: "author side done all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Detail: approve}, want: stagelabels.AwaitingMergeAdmission},
 		{name: "note for an older head does not bind", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha2", Reason: contributorLaneReasonSoaking + "(1h)", Detail: red}, want: stagelabels.MergeQueue},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := classifyStage(tc.obs)
-			if got.Stage != tc.want || got.Rank != stageRankOwned || got.Reason != tc.reason {
+			if got.Stage != tc.want || got.Reason != tc.reason {
 				t.Fatalf("classifyStage=%+v want stage %v reason %q", got, tc.want, tc.reason)
+			}
+			if tc.want != stagelabels.AwaitingMergeAdmission && got.Rank != stageRankOwned {
+				t.Fatalf("rank=%d want owned", got.Rank)
 			}
 		})
 	}
+	// Modifiers that park the PR still outrank a red optional check.
+	held := classifyStage(stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "label:hold", Detail: red})
+	if held.Stage != stagelabels.NeedsHuman {
+		t.Fatalf("held=%+v want needs-human", held)
+	}
 }
 
-// hivecommons/hive#12457 end to end: a PR soaking behind a red optional
-// check is labelled 080 (not 100) with the check in the stored reason; a
-// stale 100 from before is displaced; once the check is green the same
-// soaking reason yields 100; and a head push drops the old head's note.
-func TestApplyStageLabelsRedOptionalCheckDisplacesMergeQueue(t *testing.T) {
+// hivecommons/hive#12538 end to end: a PR soaking behind a red optional
+// check moves 100 → 072 (regressed, check named in the comment and store
+// reason); a PR awaiting admission moves 080 → 072 the same way; once the
+// check is green the same soaking reason yields 100; and a head push drops
+// the old head's note.
+func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *testing.T) {
 	api := &stageAPI{}
 	srv := newStageAPI(t, api)
 	defer srv.Close()
@@ -667,64 +688,61 @@ func TestApplyStageLabelsRedOptionalCheckDisplacesMergeQueue(t *testing.T) {
 	ctx := context.Background()
 	approve := ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
 	soaking := contributorLaneReasonSoaking + "(remaining=1h39m0s)"
+	redName := "relative links and anchors resolve"
 	key := stageKey("acme", "widget", 12457)
+	cycle := func(pr *gh.PullRequest, reason string, red []string) {
+		t.Helper()
+		api.reset()
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
+		e.noteStageAuthor("acme", "widget", 12457, stagelabels.AuthorTrusted)
+		e.noteStageVerdict("acme", "widget", 12457, approve)
+		e.noteStageRedChecks("acme", "widget", 12457, "sha", red)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Earlier cycle: all green, soaking → 100 (already on the PR).
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12457, "stage/100-merge-queue", "author/trusted"), soaking, false, nil)
-	e.noteStageAuthor("acme", "widget", 12457, stagelabels.AuthorTrusted)
-	e.noteStageVerdict("acme", "widget", 12457, approve)
-	e.noteStageRedChecks("acme", "widget", 12457, "sha", nil)
-	if _, err := e.ApplyStageLabels(ctx); err != nil {
-		t.Fatal(err)
-	}
+	cycle(stagePR(12457, "stage/100-merge-queue", "author/trusted"), soaking, nil)
 	if len(api.added) != 0 || len(api.removed) != 0 {
 		t.Fatalf("green soak changed labels: added=%v removed=%v", api.added, api.removed)
 	}
 
-	// An optional check on the same head went red: 100 → 080, named.
-	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12457, "stage/100-merge-queue", "author/trusted"), soaking, false, nil)
-	e.noteStageAuthor("acme", "widget", 12457, stagelabels.AuthorTrusted)
-	e.noteStageVerdict("acme", "widget", 12457, approve)
-	e.noteStageRedChecks("acme", "widget", 12457, "sha", []string{"relative links and anchors resolve"})
-	if _, err := e.ApplyStageLabels(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/080-awaiting-merge-admission", "stage/regressed"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
+	// An optional check on the same head went red: 100 → 072, named.
+	cycle(stagePR(12457, "stage/100-merge-queue", "author/trusted"), soaking, []string{redName})
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor", "stage/regressed"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
 	rec, _ := store.Get(key)
-	if rec.Reason != "optional-check-failing:relative links and anchors resolve" {
+	if rec.Reason != "optional-check-failing:"+redName {
 		t.Fatalf("stored reason %q", rec.Reason)
 	}
-	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 080-awaiting-merge-admission: optional-check-failing:relative links and anchors resolve") {
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 072-returned-to-contributor: optional-check-failing:"+redName) {
 		t.Fatalf("comments=%v", api.comments)
 	}
 
-	// Same head, check re-run green: the lane's soaking reason is now 100.
-	api.reset()
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12457, "stage/080-awaiting-merge-admission", "stage/regressed", "author/trusted"), soaking, false, nil)
-	e.noteStageAuthor("acme", "widget", 12457, stagelabels.AuthorTrusted)
-	e.noteStageVerdict("acme", "widget", 12457, approve)
-	e.noteStageRedChecks("acme", "widget", 12457, "sha", nil)
-	if _, err := e.ApplyStageLabels(ctx); err != nil {
-		t.Fatal(err)
-	}
+	// Same head, check re-run green: the lane's soaking reason is 100 again.
+	cycle(stagePR(12457, "stage/072-returned-to-contributor", "stage/regressed", "author/trusted"), soaking, nil)
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
 
+	// Red again while the lane stops on a reason no stage claims (would be
+	// 080): still 072.
+	cycle(stagePR(12457, "stage/100-merge-queue", "author/trusted"), "review-state-check", []string{redName})
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor", "stage/regressed"}}) {
+		t.Fatalf("added=%v removed=%v", api.added, api.removed)
+	}
+	cycle(stagePR(12457, "stage/080-awaiting-merge-admission", "author/trusted"), "review-state-check", []string{redName})
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor", "stage/regressed"}}) || !reflect.DeepEqual(api.removed, []string{"stage/080-awaiting-merge-admission"}) {
+		t.Fatalf("080 with red CI: added=%v removed=%v", api.added, api.removed)
+	}
+
 	// New head pushed: a note recorded for the old head does not bind it.
-	api.reset()
+	cycle(stagePR(12457, "stage/072-returned-to-contributor", "stage/regressed", "author/trusted"), soaking, nil)
 	pr := stagePR(12457, "stage/100-merge-queue", "author/trusted")
 	pr.Head.SHA = gh.Ptr("sha2")
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, soaking, false, nil)
-	e.noteStageAuthor("acme", "widget", 12457, stagelabels.AuthorTrusted)
-	e.noteStageVerdict("acme", "widget", 12457, approve)
-	e.noteStageRedChecks("acme", "widget", 12457, "sha", []string{"relative links and anchors resolve"})
-	if _, err := e.ApplyStageLabels(ctx); err != nil {
-		t.Fatal(err)
-	}
+	cycle(pr, soaking, []string{redName})
 	if len(api.added) != 0 || len(api.removed) != 0 {
 		t.Fatalf("stale note changed labels: added=%v removed=%v", api.added, api.removed)
 	}
