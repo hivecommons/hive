@@ -34,6 +34,7 @@ The machine-readable schema is [`pkg/evidence/schema/v1.json`](../pkg/evidence/s
 | `revert_of`, `followup_of` | Bundle ids of earlier merged PRs this PR reverts or follows up with a fix (see [Change-failure links](#change-failure-links)). |
 | `reverted_by`, `followed_up_by` | Bundle ids of later PRs that reverted or followed up this one. |
 | `shadow` | Optional. What shadow-mode gates would have done, recorded only: `review_gate` (`would_have_held`) and `intent` (`would_have_blocked`), each with `reason`, `tier`, `confidence` and `evaluated_at`. Absent unless a shadow gate ran; it never affects a merge ([#12103](https://github.com/hivecommons/hive/issues/12103)). |
+| `backfilled`, `backfill` | Optional. Present only on bundles reconstructed from forge history by `hivectl evidence backfill` rather than recorded live: `backfilled: true` and a `backfill` block with `source`, `at`, `state` (`open`, `closed`, `merged`), `closed_at`, `author_kind_rule` and the pre-registration exclusion `flags` (`placeholder_hive`, `hive_on_hive`, `under_min_merged`). Such a bundle has no `verdicts`, `ci`, `sentinel` or `shadow`; see [Backfilled bundles](#backfilled-bundles) ([#12371](https://github.com/hivecommons/hive/issues/12371)). |
 | `created_at`, `updated_at` | When the bundle was first written and last completed. |
 | `signed` | `true` only when a valid signing key produced `signature`. |
 | `hash` | Hex SHA-256 of the canonical encoding (see below). |
@@ -88,6 +89,17 @@ A PR named both ways counts as a revert. A referenced number is linked only when
 ### Shadow gates and cross-family review in the study
 
 The two opt-in experimental arms of the study (RFC [#12062](https://github.com/hivecommons/hive/issues/12062)) read these records: shadow-gate observations (`shadow`) and per-verdict reviewer model/backend. The run plan — consenting hives, 30-day periods, exact `review.shadow` / `intent.shadow` / `review_models.exclude_author_family` diffs, rollback — is [`research/ablation-plan-2026-10.md`](research/ablation-plan-2026-10.md). Auto-merge is unchanged everywhere in it.
+
+### Backfilled bundles
+
+`hivectl evidence backfill --repo <owner/repo> --since <date> [--until <date>] [--root <dir>] [--dry-run]` reconstructs bundles for PRs that predate Hive's recorder, so the study in [`research/preregistration-2026-10.md`](research/preregistration-2026-10.md) has a baseline ([#12371](https://github.com/hivecommons/hive/issues/12371); run plan in [`research/backfill.md`](research/backfill.md)). It writes what GitHub history still knows and nothing else:
+
+- `author.login` and `author.kind` by a documented heuristic, recorded in `backfill.author_kind_rule`: Hive's `— hive:` attribution trailer in the body (`attribution_trailer`, carrying `agent`/`backend`/`model`), a login passed with `--agent-login` (`agent_login`), Hive's 🐝 identity footer (`identity_footer`), a GitHub `Bot` account or `[bot]` suffix (`bot_account`), else `default_human`.
+- `merge` (`actor` from the merger GitHub reports, else `unrecorded`; `method` always `unrecorded`), or `backfill.state: closed` with `closed_at`, or `open`.
+- `created_at` is the PR's creation time, so backfilled bundles fall into the right historical window; `updated_at` and `backfill.at` are when the backfill ran.
+- `revert_of` / `followup_of` and the reverse links, under exactly the [change-failure link rules](#change-failure-links) (`pkg/evidence.ChangeRefs`, 14-day window), against bundles built in the same run and bundles already on disk.
+
+`verdicts`, `ci` (left with a zero `captured_at`), `sentinel` and `shadow` are **absent, never fabricated**; `policy.acmm_level` is 0 unless `--acmm-level` stamps a level known to be in force for the window. Every bundle carries `backfilled: true` so each chart and export can exclude or annotate it. Population exclusions from the pre-registration are applied as `backfill.flags`, never by dropping rows: `hive_on_hive` is added for `hivecommons/hive`, `under_min_merged` when fewer than `--min-merged` (default 10) PRs merged in the window, and `placeholder_hive` by `--flag`. Existing bundles for a head are skipped, so re-running is safe; the run pauses on GitHub rate limits and `--dry-run` prints counts only. Like everything in the evidence store, the backfill is record-only: nothing reads it to decide a merge.
 
 ## Downloading
 
