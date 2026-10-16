@@ -7560,14 +7560,18 @@
       const summaryText = textOrDash(opts.summaryHtml || opts.summary || '');
       const summary = `<span class="dash-card-summary ${opts.summaryClass || ''}" id="${esc(opts.summaryId || (id + '-summary'))}" title="${esc(opts.summaryTitle || summaryText || 'Collapsed summary')}" aria-label="${esc(opts.summaryTitle || summaryText || 'Collapsed summary')}">${visualSectionSummary(id, summaryText, opts.summaryTitle)}</span>`;
       const cls = ['dash-card-header','section-header-toggle',opts.headerClass || ''].filter(Boolean).join(' ');
-      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="true" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="section-chevron ${opts.chevronClass || ''}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${dashboardSectionHelpMark(id)}${settings}${subtitle}</span>${badges}${actions}${summary}</div>`;
+      // opts.collapsed renders the persisted collapsed state into the markup
+      // so a re-render never inserts an expanded body that is collapsed a
+      // moment later (#12512).
+      const chevronCls = 'section-chevron ' + [opts.chevronClass || '', opts.collapsed ? 'collapsed' : ''].filter(Boolean).join(' ');
+      return `<div class="${cls}" data-section-card-header="1" role="button" tabindex="0" aria-expanded="${opts.collapsed ? 'false' : 'true'}" aria-controls="${esc(bodyId)}" ${actionAttrs} title="${esc(opts.toggleTitle || 'Collapse / expand this section')}">${grip}<span class="${chevronCls}" aria-hidden="true">▼</span><span class="dash-card-title">${title}${dashboardSectionHelpMark(id)}${settings}${subtitle}</span>${badges}${actions}${summary}</div>`;
     }
     function sectionCardShell(opts, bodyHtml) {
       opts = opts || {};
       const id = opts.id || '';
       const bodyId = opts.bodyId || (id + '-body');
-      const panelClass = ['dash-card', opts.panelClass || ''].filter(Boolean).join(' ');
-      const bodyClass = ['dash-card-body','section-body', opts.bodyClass || ''].filter(Boolean).join(' ');
+      const panelClass = ['dash-card', opts.panelClass || '', opts.collapsed ? 'collapsed' : ''].filter(Boolean).join(' ');
+      const bodyClass = ['dash-card-body','section-body', opts.bodyClass || '', opts.collapsed ? 'collapsed' : ''].filter(Boolean).join(' ');
       return `<div class="${panelClass}" data-section-card-shell="1">${sectionCardHeader(opts)}<div class="${bodyClass}" id="${esc(bodyId)}">${bodyHtml || ''}</div></div>`;
     }
     function sectionHeaderKey(ev, sectionId) {
@@ -13293,6 +13297,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (!f) { from.appendChild(t); continue; }
         morphDomNode(f, t);
       }
+    }
+
+    // Patch a container's children in place from an HTML string (#12512).
+    // `el.innerHTML = html` throws every node away, so a periodic re-render
+    // loses scroll offsets, focus and typed input inside the container, and —
+    // when the new markup is inserted expanded and only collapsed afterwards —
+    // lets a forced layout in between measure the expanded height. Scroll
+    // anchoring then shoves the page by that delta and rides the 200ms
+    // collapse transition back: the "jumps every few seconds" seen below the
+    // Cost panel. Patching keeps the nodes and their classes, so an unchanged
+    // render is a no-op for layout.
+    function morphInnerHtml(el, html) {
+      if (!el) return;
+      const next = el.cloneNode(false);
+      next.innerHTML = html;
+      morphDomNode(el, next);
     }
 
     function morphDomAttributes(from, to) {
@@ -20413,6 +20433,15 @@ function burnAreaChart() {
       if (v === null) return !!COST_SUB_DEFAULT_COLLAPSED[key];
       return v === '1';
     }
+    // Markup-time form of applyCostSubCollapse: the sub-table is emitted
+    // already collapsed, so a re-render never inserts it open and animates it
+    // shut 200ms later (#12512).
+    function costSubCollapsedCls(key) {
+      return isCostSubCollapsed(key) ? ' collapsed' : '';
+    }
+    function costSubAriaExpanded(key) {
+      return isCostSubCollapsed(key) ? 'false' : 'true';
+    }
     function setCostSubCollapsed(key, collapsed) {
       // Store explicitly (never remove) so a user choice that matches the
       // default's opposite survives reloads for both subsections.
@@ -20555,7 +20584,7 @@ function burnAreaChart() {
       if (!el) return;
       _lastCost = cost;
       if (!cost || (!cost.estimated && (!cost.gateways || cost.gateways.length === 0))) {
-        el.innerHTML = sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: '$0', summaryTitle: 'Estimated all-time total', bodyId: 'cost-panel-body' }, '<div class="text-muted">No cost data yet.</div>');
+        morphInnerHtml(el, sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: '$0', summaryTitle: 'Estimated all-time total', bodyId: 'cost-panel-body', collapsed: isCostCollapsed() }, '<div class="text-muted">No cost data yet.</div>'));
         applyCostCollapse();
         return;
       }
@@ -20672,8 +20701,8 @@ function burnAreaChart() {
         </tr>`;
       }).join('');
       const sandboxTable = `<div class="cost-subsection" data-cost-sub="sandbox">
-        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="true" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Window: ${esc(usageWindow)}. Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>usage by sandbox <span class="cost-window-tag">(${esc(usageWindow)})</span></div>
-        <div class="cost-sub-body" id="cost-sub-sandbox-body">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="${costSubAriaExpanded('sandbox')}" aria-controls="cost-sub-sandbox-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="sandbox" data-keys="*" title="Estimated cost grouped by sandbox — one agent per sandbox (token × list price). Window: ${esc(usageWindow)}. Click to collapse / expand."><span class="cost-chevron${costSubCollapsedCls('sandbox')}" aria-hidden="true">▼</span>usage by sandbox <span class="cost-window-tag">(${esc(usageWindow)})</span></div>
+        <div class="cost-sub-body${costSubCollapsedCls('sandbox')}" id="cost-sub-sandbox-body">
         <div class="cost-table-scroll"><table class="cost-table table-compact">
           <thead><tr>${costSortTh('sandbox', 'name', 'sandbox (agent)')}${costSortTh('sandbox', 'input', 'input', { align: 'right' })}${costSortTh('sandbox', 'output', 'output', { align: 'right' })}${costSortTh('sandbox', 'usd', 'est. $', { align: 'right' })}</tr></thead>
           <tbody>${sandboxRows || '<tr><td class="text-muted" colspan="4">no usage yet</td></tr>'}</tbody>
@@ -20720,8 +20749,8 @@ function burnAreaChart() {
         </tr>`;
       }).join('');
       const sessionTable = `<div class="cost-subsection" data-cost-sub="session">
-        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-session-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="session" data-keys="*" title="Estimated cost for each individual agent session (sandbox run), sorted by session start newest first by default (token × list price). Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost per session</div>
-        <div class="cost-sub-body" id="cost-sub-session-body">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="${costSubAriaExpanded('session')}" aria-controls="cost-sub-session-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="session" data-keys="*" title="Estimated cost for each individual agent session (sandbox run), sorted by session start newest first by default (token × list price). Click to collapse / expand."><span class="cost-chevron${costSubCollapsedCls('session')}" aria-hidden="true">▼</span>cost per session</div>
+        <div class="cost-sub-body${costSubCollapsedCls('session')}" id="cost-sub-session-body">
         <div class="cost-table-scroll"><table class="cost-table table-compact">
           <thead><tr>${costSortTh('session', 'session_id', 'session')}${costSortTh('session', 'agent', 'sandbox')}${costSortTh('session', 'model', 'model')}${costSortTh('session', 'started', 'started → ended', { title: "Session start → end, local time (earliest / latest usage event). Hover a row for full timestamps; 'active' means the session had events in the last few minutes." })}${costSortTh('session', 'input', 'input', { align: 'right' })}${costSortTh('session', 'output', 'output', { align: 'right' })}${costSortTh('session', 'usd', 'est. $', { align: 'right' })}</tr></thead>
           <tbody>${sessionRows || '<tr><td class="text-muted" colspan="7">no sessions yet</td></tr>'}</tbody>
@@ -20781,10 +20810,16 @@ function burnAreaChart() {
           ${sessionTable}
           ${unpricedNote}
           ${costTokenBudgetHtml()}`;
-      el.innerHTML = sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(allTimeCost.usd), summaryTitle: costTotalTooltip(allTimeCost), bodyId: 'cost-panel-body' }, costBody);
-      // Re-apply the persisted collapsed state so a poll re-render never resets it.
-      applyCostCollapse();
+      // Patched in place with the collapsed state already in the markup: this
+      // runs on every SSE agent-status tick, and an innerHTML rebuild that
+      // inserted the sub-tables open and collapsed them after a forced layout
+      // moved the page by their height every tick (#12512).
+      morphInnerHtml(el, sectionCardShell({ id: 'cost-panel', title: '💵 Cost', gripLabel: 'Cost', panelClass: 'cost-panel', bodyClass: 'cost-body', headerClass: 'cost-title cost-toggle', chevronClass: 'cost-chevron', action: 'toggleCostPanel', keyAction: 'costHeaderKey', badgeHtml: '<span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span>', summaryClass: 'cost-collapsed-total', summaryHtml: fmtUSD(allTimeCost.usd), summaryTitle: costTotalTooltip(allTimeCost), bodyId: 'cost-panel-body', collapsed: isCostCollapsed() }, costBody));
+      // Re-apply the persisted collapsed state so a poll re-render never resets
+      // it. Sub-tables first: applyCostCollapse replays sparklines, which
+      // forces a layout, and that layout must never see them open (#12512).
       applyCostSubCollapse();
+      applyCostCollapse();
     }
 
     // ── Per-repo estimated cost (#4836 phase 3) ──
@@ -20823,8 +20858,8 @@ function burnAreaChart() {
       const rate = total > 0 ? Math.round((Number(lc.attributed_tokens) || 0) / total * 100) : null;
       const more = (lc.by_ref || []).length > refs.length ? ` · showing top ${refs.length} of ${(lc.by_ref || []).length}` : '';
       return `<div class="cost-subsection" data-cost-sub="launch">
-        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-launch-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="launch" data-keys="*" title="Estimated cost per issue / PR, from the work each kick was launched for joined against per-message token timing. Inferred, not measured. Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost by work item <span class="cost-badge est">inferred</span></div>
-        <div class="cost-sub-body" id="cost-sub-launch-body">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="${costSubAriaExpanded('launch')}" aria-controls="cost-sub-launch-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="launch" data-keys="*" title="Estimated cost per issue / PR, from the work each kick was launched for joined against per-message token timing. Inferred, not measured. Click to collapse / expand."><span class="cost-chevron${costSubCollapsedCls('launch')}" aria-hidden="true">▼</span>cost by work item <span class="cost-badge est">inferred</span></div>
+        <div class="cost-sub-body${costSubCollapsedCls('launch')}" id="cost-sub-launch-body">
         <div class="cost-subtitle">Tokens are owned by the most recent recorded kick for the same agent (up to ${Number(lc.ownership_hours) || '?'}h). ${rate === null ? '' : `<strong>${rate}%</strong> of tokens attributable`} · ${lc.window_hours ? Math.round(lc.window_hours / 24) + 'd window' : 'window unknown'} · ${Number(lc.launches_retained) || 0} launches${more}.</div>
         <div class="cost-disclaimer cost-sub-disclaimer">A governor kick names many issues at once: "est. $" is the whole spend of every launch that named the item (an upper bound); hover for the even-split share. Only governor and review-swarm kicks are recorded. Not a bill, not a budget.</div>
         <table class="cost-table table-compact">
@@ -20891,8 +20926,8 @@ function burnAreaChart() {
         ? ` · oldest audited event ${esc(String(rc.oldest_event_at).slice(0, 10))}`
         : '';
       return `<div class="cost-subsection" data-cost-sub="repo">
-        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="cost-sub-repo-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="repo" data-keys="*" title="Estimated cost attributed to each repo by joining audited repo events against per-message token timing. Inferred, not measured. Click to collapse / expand."><span class="cost-chevron" aria-hidden="true">▼</span>cost by repo <span class="cost-badge est">inferred</span></div>
-        <div class="cost-sub-body" id="cost-sub-repo-body">
+        <div class="cost-subtable-title cost-sub-toggle" role="button" tabindex="0" aria-expanded="${costSubAriaExpanded('repo')}" aria-controls="cost-sub-repo-body" data-action="costSubToggle" data-keydown-action="costSubToggle" data-arg-types="e,s" data-arg1="repo" data-keys="*" title="Estimated cost attributed to each repo by joining audited repo events against per-message token timing. Inferred, not measured. Click to collapse / expand."><span class="cost-chevron${costSubCollapsedCls('repo')}" aria-hidden="true">▼</span>cost by repo <span class="cost-badge est">inferred</span></div>
+        <div class="cost-sub-body${costSubCollapsedCls('repo')}" id="cost-sub-repo-body">
         <div class="cost-subtitle">Claude sessions only. Cost is attributed by TIMING: tokens spent between two audited repo events are billed to the repo named by the later event. ${rate === null ? '' : `<strong>${rate}%</strong> of tokens attributable`} · ${windowTxt}${oldest}.</div>
         <div class="cost-disclaimer" style="margin:var(--sp-2) var(--sp-0) var(--sp-4)">Known bias — an agent that investigates repo A, finds nothing to file, then files on repo B bills <em>all</em> of A's investigation to B. That is this method's failure mode, not a rounding error: treat a repo's figure as an upper bound when a neighbouring repo shows activity but little cost. A row showing "—" means unobserved, not free. Not a bill.</div>
         <table class="cost-table table-compact">
@@ -26450,13 +26485,16 @@ function burnAreaChart() {
       var panel = document.getElementById('audit-panel');
       if (!panel) return;
       initAuditPanelResize();
+      // Patched in place (#12512) so the 30s poll keeps the panel's own
+      // scroll offset and the empty/loaded states swap without a rebuild; the
+      // panel's height is fixed by --audit-panel-height either way.
       if (!entries.length) {
-        panel.innerHTML = '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">' + (_auditSensitiveOnly ? 'No sensitive audit entries in the last 24h' : 'No audit entries yet') + '</div>';
+        morphInnerHtml(panel, '<div style="color:var(--terminal-muted);font-size:var(--fs-base);padding:var(--sp-4)">' + (_auditSensitiveOnly ? 'No sensitive audit entries in the last 24h' : 'No audit entries yet') + '</div>');
         return;
       }
-      panel.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">' +
+      morphInnerHtml(panel, '<table style="width:100%;border-collapse:collapse;font-size:0.78rem">' +
         '<thead><tr style="color:var(--terminal-muted);font-size:0.7rem;border-bottom:1px solid var(--terminal-line)"><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Time</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">User</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Action</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Agent</th><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Details</th></tr></thead>' +
-        '<tbody>' + entries.map(renderAuditRow).join('') + '</tbody></table>';
+        '<tbody>' + entries.map(renderAuditRow).join('') + '</tbody></table>');
     }
 
     function parseAuditQuery(q) {
@@ -29530,7 +29568,9 @@ function burnAreaChart() {
       const version = platform && (platform.version || platform.hiveVersion || platform.gitVersion || platform.commit);
       const debugSummary = version ? `version ${version}` : 'platform diagnostics';
       setSectionSummary('debug-section', debugSummary);
-      grid.innerHTML = `
+      // Patched in place (#12512): a 10s innerHTML rebuild re-inserted every
+      // tile without its collapsed-hidden class and shifted the sections below.
+      morphInnerHtml(grid, `
         ${debugDiagnosticsHeadlineHtml(data, debugSummary)}
         <div style="${cardStyle}" class="platform-diagnostics"><div style="${labelStyle}">Platform</div>${platformFactTiles(platform)}</div>
         ${renderQualityStatsCard(agents)}
@@ -29554,7 +29594,7 @@ function burnAreaChart() {
           <div style="${rowStyle}"><span>Cache Read</span><span style="font-weight:600">${tokenCache}</span></div>
           ${budgetLimit > 0 ? `<div style="margin-top:var(--sp-4);${labelStyle}">Budget</div><div style="${rowStyle}"><span>Used</span><span style="font-weight:600">$${budgetUsed.toFixed(2)} / $${budgetLimit.toFixed(2)} (${budgetPct}%)</span></div>` : ''}
         </div>
-      `;
+      `);
       applySectionCollapse('debug-section');
     }
     dashboardSetInterval('debug-section', renderDebugSection, DEBUG_REFRESH_MS);
@@ -29562,14 +29602,35 @@ function burnAreaChart() {
     // ── Logs section ──
     const LOGS_REFRESH_MS = 5000;
     let _logsData = {};
+    // Agents whose /api/pane returned 404, keyed by name → the agent's state
+    // at the time. A disabled or stopped agent has no tmux window, so polling
+    // it again every 5s only produces console noise (#12512); the entry is
+    // dropped as soon as the live agent list reports a different state.
+    const _paneAbsentState = {};
+    function agentPaneStateKey(a) {
+      return (a && a.enabled === false ? 'disabled' : 'enabled') + ':' + String((a && a.state) || '');
+    }
+    // Agents that can have a pane right now: present in the live /api/status
+    // list, not disabled, not stopped, and not known-absent in this state.
+    function agentPaneCandidates(agents) {
+      const out = [];
+      for (const a of Array.isArray(agents) ? agents : []) {
+        if (!a || !a.name || agentIsDisabled(a) || a.state === 'stopped') continue;
+        if (_paneAbsentState[a.name] && _paneAbsentState[a.name] !== agentPaneStateKey(a)) delete _paneAbsentState[a.name];
+        if (_paneAbsentState[a.name]) continue;
+        out.push(a);
+      }
+      return out;
+    }
     async function fetchAgentLogs() {
-      const agents = window._lastAgents || [];
+      const allAgents = window._lastAgents || [];
+      const agents = agentPaneCandidates(allAgents);
       const select = document.getElementById('logs-agent-select');
       if (!select) return;
 
       const current = select.value;
       const existingOpts = new Set(Array.from(select.options).map(o => o.value));
-      for (const a of agents) {
+      for (const a of allAgents) {
         if (!existingOpts.has(a.name)) {
           const opt = document.createElement('option');
           opt.value = a.name;
@@ -29578,13 +29639,15 @@ function burnAreaChart() {
         }
       }
 
-      const toFetch = current === 'all' ? agents.map(a => a.name) : [current];
-      for (const name of toFetch) {
+      const toFetch = current === 'all' ? agents : agents.filter(a => a.name === current);
+      for (const a of toFetch) {
         try {
-          const res = await fetch(`/api/pane/${name}`);
+          const res = await fetch(`/api/pane/${a.name}`);
           if (res.ok) {
             const d = await res.json();
-            _logsData[name] = capDashboardArray(d.lines || [], DASHBOARD_LOG_CAP);
+            _logsData[a.name] = capDashboardArray(d.lines || [], DASHBOARD_LOG_CAP);
+          } else if (res.status === 404) {
+            _paneAbsentState[a.name] = agentPaneStateKey(a);
           }
         } catch (e) { /* skip */ }
       }
