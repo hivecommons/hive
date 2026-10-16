@@ -118,16 +118,37 @@ func TestRecordReviewEvidenceMergeCapturesCIAndHumanActions(t *testing.T) {
 		{Actor: "bob", Kind: ReviewEvidenceActionLabelRemoved, Detail: "triage", At: t0.Add(4 * time.Hour)},
 	}
 
+	// An eligibility-time snapshot recordReviewEvidenceCI left on the bundle.
+	priorCI := evidence.CI{
+		Status:     "success",
+		Checks:     []evidence.Check{{Name: "build", Conclusion: "success"}, {Name: "test", Conclusion: "success"}},
+		CapturedAt: t0.Add(-time.Hour),
+	}
+
 	tests := []struct {
 		name        string
 		fixture     *evidenceContextFixture
+		priorCI     *evidence.CI
 		wantCI      []evidence.Check
+		wantStatus  string
 		wantActions []evidence.Action
 	}{
 		{
 			name:        "CI and human actions captured",
 			fixture:     &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviews: reviews, events: events},
 			wantCI:      wantCI,
+			wantStatus:  "failure",
+			wantActions: append([]evidence.Action{approval}, labelActions...),
+		},
+		{
+			// Status, checks and captured_at must all describe the merge-time
+			// runs: a stale status beside fresh checks would read as CI
+			// disagreeing with itself.
+			name:        "merge-time capture replaces the eligibility-time snapshot whole",
+			fixture:     &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviews: reviews, events: events},
+			priorCI:     &priorCI,
+			wantCI:      wantCI,
+			wantStatus:  "failure",
 			wantActions: append([]evidence.Action{approval}, labelActions...),
 		},
 		{
@@ -136,20 +157,39 @@ func TestRecordReviewEvidenceMergeCapturesCIAndHumanActions(t *testing.T) {
 			wantActions: append([]evidence.Action{approval}, labelActions...),
 		},
 		{
-			name:    "reviews fail leaves human actions empty",
-			fixture: &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviewsFail: true, events: events},
-			wantCI:  wantCI,
+			name:        "check runs fail keeps the eligibility-time snapshot",
+			fixture:     &evidenceContextFixture{head: "h1", checksFail: true, reviews: reviews, events: events},
+			priorCI:     &priorCI,
+			wantCI:      priorCI.Checks,
+			wantStatus:  "success",
+			wantActions: append([]evidence.Action{approval}, labelActions...),
 		},
 		{
-			name:    "events fail leaves human actions empty",
-			fixture: &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviews: reviews, eventsFail: true},
-			wantCI:  wantCI,
+			name:       "reviews fail leaves human actions empty",
+			fixture:    &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviewsFail: true, events: events},
+			wantCI:     wantCI,
+			wantStatus: "failure",
+		},
+		{
+			name:       "events fail leaves human actions empty",
+			fixture:    &evidenceContextFixture{head: "h1", checkRuns: checkRuns, reviews: reviews, eventsFail: true},
+			wantCI:     wantCI,
+			wantStatus: "failure",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := withEvidenceRoot(t)
-			writeTestEvidence(t, root, "h1", "", t0)
+			seeded := writeTestEvidence(t, root, "h1", "", t0)
+			if tt.priorCI != nil {
+				seeded.CI = *tt.priorCI
+				if err := evidence.Seal(seeded, nil); err != nil {
+					t.Fatal(err)
+				}
+				if err := writeReviewEvidence(ReviewEvidencePath(root, "o/r", 7, "h1"), seeded); err != nil {
+					t.Fatal(err)
+				}
+			}
 			f := tt.fixture
 			c := newTestClient(t, newEvidenceContextServer(t, f), "o", []string{"o/r"})
 			c.SetReviewEvidence(func(string) ReviewEvidenceSettings { return ReviewEvidenceSettings{Enabled: true} })
@@ -166,8 +206,11 @@ func TestRecordReviewEvidenceMergeCapturesCIAndHumanActions(t *testing.T) {
 			if (len(tt.wantCI) > 0) == b.CI.CapturedAt.IsZero() {
 				t.Fatalf("ci captured_at = %v with %d checks", b.CI.CapturedAt, len(tt.wantCI))
 			}
-			if wantStatus := "failure"; len(tt.wantCI) > 0 && b.CI.Status != wantStatus {
-				t.Fatalf("ci status = %q, want %q", b.CI.Status, wantStatus)
+			if tt.priorCI != nil && (b.CI.CapturedAt.Equal(tt.priorCI.CapturedAt)) != (tt.fixture.checksFail) {
+				t.Fatalf("ci captured_at = %v, prior %v, checksFail %v", b.CI.CapturedAt, tt.priorCI.CapturedAt, tt.fixture.checksFail)
+			}
+			if b.CI.Status != tt.wantStatus {
+				t.Fatalf("ci status = %q, want %q", b.CI.Status, tt.wantStatus)
 			}
 			if !reflect.DeepEqual(b.HumanActions, tt.wantActions) {
 				t.Fatalf("human actions = %+v, want %+v", b.HumanActions, tt.wantActions)
@@ -456,23 +499,33 @@ func TestRecordReviewEvidenceCI(t *testing.T) {
 	})
 }
 
-func TestEvidenceCIVerdict(t *testing.T) {
+func TestCIVerdictFromRuns(t *testing.T) {
 	tests := []struct {
-		name string
-		runs []*gh.CheckRun
-		want string
+		name        string
+		runs        []*gh.CheckRun
+		want        string
+		wantFailing []string
 	}{
-		{"no runs", nil, "pending"},
-		{"all green", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success")}, "success"},
-		{"one failed", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "build", "completed", "failure")}, "failure"},
-		{"action required", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "action_required")}, "failure"},
-		{"still running", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "lint", "in_progress", "")}, "pending"},
-		{"only meta checks", []*gh.CheckRun{evidenceCheckRun(1, "tide", "completed", "success")}, "pending"},
+		{"no runs", nil, "pending", nil},
+		{"all green", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success")}, "success", nil},
+		{"one failed", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "build", "completed", "failure")}, "failure", []string{"build"}},
+		{"action required", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "action_required")}, "failure", []string{"test"}},
+		{"failed while others run", []*gh.CheckRun{evidenceCheckRun(1, "test", "in_progress", ""), evidenceCheckRun(2, "build", "completed", "failure")}, "failure", []string{"build"}},
+		{"still running", []*gh.CheckRun{evidenceCheckRun(1, "test", "completed", "success"), evidenceCheckRun(2, "lint", "in_progress", "")}, "pending", nil},
+		{"only meta checks", []*gh.CheckRun{evidenceCheckRun(1, "tide", "completed", "success")}, "pending", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := evidenceCIVerdict(tt.runs); got != tt.want {
-				t.Fatalf("evidenceCIVerdict = %q, want %q", got, tt.want)
+			v := ciVerdictFromRuns(tt.runs)
+			if v.status != tt.want {
+				t.Fatalf("status = %q, want %q", v.status, tt.want)
+			}
+			if !reflect.DeepEqual(v.failingNames, tt.wantFailing) {
+				t.Fatalf("failingNames = %v, want %v", v.failingNames, tt.wantFailing)
+			}
+			// The evidence path must read the same verdict the gate does.
+			if got := evidenceCIFromRuns(tt.runs, time.Now()).Status; got != tt.want {
+				t.Fatalf("evidenceCIFromRuns status = %q, want %q", got, tt.want)
 			}
 		})
 	}

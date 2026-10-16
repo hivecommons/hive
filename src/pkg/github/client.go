@@ -1936,10 +1936,6 @@ func (c *Client) EnrichReviewSignals(ctx context.Context, prs []PullRequest) {
 // check-run listing was obtained at all. The caller distinguishes the two:
 // "no listing" must never be read as "the required check never reported".
 func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]bool {
-	const ciStatusSuccess = "success"
-	const ciStatusFailure = "failure"
-	const ciStatusPending = "pending"
-
 	if pr.HeadSHA == "" {
 		pr.CIStatus = ciStatusPending
 		return nil
@@ -1996,50 +1992,69 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		pr.CIStatus = ciStatusPending
 		return reported
 	}
-	hasFail := false
-	allDone := true
-	ciChecksFound := 0
 	pr.CIRealCheckRunsKnown = true
-	dcoSatisfied := dcoContextSucceeded(nil, latestCheckRuns)
-	var failingNames []string
-	var failingIDs []int64
-	for _, cr := range latestCheckRuns {
-		if isMetaCheck(cr.GetName()) || (isDCOContext(cr.GetName()) && dcoSatisfied) {
-			continue
-		}
-		ciChecksFound++
-		if cr.GetStatus() != "completed" {
-			allDone = false
-			continue
-		}
-		conclusion := cr.GetConclusion()
-		if conclusion == "failure" || conclusion == "action_required" {
-			hasFail = true
-			failingNames = append(failingNames, cr.GetName())
-			failingIDs = append(failingIDs, cr.GetID())
-		}
-	}
-	pr.CIRealCheckRuns = ciChecksFound
-	if ciChecksFound == 0 {
-		pr.CIStatus = ciStatusPending
-		return reported
-	}
-	switch {
-	case hasFail:
-		pr.CIStatus = ciStatusFailure
-		pr.FailingChecks = failingNames
+	v := ciVerdictFromRuns(latestCheckRuns)
+	pr.CIRealCheckRuns = v.realChecks
+	pr.CIStatus = v.status
+	if v.status == ciStatusFailure {
+		pr.FailingChecks = v.failingNames
 		// "Failed, others still running" is a materially different state from
 		// "failed, all done": only the latter means the PR is stuck rather
 		// than still reporting (hivecommons/hive#9472).
-		pr.CIChecksRunning = !allDone
-		pr.CIFailureExcerpt = c.fetchFailureExcerpt(ctx, owner, repoName, failingIDs, failingNames)
+		pr.CIChecksRunning = !v.allDone
+		pr.CIFailureExcerpt = c.fetchFailureExcerpt(ctx, owner, repoName, v.failingIDs, v.failingNames)
 		pr.HeadTree = c.headTreeOID(ctx, owner, repoName, pr)
-	case allDone:
-		pr.CIStatus = ciStatusSuccess
-	default:
-		pr.CIStatus = ciStatusPending
 	}
 	return reported
+}
+
+// CI verdicts the merge gate assigns a head; also recorded as the evidence
+// bundle's ci.status.
+const (
+	ciStatusSuccess = "success"
+	ciStatusFailure = "failure"
+	ciStatusPending = "pending"
+)
+
+// ciVerdict is the merge gate's reading of a head's latest check runs.
+type ciVerdict struct {
+	status       string // ciStatusSuccess, ciStatusFailure or ciStatusPending
+	realChecks   int    // runs that count: neither meta checks nor a DCO that already passed
+	allDone      bool   // every real run has completed
+	failingNames []string
+	failingIDs   []int64
+}
+
+// ciVerdictFromRuns is the single source of the merge gate's CI rules, shared
+// by enrichPRCI (which gates the merge on it) and the evidence bundle's
+// ci.status (which records it): "failure" when any real check failed or needs
+// action, "success" when every real check completed clean, otherwise
+// "pending". Meta checks, and DCO once it has passed, do not count, and a head
+// with no real checks is pending, never green.
+func ciVerdictFromRuns(latest []*gh.CheckRun) ciVerdict {
+	v := ciVerdict{status: ciStatusPending, allDone: true}
+	dcoSatisfied := dcoContextSucceeded(nil, latest)
+	for _, cr := range latest {
+		if isMetaCheck(cr.GetName()) || (isDCOContext(cr.GetName()) && dcoSatisfied) {
+			continue
+		}
+		v.realChecks++
+		if cr.GetStatus() != "completed" {
+			v.allDone = false
+			continue
+		}
+		if conclusion := cr.GetConclusion(); conclusion == "failure" || conclusion == "action_required" {
+			v.failingNames = append(v.failingNames, cr.GetName())
+			v.failingIDs = append(v.failingIDs, cr.GetID())
+		}
+	}
+	switch {
+	case len(v.failingNames) > 0:
+		v.status = ciStatusFailure
+	case v.realChecks > 0 && v.allDone:
+		v.status = ciStatusSuccess
+	}
+	return v
 }
 
 // headTreeOID returns the tree OID of a red PR's head commit so the escalation

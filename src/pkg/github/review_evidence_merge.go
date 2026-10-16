@@ -180,6 +180,9 @@ func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status st
 		return
 	}
 	ci := evidenceCIFromRuns(runs, time.Now())
+	// On the enrichPRCI path status is never empty (every return after its
+	// defer sets pr.CIStatus from the same rules); the derived verdict only
+	// stands in for a caller that has none.
 	if status != "" {
 		ci.Status = status
 	}
@@ -255,12 +258,9 @@ func (c *Client) captureReviewEvidenceMergeContext(ctx context.Context, owner, n
 		c.logger.Warn("review evidence: could not capture CI for merged head",
 			slog.String("id", b.ID), slog.String("error", err.Error()))
 	} else {
-		// The gate's verdict at merge-eligibility time (recordReviewEvidenceCI)
-		// is the one that let the PR merge; keep it over one re-derived after
-		// the fact, which may have moved on.
-		if prior := b.CI.Status; prior != "" {
-			ci.Status = prior
-		}
+		// One coherent snapshot: status, checks and captured_at all describe
+		// the merge-time runs, under the same rules that gated the merge. On a
+		// read failure the eligibility-time snapshot (recordReviewEvidenceCI) is kept.
 		b.CI = ci
 	}
 	actions, err := reviewEvidenceHumanActions(ctx, c.client, owner, name, b.Number, b.HeadSHA, b.CreatedAt)
@@ -304,10 +304,11 @@ func reviewEvidenceCI(ctx context.Context, client *gh.Client, owner, name, head 
 }
 
 // evidenceCIFromRuns summarizes the latest run of each check, sorted by name,
-// with the verdict those runs give under the merge gate's rules.
+// with the verdict those runs give under the merge gate's rules
+// (ciVerdictFromRuns, shared with enrichPRCI so the two cannot diverge).
 func evidenceCIFromRuns(runs []*gh.CheckRun, now time.Time) evidence.CI {
 	latest := latestCheckRunsByNameAndApp(runs)
-	ci := evidence.CI{Status: evidenceCIVerdict(latest), CapturedAt: now.UTC()}
+	ci := evidence.CI{Status: ciVerdictFromRuns(latest).status, CapturedAt: now.UTC()}
 	for _, cr := range latest {
 		checkName := strings.TrimSpace(cr.GetName())
 		if checkName == "" {
@@ -323,32 +324,6 @@ func evidenceCIFromRuns(runs []*gh.CheckRun, now time.Time) evidence.CI {
 		ci.Checks = append(ci.Checks, evidence.Check{Name: checkName, Conclusion: conclusion, URL: cr.GetHTMLURL()})
 	}
 	return ci
-}
-
-// evidenceCIVerdict is the merge gate's reading of the latest check runs
-// (same rules as enrichPRCI): "failure" when any real check failed or needs
-// action, "success" when every real check completed clean, otherwise
-// "pending". Meta checks, and DCO once it has passed, do not count.
-func evidenceCIVerdict(latest []*gh.CheckRun) string {
-	dcoSatisfied := dcoContextSucceeded(nil, latest)
-	real, allDone := 0, true
-	for _, cr := range latest {
-		if isMetaCheck(cr.GetName()) || (isDCOContext(cr.GetName()) && dcoSatisfied) {
-			continue
-		}
-		real++
-		if cr.GetStatus() != "completed" {
-			allDone = false
-			continue
-		}
-		if conclusion := cr.GetConclusion(); conclusion == "failure" || conclusion == "action_required" {
-			return "failure"
-		}
-	}
-	if real == 0 || !allDone {
-		return "pending"
-	}
-	return "success"
 }
 
 // reviewEvidenceHumanActions lists the human actions on the PR that the bundle
