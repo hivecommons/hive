@@ -512,6 +512,11 @@ type GovernorSummary struct {
 	// "linear", "jira"). Empty for the default GitHub Issues source; the hub
 	// dashboard only badges non-default sources.
 	WorkSource string `json:"work_source,omitempty"`
+	// OpenIssues and OpenPRs are all open issues and PRs across the hive's
+	// repos (Issues/PRs above are only the actionable ones). The hub's fleet
+	// widget shows them.
+	OpenIssues int `json:"open_issues,omitempty"`
+	OpenPRs    int `json:"open_prs,omitempty"`
 }
 
 type ContributorSummary struct {

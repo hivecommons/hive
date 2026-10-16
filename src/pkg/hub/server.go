@@ -249,6 +249,11 @@ type RegistryEntry struct {
 	TotalTokens24h   int64                `json:"totalTokens24h"`
 	ActionableIssues int                  `json:"actionableIssues"`
 	ActionablePRs    int                  `json:"actionablePRs"`
+	// OpenIssues/OpenPRs are all open issues and PRs across the hive's repos,
+	// from the heartbeat's governor summary. Zero when an older spoke did not
+	// report them.
+	OpenIssues int `json:"openIssues,omitempty"`
+	OpenPRs    int `json:"openPRs,omitempty"`
 	// Output-freshness telemetry explains L3-L6 "no write" verdicts. Empty
 	// means an older spoke omitted the optional fields and current behavior is
 	// preserved.
@@ -1960,6 +1965,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		TotalTokens24h:         clampInt64(payload.Tokens24h, 0, 100_000_000_000),
 		ActionableIssues:       clampInt(payload.Governor.Issues, 0, 10_000),
 		ActionablePRs:          clampInt(payload.Governor.PRs, 0, 10_000),
+		OpenIssues:             clampInt(payload.Governor.OpenIssues, 0, 1_000_000),
+		OpenPRs:                clampInt(payload.Governor.OpenPRs, 0, 1_000_000),
 		LastWriteCapableKickAt: parseHeartbeatTime(payload.LastWriteCapableKickAt),
 		LastKickDisposition:    sanitizeHeartbeatField(payload.LastKickDisposition),
 		LastKickSkipReason:     sanitizeProseField(payload.LastKickSkipReason),

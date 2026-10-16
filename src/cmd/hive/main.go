@@ -4665,12 +4665,15 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				PrimaryRepo:             b.cfg.Project.PrimaryRepo,
 				ACMMLevel:               acmmLvl,
 				Agents:                  agents,
-				Governor: spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, WorkSource: func() string {
-					if t := b.cfg.Governor.WorkSource.Type; t != "" && t != "github" {
-						return t
-					}
-					return ""
-				}()},
+				Governor: func() spoke.GovernorSummary {
+					openIssues, openPRs := b.gov.LatestRepoTotals()
+					return spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, OpenIssues: openIssues, OpenPRs: openPRs, WorkSource: func() string {
+						if t := b.cfg.Governor.WorkSource.Type; t != "" && t != "github" {
+							return t
+						}
+						return ""
+					}()}
+				}(),
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -5607,6 +5610,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := spoke.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 				lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
 					outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
+				openIssues, openPRs := b.gov.LatestRepoTotals()
 				return &spoke.HeartbeatPayload{
 					HiveID:                  b.cfg.HiveID,
 					Org:                     b.cfg.Project.Org,
@@ -5614,7 +5618,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					PrimaryRepo:             b.cfg.Project.PrimaryRepo,
 					ACMMLevel:               acmmLvl,
 					Agents:                  agents,
-					Governor:                spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+					Governor:                spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, OpenIssues: openIssues, OpenPRs: openPRs},
 					Health:                  freshHeartbeatHealthSummary(agents),
 					ProviderLimitReason:     providerLimitReason,
 					ProviderLimitRebuffs:    providerLimitRebuffs,
