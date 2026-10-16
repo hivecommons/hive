@@ -1,0 +1,1 @@
+- Refreshed stale task_list_sweep.go citation from lines 797-815 to 848-854 in labels-and-control-signals.md.
