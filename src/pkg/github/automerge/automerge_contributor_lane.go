@@ -714,10 +714,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	var headPushedAt time.Time
-	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
-		headPushedAt = updatedAt.Time
-	}
+	headPushedAt := c.headPushedAt(owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
