@@ -349,7 +349,10 @@ spoke, or a minimal upgrade beat) keeps the last stored profile.
 The hub Fleet table shows this as a **Compliance** column: a pass-rate pill
 (`pass / (pass + fail)`; skipped and errored checks are not counted) with the
 framework IDs beneath it. The pill links to the spoke's Settings → Compliance
-tab when the hub knows the spoke's dashboard URL.
+tab when the hub knows the spoke's dashboard URL. The column is populated only
+for the hive owner and hub admins: the compliance summary is omitted from
+`/api/registry` entirely and from other members' rows in `/api/saas/my-hives`,
+so a read/read-write member sees the column empty on hives they do not own.
 
 `GET /api/hub/compliance` (hub admin only) exports the fleet-wide aggregate:
 spoke counts, per-framework spoke counts, total pass/fail with the overall

@@ -865,6 +865,14 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		if !isAdmin {
 			result[i].Leaderboard = nil
 		}
+		// Compliance profile and posture summary are owner/admin-only (#11083,
+		// #12264): the fleet rollup (/api/hub/compliance) is admin-gated, so a
+		// read/read-write member must not see it on someone else's row. Nothing
+		// downstream (quadrant scoring included) reads Compliance, so it is
+		// scrubbed here alongside the other per-row gates.
+		if h.Role != "owner" && !isAdmin {
+			result[i].Compliance = nil
+		}
 		// Who-has-access is shown only to owners (and admin), matching
 		// handleAccessList's rule. A read/read-write member is deliberately not
 		// told who else shares the hive.
@@ -1119,15 +1127,6 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 	// this exact set of rows. Ranking against the whole registry instead would
 	// let the header polygon disagree with the rows it summarises.
 	fleetQuadrant := attachQuadrants(result, isAdmin, journeyNow)
-
-	// Compliance profile and posture summary are admin/owner-only (#11083, #12264):
-	// the fleet rollup (/api/hub/compliance) is admin-gated, so non-admin,
-	// non-owner members must not see the compliance summary in my-hives.
-	for i := range result {
-		if result[i].Role != "owner" && !isAdmin {
-			result[i].Compliance = nil
-		}
-	}
 
 	// Cosmetic owner labels: resolve opaque OIDC owner identities to their
 	// stored display names so "Group by owner" headers and tooltips read like
