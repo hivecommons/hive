@@ -29,7 +29,7 @@ const (
 	OriginReviewLabel = originlabel.Review
 	// The rest of the origin/* vocabulary (pkg/originlabel), re-exported so
 	// packages that already depend on pkg/github need no extra import.
-	OriginAgentLabel           = originlabel.Agent
+	OriginAgentLabel           = originlabel.Agent // fallback; see OriginLabelForAgent
 	OriginAdvisoryLabel        = originlabel.Advisory
 	OriginRecommendationsLabel = originlabel.Recommendations
 	OriginSelfReportLabel      = originlabel.SelfReport
@@ -53,6 +53,12 @@ const (
 // than left to a prompt or a caller.
 func WithOriginLabel(labels []string, origin string) []string {
 	return originlabel.With(labels, origin)
+}
+
+// OriginLabelForAgent is originlabel.ForAgent: origin/<agent-name> for an
+// issue the named agent filed through the relay, origin/agent when unknown.
+func OriginLabelForAgent(agent string) string {
+	return originlabel.ForAgent(agent)
 }
 
 // IsOriginLabel reports whether name belongs to the origin/* family.

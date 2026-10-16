@@ -3,6 +3,7 @@ package originlabel
 import (
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -41,6 +42,31 @@ func TestWithDoesNotMutateInput(t *testing.T) {
 	_ = With(in, Review)
 	if !reflect.DeepEqual(in, []string{"from-review", "nit"}) {
 		t.Fatalf("input mutated: %v", in)
+	}
+}
+
+func TestForAgentNamesTheFilerOrFallsBack(t *testing.T) {
+	cases := map[string]string{
+		"scanner":       "origin/scanner",
+		"ci-maintainer": "origin/ci-maintainer",
+		"sec-check":     "origin/sec-check",
+		" Quality ":     "origin/quality",
+		"architect":     "origin/architect",
+		"outreach":      "origin/outreach",
+		"contrib/alice": "origin/contrib-alice",
+		"weird!!name":   "origin/weirdname",
+		"":              Agent,
+		"   ":           Agent,
+		"!!!":           Agent,
+		"-dashes-":      "origin/dashes",
+	}
+	for in, want := range cases {
+		if got := ForAgent(in); got != want || !Is(got) {
+			t.Errorf("ForAgent(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if d := Description("origin/scanner"); !strings.Contains(d, `"scanner"`) || !strings.Contains(d, "hive-open-issue") {
+		t.Errorf("Description(origin/scanner) = %q", d)
 	}
 }
 

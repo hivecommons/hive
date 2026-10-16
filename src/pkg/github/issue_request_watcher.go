@@ -518,9 +518,10 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
 		}
 		// Provenance is the relay's call, not the prompt's: every issue an
-		// agent files through hive-open-issue carries exactly origin/agent
-		// (agent/<lane> says which lane), whatever labels it asked for.
-		createLabels = WithOriginLabel(createLabels, originlabel.Agent)
+		// agent files through hive-open-issue carries exactly one
+		// origin/<agent-name> (origin/agent when the name is unknown),
+		// whatever labels it asked for.
+		createLabels = WithOriginLabel(createLabels, originlabel.ForAgent(req.Agent))
 		res, err = c.createIssue(ctx, req.Repo, req.Title, body, createLabels, true)
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this

@@ -49,8 +49,9 @@ func assertExactlyOneOrigin(t *testing.T, labels []string, want string) {
 	}
 }
 
-// The relay (hive-open-issue) stamps origin/agent regardless of what the
-// agent asked for, including an origin/* it tried to pick itself.
+// The relay (hive-open-issue) stamps origin/<agent-name> from the request's
+// recorded agent regardless of what the agent asked for, including an
+// origin/* it tried to pick itself.
 func TestIssueRequestWatcher_StampsOriginAgentAndOverridesAgentSupplied(t *testing.T) {
 	var mu sync.Mutex
 	var created [][]byte
@@ -77,13 +78,20 @@ func TestIssueRequestWatcher_StampsOriginAgentAndOverridesAgentSupplied(t *testi
 	c := issueTestClient(t, srv.URL)
 	dir := withIssueDir(t)
 
-	for i, labels := range [][]string{
-		{"agent/scanner", "hive/h1", "kind/bug"},
-		{"agent/reviewer", "origin/reviewer", "from-review", "origin/agent"},
-	} {
+	cases := []struct {
+		agent  string
+		labels []string
+		want   string
+	}{
+		{"scanner", []string{"agent/scanner", "hive/h1", "kind/bug"}, "agent/scanner,hive/h1,kind/bug,origin/scanner"},
+		{"ci-maintainer", []string{"agent/ci-maintainer", "origin/reviewer", "from-review", "origin/agent"}, "agent/ci-maintainer,origin/ci-maintainer"},
+		{"Sec-Check", []string{"agent/sec-check", "origin/scanner"}, "agent/sec-check,origin/sec-check"},
+	}
+	// The watcher processes files in name order; titles keep that order.
+	for i, tc := range cases {
 		if _, err := WriteIssueRequest(dir, IssueRequest{
-			Repo: "o/r", Title: fmt.Sprintf("[scanner] finding %d", i), Body: "detail",
-			Labels: labels, Agent: "scanner",
+			Repo: "o/r", Title: fmt.Sprintf("[%s] finding %d", tc.agent, i), Body: "detail",
+			Labels: tc.labels, Agent: tc.agent,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -92,20 +100,27 @@ func TestIssueRequestWatcher_StampsOriginAgentAndOverridesAgentSupplied(t *testi
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(created) != 2 {
-		t.Fatalf("created %d issues, want 2", len(created))
+	if len(created) != len(cases) {
+		t.Fatalf("created %d issues, want %d", len(created), len(cases))
 	}
+	seen := map[string]bool{}
 	for _, body := range created {
 		labels := createdLabels(t, body)
-		assertExactlyOneOrigin(t, labels, OriginAgentLabel)
 		for _, l := range labels {
-			if l == "from-review" || l == "origin/reviewer" {
+			if l == "from-review" || l == "origin/reviewer" || l == OriginAgentLabel {
 				t.Fatalf("agent-supplied provenance %q survived: %v", l, labels)
 			}
 		}
+		seen[strings.Join(labels, ",")] = true
 	}
-	if got := createdLabels(t, created[0]); strings.Join(got, ",") != "agent/scanner,hive/h1,kind/bug,origin/agent" {
-		t.Fatalf("plain request labels = %v", got)
+	for _, tc := range cases {
+		if !seen[tc.want] {
+			t.Fatalf("no created issue carried labels %q; got %v", tc.want, seen)
+		}
+		assertExactlyOneOrigin(t, strings.Split(tc.want, ","), OriginLabelForAgent(tc.agent))
+	}
+	if OriginLabelForAgent("") != OriginAgentLabel {
+		t.Fatalf("unknown agent must fall back to %s", OriginAgentLabel)
 	}
 }
 

@@ -23,8 +23,9 @@ const (
 
 // The vocabulary. Each filing path applies exactly one of these at creation.
 const (
-	// Agent is an issue an agent filed through the hive-open-issue relay
-	// (any lane; agent/<lane> says which one).
+	// Agent is the fallback for an issue filed through the hive-open-issue
+	// relay by an agent whose name is unknown; a known filer gets
+	// origin/<agent-name> from ForAgent instead.
 	Agent = Prefix + "agent"
 	// Review is a follow-up issue the review swarm filed from a backlog
 	// finding (review.backlog).
@@ -58,7 +59,7 @@ var All = []string{Agent, Review, Advisory, Recommendations, SelfReport, Feedbac
 
 // Descriptions are the GitHub label descriptions for each member.
 var Descriptions = map[string]string{
-	Agent:           "Filed by a hive agent through the hive-open-issue relay (provenance only; agent/<lane> says who works it)",
+	Agent:           "Filed through the hive-open-issue relay by a hive agent whose name was not recorded (provenance only)",
 	Review:          "Filed by Hive from a review-swarm backlog finding (provenance only, not a routing or hold signal)",
 	Advisory:        "Hive's pinned advisory report (provenance only; hive/advisory is the standing-issue signal)",
 	Recommendations: "Hive's standing merge-recommendations report (provenance only)",
@@ -67,6 +68,27 @@ var Descriptions = map[string]string{
 	Upstream:        "Upstream change the Hive upstream watcher asked to port (provenance only)",
 	Audit:           "Convergence audit finding published by Hive (provenance only)",
 	Dashboard:       "Filed by an operator from a Hive dashboard action (provenance only)",
+}
+
+// ForAgent returns the origin/<agent-name> label for an issue a named agent
+// filed through the hive-open-issue relay (origin/scanner, origin/quality,
+// …). The name is lower-cased and reduced to GitHub-safe label characters;
+// an empty or unusable name falls back to Agent.
+func ForAgent(agent string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(agent)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		case r == ' ' || r == '/' || r == ':':
+			b.WriteByte('-')
+		}
+	}
+	name := strings.Trim(b.String(), "-._")
+	if name == "" {
+		return Agent
+	}
+	return Prefix + name
 }
 
 // Is reports whether name belongs to the origin/* family.
@@ -89,8 +111,12 @@ func Canonical(name string) (canonical string, renamed bool) {
 // Description returns the label description for an origin/* label; unknown
 // sources get a generic one so a future filer only has to pick a name.
 func Description(name string) string {
-	if d, ok := Descriptions[strings.TrimSpace(name)]; ok {
+	name = strings.TrimSpace(name)
+	if d, ok := Descriptions[name]; ok {
 		return d
+	}
+	if Is(name) {
+		return "Filed by the hive agent \"" + strings.TrimPrefix(name, Prefix) + "\" through the hive-open-issue relay (provenance only; agent/<lane> says who works it)"
 	}
 	return "Hive provenance: where this issue came from (origin/<source>; informational only)"
 }
