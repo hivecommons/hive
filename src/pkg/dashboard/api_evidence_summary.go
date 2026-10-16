@@ -45,13 +45,15 @@ type EvidenceSummary struct {
 
 // EvidenceOutcomes counts PRs for one author kind. Closed is always 0 today:
 // a v1 bundle records a merge but not a close-without-merge. RevertedWithin14d
-// is nil because revert tracking is not recorded in bundles.
+// counts PRs whose bundle carries a RevertedBy backlink; those are written
+// only for reverts merged within reviewEvidenceLinkWindow (14 days) of the
+// original merge.
 type EvidenceOutcomes struct {
-	N                 int  `json:"n"`
-	Merged            int  `json:"merged"`
-	Closed            int  `json:"closed"`
-	Open              int  `json:"open"`
-	RevertedWithin14d *int `json:"reverted_14d"`
+	N                 int `json:"n"`
+	Merged            int `json:"merged"`
+	Closed            int `json:"closed"`
+	Open              int `json:"open"`
+	RevertedWithin14d int `json:"reverted_14d"`
 }
 
 type EvidencePerspectiveCalib struct {
@@ -94,7 +96,10 @@ type EvidenceSentinelWeek struct {
 	Hits int    `json:"hits"`
 }
 
-// EvidenceShadowGate stays zero until the shadow gate records bundles.
+// EvidenceShadowGate aggregates Bundle.Shadow.ReviewGate observations: N is
+// the number of PRs whose latest bundle carries one and WouldHaveHeld those
+// where the shadow review gate reported it would have held. Both stay zero
+// until the shadow gate records bundles.
 type EvidenceShadowGate struct {
 	N             int `json:"n"`
 	WouldHaveHeld int `json:"would_have_held"`
@@ -108,7 +113,12 @@ type EvidenceMissing struct {
 }
 
 // handleEvidenceSummary serves GET /api/evidence/summary?hours=&repo=&author_kind=.
+// Merger or owner only, like the other evidence routes: the output is
+// aggregate but still names reviewer models and exposes per-repo counts.
 func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
+	if !requireMergerOrOwnerRole(w, r) {
+		return
+	}
 	hours := prThroughputDefaultHours
 	if raw := strings.TrimSpace(r.URL.Query().Get("hours")); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -143,12 +153,11 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	resp := buildEvidenceSummary(bundles, now, hours, repo, kind)
 	resp.Missing.RecordsUnreadable = unreadable
 
+	// Reviewer accuracy uses whole days; all time (0) and anything past the
+	// cap both fall back to the maximum window.
 	days := (hours + 23) / 24
 	if days < 1 || days > reviewerAccuracyMaxWindowDays {
 		days = reviewerAccuracyMaxWindowDays
-		if hours > 0 && hours <= reviewerAccuracyMaxWindowDays*24 {
-			days = (hours + 23) / 24
-		}
 	}
 	artifact, aerr := review.LoadArtifact("")
 	ledger, lerr := review.LoadOutcomeLedger("")
@@ -162,11 +171,9 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 // loadEvidenceBundles reads every bundle under root
-// (<owner>/<repo>/<pr>/<sha>.json). Unparseable files are counted, not fatal.
+// (<owner>/<repo>/<pr>/<sha>.json). Unparseable files and bundles of another
+// schema version are counted, not fatal.
 func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
-	if root == "" {
-		root = ghpkg.ReviewEvidenceRoot
-	}
 	var out []*evidence.Bundle
 	unreadable := 0
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -249,9 +256,18 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 		} else {
 			o.Open++
 		}
+		if len(b.RevertedBy) > 0 {
+			o.RevertedWithin14d++
+		}
 		resp.Outcomes[b.Author.Kind] = o
 		if len(b.CI.Checks) == 0 {
 			resp.Missing.RecordsEmptyCI++
+		}
+		if b.Shadow != nil && b.Shadow.ReviewGate != nil {
+			resp.ShadowGate.N++
+			if held := b.Shadow.ReviewGate.WouldHaveHeld; held != nil && *held {
+				resp.ShadowGate.WouldHaveHeld++
+			}
 		}
 
 		for range b.Sentinel {
