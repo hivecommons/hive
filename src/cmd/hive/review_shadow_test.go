@@ -1,9 +1,16 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/evidence"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -38,4 +45,76 @@ func TestReviewShadowGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRecordReviewShadowRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	prev := github.ReviewEvidenceRoot
+	github.ReviewEvidenceRoot = root
+	t.Cleanup(func() { github.ReviewEvidenceRoot = prev })
+
+	at := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	pr := github.PullRequest{Number: 8, HeadSHA: "abc"}
+	b := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion,
+		ID:            evidence.BundleID("org/repo", pr.Number, pr.HeadSHA),
+		Repo:          "org/repo", Number: pr.Number,
+		Author:  evidence.Author{Login: "a", Kind: evidence.AuthorHuman},
+		BaseSHA: "base", HeadSHA: pr.HeadSHA,
+		CreatedAt: at.Add(-time.Hour), UpdatedAt: at.Add(-time.Hour),
+	}
+	if err := evidence.Seal(b, nil); err != nil {
+		t.Fatal(err)
+	}
+	path := github.ReviewEvidencePath("", "org/repo", pr.Number, pr.HeadSHA)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{Review: config.ReviewConfig{Shadow: true}}
+
+	recordReviewShadow(cfg, logger, pr, "org/repo", mergeGates{shadowReview: true, reviewLoaded: true}, at)
+
+	got, err := github.LoadReviewEvidence(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Shadow == nil || got.Shadow.ReviewGate == nil {
+		t.Fatalf("shadow review gate not recorded: %+v", got.Shadow)
+	}
+	g := got.Shadow.ReviewGate
+	if g.WouldHaveHeld == nil || !*g.WouldHaveHeld || g.Reason != "awaiting review approval" {
+		t.Fatalf("review gate = %+v, want would_have_held=true, reason=awaiting review approval", g)
+	}
+	if !g.EvaluatedAt.Equal(at) || !got.UpdatedAt.Equal(at) {
+		t.Fatalf("evaluated_at = %v, updated_at = %v, want %v", g.EvaluatedAt, got.UpdatedAt, at)
+	}
+	if want, err := evidence.Hash(got); err != nil || got.Hash != want {
+		t.Fatalf("hash = %q, want %q (err %v)", got.Hash, want, err)
+	}
+
+	// Evidence disabled: the bundle is left untouched.
+	off := false
+	cfg.Evidence.Enabled = &off
+	later := at.Add(time.Hour)
+	recordReviewShadow(cfg, logger, pr, "org/repo", mergeGates{shadowReview: true}, later)
+	again, err := github.LoadReviewEvidence(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.Shadow.ReviewGate.EvaluatedAt.Equal(at) {
+		t.Fatalf("evidence disabled but bundle rewritten: evaluated_at = %v", again.Shadow.ReviewGate.EvaluatedAt)
+	}
+
+	// Shadow off or nil config: nothing happens, no panic.
+	recordReviewShadow(cfg, logger, pr, "org/repo", mergeGates{}, later)
+	recordReviewShadow(nil, logger, pr, "org/repo", mergeGates{shadowReview: true}, later)
 }
