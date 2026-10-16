@@ -3673,9 +3673,16 @@
     .nous-config-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-5); margin-bottom: var(--sp-4); }
     .nous-config-check { display: flex; align-items: center; gap: var(--sp-4); font-size: 0.8rem; color: var(--fg); cursor: pointer; padding: var(--sp-2) var(--sp-0); }
     .nous-config-check input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
-    /* .nous-config-pill — toggleable pill on the recipe; active picks the accent */
-    .nous-config-pill { margin: var(--sp-1); cursor: pointer; transition: all 0.15s; }
-    .nous-config-pill.active { --pill-c: var(--accent); }
+    /* .nous-config-pill — toggleable pill on the recipe. The two states must
+       read differently at a glance (#12520): .is-on / [aria-pressed="true"] is a
+       filled amber chip with a leading ✓; .is-off / [aria-pressed="false"] is a
+       dimmed outline. The chip-taxonomy base rule below sets the brand colours,
+       so the state rules here must win on specificity rather than rely on --pill-c. */
+    .nous-config-pill { margin: var(--sp-1); cursor: pointer; transition: all 0.15s; font: inherit; font-size: var(--fs-sm); font-weight: 600; }
+    .nous-config-pill.is-on, .nous-config-pill[aria-pressed="true"] { background: var(--amber); border-color: var(--amber); color: var(--bg); opacity: 1; }
+    .nous-config-pill.is-on::before, .nous-config-pill[aria-pressed="true"]::before { content: '✓'; font-weight: 800; }
+    .nous-config-pill.is-off, .nous-config-pill[aria-pressed="false"] { background: transparent; border-color: var(--border); color: var(--muted); opacity: 0.7; }
+    .nous-config-pill.is-off:hover, .nous-config-pill[aria-pressed="false"]:hover { opacity: 1; border-color: var(--amber); color: var(--fg); }
     .nous-config-pill:hover { border-color: var(--accent); }
     .nous-config-pill:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
     .nous-config-output-modes { flex:0 0 auto; display: flex; gap: var(--sp-0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
@@ -23781,9 +23788,11 @@ function burnAreaChart() {
         for (const repo of projectRepos) {
           const isActive = repoTargets.includes(repo);
           const shortName = repo.includes('/') ? repo.split('/')[1] : repo;
-          h += `<div class="nous-config-pill${isActive ? ' active' : ''}" role="button" tabindex="0" aria-pressed="${isActive}" data-repo="${escapeHtml(repo)}" data-action="toggleNousRepo" data-keydown-action="toggleNousRepo" data-keys="Enter, " data-prevent="1" data-arg-types="t" title="${escapeHtml(repo)}">`;
+          // Native <button> so Enter/Space activate via the click dispatcher;
+          // the on/off look comes from .is-on/.is-off + aria-pressed (#12520).
+          h += `<button type="button" class="${nousRepoPillClass(isActive)}" aria-pressed="${isActive}" data-repo="${escapeHtml(repo)}" data-action="toggleNousRepo" data-arg-types="t" title="${escapeHtml(nousRepoPillTitle(repo, isActive))}">`;
           h += `<span>${escapeHtml(shortName)}</span>`;
-          h += '</div>';
+          h += '</button>';
         }
         h += '</div>';
         h += `<div class="nous-lab-chips-note" id="nc-repo-summary">${nousRepoSummary(repoTargets.filter(r => projectRepos.includes(r)).length, projectRepos.length)}</div>`;
@@ -23857,12 +23866,30 @@ function burnAreaChart() {
       btn.classList.add('active');
     }
 
+    // .active stays as the JS hook saveNousConfig() reads; .is-on/.is-off carry
+    // the visual state so a selected pill is a filled ✓ chip and an excluded
+    // one is a dimmed outline (#12520).
+    function nousRepoPillClass(isOn) {
+      return 'nous-config-pill ' + (isOn ? 'active is-on' : 'is-off');
+    }
+
+    function nousRepoPillTitle(repo, isOn) {
+      return repo + ' — ' + (isOn ? 'Click to exclude' : 'Click to include');
+    }
+
+    function nousRepoPillSetState(pill, isOn) {
+      pill.classList.toggle('active', isOn);
+      pill.classList.toggle('is-on', isOn);
+      pill.classList.toggle('is-off', !isOn);
+      pill.setAttribute('aria-pressed', String(isOn));
+      pill.title = nousRepoPillTitle(pill.dataset.repo || '', isOn);
+    }
+
     function toggleNousRepo(pill) {
-      pill.classList.toggle('active');
-      pill.setAttribute('aria-pressed', String(pill.classList.contains('active')));
+      nousRepoPillSetState(pill, !pill.classList.contains('is-on'));
       const summary = document.getElementById('nc-repo-summary');
       const pills = document.querySelectorAll('.nous-config-pill[data-repo]');
-      if (summary) summary.textContent = nousRepoSummary(document.querySelectorAll('.nous-config-pill[data-repo].active').length, pills.length);
+      if (summary) summary.textContent = nousRepoSummary(document.querySelectorAll('.nous-config-pill[data-repo].is-on').length, pills.length);
     }
 
     async function deleteNousPrinciple(id) {

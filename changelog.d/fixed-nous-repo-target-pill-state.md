@@ -1,0 +1,1 @@
+- Experiment Lab "Repo Targets" pills now show which repos are selected (filled amber chip with ✓) versus excluded (dimmed outline); clicking a pill, Enter or Space toggles it and the "N of M repos watched" counter updates live (#12520).
