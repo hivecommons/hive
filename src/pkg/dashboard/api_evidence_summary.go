@@ -64,7 +64,10 @@ type EvidenceSummary struct {
 	// complexity snapshots per managed repo (#12363), oldest first; omitted
 	// when no repo has a snapshot yet.
 	ComplexityByRepo []EvidenceComplexityRepo `json:"complexity_by_repo,omitempty"`
-	Missing          EvidenceMissing          `json:"missing"`
+	// WorkBalance is panel 6 (#12366): per ISO week, audited issues opened by
+	// actor kind against issues closed, over the same window and repo.
+	WorkBalance []EvidenceWorkBalanceWeek `json:"work_balance"`
+	Missing     EvidenceMissing           `json:"missing"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
@@ -160,9 +163,11 @@ func loadEvidenceComplexity(root string) []EvidenceComplexityRepo {
 }
 
 // EvidenceWriteCount is one tier's attempted and proxy-blocked write counts.
+// BlockedByReason is keyed by the proxy's DenyReason* code (#12368).
 type EvidenceWriteCount struct {
-	Attempted int64 `json:"attempted"`
-	Blocked   int64 `json:"blocked"`
+	Attempted       int64            `json:"attempted"`
+	Blocked         int64            `json:"blocked"`
+	BlockedByReason map[string]int64 `json:"blocked_by_reason,omitempty"`
 }
 
 // loadEvidenceWriteCounters reads the durable counter file; any failure yields nil.
@@ -292,6 +297,13 @@ type EvidenceMissing struct {
 	RecordsEmptyCI       int  `json:"records_empty_ci"`
 	RecordsUnreadable    int  `json:"records_unreadable"`
 	ReviewerAccuracy     bool `json:"reviewer_accuracy_unavailable"`
+	// IssuesHumanOpensUnobserved is always true today: the audit log only
+	// records hive-mediated issue writes, so issues humans or third-party bots
+	// open directly on GitHub never reach work_balance.
+	IssuesHumanOpensUnobserved bool `json:"issues_human_opens_unobserved"`
+	// ThrottleWindows is always true today: this hive reports no governor
+	// issue-creation throttle windows, so work_balance carries no shading.
+	ThrottleWindows bool `json:"throttle_windows_unavailable"`
 }
 
 // evidenceSummaryMaxRangeDays caps a custom ?from=&to= range.
@@ -408,6 +420,7 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
 	resp.IntentCounters = loadEvidenceWriteCounters(intentCountersPath)
 	resp.ComplexityByRepo = loadEvidenceComplexity(ghpkg.ReviewEvidenceRoot)
+	resp.WorkBalance = buildEvidenceWorkBalance(evidenceWorkBalanceEntries(s.audit), win, repo)
 
 	days := (hours + 23) / 24
 	if days < 1 || days > reviewerAccuracyMaxWindowDays {
@@ -486,6 +499,8 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		ReviewerModels:  []EvidenceModelAccuracy{},
 		SentinelPerWeek: EvidenceSentinelSeries{Weeks: []EvidenceSentinelWeek{}},
 		ClaimVsVerdict:  []EvidenceClaimWeek{},
+		WorkBalance:     []EvidenceWorkBalanceWeek{},
+		Missing:         EvidenceMissing{IssuesHumanOpensUnobserved: true, ThrottleWindows: true},
 	}
 	for _, k := range []string{evidence.AuthorHuman, evidence.AuthorAgent, evidence.AuthorBot} {
 		resp.Outcomes[k] = EvidenceOutcomes{}

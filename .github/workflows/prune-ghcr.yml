@@ -27,6 +27,7 @@ permissions:
 jobs:
   prune:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Prune untagged hive images
         # v3.1.0+ AUTOMATICALLY protects per-architecture child manifests that
@@ -64,6 +65,7 @@ jobs:
     needs: prune
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Delete orphaned <branch>-latest tags
         env:
@@ -133,6 +135,7 @@ jobs:
     needs: prune-orphan-branch-tags
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Delete old pure short-SHA image tags
         env:

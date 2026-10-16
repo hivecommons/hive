@@ -11,7 +11,7 @@ import (
 // sits inside the Throughput section below the throughput card, reuses the
 // prt-card chrome, follows the Throughput window/repo selector, and reads
 // /api/evidence/summary for the outcome-by-author-kind (#12364), calibration,
-// accuracy × model and shadow-gate (#12068) panels.
+// accuracy × model, boundary enforcement (#12368) and shadow-gate (#12068) panels.
 func TestEvidenceCardInThroughputSection(t *testing.T) {
 	html := indexHTML(t)
 	section := strings.Index(html, `<div id="pr-throughput-section"`)
@@ -83,6 +83,35 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		".ev-svg text.ev-lbl { fill:var(--text); font-size:var(--fs-xs); }",
 		".evidence-card { margin-top: var(--sp-4); display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr));",
 		".evidence-card > .prt-head { grid-column:1 / -1;",
+		"dto.work_balance",
+		"evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance),",
+		"no audited issue opens or closes in this window",
+		"[['human', 'wb-human', 'opened by humans'], ['agent', 'wb-agent', 'opened by agents'], ['bot', 'wb-bot', 'opened by bots']]",
+		"row.throttled ?",
+		"throttle_windows_unavailable",
+		"Throttle windows not reported by this hive",
+		"Issues only, from this hive's audit log",
+		".ev-svg .ev-bar.wb-throttle",
+		"'work-balance': (dto) => {",
+		"const EV_BALANCE_STRONG = 0.8;",
+		"const EV_BALANCE_FAIR = 0.5;",
+		"evGrade(ratio, openedTotal, EV_BALANCE_STRONG, EV_BALANCE_FAIR, true)",
+		// Panel 4 (#12368): boundary enforcement.
+		"const counters = dto.write_counters && typeof dto.write_counters === 'object' ? dto.write_counters : null;",
+		"const sentinel = dto.sentinel_hits_per_week || {};",
+		"evPanel('boundary-enforcement', 'Boundary enforcement', attemptedN, evWriteCountersSvg(counters) + evSentinelSparkline(sentinel),",
+		"const EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];",
+		"Object.entries(c.blocked_by_reason || {})",
+		"row.reasons.slice(0, EV_TOP_REASONS)",
+		"no write counters yet (the proxy has not recorded an agent write, or the counter file is absent)",
+		"no sentinel hits recorded in this window",
+		"${bar('wa', row.attempted, 0, row.attempted)}${bar('wb', row.blocked, 1,",
+		`aria-label="Sentinel hits per ISO week"`,
+		"Write counters are proxy-side observations",
+		"Would-block counts from intent verification are not included in these bars",
+		"direct writes that bypass the proxy are invisible here",
+		".ev-svg .ev-bar.wb",
+		".ev-legend i.wa",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("Evidence card missing snippet %q", snippet)
@@ -98,6 +127,13 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 	p2 := strings.Index(html, "evPanel('calibration'")
 	if p1 < 0 || p2 < 0 || p1 > p2 {
 		t.Errorf("outcome-by-author panel must render before calibration (p1=%d p2=%d)", p1, p2)
+	}
+	// Panel order follows the RFC numbering: 4 (boundary) before 5 (claim) before 8 (shadow).
+	p4 := strings.Index(html, "evPanel('boundary-enforcement'")
+	p5 := strings.Index(html, "evPanel('claim-vs-verdict'")
+	p8 := strings.Index(html, "evPanel('shadow-gates'")
+	if p4 < 0 || p5 < 0 || p8 < 0 || p4 > p5 || p5 > p8 {
+		t.Errorf("boundary-enforcement panel must render before claim-vs-verdict and shadow-gates (p4=%d p5=%d p8=%d)", p4, p5, p8)
 	}
 }
 
@@ -182,10 +218,13 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evOutcomesSvg",
 		"evCalibrationSvg",
 		"evAccuracySvg",
+		"evWriteCountersSvg",
+		"evSentinelSparkline",
 		"evShadowGateSvg",
 		"evMaintainabilityRows",
 		"evMaintainabilitySvg",
 		"evClaimVsVerdictSvg",
+		"evWorkBalanceSvg",
 		"escapeHtml",
 		"evWindowControls",
 		"evWindowLabel",
@@ -253,6 +292,8 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"const EV_REVERT_FAIR = 0.15;",
 		"const EV_SHADOW_FALSE_ALARM_STRONG = 0.25;",
 		"const EV_SHADOW_FALSE_ALARM_FAIR = 0.5;",
+		"const EV_BLOCKED_STRONG = 0.05;",
+		"const EV_BLOCKED_FAIR = 0.15;",
 		"const EV_DATA_SINCE = '2026-10-08';",
 		"const EV_REVERTS_SINCE = '2026-10-15';",
 		"const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };",
@@ -260,6 +301,7 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"calibration: (dto) => {",
 		"'accuracy-by-model': (dto) => {",
 		"'shadow-gates': (dto) => {",
+		"'boundary-enforcement': (dto) => {",
 		`<button type="button" class="ev-info" data-action="toggleEvidenceExplainer" data-arg0="${key}" data-stop="1" data-prevent="1" aria-expanded="${open ? 'true' : 'false'}" aria-controls="${id}" aria-label="Explain ${escapeHtml(title)}">ⓘ</button>`,
 		`class="ev-explainer" role="region"`,
 		"section('What is measured', x.measured)",

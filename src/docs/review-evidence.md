@@ -104,12 +104,14 @@ The two opt-in experimental arms of the study (RFC [#12062](https://github.com/h
 ## Downloading
 
 - **API:** `GET /api/review/evidence?repo=<owner/repo>&number=<n>[&head=<sha>][&format=json|zip]` for owner/merger roles. The default is the bundle for the PR's latest head; `head` takes a full SHA or a unique prefix of at least 7 characters (409 if it matches more than one). `format=json` returns the bundle bytes exactly as stored, so its hash and signature verify offline; add `download=1` for an attachment. `format=zip` returns `bundle.json`, `verdicts.json` (the matching verdict reports), `review-links.json` (the PR's review-links slice) and `manifest.json` (SHA-256 of each file, plus the signing public key when the bundle is signed and the key is readable). A missing bundle is a 404 whose body has `status: "expired"` and `expired: true` when retention removed it, otherwise `status: "not_found"`. `GET /api/review/evidence/list?repo=&number=` lists every retained bundle id and head for the PR.
-- **Aggregate:** `GET /api/evidence/summary` reports read-only aggregates over stored bundles, including per-tier proxy `write_counters` (`{attempted, blocked}`, omitted when the counter file is absent) per-tier `intent_counters` (below), and `complexity_by_repo` (the newest 12 [monthly complexity snapshots](#monthly-complexity-snapshot-report-only) per repo, omitted when none exist); see [API reference](api-reference.md).
+- **Aggregate:** `GET /api/evidence/summary` reports read-only aggregates over stored bundles, including per-tier proxy `write_counters` (`{attempted, blocked, blocked_by_reason}`, omitted when the counter file is absent) per-tier `intent_counters` (below), and `complexity_by_repo` (the newest 12 [monthly complexity snapshots](#monthly-complexity-snapshot-report-only) per repo, omitted when none exist); see [API reference](api-reference.md).
 - **Window:** the summary takes `hours=` (default 24, `0` = all time, capped at 90 days) or a custom range `from=`/`to=` as RFC3339 or `YYYY-MM-DD` (a date-only `to` is inclusive; `to` defaults to now). `to` before `from`, a span over 366 days, or `to` without `from` is a `400`. A custom range echoes `from`/`to` in the response and keeps bundles created in `[from, to)`. The Evidence card offers **24h · 7d · 30d · custom** pills and remembers the choice per browser (`hive.evidence.window`); its header reads "Evidence · last 30d" or "Evidence · Oct 1 – Oct 15".
 - **Outcome by author kind (panel 1):** `outcomes_by_author_kind` in the summary counts, over the latest bundle per PR in the window, `n`, `merged`, `closed`, `open` and `reverted_14d` (merged and then linked by `reverted_by` within 14 days) for `human`, `agent` and `bot` authors. The Evidence sub-panel draws it as the **Outcome by author kind** panel: one grouped bar per kind for merged / closed / reverted, with `n=` and the merged and reverted rates (open PRs excluded) in the tooltip. `closed` reads 0 until bundles record a close without merge, and a revert only counts once the reverting PR is linked. Reporting only ([#12364](https://github.com/hivecommons/hive/issues/12364)).
+- **Boundary enforcement (panel 4):** the Evidence sub-panel draws `write_counters` as attempted-vs-blocked bars per intent tier (0 `ADVISORY` … 3 `ISSUES_PRS_MERGE`), with the top `blocked_by_reason` codes in the row tooltip, and `sentinel_hits_per_week` as a sparkline; `n=` is the total attempted writes. The counters are proxy-side observations of agent GitHub writes (all-time totals from the durable counter file, reset semantics follow the weekly file; direct writes that bypass the proxy are invisible), and intent-verification would-block counts are not part of the bars. The panel shows an empty state when `write_counters` is omitted. Reporting only ([#12368](https://github.com/hivecommons/hive/issues/12368)).
 - **Intent counters:** every intent evaluation — the merge-eligible lane's `writeIntentVerdicts` pass and the App self-merge sweep's gate, whether or not `intent.enforce` or `intent.shadow` is on — increments an in-memory counter keyed by tier (`tier0`..`tier3`) and writes one audit-log line, action `intent_evaluated`, detail `lane=<merge-eligible|self-merge> tier=<tierN> would_block=<bool> enforce=<bool> [reason=<code>]` ([#12362](https://github.com/hivecommons/hive/issues/12362)). `would_block` is what `BlocksMerge(true)` reports, so with enforcement off it is the shadow answer; reason codes are `tier1_needs_issue`, `tier2_needs_plan`, `tier3_needs_approval`, `alignment_misaligned`, `evidence_unavailable` or `unknown`. The counters flush once a minute (and on shutdown) into `/var/run/hive-metrics/intent-counters.json`, beside the proxy's `write-counters.json` and in the same shape: cumulative `totals` per tier (`attempted` = evaluations, `blocked` = would-block, `blocked_by_reason`) and `weeks` keyed by the UTC Monday of each ISO week. The summary API exposes `totals` as `intent_counters` (`{attempted, blocked}` per tier), omitted when the file is absent. Record-only: the counters are never read back into eligibility.
 - **Shadow gates (panel 8):** `shadow_gate` in the summary counts, over the latest bundle per PR in the window, the PRs with any shadow observation (`n`), `would_have_held` (review gate) and `would_have_blocked` (intent), and for each gate (`review_gate`, `intent`) splits the evaluated PRs into `held` and `passed`, each with how they actually turned out: `merged`, `open`, `reverted` (merged and later linked by `reverted_by`) and `closed` (0 until bundles record a close without merge). The Throughput section's Evidence sub-panel draws it as the **Shadow gates** panel, with a zero state while shadow mode is off. Reporting only; nothing reads it to decide a merge ([#12068](https://github.com/hivecommons/hive/issues/12068)).
 - **Claim vs verdict (panel 5):** `claim_vs_verdict` in the summary groups the latest bundle per agent-authored PR (`author.kind == "agent"`) by the ISO week it was created and counts `claimed` (every such PR: opening or marking it ready is the agent saying "done"), `ci_not_green` (any captured check whose conclusion is not `success`, as of the merge-eligibility evaluation that captured it), `verdict_not_approve` (any perspective verdict other than `approve`) and `both`, plus `n` and `ci_captured`, the CI column's denominator. A record with no captured checks is disclosed under `missing.records_empty_ci` and never counted as CI agreement. The Evidence sub-panel draws it as the **Claim vs verdict** panel with grouped weekly bars. Reporting only; nothing reads it to decide a merge ([#12365](https://github.com/hivecommons/hive/issues/12365)).
+- **Work balance (panel 6):** `work_balance` in the summary groups the hive's audited issue writes by ISO week over the Throughput window and repo: `opened` split by actor kind (`agent` for issue-request-watcher creates, `bot` for issues the hive itself files such as advisory and ACMM-gap issues, `human` for hive-mediated human opens), `closed` for audited closes, `n`, and `throttled`. The audit log records only hive-mediated writes, so issues humans or third-party bots open directly on GitHub are not observed (`missing.issues_human_opens_unobserved`), and `throttled` stays false because this hive reports no governor issue-creation throttle windows (`missing.throttle_windows_unavailable`). The Evidence sub-panel draws it as the **Work balance** panel: opened stacked by kind against a closed line, with the throttle gap stated in its note. Reporting only; nothing reads it to decide a merge ([#12366](https://github.com/hivecommons/hive/issues/12366)).
 - **Dashboard:** owners get an **Evidence** button on Review Queue rows and Pipeline cards. It opens a modal with the bundle id, head, hash, whether it is signed, the verdict count and merge status, and **Download JSON** / **Download ZIP** buttons.
 - **CLI:** `hivectl review evidence <owner/repo#n> [--head <sha>] [-o FILE] [--zip]` prints or saves the bundle, and `hivectl review evidence verify FILE [--pubkey KEY]` checks it offline (see [hivectl](hivectl.md#review--review-evidence)).
 - **Export:** `hivectl evidence export [--since <RFC3339|duration>] [--format csv|jsonl] [--repo owner/name] [--out FILE] [--root DIR]` dumps one row per PR straight from the bundles on disk; see [Exporting](#exporting).
@@ -180,7 +182,10 @@ Grades are **Strong**, **Fair**, **Weak** or **Not enough data**. They describe 
 | Outcome by author kind | reverts within 14 d ÷ merged (`EV_REVERT_*`) | ≤ 5% | ≤ 15% | above |
 | Reviewer calibration | merged rate in the 0.9–1.0 bucket (`EV_CALIB_*`) | ≥ 80% | ≥ 60% | below |
 | Reviewer accuracy × model family | worse of false-approve and false-block rate (`EV_ERR_*`) | ≤ 10% | ≤ 25% | above |
+| Boundary enforcement | proxy-blocked ÷ attempted agent writes, all tiers (`EV_BLOCKED_*`; write counters are all-time proxy totals and do not follow the window, sentinel hits do) | ≤ 5% | ≤ 15% | above |
 | Shadow gates | would-have-stopped PRs that merged without a revert ÷ stopped PRs that merged (`EV_SHADOW_FALSE_ALARM_*`) | ≤ 25% | ≤ 50% | above |
+| Claim vs verdict | agent PRs with CI not green ÷ agent PRs with captured checks (`EV_ERR_*`) | ≤ 10% | ≤ 25% | above |
+| Work balance | issues closed ÷ issues opened, audited writes only (`EV_BALANCE_*`) | ≥ 80% | ≥ 50% | below |
 
 A panel is **Not enough data** when the graded denominator is below `EV_GRADE_MIN_N` (20). Windows of `EV_SHORT_WINDOW_HOURS` (48) or less add an "early read" caveat. Every explainer repeats the honest limits: merged is not the same as correct, an open PR counts as not merged, evidence has only been recorded since `EV_DATA_SINCE` (2026-10-08) and reverts only since `EV_REVERTS_SINCE` (2026-10-15).
 
@@ -192,34 +197,100 @@ A push changes `head_sha`, so earlier verdicts no longer describe the code. Hive
 
 Hub admins reach the fleet evidence view from the **Fleet quadrant** card on
 the hub dashboard (click the chart or its **🔬 Evidence** button). It is
-`GET /api/hub/evidence` rendered as one table per section, each with a sticky
-title and column heads, a **window** selector (24h · 7d · 30d · 90d · custom
-date range — spokes report fixed windows in their heartbeat, so a custom range
-is served from the smallest window that covers it and the view says so) and an
-ⓘ button that opens a plain-language explainer with four headings: **What is
-measured · Why it matters · How it is measured · How to read our numbers**.
-The last one is computed from the numbers on screen and ends with a grade.
+`GET /api/hub/evidence` rendered findings-first: a **What this says** block
+of three to six plain sentences generated from the data, then one table per
+section — each with a one-line plain finding under its title, a sticky title
+and column heads — a **window** selector (24h · 7d · 30d · 90d · custom
+date range — hives report fixed windows in their heartbeat, so a custom range
+is served from the smallest window that covers it and the view says so), hive
+and autonomy-level filters, a **📄 Report / ⬇ Markdown** pair (see
+*Downloadable report* below) and an ⓘ button per section that opens a
+plain-language explainer with four headings: **What is measured · Why it
+matters · How it is measured · How to read our numbers**. The last one is
+computed from the numbers on screen and ends with a grade.
 
-Two terms used everywhere:
+### Findings first
 
-- **95% CI** — the range after a percentage is a 95% confidence interval: with
-  this many cases, the true rate is very likely inside that band. Fewer cases
-  mean a wider band.
-- **Minimum sample** — below 10 cases a rate prints as `—`, never 0%, because
-  a percentage from so few cases is mostly luck. The count is still shown.
+Every sentence in **What this says**, and every one-line finding under a
+section title, is generated from the response fields (`findings[]` on the
+API; regenerated client-side by the same rules when a filter is active) and
+never typed in. Each has an explicit fallback when the data is not there
+("No autonomy level has 10 merged PRs yet, so revert rates cannot be
+reported") so no number is ever invented. Sections no selected hive reports
+are not drawn as empty tables; they are listed once under **Waiting on
+hives** at the bottom, in user-facing words ("hives report this once upgraded
+to the Oct 16 build or later"). The technical pointer — which heartbeat field,
+which issue — lives only in that item's ⓘ explainer and in this document.
+Visible modal copy never cites an issue number
+(`TestEvidenceModalNoIssueNumbers`).
 
-Grades and their thresholds (named constants in `dashboard.html`;
-`Not enough data` whenever the graded rate is below the minimum sample,
-`Not graded` where there is no "good" value):
+### Plain labels
+
+| On screen | Means |
+|---|---|
+| **All selected hives** | the pooled row — every hive the filter currently selects (the whole fleet with no filter). When exactly one hive is selected its own row reads *(same hive as above)* instead of repeating the numbers. |
+| **Merged PRs** | the number of pull requests GitHub says were merged in the last 90 days (the denominator for coverage). |
+| **X% of N** | the rate and how many cases it is computed from, in one cell. |
+| **margin lo – hi** (muted line under a rate) | the **margin (95%)**: with this many cases, the true value is very likely inside this range. Fewer cases, wider range. |
+| **—** | below the **minimum sample** of 10 cases a rate prints as a dash, never 0%, because a percentage from so few cases is mostly luck; the count is still shown. |
+| **Reviewer confidence** | how sure the AI reviewer said it was, as one of four ranges (below). |
+| **False approve** | the reviewer approved, but the PR was never merged or was reverted. |
+| **False block** | the reviewer blocked, but the PR merged anyway after a human override. |
+| **Autonomy level** | the ACMM level the hive runs at, L1 (advice only) to L6 (merges on green CI without a human). |
+
+### Reviewer-confidence ranges
+
+Spokes report calibration as six equal-width heartbeat buckets
+(`int(confidence × 6)`, 0–5). The spoke's own Evidence card shows four ranges.
+The hub view, the findings and the report fold the six buckets into those
+four ranges and label each with both the name and the numeric range:
+
+| Hub label | Heartbeat buckets | Spoke card range |
+|---|---|---|
+| Not confident (0.0–0.5) | 0, 1, 2 | 0.0–0.5 |
+| Somewhat confident (0.5–0.67) | 3 | 0.5–0.7 |
+| Confident (0.67–0.83) | 4 | 0.7–0.9 |
+| Very confident (0.83–1.0) | 5 | 0.9–1.0 |
+
+The bucket edges are sixths, so the hub's 0.67 / 0.83 boundaries approximate
+the spoke card's 0.7 / 0.9; the mapping is in `evidenceConfidenceRanges`
+(`pkg/hub/evidence_findings.go`) and its JS mirror `EVIDENCE_CONFIDENCE_RANGES`.
+Pooled buckets carry `bad` (wrong calls) as well as `n` so the hub can
+regroup them without re-deriving counts from a rounded rate.
+
+### Downloadable report
+
+The **📄 Report** link in the window row opens the current view — same window,
+same hive / level filter — as a standalone plain-language page in a new tab;
+**⬇ Markdown** downloads the same report as a `.md` file. Both are
+`GET /api/hub/evidence/report` (hub admin / owner only, like
+`/api/hub/evidence`): `?hive=<id>[,<id>…]`, `?level=<n>`, the same
+`hours=` / `from=` / `to=` window parameters, `format=md` (default) or
+`format=html`, and `download=1` to receive it as an attachment named
+`hive-evidence-<hive|fleet>-<from>-<to>.md|html`. It is rendered server-side in
+Go from the same `EvidenceView` the modal uses, so every figure reconciles with
+what is on screen. Sections, in order: **Summary** (the *What this says*
+sentences) · **What we measured and why** · **The numbers** (each section's
+table with the plain labels) · **How to read these** (margin of error, merged
+≠ correct, open PRs count as not merged, recording since 2026-10-08, backfilled
+bundles carry no verdicts) · **What is not reported yet and why** · **Grade per
+section** with the thresholds spelled out · a footer linking back here. The
+HTML variant is a single page with inline CSS and no scripts or external
+assets; hive names are escaped. Golden files live in
+`pkg/hub/testdata/evidence_report_*.golden`.
+
+Grades and their thresholds (named constants in `dashboard.html` and mirrored
+in `pkg/hub/evidence_report.go`; `Not enough data` whenever the graded rate is
+below the minimum sample, `Not graded` where there is no "good" value):
 
 | Section | Graded on | Strong | Fair | Constants |
 |---|---|---|---|---|
 | Evidence coverage | share of merged PRs (90d) with a record, higher is better | ≥ 80% | ≥ 40% | `EVIDENCE_COVERAGE_STRONG/FAIR` |
-| Calibration curve | bad-outcome rate in the most-confident measurable bucket, lower is better (needs ≥ 2 measurable buckets) | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
+| Reviewer confidence | wrong-call rate in the most-confident measurable range, lower is better (needs ≥ 2 measurable ranges) | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
 | Outcome by author kind | revert rate of agent authors (human if no agents), lower is better | ≤ 5% | ≤ 15% | `EVIDENCE_REVERT_STRONG/FAIR` |
-| ACMM level × outcome | revert rate of the highest level with enough data, lower is better | ≤ 5% | ≤ 15% | `EVIDENCE_REVERT_STRONG/FAIR` |
+| Autonomy level × outcome | revert rate of the highest level with enough data, lower is better | ≤ 5% | ≤ 15% | `EVIDENCE_REVERT_STRONG/FAIR` |
 | Boundary enforcement | — (not graded: no block rate is "good" on its own) | | | |
-| Same- vs cross-family | false-approve rate of the mix with most verdicts, lower is better | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
+| Same- vs cross-family review | false-approve rate of the mix with most verdicts, lower is better | ≤ 10% | ≤ 25% | `EVIDENCE_ERR_STRONG/FAIR` |
 | Per-hive evidence | share of hives reporting for the window, higher is better (no minimum sample) | ≥ 80% | ≥ 40% | `EVIDENCE_REPORTING_STRONG/FAIR` |
 | Shadow gates × outcome | false-alarm rate (would-have-held PRs that merged and stuck) of the gate with most held PRs, lower is better | ≤ 25% | ≤ 50% | `EVIDENCE_SHADOW_FALSE_ALARM_STRONG/FAIR` |
 
@@ -227,7 +298,7 @@ Limits every explainer repeats: merged is not the same as correct; open PRs
 are not failures; closed-without-merge is not recorded and counts as not
 merged; reverts are only linked since 2026-10-15 (`EVIDENCE_REVERTS_SINCE`)
 and evidence records only exist since 2026-10-08 (`EVIDENCE_DATA_SINCE`).
-Nothing in this view is read by any merge decision.
+Nothing in this view or the report is read by any merge decision.
 
 ## Not covered
 

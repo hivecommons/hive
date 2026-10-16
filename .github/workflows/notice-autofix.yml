@@ -116,6 +116,7 @@ jobs:
   regenerate-notice:
     name: Commit regenerated NOTICE for Dependabot
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 30
     # Gate on the triggering run: a Dependabot-authored PR from a branch in
     # this repository. Dependabot never opens PRs from forks, so requiring
     # head_repository == repository closes the fork vector completely.

@@ -131,7 +131,7 @@ func TestLoadEvidenceWriteCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loadEvidenceWriteCounters(good)
-	if got["observe"] != (EvidenceWriteCount{Attempted: 5, Blocked: 2}) {
+	if o := got["observe"]; o.Attempted != 5 || o.Blocked != 2 || o.BlockedByReason["x"] != 2 {
 		t.Errorf("got %+v", got)
 	}
 	bad := filepath.Join(dir, "bad.json")
@@ -175,7 +175,7 @@ func TestHandleEvidenceSummaryIntentCounters(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.IntentCounters["tier1"] != (EvidenceWriteCount{Attempted: 7, Blocked: 3}) || resp.IntentCounters["tier3"].Blocked != 2 {
+	if t1 := resp.IntentCounters["tier1"]; t1.Attempted != 7 || t1.Blocked != 3 || resp.IntentCounters["tier3"].Blocked != 2 {
 		t.Errorf("intent_counters = %+v", resp.IntentCounters)
 	}
 	if resp.WriteCounters != nil {
