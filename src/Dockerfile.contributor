@@ -26,7 +26,7 @@
 # this image is built for linux/amd64 and linux/arm64, and compiling Go under
 # QEMU emulation for the foreign arch costs minutes per build for no benefit —
 # a pure-Go static binary cross-compiles exactly.
-FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS quota-publisher-builder
+FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS quota-publisher-builder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
