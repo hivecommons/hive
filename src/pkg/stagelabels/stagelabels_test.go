@@ -97,6 +97,28 @@ func TestAuthorFromTier(t *testing.T) {
 	}
 }
 
+func TestAuthorMergePrecedence(t *testing.T) {
+	cases := []struct{ cur, next, want Author }{
+		{AuthorNone, AuthorUntrusted, AuthorUntrusted},
+		{AuthorNone, AuthorTrusted, AuthorTrusted},
+		// #12490: the trusted-author lane's verdict survives the contributor
+		// lane's "no registry profile" in either order.
+		{AuthorTrusted, AuthorUntrusted, AuthorTrusted},
+		{AuthorUntrusted, AuthorTrusted, AuthorTrusted},
+		{AuthorUntrusted, AuthorContributor, AuthorContributor},
+		{AuthorContributor, AuthorUntrusted, AuthorContributor},
+		{AuthorContributor, AuthorTrusted, AuthorTrusted},
+		{AuthorContributor, AuthorNewcomer, AuthorContributor},
+		{AuthorNewcomer, AuthorNone, AuthorNewcomer},
+		{AuthorNone, AuthorNone, AuthorNone},
+	}
+	for _, tc := range cases {
+		if got := tc.cur.Merge(tc.next); got != tc.want {
+			t.Errorf("%v.Merge(%v) = %v want %v", tc.cur, tc.next, got, tc.want)
+		}
+	}
+}
+
 func TestPlanIdempotentExclusiveAndStaleRemoval(t *testing.T) {
 	want := Desired{Stage: ReviewPending, Author: AuthorContributor}
 	add, remove := Plan([]string{"bug", "stage/050-review-pending", "author/contributor"}, want)

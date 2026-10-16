@@ -221,12 +221,15 @@ func (c *Engine) noteStageVerdict(owner, repo string, number int, v ContributorL
 	})
 }
 
-// noteStageAuthor records the author's admission tier as the lane computed it.
+// noteStageAuthor records the author's admission tier as the lane computed
+// it. Lanes disagree by design (the contributor lane reports "untrusted"
+// for a maintainer with no registry profile), so tiers merge by precedence
+// rather than last-writer-wins (#12490).
 func (c *Engine) noteStageAuthor(owner, repo string, number int, a stagelabels.Author) {
 	if !c.stagePolicy().Enabled || a == stagelabels.AuthorNone {
 		return
 	}
-	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) { d.Author = a })
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) { d.Author = d.Author.Merge(a) })
 }
 
 // stageVerdict is a lane's opinion about a PR's stage.
@@ -254,7 +257,8 @@ func classifyCIReason(reason string) ciReasonKind {
 	switch {
 	case reason == "":
 		return ciReasonNone
-	case hgithub.CommitCIReasonIsPending(reason), reason == "ci-unverified", reason == "check-pending":
+	case hgithub.CommitCIReasonIsPending(reason), reason == "ci-unverified", reason == "check-pending",
+		strings.HasPrefix(reason, "required-check-pending:"):
 		return ciReasonPending
 	case strings.HasPrefix(reason, "required-check-failing:"), strings.HasPrefix(reason, "check-failing:"),
 		strings.HasPrefix(reason, "status-"), strings.HasPrefix(reason, "check-"), reason == "check-runs":
@@ -407,9 +411,7 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Author, st
 		// The most specific author tier wins: the contributor lane knows
 		// registry/claim tiers the trusted-author lane cannot see, so a
 		// trusted-author "trusted" is kept but its absence is refined.
-		if o.Detail.Author != stagelabels.AuthorNone && (author == stagelabels.AuthorNone || o.Detail.Author == stagelabels.AuthorTrusted || author == stagelabels.AuthorUntrusted) {
-			author = o.Detail.Author
-		}
+		author = author.Merge(o.Detail.Author)
 	}
 	if best.Rank == 1 && author == stagelabels.AuthorNone {
 		author = stagelabels.AuthorUntrusted

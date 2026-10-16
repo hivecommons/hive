@@ -252,6 +252,22 @@ func (a Author) Label() string { return authorDefs[a].Name }
 // String is the bare tier name ("trusted", …) or "" for AuthorNone.
 func (a Author) String() string { return strings.TrimPrefix(authorDefs[a].Name, AuthorPrefix) }
 
+// Merge combines two lanes' opinions of the same author into the tier to
+// show. The lanes see different evidence — the trusted-author lane the
+// maintainer role, the contributor lane the registry/claim tier — and a
+// maintainer with no registry profile is "untrusted" to the latter, so:
+// trusted always wins; any known tier replaces none or untrusted; between
+// two equally specific tiers the first recorded is kept.
+func (a Author) Merge(next Author) Author {
+	switch {
+	case next == AuthorNone:
+		return a
+	case a == AuthorNone, next == AuthorTrusted, a == AuthorUntrusted:
+		return next
+	}
+	return a
+}
+
 // AuthorFromTier maps a registry/claim tier string to an Author given the
 // lane's require_tiers set. Unknown or empty tiers are untrusted.
 func AuthorFromTier(tier string, requireTiers map[string]bool) Author {

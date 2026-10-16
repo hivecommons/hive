@@ -137,6 +137,8 @@ func TestClassifyStageMapping(t *testing.T) {
 		{"error", stageObservation{Lane: stageLaneSelf, Reason: "fetch-pr", Err: true}, stagelabels.None, 0, false},
 		{"review pending", stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict}, stagelabels.ReviewPending, 2, false},
 		{"ci pending no verdict", stageObservation{Lane: stageLaneSelf, Reason: "check-pending"}, stagelabels.ReviewPending, 2, false},
+		{"required check pending no verdict", stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test"}, stagelabels.ReviewPending, 2, false},
+		{"required check pending approved", stageObservation{Lane: stageLaneTrusted, Reason: "required-check-pending:build-and-test", Detail: approve}, stagelabels.Reviewed, 2, false},
 		{"ci pending approved", stageObservation{Lane: stageLaneSelf, Reason: "required-check-missing:unit", Detail: approve}, stagelabels.Reviewed, 2, false},
 		{"self ci red", stageObservation{Lane: stageLaneSelf, Reason: "check-failing:unit"}, stagelabels.Fixing, 2, false},
 		{"contributor ci red", stageObservation{Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, stagelabels.ReturnedToContributor, 2, false},
@@ -185,6 +187,44 @@ func TestResolveStageLanePrecedence(t *testing.T) {
 	})
 	if v.Stage != stagelabels.Fixing {
 		t.Fatalf("self lane got %v", v.Stage)
+	}
+}
+
+// TestStageAuthorTierSurvivesContributorLane reproduces hivecommons/hive#12490:
+// a maintainer's PR is evaluated by the trusted-author lane (CI pending) and
+// then listed by the contributor lane, which knows no registry profile for
+// the author and reports "untrusted" + needs-human. The trusted tier and the
+// trusted lane's stage must win regardless of the order the lanes ran in.
+func TestStageAuthorTierSurvivesContributorLane(t *testing.T) {
+	for _, trustedFirst := range []bool{true, false} {
+		api := &stageAPI{}
+		srv := newStageAPI(t, api)
+		clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 0, 0, 0, time.UTC)}
+		e, _, _ := newStageEngine(t, srv.URL, clock)
+
+		trusted := func() {
+			e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(12484), "required-check-pending:build-and-test", false, nil)
+			e.noteStageAuthor("acme", "widget", 12484, stagelabels.AuthorTrusted)
+		}
+		contributor := func() {
+			e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12484), contributorLaneReasonNoLinkedIssue, false, nil)
+			e.noteStageAuthor("acme", "widget", 12484, stagelabels.AuthorFromTier("", map[string]bool{"trusted": true}))
+		}
+		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", stagePR(12484), "not-app-authored", false, nil)
+		if trustedFirst {
+			trusted()
+			contributor()
+		} else {
+			contributor()
+			trusted()
+		}
+		if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/trusted", "stage/050-review-pending"}) {
+			t.Fatalf("trustedFirst=%v added %v", trustedFirst, api.added)
+		}
+		srv.Close()
 	}
 }
 
