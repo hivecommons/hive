@@ -25,6 +25,64 @@ func TestDashboardScriptBracesAreBalanced(t *testing.T) {
 	}
 }
 
+// An apostrophe typed into a single-quoted JS string literal ('... the
+// hive's own evidence ...') ends the string early; the parser then meets the
+// leftover prose and fails the whole <script> block with
+// "SyntaxError: Unexpected identifier 's'". Nothing in the block runs, so the
+// page sits at "Loading your hives..." forever. node --check would catch it,
+// but the hub's test suite is Go, and braceDepth only reports brace balance.
+//
+// A '...' or "..." literal may not contain a raw newline, so a string still
+// open when the lexer reaches end-of-line is unterminated — exactly what a
+// stray quote produces. Template literals are exempt because they legally
+// span lines.
+func TestDashboardScriptStringsTerminate(t *testing.T) {
+	for i, block := range dashboardScriptBlocks(t) {
+		for _, ln := range unterminatedStringLines(block) {
+			line := strings.TrimSpace(strings.Split(block, "\n")[ln-1])
+			if len(line) > 120 {
+				line = line[:120] + "…"
+			}
+			t.Errorf("script block %d line %d: string literal is still open at end of line "+
+				"(an unescaped quote inside the string?) — the whole block fails to parse and "+
+				"the dashboard never leaves its loading spinner:\n  %s", i, ln, line)
+		}
+	}
+}
+
+// A literal built the way the quadrant header was (prose with an apostrophe
+// inside a single-quoted string) must trip the check; the escaped forms the
+// file actually uses (\' and &#39;) must not.
+func TestUnterminatedStringLinesDetectsStrayQuote(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want []int
+	}{
+		{"clean", "var a = 'x';\nvar b = \"y\";\n", nil},
+		{"escaped quote", "var a = 'the hive\\'s own';\n", nil},
+		{"html entity", "var a = 'the hive&#39;s own';\n", nil},
+		{"template literal spans lines", "var a = `one\ntwo`;\n", nil},
+		{"regex with quote", "var r = /it's/; var b = 'ok';\n", nil},
+		{"comment with quote", "// don't\nvar a = 'ok'; /* it's */\n", nil},
+		{"stray apostrophe", "var ok = 1;\nvar a = '<th title=\"from the hive's own evidence\">' + x;\nvar b = 2;\n", []int{2}},
+		{"stray double quote", "var a = \"say \"hi\" to the fleet;\nvar b = 1;\n", []int{1}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unterminatedStringLines(tc.src)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // Declarations the render path depends on must be reachable as top-level
 // statements. Anchoring on column 4 ("    var x") is how the file is
 // formatted for genuinely top-level inline-script declarations; anything
@@ -98,8 +156,24 @@ func dashboardScriptBlocks(t *testing.T) []string {
 // literals. It is deliberately conservative: it only needs to be exact enough
 // that a genuinely balanced block returns 0.
 func braceDepth(src string) int {
-	depth := 0
+	depth, _ := scanScript(src)
+	return depth
+}
+
+// unterminatedStringLines returns the 1-based line numbers at which a '...'
+// or "..." literal was still open when the line ended.
+func unterminatedStringLines(src string) []int {
+	_, lines := scanScript(src)
+	return lines
+}
+
+// scanScript is the shared lexer behind braceDepth and
+// unterminatedStringLines: a single pass that tracks string, comment and
+// regex state so that braces and quotes are only counted where the JavaScript
+// parser would see them.
+func scanScript(src string) (depth int, unterminated []int) {
 	var inStr byte // quote char when inside a string
+	line := 1
 	inLineComment := false
 	inBlockComment := false
 	inRegex := false
@@ -111,10 +185,14 @@ func braceDepth(src string) int {
 		switch {
 		case inLineComment:
 			if c == '\n' {
+				line++
 				inLineComment = false
 			}
 			continue
 		case inBlockComment:
+			if c == '\n' {
+				line++
+			}
 			if c == '*' && i+1 < len(src) && src[i+1] == '/' {
 				inBlockComment = false
 				i++
@@ -122,7 +200,20 @@ func braceDepth(src string) int {
 			continue
 		case inStr != 0:
 			if c == '\\' {
+				if i+1 < len(src) && src[i+1] == '\n' {
+					line++
+				}
 				i++
+				continue
+			}
+			if c == '\n' {
+				line++
+				if inStr != '`' {
+					// A quoted string cannot cross a line: a quote earlier on
+					// this line closed the literal the author meant to write.
+					unterminated = append(unterminated, line-1)
+					inStr = 0
+				}
 				continue
 			}
 			if c == inStr {
@@ -132,6 +223,13 @@ func braceDepth(src string) int {
 		case inRegex:
 			if c == '\\' {
 				i++
+				continue
+			}
+			if c == '\n' {
+				// Regex literals cannot span lines either; if we are still
+				// "inside" one here the '/' was really a division operator.
+				line++
+				inRegex = false
 				continue
 			}
 			if c == '[' {
@@ -177,10 +275,12 @@ func braceDepth(src string) int {
 			depth++
 		case '}':
 			depth--
+		case '\n':
+			line++
 		}
 		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
 			prev = c
 		}
 	}
-	return depth
+	return depth, unterminated
 }
