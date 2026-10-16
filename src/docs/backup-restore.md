@@ -80,7 +80,7 @@ Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, e
 
 ## Owner-triggered spoke backup
 
-`pkg/spokebackup` is complementary: it backs up one spoke on demand for its owner and includes the spoke's bead ledger. It uses the same AES-256-GCM sealing as the hub path and is sized for browser download, not nightly fleet DR. It includes `hive.yaml.dashboard`, runtime config files, `hive-id`, `hive-state.json`, GitHub App keys, and `/data/beads/*`, plus the reserved `/data/vaults/bead-synth-wiki/*.md` facts even when repository publishing is disabled. Other vaults, nested files, attachments, and symlinks remain excluded, as do bulk/derived data and live dashboard sessions. This captures the default vault location, not a custom synthesizer `vault_path`.
+`pkg/spokebackup` is complementary: it backs up one spoke on demand for its owner and includes the spoke's bead ledger. It uses the same AES-256-GCM sealing as the hub path and is sized for browser download, not nightly fleet DR. It includes `hive.yaml.dashboard`, runtime config files, `hive-id`, `hive-state.json`, GitHub App keys, and `/data/beads/*`, plus the reserved `/data/vaults/bead-synth-wiki/*.md` facts even when repository publishing is disabled. Other vaults, nested files, attachments, and symlinks remain excluded, as do bulk/derived data and live dashboard sessions. This captures the default vault location only; a custom `knowledge.bead_synthesizer.vault_path` is not backed up (see `vault_path` in [knowledge-curator.md](knowledge-curator.md)).
 
 ### Setting the backup encryption key (hosted flow)
 
@@ -136,7 +136,7 @@ The archive uses `spoke/` and `beads/` prefixes (`src/pkg/spokebackup/backup.go:
 | `spoke/hive-state.json` | `/data/hive-state.json` | `stateFile`, `backup.go:100` |
 | `spoke/gh-app-key*.pem` | `/data/gh-app-key*.pem` | `appKeyGlob`, `backup.go:105`, matched with `filepath.Glob` (`backup.go:256`) |
 | `beads/<agent>/**` | `/data/beads/<agent>/**` | `beadsSubdir`/`beadsPrefix`, `backup.go:58,114` — one subtree per agent, discovered from the archive rather than a fixed list |
-| `bead-synth-wiki/<slug>.md` | `/data/vaults/bead-synth-wiki/<slug>.md` | `addBeadSynthVault` in `pkg/spokebackup/bead_synth.go`; flat markdown facts only, restored owner-only |
+| `bead-synth-wiki/<slug>.md` | `/data/vaults/bead-synth-wiki/<slug>.md` | `addBeadSynthVault` in `pkg/spokebackup/bead_synth.go`; flat markdown facts only, restored at the synthesizer's own `0644` (not hardened to `0600`, since nothing re-applies ownership under `vaults/` at boot) |
 | `MANIFEST.json` | (not restored — it is metadata, verified by `Extract`, not spoke state) | `hubbackup` manifest format |
 
 The mapping is a prefix rename (`spoke/` → data-dir root, `beads/` → data-dir `beads/`, `bead-synth-wiki/` → data-dir `vaults/bead-synth-wiki/`) — there is no repacking, renaming, or transformation needed. This is exactly the file set the entrypoint reads at boot: `HIVE_CONFIG_RUNTIME`/`HIVE_CONFIG_RUNTIME_LEGACY`/`hive.yaml.dashboard` (`src/deploy/entrypoint.sh:69-70,586,879`), the beads directory it symlinks into `/home/dev/<agent>-beads` and chowns per-agent (`entrypoint.sh:1239-1248,1847-1853`), and `gh-app-key*.pem`, read directly from `/data` (`src/pkg/dashboard/api_config.go:186`, `src/pkg/hub/cluster_app_key.go:393`).

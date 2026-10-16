@@ -12,7 +12,18 @@ import (
 
 // The reserved automation vault contains flat markdown facts, not arbitrary
 // imported vaults or attachments. Preserve it even when repo publishing is off.
+//
+// Only the default location (config.DefaultBeadSynthVaultPath) is captured; a
+// custom knowledge.bead_synthesizer.vault_path is not read here and is
+// documented as excluded in docs/backup-restore.md.
 const beadSynthVault = "bead-synth-wiki"
+
+// beadSynthFactMode matches the 0644 the synthesizer itself writes
+// (knowledge.BeadSynthesizer). Facts are knowledge, not credentials, and the
+// entrypoint re-applies no ownership under vaults/ at boot — restoring them
+// owner-only would leave them unreadable to the synthesizer and reindex when
+// the restore runs as a different uid than the dashboard.
+const beadSynthFactMode = 0o644
 
 func addBeadSynthVault(b *hubbackup.Builder, dataDir string, res *Result, logger *slog.Logger) error {
 	relDir := filepath.Join("vaults", beadSynthVault)
@@ -44,7 +55,7 @@ func addBeadSynthVault(b *hubbackup.Builder, dataDir string, res *Result, logger
 			res.Skipped[rel] = err.Error()
 			continue
 		}
-		if err := b.AddBytes(filepath.Join(beadSynthVault, entry.Name()), 0o600, content); err != nil {
+		if err := b.AddBytes(filepath.Join(beadSynthVault, entry.Name()), beadSynthFactMode, content); err != nil {
 			return fmt.Errorf("archive bead synth fact: %w", err)
 		}
 	}

@@ -55,8 +55,8 @@ func TestBeadSynthVaultBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("private fact restored with permissions %o", info.Mode().Perm())
+	if got := info.Mode().Perm(); got != beadSynthFactMode {
+		t.Fatalf("fact restored with permissions %o, want %o (the synthesizer's own mode)", got, beadSynthFactMode)
 	}
 	for _, rel := range excluded {
 		if _, err := os.Lstat(filepath.Join(dest, rel)); !os.IsNotExist(err) {

@@ -27,6 +27,7 @@ import (
 //
 //	spoke/<name>         -> <dataDir>/<name>
 //	beads/<agent>/<rel>  -> <dataDir>/beads/<agent>/<rel>
+//	bead-synth-wiki/<slug>.md -> <dataDir>/vaults/bead-synth-wiki/<slug>.md
 //	MANIFEST.json        -> not restored; it is archive metadata, not spoke state
 //
 // Everything else in the archive is ignored and reported, so a hub
@@ -318,10 +319,14 @@ func planRestore(staging, dataDir string) (*restorePlan, error) {
 		case parts[0] == beadSynthVault && len(parts) == 2 && strings.HasSuffix(parts[1], ".md"):
 			relDst := filepath.Join("vaults", beadSynthVault, parts[1])
 			plan.moves = append(plan.moves, restoreMove{
-				rel:    relDst,
-				src:    path,
-				dst:    filepath.Join(dataDir, relDst),
-				secret: true, // Knowledge may be private; preserve owner-only access.
+				rel: relDst,
+				src: path,
+				dst: filepath.Join(dataDir, relDst),
+				// Not secret: the archive mode is the synthesizer's own 0644
+				// (beadSynthFactMode). Nothing re-applies ownership under
+				// vaults/ at boot, so an owner-only restore from a different
+				// uid would hide the facts from the synthesizer and reindex.
+				secret: false,
 			})
 		case parts[0] == beadsPrefix && len(parts) >= 3:
 			agent := parts[1]
