@@ -406,7 +406,8 @@ func TestStageAuthorTierSurvivesContributorLane(t *testing.T) {
 // PR lands alone in the next. The weak admission opinion must not be
 // written while a lane that is enabled for the repo has not reported;
 // once the trusted-author lane's observation is in the same drain, the
-// owned stage wins as before.
+// owned stage wins as before. (The hand-off label is 085-needs-decision
+// here because the test engine has no reviewer configured; see #12531.)
 func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
 	api := &stageAPI{}
 	srv := newStageAPI(t, api)
@@ -444,8 +445,10 @@ func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
 		t.Fatalf("trusted-only drain: added=%v removed=%v", api.added, api.removed)
 	}
 
-	// Drain 3: both lanes present, both weak (outside author) → 090 is
-	// written as before; completeness, not weakness, is the gate.
+	// Drain 3: both lanes present, both weak (outside author) → the human
+	// hand-off is written; completeness, not weakness, is the gate. This
+	// engine has no reviewer configured, so stagelabels.RouteHuman resolves
+	// the hand-off to 085-needs-decision (hivecommons/hive#12528), not 090.
 	api.reset()
 	setStagePRTruth(77, "author/untrusted")
 	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(77), "untrusted-author-role", false, nil)
@@ -454,7 +457,7 @@ func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/090-needs-human"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/085-needs-decision"}}) {
 		t.Fatalf("complete drain: added=%v", api.added)
 	}
 
@@ -466,7 +469,7 @@ func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/090-needs-human"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/085-needs-decision"}}) {
 		t.Fatalf("trusted lane disabled: added=%v", api.added)
 	}
 }
