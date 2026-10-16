@@ -1,7 +1,7 @@
 package stagelabels
 
 // Enforce is the ONE place a hive-owned label set is written (hivecommons/hive
-// #12512 is why). Before it, each writer — the issue reconciler, the PR
+// #12525; #12512 is the item that showed why). Before it, each writer — the issue reconciler, the PR
 // lanes, the claim-ledger hooks — planned from whatever label snapshot it
 // happened to hold and wrote the difference, and the claim hooks wrote only
 // an add. An issue the reconciler had just staged 010 took a contributor
