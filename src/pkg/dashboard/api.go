@@ -485,6 +485,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// or zipped with the artifacts it references; owner/merger only.
 	s.mux.HandleFunc("GET /api/review/evidence", s.handleReviewEvidence)
 	s.mux.HandleFunc("GET /api/review/evidence/list", s.handleReviewEvidenceList)
+	// Durable attempted-vs-blocked agent write counters (#12069); owner/merger only.
+	s.mux.HandleFunc("GET /api/evidence/write-counters", s.handleWriteCounters)
 	// write_surface is a top-level Config field; the lane write allowlist
 	// editor lives on the governor Security tab (#9587, api_config_write_surface.go).
 	s.mux.HandleFunc("GET /api/config/write-surface", s.handleWriteSurfaceGet)
