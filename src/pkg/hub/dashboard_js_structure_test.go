@@ -212,6 +212,9 @@ func TestDashboardScriptStringsTerminateOnTheirLine(t *testing.T) {
 func TestDashboardScriptParsesWithNode(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
+		if os.Getenv("CI") != "" {
+			t.Fatal("node not on PATH in CI; the hub test lane installs it via setup-node — this check must not silently skip there")
+		}
 		t.Skip("node not on PATH; relying on Go-only structure checks")
 	}
 	for i, block := range dashboardScriptBlocks(t) {
