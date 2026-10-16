@@ -1060,6 +1060,14 @@ knowledge:
                                              # Defaults to true when retention_policy is
                                              # ABSENT, but false when the block is present
                                              # without this key — set it explicitly.
+    # publish:                               # Publish facts to a repo via PR (OFF by default)
+    #   enabled: false                       # The block does nothing until true
+    #   repo: ""                             # owner/name; empty = project.primary_repo
+    #   path: docs/knowledge/                # Or .hive/knowledge/; relative, no ".."
+    #   base_branch: ""                      # Empty = the repo's default branch
+    #   mode: pr                             # pr (default) | commit. ACMM L<=4 hives publish via
+    #                                        # PR only; commit is not honored and opens a PR
+    #   cadence: per_run                     # per_run (default) | daily
   # code_maps:                               # Generated repository code maps (#11106).
   #   enabled: true                          # OPT-IN; absent or false = never generated
   #   schedule: hourly                       # HEAD check cadence: hourly (default) or daily
