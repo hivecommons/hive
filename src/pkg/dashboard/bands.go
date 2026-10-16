@@ -444,8 +444,9 @@ func stageNumber(label string) int {
 }
 
 // issueStageCovered reports whether the issue carries stage/040-covered-by-pr
-// or a mirrored PR stage past it — the stage successor of the retired
-// covered-by-PR labels, so the issue files under "done" the same way.
+// (or, until the reconciler's next pass, a PR stage an older build mirrored
+// past it) — the stage successor of the retired covered-by-PR labels, so the
+// issue files under "done" the same way.
 func issueStageCovered(labels []string) bool {
 	for _, label := range labels {
 		if stageNumber(label) >= stageNumberCoveredByPR {

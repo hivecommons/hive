@@ -109,10 +109,68 @@ type Definition struct {
 	// lane's last skip reason) when the item stalls here: a stall in such a
 	// stage points at the hive, not the author, so it must be legible.
 	StallNote bool
-	// Issue/PR report which item kinds the stage is emitted for directly.
-	// An issue covered by a PR mirrors the PR's stage, so PR stages also
-	// appear on issues.
+	// Issue/PR report which item kinds the stage may be written to. The
+	// two sets are disjoint: an issue's pipeline ends at 040-covered-by-pr
+	// and the covering PR's own progress is narrated in the issue's stage
+	// reason/comment, never mirrored as a second label (hivecommons/hive#12451).
+	// Enforce clamps a stage to the item's kind (Stage.For) so a PR-only
+	// stage can never land on an issue and vice versa.
 	Issue, PR bool
+}
+
+// Item is the kind of forge item a stage is written to.
+type Item int
+
+const (
+	// IssueItem: an issue. Only Issue:true stages (010–040) may land on it.
+	IssueItem Item = iota
+	// PRItem: a pull request. Only PR:true stages (050–100) may land on it.
+	PRItem
+)
+
+// String is "issue" or "pr".
+func (k Item) String() string {
+	if k == PRItem {
+		return "pr"
+	}
+	return "issue"
+}
+
+// Applies reports whether the stage may be written to an item of kind k.
+// None applies everywhere (it clears the stage).
+func (s Stage) Applies(k Item) bool {
+	if s == None {
+		return true
+	}
+	d, ok := definition(s)
+	if !ok {
+		return false
+	}
+	if k == PRItem {
+		return d.PR
+	}
+	return d.Issue
+}
+
+// For returns the stage to write on an item of kind k when the caller wants
+// s. An applicable stage is returned unchanged. A PR-only stage asked of an
+// issue clamps to the highest issue stage below it (040-covered-by-pr: the
+// PR exists, that is all the issue says). An issue-only stage asked of a PR
+// has no PR meaning and yields None. Unknown stages yield None.
+func (s Stage) For(k Item) Stage {
+	if s.Applies(k) {
+		return s
+	}
+	if k == PRItem {
+		return None
+	}
+	best := None
+	for _, d := range Table {
+		if d.Issue && d.Number < s.Number() && best.Before(d.Stage) {
+			best = d.Stage
+		}
+	}
+	return best
 }
 
 // Table is THE ordered stage table. Edit it to insert, rename or re-time a
@@ -403,7 +461,8 @@ func IsLegacy(label string) bool {
 
 // CarriesStageAtLeast reports whether labels carry a current stage label at
 // or past min. It is the migration-safe replacement for "has the
-// covered-by-PR label": a PR-covered issue carries 040 or a mirrored PR stage.
+// covered-by-PR label": a PR-covered issue carries 040 (or, from an older
+// build, a PR stage past it that Enforce clamps back on its next pass).
 func CarriesStageAtLeast(labels []string, min Stage) bool {
 	cur := Current(labels)
 	return cur != None && !cur.Before(min)

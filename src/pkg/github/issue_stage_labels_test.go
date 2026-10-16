@@ -151,10 +151,10 @@ func TestIssueStageFor(t *testing.T) {
 		return stagelabels.None
 	}
 	cases := []struct {
-		name     string
-		in       IssueStageInput
-		want     stagelabels.Stage
-		mirrored bool
+		name    string
+		in      IssueStageInput
+		want    stagelabels.Stage
+		covered bool
 	}{
 		{"actionable", IssueStageInput{}, stagelabels.Actionable, false},
 		{"live human claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: "human"}, stagelabels.Claimed, false},
@@ -162,17 +162,25 @@ func TestIssueStageFor(t *testing.T) {
 		{"live agent claim", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent)}, stagelabels.PRInProgress, false},
 		{"in-progress sweep", IssueStageInput{Bucket: inProgressWorkBucket}, stagelabels.PRInProgress, false},
 		{"covered, PR not yet staged", IssueStageInput{Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 5}}, stagelabels.CoveredByPR, false},
-		{"covered, mirrors PR stage", IssueStageInput{Repo: "acme/widgets", Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 99}}, stagelabels.MergeQueue, true},
-		{"covered, cross-repo PR mirrors", IssueStageInput{Repo: "acme/other", Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 99, PRRepo: "acme/widgets"}}, stagelabels.MergeQueue, true},
+		// hivecommons/hive#12451: the PR's stage is narrated, never mirrored
+		// as the issue's label — 050+ are PR-only stages.
+		{"covered, PR staged: stays 040", IssueStageInput{Repo: "acme/widgets", Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 99}}, stagelabels.CoveredByPR, true},
+		{"covered, cross-repo PR staged: stays 040", IssueStageInput{Repo: "acme/other", Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 99, PRRepo: "acme/widgets"}}, stagelabels.CoveredByPR, true},
 		{"likely-done is no stage", IssueStageInput{Labels: []string{LikelyDoneLabel}}, stagelabels.None, false},
 		{"filtered out", IssueStageInput{Bucket: "filtered"}, stagelabels.None, false},
 		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.None, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, mirrored, _ := IssueStageFor(tc.in, prStage)
-			if got != tc.want || mirrored != tc.mirrored {
-				t.Fatalf("IssueStageFor = %s/%v, want %s/%v", got, mirrored, tc.want, tc.mirrored)
+			got, covered, reason := IssueStageFor(tc.in, prStage)
+			if got != tc.want || covered != tc.covered {
+				t.Fatalf("IssueStageFor = %s/%v, want %s/%v", got, covered, tc.want, tc.covered)
+			}
+			if covered && !strings.Contains(reason, "PR #99 covers it (PR at 100-merge-queue)") {
+				t.Fatalf("reason %q must name the covering PR and its stage", reason)
+			}
+			if got != stagelabels.None && !got.Applies(stagelabels.IssueItem) {
+				t.Fatalf("%s is not an issue stage", got)
 			}
 		})
 	}
@@ -204,7 +212,7 @@ func TestSyncIssueStageLabels_MapsBucketsAndRetiresLegacy(t *testing.T) {
 		1: {add: []string{stagelabels.Actionable.Label()}},
 		2: {add: []string{stagelabels.Claimed.Label()}, remove: []string{claims.LegacyLabelClaimed}},
 		3: {add: []string{stagelabels.PRInProgress.Label()}, remove: []string{claims.LegacyLabelInProgress}},
-		4: {add: []string{stagelabels.ReviewPending.Label()}, remove: []string{stagelabels.LegacyCoveredByPR}},
+		4: {add: []string{stagelabels.CoveredByPR.Label()}, remove: []string{stagelabels.LegacyCoveredByPR}}, // PR staged 050, issue stays 040 (hivecommons/hive#12451)
 		5: {remove: []string{stagelabels.Actionable.Label()}},
 	}
 	fake.mu.Lock()
@@ -249,24 +257,31 @@ func TestSyncIssueStageLabels_IdempotentAndDisabled(t *testing.T) {
 	}
 }
 
-func TestSyncIssueStageLabels_ExclusiveAndFollowsPR(t *testing.T) {
+// hivecommons/hive#12451: issue #12451 carried 010 + 040 + 050 (050 mirrored
+// from PR #12495 by the pre-fix reconciler). Covered by a staged PR, the
+// issue is written exactly 040; the PR's stage lives in the reason, and the
+// issue's store record never holds a PR stage (so a PR falling 100 → 060
+// does not read as the issue regressing).
+func TestSyncIssueStageLabels_CoveredIssueStaysAt040(t *testing.T) {
 	fake := newIssueStageServer(t)
 	c := issueStageTestClient(t, fake.srv, true)
 	store := stagelabels.NewStore("", stageNow)
-	// The covering PR advanced from review-pending to merge-queue; the issue
-	// still carries the old mirrored stage plus a stray 040 from migration.
 	store.Observe(stagelabels.Key("acme/widgets", 40), stagelabels.MergeQueue, "soaking")
 	result := &ActionableResult{}
-	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.ReviewPending.Label(), stagelabels.CoveredByPR.Label(), stagelabels.StalledLabel}, ClaimContext: &IssueClaimContext{PRNumber: 40}}, workBucketClaimedByPR, "open PR")
+	appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 4, Labels: []string{stagelabels.Actionable.Label(), stagelabels.CoveredByPR.Label(), stagelabels.ReviewPending.Label(), stagelabels.StalledLabel}, ClaimContext: &IssueClaimContext{PRNumber: 40}}, workBucketClaimedByPR, "open PR")
 
 	syncSeeded(fake, c, result, store, stageNow())
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if got := fake.added[4]; len(got) != 1 || got[0] != stagelabels.MergeQueue.Label() {
-		t.Fatalf("added %v, want only %s", got, stagelabels.MergeQueue.Label())
+	if got := fake.added[4]; len(got) != 0 {
+		t.Fatalf("added %v, want nothing: 040 is already there and 100 is a PR stage", got)
 	}
-	if got := strings.Join(fake.removed[4], ","); got != strings.Join([]string{stagelabels.CoveredByPR.Label(), stagelabels.ReviewPending.Label(), stagelabels.StalledLabel}, ",") {
-		t.Fatalf("removed %v: every other owned label must come off (mirrored stages carry no health)", fake.removed[4])
+	if got := strings.Join(fake.removed[4], ","); got != strings.Join([]string{stagelabels.Actionable.Label(), stagelabels.ReviewPending.Label(), stagelabels.StalledLabel}, ",") {
+		t.Fatalf("removed %v: every other owned label must come off (a covered issue carries no health)", fake.removed[4])
+	}
+	rec, ok := store.Get(stagelabels.Key("acme/widgets", 4))
+	if !ok || rec.Stage != stagelabels.CoveredByPR || !strings.Contains(rec.Reason, "PR #40 covers it (PR at 100-merge-queue)") {
+		t.Fatalf("issue record %+v: must hold 040 with the PR's stage in the reason", rec)
 	}
 }
 

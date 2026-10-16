@@ -155,7 +155,7 @@ func (c *Client) markInProgressStarted(ctx context.Context, repo string, number 
 // clearInProgressForPR moves every issue a freshly opened PR names from the
 // claimed / pr-in-progress stage to covered-by-pr. Best-effort and off the
 // request path: the PR is the stronger signal and the stage reconciler
-// converges the labels (and mirrors the PR's stage) on the next cycle anyway.
+// converges the labels on the next cycle anyway.
 func (c *Client) clearInProgressForPR(ctx context.Context, repo string, issues []int) {
 	if !c.inProgressSetting().Enabled || len(issues) == 0 {
 		return

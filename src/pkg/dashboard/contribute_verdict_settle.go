@@ -208,7 +208,8 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 	if !claim.MergedPR {
 		// CoveredByPRLabel is the stage/040-covered-by-pr stage label
 		// (hivecommons/hive#12436); the issue stage reconciler keeps it in
-		// step (and mirrors the PR's stage) from the next enumeration on.
+		// step from the next enumeration on (the PR's own stage is never
+		// mirrored onto the issue, hivecommons/hive#12451).
 		if err := h.server.deps.GHClient.EnsureCoveredByPRLabel(ctx, repo); err != nil {
 			return err
 		}

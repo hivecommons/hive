@@ -65,7 +65,7 @@ func TestIsStageLabel(t *testing.T) {
 func TestEnforce_TwoStageLabels(t *testing.T) {
 	f := &fakeLabeler{truth: []string{"bug", Actionable.Label(), Claimed.Label(), "hive/claimed-by-ann"}}
 	// Snapshot predates the claim hook's add: 010 only, and 020 is wanted.
-	out, err := Enforce(context.Background(), f, "acme", "widgets", 12, []string{"bug", Actionable.Label()}, Desired{Stage: Claimed})
+	out, err := Enforce(context.Background(), f, IssueItem, "acme", "widgets", 12, []string{"bug", Actionable.Label()}, Desired{Stage: Claimed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestEnforce_TwoStageLabels(t *testing.T) {
 		t.Fatalf("item carries %v, want exactly 020", got)
 	}
 	// Idempotent: a snapshot that already matches costs no read.
-	out, err = Enforce(context.Background(), f, "acme", "widgets", 12, f.truth, Desired{Stage: Claimed})
+	out, err = Enforce(context.Background(), f, IssueItem, "acme", "widgets", 12, f.truth, Desired{Stage: Claimed})
 	if err != nil || out.Changed() || out.Reread || f.reads != 1 {
 		t.Fatalf("second pass: out=%+v err=%v reads=%d", out, err, f.reads)
 	}
@@ -87,14 +87,14 @@ func TestEnforce_TwoStageLabels(t *testing.T) {
 
 func TestEnforce_RemoveFailureContinues(t *testing.T) {
 	f := &fakeLabeler{truth: []string{Actionable.Label(), Claimed.Label(), PRInProgress.Label()}, failRm: Claimed.Label()}
-	out, err := Enforce(context.Background(), f, "acme", "widgets", 1, f.truth, Desired{Stage: PRInProgress})
+	out, err := Enforce(context.Background(), f, IssueItem, "acme", "widgets", 1, f.truth, Desired{Stage: PRInProgress})
 	if err == nil {
 		t.Fatal("the failed remove must surface")
 	}
 	if !reflect.DeepEqual(out.Removed, []string{Actionable.Label()}) {
 		t.Fatalf("the other remove must still happen: %+v", out)
 	}
-	if _, err := Enforce(context.Background(), nil, "acme", "widgets", 1, nil, Desired{}); err == nil {
+	if _, err := Enforce(context.Background(), nil, IssueItem, "acme", "widgets", 1, nil, Desired{}); err == nil {
 		t.Fatal("nil labeler must error")
 	}
 }
@@ -103,7 +103,7 @@ func TestEnforce_RemoveFailureContinues(t *testing.T) {
 // labels survive; every other stage and the retired labels come off.
 func TestEnforceStage_KeepsAuthorAndHealth(t *testing.T) {
 	f := &fakeLabeler{truth: []string{"bug", "claimed", Actionable.Label(), StalledLabel, AuthorContributor.Label(), "hive/claimed-by-ann"}}
-	out, err := EnforceStage(context.Background(), f, "acme", "widgets", 7, Claimed)
+	out, err := EnforceStage(context.Background(), f, IssueItem, "acme", "widgets", 7, Claimed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,14 +116,89 @@ func TestEnforceStage_KeepsAuthorAndHealth(t *testing.T) {
 		t.Fatalf("item carries %v", f.truth)
 	}
 	// Already right: no writes.
-	if out, err := EnforceStage(context.Background(), f, "acme", "widgets", 7, Claimed); err != nil || out.Changed() {
+	if out, err := EnforceStage(context.Background(), f, IssueItem, "acme", "widgets", 7, Claimed); err != nil || out.Changed() {
 		t.Fatalf("idempotent pass wrote %+v (%v)", out, err)
 	}
 	// None clears the stage but nothing else hive-owned.
-	if _, err := EnforceStage(context.Background(), f, "acme", "widgets", 7, None); err != nil {
+	if _, err := EnforceStage(context.Background(), f, IssueItem, "acme", "widgets", 7, None); err != nil {
 		t.Fatal(err)
 	}
 	if got := StageLabels(f.truth); len(got) != 0 || AuthorOf(f.truth) != AuthorContributor {
 		t.Fatalf("after None: %v", f.truth)
+	}
+}
+
+// hivecommons/hive#12451: the stage table says which kind of item a stage
+// may be written to. 050+ are PR stages; an issue asked to carry one gets
+// 040-covered-by-pr (the PR exists — that is all the issue says), and an
+// issue stage asked of a PR means nothing and clears the stage.
+func TestStageForItem(t *testing.T) {
+	for _, d := range Table {
+		if d.Issue == d.PR {
+			t.Fatalf("%s: a stage is an issue stage or a PR stage, never both or neither", d.Stage)
+		}
+		if d.Issue && d.Number > CoveredByPR.Number() {
+			t.Fatalf("%s: an issue's pipeline ends at 040-covered-by-pr", d.Stage)
+		}
+		if d.PR && d.Number <= CoveredByPR.Number() {
+			t.Fatalf("%s: PR stages start after 040", d.Stage)
+		}
+		if got := d.Stage.For(IssueItem); d.Issue && got != d.Stage || d.PR && got != CoveredByPR {
+			t.Errorf("%s.For(issue) = %s", d.Stage, got)
+		}
+		if got := d.Stage.For(PRItem); d.PR && got != d.Stage || d.Issue && got != None {
+			t.Errorf("%s.For(pr) = %s", d.Stage, got)
+		}
+	}
+	if !None.Applies(IssueItem) || !None.Applies(PRItem) || None.For(PRItem) != None {
+		t.Fatal("None applies everywhere")
+	}
+	if Stage(999).Applies(IssueItem) || Stage(999).For(IssueItem) != None {
+		t.Fatal("an unknown stage applies nowhere")
+	}
+	if IssueItem.String() != "issue" || PRItem.String() != "pr" {
+		t.Fatal("Item.String")
+	}
+}
+
+// The three specimens on hivecommons/hive#12451: an issue carrying 010 + 040
+// + 050 (050 mirrored from its PR) is written exactly 040 whatever the
+// caller asked for; a PR can never be given an issue stage.
+func TestEnforce_ClampsStageToItemKind(t *testing.T) {
+	f := &fakeLabeler{truth: []string{"help wanted", Actionable.Label(), CoveredByPR.Label(), ReviewPending.Label()}}
+	out, err := Enforce(context.Background(), f, IssueItem, "acme", "widgets", 12451, f.truth, Desired{Stage: ReviewPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Clamped || out.Wanted != ReviewPending || out.Stage != CoveredByPR || !out.Healed {
+		t.Fatalf("outcome %+v: 050 must clamp to 040 on an issue", out)
+	}
+	if got := StageLabels(f.truth); !reflect.DeepEqual(got, []string{CoveredByPR.Label()}) {
+		t.Fatalf("issue carries %v, want exactly 040", got)
+	}
+	sort.Strings(f.removed)
+	if !reflect.DeepEqual(f.removed, []string{Actionable.Label(), ReviewPending.Label()}) || len(f.added) != 0 {
+		t.Fatalf("removed %v added %v", f.removed, f.added)
+	}
+
+	// A PR carrying 100 asked for an issue stage: nothing issue-side lands,
+	// the PR stage is cleared, the author tier survives.
+	pr := &fakeLabeler{truth: []string{MergeQueue.Label(), AuthorTrusted.Label()}}
+	out, err = EnforceStage(context.Background(), pr, PRItem, "acme", "widgets", 7, Claimed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Clamped || out.Stage != None || len(StageLabels(pr.truth)) != 0 || AuthorOf(pr.truth) != AuthorTrusted {
+		t.Fatalf("outcome %+v truth %v", out, pr.truth)
+	}
+	if len(pr.added) != 0 {
+		t.Fatalf("a PR must never be given %v", pr.added)
+	}
+
+	// An applicable stage is not clamped and the outcome says so.
+	ok := &fakeLabeler{truth: []string{ReviewPending.Label()}}
+	out, err = Enforce(context.Background(), ok, PRItem, "acme", "widgets", 8, ok.truth, Desired{Stage: Reviewed})
+	if err != nil || out.Clamped || out.Stage != Reviewed || out.Wanted != Reviewed {
+		t.Fatalf("outcome %+v err %v", out, err)
 	}
 }
