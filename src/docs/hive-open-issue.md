@@ -144,7 +144,11 @@ rulesets, secrets, app installs, billing, anything agents are barred from):
 the comment names the exact command or step, and the watcher adds the
 configured needs-decision label before posting it, so the issue leaves the
 agent queue and reaches the owner's "Your turn" inbox instead of falling back
-to `Unclaimed` when the claim expires. The flag applies only to `issue` and
+to `Unclaimed` when the claim expires. Because the park applies a
+hive-controlled label, the lane needs `label` in its write allowlist as well
+as `comment`, and the target must be an issue: a pull request is refused
+before any write (a PR that needs a person is a `requires_human` review
+verdict, not a needs-decision label). The flag applies only to `issue` and
 `comment`; on any other kind the script exits `2` and writes nothing.
 
 ### `comment`

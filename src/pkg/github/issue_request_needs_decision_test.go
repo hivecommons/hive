@@ -140,11 +140,25 @@ func TestIssueRequestWatcher_NeedsDecisionDoesNotDuplicateLabel(t *testing.T) {
 // "comment" per comment posted.
 func runNeedsDecisionComment(t *testing.T, filter IssueAdmitter, req IssueRequest) ([]string, IssueResponse) {
 	t.Helper()
+	return runNeedsDecisionCommentOn(t, filter, req, false, nil)
+}
+
+// runNeedsDecisionCommentOn is runNeedsDecisionComment with the target's
+// kind (issue or PR) under test control and an optional client hook, so the
+// lane allowlist can be narrowed before the request is processed.
+func runNeedsDecisionCommentOn(t *testing.T, filter IssueAdmitter, req IssueRequest, targetIsPR bool, setup func(*Client)) ([]string, IssueResponse) {
+	t.Helper()
 	var mu sync.Mutex
 	var writes []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/issues/") && !strings.Contains(r.URL.Path, "/labels") && !strings.HasSuffix(r.URL.Path, "/comments"):
+			if targetIsPR {
+				_, _ = io.WriteString(w, `{"number":1,"pull_request":{"url":"https://api.github.example/repos/o/r/pulls/1"}}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"number":1}`)
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
@@ -169,6 +183,9 @@ func runNeedsDecisionComment(t *testing.T, filter IssueAdmitter, req IssueReques
 	c := issueTestClient(t, srv.URL)
 	if filter != nil {
 		c.SetIssueFilter(filter)
+	}
+	if setup != nil {
+		setup(c)
 	}
 	dir := withIssueDir(t)
 	reqPath, err := WriteIssueRequest(dir, req)
@@ -211,5 +228,64 @@ func TestIssueRequestWatcher_CommentNeedsDecisionDefaultsAndIsOptIn(t *testing.T
 	})
 	if got := strings.Join(writes, ","); got != "comment" {
 		t.Fatalf("writes = %q, want only the comment", got)
+	}
+}
+
+// Parking applies a hive-controlled label, so a lane allowed to comment but
+// not to label is refused before any GitHub write, and the refusal names the
+// label op (#12334).
+func TestIssueRequestWatcher_CommentNeedsDecisionRequiresLabelOp(t *testing.T) {
+	writes, resp := runNeedsDecisionCommentOn(t, nil, IssueRequest{
+		Kind: "comment", Repo: "o/r", Number: 7, Agent: "scanner", Body: "owner step", NeedsDecision: true,
+	}, false, func(c *Client) {
+		c.SetWriteAllowlistFunc(allowOnly("scanner", WriteOpComment))
+	})
+	if len(writes) != 0 {
+		t.Fatalf("writes = %v, want none from a lane that may not label", writes)
+	}
+	if resp.OK || !strings.Contains(resp.Error, WriteOpLabel) {
+		t.Fatalf("result = %+v, want a refusal naming %q", resp, WriteOpLabel)
+	}
+	// The plain comment from the same lane still goes through.
+	writes, resp = runNeedsDecisionCommentOn(t, nil, IssueRequest{
+		Kind: "comment", Repo: "o/r", Number: 7, Agent: "scanner", Body: "plain note",
+	}, false, func(c *Client) {
+		c.SetWriteAllowlistFunc(allowOnly("scanner", WriteOpComment))
+	})
+	if got := strings.Join(writes, ","); got != "comment" || !resp.OK {
+		t.Fatalf("writes = %q ok=%v, want only the comment to succeed", got, resp.OK)
+	}
+}
+
+// A lane holding both comment and label may park.
+func TestIssueRequestWatcher_CommentNeedsDecisionAllowedWithLabelOp(t *testing.T) {
+	writes, resp := runNeedsDecisionCommentOn(t, nil, IssueRequest{
+		Kind: "comment", Repo: "o/r", Number: 7, Agent: "scanner", Body: "owner step", NeedsDecision: true,
+	}, false, func(c *Client) {
+		c.SetWriteAllowlistFunc(allowOnly("scanner", WriteOpComment, WriteOpLabel))
+	})
+	if got := strings.Join(writes, ","); got != "label:"+issueNeedsDecisionLabel+",comment" || !resp.OK {
+		t.Fatalf("writes = %q ok=%v, want park then comment", got, resp.OK)
+	}
+}
+
+// needs_decision on a comment parks issues only: a PR target is refused
+// before any write, so the hard-suppress label never lands on a PR (#12334).
+func TestIssueRequestWatcher_CommentNeedsDecisionRefusesPullRequest(t *testing.T) {
+	writes, resp := runNeedsDecisionCommentOn(t, nil, IssueRequest{
+		Kind: "comment", Repo: "o/r", Number: 9, Agent: "scanner", Body: "owner step", NeedsDecision: true,
+	}, true, nil)
+	if len(writes) != 0 {
+		t.Fatalf("writes = %v, want none on a pull request", writes)
+	}
+	if resp.OK || !strings.Contains(resp.Error, "pull request") {
+		t.Fatalf("result = %+v, want a refusal naming the pull request", resp)
+	}
+	// A plain comment on the same PR is unaffected.
+	writes, resp = runNeedsDecisionCommentOn(t, nil, IssueRequest{
+		Kind: "comment", Repo: "o/r", Number: 9, Agent: "scanner", Body: "plain note",
+	}, true, nil)
+	if got := strings.Join(writes, ","); got != "comment" || !resp.OK {
+		t.Fatalf("writes = %q ok=%v, want only the comment to succeed", got, resp.OK)
 	}
 }

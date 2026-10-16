@@ -27,3 +27,20 @@ func (c *Client) IssueClaimBlockReason(ctx context.Context, repo string, number 
 	}
 	return "", nil
 }
+
+// issueIsPullRequest reports whether repo#number is a pull request. The
+// comment relay's needs-decision park uses it to refuse PR targets (#12334):
+// the needs-decision label is an issue-queue signal, and on a PR it would
+// hard-suppress the PR instead. A lookup error is returned so the caller
+// retries rather than parking an item it could not read.
+func (c *Client) issueIsPullRequest(ctx context.Context, repo string, number int) (bool, error) {
+	if c == nil || c.client == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		return false, fmt.Errorf("reading %s#%d before parking it: %w", repo, number, err)
+	}
+	return issue.IsPullRequest(), nil
+}

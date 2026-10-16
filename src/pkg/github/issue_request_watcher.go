@@ -118,8 +118,10 @@ type IssueRequest struct {
 	// the actionable queue whatever labels the agent named. On a "comment"
 	// request it adds the same label to the existing item before posting the
 	// comment, so a diagnosis that ends in an owner-only action reaches the
-	// owner's inbox (hivecommons/hive#12329). The label relay still refuses
-	// the label itself: this flag is the only way an agent applies it.
+	// owner's inbox (hivecommons/hive#12329); that park needs the label op
+	// in the lane's allowlist as well as comment, and refuses a pull-request
+	// target (hivecommons/hive#12334). The label relay still refuses the
+	// label itself: this flag is the only way an agent applies it.
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue and comment
 }
 
@@ -412,6 +414,15 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		c.denyIssueRequest(path, req, reason, nowFn)
 		return
 	}
+	// A comment that parks the item applies a hive-controlled label, so the
+	// lane must hold the label op too: commenting on an issue and taking it
+	// out of the actionable queue are different privileges (#12334).
+	if kind == "comment" && req.NeedsDecision {
+		if reason, refused := c.refuseWrite(req.Agent, WriteOpLabel, req.Repo, req.Number); refused {
+			c.denyIssueRequest(path, req, reason, nowFn)
+			return
+		}
+	}
 
 	// The hive fulfils issues, comments and claims with its own credentials,
 	// bypassing the agent proxy. Enforce pause before any of those API calls.
@@ -474,7 +485,20 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	case "comment":
 		// Park first: a retry after a failed comment re-adds the label (a
 		// no-op), while the reverse order would post the comment twice.
+		// The park is for issues: a PR that needs a person is a review
+		// verdict (requires_human), not a needs-decision label, and the
+		// label would hard-suppress the PR from every queue. A failed
+		// lookup retries; an unreadable target is never parked.
 		if req.NeedsDecision {
+			var isPR bool
+			isPR, err = c.issueIsPullRequest(ctx, req.Repo, req.Number)
+			if err != nil {
+				break
+			}
+			if isPR {
+				c.denyIssueRequest(path, req, fmt.Sprintf("needs_decision parks issues only: %s#%d is a pull request", req.Repo, req.Number), nowFn)
+				return
+			}
 			err = c.AddLabels(ctx, req.Repo, req.Number, []string{c.needsDecisionLabel()})
 		}
 		if err == nil {

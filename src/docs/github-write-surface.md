@@ -89,6 +89,10 @@ An agent parks an issue for the owner with the `--needs-decision` flag
 instead: on a create, or on `comment` for an existing issue whose remaining
 step only the owner can take, the relay applies the configured needs-decision
 label itself ([#12329](https://github.com/hivecommons/hive/issues/12329)).
+On `comment` the park is gated by the `label` op as well as `comment` — a
+lane allowed to comment but not to label is refused before any write — and
+it refuses a pull-request target, so the hard-suppress label only ever lands
+on an issue ([#12334](https://github.com/hivecommons/hive/pull/12334)).
 
 One reserved label refuses the whole request — nothing in it is applied — so a
 batch can never partially land. When the only refused part is removing
