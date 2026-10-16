@@ -30,8 +30,12 @@ var evidenceSummaryBuckets = []struct {
 // EvidenceSummary is the GET /api/evidence/summary response. It is read-only
 // reporting over stored evidence bundles; nothing here gates or alters a merge.
 type EvidenceSummary struct {
-	Hours      int    `json:"hours"`
-	AllTime    bool   `json:"all_time"`
+	Hours   int  `json:"hours"`
+	AllTime bool `json:"all_time"`
+	// From/To are set only for a custom range (?from=&to=); Hours is then the
+	// rounded-up span so existing readers keep working.
+	From       string `json:"from,omitempty"`
+	To         string `json:"to,omitempty"`
 	Repo       string `json:"repo,omitempty"`
 	AuthorKind string `json:"author_kind,omitempty"`
 	// N is the number of PRs (latest bundle per PR) in the window.
@@ -288,20 +292,97 @@ type EvidenceMissing struct {
 	ReviewerAccuracy     bool `json:"reviewer_accuracy_unavailable"`
 }
 
-// handleEvidenceSummary serves GET /api/evidence/summary?hours=&repo=&author_kind=.
-func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
+// evidenceSummaryMaxRangeDays caps a custom ?from=&to= range.
+const evidenceSummaryMaxRangeDays = 366
+
+// evidenceWindow is the time slice a summary covers. A zero From with Hours
+// 0 means all time; a custom range sets both From and To.
+type evidenceWindow struct {
+	Hours  int
+	From   time.Time
+	To     time.Time
+	Custom bool
+}
+
+// parseEvidenceTime accepts RFC3339 or YYYY-MM-DD (UTC midnight).
+func parseEvidenceTime(raw string) (time.Time, bool) {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC(), true
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		return t.UTC(), true
+	}
+	return time.Time{}, false
+}
+
+// parseEvidenceWindow reads hours= or from=/to= from the query. A date-only
+// `to` is inclusive (end of that UTC day); a missing `to` means now.
+func parseEvidenceWindow(q map[string][]string, now time.Time) (evidenceWindow, error) {
+	get := func(k string) string {
+		if v := q[k]; len(v) > 0 {
+			return strings.TrimSpace(v[0])
+		}
+		return ""
+	}
+	fromRaw, toRaw := get("from"), get("to")
+	if fromRaw == "" && toRaw != "" {
+		return evidenceWindow{}, errors.New("to requires from")
+	}
+	if fromRaw != "" {
+		from, ok := parseEvidenceTime(fromRaw)
+		if !ok {
+			return evidenceWindow{}, errors.New("from must be RFC3339 or YYYY-MM-DD")
+		}
+		to := now
+		if toRaw != "" {
+			t, ok := parseEvidenceTime(toRaw)
+			if !ok {
+				return evidenceWindow{}, errors.New("to must be RFC3339 or YYYY-MM-DD")
+			}
+			if len(toRaw) == len("2006-01-02") {
+				t = t.Add(24 * time.Hour)
+			}
+			to = t
+		}
+		if to.Before(from) {
+			return evidenceWindow{}, errors.New("to must not be before from")
+		}
+		if to.Sub(from) > evidenceSummaryMaxRangeDays*24*time.Hour {
+			return evidenceWindow{}, fmt.Errorf("range must not exceed %d days", evidenceSummaryMaxRangeDays)
+		}
+		hours := int((to.Sub(from) + time.Hour - 1) / time.Hour)
+		if hours < 1 {
+			hours = 1
+		}
+		return evidenceWindow{Hours: hours, From: from, To: to, Custom: true}, nil
+	}
 	hours := prThroughputDefaultHours
-	if raw := strings.TrimSpace(r.URL.Query().Get("hours")); raw != "" {
+	if raw := get("hours"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 0 {
-			jsonError(w, "hours must be a non-negative integer (0 = all time)", http.StatusBadRequest)
-			return
+			return evidenceWindow{}, errors.New("hours must be a non-negative integer (0 = all time)")
 		}
 		hours = n
 	}
 	if hours > prThroughputMaxHours {
 		hours = prThroughputMaxHours
 	}
+	win := evidenceWindow{Hours: hours, To: now}
+	if hours > 0 {
+		win.From = now.Add(-time.Duration(hours) * time.Hour)
+	}
+	return win, nil
+}
+
+// handleEvidenceSummary serves GET /api/evidence/summary?hours=&from=&to=&repo=&author_kind=.
+func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
+	now := time.Now().UTC()
+	win, werr := parseEvidenceWindow(r.URL.Query(), now)
+	if werr != nil {
+		jsonError(w, werr.Error(), http.StatusBadRequest)
+		return
+	}
+	hours := win.Hours
 	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
 	if repo != "" && !validPRThroughputRepo(repo) {
 		jsonError(w, "repo must be owner/name", http.StatusBadRequest)
@@ -315,13 +396,12 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
 	bundles, unreadable, err := loadEvidenceBundles(ghpkg.ReviewEvidenceRoot)
 	if err != nil {
 		jsonError(w, "review evidence unreadable: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	resp := buildEvidenceSummary(bundles, now, hours, repo, kind)
+	resp := buildEvidenceSummaryWindow(bundles, win, repo, kind)
 	resp.Missing.RecordsUnreadable = unreadable
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
 	resp.IntentCounters = loadEvidenceWriteCounters(intentCountersPath)
@@ -383,10 +463,21 @@ func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 }
 
 // buildEvidenceSummary aggregates the newest bundle per PR whose creation
-// falls in the window. hours==0 means all time.
+// falls in the trailing window. hours==0 means all time.
 func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, repo, kind string) EvidenceSummary {
+	win := evidenceWindow{Hours: hours, To: now}
+	if hours > 0 {
+		win.From = now.Add(-time.Duration(hours) * time.Hour)
+	}
+	return buildEvidenceSummaryWindow(bundles, win, repo, kind)
+}
+
+// buildEvidenceSummaryWindow is buildEvidenceSummary over an explicit window;
+// a custom range keeps bundles created in [From, To).
+func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) EvidenceSummary {
+	hours := win.Hours
 	resp := EvidenceSummary{
-		Hours: hours, AllTime: hours == 0, Repo: repo, AuthorKind: kind,
+		Hours: hours, AllTime: hours == 0 && !win.Custom, Repo: repo, AuthorKind: kind,
 		Outcomes:        map[string]EvidenceOutcomes{},
 		Calibration:     []EvidencePerspectiveCalib{},
 		ReviewerModels:  []EvidenceModelAccuracy{},
@@ -396,10 +487,12 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 	for _, k := range []string{evidence.AuthorHuman, evidence.AuthorAgent, evidence.AuthorBot} {
 		resp.Outcomes[k] = EvidenceOutcomes{}
 	}
-	cutoff := time.Time{}
-	if hours > 0 {
-		cutoff = now.Add(-time.Duration(hours) * time.Hour)
+	if win.Custom {
+		resp.From = win.From.Format(time.RFC3339)
+		resp.To = win.To.Format(time.RFC3339)
 	}
+	cutoff := win.From
+	bounded := win.Custom || hours > 0
 
 	latest := map[string]*evidence.Bundle{}
 	for _, b := range bundles {
@@ -409,7 +502,10 @@ func buildEvidenceSummary(bundles []*evidence.Bundle, now time.Time, hours int, 
 		if kind != "" && b.Author.Kind != kind {
 			continue
 		}
-		if hours > 0 && b.CreatedAt.Before(cutoff) {
+		if bounded && b.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if win.Custom && !b.CreatedAt.Before(win.To) {
 			continue
 		}
 		key := strings.ToLower(b.Repo) + "#" + strconv.Itoa(b.Number)

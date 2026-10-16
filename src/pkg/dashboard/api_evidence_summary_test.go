@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,7 +96,8 @@ func TestBuildEvidenceSummary(t *testing.T) {
 
 func TestHandleEvidenceSummaryValidation(t *testing.T) {
 	s := &Server{}
-	for _, q := range []string{"hours=-1", "hours=x", "repo=nope", "author_kind=robot"} {
+	for _, q := range []string{"hours=-1", "hours=x", "repo=nope", "author_kind=robot",
+		"to=2026-10-15", "from=yesterday", "from=2026-10-15&to=2026-10-01", "from=2025-01-01&to=2026-10-15", "from=2026-10-01&to=bogus"} {
 		w := httptest.NewRecorder()
 		s.handleEvidenceSummary(w, httptest.NewRequest(http.MethodGet, "/api/evidence/summary?"+q, nil))
 		if w.Code != http.StatusBadRequest {
@@ -284,6 +286,60 @@ func TestBuildEvidenceSummaryClaimVsVerdict(t *testing.T) {
 	}
 	if e := buildEvidenceSummary(nil, now, 24, "", "").ClaimVsVerdict; e == nil || len(e) != 0 {
 		t.Errorf("empty input must yield an empty (non-null) slice, got %#v", e)
+
+// TestParseEvidenceWindow pins the 24h/7d/30d/custom window contract
+// (#12062): hours up to the throughput cap, and from/to as RFC3339 or
+// YYYY-MM-DD with an inclusive date-only `to`.
+func TestParseEvidenceWindow(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	q := func(s string) map[string][]string {
+		u, err := url.ParseQuery(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	win, err := parseEvidenceWindow(q("hours=720"), now)
+	if err != nil || win.Hours != 720 || win.Custom || !win.From.Equal(now.Add(-720*time.Hour)) {
+		t.Fatalf("hours=720: %+v %v", win, err)
+	}
+	win, err = parseEvidenceWindow(q("from=2026-10-01&to=2026-10-15"), now)
+	if err != nil || !win.Custom || win.Hours != 15*24 ||
+		!win.From.Equal(time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)) ||
+		!win.To.Equal(time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("date range: %+v %v", win, err)
+	}
+	win, err = parseEvidenceWindow(q("from=2026-10-15T06:00:00Z"), now)
+	if err != nil || !win.Custom || !win.To.Equal(now) || win.Hours != 30 {
+		t.Fatalf("rfc3339 open-ended: %+v %v", win, err)
+	}
+	if _, err := parseEvidenceWindow(q("from=2025-10-01&to=2026-10-15"), now); err == nil {
+		t.Error("range over 366 days must be rejected")
+	}
+	if _, err := parseEvidenceWindow(q("from=2026-10-15&to=2026-10-01"), now); err == nil {
+		t.Error("to before from must be rejected")
+	}
+}
+
+func TestBuildEvidenceSummaryCustomRange(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	bundles := []*evidence.Bundle{
+		evSummaryBundle("a/b", 1, evidence.AuthorAgent, time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC), true, nil, 0, true),
+		evSummaryBundle("a/b", 2, evidence.AuthorHuman, time.Date(2026, 10, 9, 9, 0, 0, 0, time.UTC), false, nil, 0, true),
+		evSummaryBundle("a/b", 3, evidence.AuthorHuman, time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC), false, nil, 0, true),
+	}
+	win := evidenceWindow{Custom: true, Hours: 7 * 24,
+		From: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)}
+	got := buildEvidenceSummaryWindow(bundles, win, "", "")
+	if got.N != 1 || got.Outcomes["human"].N != 1 || got.AllTime {
+		t.Fatalf("custom range: %+v", got)
+	}
+	if got.From != "2026-10-05T00:00:00Z" || got.To != "2026-10-12T00:00:00Z" {
+		t.Errorf("from/to echo = %q %q", got.From, got.To)
+	}
+	// All-time still has no bounds.
+	if all := buildEvidenceSummary(bundles, now, 0, "", ""); all.N != 3 || !all.AllTime || all.From != "" {
+		t.Errorf("all time: %+v", all)
 	}
 }
 
