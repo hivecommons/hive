@@ -35530,7 +35530,7 @@ function burnAreaChart() {
       const managedNote = st.hub_managed
         ? 'managed by the hub — change it from the hub dashboard'
         : 'set in hive.yaml; requires restart';
-      const roRow = (label, path, valueHtml) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm" style="word-break:break-all">${valueHtml} <span class="text-muted">— ${esc(managedNote)}</span></div></div>`;
+      const roRow = (label, path, valueHtml) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm break-all">${valueHtml} <span class="text-muted">— ${esc(managedNote)}</span></div></div>`;
       const shown = v => v ? '<code>' + esc(String(v)) + '</code>' : '<span class="text-muted">unset</span>';
       const num = (key, label, path, placeholder, help, restart) => `
           <div class="config-field">
@@ -35544,8 +35544,8 @@ function burnAreaChart() {
             <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} <span class="text-muted">— ${help}${restart ? ' Requires restart.' : ' Applies without a restart.'}</span></span>
           </div>`;
       return `
-        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:var(--sp-5);background:var(--surface)">
-          <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)">Connection identity</div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Connection identity</div>
           ${roRow('Forge', 'github.forge', shown(st.forge))}
           ${roRow('API URL', 'github.api_url', shown(st.api_url))}
           ${roRow('Docs org installation ID', 'github.docs_installation_id', shown(st.docs_installation_id))}
@@ -35553,8 +35553,8 @@ function burnAreaChart() {
           ${roRow('Personal access token', 'github.token', st.token_set ? '<span>set (hidden)</span>' : '<span class="text-muted">not set</span>')}
           <div class="config-help">The App private key path is <code>github.key_file</code>, edited above. An empty forge or API URL is derived from the App config.</div>
         </div>
-        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:var(--sp-5);background:var(--surface)">
-          <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)">API quota, PR scans and authorship</div>
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">API quota, PR scans and authorship</div>
           <div class="config-field-row">
             ${num('api_reserve', 'API reserve', 'github.api_reserve', 800, 'Remaining core REST quota below which Hive skips optional sweeps (conserve mode).', true)}
             ${num('api_critical', 'API critical floor', 'github.api_critical', 250, 'Lower floor where Hive enters critical mode and stretches the eval interval further. Must be below the reserve.', true)}
