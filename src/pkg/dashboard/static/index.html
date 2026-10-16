@@ -22100,8 +22100,7 @@ function burnAreaChart() {
       return Math.max(1, Math.round(ms / 3600000));
     }
     function evShortDate(iso) {
-      const d = new Date(iso + 'T00:00:00Z');
-      return isNaN(d) ? iso : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+      return formatDashboardDate(iso + 'T00:00:00Z', { month: 'short', day: 'numeric', timeZone: 'UTC' }, iso);
     }
     function evWindowLabel() {
       if (evWindow.from) return `${evShortDate(evWindow.from)} – ${evShortDate(evWindow.to)}`;

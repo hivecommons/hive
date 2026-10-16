@@ -286,6 +286,8 @@ func TestBuildEvidenceSummaryClaimVsVerdict(t *testing.T) {
 	}
 	if e := buildEvidenceSummary(nil, now, 24, "", "").ClaimVsVerdict; e == nil || len(e) != 0 {
 		t.Errorf("empty input must yield an empty (non-null) slice, got %#v", e)
+	}
+}
 
 // TestParseEvidenceWindow pins the 24h/7d/30d/custom window contract
 // (#12062): hours up to the throughput cap, and from/to as RFC3339 or
