@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/adminmcp"
 )
@@ -24,6 +25,21 @@ type dashboardAdminMCPProvider struct {
 	// the outer request as a verified owner (dashboard token or verified
 	// owner session); see adminMCPOwnerVerified.
 	ownerVerified bool
+	userAgent     string
+}
+
+// parseStdioBuildFromUserAgent extracts the stdio client build from incoming User-Agent header (#12318).
+// Returns the build (<version>+<short>), "unidentified stdio client" for legacy hivectl/0.1, or empty string.
+func parseStdioBuildFromUserAgent(ua string) string {
+	ua = strings.TrimSpace(ua)
+	if strings.HasPrefix(ua, "hive-admin-mcp/") {
+		build := strings.TrimPrefix(ua, "hive-admin-mcp/")
+		return strings.TrimSpace(build)
+	}
+	if ua == "hivectl/0.1" || strings.HasPrefix(ua, "hivectl/0.1") {
+		return "unidentified stdio client"
+	}
+	return ""
 }
 
 func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +49,7 @@ func (s *Server) handleAdminMCP(w http.ResponseWriter, r *http.Request) {
 		role:          r.Header.Get("X-Hive-Role"),
 		authorization: r.Header.Get("Authorization"),
 		ownerVerified: adminMCPOwnerVerified(r),
+		userAgent:     r.Header.Get("User-Agent"),
 	}
 	adminmcp.NewHandler(provider,
 		adminmcp.WithWritesEnabled(adminMCPWritesEnabled()),
@@ -65,6 +82,11 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	if p.server == nil {
 		return nil, fmt.Errorf("%w: dashboard server unavailable", adminmcp.ErrForbidden)
 	}
+	if p.userAgent != "" {
+		if build := parseStdioBuildFromUserAgent(p.userAgent); build != "" {
+			p.server.RecordStdioBuild(build, time.Now().UTC())
+		}
+	}
 	if tool == adminmcp.ToolReviewQueue {
 		return adminmcp.ReadReviewQueue(func(path string) (any, error) { return p.get(tool, path) }, args)
 	}
@@ -93,6 +115,19 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 	}
 	if tool == adminmcp.ToolGovernorSetup {
 		return adminmcp.GovernorSetupProposal(data)
+	}
+	if tool == adminmcp.ToolVersionRead {
+		if m, ok := data.(map[string]any); ok {
+			if build, at := p.server.LastSeenStdio(); build != "" {
+				m["last_seen_stdio_build"] = build
+				if !at.IsZero() {
+					m["last_seen_stdio_at"] = at.Format(time.RFC3339)
+				}
+			}
+			if _, ok := m["hub_build"]; !ok {
+				m["hub_build"] = versionShort
+			}
+		}
 	}
 	return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
 }

@@ -221,6 +221,11 @@ type Server struct {
 
 	advisoryMu     sync.RWMutex
 	advisoryDigest any
+
+	// stdioBuildMu guards lastSeenStdio and lastSeenStdioAt (#12318).
+	stdioBuildMu    sync.RWMutex
+	lastSeenStdio   string
+	lastSeenStdioAt time.Time
 	// advisoryLastPostedAt / advisoryLastFindings / advisoryLastError record the
 	// outcome of the most recent advisory-digest post ATTEMPT, so the heartbeat
 	// builder can report it to the hub and a hive whose digest has quietly gone
@@ -3571,6 +3576,7 @@ func (s *Server) inHealthGrace() (bool, time.Duration) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	s.RecordStdioFromRequest(r)
 	// Build the snapshot under statusMu: hold moves mutate the published
 	// status (including repo.Ownership) under the write lock.
 	s.statusMu.RLock()
@@ -3593,6 +3599,7 @@ type statusWithWebhooks struct {
 }
 
 func (s *Server) handleStatusSummary(w http.ResponseWriter, r *http.Request) {
+	s.RecordStdioFromRequest(r)
 	s.statusMu.RLock()
 	status := s.status
 	s.statusMu.RUnlock()
@@ -4753,4 +4760,42 @@ type FrontendReleaseLineLag struct {
 	Known        bool   `json:"known"`
 	Threshold    int    `json:"threshold"`
 	Exceeded     bool   `json:"exceeded"`
+}
+
+// RecordStdioBuild records the last-seen stdio client build and the time it was seen (#12318).
+func (s *Server) RecordStdioBuild(build string, at time.Time) {
+	if s == nil {
+		return
+	}
+	build = strings.TrimSpace(build)
+	if build == "" {
+		return
+	}
+	s.stdioBuildMu.Lock()
+	s.lastSeenStdio = build
+	s.lastSeenStdioAt = at
+	s.stdioBuildMu.Unlock()
+}
+
+// RecordStdioFromRequest inspects the User-Agent header of an incoming request
+// and records the stdio build sighting if sent by a stdio client (#12318).
+func (s *Server) RecordStdioFromRequest(r *http.Request) {
+	if s == nil || r == nil {
+		return
+	}
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		if build := parseStdioBuildFromUserAgent(ua); build != "" {
+			s.RecordStdioBuild(build, time.Now().UTC())
+		}
+	}
+}
+
+// LastSeenStdio returns the recorded last-seen stdio build and sighting timestamp (#12318).
+func (s *Server) LastSeenStdio() (string, time.Time) {
+	if s == nil {
+		return "", time.Time{}
+	}
+	s.stdioBuildMu.RLock()
+	defer s.stdioBuildMu.RUnlock()
+	return s.lastSeenStdio, s.lastSeenStdioAt
 }

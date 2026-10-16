@@ -1,0 +1,1 @@
+- Hub records last-seen stdio `hive-admin-mcp` build and timestamp from `User-Agent` on admin MCP read paths and flags build skew on the dashboard (#12318).

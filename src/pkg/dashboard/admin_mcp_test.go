@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/adminmcp"
 	"github.com/hivecommons/hive/pkg/advisor"
@@ -209,5 +210,189 @@ func TestDashboardAdminMCPVersionReadReturnsAPIVersion(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "1ffbbae") || !strings.Contains(rec.Body.String(), "currentCommit") {
 		t.Fatalf("version_read body = %s", rec.Body.String())
+	}
+}
+
+func TestParseStdioBuildFromUserAgent(t *testing.T) {
+	for _, tc := range []struct {
+		ua   string
+		want string
+	}{
+		{"hive-admin-mcp/0.1.0+abc1234", "0.1.0+abc1234"},
+		{"hive-admin-mcp/2.0.0+def5678", "2.0.0+def5678"},
+		{"hivectl/0.1", "unidentified stdio client"},
+		{"hivectl/0.1 (linux/amd64)", "unidentified stdio client"},
+		{"Mozilla/5.0", ""},
+		{"curl/8.0", ""},
+		{"", ""},
+	} {
+		if got := parseStdioBuildFromUserAgent(tc.ua); got != tc.want {
+			t.Errorf("parseStdioBuildFromUserAgent(%q) = %q, want %q", tc.ua, got, tc.want)
+		}
+	}
+}
+
+func TestAdminMCPRecordsStdioUserAgent(t *testing.T) {
+	s := &Server{mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+
+	before := time.Now().UTC().Add(-time.Second)
+
+	// Admin MCP read path with hive-admin-mcp User-Agent
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version_read","arguments":{}}}`))
+	req.Header.Set("User-Agent", "hive-admin-mcp/0.1.0+abc1234")
+	s.handleAdminMCP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	build, at := s.LastSeenStdio()
+	if build != "0.1.0+abc1234" {
+		t.Fatalf("recorded build = %q, want %q", build, "0.1.0+abc1234")
+	}
+	if at.Before(before) || at.After(time.Now().UTC().Add(time.Second)) {
+		t.Fatalf("recorded timestamp %v not within expected range", at)
+	}
+
+	// Verify version_read tool returns last_seen_stdio_build, last_seen_stdio_at, and hub_build
+	var rpcResp struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rpcResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(rpcResp.Result.Content) == 0 {
+		t.Fatalf("no content in result: %s", rec.Body.String())
+	}
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(rpcResp.Result.Content[0].Text), &env); err != nil {
+		t.Fatal(err)
+	}
+	data := env.Data
+	if got, _ := data["last_seen_stdio_build"].(string); got != "0.1.0+abc1234" {
+		t.Fatalf("last_seen_stdio_build = %q, want 0.1.0+abc1234", got)
+	}
+	if got, _ := data["last_seen_stdio_at"].(string); got == "" {
+		t.Fatal("last_seen_stdio_at is empty")
+	}
+	if got, _ := data["hub_build"].(string); got == "" {
+		t.Fatal("hub_build is empty")
+	}
+
+	// Verify GET /api/version also returns last_seen_stdio_build, last_seen_stdio_at, and hub_build
+	vRec := httptest.NewRecorder()
+	vReq := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	s.handleVersion(vRec, vReq)
+	if vRec.Code != http.StatusOK {
+		t.Fatalf("GET /api/version status = %d", vRec.Code)
+	}
+	var vData map[string]any
+	if err := json.Unmarshal(vRec.Body.Bytes(), &vData); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := vData["last_seen_stdio_build"].(string); got != "0.1.0+abc1234" {
+		t.Fatalf("/api/version last_seen_stdio_build = %q, want 0.1.0+abc1234", got)
+	}
+	if got, _ := vData["last_seen_stdio_at"].(string); got == "" {
+		t.Fatal("/api/version last_seen_stdio_at is empty")
+	}
+	if got, _ := vData["hub_build"].(string); got == "" {
+		t.Fatal("/api/version hub_build is empty")
+	}
+}
+
+func TestAdminMCPRecordsUnidentifiedStdioUserAgent(t *testing.T) {
+	s := &Server{mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version_read","arguments":{}}}`))
+	req.Header.Set("User-Agent", "hivectl/0.1")
+	s.handleAdminMCP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	build, at := s.LastSeenStdio()
+	if build != "unidentified stdio client" {
+		t.Fatalf("recorded build = %q, want 'unidentified stdio client'", build)
+	}
+	if at.IsZero() {
+		t.Fatal("recorded timestamp is zero")
+	}
+}
+
+func TestAdminMCPNoPriorStdioSighting(t *testing.T) {
+	s := &Server{mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, adminmcp.EndpointPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"version_read","arguments":{}}}`))
+	s.handleAdminMCP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	var rpcResp struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rpcResp); err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(rpcResp.Result.Content[0].Text), &env); err != nil {
+		t.Fatal(err)
+	}
+	data := env.Data
+	if _, ok := data["last_seen_stdio_build"]; ok {
+		t.Fatalf("unexpected last_seen_stdio_build on fresh server: %#v", data["last_seen_stdio_build"])
+	}
+	if _, ok := data["last_seen_stdio_at"]; ok {
+		t.Fatalf("unexpected last_seen_stdio_at on fresh server: %#v", data["last_seen_stdio_at"])
+	}
+	if got, _ := data["hub_build"].(string); got == "" {
+		t.Fatal("hub_build is missing on fresh server")
+	}
+}
+
+func TestVersionEndpointRecordsStdioUserAgent(t *testing.T) {
+	s := &Server{mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /api/version", s.handleVersion)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	req.Header.Set("User-Agent", "hive-admin-mcp/2.0.0+def5678")
+	s.handleVersion(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	build, at := s.LastSeenStdio()
+	if build != "2.0.0+def5678" {
+		t.Fatalf("recorded build = %q, want '2.0.0+def5678'", build)
+	}
+	if at.IsZero() {
+		t.Fatal("recorded timestamp is zero")
+	}
+
+	var vData map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &vData); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := vData["last_seen_stdio_build"].(string); got != "2.0.0+def5678" {
+		t.Fatalf("version response last_seen_stdio_build = %q, want '2.0.0+def5678'", got)
 	}
 }

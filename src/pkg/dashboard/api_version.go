@@ -16,6 +16,7 @@ import (
 )
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	s.RecordStdioFromRequest(r)
 	imageRef, channel := "", versionChannel
 	imageSource := spoke.SelfImageSourceUnknown
 	if versionImageSource != nil {
@@ -36,6 +37,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"tracking":    tracking,
 		"imageSource": imageSource,
 		"deployment":  s.detectDeployment(),
+		"hub_build":   versionShort,
+	}
+	if build, at := s.LastSeenStdio(); build != "" {
+		resp["last_seen_stdio_build"] = build
+		if !at.IsZero() {
+			resp["last_seen_stdio_at"] = at.Format(time.RFC3339)
+		}
 	}
 	if channel != "" {
 		resp["channel"] = channel

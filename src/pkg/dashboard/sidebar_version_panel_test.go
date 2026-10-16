@@ -110,6 +110,7 @@ func TestSidebarVersionDetailsFitAndFallbackRows(t *testing.T) {
 	script := `
 function escapeHtml(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function relativeAge(){ return '2h ago'; }
+function formatDashboardDateTime(d){ return String(d); }
 const window = {};
 ` + jsFunc(t, html, "versionDeliveryLabel") + "\n" +
 		jsFunc(t, html, "versionTrackingLabel") + "\n" +
@@ -127,6 +128,7 @@ const window = {};
 		jsFunc(t, html, "versionStatusSummary") + "\n" +
 		jsFunc(t, html, "versionButtonHTML") + "\n" +
 		jsFunc(t, html, "renderVersionUpgradeAction") + "\n" +
+		jsFunc(t, html, "versionBuildSkew") + "\n" +
 		jsFunc(t, html, "renderVersionDetails") + `
 const out = renderVersionDetails({hash:'07d99d8426ec7b5ae364e25abcdef0123456789', short:'07d99d8', branch:'v5', channel:'candidate', tracking:'floating', latestHash:'07d99d8426ec7b5ae364e25abcdef0123456789', target:{sha:'07d99d8426ec7b5ae364e25abcdef0123456789', short:'07d99d8', managedBy:'hub'}, autoUpdate:{state:'up_to_date', managedBy:'hub', enabled:true, detail:'ok'}, releaseStatus:{attempt:{state:'succeeded', completedAt:'2026-10-02T10:00:00Z'}}}, {deliveryLabel:'candidate (v5)', offeredUpgradeHash:'07d99d8426ec7b5ae364e25abcdef0123456789', offeredUpgradeShort:'07d99d8'});
 if (!out.includes('>07d99d8<')) throw new Error('short sha missing: '+out);
@@ -145,6 +147,25 @@ const building = {hash:'aaa1111', short:'aaa1111', stableV4ImageReady:false, tar
 if (versionStatusSummary(building, 'bbb2222') !== 'queued (v6 building)') throw new Error('building status changed: '+versionStatusSummary(building, 'bbb2222'));
 const stuck = versionStatusSummary(Object.assign({}, building, {deployment:{runtime:'unknown', upgradeSupported:false}}), 'bbb2222');
 if (stuck !== 'manual update required (unknown); v6 building') throw new Error('unsupported deployment must not report only the build: '+stuck);
+
+// #12318: last-seen stdio client build and skew warning
+const stdioMatching = renderVersionDetails({hash:'abc1234567890', short:'abc1234', last_seen_stdio_build:'0.1.0+abc1234', last_seen_stdio_at:'2026-10-16T10:00:00Z'});
+if (!stdioMatching.includes('>Stdio client</span>')) throw new Error('missing Stdio client row on match: '+stdioMatching);
+if (!stdioMatching.includes('>0.1.0+abc1234</strong>')) throw new Error('missing stdio build on match: '+stdioMatching);
+if (stdioMatching.includes('build skew')) throw new Error('unexpected skew warning on match: '+stdioMatching);
+
+const stdioSkewed = renderVersionDetails({hash:'abc1234567890', short:'abc1234', last_seen_stdio_build:'0.1.0+def5678', last_seen_stdio_at:'2026-10-16T10:00:00Z'});
+if (!stdioSkewed.includes('>Stdio client</span>')) throw new Error('missing Stdio client row on skew: '+stdioSkewed);
+if (!stdioSkewed.includes('>0.1.0+def5678</strong>')) throw new Error('missing stdio build on skew: '+stdioSkewed);
+if (!stdioSkewed.includes('⚠ build skew')) throw new Error('missing skew warning on skew: '+stdioSkewed);
+
+const stdioUnident = renderVersionDetails({hash:'abc1234567890', short:'abc1234', last_seen_stdio_build:'unidentified stdio client', last_seen_stdio_at:'2026-10-16T10:00:00Z'});
+if (!stdioUnident.includes('>Stdio client</span>')) throw new Error('missing Stdio client row on unidentified: '+stdioUnident);
+if (!stdioUnident.includes('>unidentified stdio client</strong>')) throw new Error('missing unidentified client build: '+stdioUnident);
+if (stdioUnident.includes('build skew')) throw new Error('unexpected skew warning on unidentified: '+stdioUnident);
+
+const stdioNone = renderVersionDetails({hash:'abc1234567890', short:'abc1234'});
+if (stdioNone.includes('>Stdio client</span>')) throw new Error('unexpected Stdio client row when none seen: '+stdioNone);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
