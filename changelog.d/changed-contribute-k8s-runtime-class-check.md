@@ -1,0 +1,1 @@
+- `just contribute-k8s` now refuses an invalid `HIVE_K8S_RUNTIME_CLASS` name (no YAML on stdout), and the variable is documented in the contributor relay guide and env-var reference ([#12227](https://github.com/hivecommons/hive/issues/12227)).

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -141,6 +142,12 @@ func recordObservedMerge(rec lifecycleRecorder, org, repo string, number int, ob
 // SLA derivation can tell an issue's journey from the PR's and later merges
 // can be folded back (LinkedIssueRefs). Guarded and nil-safe; no I/O.
 func recordPROpenedForIssues(rec lifecycleRecorder, org, agent, repo string, number int, url string, issues []int) {
+	recordPROpenedForIssuesAt(rec, org, agent, repo, number, url, issues, 0)
+}
+
+// recordPROpenedForIssuesAt is recordPROpenedForIssues at an explicit instant
+// (Unix ms; <= 0 means now), so a backfill can stamp the PR's real created_at.
+func recordPROpenedForIssuesAt(rec lifecycleRecorder, org, agent, repo string, number int, url string, issues []int, at int64) {
 	if rec == nil || len(issues) == 0 {
 		return
 	}
@@ -160,6 +167,7 @@ func recordPROpenedForIssues(rec lifecycleRecorder, org, agent, repo string, num
 			IssueRef: timelineRef(org, repo, n),
 			Kind:     timeline.KindPROpened,
 			Agent:    agent,
+			At:       at,
 			Attrs:    map[string]string{timeline.AttrPRRef: prRef, "url": url},
 		})
 	}
@@ -208,6 +216,13 @@ func recordStarted(rec lifecycleRecorder, org, agent, repo string, number int, s
 	if ref == "" {
 		return
 	}
+	// A number whose own pr_opened names itself is a PR: a comment or label on
+	// it is not the start of work, and would double-count the PR journey.
+	if j, ok := store.Journey(ref); ok {
+		if st := j.Stages[timeline.KindPROpened]; st != nil && st.Attrs[timeline.AttrPRRef] == ref {
+			return
+		}
+	}
 	event := timeline.Event{
 		IssueRef: ref,
 		Kind:     timeline.KindStarted,
@@ -249,4 +264,93 @@ func recordBlocked(ctx context.Context, rec lifecycleRecorder, org, repo string,
 	_, span := tracing.StartTimelineSpan(ctx, event)
 	store.Record(event)
 	span.End()
+}
+
+// backfillMergedPROnIssues folds one merged PR onto the issue journeys it
+// closes, stamped with the PR's real created_at (pr_opened) and merged_at
+// (merged) rather than now (hivecommons/hive#12007). Issue-side stages only
+// began recording with #11880, so without this every issue started before
+// the upgrade stays "stale in-progress" although its fix already merged.
+//
+// Only issues the store already journeys are touched (a backfill must not
+// evict live journeys for issues the spoke never worked), and an issue whose
+// journey already has merged is skipped, so re-running on every merge sweep
+// and every restart is a no-op once applied. An existing pr_opened (which may
+// name another PR) is kept. Returns how many issue journeys it updated.
+func backfillMergedPROnIssues(rec lifecycleRecorder, org string, obs github.PRTerminalObservation) int {
+	if rec == nil || obs.State != github.PRStateMerged || obs.ObservedAt.IsZero() || len(obs.Issues) == 0 {
+		return 0
+	}
+	store := rec.LifecycleTimeline()
+	if store == nil {
+		return 0
+	}
+	prRef := timelineRef(org, obs.Repo, obs.Number)
+	if prRef == "" {
+		return 0
+	}
+	var needOpened []int
+	var needMerged []string
+	for _, n := range obs.Issues {
+		if n <= 0 || n == obs.Number {
+			continue
+		}
+		ref := timelineRef(org, obs.Repo, n)
+		j, ok := store.Journey(ref)
+		if !ok || j.Stages[timeline.KindMerged] != nil {
+			continue
+		}
+		if j.Stages[timeline.KindPROpened] == nil {
+			needOpened = append(needOpened, n)
+		}
+		needMerged = append(needMerged, ref)
+	}
+	if len(needMerged) == 0 {
+		return 0
+	}
+	// Without the PR's created_at there is no truthful pr_opened instant;
+	// merged alone still ends the issue's in-progress state.
+	if !obs.CreatedAt.IsZero() {
+		recordPROpenedForIssuesAt(rec, org, "", obs.Repo, obs.Number, obs.URL, needOpened, obs.CreatedAt.UnixMilli())
+	}
+	mergedAt := obs.ObservedAt.UnixMilli()
+	for _, ref := range needMerged {
+		attrs := map[string]string{timeline.AttrPRRef: prRef, "source": "backfill"}
+		if obs.URL != "" {
+			attrs["url"] = obs.URL
+		}
+		if obs.Actor != "" {
+			attrs["actor"] = obs.Actor
+		}
+		store.Record(timeline.Event{IssueRef: ref, Kind: timeline.KindMerged, At: mergedAt, Attrs: attrs})
+	}
+	return len(needMerged)
+}
+
+// mergedPRLister is the narrow GitHub read the startup backfill needs.
+type mergedPRLister interface {
+	MergedPRsSince(ctx context.Context, since time.Time) ([]github.PRTerminalObservation, error)
+}
+
+// backfillRecentMergedPRs runs backfillMergedPROnIssues over every PR merged
+// within github.MergedPRBackfillWindow of now: one bounded closed-PR listing
+// per repo. Run once at startup; the merge sweep keeps it current afterwards
+// through the PR-terminal hook. A partial listing failure is logged and the
+// repos that did list are still applied.
+func backfillRecentMergedPRs(ctx context.Context, lister mergedPRLister, rec lifecycleRecorder, org string, now time.Time, logger *slog.Logger) int {
+	if lister == nil || rec == nil {
+		return 0
+	}
+	prs, err := lister.MergedPRsSince(ctx, now.Add(-github.MergedPRBackfillWindow))
+	if err != nil && logger != nil {
+		logger.Warn("lifecycle merged-PR backfill: listing incomplete", "error", err)
+	}
+	updated := 0
+	for _, obs := range prs {
+		updated += backfillMergedPROnIssues(rec, org, obs)
+	}
+	if logger != nil {
+		logger.Info("lifecycle merged-PR backfill done", "merged_prs", len(prs), "issues_updated", updated)
+	}
+	return updated
 }

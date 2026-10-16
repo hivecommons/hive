@@ -294,6 +294,9 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   // names a workspace full of live checkouts) gets the same hermetic run CI
   // does; a test that wants a checkout on disk passes one via `env`.
   process.env.HIVE_WORKSPACE_DIR = '';
+  // #12200: a run inside a krun contributor inherits the launcher's isolation
+  // class; pin it empty so only a test's own `env` declares one.
+  process.env.HIVE_ISOLATION_CLASS = '';
   Object.assign(process.env, env);
 
   // Keep the relay's task-file/token writes out of the real prod paths.
@@ -423,6 +426,43 @@ test('team metadata reports bounded opt-in overrides without identity fields', (
     process.env = savedEnv;
     process.env.HIVE_RELAY_TEST_MODE = '1';
     teardown(relay);
+  }
+});
+
+// #12200: a krun launch passes the host's kernel release, so team metadata
+// reports the host's kernel and not the microVM guest's.
+test('team metadata reports HIVE_TEAM_KERNEL_RELEASE as kernel_release (#12200)', () => {
+  const teamEnv = {
+    HIVE_CONTRIBUTOR_TEAM_METADATA: '1',
+    HIVE_TEAM_KERNEL_RELEASE: '6.11.0-host',
+  };
+  const relay = loadRelay({ backend: 'copilot', env: teamEnv });
+  const savedEnv = { ...process.env };
+  try {
+    Object.assign(process.env, teamEnv);
+    assert.strictEqual(relay.optInTeamMetadata().kernel_release, '6.11.0-host');
+  } finally {
+    process.env = savedEnv;
+    process.env.HIVE_RELAY_TEST_MODE = '1';
+    teardown(relay);
+  }
+});
+
+// #12200: the launcher names the isolation class; the relay declares it
+// verbatim and declares nothing when the launcher set none.
+test('the relay declares isolation_class only when HIVE_ISOLATION_CLASS is set (#12200)', () => {
+  const krun = loadRelay({ backend: 'copilot', env: { HIVE_ISOLATION_CLASS: 'microvm-krun' } });
+  try {
+    assert.strictEqual(krun.detectCapabilities().isolation_class, 'microvm-krun');
+  } finally { teardown(krun); }
+
+  for (const env of [null, { HIVE_ISOLATION_CLASS: '' }, { HIVE_ISOLATION_CLASS: '   ' }]) {
+    const plain = loadRelay({ backend: 'copilot', env });
+    try {
+      const caps = plain.detectCapabilities();
+      assert.ok(!('isolation_class' in caps),
+        `without HIVE_ISOLATION_CLASS nothing may be declared, got ${JSON.stringify(caps)}`);
+    } finally { teardown(plain); }
   }
 });
 

@@ -69,7 +69,7 @@ Config keys to cross-check: `project.issue_filter.require_labels`, `project.issu
 | `lgtm`; `governor.labels.automerge` | Dashboard/authorized merger | Queues authorized human-approved merging; rechecks holds, CI and mergeability. | Do not substitute hand-labeling for authorization. |
 | `review.human_decision_label` | Hive, if configured label exists | Mirrors a verdict; text alone does not gate the App sweep. | Choose an actual hold label/GitHub rule when review must stop merging. |
 | `hive/advisory` | Hive | Standing advisory, never actionable. | Leave alone unless deliberately moving the digest. |
-| `hive/covered-by-pr`, `hive/likely-done`, `hive/verified-open` | Hive/agent outcomes | Progress display; verified-open suppresses stale likely-done state. | Confirm/close/remove based on real outcomes, not as a merge stop. |
+| `🐝 covered by PR`, `hive/likely-done`, `hive/verified-open` | Hive/agent outcomes | Progress display; verified-open suppresses stale likely-done state. | Confirm/close/remove based on real outcomes, not as a merge stop. |
 | `hive/already-done` | Contributor flow | Contributor skip/done display; not a universal agent gate. | Verify the outcome before clearing/closing. |
 | `claimed`, `preempted:<login>`, `hive/claimed-by-<agent>`, `<!-- hive-claim -->` | Claim flows | Ownership/display; the ledger/comments carry claim state. | Use `governor.claims.comment: false` for noisy comments; claim labels do not replace holds. |
 | `release-blocker` | Human/release workflow | Stable promotion script gate on open issues. | Clear after release blocker resolution, not to unblock ordinary L6 work. |

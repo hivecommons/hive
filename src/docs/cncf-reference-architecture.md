@@ -143,7 +143,7 @@ Two ideas define the architecture:
 flowchart LR
     github["GitHub<br/>issues · PRs"] --> gov["Governor<br/>queue depth → mode → kick"]
     gov --> pipe["Deterministic pipeline<br/>classify · merge-gate · enforce"]
-    pipe --> agents["AI agents (tmux)<br/>Claude · Copilot · Gemini · Goose"]
+    pipe --> agents["AI agents (tmux)<br/>Claude · Copilot · Codex · Antigravity · Goose"]
     agents --> guard["Guardrails<br/>tool deny · scoped token · MITM proxy"]
     guard -->|"gated writes"| github
     agents -.-> beads["Beads ledger<br/>git-backed work items"]

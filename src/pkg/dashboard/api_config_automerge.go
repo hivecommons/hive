@@ -150,13 +150,25 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// TrustedBotAuthors is the FULL desired list; an empty (non-nil) list
 		// disables the trusted-bot lane, absent leaves it untouched.
 		TrustedBotAuthors []string `json:"trusted_bot_authors"`
-		TrustedAuthors    *struct {
+		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
+		// dialog's plain toggle can stage it.
+		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
+		TrustedAuthors     *struct {
 			Enabled                 *bool    `json:"enabled"`
 			Repos                   []string `json:"repos"`
 			RequireRole             *string  `json:"require_role"`
 			RequireGitHubPermission *bool    `json:"require_github_permission"`
 			ExcludeLabels           []string `json:"exclude_labels"`
 		} `json:"trusted_authors"`
+		ContributorLane *struct {
+			Enabled                 *bool    `json:"enabled"`
+			SoakMinutes             *int     `json:"soak_minutes"`
+			RequireReviewerVerdict  *bool    `json:"require_reviewer_verdict"`
+			Repos                   []string `json:"repos"`
+			ExcludeLabels           []string `json:"exclude_labels"`
+			RequireTiers            []string `json:"require_tiers"`
+			RegistryTiersSufficient *bool    `json:"registry_tiers_sufficient"`
+		} `json:"contributor_lane"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -200,6 +212,36 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			trustedAuthorLabels = normalizeAutoMergeRepoList(body.TrustedAuthors.ExcludeLabels)
 		}
 	}
+	var contributorLaneRepos []string
+	var contributorLaneLabels []string
+	var contributorLaneTiers []string
+	if body.ContributorLane != nil {
+		if body.ContributorLane.SoakMinutes != nil && *body.ContributorLane.SoakMinutes < 0 {
+			jsonError(w, "contributor_lane.soak_minutes must be 0 or greater", http.StatusBadRequest)
+			return
+		}
+		if body.ContributorLane.Repos != nil {
+			contributorLaneRepos = normalizeAutoMergeRepoList(body.ContributorLane.Repos)
+		}
+		if body.ContributorLane.ExcludeLabels != nil {
+			for _, label := range body.ContributorLane.ExcludeLabels {
+				if strings.TrimSpace(label) == "" {
+					jsonError(w, "contributor_lane.exclude_labels entries must be non-empty strings", http.StatusBadRequest)
+					return
+				}
+			}
+			contributorLaneLabels = normalizeAutoMergeRepoList(body.ContributorLane.ExcludeLabels)
+		}
+		if body.ContributorLane.RequireTiers != nil {
+			for _, tier := range body.ContributorLane.RequireTiers {
+				if !config.IsContributorLaneGrantableTier(tier) {
+					jsonError(w, "contributor_lane.require_tiers entries must be operator-granted tiers ("+strings.Join(config.ContributorLaneGrantableTiers, ", ")+")", http.StatusBadRequest)
+					return
+				}
+			}
+			contributorLaneTiers = normalizeAutoMergeRepoList(body.ContributorLane.RequireTiers)
+		}
+	}
 
 	// --- apply ---
 	cfg := s.deps.Config
@@ -232,6 +274,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.TrustedBotAuthors != nil {
 		cfg.AutoMerge.TrustedBotAuthors = normalizeBotLoginList(body.TrustedBotAuthors)
 	}
+	if body.BotTakeoverEnabled != nil {
+		v := *body.BotTakeoverEnabled
+		cfg.AutoMerge.BotTakeover.Enabled = &v
+	}
 	if body.TrustedAuthors != nil {
 		if body.TrustedAuthors.Enabled != nil {
 			cfg.AutoMerge.TrustedAuthors.Enabled = *body.TrustedAuthors.Enabled
@@ -248,6 +294,32 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.TrustedAuthors.ExcludeLabels != nil {
 			cfg.AutoMerge.TrustedAuthors.ExcludeLabels = trustedAuthorLabels
+		}
+	}
+	if body.ContributorLane != nil {
+		if body.ContributorLane.Enabled != nil {
+			v := *body.ContributorLane.Enabled
+			cfg.AutoMerge.ContributorLane.Enabled = &v
+		}
+		if body.ContributorLane.SoakMinutes != nil {
+			cfg.AutoMerge.ContributorLane.SoakMinutes = *body.ContributorLane.SoakMinutes
+		}
+		if body.ContributorLane.RequireReviewerVerdict != nil {
+			v := *body.ContributorLane.RequireReviewerVerdict
+			cfg.AutoMerge.ContributorLane.RequireReviewerVerdict = &v
+		}
+		if body.ContributorLane.RegistryTiersSufficient != nil {
+			v := *body.ContributorLane.RegistryTiersSufficient
+			cfg.AutoMerge.ContributorLane.RegistryTiersSufficient = &v
+		}
+		if body.ContributorLane.Repos != nil {
+			cfg.AutoMerge.ContributorLane.Repos = contributorLaneRepos
+		}
+		if body.ContributorLane.ExcludeLabels != nil {
+			cfg.AutoMerge.ContributorLane.ExcludeLabels = contributorLaneLabels
+		}
+		if body.ContributorLane.RequireTiers != nil {
+			cfg.AutoMerge.ContributorLane.RequireTiers = contributorLaneTiers
 		}
 	}
 	syncAutoMergePolicyToGitHubClient(cfg, s.deps.GHClient)
@@ -296,6 +368,15 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	if trustedAuthorLabels == nil {
 		trustedAuthorLabels = append([]string{}, config.DefaultTrustedAuthorExcludeLabels...)
 	}
+	cl := am.ContributorLane
+	contributorLaneRepos := cl.Repos
+	if contributorLaneRepos == nil {
+		contributorLaneRepos = []string{}
+	}
+	contributorLaneLabels := cl.ExcludeLabels
+	if contributorLaneLabels == nil {
+		contributorLaneLabels = append([]string{}, config.DefaultContributorLaneExcludeLabels...)
+	}
 	return map[string]interface{}{
 		"self_authored":           selfAuthored,
 		"self_authored_set":       am.SelfAuthored != nil,
@@ -306,6 +387,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"no_ci_ok":                noCIOK,
 		"trusted_bot_authors":     trustedBots,
 		"trusted_bot_authors_set": am.TrustedBotAuthors != nil,
+		"bot_takeover_enabled":    am.BotTakeover.IsEnabled(),
 		"trusted_authors": map[string]interface{}{
 			"enabled":                   ta.Enabled,
 			"repos":                     trustedAuthorRepos,
@@ -313,6 +395,16 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 			"require_github_permission": ta.EffectiveRequireGitHubPermission(),
 			"exclude_labels":            trustedAuthorLabels,
 			"roles":                     []string{config.RoleMerger, config.RoleOwner},
+		},
+		"contributor_lane": map[string]interface{}{
+			"enabled":                   cl.IsEnabled(),
+			"soak_minutes":              cl.EffectiveSoakMinutes(),
+			"require_reviewer_verdict":  cl.EffectiveRequireReviewerVerdict(),
+			"repos":                     contributorLaneRepos,
+			"exclude_labels":            contributorLaneLabels,
+			"require_tiers":             cl.EffectiveRequireTiers(),
+			"registry_tiers_sufficient": cl.EffectiveRegistryTiersSufficient(),
+			"grantable_tiers":           config.ContributorLaneGrantableTiers,
 		},
 	}
 }

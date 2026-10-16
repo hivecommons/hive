@@ -568,3 +568,91 @@ func TestCachedPRChangedPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildReviewQueue_DispatchStatusForUnreviewed(t *testing.T) {
+	opened := reviewQueueTestNow.Add(-3 * time.Hour)
+	dispatched := reviewQueueTestNow.Add(-32 * time.Minute)
+	prs := []PullRequest{
+		{Repo: "a", Number: 1, Title: "fix: in flight", HeadSHA: "h1", CIStatus: "success", CreatedAt: opened},
+		{Repo: "acme/a", Number: 2, Title: "fix: redispatched", HeadSHA: "h2", CIStatus: "success", CreatedAt: opened},
+		{Repo: "acme/a", Number: 3, Title: "fix: exhausted", HeadSHA: "h3", CIStatus: "success", CreatedAt: opened},
+		{Repo: "acme/a", Number: 4, Title: "fix: never dispatched", HeadSHA: "h4", CIStatus: "success", CreatedAt: opened},
+		{Repo: "acme/a", Number: 5, Title: "fix: stale pending", HeadSHA: "new", CIStatus: "success", CreatedAt: opened},
+	}
+	q := BuildReviewQueue(prs, ReviewQueueOptions{
+		Org: "acme",
+		Now: reviewQueueTestNow,
+		Dispatch: review.DispatchState{
+			Pending: []review.PendingReview{
+				{Repo: "acme/a", Number: 1, HeadSHA: "h1", Perspective: review.PerspectiveCorrectness, Dispatched: dispatched},
+				{Repo: "acme/a", Number: 1, HeadSHA: "h1", Perspective: review.PerspectiveSecurity, Dispatched: dispatched.Add(time.Minute)},
+				{Repo: "acme/a", Number: 2, HeadSHA: "h2", Perspective: review.PerspectiveCorrectness, Dispatched: reviewQueueTestNow.Add(-2 * time.Hour)},
+				{Repo: "acme/a", Number: 3, HeadSHA: "h3", Perspective: review.PerspectiveCorrectness, Dispatched: reviewQueueTestNow.Add(-4 * time.Hour)},
+				{Repo: "acme/a", Number: 5, HeadSHA: "old", Perspective: review.PerspectiveCorrectness, Dispatched: dispatched},
+			},
+			Redispatches: []review.RedispatchCount{
+				{Repo: "acme/a", Number: 2, HeadSHA: "h2", Count: 2},
+				{Repo: "acme/a", Number: 3, HeadSHA: "h3", Count: 3},
+			},
+			Human: []review.HumanReviewHold{
+				{Repo: "acme/a", Number: 3, HeadSHA: "h3", Reason: review.HoldReasonDispatchExhausted + ": 3 review dispatches for this head ended without a verdict"},
+			},
+		},
+	})
+
+	inFlight := findEntry(t, q, "acme/a", 1)
+	if !inFlight.PendingSince.Equal(dispatched) || inFlight.RedispatchCount != 0 {
+		t.Fatalf("in-flight entry = pending_since %v redispatch %d, want %v/0", inFlight.PendingSince, inFlight.RedispatchCount, dispatched)
+	}
+	if !hasReason(inFlight, "review dispatched 32m ago, no verdict yet") || hasReason(inFlight, "re-dispatched") {
+		t.Fatalf("in-flight reasons = %v", inFlight.Reasons)
+	}
+
+	redispatched := findEntry(t, q, "acme/a", 2)
+	if redispatched.RedispatchCount != 2 || !hasReason(redispatched, "review dispatched 2h ago, no verdict yet (re-dispatched 2x after expiry)") {
+		t.Fatalf("re-dispatched entry = %d %v", redispatched.RedispatchCount, redispatched.Reasons)
+	}
+
+	exhausted := findEntry(t, q, "acme/a", 3)
+	if exhausted.RedispatchCount != 3 || !hasReason(exhausted, "review dispatch exhausted: 3 review dispatches for this head ended without a verdict; waiting on a human") {
+		t.Fatalf("exhausted entry = %d %v", exhausted.RedispatchCount, exhausted.Reasons)
+	}
+
+	for _, n := range []int{4, 5} {
+		e := findEntry(t, q, "acme/a", n)
+		if !e.PendingSince.IsZero() || e.RedispatchCount != 0 || hasReason(e, "review dispatched") {
+			t.Fatalf("#%d carries dispatch status it should not: %+v", n, e)
+		}
+	}
+}
+
+// An incomplete aggregate (every delivered perspective approved, some never
+// reported) is a review still being collected: the queue entry says what is
+// missing and whether the re-ask is in flight, and is not ranked as approved.
+func TestBuildReviewQueue_IncompleteAggregateShowsMissingAndDispatch(t *testing.T) {
+	opened := reviewQueueTestNow.Add(-3 * time.Hour)
+	dispatched := reviewQueueTestNow.Add(-10 * time.Minute)
+	prs := []PullRequest{{Repo: "acme/a", Number: 9, Title: "fix: partial", HeadSHA: "h9", CIStatus: "success", CreatedAt: opened}}
+	q := BuildReviewQueue(prs, ReviewQueueOptions{
+		Org: "acme",
+		Now: reviewQueueTestNow,
+		Verdicts: review.Artifact{Items: []review.Aggregate{{
+			Repo: "acme/a", Number: 9, HeadSHA: "h9", Verdict: review.VerdictIncomplete,
+			Reasons:      []string{"review coverage incomplete: missing docs-currency"},
+			Perspectives: map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictApprove},
+		}}},
+		Dispatch: review.DispatchState{Pending: []review.PendingReview{
+			{Repo: "acme/a", Number: 9, HeadSHA: "h9", Perspective: review.PerspectiveDocsCurrency, Dispatched: dispatched},
+		}},
+	})
+	e := findEntry(t, q, "acme/a", 9)
+	if !e.Reviewed {
+		t.Fatalf("incomplete aggregate should count as reviewed-at-head evidence: %+v", e)
+	}
+	if !hasReason(e, "review coverage incomplete: missing docs-currency") || !hasReason(e, "review dispatched 10m ago, no verdict yet") {
+		t.Fatalf("incomplete reasons = %v", e.Reasons)
+	}
+	if !e.PendingSince.Equal(dispatched) {
+		t.Fatalf("pending_since = %v, want %v", e.PendingSince, dispatched)
+	}
+}

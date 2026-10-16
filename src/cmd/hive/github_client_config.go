@@ -102,10 +102,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Per-lane mention sanitizing for relay-posted bodies (#9587), same
 	// live-config contract.
 	client.SetMentionNeutralizeFunc(b.cfg.WriteSurfaceNeutralizesMentions)
-	client.SetPRDetailTTLFunc(func() time.Duration { return b.cfg.GitHub.PRDetailTTL() })
+	client.SetPRDetailTTLFunc(b.cfg.GitHubPRDetailTTL)
 	client.SetGraphQLPRBatchConfig(
-		func() bool { return b.cfg.GitHub.GraphQLPRBatchEnabled() },
-		func() int { return b.cfg.GitHub.EffectiveGraphQLPRBatchPageSize() },
+		b.cfg.GitHubGraphQLPRBatchEnabled,
+		b.cfg.GitHubGraphQLPRBatchPageSize,
 	)
 	if len(b.cfg.Governor.Labels.Exempt) > 0 {
 		client.SetExemptLabels(b.cfg.Governor.Labels.Exempt)
@@ -162,7 +162,7 @@ func (b *boot) applyGitHubClientAppPolicyHooks(client *github.Client) {
 	// createCommitOnBranch before the PR opens, so its commit is
 	// GitHub-signed and authored by the App bot. Read through a func so a
 	// config reload takes effect on the next request.
-	client.SetSignedCommits(func() bool { return b.cfg.GitHub.AppSignedCommitsEnabled() })
+	client.SetSignedCommits(b.cfg.GitHubAppSignedCommitsEnabled)
 }
 
 // prRepoPolicyGate refuses a PR request when the repo's effective ACMM level
@@ -365,6 +365,10 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 			b.dashSrv.AuditLogRecordAt(ts, "system", github.AuditActionPRMerged,
 				fmt.Sprintf("repo=%s, number=%d, path=%s, actor=%s", obs.Repo, obs.Number, path, obs.Actor),
 				github.AttributionAgentGovernor, obs.Repo, obs.Number)
+			// #12007: link the PR's Fixes issues first (real created_at /
+			// merged_at), so issues started before issue-side recording
+			// existed close instead of lingering as stale in-progress.
+			backfillMergedPROnIssues(b.dashSrv, b.cfg.Project.Org, obs)
 			recordObservedMerge(b.dashSrv, b.cfg.Project.Org, obs.Repo, obs.Number, obs.ObservedAt, obs.Actor, path)
 		case github.PRStateClosed:
 			path := obs.Attribution
@@ -388,7 +392,11 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	// kick listed to it is its start signal; that is when the agent claim (and
 	// its 🔒 comment) is recorded. The ledger is read per call because the
 	// client can be configured before it is built.
+	gfiRelease := gfiReleaseOnHiveStart(b.ctx, b.cfg, b.gfiState(), func() *github.Client { return b.ghClient }, b.dashSrv, b.logger)
 	client.SetAgentStartHook(func(agentName, repo string, issue int, signal string) {
+		// A hive agent starting on an advertised good-first-issue withdraws
+		// the advertisement (label off, welcome comment superseded).
+		gfiRelease(agentName, repo, issue, signal)
 		recordAgentStart(b.issueClaims, b.cfg.Project.Org, agentName, repo, issue, signal, b.logger)
 		// The same signal is the journey's "started" stage: the instant the
 		// hive/in-progress label states, and the kick→start / start→PR

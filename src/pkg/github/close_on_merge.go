@@ -359,7 +359,7 @@ func (c *Client) CloseOnMergeBackfill(ctx context.Context, opts CloseOnMergeOpti
 
 func closeOnMergeBackfillCandidate(issue *gh.Issue) bool {
 	labels := issueLabelNames(issue.Labels)
-	return labelPresent(labels, CoveredByPRLabel) ||
+	return HasCoveredByPRLabel(labels) ||
 		labelPresent(labels, LikelyDoneLabel) ||
 		labelPresent(labels, "claimed")
 }

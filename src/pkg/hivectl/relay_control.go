@@ -54,6 +54,14 @@ func SignalRunningRelay(ctx context.Context, store *ProfileStore) (RelaySwitchRe
 		if runtime == "" {
 			runtime = "docker"
 		}
+		// krun (#12199) runs only under podman, and the reload signal does not
+		// reach a relay inside a krun guest. An inspect failure is not fatal:
+		// the kill below reports a missing container with its own output.
+		if runtime == "podman" {
+			if out, err := runRelayCommand(ctx, runtime, "inspect", "--format", "{{.OCIRuntime}}", pidFile.ContainerName); err == nil && strings.TrimSpace(string(out)) == "krun" {
+				return RelaySwitchResult{}, fmt.Errorf("relay controls are not supported under krun: podman container %s runs in a krun microVM, where the reload signal cannot reach the relay; restart it with just contribute-hive instead", pidFile.ContainerName)
+			}
+		}
 		if out, err := runRelayCommand(ctx, runtime, "kill", "--signal", "USR1", pidFile.ContainerName); err != nil {
 			if len(out) > 0 {
 				return RelaySwitchResult{}, fmt.Errorf("signal relay container %s with %s: %w: %s", pidFile.ContainerName, runtime, err, strings.TrimSpace(string(out)))

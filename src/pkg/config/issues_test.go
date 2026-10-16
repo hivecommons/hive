@@ -79,3 +79,33 @@ func TestIssuesCloseOnMergeEnvOverrides(t *testing.T) {
 		t.Fatalf("bad env values overwrote config: %+v", cfg)
 	}
 }
+
+func TestIssuesHardSuppressDefaults(t *testing.T) {
+	var cfg IssuesConfig
+	if got := cfg.EffectiveSHAHoldTrustedLabel(); got != DefaultSHAHoldTrustedLabel || DefaultSHAHoldTrustedLabel != "needs-sha" {
+		t.Fatalf("default trusted SHA label = %q, want needs-sha", got)
+	}
+	if !cfg.LiftHiveHardSuppressEnabled() {
+		t.Fatal("hard-suppress reconcile must default on")
+	}
+	if got := cfg.EffectiveHardSuppressReconcileInterval(); got != DefaultHardSuppressReconcileInterval {
+		t.Fatalf("default reconcile interval = %v", got)
+	}
+	hold, blank, off := "hold", "  ", false
+	cfg.SHAHoldTrustedLabel = &hold
+	if got := cfg.EffectiveSHAHoldTrustedLabel(); got != "hold" {
+		t.Fatalf("explicit hold = %q", got)
+	}
+	cfg.SHAHoldTrustedLabel = &blank
+	if got := cfg.EffectiveSHAHoldTrustedLabel(); got != DefaultSHAHoldTrustedLabel {
+		t.Fatalf("blank label = %q, want default", got)
+	}
+	cfg.LiftHiveHardSuppress = &off
+	if cfg.LiftHiveHardSuppressEnabled() {
+		t.Fatal("explicit false must disable the reconcile")
+	}
+	cfg.HardSuppressReconcileInterval = time.Hour
+	if got := cfg.EffectiveHardSuppressReconcileInterval(); got != time.Hour {
+		t.Fatalf("configured interval = %v", got)
+	}
+}

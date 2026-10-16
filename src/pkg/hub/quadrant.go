@@ -102,6 +102,13 @@ type quadrantInputs struct {
 	// through a fleet-wide outage in which almost nothing was submitted.
 	mergeAcceptance *float64
 
+	// selfMergeAllowed is whether the hive's ACMM level lets the App merge its
+	// own PRs without a human approval (#12080). nil = not reported.
+	selfMergeAllowed *bool
+
+	// evidence is the spoke's evidence summary; nil = not reported.
+	evidence *HeartbeatEvidence
+
 	// --- Efficiency ------------------------------------------------------
 	// tokensPerDay is the hive's CURRENT burn rate, derived from the governor's
 	// windowed budget spend normalised by elapsed window time.

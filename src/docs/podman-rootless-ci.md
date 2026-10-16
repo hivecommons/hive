@@ -88,8 +88,9 @@ lightweight CI job or a documented test-intent" is the bar for Option C. What's 
 ## Non-goals (explicitly, per #2535)
 
 - **No default flip.** `contribute-hive`'s runtime auto-detect still tries `docker` before
-  `podman`. `HIVE_CONTAINER_RUNTIME` and the dashboard runtime selector remain the only way
-  to force Podman.
+  `podman`. `HIVE_CONTAINER_RUNTIME` and the dashboard runtime selector force Podman; krun
+  mode (`HIVE_CONTAINER_OCI_RUNTIME=krun`, #12199) also selects rootless Podman, because
+  krun runs only there. Without either, detection is unchanged.
 - **No `--network host` change.** #2535 flags this as "a separate, smaller question rather
   than an ask" — out of scope here.
 - **No full SELinux CI matrix.** #2535 explicitly says a lightweight seam is sufficient for

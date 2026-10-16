@@ -3,6 +3,7 @@ package trajectory
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,51 @@ type AgentView struct {
 	Running    bool
 	Intent     string // the agent's last kick message (its assigned intent)
 	Transcript string // recent transcript tail
+	// Idle is the manager's own verdict that the agent has no turn in
+	// progress — its last kicked turn has ended, or it is parked at the
+	// prompt waiting on CI. It is derived from agent/governor state, never
+	// from transcript content: a stalled transcript on an agent whose turn
+	// is still running is a warning signal, not idleness (ADR-0009).
+	Idle bool
+	// LastOutputAt is when the agent's pane content last changed, as seen by
+	// the pane poller. Zero means unknown, which the lane treats as "may
+	// have new output" — it never skips on an unproven signal.
+	LastOutputAt time.Time
+}
+
+// DefaultMaxSkipIntervals bounds how many consecutive review intervals an
+// idle agent may go unreviewed. After this many intervals the review is
+// overdue and runs regardless of idle state, so even a long-idle agent is
+// re-read at least every N intervals (hivecommons/hive#12132).
+const DefaultMaxSkipIntervals = 6
+
+// Skip and run reasons recorded per agent on every lane pass.
+const (
+	ReasonFirstReview = "first-review"
+	ReasonOverdue     = "overdue"
+	ReasonActive      = "active"
+	ReasonNewOutput   = "new-output"
+	ReasonIdle        = "idle-no-new-output"
+)
+
+// AgentReviewState is the lane's per-agent bookkeeping, exposed for the
+// dashboard trajectory panel.
+type AgentReviewState struct {
+	LastReviewed time.Time `json:"last_reviewed"`
+	LastDecision string    `json:"last_decision"` // "reviewed" or "skipped"
+	LastReason   string    `json:"last_reason"`
+	Skipped      int       `json:"skipped"` // consecutive skips since the last review
+}
+
+// Stats are the lane's cumulative counters.
+type Stats struct {
+	Runs            int                         `json:"runs"`
+	Reviewed        int                         `json:"reviewed"`
+	Skipped         int                         `json:"skipped"`
+	SkippedByReason map[string]int              `json:"skipped_by_reason"`
+	RanByReason     map[string]int              `json:"ran_by_reason"`
+	Agents          map[string]AgentReviewState `json:"agents"`
+	LastRun         time.Time                   `json:"last_run"`
 }
 
 // AgentSource supplies the running agents to review and the actions the lane
@@ -45,6 +91,10 @@ type Lane struct {
 	onDivergence string
 	exempt       map[string]bool
 	lastRun      time.Time
+	maxSkip      time.Duration
+
+	statsMu sync.Mutex
+	stats   Stats
 }
 
 // LaneConfig configures the driver.
@@ -52,6 +102,9 @@ type LaneConfig struct {
 	IntervalS    int
 	OnDivergence string
 	ExemptAgents []string
+	// MaxSkipIntervals is how many review intervals an idle agent may be
+	// skipped before a review is overdue; <=0 uses DefaultMaxSkipIntervals.
+	MaxSkipIntervals int
 }
 
 // NewLane builds a review-lane driver. The reviewer must be non-nil.
@@ -68,15 +121,103 @@ func NewLane(reviewer *Reviewer, src AgentSource, sink Sink, cfg LaneConfig, log
 	for _, a := range cfg.ExemptAgents {
 		exempt[a] = true
 	}
+	maxSkip := cfg.MaxSkipIntervals
+	if maxSkip <= 0 {
+		maxSkip = DefaultMaxSkipIntervals
+	}
+	interval := time.Duration(intervalS) * time.Second
 	return &Lane{
 		reviewer:     reviewer,
 		src:          src,
 		sink:         sink,
 		logger:       logger,
-		interval:     time.Duration(intervalS) * time.Second,
+		interval:     interval,
 		onDivergence: onDiv,
 		exempt:       exempt,
+		maxSkip:      interval * time.Duration(maxSkip),
+		stats: Stats{
+			SkippedByReason: map[string]int{},
+			RanByReason:     map[string]int{},
+			Agents:          map[string]AgentReviewState{},
+		},
 	}
+}
+
+// Stats returns a copy of the lane's counters. Safe to call from any
+// goroutine (the dashboard reads it while the governor runs the lane).
+func (l *Lane) Stats() Stats {
+	if l == nil {
+		return Stats{}
+	}
+	l.statsMu.Lock()
+	defer l.statsMu.Unlock()
+	out := l.stats
+	out.SkippedByReason = make(map[string]int, len(l.stats.SkippedByReason))
+	for k, v := range l.stats.SkippedByReason {
+		out.SkippedByReason[k] = v
+	}
+	out.RanByReason = make(map[string]int, len(l.stats.RanByReason))
+	for k, v := range l.stats.RanByReason {
+		out.RanByReason[k] = v
+	}
+	out.Agents = make(map[string]AgentReviewState, len(l.stats.Agents))
+	for k, v := range l.stats.Agents {
+		out.Agents[k] = v
+	}
+	return out
+}
+
+// skipDecision is the review-skip predicate (hivecommons/hive#12132). It
+// returns skip=true only when ALL of the following hold:
+//
+//   - the agent has been reviewed before (a never-reviewed agent always runs);
+//   - the review is not overdue (now - lastReviewed < maxSkip);
+//   - the manager reports the agent idle (no turn in progress);
+//   - the manager has a known last-output time and it precedes the last review.
+//
+// It deliberately never looks at the transcript. A byte-identical tail on an
+// agent that is still mid-turn is a stall — exactly what the reviewer should
+// see — so "transcript unchanged" is not evidence of idleness (ADR-0009
+// addendum).
+func skipDecision(a AgentView, st AgentReviewState, now time.Time, maxSkip time.Duration) (skip bool, reason string) {
+	if st.LastReviewed.IsZero() {
+		return false, ReasonFirstReview
+	}
+	if maxSkip > 0 && now.Sub(st.LastReviewed) >= maxSkip {
+		return false, ReasonOverdue
+	}
+	if !a.Idle {
+		return false, ReasonActive
+	}
+	if a.LastOutputAt.IsZero() || a.LastOutputAt.After(st.LastReviewed) {
+		return false, ReasonNewOutput
+	}
+	return true, ReasonIdle
+}
+
+func (l *Lane) recordSkip(name, reason string) {
+	l.statsMu.Lock()
+	defer l.statsMu.Unlock()
+	l.stats.Skipped++
+	l.stats.SkippedByReason[reason]++
+	st := l.stats.Agents[name]
+	st.LastDecision = "skipped"
+	st.LastReason = reason
+	st.Skipped++
+	l.stats.Agents[name] = st
+}
+
+func (l *Lane) recordReview(name, reason string, now time.Time) {
+	l.statsMu.Lock()
+	defer l.statsMu.Unlock()
+	l.stats.Reviewed++
+	l.stats.RanByReason[reason]++
+	st := l.stats.Agents[name]
+	st.LastReviewed = now
+	st.LastDecision = "reviewed"
+	st.LastReason = reason
+	st.Skipped = 0
+	l.stats.Agents[name] = st
 }
 
 // Due reports whether enough time has elapsed since the last run for the lane
@@ -91,7 +232,15 @@ func (l *Lane) Due(now time.Time) bool {
 // the caller runs it from the governor goroutine. Errors from individual
 // reviews are logged and skipped — one bad review never blocks the rest.
 func (l *Lane) Run(ctx context.Context) {
-	l.lastRun = time.Now()
+	l.runAt(ctx, time.Now())
+}
+
+func (l *Lane) runAt(ctx context.Context, now time.Time) {
+	l.lastRun = now
+	l.statsMu.Lock()
+	l.stats.Runs++
+	l.stats.LastRun = now
+	l.statsMu.Unlock()
 	agents := l.src.TrajectoryAgents()
 	for _, a := range agents {
 		if !a.Running || l.exempt[a.Name] {
@@ -100,6 +249,19 @@ func (l *Lane) Run(ctx context.Context) {
 		if a.Intent == "" || a.Transcript == "" {
 			continue // nothing to compare yet
 		}
+		l.statsMu.Lock()
+		st := l.stats.Agents[a.Name]
+		l.statsMu.Unlock()
+		skip, reason := skipDecision(a, st, now, l.maxSkip)
+		if skip {
+			l.recordSkip(a.Name, reason)
+			l.logger.Info("trajectory review skipped", "agent", a.Name, "reason", reason,
+				"since_last_review", now.Sub(st.LastReviewed).Round(time.Second).String(),
+				"consecutive_skips", st.Skipped+1)
+			continue
+		}
+		l.recordReview(a.Name, reason, now)
+		l.logger.Debug("trajectory review running", "agent", a.Name, "reason", reason)
 		verdict, err := l.reviewer.Review(ctx, a.Name, a.Intent, a.Transcript)
 		if err != nil {
 			// Fail open: a reviewer outage must not pause working agents.

@@ -26,7 +26,7 @@ For most changes you do **not** need a cluster.
   binary; that's enough to iterate on most code.
 - **Docs:** no toolchain needed — edit Markdown and preview locally.
 - **Running the whole thing:** the fastest full run is Docker Compose from the
-  repo's [Quick Start](../README.md#quick-start-docker-compose) (`docker compose -f src/docker-compose.yaml up -d`). You only need Kubernetes for deployment-specific work.
+  repo's [Quick Start](../src/docs/quickstart-docker-compose.md) (`docker compose -f src/docker-compose.yaml up -d`). You only need Kubernetes for deployment-specific work.
 
 ## 3. Test a change without a cluster
 

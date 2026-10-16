@@ -75,8 +75,14 @@ func TestHeldPRCoordinationReachesCustomizedAndManualKicks(t *testing.T) {
 	if strings.Contains(msg, "operator-held issue") {
 		t.Fatalf("non-PR hold leaked into occupied PR claims:\n%s", msg)
 	}
-	if strings.Index(msg, "mandatory preflight") > strings.Index(msg, "CUSTOM POLICY BODY") {
-		t.Fatalf("coordination must precede policy work selection:\n%s", msg)
+	// The data-bearing preflight sits in the dynamic tail, after the static
+	// policy body, so the body stays a cacheable prefix (#12125,
+	// kick_layout.go); it still precedes the closing "Begin now".
+	if strings.Index(msg, "mandatory preflight") < strings.Index(msg, "CUSTOM POLICY BODY") {
+		t.Fatalf("coordination belongs in the dynamic tail after the policy body:\n%s", msg)
+	}
+	if strings.Index(msg, "mandatory preflight") > strings.Index(msg, "Begin now:") {
+		t.Fatalf("coordination must precede the closing instruction:\n%s", msg)
 	}
 }
 
@@ -282,9 +288,8 @@ func TestIsHoldGatedPRAgentHonorsToolsEffectiveMode(t *testing.T) {
 	}
 }
 
-// The section is spliced in after the kick's first line so the [agent:*] tag
-// stays first. A single-line message has no such line to splice after; it must
-// still receive the preflight rather than lose it.
+// The section is appended to the kick's dynamic tail (#12125). A single-line
+// message must still receive the preflight rather than lose it.
 func TestHeldPRCoordinationPrependsToSingleLineMessage(t *testing.T) {
 	s := heldPRCoordinationScheduler(t, 3, "ISSUES_AND_PRS")
 	actionable := &github.ActionableResult{
@@ -294,10 +299,7 @@ func TestHeldPRCoordinationPrependsToSingleLineMessage(t *testing.T) {
 	}
 	const single = "single line kick with no newline"
 	got := s.addHeldPRCoordination("quality", actionable, single)
-	if !strings.HasPrefix(got, "## Open hold-gated PR coordination") {
-		t.Fatalf("section must lead a newline-free message:\n%s", got)
-	}
-	if !strings.HasSuffix(got, single) {
-		t.Fatalf("original message must be preserved:\n%s", got)
+	if !strings.HasPrefix(got, single+"\n\n## Open hold-gated PR coordination") {
+		t.Fatalf("section must follow a newline-free message, preserving it:\n%s", got)
 	}
 }

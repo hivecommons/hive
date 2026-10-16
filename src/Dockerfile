@@ -17,9 +17,9 @@
 # declared BEFORE builder: every instruction after a FROM belongs to that
 # stage, so placing it after builder's FROM hijacked the builder steps and
 # left /hive, /bd, /hivectl unbuilt (v5 docker build broke on 470c2002).
-FROM mirror.gcr.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS agent-go
+FROM mirror.gcr.io/library/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS agent-go
 
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS builder
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -275,12 +275,12 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit \
 # dashboard's codex model discovery (`codex app-server` model/list — pure
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
-ARG CODEX_VERSION=0.162.1
+ARG CODEX_VERSION=0.163.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.296
+ARG CLAUDE_CODE_VERSION=2.1.301
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -409,7 +409,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
-ARG PI_VERSION=1.2.0
+ARG PI_VERSION=1.3.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"
@@ -575,6 +575,9 @@ COPY bin/hive-review.sh /usr/local/bin/hive-review
 COPY bin/hive-push-branch.sh /usr/local/bin/hive-push-branch
 COPY bin/hive-baseline-check.sh /usr/local/bin/hive-baseline-check.sh
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
+# Compact `gh --json` projections for the common read verbs (#12127); runs the
+# wrapper above, so every gate still applies — it is a projection, not a bypass.
+COPY bin/hive-gh.sh /usr/local/bin/hive-gh
 COPY bin/go-wrapper.sh /usr/local/go/bin/go
 # SDK-based copilot model discovery helper (see Layer 3b). Invoked as
 # `node /usr/local/bin/copilot-models.mjs` by the dashboard, so no exec bit.
@@ -583,7 +586,7 @@ COPY config/backends.conf /usr/local/etc/hive/backends.conf
 RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bin/gh-app-token.sh \
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh /usr/local/go/bin/go \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-open-issue /usr/local/bin/hive-merge /usr/local/bin/hive-review \
-    /usr/local/bin/hive-push-branch \
+    /usr/local/bin/hive-push-branch /usr/local/bin/hive-gh \
     /usr/local/bin/hive-baseline-check.sh
 
 # SECURITY (#4045): interactive-shell arm of the agent credential scrub.

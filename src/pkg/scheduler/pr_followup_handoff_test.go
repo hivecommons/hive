@@ -47,17 +47,17 @@ func handoffTestScheduler() *Scheduler {
 }
 
 // With the toggle on, the fresh kick of the agent that opened the PR carries
-// the handoff note right below the header; nobody else's does.
+// the handoff note in its dynamic tail (#12125); nobody else's does.
 func TestAddPRFollowUpHandoff_InjectsNoteWhenEnabled(t *testing.T) {
 	t.Setenv(config.PRFollowUpResumeEnvVar, "true")
 	seedLiveHandoff(t)
 	s := handoffTestScheduler()
 
 	msg := s.addPRFollowUpHandoff("scanner", "[agent:scanner]\nWORK LIST\n")
-	if !strings.HasPrefix(msg, "[agent:scanner]\n\n## 🧭 PR HANDOFF") {
-		t.Fatalf("section must land directly below the kick header:\n%s", msg)
+	if !strings.HasPrefix(msg, "[agent:scanner]\nWORK LIST\n\n## 🧭 PR HANDOFF") {
+		t.Fatalf("section must land in the dynamic tail after the body:\n%s", msg)
 	}
-	if !strings.Contains(msg, "Why: the original reasoning") || !strings.Contains(msg, "test-org/console#77") || !strings.HasSuffix(msg, "WORK LIST\n") {
+	if !strings.Contains(msg, "Why: the original reasoning") || !strings.Contains(msg, "test-org/console#77") {
 		t.Fatalf("kick = %s", msg)
 	}
 	if got := s.addPRFollowUpHandoff("advisor", "[agent:advisor]\nADVISE\n"); strings.Contains(got, "PR HANDOFF") {
@@ -66,8 +66,8 @@ func TestAddPRFollowUpHandoff_InjectsNoteWhenEnabled(t *testing.T) {
 	if got := s.addPRFollowUpHandoff("scanner", ""); got != "" {
 		t.Error("an empty (fail-closed) message must stay empty")
 	}
-	if got := s.addPRFollowUpHandoff("scanner", "no header\n"); !strings.HasPrefix(got, "\n## 🧭 PR HANDOFF") {
-		t.Errorf("a headerless message gets the section prepended:\n%s", got)
+	if got := s.addPRFollowUpHandoff("scanner", "no header\n"); !strings.HasPrefix(got, "no header\n\n## 🧭 PR HANDOFF") {
+		t.Errorf("a headerless message gets the section appended:\n%s", got)
 	}
 }
 

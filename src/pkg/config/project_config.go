@@ -38,6 +38,14 @@ type ProjectConfig struct {
 	// here can fail a kick. See CheckoutRootFor.
 	CheckoutsDir string `yaml:"checkouts_dir,omitempty"`
 
+	// AgentsMdMaxBytes caps the rendered AGENTS.md block prepended to a kick
+	// (#12129). The block is cut at heading boundaries — whole sections are
+	// kept or dropped, never clipped mid-rule — and when anything is dropped
+	// the kick carries a one-line warning naming the omitted sections and the
+	// scheduler logs it. Zero means the agentsmd default (8192); values below
+	// 2048 are raised to 2048.
+	AgentsMdMaxBytes int `yaml:"agents_md_max_bytes,omitempty"`
+
 	// PausedRepos is the per-repo agent pause: the repos in Repos that are
 	// currently quiet. It is a RUN-STATE, and deliberately a SEPARATE list
 	// rather than a field on a per-repo object, because #6111 (per-repo ACMM

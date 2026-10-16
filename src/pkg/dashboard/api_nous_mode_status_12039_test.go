@@ -37,7 +37,8 @@ func TestNousModeAndScopeRoundTripThroughStatus(t *testing.T) {
 		return got
 	}
 
-	if got := readStatus(); got["mode"] != "observe" || got["scope"] != "governor" {
+	// The lab is repo-only (#12207): status always reports scope "repo".
+	if got := readStatus(); got["mode"] != "observe" || got["scope"] != "repo" {
 		t.Fatalf("precondition status = %v", got)
 	}
 
@@ -52,17 +53,20 @@ func TestNousModeAndScopeRoundTripThroughStatus(t *testing.T) {
 		t.Fatalf("unrelated status keys must survive a mode change: %v", got)
 	}
 
-	rec = doPut(s, "/api/nous/scope", map[string]interface{}{"scope": "both"})
+	if rec = doPut(s, "/api/nous/scope", map[string]interface{}{"scope": "both"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT scope both = %d, want 400 (repo-only, #12207): %s", rec.Code, rec.Body.String())
+	}
+	rec = doPut(s, "/api/nous/scope", map[string]interface{}{"scope": "repo"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT scope = %d: %s", rec.Code, rec.Body.String())
 	}
 	got := readStatus()
-	if got["scope"] != "both" || got["mode"] != "suggest" {
-		t.Fatalf("status after scope PUT = mode %v scope %v, want suggest/both", got["mode"], got["scope"])
+	if got["scope"] != "repo" || got["mode"] != "suggest" {
+		t.Fatalf("status after scope PUT = mode %v scope %v, want suggest/repo", got["mode"], got["scope"])
 	}
 
-	if len(persisted) != 2 || persisted[1].Mode != "suggest" || persisted[1].Scope != "both" {
-		t.Fatalf("persisted snapshots = %+v, want two with final suggest/both", persisted)
+	if len(persisted) != 2 || persisted[1].Mode != "suggest" || persisted[1].Scope != "repo" {
+		t.Fatalf("persisted snapshots = %+v, want two with final suggest/repo", persisted)
 	}
 
 	// Downgrade back to observe (the UI's confirm path sends force=true).

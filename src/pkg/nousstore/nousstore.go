@@ -282,7 +282,7 @@ func writeAtomic(path string, data []byte) error {
 	if err := os.WriteFile(tmp, data, fileMode); err != nil {
 		return fmt.Errorf("write %s: %w", tmp, err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("replace %s: %w", path, err)
 	}

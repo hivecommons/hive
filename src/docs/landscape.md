@@ -67,7 +67,7 @@ which directly influenced Hive's catch-up work in [#2812](https://github.com/hiv
 | Dimension | Fullsend, fairly summarized | Hive, today or in-flight |
 | --- | --- | --- |
 | Control plane | Repo-centered install and workflow dispatch, especially strong for GitHub Actions-native adoption. | A live fleet operations plane with governor modes, dashboard/SSE, terminal access, budget tracking, hub/spoke heartbeats, and contributor compute. |
-| Execution model | Short-lived, workflow/sandbox-oriented agent runs; production docs currently center Claude Code. | Long-lived tmux-managed agents today, with multiple backends documented in config: Claude, Copilot, Gemini, Goose, and OpenAI-compatible gateways. |
+| Execution model | Short-lived, workflow/sandbox-oriented agent runs; production docs currently center Claude Code. | Long-lived tmux-managed agents today, with multiple backends documented in config: Claude, Copilot, Codex, Antigravity, Goose, and OpenAI-compatible gateways. |
 | Autonomy model | Public docs discuss shadow/autonomous and intent-tier concepts. | ACMM L1-L6 maps operator-selected maturity to deterministic per-agent modes and merge authority. |
 | Security enforcement | Sandbox, harness, scanner, and OIDC-mint controls are first-class in the docs. | Defense-in-depth combines CLI tool denial, scoped tokens, per-UID attribution, and a runtime-agnostic MITM proxy that enforces GitHub writes at the network boundary. |
 | Fleet topology | Per-repo install is the public deployment model. | Hub/spoke registry, callbacks, leaderboard, SaaS/manual provisioning paths, and ClankeR contributor-compute relay are built into the product shape. |
@@ -101,7 +101,7 @@ that Hive implements Symphony's `WORKFLOW.md` or Codex app-server contracts.
 | --- | --- | --- |
 | Work source | Linear in the demo; the current spec defines a provider-neutral tracker adapter. | GitHub/GitLab forge workflows; primary planning adapters include GitHub Issues/Projects, Linear, and Jira. |
 | Pre-agent gating | Config preflight, active/terminal states, required labels, adapter dispatchability, claims, and concurrency checks (spec §§6–8). | Deterministic shell enumeration/classification/merge eligibility before a kick, plus ACMM and network-level write enforcement. |
-| Agents | Codex app-server is the specified runner protocol. | Multiple CLI backends, including Claude, Copilot, Gemini, Goose, and Codex; confinement depends on backend and deployment. |
+| Agents | Codex app-server is the specified runner protocol. | Multiple CLI backends, including Claude, Copilot, Codex, Antigravity, and Goose; confinement depends on backend and deployment. |
 | Scale model | Per-issue persistent workspace, bounded concurrent runs, reconciliation, continuation, and retry. | Queue-depth-driven cadence, long-lived agents, isolated execution paths, hub/spoke, and convergence audits. |
 | Packaging | Language-neutral draft specification and experimental Elixir reference implementation. | Go runtime and supporting scripts, Compose/Quadlet deployment, dashboard, and contributor relay. |
 

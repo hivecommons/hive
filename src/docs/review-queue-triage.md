@@ -80,7 +80,10 @@ Each entry carries `reasons` in that order (for example `T0 fix (from title
 prefix)`, `not reviewed at this head: confidence unknown, ranked as needs
 attention`, `CI red: build`, `open 3d`), plus context that does not move the
 rank (`contributor PR (not opened by a hive agent)`, `on hold`, `has merge
-conflicts`).
+conflicts`). An unreviewed entry whose review is dispatched but has posted no
+verdict also carries `pending_since` and `redispatch_count` with a reason such
+as `review dispatched 32m ago, no verdict yet (re-dispatched 1x after expiry)`
+([review-swarm.md](review-swarm.md#pending-review-expiry-reviewpending_ttl-reviewmax_redispatch)).
 
 Where it shows up:
 

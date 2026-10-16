@@ -77,6 +77,8 @@ The model must return structured JSON:
 
 Invalid JSON is retried up to the shared structured-output retry bound. Transport, timeout, or validation failures fail open: deterministic advisory beads are still filed without model enrichment.
 
+Successful analyses are cached in a bounded in-memory LRU keyed by a hash of the deterministic finding set (pattern, severity, detail) and the analysis model, so an identical finding set is not re-sent to the model. An **empty** finding set is the only condition under which the model is skipped outright; any non-empty set either hits the cache or reaches the model. Cache hits are logged as `retro: analysis skipped reason=cached`; `Analyzer.CacheStats()` exposes hit/miss/skipped-empty counters.
+
 When analysis succeeds, advisory bead notes include a clearly marked “Model-generated retro analysis” section with the root-cause hypothesis and actionable process improvement.
 
 ## Knowledge graph feeding

@@ -150,7 +150,7 @@ func TestConfirmDeliveredReleasesEveryPerspectiveOfAnUndeliveredCombinedKick(t *
 	if len(got.Pending) != 0 {
 		t.Fatalf("undelivered combined kick left pending entries: %+v", got.Pending)
 	}
-	if missing := pendingMissingPerspectives(got, pr, kick.Perspectives); len(missing) != 3 {
+	if missing := pendingMissingPerspectives(got, pr, kick.Perspectives, nil); len(missing) != 3 {
 		t.Fatalf("next cycle should re-dispatch all three, got %v", missing)
 	}
 

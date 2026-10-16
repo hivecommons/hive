@@ -991,7 +991,24 @@ func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
 	}
 	profile := findContributor(username)
 	if profile == nil {
-		jsonError(w, "You need a contributor profile on this hive before it can show your stats.", http.StatusForbidden)
+		// Signed in, but never registered as a contributor on this hive. That is
+		// a NORMAL state — the hive's own owner is routinely in it, having never
+		// pointed a contributor agent at their own spoke — not a denial, so it
+		// is a 200 with has_profile:false rather than a 403 (#12111). The status
+		// matters beyond semantics: on a hosted spoke the hive-contribute
+		// Ingress inherits the ingress-nginx controller's global
+		// custom-http-errors list, which includes 403, so nginx swallowed the
+		// JSON 403 and handed the browser the error backend's HTML as a 200.
+		// The card then parsed HTML as JSON and told the owner it had hit a
+		// bug. A 2xx is never intercepted, so the empty state always arrives.
+		//
+		// No counters are included: a reader must not mistake "no record" for
+		// "a record of zero". github_username is the caller's own resolved
+		// identity, so the card can address them by name.
+		jsonResponse(w, map[string]any{
+			"github_username": username,
+			"has_profile":     false,
+		})
 		return
 	}
 
@@ -1009,6 +1026,7 @@ func (s *Server) handleContributeMe(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]any{
 		"github_username":      profile.GitHubUsername,
+		"has_profile":          true,
 		"trust_tier":           profile.TrustTier,
 		"eligible_for_trusted": contributorEligibleForTrusted(profile),
 		// Same field names as ContributorProfile so a reader of one payload can

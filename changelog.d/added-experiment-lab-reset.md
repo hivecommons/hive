@@ -1,0 +1,1 @@
+- Experiment Lab: the configuration dialog now ends with a **Data** section (snapshot / principle / experiment counts) and owner-only **Reset baseline**, **Clear knowledge** and **Reset everything** buttons backed by the new audited `POST /api/nous/reset` endpoint; deletions move data to `<nous_dir>/.trash/` first so a crash cannot half-delete the store (#12029).

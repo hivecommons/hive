@@ -724,7 +724,7 @@ func (c *Config) EffectiveAIAuthor() string {
 	if c.Project.AIAuthor != "" {
 		return c.Project.AIAuthor
 	}
-	if c.GitHub.AppAuthoredPRsEnabled() {
+	if c.GitHubAppAuthoredPRsEnabled() {
 		return c.GitHub.BotLogin()
 	}
 	return ""

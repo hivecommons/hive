@@ -116,6 +116,134 @@ declaration and acknowledges it, but nothing dispatches. Closing the socket
 releases standby implicitly; `standby_release` can release lanes without closing
 the ordinary contributor connection.
 
+## Hardened mode: the contributor container in a krun microVM
+
+Container mode can optionally run the contributor container inside a
+[libkrun](https://github.com/libkrun/libkrun) microVM, so the agent gets its
+own guest kernel instead of sharing yours. It is **opt-in only**; without it
+nothing changes, and a plain container remains a fully supported way to
+contribute.
+
+```bash
+export HIVE_CONTAINER_OCI_RUNTIME=krun   # or put it in ~/.config/hive/contributor.env
+CONTRIBUTOR_MODE=headless just contribute-hive claude
+just contribute-hive omp                 # interactive, through the VM console
+```
+
+`HIVE_CONTAINER_OCI_RUNTIME` is honoured from the environment or from
+`contributor.env`. Once it is set, the launch never falls back to a plain
+container, to docker or to local mode: it either starts the contributor under
+krun or refuses with the reason. `krun` is the only accepted value; Kata
+Containers is not supported here because it does not run under podman.
+
+**What it protects, and what it does not.** The microVM puts a second kernel
+between the agent and your **host kernel**, so a kernel or container-escape
+bug inside the guest no longer lands directly on your machine. It does **not**
+protect:
+
+- **credentials** — `GH_TOKEN`, the read-only `~/.config/gh` mount,
+  `contributor.env`, provider logins and the staged CLI config are inside the
+  guest, and an injected prompt can still read them;
+- **network egress** — the guest still reaches the hub, GitHub, model backends
+  and your LAN;
+- **mounted paths** — `~/.config/hive` and the staging directory are still
+  mounted read-write.
+
+libkrun's own security model is that the guest and the VMM *"pertain to the
+same security context"*: host resources the VMM can reach can potentially be
+reached by the guest through it. Container hardening flags (seccomp,
+capabilities, SELinux labels) therefore apply to the **VMM process**, not to
+the workload inside the guest (libkrun#913). Known open upstream issues
+include a virtio-fs escape report (libkrun#329), stop signals not reaching
+the guest (crun#2158, libkrun#10) and `claude` hanging as non-root
+(libkrun#804); keep crun current (CVE-2025-24965 was fixed in crun 1.20).
+Rootless-only mode avoids CVE-2026-84042, which affects rootful krun with
+`krun.use_passt`.
+
+**Requirements and refusals.** The launch refuses, before anything starts:
+
+- any engine other than **rootless podman** — `HIVE_CONTAINER_RUNTIME=docker`,
+  no podman installed, or podman running rootful. With
+  `HIVE_CONTAINER_RUNTIME` unset, krun mode uses podman even when docker is
+  installed (the docker-first detection is unchanged for everyone else);
+- **local mode** — krun mode is container mode;
+- the **`pi`** backend, which needs host networking to find a local model
+  server, and, with `CONTRIBUTOR_MODE=headless`, any backend with no headless
+  entry in the relay (for example `omp`, which runs interactively instead);
+- **macOS**, where podman's containers already run inside a Linux VM. Other
+  hosts without usable hardware virtualisation (such as WSL2 without nested
+  virtualisation) fail the preflight below.
+
+**Preflight.** Before the contributor starts, the recipe checks that
+`podman --runtime=krun info` resolves the runtime, that you can open
+`/dev/kvm` for reading and writing (group membership alone is not always
+enough, crun#1894), and that a throwaway run of the contributor image under
+krun (1 GiB memory, 1 vCPU, 768 MiB guest RAM) reports a kernel release
+different from the host's and has the krun marker `/.krun_config.json`. Any
+failure names the check and exits without starting the contributor.
+
+**Install.** On Fedora: `sudo dnf install crun-krun` (it pulls in `libkrun`
+and registers the `krun` runtime). On Fedora Atomic / bootc hosts, layer it:
+`sudo rpm-ostree install crun-krun` (or add it to your bootc image) and
+reboot. Then make sure your user can open `/dev/kvm`, typically by joining
+the `kvm` group and logging in again: `sudo usermod -aG kvm "$USER"`.
+
+**Sizing.** `HIVE_CONTAINER_MEMORY` stays the container's memory limit and
+the guest gets 75% of it, rounded down to whole MiB (3072 MiB at the `4g`
+default); the rest is headroom for the VMM, because a guest given the whole
+limit was OOM-killed by the host once its page cache filled.
+`HIVE_CONTAINER_CPUS` also sets the vCPU count, rounded up and kept between 1
+and 16. With `none`/`0`, krun's defaults apply (1 GiB guest; vCPUs follow the
+host's CPU count, at most 16) and the banner says so. A CPU value that is not
+`none`, `0` or a positive number is refused.
+
+**What you see.** The startup banner adds an `Isolation: microVM (krun)` line
+with the guest kernel, memory and vCPUs. On a host that is itself a virtual
+machine the banner warns that **nested krun is untested and may be
+unstable**. An exit the runtime reports as OOM-killed names the VM memory as
+the cause; an exit 137 without that report is a stop (every krun stop ends
+in SIGKILL, because the stop signal does not reach the guest).
+The relay also declares the capability `isolation_class: microvm-krun` to the
+hub, which shows it on the Operations tab as `isolation:microvm-krun` and never
+routes or admits on it. The recipe sets it with `HIVE_ISOLATION_CLASS`, and also
+passes your host's kernel release as `HIVE_TEAM_KERNEL_RELEASE`, so opt-in team
+metadata reports the host's kernel, not the guest's (#12200).
+`just contribute-stop` removes contributor containers that podman reports
+ran under krun, which also ends the VMM and deletes the relay's token cache
+with the container, and deletes the relay PID record. `hivectl`'s relay
+controls report that they are not supported under krun.
+
+**Interactive sessions.** Without `CONTRIBUTOR_MODE=headless`, krun mode runs
+the backend interactively, which is how interactive-only backends such as
+`omp` run (#12202). The krun handler refuses `podman exec`, so the session is
+reached through the microVM's **console** rather than `exec ... tmux attach`:
+the recipe starts the container with `--interactive --tty`, the entrypoint
+keeps a tmux client on the console, and the recipe prints the attach command
+and the detach keys instead of an `exec` command or a tmux hint:
+
+```bash
+podman attach hive-contributor-omp-<id>   # reach the session
+# Ctrl-P Ctrl-Q                           # detach; the contributor keeps running
+```
+
+Attach from another terminal while the recipe waits for the container (it
+does not stream the console as relay logs, because the console is the
+session's screen). Leave with **Ctrl-P Ctrl-Q**: Ctrl-C and Ctrl-D go to the
+session. Attach again to return. Ctrl-C in the recipe's own terminal, or
+`just contribute-stop`, stops and removes the contributor. Relay log lines
+are also written to the console and can overlap the session's screen;
+tmux's `Ctrl-B r` redraws it.
+
+**Costs and caveats.**
+
+- Small-file I/O is slower through virtio-fs: a `git clone` plus one test
+  suite measured about **1.8×** a plain container.
+- Listeners on port 0 inside the guest fail (libkrun#818).
+- `bwrap` and the codex sandbox work in the guest, unlike in a plain rootless
+  container.
+- `podman compose` with the docker-compose provider silently ignores
+  `runtime: krun`; use `just contribute-hive` for krun mode.
+
 ## Docker Compose workflow
 
 The containerized path is `src/compose-contributor.yaml` plus `src/Dockerfile.contributor`; the `just contribute-hive` recipe wraps it. From the repository root you can also run Compose directly after `just contribute-setup` has written `${HOME}/.config/hive/contributor.env`:
@@ -790,6 +918,14 @@ kubectl apply -f relay.yaml
 kubectl -n my-namespace rollout status deploy/hive-contributor
 ```
 
+To run the contributor pod under a sandbox runtime, set `HIVE_K8S_RUNTIME_CLASS` when generating the manifest:
+
+```bash
+HIVE_K8S_RUNTIME_CLASS=kata-qemu just contribute-k8s my-namespace relay.yaml
+```
+
+The value becomes `runtimeClassName` on the pod; unset or empty emits no field. The cluster must already provide the RuntimeClass — `just contribute-k8s` does not create it, and a pod that names a missing class stays unschedulable. Use the class names your cluster installs: Kata Containers installs names such as `kata-qemu` and `kata-clh`, and gVisor's is typically `gvisor`. A value that is not a valid Kubernetes object name (a DNS-1123 subdomain: lowercase letters, digits, `-` and `.`, starting and ending alphanumeric, at most 253 characters), such as `Kata_QEMU`, is refused with a non-zero exit and no YAML on stdout.
+
 The generated pod sets `CONTRIBUTOR_MODE=headless` because Kubernetes pods have no TTY; interactive tmux mode would stall. Headless mode is currently verified for `claude`, `litellm`, `copilot`, `codex`, `goose`, and `agy` (`agy -p`, verified on 1.1.13) — but **`agy` stays out of `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist regardless**: it signs in through an interactive Google OAuth flow with no API-key mode, and a pod has no way to complete that sign-in even once (unlike the container path, where an operator can attach and run `agy` interactively, or the relay can stage an already-signed-in `~/.gemini`). Headless `agy` is verified only on a host that has already signed in. `opencode` has a verified one-shot invocation (`opencode run "<prompt>"`, [#4970](https://github.com/hivecommons/hive/issues/4970)) but is **not yet** in `just contribute-k8s`'s `HEADLESS_BACKENDS` allowlist: whether `opencode auth login`'s credential file supports non-interactive, unattended use in a fresh pod is unverified, so it currently runs headless on a host that has already signed in, the same posture as `agy`. The Deployment has one replica per registered contributor identity and uses readiness/liveness probes that read the relay's headless status file (`waiting`, `working`, `done` pass; missing/failed state fails).
 
 **If you need `agy`, `opencode`, or `kilo` on the K8s path**, the allowlist is
@@ -825,9 +961,9 @@ Two admission behaviors are worth knowing when your relay seems idle:
 
 ## Capability declaration (DECLARE)
 
-Since protocol 1.2 the relay self-reports coarse client facts on connect — container runtime (docker/podman/none), OS/arch, agent CLI version, relay protocol version, and credential *type* (app/pat/oauth; never the credential itself). The hub records these and shows them on the Operations tab as a `declares: …` sub-line.
+Since protocol 1.2 the relay self-reports coarse client facts on connect — container runtime (docker/podman/none), OS/arch, agent CLI version, relay protocol version, and credential *type* (app/pat/oauth; never the credential itself). A krun launch also declares the isolation class (`isolation_class: microvm-krun`), which the launcher passes in as `HIVE_ISOLATION_CLASS`; the relay never detects it, and without it nothing is declared (#12200). The hub records these and shows them on the Operations tab as a `declares: …` sub-line.
 
-This is **display-only and untrusted**: the hub never routes, gates, or trusts work based on a declared capability — server-side policy still governs everything a contributor may do. Empty declarations render nothing, and older relays that don't declare behave exactly as before.
+Declarations are **untrusted hints, not authorization**: server-side policy still governs everything a contributor may do. The container runtime, OS, architecture, credential type and CLI backend do steer task selection — a task that requires one of them is skipped for a client whose declaration contradicts it (`ContributorCanRunTask`), while an undeclared field always fits. Unlike those, the isolation class is **display-only**: task selection and admission never read it. Empty declarations render nothing, and older relays that don't declare behave exactly as before.
 
 **How each fact is obtained.** All of it is probed once at relay startup, before the first hub connection, and cached for the life of the process — nothing here runs during the handshake. The container runtime is a `command -v docker || command -v podman` presence check. The agent CLI version comes from running the resolved backend binary with `--version` (the same binary `backends.conf` maps your `AGENT_BACKEND` to, so `litellm` reports the `claude` CLI's version), with stdin closed and a short timeout. Every probe is best-effort: if the binary is missing, the flag is unsupported, or the call times out, that one field is simply **omitted**, which reads as unknown. Declaring nothing is always a valid answer and never costs you work.
 

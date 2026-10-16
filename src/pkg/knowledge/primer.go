@@ -62,6 +62,9 @@ func NewPrimer(layers []LayerConfig, config PrimerConfig, logger *slog.Logger) *
 	if config.MaxFacts <= 0 {
 		config.MaxFacts = 25
 	}
+	if config.MaxBytes <= 0 {
+		config.MaxBytes = DefaultPrimerMaxBytes
+	}
 
 	return &Primer{
 		layers:   clients,
@@ -178,6 +181,7 @@ func (p *Primer) PrimeScoped(ctx context.Context, scope *TOCScope, filePaths []s
 		Facts:     prioritized,
 		Hints:     hints,
 		QueryTime: elapsed,
+		MaxBytes:  p.config.MaxBytes,
 	}
 }
 
@@ -375,3 +379,7 @@ func (p *Primer) Sources() []PrimerSource {
 	}
 	return out
 }
+
+// MaxBytes is the rendered-prompt cap this primer applies (PrimerConfig.MaxBytes
+// after defaults).
+func (p *Primer) MaxBytes() int { return p.config.MaxBytes }

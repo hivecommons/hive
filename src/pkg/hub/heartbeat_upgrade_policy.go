@@ -57,6 +57,12 @@ func (s *HubServer) heartbeatUpgradePolicy(payload *HeartbeatPayload, saasHive *
 	if schedule == AutoUpgradeModeWeekly {
 		policy.ScheduleWeekday = autoUpgradeWeeklyDay.String()
 	}
+	if hubManaged && (schedule == AutoUpgradeModeDaily || schedule == AutoUpgradeModeWeekly) && saasHive.AutoUpgradeHoldReason != "" {
+		policy.ScheduledHoldReason = saasHive.AutoUpgradeHoldReason
+		if !saasHive.AutoUpgradeHoldAt.IsZero() {
+			policy.ScheduledHoldAt = saasHive.AutoUpgradeHoldAt.UTC().Format(time.RFC3339)
+		}
+	}
 	if hubManaged && autoUpgradeCooldownApplies(saasHive.AutoUpgradeMode, reach.Channel) {
 		if cooldown := autoUpgradeCooldown(); cooldown > 0 {
 			policy.CooldownSeconds = int(cooldown / time.Second)

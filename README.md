@@ -8,630 +8,127 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fhivecommons%2Fhive.svg?type=large&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fhivecommons%2Fhive?ref=badge_large&issueType=license)
 
-AI agent orchestration for open source projects. A single Go binary enumerates issues and pull/merge requests from connected work sources, classifies them by complexity, and dispatches work to AI agents (Claude, Copilot, Gemini, Goose) on adaptive cadences governed by queue depth.
-
-Hive separates decisions into two layers: a **deterministic pipeline** of shell scripts handles filtering, classification, merge-gating, and enforcement before any LLM sees the work. Agents only handle judgment calls — reading code, reasoning about fixes, writing PRs.
-
-## Quick Start
-
-Two supported standalone runtimes. **Docker Compose is the default** and is what
-the rest of this README assumes; **Podman** is a parallel supported choice, not
-an experiment and not a recommendation over Docker. Pick one — they install the
-same two services (Hive plus its authenticating gateway) and land the dashboard
-on the same port.
-
-| | [Docker Compose](#quick-start-docker-compose) | [Podman](#quick-start-podman) |
-| --- | --- | --- |
-| Lifecycle | `docker compose up -d` | Quadlet units under systemd |
-| Runs as | the Docker daemon | rootful **or** rootless |
-| Update path | pull and recreate; optional Watchtower profile | [pinned by digest, with rollback](src/docs/podman-quadlet-update-rollback.md) |
-
-## Quick Start (Docker Compose)
-
-**Prerequisites**
-
-- Docker Engine 24+ with the Compose v2 plugin (`docker compose`, not the legacy `docker-compose`)
-- A Linux, macOS, or Windows (WSL2) host on `amd64` or `arm64` — the pre-built images are multi-arch
-- `git`, `openssl`, and a GitHub token (PAT or App) for the org you want the hive to work on
-
-```bash
-git clone https://github.com/hivecommons/hive.git
-cd hive
-
-cp src/hive.yaml.example src/hive.yaml
-# REQUIRED: set project.org and project.repos (optionally primary_repo and
-# ai_author) in src/hive.yaml — the placeholders do not work as shipped. See
-# src/docs/operator-reference.md#minimum-required-configuration
-# REQUIRED: the example ships dashboard.port 3001 for local source runs; the
-# container healthcheck probes 3002, so keeping 3001 never becomes healthy.
-sed -i 's/^  port: 3001$/  port: 3002/' src/hive.yaml
-
-# src/.env, NOT ./.env. `-f src/docker-compose.yaml` makes `src/` the project
-# directory, and that is where Compose reads `.env` from — the same place the
-# compose file's own `./hive.yaml` and `./secrets` mounts resolve against. A
-# `.env` at the repo root is read by nothing, and since both paths are
-# gitignored, neither git nor Compose says so: the hive starts and then 401s on
-# every GitHub call, which reads like a bad token rather than an unread file.
-install -m 600 /dev/null src/.env   # holds live tokens — create it 0600, never world-readable
-echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env   # classic PAT: repo scope (see src/docs/github-app-setup.md#personal-access-token-pat-scopes)
-
-# REQUIRED. The dashboard's auth proxy enforces this token and refuses to start
-# without one, so the gateway on :3001 would proxy to a port nothing is
-# listening on. See src/deploy/quadlet/hive.env.example, which is the contract
-# for both runtimes.
-printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
-
-docker compose -f src/docker-compose.yaml up -d
-```
-
-Dashboard at `http://localhost:3001`. Confirm it end to end rather than assuming
-the port answers — the gateway publishes 3001 whether or not the proxy behind it
-came up:
-
-```bash
-curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
-```
-
-The pre-built image tag is documented in [src/docs/operator-reference.md#image-provenance-and-tags](src/docs/operator-reference.md#image-provenance-and-tags). Standalone image references come from one source of truth, [`src/deploy/standalone-images.sh`](src/deploy/standalone-images.sh).
-
-To build from source instead of pulling the pre-built image:
-
-```bash
-docker compose -f src/docker-compose.yaml build
-docker compose -f src/docker-compose.yaml up -d
-```
-
-## Quick Start (Podman)
-
-Same two services as the Compose stack, run as systemd units through Quadlet, so
-`systemctl start` returning means Hive answered `/api/health` rather than merely
-that a process was spawned. Docker is not required and is not used.
-
-**Prerequisites**
-
-- **Podman 5.0.0+** (ADR-0017 recommends **5.6.0**; the verified floor is
-  unknown — see [the requirements note](src/docs/podman-standalone-quadlet.md#requirements))
-- **systemd**, and **cgroup v2** — `podman info --format '{{.Host.CgroupsVersion}}'`
-- The **Quadlet generator** at `/usr/libexec/podman/quadlet`. It ships with the
-  distribution `podman` package; a hand-installed podman binary may not carry it.
-- **`aardvark-dns`** — `podman info --format '{{.Host.NetworkBackend}}'` should
-  say `netavark`. Without it the gateway starts and cannot resolve `hive`, so
-  `:3001` serves 502s.
-- `git`, `openssl`, and a GitHub token (PAT or App) for the org the hive works on
-
-### One command
-
-`bin/hive-podman-setup.sh` does everything in the manual sequence below —
-preflights, configuration, the four Quadlet units, the boot wiring, and a final
-check that the **gateway** answers on the published port before it returns.
-
-```bash
-git clone https://github.com/hivecommons/hive.git
-cd hive
-
-export HIVE_DEPLOY_RUNTIME=podman
-bin/hive-podman-setup.sh --rootless        # or --rootful
-```
-
-It installs no packages and clones nothing, is idempotent, never overwrites an
-existing config without `--force` and never touches `secrets/`. A failing step
-stops the run and names itself; nothing is rolled back, so the partial state is
-there to inspect. It also enforces three couplings that are easy to get wrong by
-hand:
-
-- `dashboard.port` is read out of the unit that will enforce it, and the run
-  stops if the config does not read back agreeing — the 300-second silent hang
-  the manual block warns about below.
-- the volume is created **through its unit**, so it carries the ownership labels
-  that make `bin/hive-podman-teardown.sh` able to see it.
-- the secrets directory gets the right ownership for the root mode, and rootless
-  installs are told when lingering is off and the deployment will not survive a
-  reboot.
-
-Add `--enable-linger` to fix that last one during the install rather than after.
-
-### Or, by hand
-
-Worth reading even if you use the script: the comments below are where the traps
-are documented, and the script enforces the same ones.
-
-The block below is **rootless**. For rootful, set `CONF=/etc/hive`, drop the
-`podman unshare` line in favour of the `chgrp` beside it, install the units into
-`/etc/containers/systemd/` with `sudo`, and drop `--user` from every `systemctl`.
-
-```bash
-# Selects the Podman path. WITHOUT THIS the preflights below exit 0 having
-# checked nothing — they default to Docker and skip.
-export HIVE_DEPLOY_RUNTIME=podman
-
-git clone https://github.com/hivecommons/hive.git
-cd hive
-
-# Engine, root mode, cgroups; then subordinate IDs, graphroot, networking.
-# A missing subuid range or cgroup v1 host fails HERE rather than as a start
-# that times out five minutes later.
-bin/hive-podman-preflight.sh
-bin/hive-podman-preflight-ids.sh
-
-CONF=~/.config/hive                       # rootful: CONF=/etc/hive
-mkdir -p "$CONF/secrets" && chmod 750 "$CONF/secrets"
-podman unshare chown -R 0:1002 "$CONF/secrets"    # rootful: chgrp -R 1002 "$CONF/secrets"
-
-cp src/hive.yaml.example "$CONF/hive.yaml"
-# REQUIRED. The example ships 3001 for local source runs; the unit's healthcheck
-# probes 3002. Keeping 3001 costs a silent 300-second hang with no container
-# left to inspect.
-sed -i 's/^  port: 3001$/  port: 3002/' "$CONF/hive.yaml"
-# then edit the rest of "$CONF/hive.yaml" for your project
-
-cp src/deploy/nginx.conf "$CONF/nginx.conf"
-
-# Must EXIST, even if every line stays commented out: EnvironmentFile= becomes
-# `podman run --env-file`, which fails on a missing file.
-cp src/deploy/quadlet/hive.env.example "$CONF/hive.env"
-chmod 600 "$CONF/hive.env"
-printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> "$CONF/hive.env"
-# Classic PAT: `repo` scope (`public_repo` for public-only), plus `workflow` at
-# L5/L6 if agent PRs may touch `.github/workflows/`. See
-# src/docs/github-app-setup.md#personal-access-token-pat-scopes
-printf 'HIVE_GITHUB_TOKEN=%s\n'    'ghp_...'                 >> "$CONF/hive.env"
-
-# Now the host preflight, which checks what the steps above just created:
-# SELinux labels on the bind sources, secrets reachability, hive.env, port 3001.
-HIVE_SRC_DIR="$CONF" bin/hive-podman-preflight-host.sh
-
-# Pull before starting. The generated ExecStart pulls a missing image itself and
-# that pull is spent inside TimeoutStartSec; the Hive image is ~3.8GB.
-podman pull ghcr.io/hivecommons/hive:stable
-
-# All four Quadlet units — the gateway will not generate without the network it
-# names — plus the plain units that wire the stack to boot (#4478).
-install -Dm644 src/deploy/quadlet/hive.container         ~/.config/containers/systemd/hive.container
-install -Dm644 src/deploy/quadlet/hive-data.volume       ~/.config/containers/systemd/hive-data.volume
-install -Dm644 src/deploy/quadlet/hive.network           ~/.config/containers/systemd/hive.network
-install -Dm644 src/deploy/quadlet/hive-gateway.container ~/.config/containers/systemd/hive-gateway.container
-install -Dm644 src/deploy/systemd/hive-boot.target       ~/.config/systemd/user/hive-boot.target
-install -Dm644 src/deploy/systemd/hive-boot-gate.service ~/.config/systemd/user/hive-boot-gate.service
-systemctl --user daemon-reload
-systemctl --user enable hive-boot-gate.service
-
-# Starting the gateway pulls Hive, the network and the volume up in order.
-systemctl --user start hive-gateway.service
-```
-
-Dashboard at `http://localhost:3001`, the same port and the same single
-published port as the Compose stack — Hive's own 3001/3002 and the raw ttyd
-terminal on 7681 stay inside the container network. Confirm the stack end to
-end, which also proves the gateway resolved `hive` over the shared network:
-
-```bash
-curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
-
-# Post-install verification. Healthy NOW is not the same as back after a
-# reboot: this is what catches rootless Linger=no, which nothing else reports.
-bin/hive-podman-lifecycle-probe.sh check
-```
-
-`daemon-reload` runs the generator, and `[Install] WantedBy=hive-boot.target`
-inside the units is half of what wires them to boot; the other half is
-`hive-boot-gate.service` — the one real (enableable) unit, so the `enable`
-above works and is required. **Rootless additionally needs
-`loginctl enable-linger "$USER"`** or the user manager never starts at boot.
-Check with `bin/hive-podman-lifecycle-probe.sh check`, not with
-`systemctl is-enabled hive.service`, which reports `generated` either way.
-
-The gate is why booting never waits on Hive: it starts `hive-boot.target` only
-after systemd declares startup finished, so a Hive that cannot become healthy
-costs itself its `TimeoutStartSec` — not the host's boot, in either root mode.
-Before #4478 a rootful Hive sat inside the boot transaction and a broken one
-held the boot for up to five minutes, on every boot, until fixed. Measured,
-including the fix:
-[Boot persistence](src/docs/podman-standalone-quadlet.md#4-boot-persistence).
-
-**Security posture — pick deliberately.** The shipped unit requests
-`CAP_NET_ADMIN`, so the forced-proxy egress gate is *enforced* by default. Where
-that capability is unavailable, `HIVE_PROXY_ADVISORY_OK=true` in `$CONF/hive.env`
-starts Hive with the gate **not installed**; without either, Hive refuses to
-start with exit 77 rather than running an unenforced capability model.
-
-| | Enforcing (default) | Advisory (`HIVE_PROXY_ADVISORY_OK=true`) |
-| --- | --- | --- |
-| **Rootful** | **Supported** | Supported as a deliberate choice, **unenforced** |
-| **Rootless** | **Supported** (needs `loginctl enable-linger` to survive reboot) | Supported as a deliberate choice, **unenforced** |
-
-Advisory mode is **not** a weaker grade of enforcing and **not** a fallback:
-agents can bypass the MITM proxy and the ACMM capability model is not enforced.
-Choose it knowingly. Full matrix and the evidence behind each cell:
-[src/docs/podman-support-matrix.md](src/docs/podman-support-matrix.md).
-
-To build from source instead of pulling the pre-built image, build and tag it
-under the name the unit already names, then start as above:
-
-```bash
-podman build -t ghcr.io/hivecommons/hive:stable -f src/Dockerfile .
-```
-
-Full install detail — unit search paths, the traps behind each step above, boot
-persistence, and what was measured in both root modes — is in
-**[src/docs/podman-standalone-quadlet.md](src/docs/podman-standalone-quadlet.md)**.
-Update and rollback: [src/docs/podman-quadlet-update-rollback.md](src/docs/podman-quadlet-update-rollback.md).
-Teardown: `bin/hive-podman-teardown.sh`.
-
-## Kubernetes Deployment
-
-### Prerequisites
-
-- `kubectl` configured for your cluster
-- Kubernetes 1.24+
-- A StorageClass that supports `ReadWriteOnce` (the cluster default StorageClass works)
-- cert-manager (for TLS certificates)
-- ingress-nginx, the `kubernetes/ingress-nginx` controller (for ingress routing)
-
-### Hosted Option
-
-The [Hive Hub](https://hive.hivecommons.dev) provides hosted hives with OAuth-protected dashboards, a public registry, and cross-hive leaderboards. No cluster required.
-The canonical hub address is now `https://hive.hivecommons.dev`; the legacy
-`https://hive.kubestellar.io` hostname redirects during the cutover.
-Start with the [hosted hub onboarding guide](src/docs/hosted-hub.md) to sign in,
-request a hosted hive, and finish first-run setup.
-
-If you need to run your own private hub instead, see the
-[self-hosted hub deployment guide](src/docs/hub-deployment.md).
-
-Just want to try it locally? See [Try Hive on kind](src/docs/try-hive-on-kind.md).
-
-### Self-Hosted Deployment
-
-#### 1. Create the namespace
-
-```bash
-kubectl apply -f src/deploy/k8s/namespace.yaml
-```
-
-Or manually:
-
-```bash
-kubectl create namespace hive
-```
-
-#### 2. Create secrets
-
-```bash
-kubectl -n hive create secret generic hive-secrets \
-  --from-literal=HIVE_GITHUB_TOKEN=ghp_... \
-  --from-literal=HIVE_DASHBOARD_TOKEN="$(openssl rand -hex 32)"
-```
-
-The PAT needs the classic `repo` scope (`public_repo` for public-only repos),
-plus `workflow` at L5/L6 if agent PRs may touch `.github/workflows/`. Scopes are
-never validated at startup, so a wrong-scoped token fails later as a generic
-GitHub 403 — see [Personal access token (PAT) scopes](src/docs/github-app-setup.md#personal-access-token-pat-scopes).
-
-The dashboard token is an opaque shared secret with no server-side strength
-check — always generate it with a CSPRNG as above, never a hand-typed value.
-See [Generating and rotating `HIVE_DASHBOARD_TOKEN`](src/docs/env-vars.md#generating-and-rotating-hive_dashboard_token).
-
-For GitHub App auth (recommended for production), add the private key:
-
-```bash
-kubectl -n hive create secret generic hive-secrets \
-  --from-literal=HIVE_GITHUB_TOKEN=ghp_... \
-  --from-file=gh-app-key.pem=/path/to/key.pem
-```
-
-With `github.app_id`/`key_file` set, the App path supplies repository
-permissions and the PAT is only a fallback; see
-[GitHub App setup](src/docs/github-app-setup.md) for both paths.
-
-#### 3. Create ConfigMap from hive.yaml
-
-```bash
-cp src/hive.yaml.example hive.yaml
-# Edit hive.yaml: set your org, repos, agents, and governor config
-
-kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
-```
-
-#### 4. Create PersistentVolumeClaim
-
-Apply the provided PVC manifest:
-
-```bash
-kubectl apply -f src/deploy/k8s/pvc.yaml
-```
-
-The default PVC requests 10Gi with `ReadWriteOnce`. The Deployment runs one replica with
-`strategy: Recreate`, so the old pod stops before the new one mounts `/data` and RWO is enough.
-
-If your storage is NFS or another shared backend, you can use `ReadWriteMany` instead. Rollouts
-still use `Recreate`, so this does not give zero-downtime updates:
-
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: hive-data
-  namespace: hive
-spec:
-  accessModes:
-    - ReadWriteMany
-  storageClassName: nfs
-  resources:
-    requests:
-      storage: 10Gi
-```
-
-#### 5. Deploy
-
-```bash
-kubectl apply -f src/deploy/k8s/dashboard-route-rbac.yaml
-kubectl apply -f src/deploy/k8s/sandbox-job-rbac.yaml
-kubectl apply -f src/deploy/k8s/deployment.yaml
-kubectl apply -f src/deploy/k8s/service.yaml
-```
-
-`dashboard-route-rbac.yaml` creates the `hive` ServiceAccount the Deployment runs as.
-Apply it first, or the ReplicaSet cannot create a pod.
-
-The deployment runs a single replica. A startup probe and the readiness probe use `/api/health`,
-and the liveness probe uses `/api/livez`. Resource defaults: 500m CPU / 512Mi memory (requests), 2 CPU / 2Gi memory (limits).
-
-#### 6. Set up Ingress with TLS
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: hive
-  namespace: hive
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-spec:
-  ingressClassName: nginx
-  tls:
-    - hosts:
-        - hive.example.com
-      secretName: hive-tls
-  rules:
-    - host: hive.example.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: hive
-                port:
-                  name: dashboard
-```
-
-Long timeouts are needed for SSE streaming connections to the dashboard.
-
-The `nginx.ingress.kubernetes.io/*` annotations only work with ingress-nginx. Other controllers,
-including F5's NGINX Ingress Controller, ignore them, so set the same body size and timeouts with
-that controller's own options.
-
-#### Quick apply (all manifests)
-
-```bash
-kubectl apply -f src/deploy/k8s/namespace.yaml
-kubectl -n hive create secret generic hive-secrets \
-  --from-literal=HIVE_GITHUB_TOKEN=ghp_...   # classic PAT: repo scope — see src/docs/github-app-setup.md#personal-access-token-pat-scopes
-kubectl create configmap hive-config -n hive --from-file=hive.yaml=hive.yaml
-kubectl apply -f src/deploy/k8s/pvc.yaml
-kubectl apply -f src/deploy/k8s/dashboard-route-rbac.yaml
-kubectl apply -f src/deploy/k8s/sandbox-job-rbac.yaml
-kubectl apply -f src/deploy/k8s/deployment.yaml
-kubectl apply -f src/deploy/k8s/service.yaml
-```
-
-### Ports
-
-| Port | Purpose |
-|------|---------|
-| 3002 | Dashboard UI and `/api/*` (Service port `dashboard`) |
-
-ttyd listens on 7681 inside the pod only. The Service does not expose it. Open the terminal
-through the authenticated `/terminal` proxy on 3002.
-
-### Volumes
-
-| Mount Path | Purpose |
-|------------|---------|
-| `/etc/hive/hive.yaml` | Configuration (read-only, from ConfigMap) |
-| `/data` | Persistent state: metrics, beads, logs |
-| `/secrets` | GitHub App key and other secrets (read-only) |
-
-## Configuration
-
-All runtime config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See [src/hive.yaml.example](src/hive.yaml.example) for the full reference, [src/docs/env-vars.md](src/docs/env-vars.md) for the centralized environment variable reference, [src/docs/agent-configuration.md](src/docs/agent-configuration.md) for agent configuration, [src/AGENT-DEFINITION.md](src/AGENT-DEFINITION.md) for the portable agent YAML format, [src/docs/supervisor.md](src/docs/supervisor.md) for the supervisor agent, [src/docs/telemetry.md](src/docs/telemetry.md) for data collection and the L5/L6-only opt-in observability agent, and [src/docs/operations.md](src/docs/operations.md) for operational readiness, [docs/backend-setup.md](docs/backend-setup.md) for CLI backends, [docs/inference-backends.md](docs/inference-backends.md) for model gateways, [docs/migration-v1-v2.md](docs/migration-v1-v2.md) for v1→v2 migration, and [src/docs/migration-v2-v4.md](src/docs/migration-v2-v4.md) for upgrading a v2 deployment to v4.
-
-The top-level deterministic shell pipeline uses a separate project file,
-`config/hive-project.yaml.example`; see [config/README.md](config/README.md)
-before running the top-level `bin/` scripts directly.
-
-```yaml
-project:
-  org: your-org
-  repos:
-    - repo-one
-    - repo-two
-  primary_repo: repo-one
-  ai_author: your-bot-user
-
-agents:
-  scanner:
-    enabled: true
-    backend: claude
-    model: claude-sonnet-4-6
-    beads_dir: /data/beads/scanner
-    clear_on_kick: true
-
-governor:
-  eval_interval_s: 300
-  modes:
-    surge:
-      threshold: 20
-      scanner: 15m
-      reviewer: pause
-    busy:
-      threshold: 10
-      scanner: 15m
-      reviewer: 1h
-    quiet:
-      threshold: 2
-      scanner: 15m
-      reviewer: 45m
-    idle:
-      threshold: 0
-      scanner: 15m
-      reviewer: 15m
-
-hub:
-  enabled: true
-  url: https://hive.hivecommons.dev
-  contribute:
-    enabled: true
-```
-
-### GitHub Auth
-
-Use a personal access token or a GitHub App:
-
-```yaml
-github:
-  token: ${HIVE_GITHUB_TOKEN}
-```
-
-```yaml
-github:
-  app_id: 12345
-  installation_id: 67890
-  key_file: /secrets/gh-app-key.pem
-```
+Hive is a co-maintainer for your GitHub project that never sleeps. Point it at a repo, set the limits, and let short-lived AI agents handle the maintenance chores while humans keep the decisions that matter.
+
+## What Hive is
+
+Hive watches the work that piles up in a repository — issues, pull requests, failing CI, CVEs, and dependabot alerts — and sends AI coding agents (Claude, Copilot, Codex, Antigravity, Goose…) to deal with it: triage, fixes, reviews, releases. You decide how much it is allowed to do. Humans keep every decision that matters; agents do the chores.
+
+## "I already use an agent. How is this different?"
+
+A terminal agent is a power tool: you hold it, aim it, and it stops when you stop. Hive is the workshop that runs the power tools for you — on three rules the industry is only now discovering:
+
+1. **Short-lived agents.** Every task starts a fresh agent with a clean context and ends it. No "long-running" agent drifting for hours.
+2. **External context.** What the agent needs to know lives outside the model — in your repo, your knowledge base, your audit trail — and is re-injected each time, so nothing is forgotten and nothing is hallucinated from stale memory.
+3. **Prompts driven by deterministic facts.** The instructions an agent gets are templates filled from real data (the issue, the CI log, the diff, the trust level), not hand-tuned prose.
+
+Around that, Hive picks work from your real queue, sets limits in code with six trust levels from the **AI Codebase Maturity Model (ACMM)** — a framework for how much autonomy a codebase is ready to give agents ([levels](#acmm-levels) · [paper](https://arxiv.org/abs/2604.09388)), checks before and after with deterministic filters and gates, writes every action to an audit log owned by a named human, and runs around the clock. Same agents you use today — governed, scheduled, scoped, and accountable.
+
+## Hub and spoke
+
+- **Spoke** — one running Hive, serving your repo(s). It is where agents actually work. Runs on your Kubernetes cluster, Podman, or Docker Compose.
+- **Hub** — the control plane for many spokes: registers, provisions, upgrades and watches them; fleet view, leaderboards, routes contributor compute to the hives that need it.
+
+A spoke works alone. A hub is how you see and manage a fleet of them.
+
+## Contributor relay: a swarm working on your behalf
+
+Your own agents are only the start. The **contributor relay** (ClankeR) lets anyone who wants to help your project **donate their compute and model tokens** without you handing out anything:
+
+- **They bring their own agent.** A contributor runs one command on their laptop, cluster, or Compose box; it connects outbound to your hive, takes one curated task at a time, and runs *their* CLI with *their* model and *their* subscription.
+- **Their secrets never reach you.** API keys and CLI logins stay on the contributor's machine. The hive never sees them.
+- **Your forge settings never change.** Nobody is added as a collaborator. For each task the hive mints a short-lived, task-scoped GitHub token so the PR can be opened, then it expires. Revoke a contributor and their access is gone.
+- **Your prompts, your limits.** Contributors work the queue you curated, under the same trust level, filters and gates as your resident agents.
+
+The result is an **elastic swarm**: a three-person project can have a dozen contributors' agents grinding its backlog overnight, each accountable to a named human, while the maintainers hold every merge decision. See [src/docs/contributor-relay.md](src/docs/contributor-relay.md).
+
+## Hive the project vs the hosted service
+
+- **Hive the project**: Apache-2.0 code in this repo. Run it yourself.
+- **Hive the hosted service**: [hive.hivecommons.dev](https://hive.hivecommons.dev) — a hub we operate so you can onboard a spoke without a cluster. Same software, one deployment of it.
+
+## Does Hive fit my project?
+
+**Do I need a paid agent subscription?** No. Hive drives the agent CLIs you already have (Claude, Copilot, Codex, Antigravity, Goose) *or* any OpenAI-compatible model through its Model Gateway (OpenRouter key, no CLI login). Contributors can bring their own.
+
+**Who tells it what to work on?** Your backlog does. The Governor reads your issues/PRs/CI, filters them deterministically (labels, areas, complexity), and only hands agents work you have allowed. You choose the areas and the trust level. Nothing is invented.
+
+**We require design discussion before non-trivial PRs.** That is a trust level, not a workaround: *Measured* mode = agents may only file findings and proposals as issues — no code, no PRs — so the discussion happens first; *Holdgated* = PRs are opened with a `hold` label and a human must review and release; *Full* (L6) = merge on green. Start at Measured. You never have to move up.
+
+**Can it open PRs to our upstream repo?** Yes, if you install it there. Or run it on a fork (`upstream_watch` keeps the fork current) and push reviewed PRs upstream yourself.
+
+More answers: https://docs.hivecommons.dev/docs/community/what-is-hive-commons#does-hive-fit-my-project
+
+## Run it
+
+| Path | Start here |
+| --- | --- |
+| Docker Compose | [Quick Start (Docker Compose)](src/docs/quickstart-docker-compose.md) |
+| Podman | [Quick Start (Podman)](src/docs/quickstart-podman.md) |
+| Kubernetes | [Kubernetes deployment](src/docs/kubernetes-deployment.md) |
+| Hosted hub | [https://hive.hivecommons.dev](https://hive.hivecommons.dev) and the [hosted hub guide](src/docs/hosted-hub.md) |
+| Getting started | [Zero to Automation: Getting Started with Hive](src/docs/getting-started.md) |
+
+Configuration lives in `hive.yaml`; see the [operator reference](src/docs/operator-reference.md), [environment variable reference](src/docs/env-vars.md), and [agent configuration](src/docs/agent-configuration.md).
 
 ## ACMM Levels
 
 Hive uses an **AI Codebase Maturity Model** (ACMM) with six levels that control what agents are allowed to do:
 
-| Level | Name | Agents | What agents can do |
-|-------|------|--------|-------------------|
-| L1 | Inception (Assisted) | 2 | Interactive advisor and project inception. Advisory beads only. |
-| L2 | Advisory (Instructed) | 5 | Observe and report findings as dashboard beads. No GitHub interaction. |
-| L3 | Quality-Gated (Measured) | 6 | Quality agent opens issues and PRs gated by the literal `hold` level-gate label. Others remain advisory. |
-| L4 | Security-Aware (Adaptive) | 7 | All agents file issues. Quality, sec-check, and CI open PRs gated by the literal `hold` level-gate label. |
-| L5 | Semi-Autonomous (Semi-Automated) | 9 | All agents open PRs gated by the literal `hold` level-gate label. Humans batch-review and approve. |
-| L6 | Fully Autonomous | 10 | Agents open PRs and auto-merge when checks pass. Non-outreach PRs have no level hold; outreach PRs remain held for human review. |
+| Level | Name | What agents can do |
+|-------|------|-------------------|
+| L1 | Inception (Assisted) | Interactive advisor and project inception. Advisory beads only. |
+| L2 | Advisory (Instructed) | Observe and report findings as dashboard beads. No GitHub interaction. |
+| L3 | Quality-Gated (Measured) | Quality agent opens issues and PRs gated by the literal `hold` level-gate label. Others remain advisory. |
+| L4 | Security-Aware (Adaptive) | All agents file issues. Quality, sec-check, and CI open PRs gated by `hold`. |
+| L5 | Semi-Autonomous (Semi-Automated) | All agents open PRs gated by `hold`. Humans batch-review and approve. |
+| L6 | Fully Autonomous | Agents open PRs and auto-merge when checks pass. Non-outreach PRs have no level hold; outreach PRs remain held. |
 
-Each level defines per-agent **policy modes**: advisory (observe only), measured (file issues), holdgated (PRs with the literal `hold` level-gate label), or full (auto-merge). The dashboard `hive-pause/<hive-id>` label is a separate manual hold; `hive/<hive-id>` is provenance only. See `src/docs/acmm-policy-matrix.md` for the full matrix and `src/docs/labels-and-control-signals.md` for label behavior. Browse the [documentation map](src/docs/documentation-map.md) for operations, contributor relay, snapshots, health checks, and design guides. Questions and newcomer help are welcome in [Join our Discord](https://hivecommons.dev/discord).
-
-Operational references from the repository root include [hub disaster recovery](docs/HUB_DISASTER_RECOVERY.md), [federation design](docs/federation-design.md), [review evidence bundle](src/docs/review-evidence.md) and its [SOC 2 control mapping (not a compliance claim)](src/docs/soc2-control-mapping.md), [outreach antispam policy](docs/outreach-antispam.md), [macOS deployment notes](docs/macos.md), and [backend setup](docs/backend-setup.md). Worked examples live under [examples/](examples/README.md), including [KubeStellar skill and campaign configs](examples/kubestellar/README.md), [SQLite state backend notes](examples/sqlite-state.md), and [ACMM runtime fragments](examples/acmm/README.md).
-
-
-### Recent shipped capabilities
-
-The v5 line now includes Jira Data Center / Server work sources (`work_source.type: jira` with `jira.deployment: datacenter`), per-repo swarm mode with `/api/leaderboard/swarm`, The Commons for ranking and routing contributor effort across multiple hives, team leaderboards at `/api/leaderboard/teams`, and Achievements 2.0 tiers for solo/dual/fireteam/raid work including the local-model track. Admin MCP and dashboard Extensions wiring for Spektacular are on the v6 edge line only until that branch is promoted.
+See [src/docs/acmm-policy-matrix.md](src/docs/acmm-policy-matrix.md) for the full matrix and [src/docs/labels-and-control-signals.md](src/docs/labels-and-control-signals.md) for label behavior.
 
 ## Architecture
 
-Hive runs as a single container with three long-lived processes:
+Hive runs as a single container with a Go control plane, an authenticated Node.js gateway, and ttyd for web terminal access. The Governor evaluates queue depth, deterministic filters decide what an agent may see, scoped tokens and a MITM proxy enforce what it may do, and gates decide what may land.
 
-- **Go binary** (`hive`, `:3002`) — the brain. Runs the governor eval loop, the agent manager (tmux sessions), the dashboard API, an in-process MITM GitHub proxy, the hub heartbeat, and token tracking — all as goroutines.
-- **Node.js proxy** (`:3001`) — the public front door. Reverse-proxies to the Go API with auth and path-rewrite, and streams SSE/WebSocket to the dashboard and web terminal.
-- **ttyd** (`:7681`) — web terminal onto the agent tmux sessions.
-
-The governor evaluates queue depth on a configurable interval and switches between four modes (`SURGE`, `BUSY`, `QUIET`, `IDLE`), each with per-agent cadences. A deterministic pipeline (Go + shell) filters, classifies, and merge-gates all GitHub work before any agent is kicked, and three independent layers — CLI tool denial, least-privilege scoped tokens, and a network-level MITM proxy — enforce what each agent may do, keyed off its ACMM-assigned mode.
-
-```mermaid
-flowchart LR
-    github["GitHub<br/>issues · PRs"] --> gov["Governor<br/>(queue depth → mode → kick)"]
-    gov --> pipe["Deterministic pipeline<br/>classify · merge-gate · enforce"]
-    pipe --> agents["AI agents (tmux)<br/>Claude · Copilot · Gemini · Goose"]
-    agents --> guard["Guardrails<br/>tool deny · scoped token · MITM proxy"]
-    guard -->|"gated writes"| github
-    agents -.-> beads["Beads ledger<br/>(git-backed work items)"]
-    gov -.->|"heartbeat"| hub["Hive Hub<br/>registry · leaderboard"]
-    dash["Dashboard :3001"] -.->|"SSE"| gov
-```
-
-**See [src/docs/architecture.md](src/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout. Operator safety references include [trajectory review](src/docs/trajectory-review.md), [dashboard health checks](src/docs/health-checks.md), [sandbox guardrails](src/docs/sandbox-isolation.md), [compliance controls](src/docs/compliance.md) (framework control mapping; not a certification), [manual provisioning](src/docs/manual-provisioning.md), [cross-cluster migration](src/docs/cross-cluster-migration.md), and [config layering](src/docs/config-layering.md). The dashboard API reference is published as [dashboard/openapi.json](dashboard/openapi.json).
-
-See also the [roadmap](ROADMAP.md) (release-line trajectory, with the [detailed near-term plan](src/docs/roadmap.md)), the [upgrade guide](UPGRADE.md), the [documentation map](src/docs/documentation-map.md), and the [landscape comparison](src/docs/landscape.md) for community-facing documentation and positioning.
+See [src/docs/architecture.md](src/docs/architecture.md) for process model, governor loop, guardrails, hub/spoke, and walkthrough diagrams.
 
 ## Terminal dashboard
 
-`hivectl tui` is a full-screen, keyboard-driven terminal view of the fleet —
-agents, governor, token spend, and activity in a live 2×2 grid, with
-pause/resume, model apply, kick, ACMM level, and hive-profile switching
-actions. It is **not a second
-Hive runtime**: it is another client of the same dashboard API the web
-dashboard at `:3001` uses, over the same auth token and the same SSE stream.
+`hivectl tui` is a full-screen terminal view of the same dashboard API the web UI uses: agents, governor, token spend, live activity, pause/resume, kick, ACMM level, and hive-profile actions.
 
-```bash
-export HIVE_DASHBOARD_TOKEN="..."
-hivectl tui
-```
-
-See [`hivectl tui` in the command reference](src/docs/hivectl.md#tui--live-terminal-dashboard)
-for keybindings, pane cadence, and v1 boundaries, and
-[the design record](src/docs/design/tui.md) for the reasoning behind it.
+See [`hivectl tui` in the command reference](src/docs/hivectl.md#tui--live-terminal-dashboard).
 
 ## Contribute to a Hive
 
-Community members can contribute compute to any hive through **ClankeR**, the
-contributor relay — it hands tasks from a hive's backlog to the CLI agent
-running on your own machine. On Linux, install the published Homebrew tap formula:
+Community members can contribute compute to any hive through **ClankeR**, the contributor relay (see [above](#contributor-relay-a-swarm-working-on-your-behalf)): it hands tasks from a hive's backlog to the CLI agent running on your own machine, under the hive's prompts and limits, with no repo permissions and no shared secrets.
 
-```bash
-brew install hivecommons/hive/contribute
-hive-contribute
-```
+Start with [src/docs/contributor-relay.md](src/docs/contributor-relay.md) or the [Hive Hub contribute page](https://hive.hivecommons.dev).
 
-The tap installs the `hive-contribute` wrapper for the stable contributor image
-pinned by digest. Apptainer runs natively only on Linux; see the
-[homebrew-hive README](https://github.com/hivecommons/homebrew-hive#platform-reality)
-for the macOS Lima/VM and Windows WSL2 paths.
+## Moved sections
 
-The from-source flow remains supported for development or platforms using a local
-checkout:
+## Quick Start
 
-```bash
-brew install just gh
-git clone https://github.com/hivecommons/hive && cd hive
-just contribute-setup claude
-just contribute-hive
-```
+Moved to [Quick Start (Docker Compose)](src/docs/quickstart-docker-compose.md), [Quick Start (Podman)](src/docs/quickstart-podman.md), and [Kubernetes deployment](src/docs/kubernetes-deployment.md).
 
-Supported CLIs: Claude Code, GitHub Copilot, Codex, Goose, Pi, Oh My Pi (`omp`), Bob, Aider, LiteLLM (via Claude Code), Antigravity (`agy`), opencode, Kilo, and Muse Code — the authoritative list is `KNOWN_BACKENDS` in [config/backends.conf](config/backends.conf), and [docs/backend-setup.md](docs/backend-setup.md) covers per-backend setup, auth, and confinement. Contributors start as newcomer (rate-limited), auto-promote to contributor after PR-backed work, and become trusted only when an operator grants it after about 20 PR tasks with the tier dropdown on the contributor card under **Operations → Connected clankers** (`PUT /api/contributors/{id}/trust`). Your credentials never leave your machine.
+## Quick Start (Docker Compose)
 
-Related project: [GitHub Agentic Workflows (gh-aw)](https://github.com/github/gh-aw)
-compiles Markdown-authored agentic jobs into GitHub Actions. Use the
-[Hive report-only triage on-ramp](src/deploy/gh-aw/README.md) alongside existing
-workflows, then adopt Hive when you need a continuous fleet rather than per-run
-Actions plumbing; see the [overlap/difference table](src/docs/landscape.md#github-agentic-workflows-gh-aw).
+Moved to [src/docs/quickstart-docker-compose.md](src/docs/quickstart-docker-compose.md).
 
-External and additive work integrations include the [Flue](https://github.com/withastro/flue) report-only external-execution pilot (`runs.external.flue`, linked with the `extwork_flue` build tag) and the [Crustify](https://github.com/crustify-rs/crustify) / [Wavefront](https://github.com/crustify-rs/wavefront) C/C++→Rust migration graph work source (`governor.work_source.wavefront`, default disabled).
+## Quick Start (Podman)
 
-A relay can subscribe to multiple hives — manage them as named profiles with `hivectl hives` (`add`, `use`, `list`, plus `export`/`import`/`session` for moving profiles between machines), which generates the `HIVE_HUB` / `HIVE_REGISTRATION_TOKEN` lists the relay reads so they stay aligned by construction. Operators can delegate selected spoke roles through **Acting as** / `HIVE_AGENT_ROLE`. See [src/docs/hivectl.md](src/docs/hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to), [src/docs/contributor-relay.md](src/docs/contributor-relay.md), and [src/docs/contributor-trust-and-roles.md](src/docs/contributor-trust-and-roles.md).
+Moved to [src/docs/quickstart-podman.md](src/docs/quickstart-podman.md).
 
-See the [Hive Hub contribute page](https://hive.hivecommons.dev) for details.
+## Kubernetes Deployment
+
+Moved to [src/docs/kubernetes-deployment.md](src/docs/kubernetes-deployment.md).
 
 ## Related projects
 
-- [Goose](https://github.com/aaif-goose/goose), an agent backend whose upstream
-  moved to the [Agentic AI Foundation (AAIF)](https://aaif.io/). Hive integrates
-  Goose as an independent CNCF project; Hive does not join AAIF, seek AAIF
-  membership, or rely on AAIF to host or govern Hive. See [unattended Goose with Hive](docs/goose-at-scale.md)
-  and [Goose upstream tracking](src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
+- [Goose](https://github.com/aaif-goose/goose), an agent backend whose upstream moved to the [Agentic AI Foundation (AAIF)](https://aaif.io/). Hive integrates Goose as an independent CNCF project; Hive does not join AAIF, seek AAIF membership, or rely on AAIF to host or govern Hive. See [unattended Goose with Hive](docs/goose-at-scale.md) and [Goose upstream tracking](src/docs/landscape.md#agentic-ai-foundation-aaif-and-goose).
 
 ## Repositories
 
-Hive is one of several repositories in the hivecommons organization. See
-[docs/repositories.md](docs/repositories.md) for the full list, what each one is
-for, and which ones ship inside a Hive release.
+Hive is one of several repositories in the hivecommons organization. See [docs/repositories.md](docs/repositories.md) for the full list, what each one is for, and which ones ship inside a Hive release.
 
 ## Contributing
 
@@ -650,5 +147,4 @@ Please see [SECURITY.md](SECURITY.md) for the vulnerability disclosure process. 
 Apache 2.0
 
 Hive is a [Cloud Native Computing Foundation](https://www.cncf.io/) sandbox project candidate; onboarding status is tracked in [src/docs/cncf-sandbox-onboarding.md](src/docs/cncf-sandbox-onboarding.md). This does not imply CNCF acceptance or endorsement.
-
 Copyright The Linux Foundation and Hive contributors. The Linux Foundation has registered trademarks and uses trademarks. For a list of trademarks of The Linux Foundation, please see the [Linux Foundation Trademark Usage page](https://www.linuxfoundation.org/legal/trademark-usage). Hive project names and logos are used in accordance with that policy once ownership is transferred to the Linux Foundation/CNCF.

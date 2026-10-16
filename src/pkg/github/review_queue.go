@@ -178,6 +178,14 @@ type ReviewQueueEntry struct {
 	ConfidenceScore *int   `json:"confidence_score,omitempty"`
 	ConfidenceBand  string `json:"confidence_band"`
 	CIState         string `json:"ci_state"`
+	// PendingSince is when the review swarm first dispatched a still-pending
+	// review for the PR's CURRENT head, so an unreviewed PR reads as "review
+	// dispatched Xm ago, no verdict" rather than merely not reviewed. Zero
+	// when nothing is pending for this head. RedispatchCount is how many
+	// times that head's pending reviews expired (review.pending_ttl) and
+	// were asked again; at review.max_redispatch the PR is held for a human.
+	PendingSince    time.Time `json:"pending_since,omitzero"`
+	RedispatchCount int       `json:"redispatch_count,omitempty"`
 	// Reasons explains the rank, in sort-key order (class, confidence, CI,
 	// age), then any context that did not move it. Like Confidence.Reasons,
 	// it is what a reader needs to reconstruct the order without the code.
@@ -217,6 +225,9 @@ type ReviewQueueOptions struct {
 	// It must not call GitHub: ranking runs on every eval cycle and on every
 	// API request.
 	ChangedPaths func(fullRepo string, number int, headSHA string) []string
+	// Dispatch is the review swarm's dispatch state; it supplies
+	// PendingSince and RedispatchCount. The zero value means unknown.
+	Dispatch review.DispatchState
 	// Held marks PRs (by ReviewQueueKey) that sit on a hold label.
 	Held map[string]bool
 	// Now is the reference time for ages. Zero means time.Now().
@@ -348,9 +359,20 @@ func buildReviewQueueEntry(pr PullRequest, full, key string, opts ReviewQueueOpt
 			reason += ": " + strings.Join(agg.Confidence.Reasons, "; ")
 		}
 		e.Reasons = append(e.Reasons, reason)
+		// An incomplete aggregate is a review still being collected, not a
+		// settled verdict: say what is missing and whether it is dispatched.
+		if agg.Verdict == review.VerdictIncomplete {
+			e.Reasons = append(e.Reasons, agg.Reasons...)
+			if reason := reviewQueueDispatchReason(&e, pr, full, opts, now); reason != "" {
+				e.Reasons = append(e.Reasons, reason)
+			}
+		}
 	} else {
 		e.ConfidenceBand = ReviewQueueBandNeedsAttention
 		e.Reasons = append(e.Reasons, "not reviewed at this head: confidence unknown, ranked as needs attention")
+		if reason := reviewQueueDispatchReason(&e, pr, full, opts, now); reason != "" {
+			e.Reasons = append(e.Reasons, reason)
+		}
 	}
 
 	switch e.CIState {
@@ -396,6 +418,57 @@ func reviewQueueAge(hours int) string {
 		return fmt.Sprintf("%dh", hours)
 	}
 	return fmt.Sprintf("%dd", hours/reviewQueueHoursPerDay)
+}
+
+// reviewQueueDispatchReason fills PendingSince and RedispatchCount from the
+// dispatch state and returns the reason line that explains an unreviewed PR's
+// dispatch status: a review is in flight, it has been re-dispatched after
+// expiring, or the retry budget is spent and the PR waits on a human. Empty
+// when the swarm has nothing recorded for this head.
+func reviewQueueDispatchReason(e *ReviewQueueEntry, pr PullRequest, full string, opts ReviewQueueOptions, now time.Time) string {
+	if strings.TrimSpace(pr.HeadSHA) == "" {
+		return ""
+	}
+	since := opts.Dispatch.PendingSince(full, pr.Number, pr.HeadSHA)
+	count := opts.Dispatch.RedispatchCountFor(full, pr.Number, pr.HeadSHA)
+	if since.IsZero() && full != pr.Repo {
+		since = opts.Dispatch.PendingSince(pr.Repo, pr.Number, pr.HeadSHA)
+		count = opts.Dispatch.RedispatchCountFor(pr.Repo, pr.Number, pr.HeadSHA)
+	}
+	e.PendingSince = since
+	e.RedispatchCount = count
+	var exhausted string
+	for _, h := range opts.Dispatch.Human {
+		if h.Number == pr.Number && strings.TrimSpace(h.HeadSHA) == strings.TrimSpace(pr.HeadSHA) &&
+			(strings.EqualFold(strings.TrimSpace(h.Repo), full) || strings.EqualFold(strings.TrimSpace(h.Repo), pr.Repo)) &&
+			strings.HasPrefix(h.Reason, review.HoldReasonDispatchExhausted) {
+			exhausted = h.Reason
+			break
+		}
+	}
+	if exhausted != "" {
+		return "review dispatch exhausted: " + strings.TrimPrefix(exhausted, review.HoldReasonDispatchExhausted+": ") + "; waiting on a human"
+	}
+	if since.IsZero() {
+		return ""
+	}
+	reason := fmt.Sprintf("review dispatched %s ago, no verdict yet", reviewQueueDispatchAge(now.Sub(since)))
+	if count > 0 {
+		reason += fmt.Sprintf(" (re-dispatched %dx after expiry)", count)
+	}
+	return reason
+}
+
+// reviewQueueDispatchAge renders how long a review has been in flight:
+// whole minutes under an hour, then reviewQueueAge's hours/days.
+func reviewQueueDispatchAge(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return reviewQueueAge(int(d.Hours()))
 }
 
 // ReviewQueueFromActionable ranks every open PR the enumeration saw - the

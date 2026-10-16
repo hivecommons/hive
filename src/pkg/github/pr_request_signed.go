@@ -349,6 +349,14 @@ func signedTrailerEmail(email string) string {
 	return slug + "@" + signedTrailerDomain()
 }
 
+// BotSignedOffByTrailer returns the DCO trailer for a commit the App authors
+// itself through the API: the App login as the name and the bracket-free
+// address signedTrailerEmail derives from its noreply form (#6276).
+func BotSignedOffByTrailer(login string) string {
+	login = strings.TrimSpace(login)
+	return "Signed-off-by: " + login + " <" + signedTrailerEmail(login+"@"+signedTrailerNoreplyDomain) + ">"
+}
+
 // signedTrailersBracketFree rewrites every Signed-off-by line in msg through
 // signedTrailerEmail, leaving the rest of the message byte-for-byte intact.
 func signedTrailersBracketFree(msg string) string {

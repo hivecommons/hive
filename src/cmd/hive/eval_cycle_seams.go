@@ -226,6 +226,7 @@ func kickSkipReason(
 	agents map[string]config.AgentConfig,
 	onDemandSet map[string]bool,
 	isPaused func(string) bool,
+	pauseTrigger func(string) string,
 ) string {
 	name, _ = config.SplitCadenceTargetKey(name)
 	if ac, ok := agents[name]; ok && ac.OnDemand {
@@ -235,9 +236,26 @@ func kickSkipReason(
 		return "on-demand-in-pack"
 	}
 	if isPaused(name) {
-		return "operator-paused"
+		var trigger string
+		if pauseTrigger != nil {
+			trigger = pauseTrigger(name)
+		}
+		return pausedSkipReason(trigger)
 	}
 	return ""
+}
+
+// pausedSkipReason names who paused an agent in the eval-cycle log. A pause
+// from the thrash breaker, login detector, rotation, etc. used to be reported
+// as "operator-paused" (#12015), sending operators looking for a human who
+// never touched the agent.
+func pausedSkipReason(trigger string) string {
+	switch trigger = strings.TrimSpace(trigger); trigger {
+	case "", "dashboard-api":
+		return "operator-paused"
+	default:
+		return "paused by " + trigger
+	}
 }
 
 // partitionKickableAgents splits the due list into the agents that will
@@ -251,9 +269,10 @@ func partitionKickableAgents(
 	agents map[string]config.AgentConfig,
 	onDemandSet map[string]bool,
 	isPaused func(string) bool,
+	pauseTrigger func(string) string,
 ) (kickable []string, skipped []string) {
 	for _, name := range agentsDue {
-		if reason := kickSkipReason(name, agents, onDemandSet, isPaused); reason != "" {
+		if reason := kickSkipReason(name, agents, onDemandSet, isPaused, pauseTrigger); reason != "" {
 			skipped = append(skipped, name+" ("+reason+")")
 			continue
 		}
@@ -275,7 +294,7 @@ func filterKickableAgents(
 	onDemandSet map[string]bool,
 	isPaused func(string) bool,
 ) []string {
-	kickable, _ := partitionKickableAgents(agentsDue, agents, onDemandSet, isPaused)
+	kickable, _ := partitionKickableAgents(agentsDue, agents, onDemandSet, isPaused, nil)
 	return kickable
 }
 

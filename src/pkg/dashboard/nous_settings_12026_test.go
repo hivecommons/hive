@@ -143,7 +143,9 @@ func TestGovernorFeatures_NousSettingsPut(t *testing.T) {
 	}
 	// The settings search must find the group for the words an operator
 	// would type (hivecommons/hive#12026 started from "nous" → 0 matches).
-	hit := strings.Index(string(html), "section: 'Nous / Experiment Lab'")
+	// Since #12037 the Features tab is organised into headed sections, so the
+	// entry files under the "Experimental" heading and keeps its own label.
+	hit := strings.Index(string(html), "section: 'Experimental', label: 'Nous / Experiment Lab'")
 	if hit < 0 {
 		t.Fatal("settings search has no static hit for the Nous group")
 	}

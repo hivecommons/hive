@@ -160,7 +160,13 @@ normal path is:
    `autoUpdate.state`; a retrying or failed upgrade includes the upgrade marker's
    `attempts` and `lastError`. A dashboard-triggered Upgrade that is accepted
    but produces no rollout or completion signal is marked failed after 15
-   minutes instead of showing `Upgrading…` forever.
+   minutes instead of showing `Upgrading…` forever. If a daily or weekly
+   window opened while the hive was behind but the hub held the upgrade (an
+   unresolved channel, a claim still being delivered, a pending earlier
+   upgrade, a full upgrade wave, the merge debounce, or a hive that has not
+   heartbeated recently), the panel shows a `Held` row with that reason from
+   `autoUpdate.heldReason` / `heldAt`, so a missed window is explained instead
+   of only showing the previous upgrade.
 5. **Need it now?** Once `stable` itself points at the desired build,
    **Upgrade now** skips the automatic-upgrade wait for that hive and arms the
    rollout immediately. It does not promote `stable`; it only follows the channel

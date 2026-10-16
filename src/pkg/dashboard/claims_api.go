@@ -119,10 +119,15 @@ func (h *ContributeWSHub) claimIssueForContributor(c *ContributorConnection, rep
 	if holder == "" {
 		holder = c.profile.ContributorID
 	}
+	// tier= and verified= on the marker are what the contributor-lane
+	// auto-merge tier reads to decide whether this holder is vetted (#12041).
+	// A login that was never proven against GitHub is never verified.
 	res, err := l.Claim(claims.Request{
 		Repo: repoFull, Issue: number,
 		Holder: holder, HolderID: identityOf(c), Kind: claims.KindContributor,
-		Session: c.session,
+		Session:  c.session,
+		Tier:     c.profile.TrustTier,
+		Verified: c.profile.GitHubUsername != "" && c.profile.GitHubVerifiedAt != "",
 	})
 	if err != nil {
 		h.logger.Warn("[claims] contributor claim not recorded", "repo", repoFull, "number", number, "holder", holder, "error", err)
@@ -151,7 +156,7 @@ func (h *ContributeWSHub) renewClaimForLease(identity, repo string, number int) 
 		return
 	}
 	if _, err := l.Claim(claims.Request{Repo: c.Repo, Issue: c.Issue, Holder: c.Holder, HolderID: c.HolderID,
-		Kind: c.Kind, Session: c.Session}); err != nil {
+		Kind: c.Kind, Session: c.Session, Tier: c.Tier, Verified: c.Verified}); err != nil {
 		h.logger.Warn("[claims] contributor claim not renewed", "issue", c.Key(), "holder", c.Holder, "error", err)
 	}
 }

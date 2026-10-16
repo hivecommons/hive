@@ -79,7 +79,7 @@ as fact (`issue_request_label.go`):
   queues a merge;
 - the hold labels (`hold`, `on-hold`, `hold/review`) — they block one;
 - everything in the `hive/` namespace, including `hive/claimed-by-<agent>`
-  (use `claim`), `hive/in-progress`, `hive/covered-by-pr`, `hive/likely-done`
+  (use `claim`), `hive/in-progress`, `🐝 covered by PR`, `hive/likely-done`
   and `hive/verified-open`;
 - the labels that record a person's decision or an escalation:
   `approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
@@ -133,6 +133,7 @@ writes no entry.
 | Attribution trailer reconcile | `attribution.go` (`ReconcilePRAttribution`) | yes (`pr_attribution_reconciled`) | yes |
 | Task-list sweep closes | `task_list_sweep.go` | yes (`task-list-sweep-closed`) | yes |
 | Supersession sweep (notice, `hive/superseded` close) | `pr_supersession_sweep.go`, `pr_supersession_autoclose.go` | yes (`supersession-sweep-*`) | yes |
+| Shared-CI rerun (`rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment) | `shared_ci_rerun.go` | yes (`shared-ci-rerun`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
 | Signed-commit reconcile: branch rewrite | `pr_signed_reconcile.go` | yes (`signed_commit_reauthored`, with `branch`, `base`, `commit`, `replaced_commits`) | yes / PR number |

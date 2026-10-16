@@ -135,6 +135,22 @@ func trustCriteria(in quadrantInputs) []subCriterion {
 		})
 	}
 
+	// Delegation: whether the operator let the App merge its own PRs. Reported
+	// by the spoke on the evidence summary; absent for old spokes, in which case
+	// the criterion declines. A posture, so it is exempt from the activity gate.
+	if in.selfMergeAllowed != nil {
+		v, n := 0.0, "Self-authored auto-merge is not allowed — raise the ACMM level to delegate it"
+		if *in.selfMergeAllowed {
+			v, n = 1, ""
+		}
+		out = append(out, subCriterion{
+			name:           "delegation",
+			value:          v,
+			higherIsBetter: true,
+			nudge:          n,
+		})
+	}
+
 	return out
 }
 
@@ -179,6 +195,25 @@ func efficiencyCriteria(in quadrantInputs) []subCriterion {
 			higherIsBetter: false,
 			nudge:          "Token spend per merged PR is high relative to the fleet",
 		})
+	}
+
+	// Revert rate: merged PRs reverted or follow-up-fixed within 14 days, the
+	// change-failure-rate proxy. A ratio where zero is the best outcome, so it
+	// has no activityFloor; the merged-count minimum is the sufficiency gate.
+	if e := in.evidence; e != nil {
+		if rate, ok := evidenceRate(e.Reverted14d90d, e.Merged90d); ok {
+			n := ""
+			if rate > 0.1 {
+				n = fmt.Sprintf("%d of %d merged PRs were reverted or fixed within 14 days",
+					e.Reverted14d90d, e.Merged90d)
+			}
+			out = append(out, subCriterion{
+				name:           "revert_rate",
+				value:          rate,
+				higherIsBetter: false,
+				nudge:          n,
+			})
+		}
 	}
 
 	// Rework: PRs the agent opened that were rejected rather than merged. This
@@ -375,21 +410,36 @@ func productivityCriteria(in quadrantInputs) []subCriterion {
 	return out
 }
 
-// satisfactionCriteria is intentionally empty.
-//
-// There is no satisfaction signal in the platform today. The available
-// candidates — health checks, advisory depth, attention debt, contributor
-// engagement — are OPERATIONAL HYGIENE, and hygiene is not satisfaction: a hive
-// can be perfectly healthy and still be frustrating to work with, and a hive
-// with a deep advisory backlog can have delighted users. Substituting hygiene
-// here would produce a number that looks measured but is not, and it would
-// undermine confidence in the three axes that are honestly derived.
-//
-// The axis therefore renders as a collapsed spoke with an explicit reason. That
-// empty spoke is itself the finding: it says the platform does not yet measure
-// how this feels to use. A real signal — e.g. a lightweight pulse on agent
-// output — would populate it.
-func satisfactionCriteria(_ quadrantInputs) []subCriterion { return nil }
+// satisfactionCriteria scores how it feels to use the swarm, from the two
+// honest signals in the evidence store: how often a human had to override a
+// block (false-block) and how often a human had to fix an approved PR
+// (false-approve). Both are lower-is-better ratios, exempt from the activity
+// gate, and decline below minEvidenceN verdicts so a hive with little data
+// renders unscored rather than flattering. Hygiene signals (health, advisory
+// depth) are deliberately not used: hygiene is not satisfaction.
+func satisfactionCriteria(in quadrantInputs) []subCriterion {
+	e := in.evidence
+	if e == nil {
+		return nil
+	}
+	var out []subCriterion
+	if rate, ok := evidenceRate(e.FalseBlock90d, e.Verdicts90d); ok {
+		n := ""
+		if rate > 0.1 {
+			n = fmt.Sprintf("Humans overrode %d of %d swarm blocks — the gate may be too strict",
+				e.FalseBlock90d, e.Verdicts90d)
+		}
+		out = append(out, subCriterion{name: "human_override_rate", value: rate, higherIsBetter: false, nudge: n})
+	}
+	if rate, ok := evidenceRate(e.FalseApprove90d, e.Verdicts90d); ok {
+		n := ""
+		if rate > 0.1 {
+			n = fmt.Sprintf("Humans had to fix %d of %d swarm-approved PRs", e.FalseApprove90d, e.Verdicts90d)
+		}
+		out = append(out, subCriterion{name: "human_followup_rate", value: rate, higherIsBetter: false, nudge: n})
+	}
+	return out
+}
 
 // unscoredReason explains, per axis, what evidence is missing. Shown in the
 // hover so a collapsed spoke reads as "not measured yet" rather than as a gap
@@ -397,7 +447,7 @@ func satisfactionCriteria(_ quadrantInputs) []subCriterion { return nil }
 func unscoredReason(axis string) string {
 	switch axis {
 	case AxisSatisfaction:
-		return "No satisfaction signal is collected yet"
+		return "No satisfaction signal is collected yet (needs ≥10 reviewed verdicts)"
 	case AxisEfficiency:
 		return "Not enough merged output to judge cost efficiency yet"
 	case AxisProductivity:

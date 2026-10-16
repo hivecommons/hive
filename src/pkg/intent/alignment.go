@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -48,6 +49,11 @@ type AlignmentContext struct {
 	CheckFiles       []DiffFileSummary `json:"-"`
 	TruncatedFiles   int               `json:"truncated_files,omitempty"`
 	TruncatedBytes   bool              `json:"truncated_bytes,omitempty"`
+	// HeadSHA pins the commit the diff summary describes. It is not sent to
+	// the model; it keys the reviewer's verdict cache together with
+	// IntentRevision so a verdict is reused only for the identical tree and
+	// intent (hivecommons/hive#12131).
+	HeadSHA string `json:"head_sha,omitempty"`
 }
 
 type AlignmentFinding struct {
@@ -111,6 +117,7 @@ func BuildAlignmentContext(pr PR, issueTexts []TextEvidence, stores map[string]*
 		CheckFiles:       checkFiles,
 		TruncatedFiles:   truncatedFiles,
 		TruncatedBytes:   truncatedBytes,
+		HeadSHA:          strings.TrimSpace(pr.HeadSHA),
 	}
 }
 
@@ -348,12 +355,16 @@ type AlignmentReviewer struct {
 	apiKey   string
 	model    string
 	http     *http.Client
+	cache    *alignmentCache
+	logger   *slog.Logger
 }
 
 type AlignmentReviewerConfig struct {
 	Endpoint string
 	APIKey   string
 	Model    string
+	// Logger receives cache hit/miss lines; nil uses slog.Default().
+	Logger *slog.Logger
 }
 
 func NewAlignmentReviewer(c AlignmentReviewerConfig) (*AlignmentReviewer, error) {
@@ -364,15 +375,57 @@ func NewAlignmentReviewer(c AlignmentReviewerConfig) (*AlignmentReviewer, error)
 	if strings.TrimSpace(c.Model) == "" {
 		return nil, fmt.Errorf("intent alignment review: no reviewer model resolved")
 	}
+	logger := c.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &AlignmentReviewer{
 		endpoint: endpoint,
 		apiKey:   c.APIKey,
 		model:    strings.TrimSpace(c.Model),
 		http:     &http.Client{Timeout: alignmentReviewTimeout},
+		cache:    newAlignmentCache(DefaultAlignmentCacheSize),
+		logger:   logger,
 	}, nil
 }
 
+// CacheStats reports the verdict cache counters; zero for a nil reviewer.
+func (r *AlignmentReviewer) CacheStats() AlignmentCacheStats {
+	if r == nil || r.cache == nil {
+		return AlignmentCacheStats{}
+	}
+	return r.cache.snapshot()
+}
+
+// Review returns the model's alignment verdict for ac.
+//
+// The deterministic verdict from EvaluateAlignment is deliberately NOT an
+// input here: the model is consulted for every (head SHA, intent revision)
+// pair the reviewer has not already judged, however clean or ambiguous the
+// deterministic checks looked. The only thing that avoids a model call is a
+// cache hit for the identical inputs (hivecommons/hive#12131).
 func (r *AlignmentReviewer) Review(ctx context.Context, ac AlignmentContext) (ModelAlignmentVerdict, error) {
+	if r.cache == nil {
+		r.cache = newAlignmentCache(DefaultAlignmentCacheSize)
+	}
+	if r.logger == nil {
+		r.logger = slog.Default()
+	}
+	key := alignmentCacheKey(r.model, ac)
+	if v, ok := r.cache.get(key); ok {
+		r.logger.Info("intent alignment review skipped", "reason", "cached", "head_sha", ac.HeadSHA, "intent_revision", IntentRevision(ac)[:12])
+		return v, nil
+	}
+	r.logger.Debug("intent alignment review cache miss", "head_sha", ac.HeadSHA, "intent_revision", IntentRevision(ac)[:12])
+	v, err := r.reviewUncached(ctx, ac)
+	if err != nil {
+		return ModelAlignmentVerdict{}, err
+	}
+	r.cache.put(key, v)
+	return v, nil
+}
+
+func (r *AlignmentReviewer) reviewUncached(ctx context.Context, ac AlignmentContext) (ModelAlignmentVerdict, error) {
 	body, err := json.Marshal(alignmentChatRequest{
 		Model:       r.model,
 		Messages:    buildAlignmentPrompt(ac),

@@ -205,13 +205,28 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 			// A pack model names a model of the pack's backend; when the
 			// spoke's backends list replaced that backend (#11310) the model is
 			// not seeded, so the replacement backend launches its own default.
+			// The same holds when the agent itself was moved onto a model
+			// gateway (#9945): the pack's copilot id `claude-sonnet-4-6` was
+			// re-seeded on every restart onto a `litellm` agent, outranked the
+			// gateway's default_model, and 403'd as a model the team is not
+			// entitled to — and deleting the `model:` line by hand did not
+			// stick. A pack-owned model is cleared there instead, so the
+			// gateway default applies.
 			packBackend, backendReplaced := s.packAgentBackend(pa)
+			onForeignGateway := s.agentOnForeignGatewayBackend(existing.Backend, packBackend)
 			packModel := pa.Model
-			if backendReplaced {
+			if backendReplaced || onForeignGateway {
 				packModel = ""
 			}
 			if packModel != "" && existing.Model != packModel && !existing.ModelIsOperatorOwned() {
 				existing.Model = packModel
+				existing.ModelOwner = config.FieldOwnerPack
+				changed = true
+			}
+			if onForeignGateway && existing.Model != "" && !existing.ModelIsOperatorOwned() {
+				s.logger.Info("clearing pack model on gateway-routed agent so the gateway default_model applies",
+					"agent", pa.Name, "backend", existing.Backend, "model", existing.Model, "pack_backend", packBackend)
+				existing.Model = ""
 				existing.ModelOwner = config.FieldOwnerPack
 				changed = true
 			}
@@ -1067,6 +1082,17 @@ func (s *Server) ensureCPUTier(level int) {
 // choice, unless the spoke's backends allow/deny list (#11310) disallows it,
 // in which case the list's fallback ("" = hive default) is used instead and
 // replaced reports true.
+// agentOnForeignGatewayBackend reports whether an agent runs on an
+// inference-routed backend (litellm/vllm/llm-d or a configured gateway name)
+// other than the pack's backend, so a pack model — an id from the pack
+// backend's catalogue — does not apply to it.
+func (s *Server) agentOnForeignGatewayBackend(agentBackend, packBackend string) bool {
+	if agentBackend == "" || strings.EqualFold(agentBackend, packBackend) {
+		return false
+	}
+	return config.IsInferenceBackend(agentBackend) || s.deps.Config.Governor.ResolveGateway(agentBackend) != nil
+}
+
 func (s *Server) packAgentBackend(pa config.PackAgent) (backend string, replaced bool) {
 	if s.deps.Config.BackendAllowed(pa.Backend) {
 		return pa.Backend, false

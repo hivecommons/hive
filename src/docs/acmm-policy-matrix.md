@@ -1,5 +1,14 @@
 # ACMM Policy Matrix
 
+**ACMM** is the **AI Codebase Maturity Model**: a six-level framework that ties
+how much autonomy AI agents get in a repository to how mature that repository's
+safeguards are — tests, coverage, review practice, security posture. A project
+starts at a low level where agents only observe and advise, and earns higher
+levels (opening PRs, then merging on green CI) as the deterministic checks that
+catch mistakes are put in place. Hive enforces each level in code: the level
+decides which agents run, in which policy mode, with which GitHub permissions.
+Background: [the ACMM paper](https://arxiv.org/abs/2604.09388).
+
 ## Policy Modes
 
 Each agent runs in one of four modes, controlling what actions it can take on GitHub.
@@ -41,7 +50,7 @@ Agents observe and report findings as advisory beads on the dashboard and tracki
 
 ### L3 — Quality-Gated (Measured) (6 agents)
 
-Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI workflows. All other agents remain advisory. CI-maintainer joins to monitor build health. Key artifact: measurement infrastructure.
+Quality agent opens GitHub issues and PRs about testing gaps, coverage, and CI workflows. All other agents remain advisory. CI-maintainer joins to monitor build health. Key artifact: measurement infrastructure. L3 is also the first level at which the dashboard shows the **Experiment Lab (nous)** section when `dashboard.experiment_lab` is on (see [Experiment Lab](experiment-lab.md#visibility)).
 
 | Agent | Mode | Template |
 |-------|------|----------|

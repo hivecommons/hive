@@ -960,6 +960,9 @@ func TestApplyDefaults_KnowledgeDefaults(t *testing.T) {
 	if cfg.Knowledge.Primer.MaxFacts != defaultKnowledgeMaxFacts {
 		t.Errorf("max_facts = %d", cfg.Knowledge.Primer.MaxFacts)
 	}
+	if cfg.Knowledge.Primer.MaxBytes != defaultKnowledgeMaxBytes {
+		t.Errorf("max_bytes = %d", cfg.Knowledge.Primer.MaxBytes)
+	}
 	if cfg.Knowledge.Primer.MergeStrategy != "precedence" {
 		t.Errorf("merge_strategy = %q", cfg.Knowledge.Primer.MergeStrategy)
 	}

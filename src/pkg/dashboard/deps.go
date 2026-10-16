@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -102,7 +103,10 @@ type Dependencies struct {
 	// repo_cost_collector.go), mirroring Activity's caching of
 	// /api/repo-activity. Nil is safe: handleRepoCost falls back to computing
 	// inline (used by tests that construct a bare Dependencies).
-	RepoCost        *collect.RepoCostCollector
+	RepoCost *collect.RepoCostCollector
+	// LaunchCost caches the /api/launch-cost join (#12128). Nil is safe:
+	// handleLaunchCost falls back to computing inline from Tokens.
+	LaunchCost      *collect.LaunchCostCollector
 	BeadSynthesizer *knowledge.BeadSynthesizer
 	BeadStores      map[string]*beads.Store
 	// ChatResponder handles dashboard Hive Chat free-text messages that are
@@ -268,8 +272,14 @@ type Dependencies struct {
 	ReviewEvents *eventdispatch.Dispatcher
 }
 
+// NousScopeRepo is the only experiment scope the Experiment Lab supports.
+// Governor-scope experiments are out of scope for the lab.
+const NousScopeRepo = "repo"
+
 type NousState struct {
-	Mode         string                   `json:"mode"`
+	Mode string `json:"mode"`
+	// Scope is always NousScopeRepo; it is kept as a field for state
+	// compatibility with the experiment loop's status publishing.
 	Scope        string                   `json:"scope"`
 	Phase        string                   `json:"phase"`
 	Status       map[string]interface{}   `json:"status"`
@@ -309,6 +319,10 @@ type NousState struct {
 	// PromotionStore, when set, is the durable promotion record (#11699);
 	// Promotions mirrors it. Nil keeps promotions in memory only.
 	PromotionStore NousPromotionStore `json:"-"`
+	// ResetStore, when set, performs the on-disk part of POST
+	// /api/nous/reset (RFC #11585); cmd/hive wires pkg/nousstore. Nil
+	// answers the endpoint with 404.
+	ResetStore NousResetStore `json:"-"`
 	// ArtifactSync, when set, triggers one immediate pass of the optional
 	// GitHub artifact mirror (#11701) and returns its result for the
 	// response body; cmd/hive wires it to pkg/nousartifacts only when
@@ -338,9 +352,13 @@ type NousPrinciple struct {
 
 const NousBaselineTarget = 672
 
+// NousSnapshotRetention bounds the snapshots kept on disk: the newest
+// 4x baseline target, so baseline_pct stays at 100 while old files go
+// (hivecommons/hive#12030).
+const NousSnapshotRetention = 4 * NousBaselineTarget
+
 // NousBaselinePct reports baseline-collection progress as a percentage,
-// bounded to 0..100. count keeps growing after that (snapshots are never
-// pruned), but "percent complete" should not (hivecommons/hive#10026).
+// bounded to 0..100. the count is bounded by NousSnapshotRetention, but "percent complete" should not (hivecommons/hive#10026).
 func NousBaselinePct(count int) float64 {
 	if count <= 0 {
 		return 0
@@ -408,7 +426,7 @@ func (ns *NousState) refreshStatus() {
 
 	count := 0
 	if entries, err := os.ReadDir(ns.SnapshotDir); err == nil {
-		count = len(entries)
+		count = len(entries) - pruneNousSnapshots(ns.SnapshotDir, entries, NousSnapshotRetention)
 	}
 
 	if count > 0 && ns.Phase == "collecting" {
@@ -422,6 +440,22 @@ func (ns *NousState) refreshStatus() {
 	ns.Status["snapshotTarget"] = NousBaselineTarget
 	ns.Status["phase"] = ns.Phase
 	ns.Status["principleCount"] = len(ns.Principles)
+}
+
+// pruneNousSnapshots removes the oldest snapshot files beyond keep and
+// returns how many were removed. entries is the name-sorted ReadDir listing;
+// snapshot names are fixed-width unix milliseconds, so name order is age order.
+func pruneNousSnapshots(dir string, entries []os.DirEntry, keep int) int {
+	removed := 0
+	for i := 0; i < len(entries)-keep; i++ {
+		if entries[i].IsDir() {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entries[i].Name())); err == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
 type SchedulerControl interface {

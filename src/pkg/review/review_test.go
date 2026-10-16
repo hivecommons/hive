@@ -59,7 +59,7 @@ func TestAggregateReportsMatrix(t *testing.T) {
 		{name: "explicit requires human wins", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove), baseReport(PerspectiveSecurity, VerdictRequiresHuman)}, want: VerdictRequiresHuman, human: true},
 		{name: "reject recommends close", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictReject)}, want: VerdictReject, close: true},
 		{name: "fix cap requires human", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictChangesRequested)}, opts: AggregateOptions{FixAttempts: DefaultFixCycleCap}, want: VerdictRequiresHuman, human: true},
-		{name: "missing perspectives is disagreement", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictRequiresHuman, human: true},
+		{name: "missing perspectives is incomplete, not a human hold", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictIncomplete},
 	}
 
 	for _, tt := range tests {

@@ -18,6 +18,18 @@ func clusterIDForSaaSHive(sh SaaSHive) string {
 	return defaultClusterID
 }
 
+// heartbeatClusterIDToDeliver returns the cluster id the hub should send in a
+// heartbeat response: the hive's SaaS-recorded cluster, only when the spoke
+// reported no cluster_id of its own. A spoke's configured id is never
+// contradicted, and the defaultClusterID fallback is never delivered — only
+// what the hub's record actually says.
+func heartbeatClusterIDToDeliver(saasClusterID, reportedClusterID string) string {
+	if strings.TrimSpace(reportedClusterID) != "" {
+		return ""
+	}
+	return sanitizeHeartbeatField(strings.TrimSpace(saasClusterID))
+}
+
 // ensureClusterIDForClaim stamps a non-blank cluster_id onto a hive that is
 // about to be persisted by a claim/assign. This is the data-integrity guard
 // for the observed bug where CLAIMED hives lost cluster_id in their meta.json

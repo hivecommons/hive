@@ -175,6 +175,10 @@ type Client struct {
 	// change rather than once per enumeration. Guarded by issueClaimMu.
 	issueClaimCache map[string]issueClaimCacheEntry
 	issueClaimMu    sync.Mutex
+	// sharedCIRerunSeen memoizes PRs the shared-CI rerun sweep found nothing
+	// to do for, keyed "owner/repo#n". Guarded by sharedCIRerunMu.
+	sharedCIRerunSeen map[string]sharedCIRerunSeen
+	sharedCIRerunMu   sync.Mutex
 	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
 	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
 	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;
@@ -295,6 +299,14 @@ type Client struct {
 	// the life of the process.
 	defaultBranchMu sync.RWMutex
 	defaultBranches map[string]string
+	// closingLinks memoises issue↔PR pairs already pushed to GitHub's
+	// Development sidebar for PRs GitHub did not link itself (hivecommons/hive#11888).
+	// Zero value is ready to use.
+	closingLinks closingLinkCache
+	// coveredByPRLabel memoises repos whose covered-by-PR label is already
+	// under its current spelling (hivecommons/hive#11888). Zero value is
+	// ready to use.
+	coveredByPRLabel coveredByPRLabelState
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning
@@ -541,6 +553,10 @@ type IssueLinkedPR struct {
 	Merged  bool   `json:"merged"`
 	URL     string `json:"url,omitempty"`
 	Closing bool   `json:"closing,omitempty"`
+	// Reference marks a PR that references the issue without closing it
+	// (`Refs #N`, `Part of #N`): the dashboard glyph reads "covered by PR
+	// #N (partial)" rather than "closes via PR #N" (hivecommons/hive#12144).
+	Reference bool `json:"reference,omitempty"`
 }
 
 type Issue struct {
@@ -2027,6 +2043,9 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		allCheckRuns = checkRuns.CheckRuns
 	}
 	latestCheckRuns := latestCheckRunsByNameAndApp(allCheckRuns)
+	// Snapshot the CI verdict for the evidence bundle once it is known. Never
+	// affects the verdict or any merge decision.
+	defer func() { c.recordReviewEvidenceCI(pr.Repo, pr.Number, pr.HeadSHA, pr.CIStatus, latestCheckRuns) }()
 	reported := make(map[string]bool, len(latestCheckRuns))
 	for _, cr := range latestCheckRuns {
 		if name := cr.GetName(); name != "" {
@@ -3343,12 +3362,42 @@ type SHAHoldConfig struct {
 	PrimaryRepo     string
 	AIAuthor        string
 	InternalAuthors []string
+	// TrustedAssociations are the GitHub author associations (OWNER, MEMBER,
+	// COLLABORATOR, ...) whose missing SHA gets TrustedLabel instead of the
+	// hard `hold` (hivecommons/hive#12002): the SHA request is a
+	// reproduction aid, not a maintainer park.
+	TrustedAssociations []string
+	// TrustedLabel is the soft label for trusted reporters. Empty (or "hold")
+	// keeps the legacy hard hold for every reporter.
+	TrustedLabel string
 }
 
 type SHAHoldResult struct {
 	Held    int `json:"held"`
 	Unheld  int `json:"unheld"`
 	Skipped int `json:"skipped"`
+	// Softened counts SHA-sweep holds on trusted reporters' issues that were
+	// swapped for the soft TrustedLabel.
+	Softened int `json:"softened"`
+}
+
+// shaHoldSoftLabel returns the soft label to apply to this reporter's issue,
+// or "" when the hard `hold` applies.
+func (cfg SHAHoldConfig) shaHoldSoftLabel(association string) string {
+	label := strings.TrimSpace(cfg.TrustedLabel)
+	if label == "" || strings.EqualFold(label, "hold") {
+		return ""
+	}
+	association = strings.TrimSpace(association)
+	if association == "" {
+		return ""
+	}
+	for _, trusted := range cfg.TrustedAssociations {
+		if strings.EqualFold(strings.TrimSpace(trusted), association) {
+			return label
+		}
+	}
+	return ""
 }
 
 func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHoldResult, error) {
@@ -3388,6 +3437,11 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 			hasSHA = c.checkCommentsForSHA(ctx, owner, repo, issue.GetNumber(), author)
 		}
 
+		if soft := cfg.shaHoldSoftLabel(issue.GetAuthorAssociation()); soft != "" {
+			c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, soft, labels, held, hasSHA, result)
+			continue
+		}
+
 		switch {
 		case hasSHA && held:
 			// Only release a hold this sweep applied. A human's `hold`, a hold
@@ -3419,6 +3473,67 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 	}
 
 	return result, nil
+}
+
+// enforceSoftSHAHold is the trusted-reporter branch of EnforceSHAHold
+// (hivecommons/hive#12002). It never applies the hard `hold`: a missing SHA
+// gets the soft label plus the usual notice, a provided SHA lifts the soft
+// label, and a hard `hold` this sweep applied before the soft path existed is
+// swapped for the soft label. A `hold` from anyone else is left alone.
+func (c *Client) enforceSoftSHAHold(ctx context.Context, owner, repo string, number int, author, soft string, labels []string, held, hasSHA bool, result *SHAHoldResult) {
+	softHeld := labelPresent(labels, soft)
+	if held {
+		ok, err := c.shaHoldIsOwn(ctx, owner, repo, number)
+		if err != nil {
+			c.logger.Warn("SHA-SOFTEN skipped: could not verify hold provenance", "repo", repo, "issue", number, "error", err)
+			result.Skipped++
+			return
+		}
+		if !ok {
+			result.Skipped++
+			return
+		}
+		if !hasSHA && !softHeld {
+			if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{soft}); err != nil {
+				c.logger.Warn("failed to add soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
+				result.Skipped++
+				return
+			}
+		}
+		c.unhold(ctx, owner, repo, number)
+		if hasSHA {
+			result.Unheld++
+			c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", number, "author", author)
+			return
+		}
+		result.Softened++
+		c.logger.Info("SHA-SOFTEN", "repo", repo, "issue", number, "author", author, "label", soft)
+		return
+	}
+	switch {
+	case hasSHA && softHeld:
+		if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, soft); err != nil {
+			c.logger.Warn("failed to remove soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
+			result.Skipped++
+			return
+		}
+		result.Unheld++
+		c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", number, "author", author, "label", soft)
+	case !hasSHA && !softHeld:
+		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{soft}); err != nil {
+			c.logger.Warn("failed to add soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
+			result.Skipped++
+			return
+		}
+		comment := &gh.IssueComment{Body: gh.Ptr(shaHoldComment)}
+		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, comment); err != nil {
+			c.logger.Warn("failed to post SHA hold comment", "repo", repo, "issue", number, "error", err)
+		}
+		result.Held++
+		c.logger.Info("SHA-HOLD", "repo", repo, "issue", number, "author", author, "label", soft)
+	default:
+		result.Skipped++
+	}
 }
 
 func (c *Client) checkCommentsForSHA(ctx context.Context, owner, repo string, number int, _ string) bool {
@@ -3617,6 +3732,13 @@ type RepoWorkIssue struct {
 	Reason            string    `json:"reason,omitempty"`
 	// ReporterConfirmationGate mirrors Issue.ReporterConfirmationGate.
 	ReporterConfirmationGate bool `json:"reporter_confirmation_gate,omitempty"`
+	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
+	// duplicate-PR guard suppressed into the claimed_by_pr bucket
+	// (hivecommons/hive#12144), so the repo card can render the same
+	// covering-PR glyph it shows on actionable issues. Both are the
+	// github.Issue fields of the same name, copied as-is.
+	LinkedPRs    []IssueLinkedPR    `json:"linked_prs,omitempty"`
+	ClaimContext *IssueClaimContext `json:"claim_context,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
@@ -3635,6 +3757,8 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		Reason:            reason,
 
 		ReporterConfirmationGate: issue.ReporterConfirmationGate,
+		LinkedPRs:                append([]IssueLinkedPR(nil), issue.LinkedPRs...),
+		ClaimContext:             issue.ClaimContext,
 	}
 }
 

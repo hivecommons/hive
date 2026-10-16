@@ -13,6 +13,12 @@ const (
 	issueNeedsReporterConfirmationLabel = "needs-reporter-confirmation"
 )
 
+// NeedsSignalLabel is the escalation label hive applies when it needs a
+// better CI or test signal before continuing. It is not a hard-suppress
+// label (the issue stays actionable), but it is still "waiting on a person",
+// so the dashboard's Needs-human preset includes it.
+const NeedsSignalLabel = "needs-signal"
+
 // hardSuppressIssueLabels are the escalation labels that park an issue on a
 // person ("Hard suppress until directed" in docs/labels-and-control-signals.md).
 // An issue carrying one never enters the actionable set, so no agent kick or
@@ -54,7 +60,7 @@ var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{
 		color:       "bfd4f2",
 		description: "Hive needs a specification or acceptance criteria before continuing",
 	},
-	"needs-signal": {
+	NeedsSignalLabel: {
 		color:       "fbca04",
 		description: "Hive needs a better CI or test signal before continuing",
 	},

@@ -294,7 +294,7 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			targetIssues = filterIssuesByRepo(classifiedIssues, repo)
 		}
 		elideStuffed := s.dropStuffedContext(agentName)
-		msg, idleReason := s.buildAgentMessage(agentName, targetIssues, targetActionable, elideStuffed)
+		msg, idleReason := s.buildAgentMessageFor(agentName, repo, s.kickIncludesRepos(agentName), targetIssues, targetActionable, elideStuffed)
 		if idleReason != "" {
 			// The reviewer lane is dormant or has nothing to adjudicate
 			// (#11046): skip the kick rather than spend a model turn on a
@@ -307,7 +307,14 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 			continue
 		}
 		if msg != "" {
-			msg = s.finalizeKickMessage(agentName, repo, msg)
+			// The canary is the one thing that goes AHEAD of the static
+			// prefix: it is random by construction and prepended to the kick
+			// (ADR-0008, pkg/ioscan/canary.go), and both properties are what
+			// make it an exfiltration detector. It is opt-in
+			// (ioscan.canaries), so a hive without it starts the kick at the
+			// cacheable prefix; a hive with it pays one short random line.
+			msg = s.addCanaryPreamble(agentName, msg)
+			s.logKickSize(agentName, repo, msg, targetIssues, targetActionable)
 			if elideStuffed && s.logger != nil {
 				s.logger.Info("task MCP stuffed context elided", "agent", agentName, "elided_bytes", len(msg))
 			}
@@ -320,28 +327,6 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 		}
 	}
 	return messages
-}
-
-func (s *Scheduler) finalizeKickMessage(agentName, repo, msg string) string {
-	includeRepos := true
-	if agentCfg, ok := s.cfg.Agents[agentName]; ok {
-		includeRepos = agentCfg.ShouldIncludeRepos()
-	} else if agentCfg, ok := s.cfg.Agents[s.cfg.BaseAgentName(agentName)]; ok {
-		includeRepos = agentCfg.ShouldIncludeRepos()
-	} else if s.cfg.BaseAgentName(agentName) == "outreach" {
-		includeRepos = false
-	}
-	msg = s.addIndependentReviewSection(agentName, msg)
-	if repo != "" {
-		msg = fmt.Sprintf("REPO-SCOPED CADENCE TARGET: %s\n\n%s", repo, msg)
-	}
-	if includeRepos {
-		// Built per agent, not once for the fleet: a repo-scoped agent
-		// must be told its own AUTHORIZED REPOS, or the one section
-		// every agent sees would name repos it cannot write to (#6204).
-		msg += "\n" + s.buildReposSectionFor(agentName)
-	}
-	return s.addCanaryPreamble(agentName, msg)
 }
 
 func (s *Scheduler) selectReviewModel(agentCfg config.AgentConfig, pr github.PullRequest) (string, string, bool) {
@@ -383,7 +368,7 @@ func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string
 		classified = s.applyRunTriage(sweepCtx, classified)
 		cancelSweep()
 	}
-	return s.addIndependentReviewSection(agentName, s.BuildAgentMessage(agentName, classified, actionable))
+	return s.BuildAgentMessage(agentName, classified, actionable)
 }
 
 // buildReposSection is buildReposSectionFor with no agent: the hive-wide list.
@@ -419,6 +404,41 @@ func (s *Scheduler) prCap() int {
 	return s.cfg.Governor.KickLimits.PRsPerKick()
 }
 
+// logKickSize emits one structured line per rendered kick with the prompt's
+// byte size next to the list counts and caps that drove it (#12133). It is
+// the only per-kick size telemetry: the audit line in pkg/agent carries
+// message_len but not the counts, and prompt-history truncates at 32 KiB.
+// Operators tune governor.kick_limits from this line, not from guesswork —
+// see docs/operator-reference.md "Kick size and the list caps".
+func (s *Scheduler) logKickSize(agentName, repo, msg string, issues []github.Issue, actionable *github.ActionableResult) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	issueTotal, prTotal := len(issues), 0
+	if actionable != nil {
+		prTotal = len(actionable.PRs.Items)
+	}
+	s.logger.Info("kick rendered",
+		"agent", agentName,
+		"repo", repo,
+		"kick_bytes", len(msg),
+		"issues_total", issueTotal,
+		"issues_listed", min(issueTotal, capOrAll(s.issueCap(), issueTotal)),
+		"prs_total", prTotal,
+		"prs_listed", min(prTotal, capOrAll(s.prCap(), prTotal)),
+		"max_issues", s.issueCap(),
+		"max_prs", s.prCap(),
+	)
+}
+
+// capOrAll maps the kick_limits "0 = unlimited" convention onto a count.
+func capOrAll(limit, total int) int {
+	if limit <= 0 {
+		return total
+	}
+	return limit
+}
+
 // prListOverflowLine is the explicit marker appended when a PR list was cut
 // at the cap, so the agent knows the list is partial rather than complete —
 // a silent slice would read as "these are all the PRs".
@@ -442,59 +462,44 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 	if len(elideOpt) > 0 {
 		elideStuffed = elideOpt[0]
 	}
-	// Hold-gated PRs are deliberately absent from actionable.PRs: fetchPRs moves
-	// them into actionable.Hold as soon as it sees the hold label. Wrap every
-	// resolution path here so config templates, repo-sourced prompts, embedded
-	// defaults, hardcoded fallbacks, scheduled kicks, and manual kicks all see
-	// the same occupied-ground preflight. A template-only fix would leave stale
-	// operator overrides vulnerable indefinitely (kubestellar/hive#4744).
+	return s.buildAgentMessageFor(agentName, "", false, issues, actionable, elideStuffed)
+}
+
+// kickIncludesRepos reports whether the agent's kick carries the AUTHORIZED
+// REPOS block (`include_repos`, default on; outreach defaults off).
+func (s *Scheduler) kickIncludesRepos(agentName string) bool {
+	if agentCfg, ok := s.cfg.Agents[agentName]; ok {
+		return agentCfg.ShouldIncludeRepos()
+	}
+	if agentCfg, ok := s.cfg.Agents[s.cfg.BaseAgentName(agentName)]; ok {
+		return agentCfg.ShouldIncludeRepos()
+	}
+	return s.cfg.BaseAgentName(agentName) != "outreach"
+}
+
+// buildAgentMessageFor resolves the kick body through the template chain and
+// then hands it to assembleKick, which wraps EVERY resolution path — config
+// templates, repo-sourced prompts, embedded defaults, hardcoded fallbacks,
+// scheduled kicks, and manual kicks — in the same post-resolution seams. A
+// template-only fix would leave stale operator overrides vulnerable
+// indefinitely (kubestellar/hive#4744), so no seam may live in a policy file.
+//
+// repo is the cadence target of a repo-scoped kick ("" otherwise) and
+// includeRepos whether the AUTHORIZED REPOS block is rendered; both are
+// semi-static and are placed by assembleKick. elideStuffed is the task MCP
+// drop_stuffed_context decision: the work lists render as refs only and the
+// MCP pointer says so.
+func (s *Scheduler) buildAgentMessageFor(agentName, repo string, includeRepos bool, issues []github.Issue, actionable *github.ActionableResult, elideStuffed bool) (message, idleReason string) {
 	defer func() {
-		message = s.addHeldPRCoordination(agentName, actionable, message)
-		message = s.addGuideFlow(agentName, actionable, message)
-		// Formal verification is an operator-enabled quality capability, not a
-		// property of one particular prompt file. Inject its contract after
-		// template resolution so local edits, remote prompts, replicas, scheduled
-		// kicks, and manual kicks cannot accidentally omit it.
-		message = s.addFormalQualityCapability(agentName, message)
-		// Fix-before-new: an agent with red PRs of its own must see them —
-		// with the CI evidence — ahead of any new work. Injected at the same
-		// post-resolution seam as the held-PR preflight so no template path
-		// can omit it (kubestellar/hive#4744): observed live on
-		// kubestellar/console (2026-08-26), ten red split-PRs each had exactly
-		// one commit — kicks kept spawning NEW PRs while the reaper's
-		// re-engagements aged every red SHA to its cap unfixed.
-		message = s.addRedPRFixFirst(agentName, message)
-		// Same shape of problem, same seam (hivecommons/hive#7360): a PR this
-		// agent opened is stuck behind unresolved external review-bot threads
-		// and needs a push + in-thread replies before any new work.
-		message = s.addReviewThreadFixFirst(agentName, message)
-		// PR follow-up handoff (hivecommons/hive#9583, default off): the
-		// reasoning behind the agent's own PRs with open follow-ups, for the
-		// fresh session this kick starts.
-		message = s.addPRFollowUpHandoff(agentName, message)
-		// Non-GitHub work source: tell the agent how the tracker half of its
-		// policy maps onto Linear (identity, auth, filing, PR linking, hold).
-		// Same seam, same reason — a customized template cannot omit it.
-		message = s.addWorkTrackerSection(message)
-		// Items a live session already holds were dropped from the list
-		// above; say so at the same seam so a customized template cannot
-		// leave the agent wondering where its delegated issue went.
-		message = s.addInflightNote(message, issues)
-		// The workflow-push ceiling is a property of the agent's MODE, not of
-		// its policy text, and no policy path can state it correctly for every
-		// deployment — so it is stated here, at the same seam, for the one mode
-		// that has it (#6681).
-		message = s.addWorkflowPushCeiling(agentName, message)
-		message = s.addTaskMCPPointer(message, elideStuffed)
-		message = s.addQuestionAnswerContract(agentName, message, issues)
-		message = addGovernorWorkSourceRule(message)
-		// The start signal (hive/in-progress) is a property of how the hive
-		// tracks work, not of any one policy file, so it is stated here for
-		// every kick that lists issues — a customized template cannot omit it.
-		message = addInProgressClaimRule(message, issues)
-		if idleReason == "" {
-			message = addConcreteKickClosingInstruction(message)
-		}
+		message = s.assembleKick(kickAssembly{
+			agent:        agentName,
+			repo:         repo,
+			includeRepos: includeRepos,
+			issues:       issues,
+			actionable:   actionable,
+			idleReason:   idleReason,
+			elideStuffed: elideStuffed,
+		}, message)
 	}()
 
 	baseName := s.cfg.BaseAgentName(agentName)
@@ -603,16 +608,13 @@ func (s *Scheduler) buildAgentMessage(agentName string, issues []github.Issue, a
 	}
 }
 
-const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments."
+const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work — these are blocked by the hive proxy for agents and only waste a turn. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments. Prefer the compact form `hive-gh pr view <n>` / `hive-gh pr checks <n>` / `hive-gh issue view <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions; issue comments still come from `gh issue view <n> --comments`); add `--full` only when you need the complete record."
 
 func addGovernorWorkSourceRule(message string) string {
 	if message == "" || strings.Contains(message, governorWorkSourceRule) {
 		return message
 	}
-	if newline := strings.IndexByte(message, '\n'); newline >= 0 {
-		return message[:newline+1] + "\n" + governorWorkSourceRule + "\n" + message[newline+1:]
-	}
-	return governorWorkSourceRule + "\n" + message
+	return insertAfterKickHeader(message, governorWorkSourceRule)
 }
 
 // inProgressClaimRule tells the agent to mark the issue it is about to

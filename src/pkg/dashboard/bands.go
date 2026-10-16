@@ -13,6 +13,9 @@ import (
 const (
 	defaultStaleDays = 14
 	hoursPerDay      = 24
+	// goodFirstIssueLabel mirrors gfi.Label (asserted equal in gfi_test.go);
+	// kept local so pkg/dashboard does not import pkg/gfi.
+	goodFirstIssueLabel = "good first issue"
 )
 
 var (
@@ -161,6 +164,9 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	}
 	if labels["epic"] {
 		signals = append(signals, Signal{Glyph: "◆", Label: "epic"})
+	}
+	if labels[goodFirstIssueLabel] {
+		signals = append(signals, Signal{Glyph: "🌱", Label: "good first issue — curated for new contributors"})
 	}
 	if inProgress {
 		signals = append(signals, Signal{Glyph: "👤", Label: "assigned or claimed"})

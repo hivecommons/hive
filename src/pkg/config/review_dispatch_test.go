@@ -67,3 +67,34 @@ func TestValidateReviewEventDispatch(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingReviewTTL(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"", DefaultPendingReviewTTL},
+		{"0", DefaultPendingReviewTTL},
+		{"garbage", DefaultPendingReviewTTL},
+		{"20m", 20 * time.Minute},
+		{" 2h ", 2 * time.Hour},
+		{"-1s", -time.Second},
+	}
+	for _, tc := range cases {
+		if got := (ReviewConfig{PendingTTL: tc.raw}).PendingReviewTTL(); got != tc.want {
+			t.Fatalf("PendingReviewTTL(%q) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+	if err := (ReviewConfig{PendingTTL: "garbage"}).ValidatePendingReviewTTL(); err == nil {
+		t.Fatal("ValidatePendingReviewTTL accepted a non-duration")
+	}
+	if err := (ReviewConfig{PendingTTL: "45m"}).ValidatePendingReviewTTL(); err != nil {
+		t.Fatalf("ValidatePendingReviewTTL rejected 45m: %v", err)
+	}
+	if got := (ReviewConfig{}).EffectiveMaxRedispatch(); got != DefaultMaxRedispatch {
+		t.Fatalf("EffectiveMaxRedispatch() = %d, want %d", got, DefaultMaxRedispatch)
+	}
+	if got := (ReviewConfig{MaxRedispatch: 5}).EffectiveMaxRedispatch(); got != 5 {
+		t.Fatalf("EffectiveMaxRedispatch(5) = %d", got)
+	}
+}

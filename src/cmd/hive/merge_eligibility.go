@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
@@ -66,6 +67,90 @@ func trustedAuthorPolicyFunc(cfg *config.Config) func() automerge.TrustedAuthorP
 			ExcludeLabels:           excludeLabels,
 		}
 	}
+}
+
+// contributorLanePolicyFunc reads auto_merge.contributor_lane.* through cfg
+// on every call so a config reload takes effect without a restart.
+func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorLanePolicy {
+	return func() automerge.ContributorLanePolicy {
+		if cfg == nil {
+			return automerge.ContributorLanePolicy{}
+		}
+		p := cfg.AutoMerge.ContributorLane
+		return automerge.ContributorLanePolicy{
+			Enabled:                 p.IsEnabled(),
+			HiveID:                  cfg.HiveID,
+			Soak:                    time.Duration(p.EffectiveSoakMinutes()) * time.Minute,
+			RequireReviewerVerdict:  p.EffectiveRequireReviewerVerdict(),
+			Repos:                   p.RepoSet(),
+			ExcludeLabels:           p.ExcludeLabelSet(),
+			RequireTiers:            p.RequireTierSet(),
+			RegistryTiersSufficient: p.EffectiveRegistryTiersSufficient(),
+		}
+	}
+}
+
+// contributorRegistryTierFunc answers the contributor-lane registry
+// admission path from the contributor registry on the hive's PVC
+// (dashboard.ContributorTrustTierByLogin), so an operator-granted trusted
+// tier admits a contributor's PR without a linked issue or claim marker.
+func contributorRegistryTierFunc() automerge.ContributorRegistryTierFunc {
+	return dashboard.ContributorTrustTierByLogin
+}
+
+// contributorLaneReviewerConfigured reports whether any enabled, unpaused
+// agent is a reviewer under the dispatcher's own rule (review.ReviewCapable).
+// With no reviewer the contributor-lane tier skips (contributor-lane:
+// no-reviewer, #12041): nobody can produce a verdict, so those PRs wait for a
+// human instead of merging unreviewed.
+func contributorLaneReviewerConfigured(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	allowed := review.ReviewerAgentSet(cfg.Review.ReviewerAgents)
+	for name, ac := range cfg.EnabledAgents() {
+		if ac.Paused || ac.OnDemand {
+			continue
+		}
+		cap := review.AgentCapability{
+			Name: name, Enabled: true, Role: ac.Role,
+			LaneKeywords: ac.LaneKeywords, DetectKeywords: ac.DetectKeywords, Aliases: ac.Aliases,
+		}
+		if review.ReviewCapable(cap, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+// contributorLaneVerdictFunc answers the contributor-lane reviewer gate from
+// the same durable review-verdicts.json the merge-eligibility gate reads
+// (review.Artifact.HasAggregateApproval). An unreadable artifact with a
+// reviewer configured fails closed: Configured=true, Approved=false.
+func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automerge.ContributorLaneVerdictFunc {
+	return func(repo string, number int, headSHA string) automerge.ContributorLaneVerdict {
+		if !contributorLaneReviewerConfigured(cfg) {
+			return automerge.ContributorLaneVerdict{}
+		}
+		artifact, err := review.LoadArtifact("")
+		if err != nil {
+			if logger != nil {
+				logger.Warn("contributor-lane verdict gate: review-verdicts.json unavailable; failing closed", "error", err)
+			}
+			return automerge.ContributorLaneVerdict{Configured: true}
+		}
+		approved := artifact.HasAggregateApproval(repo, number, headSHA)
+		return automerge.ContributorLaneVerdict{Configured: true, Approved: approved, Verdict: contributorLaneVerdictText(artifact, repo, number, headSHA)}
+	}
+}
+
+func contributorLaneVerdictText(artifact review.Artifact, repo string, number int, headSHA string) string {
+	for _, item := range artifact.Items {
+		if item.Number == number && strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) && strings.TrimSpace(item.HeadSHA) == strings.TrimSpace(headSHA) {
+			return string(item.Verdict)
+		}
+	}
+	return ""
 }
 
 func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func(repo, login string) github.SentinelAuthorTrust {
@@ -297,10 +382,7 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	// intent.Verdict.BlocksMerge is the one shared refusal predicate; the
 	// App self-merge sweep gates on the same function (#6258).
 	if v, ok := g.intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]; ok && v.BlocksMerge(g.enforceIntent) {
-		reason := v.Reason
-		if v.Authorized && v.Alignment != nil && v.Alignment.Misaligned() {
-			reason = intent.ReasonAlignmentMisaligned + ": " + v.Alignment.Rationale
-		}
+		reason := v.BlockReason()
 		return mergeBucketSkip, blockedOrOutstanding("intent verification: " + reason), reason
 	}
 
@@ -791,6 +873,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		if intentReason != "" {
 			iv := intentVerdicts[fmt.Sprintf("%s/%d", fullRepo, pr.Number)]
 			logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", iv.Tier, "reason", intentReason)
+		}
+		if bucket == mergeBucketEligible {
+			recordIntentShadow(cfg, logger, enforceIntent, intentVerdicts, pr, fullRepo, time.Now())
 		}
 		row := failingPR{
 			Number:          pr.Number,

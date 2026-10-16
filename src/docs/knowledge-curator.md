@@ -443,6 +443,7 @@ knowledge:
     min_confidence: 0.0             # drop facts classified below this
     target_layer: personal          # primer layer for the synth vault
     max_facts_per_cycle: 0          # 0 = unlimited
+    max_api_calls_per_cycle: 40     # cap on charged PR GETs per cycle
     vault_path: /data/vaults/bead-synth-wiki
     retention_policy:
       max_beads: 5000
@@ -457,6 +458,7 @@ knowledge:
 | `min_confidence` | Facts whose heuristic classification confidence (`ClassifyBead`, `bead_synthesizer.go:254`, emits 0.5–0.8) falls below this are skipped. Default `0.0` — everything classifiable is ingested. |
 | `target_layer` | Layer the synth vault is registered at with the primer; empty defaults to `personal` (`main.go:2525-2528`). |
 | `max_facts_per_cycle` | Cap per synthesis cycle after dedup; `0` means unlimited (`bead_synthesizer.go:223-226`). |
+| `max_api_calls_per_cycle` | Cap on charged `GET /pulls/{n}` calls per synthesis cycle; default `40`. PR GETs are conditional (`If-None-Match`, ETag and body kept across cycles), so a `304` reuses the cached PR. The `HIVE_BEAD_SYNTH_MAX_API_CALLS` env var overrides this (`0` = unlimited). |
 | `vault_path` | Defaults to `/data/vaults/bead-synth-wiki`; the directory is created and auto-connected as vault `bead-synth-wiki` (`main.go:2510-2522`). |
 
 `retention_policy` drives a bead lifecycle manager that archives old beads —
@@ -472,6 +474,54 @@ without the key** — set it explicitly whenever you write the block.
 Runtime status and toggle: `GET /api/knowledge/bead-synthesizer` and
 `PUT /api/knowledge/bead-synthesizer/enabled` (owner-only) — see
 [api-reference.md](api-reference.md).
+
+## Kick primer size cap (`knowledge.primer.max_bytes`)
+
+`knowledge.primer.max_facts` (default 25) bounds how many facts a kick may
+receive; `knowledge.primer.max_bytes` (default 4096, minimum 512) bounds
+how many bytes the rendered `# Relevant Knowledge` block may take
+(`pkg/knowledge/primer_render.go`). Facts are visited in the primer's rank
+order (type priority, then confidence) and each is kept only if its whole
+entry — title, confidence, source link and body — fits the remaining
+budget. A fact that does not fit is **dropped whole, never clipped
+mid-body**, and later, smaller facts are still considered, so one long fact
+cannot suppress everything ranked after it. Context7 "Available
+Documentation" hints follow the same rule.
+
+When anything was dropped the block ends with a visible one-line marker,
+`_… truncated: N facts / M bytes omitted (size cap)._` (the same
+`… truncated:` prefix the code map uses), and the scheduler logs
+`knowledge primer: dropped facts over the byte cap` with the counts and the
+cap, so a cap that is too tight for the vault is visible in the kick and in
+the log rather than silently thinning what agents are told.
+
+```yaml
+knowledge:
+  primer:
+    max_facts: 25
+    max_bytes: 4096        # 0 = default; values under 512 are raised to 512
+```
+
+### Context7 content cap
+
+The Context7 llms.txt body a document import or the `context7` connector
+fetches is bounded the same way before it is stored (`CapContext7Content`
+in `pkg/knowledge/context7.go`). The body is split into Context7's snippet
+blocks (or paragraphs for plain prose), snippets are ranked by how many
+query/topic terms they mention, and each is kept only if it is within the
+per-snippet cap and fits the remaining total; dropped snippets are dropped
+whole and the content ends with `… truncated: N snippets / M bytes omitted
+(size cap)`. Kept snippets stay in source order. The fetch logs
+`context7: dropped snippets over the content cap` naming the library.
+
+| Env var | Default | Meaning |
+| --- | --- | --- |
+| `HIVE_CONTEXT7_MAX_SNIPPETS` | 40 | Snippets kept per fetch. |
+| `HIVE_CONTEXT7_MAX_SNIPPET_BYTES` | 4096 | A single snippet larger than this is dropped. |
+| `HIVE_CONTEXT7_MAX_TOTAL_BYTES` | 16384 | Total content kept, marker included; minimum 1024. |
+
+Unparseable or non-positive overrides fall back to the default rather than
+to no cap.
 
 ## Repository code maps (`knowledge.code_maps`)
 
@@ -514,6 +564,9 @@ body is capped at `max_bytes` (default 16 KiB, minimum 1 KiB); individual
 entries are clipped to 240 bytes; the walk stops after 20,000 files and the
 map says it is partial. Dropped entries or sections are replaced by a
 `… truncated:` marker line, always at the same point for the same input.
+
+The same whole-entry-or-nothing rule bounds what the kick primer renders —
+see [Kick primer size cap](#kick-primer-size-cap-knowledgeprimermax_bytes).
 
 **Storage and scoping.** Maps are written to
 `<vault_path>/codemaps/codemap-<repo>.md` as `type: reference`,

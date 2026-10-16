@@ -21,16 +21,19 @@ The machine-readable schema is [`pkg/evidence/schema/v1.json`](../pkg/evidence/s
 | `schema_version` | Always `v1` for this schema. |
 | `id` | `owner/repo#number@headSHA`. |
 | `repo`, `number` | The repository (`owner/name`) and PR number. |
-| `author` | `login` and `kind` (`human`, `agent` or `bot`). |
+| `author` | `login` and `kind` (`human`, `agent` or `bot`). An `agent` author also carries `agent`, `backend` and `model`: the launch metadata the hive recorded when that agent opened the PR (the same values as the PR's attribution trailer); a field the hive did not know is omitted ([#12065](https://github.com/hivecommons/hive/issues/12065)). |
 | `base_sha`, `head_sha` | The commits the PR compares. The bundle is about `head_sha`. |
 | `previous_bundle_id` | The bundle for the previous head of this PR, if any. |
 | `policy` | Snapshot of the policy in force (below). |
 | `verdicts` | Every reviewer verdict (below). |
 | `posted_reviews` | Reviews Hive posted on the PR: `url`, `head`, `at`. |
-| `ci` | Check runs for the head: `checks[]` (`name`, `conclusion`, `url`) and `captured_at`. |
+| `ci` | CI for the head: `status` (the merge gate's verdict, `success`, `failure` or `pending`; absent on bundles written before it was captured), `checks[]` (`name`, `conclusion`, `url`) and `captured_at`. |
 | `sentinel` | Why the sentinel sweep flagged the PR, if it did: `rule`, `summary`, `paths`. |
 | `human_actions` | Approvals, label changes, hold lifts: `actor`, `kind`, `detail`, `at`. |
 | `merge` | Present once merged: `actor`, `method`, `at`, `sha`. Absent before merge. |
+| `revert_of`, `followup_of` | Bundle ids of earlier merged PRs this PR reverts or follows up with a fix (see [Change-failure links](#change-failure-links)). |
+| `reverted_by`, `followed_up_by` | Bundle ids of later PRs that reverted or followed up this one. |
+| `shadow` | Optional. What shadow-mode gates would have done, recorded only: `review_gate` (`would_have_held`) and `intent` (`would_have_blocked`), each with `reason`, `tier`, `confidence` and `evaluated_at`. Absent unless a shadow gate ran; it never affects a merge ([#12103](https://github.com/hivecommons/hive/issues/12103)). |
 | `created_at`, `updated_at` | When the bundle was first written and last completed. |
 | `signed` | `true` only when a valid signing key produced `signature`. |
 | `hash` | Hex SHA-256 of the canonical encoding (see below). |
@@ -66,15 +69,26 @@ The review relay writes them whenever it records a validated verdict (with or wi
 - Later writes append to `verdicts` and `posted_reviews`. A verdict identical to one already recorded (ignoring `recorded_at`), or a review URL already listed, is not added again, and a pass that adds nothing leaves the file untouched, so re-running the relay never duplicates entries. A changed verdict from the same perspective is kept beside the earlier one.
 - Every write recomputes `hash`, and signs when `evidence.signing_key_file` is set. Files are written then renamed, so a reader never sees a partial bundle. An existing bundle that cannot be parsed is left untouched rather than replaced.
 - When the sentinel sweep flags a PR, its findings (`rule`, `summary`, sorted `paths`) are added to `sentinel` in the bundle for the flagged head. If the relay has not written that head yet, the sweep starts the bundle from the PR it already listed. A finding already recorded is not added again.
-- When the PR merges, before the merge event is sealed in, Hive captures `ci` from GitHub: the latest check run per check name for the bundle's head, with its conclusion (or its status, such as `in_progress`, if it had not finished) and URL. It also captures `human_actions` from the PR's reviews and issue events: `approval` (an approving review of this head, or any approval since the bundle was created; `detail` is the review URL), `label_added`, `label_removed`, and `hold_lift` (a hold label removed); `detail` is the label name. Label changes count only from the bundle's `created_at`. Bot and App accounts, including Hive's own, are left out; their writes are in the hive audit log. Each capture is best-effort: if GitHub cannot be read, a warning is logged, that field stays empty, and the merge is still recorded. A replayed merge changes nothing.
+- Each time Hive evaluates a head's merge eligibility, it stores the CI gate's verdict as `ci.status` with the latest check runs and `captured_at` on the head's existing bundle. The bundle is rewritten only when the verdict or a check name or conclusion changed (check URLs alone do not count), so an unchanged verdict does not churn the hash; a merged bundle is never touched. When the PR merges, before the merge event is sealed in, Hive refreshes `ci` from GitHub, keeping the eligibility-time `status`: the latest check run per check name for the bundle's head, with its conclusion (or its status, such as `in_progress`, if it had not finished) and URL. It also captures `human_actions` from the PR's reviews and issue events: `approval` (an approving review of this head, or any approval since the bundle was created; `detail` is the review URL), `label_added`, `label_removed`, and `hold_lift` (a hold label removed); `detail` is the label name. Label changes count only from the bundle's `created_at`. Bot and App accounts, including Hive's own, are left out; their writes are in the hive audit log. Each capture is best-effort: if GitHub cannot be read, a warning is logged, that field stays empty, and the merge is still recorded. A replayed merge changes nothing.
+- When the merged PR's title or body references an earlier PR of the same repo, the two bundles are linked; see [Change-failure links](#change-failure-links).
 - A finding reported against the PR as a whole, with no file, is recorded with `path` `(pr)`. A verdict's `confidence` is that perspective's own 0 to 5 review confidence score divided by 5.
 - `evidence.enabled: false` stops new writes. Failures are logged and never fail or retry the review itself.
 
 Nothing prunes bundles automatically; they stay until an operator removes them. Reads follow the same retention contract as `/api/runs/audit`: a bundle Hive can prove existed (its PR directory is still there, or a newer bundle's `previous_bundle_id` names it) is reported with an explicit `expired` marker, never as silent absence.
 
+### Change-failure links
+
+A proxy for the change failure rate, not a verdict on any change ([#12067](https://github.com/hivecommons/hive/issues/12067)). When a PR merges, Hive scans its title and body for a keyword followed by `#N` or `owner/repo#N` (optionally `PR #N` / `pull request #N`) in the same repository:
+
+- **Revert:** `revert`, `reverts`, `reverting`, `revert of` (GitHub's Revert button writes `Reverts owner/repo#N`).
+- **Follow-up fix:** `fix`, `fixes`, `fixed`, `follow-up to|of|for` (also `followup`, `follow up`), `regression from|in|of`.
+
+A PR named both ways counts as a revert. A referenced number is linked only when its newest merged bundle records a merge in the 14 days before this one, so issue numbers and PRs Hive never reviewed link nothing. The merging bundle gets `revert_of` / `followup_of` (bundle ids) before it is sealed; then each linked bundle gets `reverted_by` / `followed_up_by` naming it and is re-sealed (and re-signed), so its `hash` differs from the one in its own merge comment. Commit messages are not scanned. A replayed merge adds nothing, and failures are logged and never affect the merge.
+
 ## Downloading
 
 - **API:** `GET /api/review/evidence?repo=<owner/repo>&number=<n>[&head=<sha>][&format=json|zip]` for owner/merger roles. The default is the bundle for the PR's latest head; `head` takes a full SHA or a unique prefix of at least 7 characters (409 if it matches more than one). `format=json` returns the bundle bytes exactly as stored, so its hash and signature verify offline; add `download=1` for an attachment. `format=zip` returns `bundle.json`, `verdicts.json` (the matching verdict reports), `review-links.json` (the PR's review-links slice) and `manifest.json` (SHA-256 of each file, plus the signing public key when the bundle is signed and the key is readable). A missing bundle is a 404 whose body has `status: "expired"` and `expired: true` when retention removed it, otherwise `status: "not_found"`. `GET /api/review/evidence/list?repo=&number=` lists every retained bundle id and head for the PR.
+- **Aggregate:** `GET /api/evidence/summary` reports read-only aggregates over stored bundles, including per-tier proxy `write_counters` (`{attempted, blocked}`, omitted when the counter file is absent); see [API reference](api-reference.md).
 - **Dashboard:** owners get an **Evidence** button on Review Queue rows and Pipeline cards. It opens a modal with the bundle id, head, hash, whether it is signed, the verdict count and merge status, and **Download JSON** / **Download ZIP** buttons.
 - **CLI:** `hivectl review evidence <owner/repo#n> [--head <sha>] [-o FILE] [--zip]` prints or saves the bundle, and `hivectl review evidence verify FILE [--pubkey KEY]` checks it offline (see [hivectl](hivectl.md#review--review-evidence)).
 - **On the PR:** when a PR merges through any Hive merge path, the merge event is added to the head's bundle (re-signed) and Hive posts one comment:
@@ -123,3 +137,12 @@ A push changes `head_sha`, so earlier verdicts no longer describe the code. Hive
 ## Not covered
 
 A bundle shows what Hive recorded. It does not prove who a reviewer's identity is, does not make the operator's policy accept automated review, and is not a compliance claim of any kind.
+
+## Monthly complexity snapshot (report-only)
+
+`pkg/evidence/complexity` writes one maintainability snapshot per repo per
+month to `/data/evidence/<org>/<repo>/complexity/<YYYY-MM>.json`: Go
+cyclomatic complexity (total, mean, max, functions over a threshold, top
+hotspots) plus static-analysis finding counts per tool. An existing month is
+never overwritten. It is report-only and never blocks a merge (RFC #12062,
+#12072); it feeds the dashboard maintainability panel and the study.

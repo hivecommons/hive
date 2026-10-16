@@ -792,6 +792,7 @@ var publicExactPaths = map[string]struct{}{
 	"/components.css":          {},
 	ssoHandoffPath:             {},
 	"/tokens.css":              {},
+	spokeWidgetSummaryPath:     {},
 }
 
 var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot"}
@@ -853,6 +854,16 @@ func isSaaSPublicPath(originalURI string) bool {
 // here simply lets that check run at all. It is the same class of fix as
 // #4050 (/api/v1) and #7453 (/api/contribute/me).
 const knowledgeExportPath = "/api/knowledge/export"
+
+// spokeWidgetSummaryPath is the spoke's read-only phone-widget endpoint
+// (#12147). The iPhone widget calls it with no browser session, so the hub's
+// nginx auth_request gate must wave it through, exactly like
+// knowledgeExportPath. This does NOT open it to anonymous callers: the spoke
+// admits the request only with a hub session, the shared token, or the
+// owner-minted widget token (sent in X-Hive-Widget-Token, never in
+// Authorization, so the hub never forwards it to GitHub); anything else is a
+// 401.
+const spokeWidgetSummaryPath = "/api/widget/summary"
 
 // publicKnowledgeMCPPath is the spoke's owner-switched, read-only MCP
 // knowledge endpoint (#10615). External agents (Goose, Claude, Copilot) reach

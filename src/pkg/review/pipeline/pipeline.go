@@ -330,6 +330,13 @@ func Derive(in Inputs) Card {
 		card.Since = earliestDispatch(pendingReviews)
 		card.Reasons = append(card.Reasons, fmt.Sprintf("%d review perspective(s) dispatched for the current head", len(pendingReviews)))
 		card.NextAction = NextAction{Kind: ActionWait, Label: "Wait for reviewers", URL: pr.URL}
+	case current != nil && current.Verdict == review.VerdictIncomplete:
+		// Delivered perspectives all approved; the rest have not reported
+		// and the dispatcher will re-ask for them. Still reviewing, not held.
+		card.Stage = StageReviewing
+		card.Since = current.RecordedAt
+		card.Reasons = append(card.Reasons, current.Reasons...)
+		card.NextAction = NextAction{Kind: ActionWait, Label: "Wait for the missing perspectives", URL: pr.URL}
 	default:
 		card.Stage = StageUnreviewed
 		card.Since = pr.CreatedAt

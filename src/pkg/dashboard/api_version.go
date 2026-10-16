@@ -145,8 +145,15 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 			resp["behind"] = false
 			resp["commitsBehind"] = 0
 		} else if targetImageReady {
-			resp["behind"] = true
-			if count, ok := s.commitsBehindStableTip(versionHash, target.SHA); ok {
+			// A differing target is not necessarily newer: right after a
+			// channel promotion the hub's cached target can lag the commit
+			// the spoke already runs. Offering an upgrade then only earns a
+			// "not armed — already at target" refusal from the hub, so treat
+			// a zero-commit distance as up to date, mirroring the hub's
+			// commitAtOrAheadOfTarget check.
+			count, ok := s.commitsBehindStableTip(versionHash, target.SHA)
+			resp["behind"] = !ok || count > 0
+			if ok {
 				resp["commitsBehind"] = count
 			}
 		} else {

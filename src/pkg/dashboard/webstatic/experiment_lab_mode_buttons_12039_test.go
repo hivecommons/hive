@@ -20,7 +20,6 @@ func TestStaticExperimentLabModeButtonsWiring(t *testing.T) {
 	html := string(body)
 	for _, want := range []string{
 		`const NOUS_MODES = ['observe', 'suggest', 'evolve'];`,
-		`const NOUS_SCOPES = ['governor', 'repo', 'both'];`,
 		`const NOUS_OWNER_ONLY_TITLE = `,
 		`function nousCanChangeMode() {`,
 		`return dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');`,
@@ -29,9 +28,7 @@ func TestStaticExperimentLabModeButtonsWiring(t *testing.T) {
 		`function nousRefreshTrustLadder(mode) {`,
 		// Section segmented controls: shared handler, role-gated, pressed state.
 		`data-action="nousSetMode" data-mode="${m}"${canSetNous ? '' : ' disabled'}`,
-		`data-action="nousSetScope" data-scope="${sc}"`,
 		`aria-pressed="${m === mode}"`,
-		`aria-pressed="${sc === scope}"`,
 		// Trust Ladder steps are real buttons dispatching the same handler.
 		`<button type="button" class="nous-trust-step${isCurrent ? ' current' : ''}"`,
 		`data-action="nousSetMode" data-mode="${step.id}" data-color="${step.color}"`,
@@ -49,10 +46,13 @@ func TestStaticExperimentLabModeButtonsWiring(t *testing.T) {
 	if strings.Contains(html, `<div class="nous-trust-step`) {
 		t.Fatalf("Trust Ladder steps must be buttons, not inert divs")
 	}
-	// The dispatcher keeps routing both actions to the shared handlers.
+	// The dispatcher keeps routing the mode action to the shared handler;
+	// the scope selector is gone — the lab is repo-only (#12207).
+	if strings.Contains(html, `nousSetScope`) {
+		t.Fatalf("scope selector must be gone: the Experiment Lab is repo-only (#12207)")
+	}
 	for _, want := range []string{
 		`case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;`,
-		`case 'nousSetScope': nousSetScope(el.dataset.scope || el.dataset.arg0); break;`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("data-action dispatcher missing %q", want)

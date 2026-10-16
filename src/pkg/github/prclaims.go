@@ -102,7 +102,17 @@ const (
 	ClaimLedgerPath = "/data/pr-claims.json"
 
 	// CoveredByPRLabel marks an open issue with an API-verified open PR relation.
-	CoveredByPRLabel = "hive/covered-by-pr"
+	// The bee replaced the `hive/covered-by-pr` spelling (hivecommons/hive#11888)
+	// so the issue list carries hive's own glyph next to GitHub's PR icon.
+	CoveredByPRLabel = "🐝 covered by PR"
+	// LegacyCoveredByPRLabel is the pre-#11888 spelling. Readers accept both
+	// during the transition; EnsureCoveredByPRLabel renames it in place on the
+	// first sweep so existing issues keep the label without per-issue writes.
+	LegacyCoveredByPRLabel = "hive/covered-by-pr"
+	// CoveredByPRLabelColor is the hive-amber label colour.
+	CoveredByPRLabelColor = "f5a623"
+	// CoveredByPRLabelDescription is the label description hive creates it with.
+	CoveredByPRLabelDescription = "Hive verified that an open PR references or claims this issue; still actionable until confirmed"
 	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
 	// that is not yet a resolved/closed issue.
 	LikelyDoneLabel = "hive/likely-done"
@@ -383,6 +393,16 @@ func (c IssueClaim) Key() string {
 
 func claimKey(repo string, issue int) string {
 	return fmt.Sprintf("%s#%d", repo, issue)
+}
+
+// referencesIssue reports whether refs names repo#issue.
+func referencesIssue(refs []ClaimedRef, repo string, issue int) bool {
+	for _, ref := range refs {
+		if ref.Issue == issue && strings.EqualFold(ref.Repo, repo) {
+			return true
+		}
+	}
+	return false
 }
 
 // closingKeywords is GitHub's full set of issue-closing keywords. Matching is
@@ -751,8 +771,17 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	// branch as issue-423 / fix-issue-423 / 423-some-slug, so the
 	// head ref recovers the link. Only consulted when the body and
 	// title yielded nothing, so an explicit `Fixes #N` always wins.
+	//
+	// The branch-name claim is itself overruled by an explicit non-closing
+	// reference to the same issue (hivecommons/hive#12144): a PR on
+	// `feat/12005-push` whose body says `Refs #12005 (partial)` is the
+	// author declining to close the issue, and the heuristic must not turn
+	// that into a strong claim — which is what let SyncIssuePRClaimLabels
+	// give #12025 a GitHub closing link onto #12005 and arm auto-close on
+	// merge. The issue falls through to the reference tier below instead.
+	referencedRefs := ParseReferencedIssues(text, repo)
 	if len(refs) == 0 {
-		if n, ok := issueFromBranchName(headRef(pr)); ok {
+		if n, ok := issueFromBranchName(headRef(pr)); ok && !referencesIssue(referencedRefs, repo, n) {
 			refs = []ClaimedRef{{Repo: repo, Issue: n}}
 			refsAreClosing = false
 		}
@@ -781,7 +810,7 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 		strong[claimKey(ref.Repo, ref.Issue)] = true
 	}
 	var referenced []ClaimedRef
-	for _, ref := range ParseReferencedIssues(text, repo) {
+	for _, ref := range referencedRefs {
 		if !strong[claimKey(ref.Repo, ref.Issue)] {
 			referenced = append(referenced, ref)
 		}
@@ -964,6 +993,9 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 					ObservedAt:  mergedAt,
 					Actor:       mergedBy,
 					Attribution: prTerminalMergeAttribution(mergedBy, identity, c.appBotLogin),
+					CreatedAt:   pr.GetCreatedAt().Time,
+					URL:         pr.GetHTMLURL(),
+					Issues:      mergedPRClosingIssues(pr, repo, owner+"/"+repoName),
 				})
 				prClaims := claimsFromPR(pr, repo, identity, now)
 				history = append(history, prHistoryFromClaims(prClaims, PRStateMerged, now)...)
@@ -1674,7 +1706,7 @@ func linkedPRFromClaim(c IssueClaim) IssueLinkedPR {
 	if c.MergedPR {
 		state = "merged"
 	}
-	return IssueLinkedPR{Number: c.PRNumber, Repo: c.PRRepo, State: state, Merged: c.MergedPR, URL: c.PRURL, Closing: c.Closing}
+	return IssueLinkedPR{Number: c.PRNumber, Repo: c.PRRepo, State: state, Merged: c.MergedPR, URL: c.PRURL, Closing: c.Closing, Reference: c.Reference}
 }
 
 func issueHasLabel(labels []string, label string) bool {
@@ -1721,7 +1753,7 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 		issue.LinkedPRs = append(issue.LinkedPRs, link)
 	}
 	if claim.MergedPR {
-		issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+		issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		if issueHasLabel(issue.Labels, VerifiedOpenLabel) || issueHasLabel(issue.Labels, PartiallyAddressedLabel) {
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
 		} else {
@@ -1754,7 +1786,7 @@ func annotateIssueReopenedAfterMerge(issue *Issue, claim IssueClaim) {
 	if !seen {
 		issue.LinkedPRs = append(issue.LinkedPRs, link)
 	}
-	issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+	issue.Labels = removeCoveredByPRLabel(issue.Labels)
 	issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
 	cc := claimContext(claim, ClaimDecisionReopenedAfterMerge)
 	cc.MergedPR = false
@@ -1923,6 +1955,42 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			continue
 		}
 		coveredWanted := ok && claim.PRNumber > 0 && !claim.MergedPR
+		if coveredWanted && (claim.PRRepo == "" || strings.EqualFold(claim.PRRepo, issue.Repo)) {
+			// Every claim that earns the covered-by-PR label also gets its
+			// Development-sidebar link (hivecommons/hive#11888), whether the
+			// PR was opened by the hive-open-pr relay or outside it, and
+			// whether its claim came from a closing keyword or the branch
+			// name. The one exception is a Reference claim ("Refs #N",
+			// "Part of #N"): a closing link makes GitHub close the issue
+			// when the PR merges, which is exactly what the author declined
+			// and what close-on-merge's partially_addressed path exists to
+			// prevent, so the label alone is the right signal there. The
+			// client memoises each linked pair and never memoises a
+			// failure, so this costs one GraphQL query per new claim and
+			// retries a failed pair on the next tick.
+			//
+			// A Reference claim also has any closing link the hive itself
+			// made for the pair retracted (hivecommons/hive#12144): the
+			// body may have said `Closes #N` when the link was made, or an
+			// earlier sweep graded the claim as strong, and either way the
+			// link now arms exactly the auto-close the author declined.
+			// Links made by anyone else are left alone and logged.
+			if claim.Reference {
+				if res, err := client.RetractHiveClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
+					logger.Warn("retracting hive closing link on reference-only PR failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+				} else if res.Retracted && logger != nil {
+					logger.Info("retracted hive closing link: PR only references the issue, so merging it must not close the issue", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
+				} else if res.Skipped == "not-hive-linked" && logger != nil {
+					logger.Warn("reference-only PR carries a closing link the hive did not make; leaving it in place", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "linked_by", res.LinkedBy)
+				} else if logger != nil {
+					logger.Debug("not linking issue to reference-only PR; a closing link would auto-close the issue on merge", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber)
+				}
+			} else if res, err := client.EnsureClosingIssueLink(ctx, issue.Repo, claim.PRNumber, issue.Number); err != nil && logger != nil {
+				logger.Warn("linking issue to covering PR failed; will retry next sweep", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "error", err)
+			} else if res.Linked && logger != nil {
+				logger.Info("linked issue to covering PR so the issue list shows it", "repo", issue.Repo, "issue", issue.Number, "pr", claim.PRNumber, "base", res.Base, "closing_claim", claim.Closing)
+			}
+		}
 		verifiedOpen := issueHasLabel(originalLabels, VerifiedOpenLabel)
 		if verifiedOpen {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, VerifiedOpenLabel, VerifiedOpenLabelColor, VerifiedOpenLabelDescription); err != nil && logger != nil {
@@ -1931,16 +1999,24 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		}
 		likelyWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
 		if coveredWanted {
-			if err := client.EnsureIssueLabel(ctx, issue.Repo, CoveredByPRLabel, "1d76db", "Hive verified that an open PR references or claims this issue; still actionable until confirmed"); err != nil && logger != nil {
+			if err := client.EnsureCoveredByPRLabel(ctx, issue.Repo); err != nil && logger != nil {
 				logger.Warn("ensuring covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			} else if HasCoveredByPRLabel(originalLabels) {
+				// Already carried (under either spelling after the in-place
+				// rename); re-adding would only spend a write.
 			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{CoveredByPRLabel}); err != nil && logger != nil {
 				logger.Warn("adding covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
-		} else if issueHasLabel(originalLabels, CoveredByPRLabel) {
-			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, CoveredByPRLabel); err != nil && logger != nil {
-				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+		} else if HasCoveredByPRLabel(originalLabels) {
+			for _, name := range []string{CoveredByPRLabel, LegacyCoveredByPRLabel} {
+				if !issueHasLabel(originalLabels, name) {
+					continue
+				}
+				if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, name); err != nil && logger != nil {
+					logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "label", name, "error", err)
+				}
 			}
-			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+			issue.Labels = removeCoveredByPRLabel(issue.Labels)
 		}
 		if likelyWanted {
 			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && logger != nil {

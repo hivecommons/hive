@@ -257,6 +257,12 @@ func TestContributeTriageRenderMarkup(t *testing.T) {
 	if ops < 0 || card <= ops || (lb >= 0 && card >= lb) {
 		t.Errorf("triage card is not inside the Operations panel (ops=%d card=%d lb=%d)", ops, card, lb)
 	}
+
+	mainCol := strings.Index(body, `id="ops-main-column"`)
+	wideCol := strings.Index(body, `id="ops-wide-region"`)
+	if mainCol < 0 || wideCol < 0 || card <= mainCol || card >= wideCol {
+		t.Errorf("triage card is not in the Operations center column (main=%d card=%d wide=%d)", mainCol, card, wideCol)
+	}
 }
 
 // TestContributeTriageEndpoint hits the JSON endpoint and asserts it returns the

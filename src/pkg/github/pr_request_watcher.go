@@ -670,7 +670,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Body: body, Handoff: req.Handoff, Issues: append([]int(nil), req.IssueN...)})
 	}
 	// The PR supersedes the hive/in-progress start mark on the issues it
-	// names; the PR-claim sync mirrors hive/covered-by-pr next enumeration.
+	// names; the PR-claim sync mirrors the covered-by-PR label next enumeration.
 	c.clearInProgressForPR(ctx, req.Repo, req.IssueN)
 	c.recordWriteAudit(AuditActionAgentPRCreated, meta,
 		WriteTarget{Repo: req.Repo, Number: res.Number},

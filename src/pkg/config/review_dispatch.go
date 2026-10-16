@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,11 @@ const (
 	// MaxReviewEventDebounceS bounds review.event_debounce_s; anything longer
 	// is slower than a typical governor cadence and defeats the purpose.
 	MaxReviewEventDebounceS = 3600
+	// DefaultPendingReviewTTL matches review.DefaultPendingReviewTTL;
+	// duplicated here to avoid a config→review import cycle.
+	DefaultPendingReviewTTL = 45 * time.Minute
+	// DefaultMaxRedispatch matches review.DefaultMaxRedispatch.
+	DefaultMaxRedispatch = 3
 )
 
 // ReviewEventDrivenEnabled reports whether pull_request webhooks may trigger
@@ -43,6 +49,42 @@ func (r ReviewConfig) ValidateReviewEventDispatch() error {
 	if r.EventDebounceS < 0 || r.EventDebounceS > MaxReviewEventDebounceS {
 		return fmt.Errorf("review: event_debounce_s %d out of range (0-%d; 0 means the %ds default)",
 			r.EventDebounceS, MaxReviewEventDebounceS, DefaultReviewEventDebounceS)
+	}
+	return nil
+}
+
+// PendingReviewTTL is review.pending_ttl as a duration. Unset, "0" or an
+// unparsable value means DefaultPendingReviewTTL; a negative duration is
+// returned as-is and the planner reads it as "never expire".
+func (r ReviewConfig) PendingReviewTTL() time.Duration {
+	raw := strings.TrimSpace(r.PendingTTL)
+	if raw == "" {
+		return DefaultPendingReviewTTL
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d == 0 {
+		return DefaultPendingReviewTTL
+	}
+	return d
+}
+
+// EffectiveMaxRedispatch resolves review.max_redispatch.
+func (r ReviewConfig) EffectiveMaxRedispatch() int {
+	if r.MaxRedispatch <= 0 {
+		return DefaultMaxRedispatch
+	}
+	return r.MaxRedispatch
+}
+
+// ValidatePendingReviewTTL rejects a review.pending_ttl that is not a Go
+// duration string.
+func (r ReviewConfig) ValidatePendingReviewTTL() error {
+	raw := strings.TrimSpace(r.PendingTTL)
+	if raw == "" {
+		return nil
+	}
+	if _, err := time.ParseDuration(raw); err != nil {
+		return fmt.Errorf("review: pending_ttl %q is not a duration (e.g. 45m); unset means the default %s", r.PendingTTL, DefaultPendingReviewTTL)
 	}
 	return nil
 }

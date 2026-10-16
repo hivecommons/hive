@@ -232,10 +232,18 @@ func (c *Client) recordReviewEvidence(ctx context.Context, req ReviewRequest, re
 // untouched, so re-running the relay never duplicates entries or churns the
 // hash.
 func (c *Client) upsertReviewEvidence(repo string, number int, head string, u reviewEvidenceUpdate, policy evidence.Policy, key ed25519.PrivateKey, fetchPR func() *gh.PullRequest, now time.Time) {
+	path := ReviewEvidencePath("", repo, number, head)
+	// fetchPR is a GitHub GET and memoized, so a bundle that has to be started
+	// fetches here, before reviewEvidenceMu is taken: the merge-eligibility
+	// poll loop (recordReviewEvidenceCI) takes the same lock and must not wait
+	// on the network. A bundle that appears meanwhile only costs a spare fetch.
+	if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
+		fetchPR()
+	}
+
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
 
-	path := ReviewEvidencePath("", repo, number, head)
 	b, err := LoadReviewEvidence(path)
 	switch {
 	case err == nil:
@@ -404,12 +412,14 @@ func (c *Client) reviewEvidencePolicy(p evidence.Policy) evidence.Policy {
 
 // evidenceAuthor classifies the PR author. A PR the audit log records as
 // opened by one of this hive's agents is "agent" even though GitHub shows the
-// App bot as its author; any other bot account is "bot".
+// App bot as its author, and carries the agent, backend and model that audit
+// entry recorded at launch; any other bot account is "bot".
 func evidenceAuthor(repo string, number int, user *gh.User) evidence.Author {
 	login := strings.TrimSpace(user.GetLogin())
+	if m := auditAuthorMetaForPR(repo, number, reviewVerdictAuditPath, time.Now().UTC().Add(-reviewVerdictAuditLookback)); m.Agent != "" {
+		return evidence.Author{Login: login, Kind: evidence.AuthorAgent, Agent: m.Agent, Backend: m.Backend, Model: m.Model}
+	}
 	switch {
-	case auditAuthorAgentForPR(repo, number, reviewVerdictAuditPath, time.Now().UTC().Add(-reviewVerdictAuditLookback)) != "":
-		return evidence.Author{Login: login, Kind: evidence.AuthorAgent}
 	case strings.EqualFold(user.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]"):
 		return evidence.Author{Login: login, Kind: evidence.AuthorBot}
 	default:

@@ -2400,6 +2400,10 @@ const CONTAINER_NAME = process.env.HIVE_CONTAINER_NAME || 'hive-contributor';
 //     every podman operator a command that fails. It defaults to docker, so a
 //     bare-docker launch prints exactly what it printed before.
 const CONTAINER_RUNTIME = process.env.HIVE_CONTAINER_RUNTIME || 'docker';
+// HIVE_ISOLATION_CLASS — the isolation class the LAUNCHER names, e.g.
+// "microvm-krun" for a krun launch (#12200). The relay never detects it from
+// inside the container; unset means nothing is declared.
+const ISOLATION_CLASS = (process.env.HIVE_ISOLATION_CLASS || '').trim();
 const ATTACH_COMMAND = process.env.HIVE_CONTAINER_NAME
   ? `${CONTAINER_RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t ${TMUX_SESSION}`
   : `tmux attach -t ${TMUX_SESSION}`;
@@ -2433,6 +2437,9 @@ function detectCapabilities() {
     } catch (_) { /* not installed */ }
   }
   caps.container_runtime = runtime;
+  // Isolation class (#12200): passed in by the launcher, declared verbatim,
+  // display-only on the hub. Omitted entirely when the launcher set none.
+  if (ISOLATION_CLASS) caps.isolation_class = ISOLATION_CLASS;
   // Credential type: the KIND of GitHub credential the relay authenticates with
   // (never the credential itself). App-token cache present → "app"; an explicit
   // GH_TOKEN/GITHUB_TOKEN in the environment → "pat"; otherwise leave unset.

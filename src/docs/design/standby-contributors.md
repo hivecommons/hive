@@ -80,7 +80,7 @@ phase map stays small.
   selection already used to build kicks. Per-lane queue depth is a count over
   work the scheduler already computes.
 - **The tier vocabulary.** `RotationConfig.AgentTiers`
-  (`src/pkg/config/provider_rotation.go:68`) already spells T1/T2/T3 in `hive.yaml`. It
+  (`src/pkg/config/provider_rotation.go:72`) already spells T1/T2/T3 in `hive.yaml`. It
   maps *agent names*, not models — so standby borrows the vocabulary and needs
   its own mapping (below).
 - **The relay's configuration report.** `auth_response` already carries

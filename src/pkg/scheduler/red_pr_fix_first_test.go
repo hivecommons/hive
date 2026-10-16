@@ -126,8 +126,8 @@ func TestAddRedPRFixFirst_Injection(t *testing.T) {
 	if !strings.Contains(msg, "FIX-BEFORE-NEW") {
 		t.Fatalf("scanner kick missing fix-before-new section:\n%s", msg)
 	}
-	if !strings.HasPrefix(msg, "[agent:scanner]\n\n## 🔴 FIX-BEFORE-NEW") {
-		t.Errorf("section must land directly below the kick header:\n%s", msg[:min(len(msg), 120)])
+	if !strings.HasPrefix(msg, "[agent:scanner]\nWORK LIST\n\n## 🔴 FIX-BEFORE-NEW") {
+		t.Errorf("section must land in the dynamic tail after the body (#12125):\n%s", msg[:min(len(msg), 120)])
 	}
 
 	if got := s.addRedPRFixFirst("advisor", "[agent:advisor]\nADVISORY\n"); strings.Contains(got, "FIX-BEFORE-NEW") {

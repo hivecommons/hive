@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/nousstore"
@@ -51,12 +52,37 @@ func nousPrinciplesForPanel(in []nousstore.Principle) []dashboard.NousPrinciple 
 // wireNousKnowledge attaches a live reader over layout's governor dir (with
 // legacyDir as the read-only fallback) to state and performs the initial
 // load, so the boot snapshot and every later request come from one path.
+// The same reader backs the reset store so a knowledge reset can drop its
+// cache (RFC #11585, POST /api/nous/reset).
 func wireNousKnowledge(state *dashboard.NousState, layout nousstore.Layout, legacyDir string, logger *slog.Logger) {
+	wireNousKnowledgeWith(state, layout, legacyDir, logger, time.Now)
+}
+
+func wireNousKnowledgeWith(state *dashboard.NousState, layout nousstore.Layout, legacyDir string, logger *slog.Logger, now func() time.Time) {
 	if state == nil {
 		return
 	}
-	state.KnowledgeStore = nousKnowledgeStore{reader: layout.KnowledgeReader(legacyDir), logger: logger}
+	reader := layout.KnowledgeReader(legacyDir)
+	state.KnowledgeStore = nousKnowledgeStore{reader: reader, logger: logger}
+	state.ResetStore = nousResetStore{layout: layout, reader: reader, now: now}
 	if err := state.SyncKnowledge(); err != nil && logger != nil {
 		logger.Warn("nous: ledger/principles unreadable at boot", "error", err)
 	}
+}
+
+// nousResetStore adapts nousstore's reset operation to the dashboard's
+// NousResetStore seam. A knowledge reset also drops the live reader's
+// cache so the next load re-reads the emptied files.
+type nousResetStore struct {
+	layout nousstore.Layout
+	reader *nousstore.KnowledgeReader
+	now    func() time.Time
+}
+
+func (r nousResetStore) Reset(scope dashboard.NousResetScope) (dashboard.NousResetCounts, error) {
+	res, err := r.layout.Reset(nousstore.ResetScope{Baseline: scope.Baseline, Knowledge: scope.Knowledge, Gates: scope.Gates}, r.now())
+	if scope.Knowledge && r.reader != nil {
+		r.reader.Invalidate()
+	}
+	return dashboard.NousResetCounts{Snapshots: res.Snapshots, LedgerEntries: res.LedgerEntries, Principles: res.Principles}, err
 }

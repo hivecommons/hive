@@ -79,7 +79,7 @@ func (s *HubServer) patchHeartbeatFallbackDirectly(hive *SaaSHive, cluster *Clus
 	if cluster == nil || !cluster.KubectlReachable() {
 		return fmt.Errorf("cluster is not kubectl-reachable")
 	}
-	image := fmt.Sprintf("ghcr.io/%s:%s", ghcrRepoSpoke, shortSHA(target))
+	image := heartbeatFallbackDirectPatchImage(hive, target)
 	if err := validateImageRef(image); err != nil {
 		return err
 	}
@@ -103,6 +103,21 @@ func (s *HubServer) patchHeartbeatFallbackDirectly(hive *SaaSHive, cluster *Clus
 		return fmt.Errorf("kubectl patch deployment image failed: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// heartbeatFallbackDirectPatchImage is the image the direct Deployment patch
+// rolls the spoke onto. A hive that tracks a release channel is re-pulled on
+// its channel tag rather than pinned to the target's SHA tag: the delivery-time
+// guard in the heartbeat handler has already aimed the target at the commit the
+// channel carries, and a SHA tag would read as channel drift on the next beat,
+// so the tracked-channel re-arm would roll the pod a second time just to switch
+// back to the channel tag (#12108).
+func heartbeatFallbackDirectPatchImage(hive *SaaSHive, target string) string {
+	tag := shortSHA(target)
+	if hive != nil && isReleaseChannel(hive.TrackedChannel) {
+		tag = hive.TrackedChannel
+	}
+	return fmt.Sprintf("ghcr.io/%s:%s", ghcrRepoSpoke, tag)
 }
 
 func hostedDeploymentImagePatch(rawDeployment []byte, image string, at time.Time) (string, error) {

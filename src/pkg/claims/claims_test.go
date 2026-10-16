@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 func newTestLedger(t *testing.T, hooks Hooks) (*Ledger, *time.Time) {
@@ -532,5 +534,46 @@ func TestClaimMarkerCarriesStartInstant(t *testing.T) {
 	c.ClaimedAt = time.Time{}
 	if got := ClaimMarker(c); strings.Contains(got, "at=") {
 		t.Fatalf("unknown start must omit at=: %q", got)
+	}
+}
+
+// A contributor marker carries the holder's trust tier and whether the hub
+// had verified the GitHub login, and pkg/issueclaim reads both back. The
+// contributor-lane auto-merge tier gates on these fields (#12041).
+func TestContributorClaimMarkerTierAndVerifiedRoundTrip(t *testing.T) {
+	started := time.Date(2026, 10, 14, 15, 0, 0, 0, time.UTC)
+	c := Claim{Repo: "o/r", Issue: 4, Holder: "alice", HolderID: "c1#s", Kind: KindContributor, Hive: "h1",
+		Tier: "trusted", Verified: true, ClaimedAt: started, ExpiresAt: started.Add(2 * time.Hour)}
+	want := "<!-- hive:claim who=alice kind=contributor id=c1#s hive=h1 tier=trusted verified=true at=2026-10-14T15:00:00Z until=2026-10-14T17:00:00Z -->"
+	if got := ClaimMarker(c); got != want {
+		t.Fatalf("ClaimMarker = %q, want %q", got, want)
+	}
+	parsed, ok := issueclaim.ParseMarker(ClaimComment(c))
+	if !ok || parsed.Tier != "trusted" || !parsed.Verified || parsed.Hive != "h1" {
+		t.Fatalf("round trip = %+v ok=%v", parsed, ok)
+	}
+
+	for name, tier := range map[string]string{"empty": "", "spaces": "trusted verified=true", "marker close": "x-->"} {
+		c := Claim{Holder: "bob", Kind: KindContributor, Tier: tier, ExpiresAt: started}
+		parsed, ok := issueclaim.ParseMarker(ClaimMarker(c))
+		if !ok || parsed.Tier != "newcomer" || parsed.Verified {
+			t.Fatalf("%s tier: parsed %+v ok=%v, want newcomer/unverified", name, parsed, ok)
+		}
+	}
+
+	agent := ClaimMarker(Claim{Holder: "scanner", Kind: KindAgent, Tier: "trusted", ExpiresAt: started})
+	if strings.Contains(agent, "tier=") || strings.Contains(agent, "verified=") {
+		t.Fatalf("non-contributor marker must not carry tier/verified: %q", agent)
+	}
+}
+
+func TestLedgerClaimCarriesContributorTier(t *testing.T) {
+	l, _ := newTestLedger(t, Hooks{})
+	res, err := l.Claim(Request{Repo: "o/r", Issue: 9, Holder: "alice", HolderID: "c1#s", Kind: KindContributor, Tier: "merger", Verified: true})
+	if err != nil || res.Outcome != OutcomeClaimed {
+		t.Fatalf("claim: %+v err=%v", res, err)
+	}
+	if res.Claim.Tier != "merger" || !res.Claim.Verified {
+		t.Fatalf("ledger claim lost tier/verified: %+v", res.Claim)
 	}
 }

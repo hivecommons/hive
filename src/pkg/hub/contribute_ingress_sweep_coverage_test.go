@@ -82,10 +82,16 @@ func TestReconcileContributeIngressPatchesDriftedSpoke(t *testing.T) {
 func TestReconcileContributeIngressConvergedIsNoOp(t *testing.T) {
 	t.Setenv("HIVE_HUB_PUBLIC_URL", contributeSweepHubURL)
 	s := netAdminSweepServer(t)
-	// hive-terminal's set is a superset of hive-contribute's, so one document
-	// carrying it converges both reads the fake kubectl serves.
-	converged := string(liveIngressJSON(t,
-		terminalIngressAuthAnnotations(contributeSweepHubURL, "hosted-ok-ci02")))
+	// One document carrying the union of every target's set converges both
+	// reads the fake kubectl serves (hive-terminal adds auth-signin,
+	// hive-contribute adds the #12111 error-interception pair).
+	union := map[string]string{}
+	for _, target := range gatedIngressTargets() {
+		for k, v := range target.want(contributeSweepHubURL, "hosted-ok-ci02") {
+			union[k] = v
+		}
+	}
+	converged := string(liveIngressJSON(t, union))
 	logPath := installNetAdminKubectl(t, converged, 0, 0)
 	if err := saveSaaSHive(&SaaSHive{ID: "hosted-ok-ci02", Status: "assigned"}); err != nil {
 		t.Fatal(err)

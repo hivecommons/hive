@@ -201,6 +201,12 @@ type ContributorCapabilities struct {
 	// CredentialType names the kind of credential the relay authenticates GitHub
 	// with (e.g. "app", "pat", "oauth"), NOT the credential itself. Advisory.
 	CredentialType string `json:"credential_type,omitempty"`
+	// IsolationClass names the isolation the contributor's LAUNCHER chose, e.g.
+	// "microvm-krun" for a krun microVM launch (#12200). The relay passes on what
+	// the launcher set and never detects it. Unlike the runtime, OS, arch,
+	// credential and backend fields it is DISPLAY-ONLY: task selection and
+	// admission never read it (ContributorCanRunTask ignores it).
+	IsolationClass string `json:"isolation_class,omitempty"`
 	// Pi readiness is a four-stage, machine-readable declaration (#5039). Auth
 	// deliberately distinguishes configured_unverified from verified: a key or
 	// auth-file entry is configuration, not proof that a provider accepted it.
@@ -217,7 +223,7 @@ type ContributorCapabilities struct {
 func (c ContributorCapabilities) IsZero() bool {
 	return c.ContainerRuntime == "" && c.OS == "" && c.Arch == "" &&
 		c.AgentCLIVersion == "" && c.RelayProtocolVersion == "" && c.CredentialType == "" &&
-		len(c.RelayCapabilities) == 0 &&
+		c.IsolationClass == "" && len(c.RelayCapabilities) == 0 &&
 		c.PiBinary == "" && c.PiConfiguration == "" && c.PiAuthentication == "" && c.PiInvocation == ""
 }
 
@@ -253,6 +259,7 @@ func (c ContributorCapabilities) Sanitized() ContributorCapabilities {
 		RelayProtocolVersion: sanitizeCapabilityField(c.RelayProtocolVersion),
 		RelayCapabilities:    sanitizeCapabilityTokens(c.RelayCapabilities),
 		CredentialType:       sanitizeCapabilityField(c.CredentialType),
+		IsolationClass:       sanitizeCapabilityField(c.IsolationClass),
 		PiBinary:             sanitizeCapabilityField(c.PiBinary),
 		PiConfiguration:      sanitizeCapabilityField(c.PiConfiguration),
 		PiAuthentication:     sanitizeCapabilityField(c.PiAuthentication),
@@ -451,9 +458,17 @@ func TaskRequirementsFromLabels(labels []string) ContributorTaskRequirements {
 // requirements. Unknown always fits for backward compatibility; only an explicit
 // contradictory declaration excludes the client.
 func ContributorCanRunTask(caps *ContributorCapabilities, cliBackend string, req ContributorTaskRequirements) bool {
-	if req.IsZero() || caps == nil || caps.IsZero() {
+	if req.IsZero() || caps == nil {
 		return true
 	}
+	// The isolation class is display-only (#12200): a declaration that carries
+	// only it is still "declared nothing" for the fit decision.
+	fit := *caps
+	fit.IsolationClass = ""
+	if fit.IsZero() {
+		return true
+	}
+	caps = &fit
 	if req.ContainerRuntime != "" {
 		have := strings.ToLower(strings.TrimSpace(caps.ContainerRuntime))
 		want := strings.ToLower(req.ContainerRuntime)

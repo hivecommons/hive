@@ -90,10 +90,15 @@ if (sorted[0].name !== 'scanner' || sorted[1].name !== 'outreach') throw new Err
 const summary = agentsSectionSummary(sorted);
 if (!summary.includes('1 on') || !summary.includes('1 disabled')) throw new Error('summary should count only enabled agent as on and append disabled count: ' + summary);
 `
-	cmd := exec.Command("node", "-e", script)
-	out, err := cmd.CombinedOutput()
+	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Fatalf("node renderAgents fixture failed: %v\n%s", err, out)
+		t.Log("node not on PATH — the renderAgents fixture was NOT executed by this run; the structure checks below still ran")
+	} else {
+		cmd := exec.Command(node, "-e", script)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("node renderAgents fixture failed: %v\n%s", err, out)
+		}
 	}
 	renderBody := jsFunc(t, html, "renderAgents")
 	for _, snippet := range []string{

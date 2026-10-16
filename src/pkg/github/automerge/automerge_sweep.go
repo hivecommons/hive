@@ -71,12 +71,29 @@ type Options struct {
 	// PRs the self-authored sweep merges alongside the App's own (see
 	// config.AutoMergeConfig.TrustedBotAuthors). nil means App-only.
 	TrustedBotAuthors func() map[string]bool
+	// BotTakeoverEnabled returns the live auto_merge.bot_takeover.enabled
+	// switch: re-author a trusted github-actions[bot] PR whose
+	// `pull_request` checks can never run (#12003). nil means off.
+	BotTakeoverEnabled func() bool
 	// TrustedAuthorPolicy returns the live, operator opt-in policy for the
 	// human-authored tier. nil or disabled means the tier is off.
 	TrustedAuthorPolicy func() TrustedAuthorPolicy
 	// TrustedAuthorizer reports whether a PR author holds the policy's required
 	// authorized-users role. nil fails closed.
 	TrustedAuthorizer TrustedAuthorizer
+	// ContributorLanePolicy returns the live contributor-lane tier policy
+	// (auto_merge.contributor_lane.*). nil means the tier is off.
+	ContributorLanePolicy func() ContributorLanePolicy
+	// ContributorLaneVerdict reports the reviewer verdict for a PR head. nil
+	// means no reviewer is configured, which satisfies the verdict gate.
+	ContributorLaneVerdict ContributorLaneVerdictFunc
+	// ContributorRegistryTier looks up a PR author's operator-set trust tier
+	// in this hive's contributor registry for the contributor-lane registry
+	// admission path. nil means only the claim-marker path admits.
+	ContributorRegistryTier ContributorRegistryTierFunc
+	// ContributorSoak overrides the process-wide soak tracker. nil shares
+	// the package default so one-shot engines still soak across ticks.
+	ContributorSoak *ContributorSoakTracker
 	// SentinelLabel returns the configured sentinel alert label. The label also
 	// travels through the transport's hold-label set, but the sweep names this
 	// skip distinctly so operators can tell a sentinel block from an ordinary
@@ -114,8 +131,13 @@ type Engine struct {
 	selfAuthorizationHoldReleaseLimit int
 	repoAutoMergeEnabled              func(repo string) bool
 	trustedBotAuthors                 func() map[string]bool
+	botTakeoverEnabledFn              func() bool
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
 	trustedAuthorizer                 TrustedAuthorizer
+	contributorLanePolicy             func() ContributorLanePolicy
+	contributorRegistryTier           ContributorRegistryTierFunc
+	contributorLaneVerdict            ContributorLaneVerdictFunc
+	contributorSoak                   *ContributorSoakTracker
 	sentinelLabel                     func() string
 	minHeadAge                        time.Duration
 	now                               func() time.Time
@@ -153,8 +175,13 @@ func New(transport Transport, opts Options) *Engine {
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
 		repoAutoMergeEnabled:              opts.RepoAutoMergeEnabled,
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
+		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
 		trustedAuthorPolicy:               opts.TrustedAuthorPolicy,
 		trustedAuthorizer:                 opts.TrustedAuthorizer,
+		contributorLanePolicy:             opts.ContributorLanePolicy,
+		contributorLaneVerdict:            opts.ContributorLaneVerdict,
+		contributorRegistryTier:           opts.ContributorRegistryTier,
+		contributorSoak:                   opts.ContributorSoak,
 		sentinelLabel:                     opts.SentinelLabel,
 		minHeadAge:                        opts.MinHeadAge,
 		now:                               opts.Now,
@@ -163,6 +190,9 @@ func New(transport Transport, opts Options) *Engine {
 	}
 	if e.now == nil {
 		e.now = time.Now
+	}
+	if e.contributorSoak == nil {
+		e.contributorSoak = sharedContributorSoak
 	}
 
 	if e.mutation == nil {
@@ -213,6 +243,13 @@ func StartSelfAuthoredAutoMergeSweep(ctx context.Context, transport Transport, m
 
 func SweepTrustedAuthorAutoMerges(ctx context.Context, transport Transport, opts Options, sweepOpts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
 	return New(transport, opts).SweepTrustedAuthorAutoMerges(ctx, sweepOpts)
+}
+
+// SweepContributorLaneAutoMerges runs the contributor-lane tier on a one-shot
+// engine. Soak state is shared process-wide (see ContributorSoakTracker), so
+// a one-shot engine per tick still observes the soak.
+func SweepContributorLaneAutoMerges(ctx context.Context, transport Transport, opts Options, sweepOpts AutoMergeSweepOptions) (*AutoMergeSweepResult, error) {
+	return New(transport, opts).SweepContributorLaneAutoMerges(ctx, sweepOpts)
 }
 
 // selfMergeMinACMMLevel mirrors config.SelfMergeMinACMMLevel. It is duplicated
@@ -1031,7 +1068,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		close(done)
 		return done
 	}
-	if !acmmAllowed && !c.currentTrustedAuthorPolicy().Enabled {
+	if !acmmAllowed && !c.currentTrustedAuthorPolicy().Enabled && !c.currentContributorLanePolicy().Enabled {
 		level := "unset"
 		if acmmLevel != nil {
 			level = fmt.Sprintf("%d", *acmmLevel)
@@ -1086,6 +1123,25 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 						result.Skipped += trustedResult.Skipped
 						result.Candidates += trustedResult.Candidates
 						result.Merged = append(result.Merged, trustedResult.Merged...)
+					}
+				}
+				remaining = maxMerges
+				if remaining <= 0 {
+					remaining = DefaultAutoMergeSweepMaxMerges
+				}
+				remaining -= len(result.Merged)
+				if remaining > 0 && c.currentContributorLanePolicy().Enabled {
+					laneResult, laneErr := c.SweepContributorLaneAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining})
+					if laneErr != nil {
+						c.warn("contributor-lane automerge sweep failed", "error", laneErr)
+						if isRateLimited(laneErr) {
+							c.refreshRateLimitCache(ctx)
+						}
+					} else {
+						result.Seen += laneResult.Seen
+						result.Skipped += laneResult.Skipped
+						result.Candidates += laneResult.Candidates
+						result.Merged = append(result.Merged, laneResult.Merged...)
 					}
 				}
 				if next, changed := nextSelfAuthoredSweepInterval(repos, interval, result); changed {
@@ -1252,6 +1308,15 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
+	}
+	if !green {
+		// A trusted bot's dependency-bump head never gets the contexts its
+		// workflow skips by design (#12004); re-evaluate treating those as
+		// satisfied. Every other required check must still be green.
+		green, reason, err = c.recheckSkippedByDesign(ctx, displayRepo, owner, repo, baseBranch, pr, number, evaluatedHeadSHA, headPushedAt, reason)
+		if err != nil {
+			return AutoMergeSweepEvent{}, reason, err
+		}
 	}
 	if !green {
 		// A missing required check on a trusted-lane head may be a workflow
@@ -2239,14 +2304,21 @@ func (c *Engine) commitGreen(ctx context.Context, owner, repo, branch, sha strin
 }
 
 func (c *Engine) commitGreenForPR(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache) (bool, string, error) {
-	return c.commitGreenForPRWithServerEnforcement(ctx, owner, repo, branch, sha, prNumber, headPushedAt, expectedChecks, true)
+	return c.commitGreenForPRWith(ctx, owner, repo, branch, sha, prNumber, headPushedAt, expectedChecks, true, nil)
 }
 
 func (c *Engine) commitGreenForQueuedPR(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache) (bool, string, error) {
-	return c.commitGreenForPRWithServerEnforcement(ctx, owner, repo, branch, sha, prNumber, headPushedAt, expectedChecks, false)
+	return c.commitGreenForPRWith(ctx, owner, repo, branch, sha, prNumber, headPushedAt, expectedChecks, false, nil)
 }
 
-func (c *Engine) commitGreenForPRWithServerEnforcement(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache, serverEnforceUnknown bool) (bool, string, error) {
+// commitGreenForPRSkipping is commitGreenForPR with skippedByDesign: required
+// contexts the caller verified are skipped by their workflow on this head
+// (#12004), treated as satisfied rather than missing.
+func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache, skippedByDesign map[string]bool) (bool, string, error) {
+	return c.commitGreenForPRWith(ctx, owner, repo, branch, sha, prNumber, headPushedAt, expectedChecks, true, skippedByDesign)
+}
+
+func (c *Engine) commitGreenForPRWith(ctx context.Context, owner, repo, branch, sha string, prNumber int, headPushedAt time.Time, expectedChecks *expectedCheckCache, serverEnforceUnknown bool, skippedByDesign map[string]bool) (bool, string, error) {
 	// The walk itself lives in hgithub.EvaluateCommitCI so the merge-request
 	// watcher's positive-confirmation gate (#6173) evaluates a SHA with the
 	// identical rules; only the required-set precedence is engine-specific.
@@ -2276,6 +2348,7 @@ func (c *Engine) commitGreenForPRWithServerEnforcement(ctx context.Context, owne
 		UnknownRequiredChecksServerEnforced: serverEnforceUnknown && !requiredKnown,
 		RequiredKnownEmpty:                  positiveEvidenceGate,
 		RequireEvidence:                     !requiredKnown,
+		SkippedByDesign:                     skippedByDesign,
 		MinHeadAge:                          c.minHeadAge,
 		HeadPushedAt:                        headPushedAt,
 		Now:                                 c.now,

@@ -369,6 +369,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /access-denied", s.handleAccessDenied)
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
+	s.mux.HandleFunc("GET /api/hub/widget", s.requireAuth(s.handleHubWidget))
 	// Per-release image-pulls series, headline (active release line) plus
 	// per-line (external adoption gauge). requireAuth,
 	// not requireAdmin: any signed-in hub user sees the same public-adoption

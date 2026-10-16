@@ -875,6 +875,9 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	// daily after an instant upgrade earlier today would inherit a stale date
 	// and skip tonight's window.
 	h.AutoUpgradeLastFired = ""
+	// A hold recorded under the old setting no longer explains anything.
+	h.AutoUpgradeHoldReason = ""
+	h.AutoUpgradeHoldAt = time.Time{}
 	if err := saveSaaSHive(h); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
@@ -1046,6 +1049,15 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// v2 is what armed 0b78dc0 (a v2-only commit) at placeholders on a v4
 		// hub.
 		branch = s.upgradeBranchOrDefault(branch)
+		// Every gate below that turns away a daily/weekly hive while its window
+		// is open records WHY (#11196), so the spoke dashboard can explain a
+		// missed 13:00 window instead of only showing the previous upgrade.
+		holdNow := autoUpgradeHoldNow()
+		holdScheduled := func(reason string) {
+			if h.AutoUpgrade && scheduledUpgradeWindowOpen(h.AutoUpgradeMode, h.AutoUpgradeLastFired, holdNow) {
+				s.noteScheduledUpgradeHold(&h, reason, holdNow)
+			}
+		}
 		if alreadyUpgrading {
 			// Floating-tag convergence. A hive whose Deployment tracks a MUTABLE
 			// tag (…-latest) has no stable target commit: a restart re-pulls the
@@ -1237,6 +1249,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 				s.logger.Debug("not re-arming in-progress upgrade — hive cannot collect it",
 					"hive", h.ID, "target", upgradeTarget,
 					"last_heartbeat", orDash(lastHeartbeat))
+				holdScheduled("an earlier upgrade to " + upgradeTarget + " is still pending: " + uncollectibleUpgradeReason(lastHeartbeat))
 				continue
 			}
 			hiveCluster := s.clusterForHive(&h)
@@ -1249,6 +1262,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			}
 			s.logger.Debug("skipping target advance — upgrade still in progress",
 				"hive", h.ID, "current", currentSHA)
+			holdScheduled("an earlier upgrade to " + orDash(upgradeTarget) + " has not landed yet; a new upgrade starts only after it does")
 			continue
 		}
 		// Everything below STARTS a new upgrade, which only auto-upgrade hives
@@ -1263,6 +1277,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		if h.DigestPinned() {
 			s.logger.Debug("auto-upgrade skipped - hive is pinned to a digest",
 				"hive_id", h.ID, "digest", h.DigestPin.Digest, "pinned_by", h.DigestPin.By)
+			holdScheduled("the hive is pinned to an image digest; lift the pin to resume scheduled upgrades")
 			continue
 		}
 		// Claim-in-flight latch (#95). A placeholder that has just been ASSIGNED
@@ -1280,15 +1295,18 @@ func (s *HubServer) triggerAutoUpgrades() {
 		if assignmentInFlight(&h) {
 			s.logger.Debug("auto-upgrade deferred — claim in flight",
 				"hive_id", h.ID, "status", h.Status, "assigned_at", h.AssignedAt)
+			holdScheduled("the hive's claim is still being delivered; upgrades wait until it lands")
 			continue
 		}
 		decision := autoUpgradeDecision{Allowed: true, Reason: "not evaluated"}
 		// Skip hives that are actively provisioning or in error state.
 		// Empty status means the hive predates the provisioning system — treat as eligible.
 		if h.Status == "provisioning" || h.Status == "error" {
+			holdScheduled("the hive is in " + h.Status + " state on the hub")
 			continue
 		}
 		if currentSHA == "" {
+			holdScheduled("the hive has not reported its running commit to the hub")
 			continue
 		}
 		// Chase what the spoke can actually REACH: a release-channel spoke
@@ -1299,6 +1317,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// run (2026-09-25).
 		reach := s.reachableUpgradeTarget(branch, imageRef, h.TrackedChannel)
 		if !reach.Resolved {
+			holdScheduled("the hub could not resolve the :" + reach.Channel + " channel to a published commit")
 			continue
 		}
 		// Scheduling gate. Candidate-channel hives are canaries whose job is to
@@ -1312,7 +1331,12 @@ func (s *HubServer) triggerAutoUpgrades() {
 			continue
 		}
 		latestSHA := reach.SHA
-		if latestSHA == "" || sameCommit(currentSHA, latestSHA) {
+		if latestSHA == "" {
+			continue
+		}
+		if sameCommit(currentSHA, latestSHA) {
+			// Nothing is owed any more, so no hold is left to explain.
+			s.noteScheduledUpgradeHold(&h, "", holdNow)
 			continue
 		}
 		// A floating-tag spoke (restarted by hand, or a re-pull that landed
@@ -1320,6 +1344,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// latest. Arming "latest" then only debounces and rolls the pod for
 		// nothing — and shows it "Upgrading" to an older commit.
 		if commitAtOrAheadOfTarget(currentSHA, latestSHA, s.logger) {
+			s.noteScheduledUpgradeHold(&h, "", holdNow)
 			continue
 		}
 		// Per-hive cooldown (#11825): an instant hive that auto-upgraded less
@@ -1366,6 +1391,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 				"collapsed", debounce.State.Collapsed,
 				"debounce", autoUpgradeDebounceInterval(),
 				"reason", debounce.Reason)
+			holdScheduled("waiting for the target " + debounce.State.Target + " to stop moving before rolling (merge debounce)")
 			continue
 		}
 		if debounce.Collapsed > 0 {
@@ -1381,6 +1407,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		hiveCluster := s.clusterForHive(&h)
 		if hiveCluster == nil {
 			s.logger.Warn("auto-upgrade skipped — no cluster config", "hive_id", h.ID, "cluster_id", h.ClusterID)
+			holdScheduled("the hub has no cluster config for this hive")
 			continue
 		}
 		// Do not ARM an upgrade this hive cannot COLLECT. Delivery is PULL: the
@@ -1410,6 +1437,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 				"from", currentSHA, "would_have_targeted", latestSHA,
 				"last_heartbeat", orDash(lastHeartbeat), "reason", reason)
 			s.noteUncollectibleUpgrade(h.ID, latestSHA, reason)
+			holdScheduled(reason)
 			continue
 		}
 		// Wave gate — evaluated AFTER every eligibility check so a slot is
@@ -1420,6 +1448,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			s.logger.Debug("auto-upgrade deferred — cluster upgrade wave is full",
 				"hive_id", h.ID, "cluster", hiveCluster.ID,
 				"in_flight", upgradingByCluster[hiveCluster.ID], "wave_size", waveSize)
+			holdScheduled("the cluster's upgrade wave is full; the hive boards a later wave")
 			continue
 		}
 		upgradingByCluster[hiveCluster.ID]++
@@ -1451,6 +1480,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		// The hive is deliverable again — drop any suppressed-refusal memory so a
 		// future undeliverable episode is reported afresh rather than swallowed.
 		s.forgetUncollectibleUpgrade(h.ID)
+		s.noteScheduledUpgradeHold(&h, "", holdNow)
 		s.recordAutoUpgradeFired(&h, time.Now())
 		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID, "mode", normalizeAutoUpgradeMode(h.AutoUpgradeMode),
 			"schedule", effectiveAutoUpgradeSchedule(h.AutoUpgradeMode, reach.Channel), "reason", decision.Reason)

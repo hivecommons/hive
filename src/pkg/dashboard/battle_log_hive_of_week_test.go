@@ -47,7 +47,7 @@ func TestBattleLogDropsUnknownActions(t *testing.T) {
 	events := buildBattleLogEvents([]ActivityEntry{
 		{Timestamp: "2026-09-21T12:00:00Z", Username: "alice", Action: "failed", Task: "x"},
 		{Timestamp: "2026-09-21T12:01:00Z", Username: "", Action: "joined"},
-	}, 0)
+	}, 0, publicReposFromEnv())
 	if len(events) != 1 {
 		t.Fatalf("events = %+v, want only the joined event", events)
 	}
@@ -161,8 +161,11 @@ func TestHiveOfWeekPayloadDefaultsAndEscaping(t *testing.T) {
 	if resp.Project != hiveGourceDefaultProject || resp.Week != "2026-W39" || resp.ActivityCount != 3 {
 		t.Fatalf("defaults = %+v", resp)
 	}
-	if resp.VideoURL != defaultHiveOfWeekVideoURL || resp.PosterURL != defaultHiveOfWeekPosterURL {
-		t.Fatalf("media defaults = %+v", resp)
+	if resp.VideoURL != "" || resp.PosterURL != "" || resp.EmbedHTML != "" {
+		t.Fatalf("media must be empty when no render is configured: %+v", resp)
+	}
+	if strings.Contains(resp.ReadmeMarkdown, "![") {
+		t.Fatalf("readme must not embed a missing video: %q", resp.ReadmeMarkdown)
 	}
 	if resp.GourceLogURL != "/api/leaderboard/gource-log?project=hive&week=2026-W39" {
 		t.Fatalf("gource log url = %q", resp.GourceLogURL)
@@ -195,7 +198,7 @@ func TestValidPublicGourceProject(t *testing.T) {
 		"acme/wid gets":          false,
 	}
 	for project, want := range cases {
-		if got := validPublicGourceProject(project); got != want {
+		if got := validPublicGourceProject(project, publicReposFromEnv()); got != want {
 			t.Fatalf("validPublicGourceProject(%q) = %v, want %v", project, got, want)
 		}
 	}
@@ -307,7 +310,7 @@ func TestHiveOfWeekAPIRouteFallsBackToHiveWithoutActivity(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("json: %v", err)
 	}
-	if resp.Project != hiveGourceDefaultProject || resp.ActivityCount != 0 || resp.VideoURL != defaultHiveOfWeekVideoURL {
+	if resp.Project != hiveGourceDefaultProject || resp.ActivityCount != 0 || resp.VideoURL != "" {
 		t.Fatalf("resp = %+v", resp)
 	}
 }

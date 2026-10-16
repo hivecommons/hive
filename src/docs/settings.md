@@ -8,7 +8,7 @@ For the dashboard's other sections, see [Dashboard sections explained](dashboard
 
 ## General
 
-Hive-wide basics: the hive ID, the ACMM maturity level, how often the governor evaluates the hive, the fleet-wide default for explain mode, and whether agent-created PRs and issues carry an attribution trailer.
+Hive-wide basics: the hive ID, the ACMM maturity level, how often the governor evaluates the hive, the fleet-wide default for explain mode, and whether agent-created PRs and issues carry an attribution trailer. The **Eval loop pacing** block sets the eval-interval cap, the webhook-healthy interval, the conserve-mode multiplier, how often optional sweeps run and the provider spend-limit probe interval; a saved change applies from the next eval cycle. It also shows, read-only, whether the mode thresholds are pack-seeded or operator-owned.
 
 - ACMM levels and the agents each level runs: [ACMM levels](agent-configuration.md#acmm-levels-agent-rosters-as-packs).
 - Explain mode: [Explain mode](agent-configuration.md#explain-mode-debugging-agent-behaviour).
@@ -20,7 +20,7 @@ The issue and PR counts that move the governor between modes, and how those thre
 
 ## Labels
 
-Which labels hold, require, or route work, and the reporter-trust rules for outside PRs. See [Labels and control signals](labels-and-control-signals.md) and [Label policy](agent-configuration.md#label-policy-which-issues-agents-may-work).
+Which labels hold, require, or route work, the label the merger queue applies to queue a PR for auto-merge (applies after a restart), and the reporter-trust rules for outside PRs. See [Labels and control signals](labels-and-control-signals.md) and [Label policy](agent-configuration.md#label-policy-which-issues-agents-may-work).
 
 ## Repos
 

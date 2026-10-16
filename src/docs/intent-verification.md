@@ -47,6 +47,8 @@ Set `intent.alignment_model` to enable a second-model alignment reviewer. Hive r
 
 Model review fails open: endpoint, transport, or parse errors are recorded in the verdict but never block merge eligibility by themselves.
 
+Model verdicts are cached in a bounded in-memory LRU keyed by the PR head SHA and an *intent revision* (a hash of the authorized intent text, PR title, and PR body). An unchanged PR is not re-sent to the model on every governor tick; a new push or an edit to the linked issue or PR text invalidates the entry. The cache only ever replaces a model call with the model's own earlier answer for identical inputs — the deterministic verdict is never used to skip the model, however clean or ambiguous it looks. Hits are logged as `intent alignment review skipped reason=cached`, and a per-tick `intent alignment review cache` line reports cumulative hits/misses/size.
+
 ## Report-only vs enforce
 
 Intent verification is report-only by default. With no `intent:` block, Hive writes `/var/run/hive-metrics/intent-verdicts.json` and logs denials, but `merge-eligible.json` is unchanged.
@@ -61,6 +63,17 @@ intent:
 When enforcement is enabled, unauthorized agent-authored PRs are excluded from `/var/run/hive-metrics/merge-eligible.json`, so the merge relay denies them through the existing merge-eligible binding.
 
 A `misaligned` deterministic or model alignment verdict is treated the same as unauthorized when `intent.enforce: true`: the PR is excluded from `merge-eligible.json`. In report-only mode, Hive only records the verdict and creates an advisory bead describing the drift.
+
+### Shadow mode
+
+`intent.shadow` (default false) evaluates intent verification exactly as `enforce: true` would, without acting on it:
+
+```yaml
+intent:
+  shadow: true
+```
+
+While `enforce` is off, both merge lanes that share the refusal predicate — `merge-eligible.json` and the App self-merge sweep — compute the enforced verdict and record `shadow.intent.would_have_blocked` (with `reason`, `tier`, and `confidence`, the alignment model's confidence when it reported one, else 1) on the PR head's evidence bundle and in the log (`intent shadow gate`). In `merge-eligible.json` only PRs that are otherwise eligible are recorded. The self-merge sweep records an unavailable changed-file list as `would_have_blocked: true` with reason `intent-evidence`. Shadow never blocks a merge; with `enforce: true` it is ignored and enforcement behaves as above. Recording needs `evidence` enabled and an existing bundle for the head. The dashboard Settings → Security tab exposes the toggle.
 
 Optional pattern overrides:
 

@@ -790,6 +790,7 @@ a.nav-chip:active,
 .text-brand { color: var(--brand); }
 .text-accent { color: var(--accent); }
 .fw-semibold { font-weight: var(--fw-semibold); }
+.break-all { word-break: break-all; }
 .m-0 { margin: var(--sp-0); }
 .mb-0 { margin-bottom: var(--sp-0); }
 .mt-1 { margin-top: var(--sp-1); }

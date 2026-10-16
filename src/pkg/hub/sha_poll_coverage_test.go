@@ -36,7 +36,7 @@ func fakeGitHubGHCR(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 
 func waitForCommitOrderResolvers(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(commitCompareTimeout + 2*time.Second)
 	for {
 		commitOrderMu.Lock()
 		inFlight := len(commitOrderInFlight)

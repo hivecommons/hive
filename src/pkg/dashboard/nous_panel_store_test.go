@@ -25,7 +25,7 @@ func TestNousPanelConfigPersistsAcrossRestart(t *testing.T) {
 		body map[string]interface{}
 	}{
 		{"/api/nous/mode", map[string]interface{}{"mode": "suggest"}},
-		{"/api/nous/scope", map[string]interface{}{"scope": "both"}},
+		{"/api/nous/scope", map[string]interface{}{"scope": "repo"}},
 		{"/api/nous/config/goals", map[string]interface{}{"governor": "reduce MTTR"}},
 		{"/api/nous/config/schedule", map[string]interface{}{"cooldown_hours": 2}},
 	} {
@@ -38,8 +38,8 @@ func TestNousPanelConfigPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("PersistPanel called %d times, want one per mutating PUT", len(saved))
 	}
 	pc := saved[len(saved)-1]
-	if pc.Mode != "suggest" || pc.Scope != "both" {
-		t.Fatalf("persisted = %+v, want suggest/both", pc)
+	if pc.Mode != "suggest" || pc.Scope != "repo" {
+		t.Fatalf("persisted = %+v, want suggest/repo", pc)
 	}
 	if goals, _ := pc.Config["goals"].(map[string]interface{}); goals["governor"] != "reduce MTTR" {
 		t.Fatalf("persisted goals = %+v", pc.Config["goals"])
@@ -51,10 +51,10 @@ func TestNousPanelConfigPersistsAcrossRestart(t *testing.T) {
 	// "Restart": a defaults-only state picks the persisted values back up.
 	fresh := &NousState{Mode: "observe", Scope: "governor", Status: map[string]interface{}{"mode": "observe", "scope": "governor"}}
 	fresh.ApplyPanelConfig(pc)
-	if fresh.Mode != "suggest" || fresh.Scope != "both" {
+	if fresh.Mode != "suggest" || fresh.Scope != "repo" {
 		t.Fatalf("after restart mode/scope = %q/%q", fresh.Mode, fresh.Scope)
 	}
-	if fresh.Status["mode"] != "suggest" || fresh.Status["scope"] != "both" {
+	if fresh.Status["mode"] != "suggest" || fresh.Status["scope"] != "repo" {
 		t.Fatalf("status mirrors not refreshed: %+v", fresh.Status)
 	}
 	if goals, _ := fresh.Config["goals"].(map[string]interface{}); goals["governor"] != "reduce MTTR" {

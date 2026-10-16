@@ -249,6 +249,11 @@ type RegistryEntry struct {
 	TotalTokens24h   int64                `json:"totalTokens24h"`
 	ActionableIssues int                  `json:"actionableIssues"`
 	ActionablePRs    int                  `json:"actionablePRs"`
+	// OpenIssues/OpenPRs are all open issues and PRs across the hive's repos,
+	// from the heartbeat's governor summary. Zero when an older spoke did not
+	// report them.
+	OpenIssues int `json:"openIssues,omitempty"`
+	OpenPRs    int `json:"openPRs,omitempty"`
 	// Output-freshness telemetry explains L3-L6 "no write" verdicts. Empty
 	// means an older spoke omitted the optional fields and current behavior is
 	// preserved.
@@ -490,6 +495,10 @@ type RegistryEntry struct {
 	// value with no frameworks = compliance not configured. Carried forward
 	// across beats that omit it.
 	Compliance *HeartbeatCompliance `json:"compliance,omitempty"`
+
+	// Evidence is the spoke's evidence-pipeline summary (#12080), always the
+	// product of sanitizeEvidence. nil = never reported (old spoke).
+	Evidence *HeartbeatEvidence `json:"evidence,omitempty"`
 	// AgentsWithModel is the spoke-reported count of agents that have a method
 	// (backend) or model assigned. nil = the spoke is too old to report it, so
 	// journey stage 2 is treated as unknown rather than unsatisfied.
@@ -1669,6 +1678,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/hub/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
 	s.mux.HandleFunc("GET "+complianceRollupPath, s.requireAdmin(s.handleComplianceRollup))
+	s.mux.HandleFunc("GET "+evidencePath, s.requireAdmin(s.handleEvidence))
 	s.mux.HandleFunc("GET /api/gh-rate-limits", s.requireAdmin(s.handleGHRateLimits))
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
 	// Delegation-chain verification material (JWKS-equivalent). Registered
@@ -1960,6 +1970,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		TotalTokens24h:         clampInt64(payload.Tokens24h, 0, 100_000_000_000),
 		ActionableIssues:       clampInt(payload.Governor.Issues, 0, 10_000),
 		ActionablePRs:          clampInt(payload.Governor.PRs, 0, 10_000),
+		OpenIssues:             clampInt(payload.Governor.OpenIssues, 0, 1_000_000),
+		OpenPRs:                clampInt(payload.Governor.OpenPRs, 0, 1_000_000),
 		LastWriteCapableKickAt: parseHeartbeatTime(payload.LastWriteCapableKickAt),
 		LastKickDisposition:    sanitizeHeartbeatField(payload.LastKickDisposition),
 		LastKickSkipReason:     sanitizeProseField(payload.LastKickSkipReason),
@@ -2130,6 +2142,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// report — see sanitizeComponentReach for the bounds. Storage only.
 		ComponentReach: sanitizeComponentReach(payload.ComponentReach),
 		Compliance:     sanitizeCompliance(payload.Compliance),
+		Evidence:       sanitizeEvidence(payload.Evidence),
 		// Per-repo output activity (hive-health): sanitized/clamped, never the
 		// raw payload. The collected-at + window travel with it so the verdict
 		// can age the summary.
@@ -2177,9 +2190,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// spoke's self-report — is what entry.IsPublic must reflect. nil means "no
 	// SaaS record" (a bare/BYO spoke), in which case the spoke's own report stands.
 	var saasVisibility *bool
+	// The cluster the hub's own SaaS record places this hive on — never the
+	// spoke's self-report nor the defaultClusterID fallback. Delivered back to
+	// spokes that report no cluster_id (see heartbeatClusterIDToDeliver).
+	saasClusterID := ""
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		hasSaaSRecord = true
 		clusterID = sh.ClusterID
+		saasClusterID = sh.ClusterID
 		entry.ProvStatus = sh.Status
 		isPub := sh.IsPublic
 		saasVisibility = &isPub
@@ -2430,6 +2448,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			if entry.Compliance == nil && h.Compliance != nil {
 				entry.Compliance = h.Compliance
+			}
+			if entry.Evidence == nil && h.Evidence != nil {
+				entry.Evidence = h.Evidence
 			}
 			// Carry the last real repo-activity summary forward when this beat
 			// omits it (minimal upgrade-beat, or a spoke whose collector hasn't
@@ -2823,6 +2844,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.PendingGateway = gw
 		s.logger.Info("heartbeat: delivering funded gateway to spoke",
 			"hive_id", payload.HiveID, "gateway", gw.Name, "default_model", gw.DefaultModel)
+	}
+
+	// Deliver the hub-known cluster id to a spoke that reports none. Spokes
+	// provisioned before the template rendered hub.cluster_id / HIVE_CLUSTER_ID
+	// (#11432) never attach cluster_health, and on pull_only clusters the hub
+	// cannot re-render their Deployments — the heartbeat is the only channel.
+	if cid := heartbeatClusterIDToDeliver(saasClusterID, payload.ClusterID); cid != "" {
+		resp.ClusterID = cid
+		s.logger.Info("heartbeat: delivering cluster_id to spoke that reports none",
+			"hive_id", payload.HiveID, "cluster_id", cid)
 	}
 
 	// Check if the hive should self-upgrade via heartbeat response.

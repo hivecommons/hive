@@ -512,6 +512,11 @@ type GovernorSummary struct {
 	// "linear", "jira"). Empty for the default GitHub Issues source; the hub
 	// dashboard only badges non-default sources.
 	WorkSource string `json:"work_source,omitempty"`
+	// OpenIssues and OpenPRs are all open issues and PRs across the hive's
+	// repos (Issues/PRs above are only the actionable ones). The hub's fleet
+	// widget shows them.
+	OpenIssues int `json:"open_issues,omitempty"`
+	OpenPRs    int `json:"open_prs,omitempty"`
 }
 
 type ContributorSummary struct {
@@ -553,6 +558,10 @@ type HeartbeatClusterHealthReport struct {
 	// NodeHealthError carries the spoke-side reason health is partial or
 	// absent, for example a missing metrics API or forbidden node list.
 	NodeHealthError string `json:"node_health_error,omitempty"`
+	// NodeRBAC is this spoke's verdict on its cluster-scoped Node read access:
+	// "ok" when listing /api/v1/nodes succeeded, "forbidden" on HTTP 403, and
+	// empty when the list failed for any other reason.
+	NodeRBAC string `json:"node_rbac,omitempty"`
 }
 
 // HeartbeatNodeMetric holds per-node resource usage collected on the spoke.
@@ -1073,6 +1082,13 @@ type HeartbeatPayload struct {
 	// configured and clears what the hub stored; nil (old spoke, minimal
 	// beat) leaves the hub's stored profile untouched.
 	Compliance *HeartbeatCompliance `json:"compliance,omitempty"`
+	// Evidence is the spoke's evidence-pipeline summary over the last 90
+	// days (#12114, part of #12080), built from the same review-evidence
+	// bundles as GET /api/evidence/summary. The hub sanitizes and bounds it
+	// (sanitizeEvidence) and stores it with the other per-hive quadrant
+	// inputs. nil (old spoke, minimal beat, or bundles unreadable this cycle)
+	// leaves the hub's stored summary untouched.
+	Evidence *HeartbeatEvidence `json:"evidence,omitempty"`
 	// StatsStale is true when this beat carries CACHED collected stats rather
 	// than fresh ones, because collect() timed out this cycle (see
 	// sendHeartbeat / collectWithTimeout). The beat is still a genuine liveness
@@ -1140,6 +1156,37 @@ type HeartbeatCompliancePosture struct {
 	LastRun string `json:"lastRun,omitempty"`
 }
 
+// HeartbeatEvidenceCalibrationBuckets is the number of confidence buckets in
+// HeartbeatEvidence.Calibration; bucket i covers confidence [i/6, (i+1)/6),
+// the last bucket also including 1.0.
+const HeartbeatEvidenceCalibrationBuckets = 6
+
+// HeartbeatEvidence is the evidence block of a heartbeat: 90-day counts over
+// the newest review-evidence bundle per PR. FalseApprove90d counts approve
+// verdicts on PRs later reverted or followed up within 14 days of merge;
+// FalseBlock90d counts blocking verdicts on PRs that were merged anyway;
+// Reverted14d90d counts merged PRs reverted or followed up within 14 days.
+// AutomergeSelfAuthored is AutoMerge.SelfAuthoredAutoMergeAllowed(ACMMLevel),
+// nil when the spoke has no config. The JSON shape matches hub.HeartbeatEvidence.
+type HeartbeatEvidence struct {
+	Verdicts90d           int                                                          `json:"verdicts_90d"`
+	FalseApprove90d       int                                                          `json:"false_approve_90d"`
+	FalseBlock90d         int                                                          `json:"false_block_90d"`
+	Merged90d             int                                                          `json:"merged_90d"`
+	Reverted14d90d        int                                                          `json:"reverted_14d_90d"`
+	AutomergeSelfAuthored *bool                                                        `json:"automerge_self_authored,omitempty"`
+	ReviewerFamilies      []string                                                     `json:"reviewer_families,omitempty"`
+	AuthorFamilies        []string                                                     `json:"author_families,omitempty"`
+	Calibration           [HeartbeatEvidenceCalibrationBuckets]HeartbeatEvidenceBucket `json:"calibration"`
+}
+
+// HeartbeatEvidenceBucket is one calibration bucket: N verdicts, Bad of
+// which disagreed with the outcome (a false approve or a false block).
+type HeartbeatEvidenceBucket struct {
+	N   int `json:"n"`
+	Bad int `json:"bad"`
+}
+
 type StatusCollector func() *HeartbeatPayload
 
 // FreshStatusCollector returns only cheap, in-memory state that is safe to
@@ -1188,6 +1235,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onAuthorizedUsers AuthorizedUsersCallback
 	var onProjectConfig ProjectConfigCallback
 	var onGatewayConfig GatewayConfigCallback
+	var onClusterID ClusterIDCallback
 	var onRestartSpoke RestartSpokeCallback
 	var onAgentRestartReset AgentRestartResetCallback
 	var freshCollect FreshStatusCollector
@@ -1210,6 +1258,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onProjectConfig = fn
 		case GatewayConfigCallback:
 			onGatewayConfig = fn
+		case ClusterIDCallback:
+			onClusterID = fn
 		case RestartSpokeCallback:
 			onRestartSpoke = fn
 		case AgentRestartResetCallback:
@@ -1260,6 +1310,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		// creates/replaces the gateway.
 		if resp.PendingGateway != nil && onGatewayConfig != nil {
 			onGatewayConfig(resp.PendingGateway)
+		}
+		if resp.ClusterID != "" && onClusterID != nil {
+			onClusterID(resp.ClusterID)
 		}
 		if resp.RestartSpoke && onRestartSpoke != nil {
 			onRestartSpoke()
@@ -2530,6 +2583,12 @@ type HeartbeatResponse struct {
 	// nil means "nothing to deliver". The hub sends it once (drained on delivery)
 	// rather than every beat, since it carries a secret key value.
 	PendingGateway *HeartbeatGatewayConfig `json:"pending_gateway,omitempty"`
+	// ClusterID is the cluster the hub's record places this hive on. The hub
+	// sends it only while the spoke reports no cluster_id of its own, so a
+	// spoke provisioned before the template rendered hub.cluster_id (#11432)
+	// learns it — the only channel on pull_only clusters the hub cannot
+	// re-render. Empty means "nothing to deliver".
+	ClusterID string `json:"cluster_id,omitempty"`
 	// UpgradePolicy is the hub's upgrade posture for THIS spoke (#7262): who
 	// owns upgrades, on what schedule, toward which branch/channel head. Sent
 	// on every beat for any hive the hub has an upgrade opinion about; nil
@@ -2580,6 +2639,11 @@ type GitHubAppConfigCallback func(cfg *HeartbeatGitHubAppConfig)
 // cannot push config over kubectl (mirrors AuthorizedUsersCallback).
 type ProjectConfigCallback func(cfg *HeartbeatProjectConfig)
 
+// ClusterIDCallback is called with the hub-known cluster id when the hub
+// delivers one via the heartbeat response. The spoke adopts it only when its
+// own hub.cluster_id is empty, which enables cluster_health on later beats.
+type ClusterIDCallback func(clusterID string)
+
 // HeartbeatUpgradePolicy is the hub's authoritative upgrade posture for one
 // spoke (#7262). Every field is descriptive: nothing here instructs the spoke
 // to change its image (UpgradeTo / SwitchToTag still do that). Wire-compatible
@@ -2620,6 +2684,11 @@ type HeartbeatUpgradePolicy struct {
 	// send it — and must not be rendered as "no update coming".
 	NextUpdateAt     string `json:"next_update_at,omitempty"`
 	NextUpdateStatus string `json:"next_update_status,omitempty"`
+	// ScheduledHoldReason is why the hub did not apply this hive's daily/weekly
+	// upgrade while its window was open; ScheduledHoldAt (RFC3339 UTC) is when
+	// it was recorded. Empty when nothing is held or the hub is too old to say.
+	ScheduledHoldReason string `json:"scheduled_hold_reason,omitempty"`
+	ScheduledHoldAt     string `json:"scheduled_hold_at,omitempty"`
 }
 
 // Schedule values carried by HeartbeatUpgradePolicy.Schedule. These mirror
