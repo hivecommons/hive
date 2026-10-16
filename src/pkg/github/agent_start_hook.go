@@ -49,31 +49,38 @@ func (c *Client) notifyAgentStart(agent, repo string, number int, signal string)
 }
 
 // commentDeferral matches the deferral forms from #12387: a comment that
-// opens with "Deferred"/"Deferring" (markdown emphasis allowed), "deferred
-// this cycle", "deferring … until/pending", "picks up once/after/when", a
-// present tense "blocked by/on #N" (opening the comment or a line, or
-// "is/still/currently blocked by #N") and "waiting on/for #N". Such a comment
-// is not evidence of work starting, even when it names the issue or its
-// blocker. A past-tense mention ("previously blocked by #N") or an aside
-// ("cleanup deferred to #N") in an ordinary work comment does not match.
-// Explicit label, claim and PR requests remain start signals independently
-// of any accompanying comment.
-var commentDeferral = regexp.MustCompile(`(?im)(?:^\W*deferr(?:ed|ing)\b` +
+// opens with "Deferred"/"Deferring" (markdown emphasis allowed), "blocked
+// by/on #N" or a negated start ("Not starting yet", "Can't start"), one
+// whose opening clause says "is/still/currently blocked by #N" or "waiting
+// on/for #N", and anywhere "deferred this cycle", "deferring … until/pending"
+// or "picks up once/after/when". Such a comment is not evidence of work
+// starting, even when it names the issue or its blocker. The anchored forms
+// deliberately apply to the comment's opening only — not to every line or
+// clause — so a progress comment with an aside ("Working on a fix.\n-
+// Deferring the refactor to a follow-up.", "Implemented in PR #N; waiting on
+// #N CI.", "cleanup deferred to #N") or a past-tense mention ("previously
+// blocked by #N") still records the claim. Explicit label, claim and PR
+// requests remain start signals independently of any accompanying comment.
+var commentDeferral = regexp.MustCompile(`(?i)(?:^\W*deferr(?:ed|ing)\b` +
+	`|^\W*blocked\s+(?:by|on)\s+#\d+` +
+	`|^\W*(?:not|never|won't|cannot|can't)\s+start\w*\b` +
+	`|^[^.;!?\n]*?\b(?:is|am|are|still|currently|remains?)\s+blocked\s+(?:by|on)\s+#\d+` +
+	`|^[^.;!?\n]*?\bwaiting\s+(?:on|for)\s+#\d+` +
 	`|\bdeferred\s+this\s+cycle\b` +
 	`|\bdeferr(?:ed|ing)\s+(?:\w+\s+){0,2}?(?:until|pending)\b` +
-	`|\bpicks?\s+up\s+(?:once|after|when)\b` +
-	`|^\W*blocked\s+(?:by|on)\s+#\d+` +
-	`|\b(?:is|am|are|still|currently|remains?)\s+blocked\s+(?:by|on)\s+#\d+` +
-	`|\bwaiting\s+(?:on|for)\s+#\d+)`)
+	`|\bpicks?\s+up\s+(?:once|after|when)\b)`)
 
 // commentStartOverride matches an explicit statement that work is starting
-// or resuming. It wins over commentDeferral so a resume comment such as
-// "Previously blocked by #N; that merged, starting now." still records the
-// claim that keeps a second agent off the issue (#10527). Occurrences that
-// commentNonStart matches are removed before this runs, so a start word
-// inside the deferral clause does not override it. A past "started" only
-// overrides with an explicit "now", not a third-party start or an old spike.
-var commentStartOverride = regexp.MustCompile(`(?i)\b(?:starting|started\s+(?:work\s+)?now|resuming|resumed|picking\s+(?:this\s+|it\s+)?up|picked\s+(?:this\s+|it\s+)?up|back\s+on\s+(?:this|it)\b|no\s+longer\s+blocked|unblocked)\b`)
+// or resuming, or that the blocker/deferral it opens with is in the past
+// ("Blocked by #N earlier; …"). It wins over commentDeferral so a resume
+// comment such as "Previously blocked by #N; that merged, starting now."
+// still records the claim that keeps a second agent off the issue (#10527).
+// Occurrences that commentNonStart matches are removed before this runs, so
+// a start word inside the deferral clause does not override it. A past
+// "started" only overrides with an explicit "now", not a third-party start
+// or an old spike.
+var commentStartOverride = regexp.MustCompile(`(?i)(?:\b(?:starting|started\s+(?:work\s+)?now|resuming|resumed|picking\s+(?:this\s+|it\s+)?up|picked\s+(?:this\s+|it\s+)?up|back\s+on\s+(?:this|it)\b|no\s+longer\s+blocked|unblocked)\b` +
+	`|^\W*(?:was\s+|were\s+)?(?:blocked|deferred)\b[^.;!?\n]*?\b(?:earlier|previously|yesterday|last\s+(?:week|cycle|time|month))\b)`)
 
 // commentNonStart matches start words that do not describe work starting
 // now: a negated start ("not starting until #N merges"), a start conditional

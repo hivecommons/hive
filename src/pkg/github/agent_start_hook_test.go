@@ -156,6 +156,10 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Still blocked on #12322.",
 		"Deferring until #12322 merges; the scanner started it already.",
 		"Deferred this cycle: #12322 is open. I started a spike but it conflicts.",
+		"Deferring until #12322 merges; the scanner is working on it.",
+		"Blocked by #12322.\n\nWorking on it means waiting for the schema.",
+		"- Blocked by #12322\n- Deferring until it merges",
+		"Not starting yet - blocked by #12322 earlier today and still blocked.",
 	} {
 		t.Run(body, func(t *testing.T) {
 			if got := issueRequestStartSignal("comment", body); got != "" {
@@ -170,7 +174,10 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 	}
 	// Work and resume comments that mention a blocker or a deferral in
 	// passing must still signal a start, or the #10527 duplicate-dispatch
-	// gap reopens on exactly the resume path #12387 is about.
+	// gap reopens on exactly the resume path #12387 is about. Anchored forms
+	// apply to the comment's opening clause only: a later line or clause
+	// that defers an aside, or that waits on CI of the PR just opened, is
+	// still a work comment.
 	for _, body := range []string{
 		"Starting work on this issue.",
 		"verified on v5",
@@ -185,6 +192,16 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Still blocked on #12322 an hour ago; unblocked now, picking this up.",
 		"Done; cleanup deferred to #999.",
 		"Fixed; deferred the cleanup to #999.",
+		"Working on a fix.\n- Deferring the refactor to a follow-up.",
+		"Working on a fix.\n\nDeferred the refactor to #999.",
+		"Implemented the fix in PR #500; waiting on #500 CI.",
+		"Implemented the fix in PR #500. Waiting for #500 CI.",
+		"I'm working on this. Second half is blocked by #5 and will follow.",
+		"Working on it. Note: the follow-up is blocked by #12322.",
+		"Working on it; the follow-up is still blocked by #12322.",
+		"Blocked by #12322 earlier; when it merged I started implementing.",
+		"Was blocked by #12322 previously. Implementing now.",
+		"Tests pass.\nBlocked by #12322 for the last mile, pushing the rest.",
 	} {
 		if got := issueRequestStartSignal("comment", body); got != AgentStartSignalComment {
 			t.Errorf("work comment %q reported %q", body, got)
