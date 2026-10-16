@@ -73,8 +73,8 @@ func TestDashboardGitHubAPIBudgetRowsHaveHelpMarks(t *testing.T) {
 		"answered 304 Not Modified because the hive re-sent a remembered ETag (If-None-Match)",
 		"GitHub does not charge a 304 against the core rate limit",
 		"Counted since the process started, not over the 1h window",
-		"Below github.api_reserve (default 800) the governor enters conserve mode",
-		"below github.api_critical (default 250)",
+		"Below the configured API reserve (default 800 requests) the governor enters conserve mode",
+		"below the API critical floor (default 250)",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing GitHub API budget help-mark snippet %q", want)
