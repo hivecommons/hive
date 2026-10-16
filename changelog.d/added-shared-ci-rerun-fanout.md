@@ -1,0 +1,1 @@
+- Re-run the failed jobs on open PRs stamped `<!-- hive-shared-ci-<n> -->` once `[shared-ci]` incident `#<n>` closes, at most once per PR per incident (recorded with a `<!-- hive-shared-ci-rerun-<n> -->` comment), so PRs left red by a broken baseline get a fresh verdict without a human push. On by default; disable with `shared_ci_rerun.enabled: false` (#12253).

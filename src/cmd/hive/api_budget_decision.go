@@ -14,7 +14,7 @@ type evalBudgetDecision struct {
 	RunOptional  bool
 	SkipOptional bool
 	// SkipUnstick covers the steps that unstick stuck items (sha_hold,
-	// supersession sweep, escalation). They are shed only in critical mode.
+	// supersession sweep, shared-CI rerun, escalation). They are shed only in critical mode.
 	SkipUnstick  bool
 	SkippedSteps []string
 }

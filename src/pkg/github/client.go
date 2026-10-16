@@ -175,6 +175,10 @@ type Client struct {
 	// change rather than once per enumeration. Guarded by issueClaimMu.
 	issueClaimCache map[string]issueClaimCacheEntry
 	issueClaimMu    sync.Mutex
+	// sharedCIRerunSeen memoizes PRs the shared-CI rerun sweep found nothing
+	// to do for, keyed "owner/repo#n". Guarded by sharedCIRerunMu.
+	sharedCIRerunSeen map[string]sharedCIRerunSeen
+	sharedCIRerunMu   sync.Mutex
 	// combinedPerspectivesFn / maxReviewsPerHeadFn feed the per-head review
 	// backstop (perHeadReviewRefusal); read live so a dashboard change applies
 	// without a client rebuild. maxReviewsPerHeadFn returning 0 means derive;

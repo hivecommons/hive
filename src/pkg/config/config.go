@@ -159,6 +159,10 @@ type Config struct {
 	// SupersessionSweep tunes the superseded-PR sweep. Closing human-authored
 	// PRs is opt-in (hivecommons/hive#11418); the default only comments.
 	SupersessionSweep SupersessionSweepConfig `yaml:"supersession_sweep,omitempty" json:"supersession_sweep,omitempty"`
+	// SharedCIRerun gates re-running failed jobs on PRs stamped
+	// `<!-- hive-shared-ci-<n> -->` once incident #n closes
+	// (hivecommons/hive#12253). Default on.
+	SharedCIRerun SharedCIRerunConfig `yaml:"shared_ci_rerun,omitempty" json:"shared_ci_rerun,omitempty"`
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
@@ -8396,6 +8400,21 @@ type SupersessionSweepConfig struct {
 	// supersession notice. Non-positive means
 	// github.DefaultSupersessionGracePeriod (24h).
 	GracePeriod time.Duration `yaml:"grace_period,omitempty" json:"grace_period,omitempty"`
+}
+
+// SharedCIRerunConfig gates the shared-CI rerun sweep
+// (github.SweepSharedCIReruns): when a `[shared-ci]` incident issue closes,
+// Hive re-runs the failed jobs of every open PR stamped with that incident's
+// `<!-- hive-shared-ci-<n> -->` marker, once per PR per incident.
+type SharedCIRerunConfig struct {
+	// Enabled is *bool so unset means on; set `shared_ci_rerun.enabled: false`
+	// to disable.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the sweep runs; unset means on.
+func (c SharedCIRerunConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
 }
 
 // AutoMergeConfig gates the App-self-merge sweep (SweepSelfAuthoredAutoMerges).

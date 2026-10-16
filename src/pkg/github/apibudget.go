@@ -149,6 +149,7 @@ var (
 	APIBudgetUnstickSteps = []string{
 		"sha_hold",
 		"supersession_sweep",
+		"shared_ci_rerun",
 		"escalation",
 	}
 	APIBudgetEnrichmentSteps = []string{

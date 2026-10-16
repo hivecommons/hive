@@ -451,6 +451,35 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
 | `supersession_sweep.close_contributor_prs` | `false` | Allows closing superseded human-authored PRs after the grace window. Off: they only get the notice. |
 | `supersession_sweep.grace_period` | `24h` (`DefaultSupersessionGracePeriod`) when 0/unset | How long a human-authored PR stays open after the grace-window notice. Changing it rewrites the notice and restarts the window. |
 
+## Shared-CI rerun sweep (`shared_ci_rerun`)
+
+When a fix lane defers a red PR to a `[shared-ci] <check> failing across
+<owner/repo>` incident it stamps `<!-- hive-shared-ci-<n> -->` on the PR
+(see [labels and control signals](labels-and-control-signals.md)). Nothing on
+the PR changes when the incident's fix lands, so the PR stays red until
+someone re-runs it. The shared-CI rerun sweep
+(`src/pkg/github/shared_ci_rerun.go`) closes that gap every ~15 minutes:
+
+- It lists `[shared-ci]` issues closed in the last 72h in each watched repo,
+  ignoring ones closed as "not planned". With none, it makes no other calls.
+- For each open PR whose newest shared-CI marker names one of those incidents,
+  it re-runs the failed jobs (`POST .../actions/runs/{id}/rerun-failed-jobs`)
+  of the newest run per workflow on the PR head when that run concluded
+  `failure` or `timed_out`, using the hive's App/daemon credential. It pushes
+  nothing to the branch, so it applies to every author; PRs with a hold or
+  `do-not-merge` label are skipped.
+- It then posts one comment carrying `<!-- hive-shared-ci-rerun-<n> -->`,
+  which keeps the PR to one re-run per incident. A PR with nothing red on its
+  head gets no comment. At most 10 PRs are re-run per pass; each re-run is
+  logged as `shared-ci rerun repo=… pr=… incident=#…` and audited as
+  `shared-ci-rerun`.
+- It is an unstick step (`shared_ci_rerun` in `api_budget.unstick_steps`): it
+  keeps running in `conserve` and is shed only in `critical`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `shared_ci_rerun.enabled` | `true` (unset) | Set `false` to stop re-running PRs when a `[shared-ci]` incident closes. |
+
 ## Suspicious-activity alerts (`sentinel`)
 
 The sentinel sweep runs every ~15 minutes alongside the other run-loop sweeps
@@ -631,7 +660,7 @@ Spoke GitHub App installations share one core REST bucket across the scan loop a
 | Mode | Condition | Default behavior |
 | --- | --- | --- |
 | `normal` | `remaining >= github.api_reserve` | Full eval fan-out. Optional sweeps run every `governor.optional_sweep_every_n_cycles` cycles (default `1`). |
-| `conserve` | `remaining < github.api_reserve` (default `800`) | Critical paths and unstick steps (escalation, SHA hold, supersession sweep) continue; optional advisory/recommendation/duplicate/review-thread/collector enrichment sweeps are skipped. Eval interval is multiplied by `governor.conserve_interval_multiplier` (default `2`). |
+| `conserve` | `remaining < github.api_reserve` (default `800`) | Critical paths and unstick steps (escalation, SHA hold, supersession sweep, shared-CI rerun) continue; optional advisory/recommendation/duplicate/review-thread/collector enrichment sweeps are skipped. Eval interval is multiplied by `governor.conserve_interval_multiplier` (default `2`). |
 | `critical` | `remaining < github.api_critical` (default `250`) | Same shedding as conserve plus the unstick steps, with the eval interval stretched by `4x`. |
 
 Mode exits use hysteresis: Hive leaves conserve/critical only after quota rises above the threshold plus 100 calls or after the reset time passes. The effective interval is capped by `governor.eval_interval_max_s` (default `1800`). `/api/status` and `/api/gh-rate-limits` expose `api_budget` with the mode, remaining/limit/reset, mode `since`, `skipped_steps`, `unstick_steps` and `enrichment_steps`; the dashboard shows an API budget pill beside the GitHub rate-limit display.

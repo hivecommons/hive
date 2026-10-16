@@ -8486,6 +8486,12 @@ const taskListSweepInterval = 15 * time.Minute
 // the same conservative cadence as the task-list sweep.
 const supersessionSweepInterval = 15 * time.Minute
 
+// sharedCIRerunInterval is the minimum spacing between shared-CI rerun
+// sweeps. Each pass lists recently closed issues per repo and only walks open
+// PRs when a [shared-ci] incident closed inside the lookback window, so it
+// shares the supersession sweep's cadence.
+const sharedCIRerunInterval = 15 * time.Minute
+
 // duplicateSweepInterval is the minimum spacing between duplicate sweeps. It
 // is an hour rather than the task-list sweep's fifteen minutes for two
 // reasons. Cost: the sweep fingerprints the changed-file set of every open PR,
@@ -8762,6 +8768,48 @@ func runSupersessionSweepIfDue(ctx context.Context, ghClient *github.Client, cfg
 			"skipped":   strconv.Itoa(result.Skipped),
 		},
 	})
+}
+
+// runSharedCIRerunSweepIfDue re-runs failed jobs on open PRs deferred to a
+// [shared-ci] incident that has since closed (hivecommons/hive#12253), at most
+// once per sharedCIRerunInterval. Gates and dedupe live in
+// SweepSharedCIReruns; this is the scheduler and dashboard audit sink.
+func runSharedCIRerunSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, lastRun *time.Time, logger *slog.Logger) {
+	if ghClient == nil {
+		return
+	}
+	if cfg != nil && !cfg.SharedCIRerun.IsEnabled() {
+		return
+	}
+	now := time.Now()
+	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < sharedCIRerunInterval {
+		return
+	}
+	if lastRun != nil {
+		*lastRun = now
+	}
+	result, err := ghClient.SweepSharedCIReruns(ctx, github.SharedCIRerunOptions{
+		MaxPRs: github.DefaultSharedCIRerunMaxPRs,
+		Audit: func(event github.SharedCIRerunEvent) {
+			if dashSrv == nil {
+				return
+			}
+			incidents := make([]string, len(event.Incidents))
+			for i, n := range event.Incidents {
+				incidents[i] = "#" + strconv.Itoa(n)
+			}
+			detail := fmt.Sprintf("repo=%s, pr=%d, incident=%s, head=%s, runs=%d",
+				event.Repo, event.Number, strings.Join(incidents, ","), event.HeadSHA, len(event.RunIDs))
+			dashSrv.AuditLogRecord("system", "shared-ci-rerun", detail, "", event.Repo, event.Number)
+		},
+	})
+	if err != nil {
+		logger.Warn("shared-ci rerun sweep failed", "error", err)
+		return
+	}
+	if len(result.Rerun) > 0 {
+		logger.Info("shared-ci rerun sweep complete", "incidents", result.Incidents, "seen", result.Seen, "rerun", len(result.Rerun), "skipped", result.Skipped)
+	}
 }
 
 // runDuplicateSweepIfDue clusters open PRs by changed-file set and suggests
