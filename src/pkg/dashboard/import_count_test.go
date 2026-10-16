@@ -22,8 +22,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// for the divergence view and /api/upstream-watch route (hivecommons/hive#10361),
 	// plus pkg/releasenotes for the GET /api/version/release-notes changelog
 	// gap endpoint (hivecommons/hive#11065), plus pkg/compliance for the
-	// control registry and /api/compliance routes (hivecommons/hive#11078).
-	const maxDashboardInternalImports = 45
+	// control registry and /api/compliance routes (hivecommons/hive#11078),
+	// plus pkg/evidence for the schema-v1 bundle types behind the read-only
+	// GET /api/evidence/summary aggregate (hivecommons/hive#12063).
+	const maxDashboardInternalImports = 46
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
