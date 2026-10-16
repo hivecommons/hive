@@ -360,8 +360,11 @@ rounded to whole percent and are `null`/absent when no check has been decided.
 ## Evidence summary heartbeat (#12114)
 
 Every spoke adds an `evidence` block to its hub heartbeat: a 90-day summary of
-its [review evidence](review-evidence.md) bundles (newest bundle per PR, the
-same store behind `GET /api/evidence/summary`):
+its [review evidence](review-evidence.md) bundles. Every bundle of a PR is
+folded into one row and windowed on PR open time with the same
+`evidence.FoldPRs` behind `GET /api/evidence/summary` (#12516), so a PR with a
+live and a backfilled bundle counts once, with the live verdicts and the
+forge outcome:
 
 ```json
 {"evidence": {"verdicts_90d": 30, "false_approve_90d": 2, "false_block_90d": 3,
