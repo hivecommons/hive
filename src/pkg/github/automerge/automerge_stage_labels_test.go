@@ -444,8 +444,9 @@ func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
 		t.Fatalf("trusted-only drain: added=%v removed=%v", api.added, api.removed)
 	}
 
-	// Drain 3: both lanes present, both weak (outside author) → 090 is
-	// written as before; completeness, not weakness, is the gate.
+	// Drain 3: both lanes present, both weak (outside author) → the human
+	// hand-off is written; completeness, not weakness, is the gate. With no
+	// reviewer configured RouteHuman lands it at 085 (#12531).
 	api.reset()
 	setStagePRTruth(77, "author/untrusted")
 	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", stagePR(77), "untrusted-author-role", false, nil)
@@ -454,7 +455,7 @@ func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/090-needs-human"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/085-needs-decision"}}) {
 		t.Fatalf("complete drain: added=%v", api.added)
 	}
 
@@ -466,7 +467,7 @@ func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/090-needs-human"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"author/untrusted", "stage/085-needs-decision"}}) {
 		t.Fatalf("trusted lane disabled: added=%v", api.added)
 	}
 }
