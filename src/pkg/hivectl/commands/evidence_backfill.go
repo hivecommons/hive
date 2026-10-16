@@ -82,20 +82,6 @@ type evidenceBackfillOptions struct {
 	skipMergers bool
 }
 
-func newEvidenceCommand(env *commandEnv) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:     "evidence",
-		Short:   "Evidence store tooling: backfill bundles from forge history",
-		Args:    argsNone(),
-		Example: "  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
-		},
-	}
-	cmd.AddCommand(newEvidenceBackfillCommand(env))
-	return cmd
-}
-
 func newEvidenceBackfillCommand(env *commandEnv) *cobra.Command {
 	opts := &evidenceBackfillOptions{}
 	cmd := &cobra.Command{

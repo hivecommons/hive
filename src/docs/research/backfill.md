@@ -1,10 +1,11 @@
 # Evidence backfill: run plan (2026-10)
 
 **Status:** tooling landed (`hivectl evidence backfill`, [#12371](https://github.com/hivecommons/hive/issues/12371)).
-**Runs: not started.** Every command below is `needs-human`: it needs the repo
-owner's consent and a token with read access, and it writes into a hive's
-evidence store. Nothing here runs automatically. Approve each block on
-#12371 before running it and report the printed summary back on the issue.
+**Runs: executed by the operator (@clubanderson) right after the tooling
+merges**, in order Bluefin → Console → Hive/tunaos/Frostyard/Open Horizon.
+The commands below need a token with read access and write into a hive's
+evidence store; they are not scheduled by CI or by any hive, the operator runs
+them from a shell and reports each printed summary back on #12371.
 
 Parent: RFC [#12062](https://github.com/hivecommons/hive/issues/12062), proposal
 C (Study). Rules: [`preregistration-2026-10.md`](preregistration-2026-10.md)
@@ -53,7 +54,7 @@ by the `— hive:` trailer or the 🐝 footer, and lands as `author_kind_rule:
 attribution_trailer` / `identity_footer`). Check the first dry run's
 `agent` count against what the hive's throughput card reports for the window.
 
-## 1. Bluefin (pre-Hive baseline) — `needs-human`
+## 1. Bluefin (pre-Hive baseline) — run first
 
 Consent: @mrbobbytables (repo owner). Window: from the start of the baseline
 year to today. The repo list is the Bluefin hive's `hive.yaml` `repos`; the
@@ -73,7 +74,7 @@ the flag is what the analysis filters on; do not skip the repo.
 Report: fetched / written / skipped, first and last `created_at`, per-kind
 counts.
 
-## 2. Console (ACMM dose series) — `needs-human`
+## 2. Console (ACMM dose series) — run second
 
 Consent: Console owners (KubeStellar). Full history, split at each recorded
 ACMM transition so `policy.acmm_level` is stamped per window. Fill the dates
@@ -104,7 +105,7 @@ applying the ≥ 10 rule.
 Where the Console hive already recorded live bundles (L5/L6), those heads are
 skipped and keep their live verdicts and CI; only the gaps are backfilled.
 
-## 3. Hive, tunaos, Frostyard, Open Horizon — `needs-human`
+## 3. Hive, tunaos, Frostyard, Open Horizon — run third
 
 Consent: each hive's maintainers, recorded on #12371. Repo lists come from each
 hive's `hive.yaml` `repos`; the templates below take one repo at a time.
