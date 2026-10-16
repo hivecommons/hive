@@ -22974,9 +22974,8 @@ function burnAreaChart() {
       }
 
       // Stats row
-      const snapPct = s.snapshotTarget ? Math.min(Math.round((s.snapshotCount / s.snapshotTarget) * 100), 100) : 0;
       html += '<div class="nous-stat-grid">';
-      html += `<div class="nous-stat"><div class="val">${s.snapshotCount || 0}</div><div class="lbl">Snapshots (${snapPct}% of baseline)</div></div>`;
+      html += `<div class="nous-stat"><div class="val">${s.snapshotCount || 0}</div><div class="lbl">State snapshots</div></div>`;
       html += `<div class="nous-stat"><div class="val">${s.principleCount || 0}</div><div class="lbl">Principles</div></div>`;
       html += `<div class="nous-stat"><div class="val">${ledger.length}</div><div class="lbl">Experiments</div></div>`;
       html += '</div>';
@@ -22985,7 +22984,7 @@ function burnAreaChart() {
       const ss = s.snapshotSummary;
       if (ss) {
         html += '<div class="nous-card mt-5">';
-        html += '<h3>Baseline Data</h3>';
+        html += '<h3>State history</h3>';
         const timeRange = ss.firstTs && ss.latestTs
           ? `${formatDashboardDate(ss.firstTs, {month:'short',day:'numeric'})} – ${formatDashboardDateTime(ss.latestTs, {month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'})}`
           : '';
@@ -23030,17 +23029,8 @@ function burnAreaChart() {
       // Data collection progress
       html += '<div class="nous-card mt-5">';
       html += '<h3>Data Collection</h3>';
-      html += `<div class="nous-progress"><div class="nous-progress-fill" style="width:${snapPct}%;background:var(--blue)"></div></div>`;
-      const snapCount = s.snapshotCount || 0;
-      const snapTarget = s.snapshotTarget || 672;
-      let snapText;
-      if (snapCount >= snapTarget) {
-        snapText = `Baseline complete \u00b7 ${snapCount} snapshots collected (target ${snapTarget})`;
-      } else {
-        snapText = `${snapCount} / ${snapTarget} snapshots \u2014 ${snapPct >= 75 ? (mode === 'observe' ? 'Baseline sufficient \u2014 switch to Suggest when ready' : 'Baseline sufficient') : 'Collecting baseline data'}`;
-      }
-      html += `<div style="font-size:0.72rem;color:var(--muted)">${snapText}</div>`;
-      html += '<div class="nous-pending-params">Observe records a snapshot of hive state every governor evaluation cycle to build a baseline; no experiments run until you switch to Suggest/Evolve and approve/apply proposals.</div>';
+      html += `<div style="font-size:0.72rem;color:var(--muted)">${s.snapshotCount || 0} snapshots recorded \u00b7 one per governor evaluation cycle, kept 24 h raw then hourly for 30 days</div>`;
+      html += '<div class="nous-pending-params">Observe records a snapshot of hive state every governor evaluation cycle (the hive-state time series). No experiments run until you switch to Suggest/Evolve and approve proposals.</div>';
 
       // Show experiment proposals from ledger
       const dryRuns = ledger.filter(e => e.type === 'dry_run').slice(-5);
