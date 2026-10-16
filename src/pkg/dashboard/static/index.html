@@ -45477,6 +45477,7 @@ function burnAreaChart() {
       const templateDirty = !!_configState.promptTemplateDirty;
       if (Object.keys(dirty).length === 0 && !templateDirty) {
         showToast('No changes to save', 'info');
+        closeConfigDialog();
         return;
       }
       // Pinning an agent to a gateway method requires that gateway to be
