@@ -143,6 +143,26 @@ hive. The flag only applies to a create; on any other kind the script exits
 `--repo`, a number or URL, and `--body` are all required, or the script exits
 `2`.
 
+A posted comment is also the agent's **start signal** on that issue: the hub
+records a 2h agent claim on the issue the first time the agent's own comment,
+label or claim request (or a `hive-open-pr --issues` request) names it, so a
+second agent is not kicked onto the same work
+([#10527](https://github.com/hivecommons/hive/issues/10527)). A comment that
+is an explicit *deferral* is posted but records no claim: one opening with
+"Deferred"/"Deferring", "Blocked by/on #N", "Not starting", "is/still
+blocked by #N", "waiting on/for #N" or "deferring … until #N", or saying
+"Deferred this cycle" or "Picks up once/after/when #N merges" anywhere. The
+exemption is lost — the claim is recorded — if the comment also says work is
+starting or resuming now ("that merged, starting now", "picking this up",
+"unblocked"); a third party's start ("#N is starting the same refactor",
+"scanner is picking this up in #N") or a start conditional on the blocker
+("will resume once it merges") does not count as yours. The opening-clause
+forms stop at the first `,` `.` `;` or newline, so a work comment with a
+deferral aside ("Opened PR #N, waiting on #N CI.", "Implementing now.
+Deferring the rename until #N lands.") still records the claim
+([#12387](https://github.com/hivecommons/hive/issues/12387)). To park an
+issue without claiming it, open the comment with the deferral.
+
 ### `claim`
 
 `--repo` and a number or URL are required; no body or title needed. A claim

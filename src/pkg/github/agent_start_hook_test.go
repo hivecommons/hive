@@ -160,6 +160,11 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Blocked by #12322.\n\nWorking on it means waiting for the schema.",
 		"- Blocked by #12322\n- Deferring until it merges",
 		"Not starting yet - blocked by #12322 earlier today and still blocked.",
+		"Deferred this cycle: #12322 is starting the same refactor; picks up once it merges.",
+		"Deferred this cycle: scanner is picking this up in #12322; picks up once it merges.",
+		"Deferred this cycle: #12322 is unblocked and the scanner is resuming it; picks up once it merges.",
+		"Waiting for #500 CI, then merging.",
+		"Waiting on #12322, picks up when it merges.",
 	} {
 		t.Run(body, func(t *testing.T) {
 			if got := issueRequestStartSignal("comment", body); got != "" {
@@ -196,6 +201,11 @@ func TestIssueRequestStartSignal_Deferrals(t *testing.T) {
 		"Working on a fix.\n\nDeferred the refactor to #999.",
 		"Implemented the fix in PR #500; waiting on #500 CI.",
 		"Implemented the fix in PR #500. Waiting for #500 CI.",
+		"Opened PR #500, waiting on #500 CI.",
+		"Implementing now. Deferring the rename until #999 lands.",
+		"Taking this. Deferring the docs until the API settles.",
+		"I am picking this up now that #12322 merged.",
+		"#12322 merged so this is unblocked; starting now.",
 		"I'm working on this. Second half is blocked by #5 and will follow.",
 		"Working on it. Note: the follow-up is blocked by #12322.",
 		"Working on it; the follow-up is still blocked by #12322.",

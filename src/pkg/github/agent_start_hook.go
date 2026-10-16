@@ -51,23 +51,26 @@ func (c *Client) notifyAgentStart(agent, repo string, number int, signal string)
 // commentDeferral matches the deferral forms from #12387: a comment that
 // opens with "Deferred"/"Deferring" (markdown emphasis allowed), "blocked
 // by/on #N" or a negated start ("Not starting yet", "Can't start"), one
-// whose opening clause says "is/still/currently blocked by #N" or "waiting
-// on/for #N", and anywhere "deferred this cycle", "deferring … until/pending"
-// or "picks up once/after/when". Such a comment is not evidence of work
-// starting, even when it names the issue or its blocker. The anchored forms
-// deliberately apply to the comment's opening only — not to every line or
-// clause — so a progress comment with an aside ("Working on a fix.\n-
-// Deferring the refactor to a follow-up.", "Implemented in PR #N; waiting on
-// #N CI.", "cleanup deferred to #N") or a past-tense mention ("previously
-// blocked by #N") still records the claim. Explicit label, claim and PR
-// requests remain start signals independently of any accompanying comment.
+// whose opening clause says "is/still/currently blocked by #N", "waiting
+// on/for #N" or "deferring … until/pending", and anywhere "deferred this
+// cycle" or "picks up once/after/when". Such a comment is not evidence of
+// work starting, even when it names the issue or its blocker. The anchored
+// forms deliberately apply to the comment's opening clause only — a comma,
+// sentence punctuation or newline ends it — not to every line or clause, so
+// a progress comment with an aside ("Working on a fix.\n- Deferring the
+// refactor to a follow-up.", "Implementing now. Deferring the rename until
+// #N lands.", "Opened PR #N, waiting on #N CI.", "cleanup deferred to #N")
+// or a past-tense mention ("previously blocked by #N") still records the
+// claim, while a comment that opens with the wait ("Waiting for #N CI, then
+// merging.") does not. Explicit label, claim and PR requests remain start
+// signals independently of any accompanying comment.
 var commentDeferral = regexp.MustCompile(`(?i)(?:^\W*deferr(?:ed|ing)\b` +
 	`|^\W*blocked\s+(?:by|on)\s+#\d+` +
 	`|^\W*(?:not|never|won't|cannot|can't)\s+start\w*\b` +
-	`|^[^.;!?\n]*?\b(?:is|am|are|still|currently|remains?)\s+blocked\s+(?:by|on)\s+#\d+` +
-	`|^[^.;!?\n]*?\bwaiting\s+(?:on|for)\s+#\d+` +
+	`|^[^.,;!?\n]*?\b(?:is|am|are|still|currently|remains?)\s+blocked\s+(?:by|on)\s+#\d+` +
+	`|^[^.,;!?\n]*?\bwaiting\s+(?:on|for)\s+#\d+` +
+	`|^[^.,;!?\n]*?\bdeferr(?:ed|ing)\s+(?:\w+\s+){0,2}?(?:until|pending)\b` +
 	`|\bdeferred\s+this\s+cycle\b` +
-	`|\bdeferr(?:ed|ing)\s+(?:\w+\s+){0,2}?(?:until|pending)\b` +
 	`|\bpicks?\s+up\s+(?:once|after|when)\b)`)
 
 // commentStartOverride matches an explicit statement that work is starting
@@ -86,14 +89,18 @@ var commentStartOverride = regexp.MustCompile(`(?i)(?:\b(?:starting|started\s+(?
 // now: a negated start ("not starting until #N merges"), a start conditional
 // on something else within the same clause ("once #N merges and this is
 // unblocked", "resuming after that", "will resume once it merges" — the
-// rest of that clause is consumed with it), and a third party's past start
-// ("#N was started by scanner", "#N already started this refactor"). Each
-// match is blanked before commentStartOverride is evaluated.
+// rest of that clause is consumed with it), and a third party's start,
+// past ("#N was started by scanner", "#N already started this refactor") or
+// in progress ("#N is starting the same refactor", "scanner is picking this
+// up in #N", "#N is unblocked"). "am" is deliberately absent from the
+// present-tense form so a first-person "I am picking this up" stays a
+// start. Each match is blanked before commentStartOverride is evaluated.
 var commentNonStart = regexp.MustCompile(`(?i)(?:\b(?:not|never|won't|cannot|can't|before|without)\s+(?:be\s+)?(?:start|resum|pick|unblock)\w*` +
 	`|\b(?:once|after|when|until|while|unless|if|pending)\b[^.;!?\n]*?\b(?:start|resum|pick|unblock)\w*` +
 	`|\b(?:start|resum|unblock)\w*\s+(?:once|after|when|until|unless|if|pending)\b[^.;!?\n]*` +
 	`|\bpick\w*\s+(?:this\s+|it\s+)?up\s+(?:once|after|when|until|unless|if|pending)\b[^.;!?\n]*` +
-	`|\b(?:was|were|been|already|has|had|#\d+)\s+(?:started|resumed|picked\s+(?:this\s+|it\s+)?up)\b)`)
+	`|\b(?:was|were|been|already|has|had|#\d+)\s+(?:started|resumed|picked\s+(?:this\s+|it\s+)?up)\b` +
+	`|\b(?:is|are)\s+(?:starting|resuming|picking\s+(?:this\s+|it\s+)?up|unblocked)\b)`)
 
 // commentIsDeferral reports whether a comment body is an explicit deferral
 // that carries no overriding statement of work starting.
