@@ -23704,6 +23704,10 @@
                     "max_reviews_per_head": {
                       "type": "integer",
                       "description": "Cap on top-level hive reviews per PR head before the relay refuses more (revisions and thread replies excepted). 0 derives: 1 with combined_perspectives, one per perspective otherwise; negative disables."
+                    },
+                    "shadow": {
+                      "type": "boolean",
+                      "description": "Evaluate the review-approval gate as require_approval would but never hold the PR; records shadow.review_gate.would_have_held on the evidence bundle (hivecommons/hive#12104)."
                     }
                   }
                 }
@@ -23758,6 +23762,11 @@
                     "type": "integer",
                     "nullable": true,
                     "description": "Cap on top-level hive reviews per PR head before the relay refuses more (revisions and thread replies excepted). 0 derives: 1 with combined_perspectives, one per perspective otherwise; negative disables."
+                  },
+                  "shadow": {
+                    "type": "boolean",
+                    "nullable": true,
+                    "description": "Evaluate the review-approval gate as require_approval would but never hold the PR; records shadow.review_gate.would_have_held on the evidence bundle (hivecommons/hive#12104)."
                   },
                   "severity": {
                     "type": "object",
