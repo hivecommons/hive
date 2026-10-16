@@ -536,3 +536,52 @@ func TestRegressionCommentOncePerHeadAcrossFlaps(t *testing.T) {
 		t.Fatal("empty head must fall back to the per-regression flag")
 	}
 }
+
+// TestStoreHistoryTrail checks that Observe records one Hop per stage
+// change (not per same-stage observation), caps the trail at HistoryLimit
+// oldest-first, persists it, and that a same-stage reason change still
+// marks the store dirty.
+func TestStoreHistoryTrail(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	path := filepath.Join(t.TempDir(), "s.json")
+	st := NewStore(path, clock)
+	key := Key("o/r", 9)
+
+	st.Observe(key, ReviewPending, "contributor-lane:no-verdict")
+	now = now.Add(time.Minute)
+	st.Observe(key, ReviewPending, "required-check-pending:build")
+	rec, _ := st.Get(key)
+	if len(rec.History) != 1 || rec.History[0].Stage != ReviewPending || rec.History[0].Reason != "contributor-lane:no-verdict" {
+		t.Fatalf("same-stage observation must not add a hop: %+v", rec.History)
+	}
+	if rec.Reason != "required-check-pending:build" || !st.dirty {
+		t.Fatalf("reason update must be kept and persisted: %+v dirty=%v", rec, st.dirty)
+	}
+	stages := []Stage{Reviewed, Fixing, ReviewPending, Reviewed, AwaitingMergeAdmission, MergeQueue, Reviewed, MergeQueue, ReadyForHumanMerge}
+	for _, s := range stages {
+		now = now.Add(time.Minute)
+		st.Observe(key, s, "r-"+s.Slug())
+	}
+	rec, _ = st.Get(key)
+	if len(rec.History) != HistoryLimit {
+		t.Fatalf("history len = %d, want cap %d", len(rec.History), HistoryLimit)
+	}
+	if last := rec.History[HistoryLimit-1]; last.Stage != ReadyForHumanMerge || !last.At.Equal(now) || last.Reason != "r-ready-for-human-merge" {
+		t.Fatalf("newest hop = %+v", last)
+	}
+	if first := rec.History[0]; first.Stage != Fixing {
+		t.Fatalf("oldest kept hop = %+v, want the drop of the two oldest", first)
+	}
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+	st2 := NewStore(path, clock)
+	if err := st2.Load(); err != nil {
+		t.Fatal(err)
+	}
+	rec2, _ := st2.Get(key)
+	if len(rec2.History) != HistoryLimit || rec2.History[0].Stage != Fixing {
+		t.Fatalf("history not persisted: %+v", rec2.History)
+	}
+}

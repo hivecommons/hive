@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -77,9 +78,38 @@ type Record struct {
 	// stage visit; reset on every stage change so each transition explains
 	// itself exactly once (hivecommons/hive#12528).
 	EntryCommented bool `json:"entry_commented,omitempty"`
+	// History is the item's recent stage transitions, oldest first, capped
+	// at HistoryLimit: each entry is the stage entered, when, and the reason
+	// at entry. The dashboard's Hive activity monitor renders it as the
+	// item's tracker trail; nothing in the reconciler reads it back.
+	History []Hop `json:"history,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
+}
+
+// Hop is one stage entry in a Record's History.
+type Hop struct {
+	Stage  Stage     `json:"stage"`
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason,omitempty"`
+}
+
+// HistoryLimit bounds Record.History so the store file stays small for an
+// item that flaps between stages.
+const HistoryLimit = 8
+
+// appendHop appends h to history, dropping the oldest entries past
+// HistoryLimit. The result never aliases history's backing array when it
+// grows, so a Record copy held by a caller is not mutated.
+func appendHop(history []Hop, h Hop) []Hop {
+	out := make([]Hop, 0, len(history)+1)
+	out = append(out, history...)
+	out = append(out, h)
+	if len(out) > HistoryLimit {
+		out = out[len(out)-HistoryLimit:]
+	}
+	return out
 }
 
 // Regressed reports whether the item carries an unresolved regression.
@@ -239,6 +269,7 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 		next.EnteredAt = now
 		next.StallCommented = false
 		next.EntryCommented = false
+		next.History = appendHop(prev.History, Hop{Stage: stage, At: now, Reason: reason})
 		tr.Changed = true
 	}
 	switch {
@@ -260,11 +291,18 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 		next.RegressionCommented = false
 		tr.Recovered = true
 	}
-	if !had || next != prev {
+	if !had || tr.Changed || !recordEqual(next, prev) {
 		s.dirty = true
 	}
 	s.items[key] = next
 	return tr
+}
+
+// recordEqual compares two records field by field; History (a slice) makes
+// Record incomparable with ==, and it only changes when the stage does.
+func recordEqual(a, b Record) bool {
+	a.History, b.History = nil, nil
+	return reflect.DeepEqual(a, b)
 }
 
 // IsRegression reports whether moving from → to is a backward transition

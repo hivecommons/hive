@@ -32,6 +32,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/timeline"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/watchdog"
@@ -99,6 +100,9 @@ type Server struct {
 	logger     *slog.Logger
 	mux        *http.ServeMux
 	deps       *Dependencies
+	// stageStore is the stage-label memory /api/stage-tracker reads; nil
+	// means the process-wide stagelabels.Shared(). Tests inject one.
+	stageStore *stagelabels.Store
 	sidebar    interface{}
 	sidebarMu  sync.RWMutex
 
