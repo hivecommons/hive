@@ -1,0 +1,1 @@
+- The settings parity test no longer treats a help-text mention as Settings UI coverage for `data.nous_dir`, and its `# TODO #11854` allowlist entry is restored until an editable control exists.

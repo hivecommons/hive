@@ -3,6 +3,7 @@ package dashboard
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -20,11 +21,12 @@ func TestSettingsDialogReferencesEveryHiveYAMLLeaf(t *testing.T) {
 		t.Fatalf("read settings parity allowlist: %v", err)
 	}
 	corpus := dashboardSettingsCorpus(t)
+	controlCorpus := settingHelpMarkRE.ReplaceAllString(corpus, "")
 	leafSet := map[string]bool{}
 	var missing []string
 	for _, leaf := range leaves {
 		leafSet[leaf.Path] = true
-		if settingsParityReferenced(corpus, leaf.Path) || allow[leaf.Path] != "" {
+		if settingsParityReferenced(corpus, controlCorpus, leaf.Path) || allow[leaf.Path] != "" {
 			continue
 		}
 		missing = append(missing, leaf.Path)
@@ -36,7 +38,7 @@ func TestSettingsDialogReferencesEveryHiveYAMLLeaf(t *testing.T) {
 		if !leafSet[path] {
 			t.Fatalf("settings parity allowlist contains %q, but that is not a current Config leaf", path)
 		}
-		if settingsParityReferenced(corpus, path) {
+		if settingsParityReferenced(corpus, controlCorpus, path) {
 			t.Fatalf("settings parity allowlist still contains %q, but the Settings UI now references it; remove the allowlist entry", path)
 		}
 	}
@@ -65,9 +67,19 @@ func dashboardSettingsCorpus(t *testing.T) string {
 	return b.String()
 }
 
-func settingsParityReferenced(corpus, path string) bool {
-	if strings.Contains(corpus, path) {
-		return true
+// settingHelpMarkRE matches a settingHelpMark(...) call so its help text can be
+// ignored for keys that need an editable control rather than a prose mention.
+var settingHelpMarkRE = regexp.MustCompile("settingHelpMark\\((?:'[^']*'|\"[^\"]*\"),\\s*(?:'[^']*'|\"[^\"]*\"),\\s*(?:'(?:[^'\\\\]|\\\\.)*'|\"[^\"]*\"),\\s*`[^`]*`\\)")
+
+// controlOnlyLeaves are keys whose mention in help text must not count as UI
+// coverage; only a reference outside settingHelpMark(...) does.
+var controlOnlyLeaves = map[string]bool{
+	"data.nous_dir": true,
+}
+
+func settingsParityReferenced(corpus, controlCorpus, path string) bool {
+	if controlOnlyLeaves[path] {
+		return strings.Contains(controlCorpus, path)
 	}
-	return false
+	return strings.Contains(corpus, path)
 }
