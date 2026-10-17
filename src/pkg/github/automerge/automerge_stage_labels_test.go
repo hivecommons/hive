@@ -1304,6 +1304,10 @@ func TestApplyStageLabels_StripsStrayOwnershipLabelsFromContributorPR(t *testing
 // "no verdict yet" — with `no-dco`, the legacy Prow pill stripped, and a
 // nudge carrying the exact rebase command. A signed head gets the green
 // `dco`. One commits GET per head, none while the head is unchanged.
+// clankerBody is the hive provenance marker that classifies a PR as
+// author/clanker, the only kind the 072 nudge interrupts.
+const clankerBody = "Adds x.\n\n— hive: backend=pi model=gpt-6\n"
+
 func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{}, commits: map[int][]string{
 		31: {"feat: a\n\nSigned-off-by: A <a@x>", "fix: b", "fix: c"},
@@ -1318,6 +1322,7 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 
 	pr := stagePR(31, "dco-signoff: yes", "bug")
 	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	pr.Body = gh.Ptr(clankerBody)
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageRole("acme", "widget", 31, stagelabels.RoleContributor)
 	e.noteStageDCOGate("acme", "widget", 31, "sha", nil, map[string]bool{"DCO": true, "build": true})
@@ -1331,7 +1336,7 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	if rec.DCO("sha") != stagelabels.DCONo || rec.DCOTotal != 3 || rec.DCOUnsigned != 2 {
 		t.Fatalf("dco cache %+v", rec)
 	}
-	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/human", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor"}) {
+	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor"}) {
 		t.Fatalf("added %v", api.added)
 	}
 	if !reflect.DeepEqual(api.removed, []string{"dco-signoff: yes"}) {
@@ -1343,14 +1348,15 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	if api.commitReads != 1 {
 		t.Fatalf("commit reads = %d", api.commitReads)
 	}
-	if api.labels[stagelabels.DCOLabel] != stagelabels.AuthorTrustedColor || api.labels[stagelabels.NoDCOLabel] != stagelabels.StalledColor {
+	if api.labels[stagelabels.DCOLabel] != stagelabels.RoleTrustedColor || api.labels[stagelabels.NoDCOLabel] != stagelabels.StalledColor {
 		t.Fatalf("provisioned colours %v", api.labels)
 	}
 
 	// Same head next cycle: cached, no second read, no writes.
 	api.reset()
-	pr = stagePR(31, "bug", "author/human", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor")
+	pr = stagePR(31, "bug", "author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor")
 	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	pr.Body = gh.Ptr(clankerBody)
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageRole("acme", "widget", 31, stagelabels.RoleContributor)
 	e.noteStageDCOGate("acme", "widget", 31, "sha", nil, map[string]bool{"DCO": true})
@@ -1363,9 +1369,10 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	api.mu.Lock()
 	api.commits[31] = []string{"feat: a\n\nSigned-off-by: A <a@x>", "fix: b\n\nSigned-off-by: A <a@x>", "fix: c\n\nsigned-off-by: A <a@x>"}
 	api.mu.Unlock()
-	pr = stagePR(31, "bug", "author/human", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor")
+	pr = stagePR(31, "bug", "author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor")
 	pr.Head.SHA = gh.Ptr("sha2")
 	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	pr.Body = gh.Ptr(clankerBody)
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageRole("acme", "widget", 31, stagelabels.RoleContributor)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
@@ -1455,6 +1462,7 @@ func TestApplyStageLabelsDCOGatePerRepo(t *testing.T) {
 	required["acme/widget"] = true
 	pr = stagePR(42)
 	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	pr.Body = gh.Ptr(clankerBody)
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageRole("acme", "widget", 42, stagelabels.RoleContributor)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {

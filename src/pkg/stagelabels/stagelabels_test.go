@@ -114,7 +114,7 @@ func TestAllLabelDefsColours(t *testing.T) {
 // stripped once the commit check has spoken, nothing touched while unknown.
 func TestPlanDCO(t *testing.T) {
 	base := Desired{Stage: ReviewPending, Role: RoleContributor}
-	cur := []string{"stage/050-review-pending", "author/contributor", "dco-signoff: yes", "bug"}
+	cur := []string{"stage/050-review-pending", "role/contributor", "dco-signoff: yes", "bug"}
 
 	yes := base
 	yes.DCO = DCOYes
@@ -124,17 +124,17 @@ func TestPlanDCO(t *testing.T) {
 	}
 	no := base
 	no.DCO = DCONo
-	add, remove = Plan([]string{"stage/050-review-pending", "author/contributor", DCOLabel, LegacyDCONo}, no)
+	add, remove = Plan([]string{"stage/050-review-pending", "role/contributor", DCOLabel, LegacyDCONo}, no)
 	if !reflect.DeepEqual(add, []string{NoDCOLabel}) || !reflect.DeepEqual(remove, []string{DCOLabel, LegacyDCONo}) {
 		t.Fatalf("no: add=%v remove=%v", add, remove)
 	}
 	// Unknown keeps whatever is there, own or legacy.
-	add, remove = Plan([]string{"stage/050-review-pending", "author/contributor", NoDCOLabel, LegacyDCOYes}, base)
+	add, remove = Plan([]string{"stage/050-review-pending", "role/contributor", NoDCOLabel, LegacyDCOYes}, base)
 	if len(add)+len(remove) != 0 {
 		t.Fatalf("unknown: add=%v remove=%v", add, remove)
 	}
 	// Idempotent.
-	add, remove = Plan([]string{"stage/050-review-pending", "author/contributor", DCOLabel}, yes)
+	add, remove = Plan([]string{"stage/050-review-pending", "role/contributor", DCOLabel}, yes)
 	if len(add)+len(remove) != 0 {
 		t.Fatalf("idempotent: add=%v remove=%v", add, remove)
 	}

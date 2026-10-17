@@ -1231,9 +1231,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 
 // ensureStageLabels provisions (or recolours) the family's labels in a repo
 // once per process: one list call, then a create or patch per label that is
-// missing or whose colour or description drifted from the table. A PATCH
-// keeps the label on every PR wearing it, so a pre-existing `dco` label is
-// recoloured in place rather than re-added.
+// missing or whose colour drifted from the table. A PATCH keeps the label on
+// every PR wearing it, so a pre-existing `dco` label is recoloured in place
+// rather than re-added.
 func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, tracker *StageTracker, kinds authorkind.Names) error {
 	full := strings.ToLower(owner + "/" + repo)
 	tracker.mu.Lock()
@@ -1284,7 +1284,7 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 			if err != nil && !isGitHubStatus(err, http.StatusUnprocessableEntity) {
 				return fmt.Errorf("creating label %s in %s: %w", def.Name, full, err)
 			}
-		case !strings.EqualFold(cur.GetColor(), def.Color) || cur.GetDescription() != stagelabels.ClampLabelDescription(def.Description):
+		case !strings.EqualFold(cur.GetColor(), def.Color):
 			_, _, err := c.gh.Issues.EditLabel(ctx, owner, repo, cur.GetName(), &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(stagelabels.ClampLabelDescription(def.Description))})
 			if err != nil {
 				return fmt.Errorf("recolouring label %s in %s: %w", def.Name, full, err)

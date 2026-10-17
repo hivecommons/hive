@@ -181,10 +181,10 @@ referenced it) a lone `stage/050-review-pending`
   (same constants, so the pair reads as one family). The retired
   `stage/regressed` is stripped from any item the sweep sees and is no longer
   provisioned.
-  The ensure-label step creates missing labels and PATCHes the colour or
-  description of an existing one only when it differs from the table, once
-  per repo per process — a PATCH keeps the label on every PR wearing it, so
-  an existing pill is recoloured, never removed and re-added.
+  The ensure-label step creates missing labels and PATCHes the colour of an
+  existing one only when it differs from the table, once per repo per
+  process — a PATCH keeps the label on every PR wearing it, so an existing
+  pill is recoloured, never removed and re-added.
 
 ### The table
 
@@ -413,9 +413,10 @@ The pair is mutually exclusive. A missing sign-off is the one author-side
 gate the hive decides **without waiting for CI or a reviewer verdict**: the
 PR goes to `stage/072-returned-to-contributor` (`070-fixing` when
 self-authored) with reason `dco-missing` on the first evaluation of the head,
-and the 072 nudge / relay `fix-pr` task names the exact fix —
-`git rebase --signoff HEAD~<n> && git push --force-with-lease` where `<n>` is
-the PR's commit count. Signing and force-pushing produces a new head, which
+and, for an `author/clanker` PR, the 072 nudge / relay `fix-pr` task names
+the exact fix — `git rebase --signoff HEAD~<n> && git push --force-with-lease`
+where `<n>` is the PR's commit count (a human-authored PR simply waits at 072
+wearing `no-dco`; see "Stage 072 by author kind"). Signing and force-pushing produces a new head, which
 is re-read and returns the PR to the normal path. A PR with no non-merge
 commits, or whose commits could not be read, is *unknown*: its existing DCO
 pills are left alone and no stage decision is made from DCO.
