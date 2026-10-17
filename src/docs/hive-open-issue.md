@@ -197,8 +197,10 @@ release actions.
 
 **This is descriptive metadata, not release authorization.** Hive still parks
 the issue and offers `/hive done` and `/hive decision` as before. `/hive approve`
-retains its existing meaning; it does **not** publish a release. No
-`release_on_approve` policy or dashboard release action is implemented yet.
+retains its existing meaning; it does **not** publish a release. The
+`project.repo_policies[].release_on_approve` opt-in (default `false`) is only a
+config switch for future behaviour (hivecommons/hive#12634, #12635); no release
+execution or dashboard release action is implemented yet.
 The owner must still cut the release themselves. The agent `gh release create`
 gate is unchanged. A future hub executor must independently validate live repo
 policy, human approval, tag/target provenance, required checks and replay safety

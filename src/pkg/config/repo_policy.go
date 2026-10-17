@@ -14,6 +14,7 @@ type RepoPolicy struct {
 	ReporterTrustHold     *bool  `yaml:"reporter_trust_hold,omitempty" json:"reporter_trust_hold,omitempty"`
 	AutoMerge             *bool  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	LabelDriven           bool   `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
+	ReleaseOnApprove      bool   `yaml:"release_on_approve,omitempty" json:"release_on_approve,omitempty"`
 	// LabelDrivenApprovalLabels overrides project.label_driven_approval_labels
 	// for this repo (hivecommons/hive#11313). Only read when LabelDriven is set.
 	LabelDrivenApprovalLabels []string             `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
@@ -83,6 +84,14 @@ func (c *Config) EffectiveACMMLevelForRepo(repo string) int {
 func (c *Config) RepoLabelDriven(repo string) bool {
 	rp, ok := c.RepoPolicyFor(repo)
 	return ok && rp.LabelDriven
+}
+
+// RepoReleaseOnApprove reports whether repo opted in to release-on-approve
+// (hivecommons/hive#12631). It is only the opt-in switch; unset means false and
+// a kind=release owner step behaves as it does today.
+func (c *Config) RepoReleaseOnApprove(repo string) bool {
+	rp, ok := c.RepoPolicyFor(repo)
+	return ok && rp.ReleaseOnApprove
 }
 
 // DefaultLabelDrivenApprovalLabel is the acceptance label Prow-style

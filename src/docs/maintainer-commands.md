@@ -73,8 +73,10 @@ instead of closing.
 A parked issue can carry a typed `kind=release` owner-step marker naming a tag
 and immutable commit SHA (see [hive-open-issue.md](hive-open-issue.md#recording-a-release-only-owner-step)).
 This records a proposal only: `/hive approve` still accepts direction and
-un-parks the issue, **not** a release operation. There is no `release_on_approve`
-opt-in yet. Cut the release yourself and reply `/hive done`, or use
+un-parks the issue, **not** a release operation. The repo-policy opt-in
+`project.repo_policies[].release_on_approve` (default `false`) exists as the
+switch for a future hub-cut release on `/hive approve` (follow-ups
+hivecommons/hive#12634 and #12635); it changes nothing yet. Cut the release yourself and reply `/hive done`, or use
 `/hive decision <text>` to change direction. The menu, permission checks and
 agent release-write prohibition are unchanged.
 

@@ -125,3 +125,30 @@ func TestMergeStrategyCountsAsOverride(t *testing.T) {
 		t.Fatal("a merge_strategy entry must not be pruned as empty")
 	}
 }
+
+func TestRepoReleaseOnApprove(t *testing.T) {
+	var cfg Config
+	raw := []byte(`
+project:
+  org: acme
+  repos: [a, b, c]
+  repo_policies:
+    - repo: a
+      release_on_approve: true
+    - repo: b
+      auto_merge: false
+`)
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cases := map[string]bool{"a": true, "acme/a": true, "b": false, "c": false}
+	for repo, want := range cases {
+		if got := cfg.RepoReleaseOnApprove(repo); got != want {
+			t.Errorf("RepoReleaseOnApprove(%q) = %v, want %v", repo, got, want)
+		}
+	}
+	var nilCfg *Config
+	if nilCfg.RepoReleaseOnApprove("a") {
+		t.Error("nil config must default to false")
+	}
+}
