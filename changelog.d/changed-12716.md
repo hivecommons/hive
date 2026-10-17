@@ -1,0 +1,1 @@
+- Contributor-lane soak defaults to 30m; settings spell out that 0 means default (#12716)
