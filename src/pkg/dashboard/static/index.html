@@ -1713,6 +1713,20 @@
     .ev-svg .ev-bar.cr-aband { fill:var(--red); }
     .ev-svg .ev-bar.cr-pend { fill:var(--amber); opacity:.6; }
     .ev-svg .ev-bar.cr-unk { fill:none; stroke:var(--muted); stroke-width:1; stroke-dasharray:2 2; }
+    .ev-svg .ev-bar.cp-1 { fill:var(--green); }
+    .ev-svg .ev-bar.cp-2 { fill:var(--green); opacity:.6; }
+    .ev-svg .ev-bar.cp-3 { fill:var(--amber); opacity:.8; }
+    .ev-svg .ev-bar.cp-4 { fill:var(--amber); opacity:.5; }
+    .ev-svg .ev-bar.cp-never { fill:var(--red); }
+    .ev-svg .ev-line.cp-line { fill:none; stroke:var(--blue); stroke-width:1.5; }
+    .ev-svg .ev-dot.cp-line { fill:var(--blue); }
+    .ev-legend i.cp-1 { background:var(--green); }
+    .ev-legend i.cp-2 { background:var(--green); opacity:.6; }
+    .ev-legend i.cp-3 { background:var(--amber); opacity:.8; }
+    .ev-legend i.cp-4 { background:var(--amber); opacity:.5; }
+    .ev-legend i.cp-never { background:var(--red); }
+    .ev-legend i.cp-line { background:var(--blue); height:2px; }
+    .ev-disclosed { margin:4px 0 6px; }
     .ev-legend i.cr-rec { background:var(--green); }
     .ev-legend i.cr-green { background:var(--green); opacity:.45; }
     .ev-legend i.cr-aband { background:var(--red); }
@@ -22952,9 +22966,14 @@ function burnAreaChart() {
     const EV_QUEUE_GROWTH_MAX = 0.10;       // week-end queue depth growing more than this week over week → Weak regardless of ratio
     const EV_BLOCKED_STRONG = 0.01;         // proxy-blocked share of ALL agent writes (direct + hive-mediated) ≤ → Strong
     const EV_BLOCKED_FAIR = 0.05;           // ≤ → Fair, above → Weak
-    const EV_RECOVERY_STRONG = 0.90;        // CI-red-at-claim PRs that went green and merged ÷ settled (merged + abandoned) ≥ → Strong
-    const EV_RECOVERY_FAIR = 0.70;          // ≥ → Fair, below → Weak
-    const EV_ABANDON_MAX = 0.25;            // abandoned ÷ settled above this → Weak regardless of recovery
+    // CI gate, grade A (integrity): breaches ÷ merged PRs with a known merge-time check state.
+    const EV_GATE_BREACH_GOOD = 0.01;       // 0 breaches → Excellent; ≤ this share → Good
+    const EV_GATE_BREACH_FAIR = 0.03;       // ≤ this share → Fair, above → Weak
+    // CI gate, grade B (convergence): median CI passes to first green AND abandoned share, both must hold.
+    const EV_CONV_PASSES_EXCELLENT = 1.5, EV_CONV_ABANDON_EXCELLENT = 0.05;
+    const EV_CONV_PASSES_GOOD = 2.5, EV_CONV_ABANDON_GOOD = 0.10;
+    const EV_CONV_PASSES_FAIR = 4, EV_CONV_ABANDON_FAIR = 0.20;
+    const EV_CONV_BUCKETS = ['1', '2', '3', '4+', 'never'];
     const EV_CALIB_MIN_BUCKET_N = 5;        // calibration buckets with fewer known-outcome verdicts are drawn hollow and not joined
     const EV_DATA_SINCE = '2026-10-08';     // first live evidence bundles were written
     const EV_REVERTS_SINCE = '2026-10-15';  // reverted_by links recorded from this date
@@ -22965,6 +22984,19 @@ function burnAreaChart() {
     // evThroughputGrade: closed ÷ opened over the window on the four-band
     // scale, forced to Weak when the week-end queue grew more than
     // EV_QUEUE_GROWTH_MAX week over week at the end of the window.
+    // evGateGrade: 0 breaches is Excellent only once enough merged PRs have a known state.
+    function evGateGrade(breaches, withChecks) {
+      if (!(Number(withChecks) >= EV_GRADE_MIN_N)) return 'none';
+      const share = Number(breaches) / Number(withChecks);
+      return Number(breaches) === 0 ? 'excellent' : share <= EV_GATE_BREACH_GOOD ? 'good' : share <= EV_GATE_BREACH_FAIR ? 'fair' : 'weak';
+    }
+    function evConvergenceGrade(medianPasses, abandonShare, settled) {
+      if (medianPasses == null || abandonShare == null || !(Number(settled) >= EV_GRADE_MIN_N)) return 'none';
+      if (medianPasses <= EV_CONV_PASSES_EXCELLENT && abandonShare < EV_CONV_ABANDON_EXCELLENT) return 'excellent';
+      if (medianPasses <= EV_CONV_PASSES_GOOD && abandonShare < EV_CONV_ABANDON_GOOD) return 'good';
+      if (medianPasses <= EV_CONV_PASSES_FAIR && abandonShare < EV_CONV_ABANDON_FAIR) return 'fair';
+      return 'weak';
+    }
     function evThroughputGrade(ratio, opened, queueGrowth) {
       if (ratio == null || !(Number(opened) >= EV_GRADE_MIN_N)) return 'none';
       if (queueGrowth != null && queueGrowth > EV_QUEUE_GROWTH_MAX) return 'weak';
@@ -23114,22 +23146,25 @@ function burnAreaChart() {
           notApprove += Number(w.verdict_not_approve) || 0;
         });
         const rec = dto.ci_recovery && typeof dto.ci_recovery === 'object' ? dto.ci_recovery : {};
-        const red = rec.red || {};
-        const pol = rec.policy || {};
-        const settled = (Number(red.recovered_merged) || 0) + (Number(red.abandoned) || 0);
-        const recovery = evRate(red.recovered_merged, settled);
-        const abandon = evRate(red.abandoned, settled);
-        let grade = evGrade(recovery, settled, EV_RECOVERY_STRONG, EV_RECOVERY_FAIR, true);
-        if (grade !== 'none' && abandon != null && abandon > EV_ABANDON_MAX) grade = 'weak';
+        const red = rec.red || {}, gate = rec.gate || {}, conv = rec.convergence || {}, pol = rec.policy || {};
+        const passes = conv.passes || {};
+        const settled = Number(conv.settled) || 0;
+        const never = Number(passes.never) || 0;
+        const abandon = evRate(never, settled);
+        const firstPass = evRate(passes['1'], settled - never);
+        const gradeA = evGateGrade(gate.breaches, gate.with_checks);
+        const gradeB = evConvergenceGrade(conv.median_passes != null ? Number(conv.median_passes) : null, abandon, settled);
+        const grade = evLowerGrade(gradeA, gradeB);
         const policy = pol.self_authored_automerge === false ? 'self-authored auto-merge is OFF on this hive, so a human merges after CI' : `self-authored auto-merge is ON (auto_merge.self_authored), so a red check simply holds the PR until the agent pushes a fix${Array.isArray(pol.required_checks) && pol.required_checks.length ? `; required checks: ${pol.required_checks.join(', ')}` : ''}`;
-        const med = red.median_pushes_to_green != null ? ` Median ${red.median_pushes_to_green} push(es) and ${red.median_hours_to_green != null ? Math.round(Number(red.median_hours_to_green) * 10) / 10 : '—'} h from claim to first green${red.same_head_recovered ? ` (${red.same_head_recovered} went green on the same head: a re-run or a flaky check, no new commit)` : ''}.` : '';
+        const rsettled = (Number(red.recovered_merged) || 0) + (Number(red.abandoned) || 0);
+        const cost = gate.median_green_to_merge_hours != null ? ` Gate latency: median ${Math.round(Number(gate.median_green_to_merge_hours) * 10) / 10} h from first green on the merged head to merge (${Number(gate.green_to_merge_n) || 0} PRs).` : '';
         return {
-          matters: 'This hive runs a "CI arbitrates" policy: agents open the PR as soon as they believe it is done and let CI kick it back rather than tying up an agent waiting on checks. So CI red at claim time is expected here, and the question that matters is what happens next: does the agent recover (push a fix, go green, merge) or is the PR abandoned?',
-          measured: 'For agent-written PRs only: the state of CI at the moment of the claim (the first evidence record that captured checks), how many claims got a non-approve swarm verdict, and — the headline — of the PRs that were CI-red at claim, how many later went green and merged (recovered), how many are green but still open, how many were closed without merging (abandoned), how many are still red or pending, and how many have no recorded outcome.',
-          how: `Claim = the first live evidence record per agent PR with captured checks; its head SHA is the claim head; skipped and neutral checks are green, as the merge gate treats them. For red-at-claim PRs the hive fetches the PR’s commit trail from GitHub (one head per push, newest 6) and reads each head’s check conclusion, refreshed hourly and kept in a durable rollup. Recovered = merged (from the bundle or GitHub). Abandoned = closed without merge. Recovery rate = recovered ÷ (recovered + abandoned) — only PRs whose outcome has settled. Green-but-open, still red/pending and outcome-unknown PRs are shown as counts and are not in any rate. Policy: ${policy}. No knob makes agents wait for CI; the merge gate requiring green checks is the policy.`,
-          good: `Recovery at or above ${Math.round(EV_RECOVERY_STRONG * 100)}% of settled red-at-claim PRs is Strong, ${Math.round(EV_RECOVERY_FAIR * 100)}% or more Fair, below that Weak; more than ${Math.round(EV_ABANDON_MAX * 100)}% abandoned is Weak whatever the recovery. A high red-at-claim share is NOT graded: under CI-arbitrates it is the design, not a defect.`,
-          ours: `${claimed} agent PRs claimed done across ${weeks.length} week(s). At claim: ${Number((rec.at_claim || {}).green) || 0} green · ${Number((rec.at_claim || {}).red) || 0} red · ${Number((rec.at_claim || {}).pending) || 0} pending · ${Number((rec.at_claim || {}).none) || 0} with no captured checks (bundle view: ${ciNotGreen} of ${ciCaptured} settled not green, ${ciPending} pending). ${notApprove} got a non-approve swarm verdict. Of ${Number(red.n) || 0} red at claim: ${Number(red.recovered_merged) || 0} recovered and merged (${evPct(recovery)} of ${settled} settled), ${Number(red.green_open) || 0} green but open, ${Number(red.abandoned) || 0} abandoned, ${Number(red.pending) || 0} still red or pending, ${Number(red.outcome_unknown) || 0} outcome unknown; ${Number(red.not_enriched) || 0} not yet enriched from GitHub.${med} ${evLimitsSentence()}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} red-at-claim PRs with a settled outcome${evWindowHint(dto)}` : `${evPct(recovery)} of ${settled} settled red-at-claim PRs recovered and merged · ${evPct(abandon)} abandoned`,
+          matters: 'This hive hands off to CI by policy: agents open the PR as soon as they believe it is done and do not wait for checks; CI kicks back what is not ready. Two things then matter. Safety: did anything merge without green checks (gate integrity)? Efficiency: how many CI passes does an agent PR need before it is green, and how many never get there (convergence)? CI red at the moment of the claim is the design, not a defect, and is disclosed but not graded.',
+          measured: 'Grade A, gate integrity: every merged PR in the window, any author, by the state of its checks at merge time — green, red, a policy-required check missing, still pending, or unknown. Grade B, convergence: for agent-authored PRs, the number of CI passes (distinct head SHAs that CI evaluated) until the first green one, bucketed 1 / 2 / 3 / 4+ / never (closed without merge and without a green), per ISO week of PR open time, plus the cumulative share green by pass k. Disclosed facts: CI state at claim, swarm non-approve verdicts, and the recovery read of red-at-claim PRs. Secondary: gate latency, first green → merge.',
+          how: `Merge-time state = the newest live evidence snapshot for the head that merged, else the last head of the PR’s GitHub commit trail; merged PRs with neither are "unknown" and in no rate. Breach = red at merge, or a required check (${Array.isArray(pol.required_checks) && pol.required_checks.length ? pol.required_checks.join(', ') : 'none configured'}) not green in the snapshot; every breach is listed with its PR. Gate integrity = (with_checks − breaches) ÷ with_checks. A pass is one CI evaluation of a new head SHA: the hive reads each PR’s commits and check-run conclusions through its app token (hourly, a capped batch per pass, red-at-claim and merged-unknown PRs first) into a durable rollup, scanning from the first commit until the first green or the fourth evaluated head; until a PR’s trail arrives, its live snapshots stand in (${Number(conv.from_github) || 0} settled reads from GitHub, ${Number(conv.from_bundles) || 0} from bundles only — bundles can miss heads nobody reviewed). Median passes counts 4+ as 4. Abandoned share = never ÷ settled; in-flight (open, not yet green: ${Number(conv.in_flight) || 0}) and unknown (${Number(conv.unknown) || 0}) are counts outside every denominator. First-pass share = green on pass 1 ÷ PRs that went green: a neutral line (the RFC’s C1 number), not graded. Policy: ${policy}. No knob makes agents wait for CI; the merge gate requiring green checks is the policy.`,
+          good: `Grade A: 0 breaches is Excellent, at most ${Math.round(EV_GATE_BREACH_GOOD * 100)}% of merged-with-known-state Good, at most ${Math.round(EV_GATE_BREACH_FAIR * 100)}% Fair, more Weak. Grade B needs both conditions: median passes ≤ ${EV_CONV_PASSES_EXCELLENT} and under ${Math.round(EV_CONV_ABANDON_EXCELLENT * 100)}% abandoned is Excellent; ≤ ${EV_CONV_PASSES_GOOD} and under ${Math.round(EV_CONV_ABANDON_GOOD * 100)}% Good; ≤ ${EV_CONV_PASSES_FAIR} and under ${Math.round(EV_CONV_ABANDON_FAIR * 100)}% Fair; otherwise Weak. The panel grade is the lower of A and B. Red-at-claim share and swarm non-approve are not graded.`,
+          ours: `Gate: ${Number(gate.merged_n) || 0} PRs merged, ${Number(gate.with_checks) || 0} with a known merge-time state → ${Number(gate.green) || 0} green, ${Number(gate.breaches) || 0} breach(es), ${Number(gate.pending) || 0} merged with checks still running, ${Number(gate.unknown) || 0} unknown (${EV_GRADES[gradeA]}).${cost} Convergence: ${Number(conv.n) || 0} agent PRs, ${settled} settled → pass 1: ${Number(passes['1']) || 0} · 2: ${Number(passes['2']) || 0} · 3: ${Number(passes['3']) || 0} · 4+: ${Number(passes['4+']) || 0} · never: ${never}; median ${conv.median_passes != null ? conv.median_passes : '—'} pass(es), ${evPct(abandon)} abandoned, first-pass share ${evPct(firstPass)} (${EV_GRADES[gradeB]}). Disclosed: ${claimed} agent PRs claimed done across ${weeks.length} week(s); at claim ${Number((rec.at_claim || {}).green) || 0} green · ${Number((rec.at_claim || {}).red) || 0} red · ${Number((rec.at_claim || {}).pending) || 0} pending · ${Number((rec.at_claim || {}).none) || 0} no captured checks (bundle view: ${ciNotGreen} of ${ciCaptured} settled not green, ${ciPending} pending); ${notApprove} got a non-approve swarm verdict; of ${Number(red.n) || 0} red at claim, ${Number(red.recovered_merged) || 0} recovered and merged (${evPct(evRate(red.recovered_merged, rsettled))} of ${rsettled} settled), ${Number(red.abandoned) || 0} abandoned, ${Number(red.outcome_unknown) || 0} outcome unknown. ${evLimitsSentence()}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} merged PRs with a known merge-time check state and ${EV_GRADE_MIN_N} settled agent PRs${evWindowHint(dto)}` : `A gate integrity ${EV_GRADES[gradeA]}: ${Number(gate.breaches) || 0} breach(es) in ${Number(gate.with_checks) || 0} · B convergence ${EV_GRADES[gradeB]}: median ${conv.median_passes != null ? conv.median_passes : '—'} pass(es), ${evPct(abandon)} abandoned`,
         };
       },
       'work-balance': (dto) => {
@@ -23441,6 +23476,74 @@ function burnAreaChart() {
     // green but open · abandoned · still red/pending · outcome unknown).
     // Weekly bars below keep the claim-time facts: claimed done, CI not green
     // at claim, swarm not approve, both. Read-only; no gate reads it.
+    // CI gate headline: grade A (integrity) and grade B (convergence) with
+    // their denominators, breaches linkable, unknowns as counts.
+    function evCIGateHtml(rec) {
+      if (!rec || typeof rec !== 'object') return '';
+      const gate = rec.gate || {}, conv = rec.convergence || {}, passes = conv.passes || {}, pol = rec.policy || {};
+      const withChecks = Number(gate.with_checks) || 0, breaches = Number(gate.breaches) || 0;
+      const integrity = evRate(withChecks - breaches, withChecks);
+      const settled = Number(conv.settled) || 0, never = Number(passes.never) || 0;
+      const abandon = evRate(never, settled);
+      const firstPass = evRate(passes['1'], settled - never);
+      const gradeA = evGateGrade(breaches, withChecks);
+      const gradeB = evConvergenceGrade(conv.median_passes != null ? Number(conv.median_passes) : null, abandon, settled);
+      const policy = pol.self_authored_automerge === false ? 'self-authored auto-merge off' : 'hands off to CI: agents do not wait for checks';
+      const breachList = (Array.isArray(gate.breach_prs) ? gate.breach_prs : []).slice(0, 8).map((b) => {
+        const label = `${b.repo}#${b.number}`;
+        const why = b.state === 'missing_required' ? `required check(s) missing: ${(b.missing || []).join(', ')}` : 'red at merge';
+        return `<a href="https://github.com/${encodeURIComponent(String(b.repo || '')).replace(/%2F/g, '/')}/pull/${Number(b.number) || 0}" target="_blank" rel="noopener" title="${escapeHtml(`${why} · ${b.author_kind || ''} · ${b.source || ''}`)}">${escapeHtml(label)}</a>`;
+      }).join(' ');
+      const cost = gate.median_green_to_merge_hours != null ? ` · gate latency median ${Math.round(Number(gate.median_green_to_merge_hours) * 10) / 10} h first green → merge (${Number(gate.green_to_merge_n) || 0})` : '';
+      const a = `<div class="ev-headline"><span class="ev-grade ${gradeA}" title="Grade A">${EV_GRADES[gradeA]}</span> <b>Gate integrity ${evPct(integrity)}</b> · ${withChecks - breaches} of ${withChecks} merged PRs green at merge · <b>${breaches} breach(es)</b>${breachList ? ` ${breachList}` : ''} <span class="ev-sub">(${Number(gate.merged_n) || 0} merged: ${Number(gate.pending) || 0} with checks still running, ${Number(gate.unknown) || 0} unknown state, both outside the rate${cost})</span></div>`;
+      const b = `<div class="ev-headline"><span class="ev-grade ${gradeB}" title="Grade B">${EV_GRADES[gradeB]}</span> <b>Convergence: median ${conv.median_passes != null ? conv.median_passes : '—'} CI pass(es) to green</b> · ${evPct(abandon)} abandoned (${never} of ${settled} settled) · first-pass share ${evPct(firstPass)} <span class="ev-sub">(${Number(conv.n) || 0} agent PRs: ${Number(conv.in_flight) || 0} in flight, ${Number(conv.unknown) || 0} unknown, outside the rates · ${Number(conv.from_github) || 0} read from GitHub, ${Number(conv.from_bundles) || 0} from bundles only · policy: ${escapeHtml(policy)})</span></div>`;
+      return a + b;
+    }
+    // Convergence chart: per ISO week a stacked bar of agent PRs by passes to
+    // first green (1 / 2 / 3 / 4+ / never) with a line for the cumulative
+    // share green by pass 1 over settled-and-green PRs.
+    function evConvergenceSvg(conv) {
+      const rows = (conv && Array.isArray(conv.by_week) ? conv.by_week : []).filter((w) => w && w.passes && EV_CONV_BUCKETS.some((k) => Number(w.passes[k]) > 0 || Number(w.in_flight) > 0 || Number(w.unknown) > 0));
+      if (!rows.length) return '';
+      const series = [['1', 'cp-1', 'green on pass 1'], ['2', 'cp-2', 'pass 2'], ['3', 'cp-3', 'pass 3'], ['4+', 'cp-4', 'pass 4+'], ['never', 'cp-never', 'never (closed unmerged)']];
+      const w = EV_SVG_W, h = 150, l = 26, r = 30, t = 8, b = 22;
+      const pw = w - l - r, ph = h - t - b;
+      const groupW = pw / rows.length;
+      const barW = Math.max(3, groupW * 0.6);
+      const total = (row) => series.reduce((acc, [k]) => acc + (Number(row.passes[k]) || 0), 0);
+      const maxN = Math.max(1, ...rows.map(total));
+      const y = (v) => t + ph - (v / maxN) * ph;
+      const yPct = (f) => t + ph - f * ph;
+      let grid = '';
+      [0, 0.5, 1].forEach((f) => {
+        const v = Math.round(maxN * f);
+        grid += `<line class="ev-axis" x1="${l}" x2="${w - r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text x="${l - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text><text x="${w - r + 4}" y="${(yPct(f) + 3).toFixed(1)}">${Math.round(f * 100)}%</text>`;
+      });
+      const pts = [];
+      const body = rows.map((row, i) => {
+        const x0 = l + i * groupW + (groupW - barW) / 2;
+        const n = total(row);
+        const never = Number(row.passes.never) || 0;
+        const green = n - never;
+        const p1 = Number(row.passes['1']) || 0;
+        const tip = escapeHtml(`${row.week}: ${n} settled agent PRs · pass 1: ${p1} · 2: ${Number(row.passes['2']) || 0} · 3: ${Number(row.passes['3']) || 0} · 4+: ${Number(row.passes['4+']) || 0} · never: ${never} · in flight ${Number(row.in_flight) || 0} · unknown ${Number(row.unknown) || 0}${green ? ` · green by pass 1: ${Math.round((p1 / green) * 100)}%` : ''}`);
+        let acc = 0;
+        const bars = series.map(([key, cls]) => {
+          const v = Number(row.passes[key]) || 0;
+          if (!(v > 0)) return '';
+          const y1 = y(acc + v), y0 = y(acc);
+          acc += v;
+          return `<rect class="ev-bar ${cls}" x="${x0.toFixed(1)}" y="${y1.toFixed(1)}" width="${barW.toFixed(1)}" height="${(y0 - y1).toFixed(1)}"><title>${tip}</title></rect>`;
+        }).join('');
+        if (green > 0) pts.push([x0 + barW / 2, yPct(p1 / green), p1, green]);
+        const label = rows.length > 8 ? String(row.week || '').replace(/^\d{4}-/, '') : String(row.week || '');
+        return `<g>${bars}<text x="${(x0 + barW / 2).toFixed(1)}" y="${h - 6}" text-anchor="middle">${escapeHtml(label)}<title>${tip}</title></text></g>`;
+      }).join('');
+      const line = pts.length > 1 ? `<polyline class="ev-line cp-line" points="${pts.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(' ')}"/>` : '';
+      const dots = pts.map(([x, yy, p1, green]) => `<circle class="ev-dot cp-line" cx="${x.toFixed(1)}" cy="${yy.toFixed(1)}" r="2.5"><title>${escapeHtml(`green by pass 1: ${p1} of ${green} (${Math.round((p1 / green) * 100)}%)`)}</title></circle>`).join('');
+      const legend = series.map(([, cls, label]) => `<span><i class="${cls}"></i>${label}</span>`).join('') + '<span><i class="cp-line"></i>share green by pass 1 (right axis)</span>';
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="CI convergence: agent PRs per week by CI passes to first green, with the share green on pass 1">${grid}${body}${line}${dots}</svg><div class="ev-legend">${legend}</div>`;
+    }
     function evCIRecoveryHtml(rec) {
       if (!rec || typeof rec !== 'object' || !(Number(rec.n) > 0)) return '';
       const red = rec.red || {}, at = rec.at_claim || {}, pol = rec.policy || {};
@@ -23448,9 +23551,9 @@ function burnAreaChart() {
       const n = Number(red.n) || 0;
       const settled = (Number(red.recovered_merged) || 0) + (Number(red.abandoned) || 0);
       const rate = evRate(red.recovered_merged, settled);
-      const policy = pol.self_authored_automerge === false ? 'self-authored auto-merge off' : 'CI arbitrates: self-authored auto-merge on';
+      const policy = pol.self_authored_automerge === false ? 'self-authored auto-merge off' : 'hands off to CI: agents do not wait for checks';
       const med = red.median_pushes_to_green != null ? ` · median ${red.median_pushes_to_green} push(es), ${red.median_hours_to_green != null ? Math.round(Number(red.median_hours_to_green) * 10) / 10 : '—'} h to green` : '';
-      const headline = `<div class="ev-headline"><b>${Number(red.recovered_merged) || 0} of ${settled} settled red-at-claim PRs recovered and merged</b> · ${evPct(rate)}${med} <span class="ev-sub">(${n} red at claim of ${Number(rec.n) || 0} claims: ${Number(at.green) || 0} green · ${Number(at.red) || 0} red · ${Number(at.pending) || 0} pending · ${Number(at.none) || 0} no checks captured · policy: ${escapeHtml(policy)}${Number(red.not_enriched) > 0 ? ` · ${red.not_enriched} not yet enriched from GitHub` : ''})</span></div>`;
+      const headline = `<div class="ev-sub ev-disclosed">Disclosed, not graded: at claim ${Number(at.green) || 0} green · ${Number(at.red) || 0} red · ${Number(at.pending) || 0} pending · ${Number(at.none) || 0} no checks captured of ${Number(rec.n) || 0} agent claims (${escapeHtml(policy)}). Of ${n} red at claim: ${Number(red.recovered_merged) || 0} of ${settled} settled recovered and merged (${evPct(rate)})${med}${Number(red.not_enriched) > 0 ? ` · ${red.not_enriched} not yet enriched from GitHub` : ''}.</div>`;
       if (!n) return headline;
       const w = EV_SVG_W, h = 14;
       let x = 0;
@@ -23590,7 +23693,7 @@ function burnAreaChart() {
       const throttleNote = (dto.missing || {}).throttle_windows_unavailable === false ? 'Shaded weeks are governor issue-creation throttle windows.' : 'Throttle windows not reported by this hive, so no weeks are shaded.';
       const issueSourceNote = balanceSrc.issues_github_since ? `Issue opens and closes are GitHub-truth (all authors) from ${balanceSrc.issues_github_since}${balanceSrc.audit_only_weeks ? `; the ${balanceSrc.audit_only_weeks} earlier week(s) are audit-log only, where issues humans or third-party bots open directly on GitHub are not observed` : ''}.` : 'GitHub issue history has not been fetched yet, so issue opens and closes are audit-log only: issues humans or third-party bots open directly on GitHub are not observed and the human column is a floor.';
       const rec = dto.ci_recovery && typeof dto.ci_recovery === 'object' ? dto.ci_recovery : {};
-      const recRed = rec.red || {};
+      const recGate = rec.gate || {}, recConv = rec.convergence || {};
       const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
@@ -23603,8 +23706,8 @@ function burnAreaChart() {
           `Outcome is recorded merge vs recorded close, not ground truth: a block that was later fixed and merged counts as a false block, and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here, merged elsewhere or by hand, or still open) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
         + evPanel('boundary-enforcement', 'Boundary enforcement', writesN, evWriteActivitySvg(activity) + evSentinelSparkline(sentinel),
           `The denominator is every agent GitHub write the hive can see in the window: hive-mediated writes from the audit log plus direct writes through the proxy (weekly counters kept under /data). Blocked is what the proxy refused; would-block counts from intent verification are shown separately in the explainer and never counted as blocked.${directCoverage} Writes that bypass both the hive and the proxy are invisible here. Sentinel hits come from evidence bundles in the window. Blocked is not the same as harmful.`)
-        + evPanel('claim-vs-verdict', 'Claim vs verdict · CI recovery', claimN, evCIRecoveryHtml(rec) + evClaimVsVerdictSvg(claims),
-          `Only agent-authored PRs; the first evidence record with captured checks is the claim. This hive runs CI-arbitrates (agents do not wait for CI; a red check holds the PR), so CI red at claim is by design and is not graded — recovery is. Recovery rate = recovered and merged ÷ (recovered + abandoned); PRs that are green but open, still red or pending${recRed.pending ? ` (${recRed.pending})` : ''}, or have no recorded outcome${recRed.outcome_unknown ? ` (${recRed.outcome_unknown})` : ''} are counted separately and in no rate. A PR with no captured checks${emptyCI ? ` (${emptyCI} in this window)` : ''} or still-running checks at claim${pendingCI ? ` (${pendingCI})` : ''} is left out of the CI column. Pushes and hours to green come from GitHub’s commit trail (newest 6 heads) and only for PRs already enriched${recRed.not_enriched ? ` (${recRed.not_enriched} not yet)` : ''}. A non-approve verdict is not proof the agent was wrong.`)
+        + evPanel('claim-vs-verdict', 'CI gate — integrity + convergence', claimN, evCIGateHtml(rec) + evConvergenceSvg(rec.convergence) + evCIRecoveryHtml(rec) + evClaimVsVerdictSvg(claims),
+          `Gate integrity covers every merged PR in the window (any author) whose merge-time check state is on record; merged PRs with no snapshot and no GitHub trail${recGate.unknown ? ` (${recGate.unknown})` : ''} are unknown, not green and not breaches. Convergence covers agent-authored PRs only: a pass is one CI evaluation of a new head SHA, read from GitHub’s commit trail where it has arrived and from this hive’s own snapshots otherwise (which can miss heads nobody reviewed); in-flight${recConv.in_flight ? ` (${recConv.in_flight})` : ''} and unknown${recConv.unknown ? ` (${recConv.unknown})` : ''} PRs are in no rate. This hive hands off to CI by policy (agents do not wait for CI; a red check holds the PR), so CI red at claim is by design and is disclosed, not graded. A PR with no captured checks${emptyCI ? ` (${emptyCI} in this window)` : ''} or still-running checks at claim${pendingCI ? ` (${pendingCI})` : ''} is left out of the CI column. A non-approve verdict is not proof the agent was wrong.`)
         + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance, balanceSrc),
           `${issueSourceNote} PR opens, merges and closes come from evidence bundles for PRs opened in the window (live and backfilled), so PRs never seen by this hive are missing. Week-end queue depth is the governor’s actionable open issues / PRs (held items excluded) from its last snapshot of the week, kept ${balanceSrc.queue_retention_days || 30} days${balanceSrc.queue_samples === 0 ? ' — no snapshot in this window' : ''}. Nothing is weighted by size, and an opened issue counts whether or not anyone acted on it. ${throttleNote}`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),

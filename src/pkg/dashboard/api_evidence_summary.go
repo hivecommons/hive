@@ -527,7 +527,8 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	}, win, repo)
 	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == ""
 	resp.WriteActivity = buildEvidenceWriteActivity(writeCountersPath, evidenceWriteActivityEntries(s.audit), win, repo, now)
-	resp.CIRecovery = buildEvidenceCIRecovery(evidenceCIClaims(bundles, evidence.FoldPRs(bundles, "", "")), loadCIRecoveryRollup(ciRecoveryPath), win, repo, evidenceCIPolicy(s))
+	allPRs := evidence.FoldPRs(bundles, "", "")
+	resp.CIRecovery = buildEvidenceCIRecovery(evidenceCIClaims(bundles, allPRs), evidenceGateMerges(bundles, allPRs), loadCIRecoveryRollup(ciRecoveryPath), win, repo, evidenceCIPolicy(s))
 
 	days := (hours + 23) / 24
 	if days < 1 || days > reviewerAccuracyMaxWindowDays {

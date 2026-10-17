@@ -358,7 +358,7 @@ func evidenceWaiting(v EvidenceView) []string {
 	}
 	out = append(out,
 		"Per-axis criteria table — not reported by any hive build yet.",
-		"Claim-vs-verdict totals — not reported by any hive build yet.")
+		"CI gate (claim vs verdict) totals — not reported by any hive build yet.")
 	if !evidenceHasTimeToMerge(v) {
 		out = append(out, evidenceWaitingTimeToMerge)
 	}

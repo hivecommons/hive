@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,7 +38,7 @@ const (
 	// hour, ciRecoveryMaxPerPass PRs per pass (each PR costs one PR GET, one
 	// commit list and up to prCITrailMaxHeads check summaries).
 	ciRecoveryRefresh    = time.Hour
-	ciRecoveryMaxPerPass = 10
+	ciRecoveryMaxPerPass = 20
 	// ciRecoveryLookback is how far back (by PR open time) the collector
 	// looks for red-at-claim agent PRs to enrich.
 	ciRecoveryLookback = 60 * 24 * time.Hour
@@ -161,8 +162,243 @@ type EvidenceCIRecovery struct {
 	// AtClaim buckets N by the CI state of the first captured snapshot:
 	// green, red, pending, none (no check captured).
 	AtClaim map[string]int `json:"at_claim"`
-	// Red is the recovery read over the red-at-claim PRs.
+	// Red is what happened to the PRs that were red at claim.
 	Red EvidenceCIRedRecovery `json:"red"`
+	// Gate is grade A: did anything merge without green checks?
+	Gate EvidenceCIGate `json:"gate"`
+	// Convergence is grade B: how many CI passes agent PRs need to go green.
+	Convergence EvidenceCIConvergence `json:"convergence"`
+}
+
+// Convergence pass buckets. A pass is one CI evaluation of a distinct head
+// SHA; "4+" absorbs everything past PRCIConvergenceCap, "never" is closed
+// without ever going green.
+const (
+	evidenceConvNever   = "never"
+	evidenceConvCapKey  = "4+"
+	evidenceConvBuckets = 4
+)
+
+// EvidenceCIConvergence counts, per agent PR opened in the window, the CI
+// passes until the first green head. Shares are over settled PRs (passes
+// known, or closed unmerged without a green); in-flight and unknown PRs are
+// counts outside every denominator.
+type EvidenceCIConvergence struct {
+	// N is agent PRs in the window with a live record.
+	N int `json:"n"`
+	// Passes buckets settled PRs: "1", "2", "3", "4+", "never".
+	Passes map[string]int `json:"passes"`
+	// Settled is the sum of Passes; InFlight is open PRs not yet green;
+	// Unknown is PRs whose passes cannot be read (no CI captured, or merged
+	// without an observed green).
+	Settled  int `json:"settled"`
+	InFlight int `json:"in_flight"`
+	Unknown  int `json:"unknown"`
+	// MedianPasses is over PRs that went green ("4+" counted as 4).
+	MedianPasses *float64 `json:"median_passes,omitempty"`
+	// Sources: how many settled reads came from the GitHub commit trail vs
+	// from bundle snapshots alone (which can miss heads nobody reviewed).
+	FromGitHub  int `json:"from_github"`
+	FromBundles int `json:"from_bundles"`
+	// ByWeek is the same read per ISO week of PR open time, oldest first.
+	ByWeek []EvidenceCIConvergenceWeek `json:"by_week"`
+}
+
+// EvidenceCIConvergenceWeek is one ISO week's pass distribution.
+type EvidenceCIConvergenceWeek struct {
+	Week     string         `json:"week"`
+	Passes   map[string]int `json:"passes"`
+	InFlight int            `json:"in_flight"`
+	Unknown  int            `json:"unknown"`
+}
+
+// evidenceConvBucket names the bucket for a pass count.
+func evidenceConvBucket(passes int) string {
+	if passes >= evidenceConvBuckets {
+		return evidenceConvCapKey
+	}
+	return strconv.Itoa(passes)
+}
+
+func evidenceConvEmptyPasses() map[string]int {
+	return map[string]int{"1": 0, "2": 0, "3": 0, evidenceConvCapKey: 0, evidenceConvNever: 0}
+}
+
+// evidenceConvRead returns a claim's pass bucket ("" when in flight or
+// unknown), whether it is in flight, and the source of the read.
+func evidenceConvRead(c *ciClaim, tr *CIRecoveryTrail) (bucket string, inFlight bool, source string) {
+	merged, closed := c.pr.Merge != nil, c.pr.Closed
+	if tr != nil && (tr.Trail.Evaluated > 0 || tr.Trail.PassesToGreen > 0) {
+		switch tr.Trail.State {
+		case "merged":
+			merged = true
+		case "closed":
+			closed = true
+		case "open":
+			merged, closed = false, false
+		}
+		switch {
+		case tr.Trail.PassesToGreen > 0:
+			return evidenceConvBucket(tr.Trail.PassesToGreen), false, "github"
+		case tr.Trail.ScanCapped:
+			return evidenceConvCapKey, false, "github"
+		case merged:
+			return "", false, "github"
+		case closed:
+			return evidenceConvNever, false, "github"
+		}
+		return "", true, "github"
+	}
+	if c.state == evidenceCINone {
+		return "", false, "bundle"
+	}
+	seen := map[string]bool{c.claimHead: true}
+	passes := 1
+	if c.state == evidenceCIGreen {
+		return evidenceConvBucket(passes), false, "bundle"
+	}
+	for _, h := range c.later {
+		if seen[h.SHA] {
+			if h.State == ghpkg.PRCIHeadGreen {
+				// Same head re-run to green: still the same pass.
+				return evidenceConvBucket(passes), false, "bundle"
+			}
+			continue
+		}
+		seen[h.SHA] = true
+		passes++
+		if h.State == ghpkg.PRCIHeadGreen {
+			return evidenceConvBucket(passes), false, "bundle"
+		}
+	}
+	switch {
+	case merged:
+		return "", false, "bundle"
+	case closed:
+		return evidenceConvNever, false, "bundle"
+	}
+	return "", true, "bundle"
+}
+
+// EvidenceCIGate is the CI gate integrity read of the window: every merged
+// PR (any author) by the state of its checks at merge time, the catch rate
+// for red-at-claim agent PRs, and what the gate costs in latency. Rates
+// are over PRs whose merge-time state is known; unknown is a count.
+type EvidenceCIGate struct {
+	// MergedN is PRs opened in the window that merged.
+	MergedN int `json:"merged_n"`
+	// WithChecks is merged PRs whose check state at merge is known (bundle
+	// snapshot at the merged head, or the GitHub trail's final head).
+	WithChecks int `json:"with_checks"`
+	// Green is merged with every check green (required checks present when
+	// the policy names any).
+	Green int `json:"green"`
+	// Breaches is merged with a red check, or with a required check missing;
+	// each is listed so a reader can open it.
+	Breaches  int                    `json:"breaches"`
+	BreachPRs []EvidenceCIGateBreach `json:"breach_prs,omitempty"`
+	// Pending is merged while a check was still running: not green, not a
+	// red breach; disclosed, in no rate.
+	Pending int `json:"pending"`
+	// Unknown is merged PRs with no recorded merge-time checks and no trail.
+	Unknown int `json:"unknown"`
+	// Gate cost: median hours from the first green on the merged head to the
+	// merge, over merged PRs where both times are known.
+	GreenToMergeN           int      `json:"green_to_merge_n"`
+	MedianGreenToMergeHours *float64 `json:"median_green_to_merge_hours,omitempty"`
+}
+
+// EvidenceCIGateBreach is one merged PR whose checks were not green at merge.
+type EvidenceCIGateBreach struct {
+	Repo     string    `json:"repo"`
+	Number   int       `json:"number"`
+	Head     string    `json:"head"`
+	Author   string    `json:"author_kind"`
+	State    string    `json:"state"` // red or missing_required
+	Missing  []string  `json:"missing,omitempty"`
+	MergedAt time.Time `json:"merged_at"`
+	Source   string    `json:"source"` // bundle or github
+}
+
+// gateMerge is a merged PR's merge-time check state as the bundles know it.
+type gateMerge struct {
+	key, repo  string
+	number     int
+	authorKind string
+	openedAt   time.Time
+	mergedAt   time.Time
+	head       string
+	state      string // evidenceCI*; evidenceCINone when no snapshot
+	checks     []evidence.Check
+	greenAt    time.Time // first time a live record saw the merged head green
+}
+
+// evidenceGateMerges folds every merged PR's live records into the check
+// state of the head that merged: the merging record's head, read from the
+// newest live snapshot for that head.
+func evidenceGateMerges(bundles []*evidence.Bundle, prs map[string]*evidence.PR) map[string]*gateMerge {
+	byPR := map[string][]*evidence.Bundle{}
+	for _, b := range bundles {
+		if b == nil || b.Backfilled {
+			continue
+		}
+		k := evidence.PRKey(b.Repo, b.Number)
+		byPR[k] = append(byPR[k], b)
+	}
+	out := map[string]*gateMerge{}
+	for k, p := range prs {
+		if p == nil || p.Merge == nil {
+			continue
+		}
+		g := &gateMerge{key: k, repo: p.Repo, number: p.Number, authorKind: string(p.Author.Kind), openedAt: p.OpenedAt, mergedAt: p.Merge.At, state: evidenceCINone}
+		bs := byPR[k]
+		sort.SliceStable(bs, func(i, j int) bool { return bs[i].CreatedAt.Before(bs[j].CreatedAt) })
+		for _, b := range bs {
+			if b.Merge != nil {
+				g.head = b.HeadSHA
+			}
+		}
+		if g.head == "" && len(bs) > 0 {
+			g.head = bs[len(bs)-1].HeadSHA
+		}
+		for _, b := range bs {
+			if b.HeadSHA != g.head {
+				continue
+			}
+			st := evidenceCIState(b)
+			if st == evidenceCINone {
+				continue
+			}
+			if st == evidenceCIGreen && g.greenAt.IsZero() {
+				g.greenAt = b.CI.CapturedAt
+				if g.greenAt.IsZero() {
+					g.greenAt = b.CreatedAt
+				}
+			}
+			g.state, g.checks = st, b.CI.Checks
+		}
+		out[k] = g
+	}
+	return out
+}
+
+// evidenceGateMissingRequired lists policy-required check names absent or
+// not green in the snapshot.
+func evidenceGateMissingRequired(required []string, checks []evidence.Check) []string {
+	var missing []string
+	for _, name := range required {
+		ok := false
+		for _, c := range checks {
+			if c.Name == name && evidenceCIFinishedConclusions[c.Conclusion] && !evidenceCIFailingConclusions[c.Conclusion] {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			missing = append(missing, name)
+		}
+	}
+	return missing
 }
 
 // EvidenceCIPolicy is the hive's CI-arbitration posture, read from config.
@@ -202,9 +438,101 @@ type EvidenceCIRedRecovery struct {
 }
 
 // buildEvidenceCIRecovery combines bundle claims with the rollup trails.
-func buildEvidenceCIRecovery(claims map[string]*ciClaim, rollup CIRecoveryRollup, win evidenceWindow, repo string, policy EvidenceCIPolicy) EvidenceCIRecovery {
+func buildEvidenceCIRecovery(claims map[string]*ciClaim, merges map[string]*gateMerge, rollup CIRecoveryRollup, win evidenceWindow, repo string, policy EvidenceCIPolicy) EvidenceCIRecovery {
 	out := EvidenceCIRecovery{Policy: policy, AtClaim: map[string]int{evidenceCIGreen: 0, evidenceCIRed: 0, evidenceCIPending: 0, evidenceCINone: 0}}
-	var pushes, hours []float64
+	var pushes, hours, greenToMerge []float64
+	g := &out.Gate
+	conv := &out.Convergence
+	conv.Passes = evidenceConvEmptyPasses()
+	weeks := map[string]*EvidenceCIConvergenceWeek{}
+	var convPasses []float64
+	convAdd := func(c *ciClaim) {
+		conv.N++
+		wk := evidenceWeekKey(c.openedAt)
+		w := weeks[wk]
+		if w == nil {
+			w = &EvidenceCIConvergenceWeek{Week: wk, Passes: evidenceConvEmptyPasses()}
+			weeks[wk] = w
+		}
+		var tr *CIRecoveryTrail
+		if t, ok := rollup.PRs[c.key]; ok {
+			tr = &t
+		}
+		bucket, inFlight, source := evidenceConvRead(c, tr)
+		switch {
+		case inFlight:
+			conv.InFlight++
+			w.InFlight++
+		case bucket == "":
+			conv.Unknown++
+			w.Unknown++
+		default:
+			conv.Passes[bucket]++
+			w.Passes[bucket]++
+			conv.Settled++
+			if source == "github" {
+				conv.FromGitHub++
+			} else {
+				conv.FromBundles++
+			}
+			if bucket != evidenceConvNever {
+				p := evidenceConvBuckets
+				if bucket != evidenceConvCapKey {
+					p, _ = strconv.Atoi(bucket)
+				}
+				convPasses = append(convPasses, float64(p))
+			}
+		}
+	}
+	keys := make([]string, 0, len(merges))
+	for k := range merges {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		m := merges[k]
+		if repo != "" && !strings.EqualFold(m.repo, repo) {
+			continue
+		}
+		if !evidenceWindowHas(win, m.openedAt) {
+			continue
+		}
+		g.MergedN++
+		state, source, greenAt := m.state, "bundle", m.greenAt
+		var missing []string
+		if state != evidenceCINone {
+			missing = evidenceGateMissingRequired(policy.RequiredChecks, m.checks)
+		}
+		if tr, ok := rollup.PRs[k]; ok && state == evidenceCINone && len(tr.Trail.Heads) > 0 {
+			if last := tr.Trail.Heads[len(tr.Trail.Heads)-1]; last.State != ghpkg.PRCIHeadNone {
+				state, source = last.State, "github"
+				if last.State == ghpkg.PRCIHeadGreen && greenAt.IsZero() {
+					greenAt = last.At
+				}
+			}
+		}
+		switch {
+		case state == evidenceCINone:
+			g.Unknown++
+		case state == evidenceCIRed || len(missing) > 0:
+			g.WithChecks++
+			g.Breaches++
+			br := EvidenceCIGateBreach{Repo: m.repo, Number: m.number, Head: m.head, Author: m.authorKind, State: "red", MergedAt: m.mergedAt, Source: source}
+			if state != evidenceCIRed {
+				br.State, br.Missing = "missing_required", missing
+			}
+			g.BreachPRs = append(g.BreachPRs, br)
+		case state == evidenceCIPending:
+			g.WithChecks++
+			g.Pending++
+		default:
+			g.WithChecks++
+			g.Green++
+			if !greenAt.IsZero() && m.mergedAt.After(greenAt) {
+				greenToMerge = append(greenToMerge, m.mergedAt.Sub(greenAt).Hours())
+			}
+		}
+	}
 	for _, c := range claims {
 		if repo != "" && !strings.EqualFold(c.repo, repo) {
 			continue
@@ -214,6 +542,7 @@ func buildEvidenceCIRecovery(claims map[string]*ciClaim, rollup CIRecoveryRollup
 		}
 		out.N++
 		out.AtClaim[c.state]++
+		convAdd(c)
 		if c.state != evidenceCIRed {
 			continue
 		}
@@ -292,6 +621,18 @@ func buildEvidenceCIRecovery(claims map[string]*ciClaim, rollup CIRecoveryRollup
 		m = float64(int(m*10+0.5)) / 10
 		out.Red.MedianHoursToGreen = &m
 	}
+	if m, ok := evidenceMedian(convPasses); ok {
+		conv.MedianPasses = &m
+	}
+	for _, w := range weeks {
+		conv.ByWeek = append(conv.ByWeek, *w)
+	}
+	sort.Slice(conv.ByWeek, func(i, j int) bool { return conv.ByWeek[i].Week < conv.ByWeek[j].Week })
+	g.GreenToMergeN = len(greenToMerge)
+	if m, ok := evidenceMedian(greenToMerge); ok {
+		m = float64(int(m*10+0.5)) / 10
+		g.MedianGreenToMergeHours = &m
+	}
 	return out
 }
 
@@ -338,16 +679,42 @@ func (mc *MetricsCollector) collectCIRecovery(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	claims := evidenceCIClaims(bundles, evidence.FoldPRs(bundles, "", ""))
+	prs := evidence.FoldPRs(bundles, "", "")
+	claims := evidenceCIClaims(bundles, prs)
 	var due []*ciClaim
+	var dueConv []*ciClaim
 	for _, c := range claims {
-		if c.state != evidenceCIRed || c.openedAt.Before(now.Add(-ciRecoveryLookback)) {
+		if c.openedAt.Before(now.Add(-ciRecoveryLookback)) {
 			continue
 		}
-		if tr, ok := rollup.PRs[c.key]; ok && (tr.Settled || now.Sub(tr.FetchedAt) < ciRecoveryRefresh) {
+		tr, ok := rollup.PRs[c.key]
+		if ok && (tr.Settled || now.Sub(tr.FetchedAt) < ciRecoveryRefresh) {
 			continue
 		}
-		due = append(due, c)
+		if c.state == evidenceCIRed {
+			due = append(due, c)
+			continue
+		}
+		// Convergence wants the GitHub commit trail for every agent PR, but
+		// red-at-claim and merged-unknown PRs go first; bundle-only reads
+		// stand in until the trail arrives.
+		if !ok {
+			dueConv = append(dueConv, c)
+		}
+	}
+	// Gate integrity needs the merge-time check state of every merged PR;
+	// when no bundle snapshot has it, the trail's final head supplies it.
+	for k, m := range evidenceGateMerges(bundles, prs) {
+		if m.state != evidenceCINone || m.openedAt.Before(now.Add(-ciRecoveryLookback)) {
+			continue
+		}
+		if _, ok := rollup.PRs[k]; ok {
+			continue
+		}
+		if c := claims[k]; c != nil && c.state == evidenceCIRed {
+			continue
+		}
+		due = append(due, &ciClaim{key: k, repo: m.repo, number: m.number, openedAt: m.openedAt, claimAt: m.mergedAt, claimHead: m.head})
 	}
 	sort.Slice(due, func(i, j int) bool {
 		_, ei := rollup.PRs[due[i].key]
@@ -357,6 +724,8 @@ func (mc *MetricsCollector) collectCIRecovery(ctx context.Context) {
 		}
 		return due[i].openedAt.After(due[j].openedAt)
 	})
+	sort.Slice(dueConv, func(i, j int) bool { return dueConv[i].openedAt.After(dueConv[j].openedAt) })
+	due = append(due, dueConv...)
 	if len(due) > ciRecoveryMaxPerPass {
 		due = due[:ciRecoveryMaxPerPass]
 	}
