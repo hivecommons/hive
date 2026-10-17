@@ -160,6 +160,77 @@ func TestHubSelfReportIngestJoinsExistingFingerprint(t *testing.T) {
 	}
 }
 
+func TestHubSelfReportRecoverUnknownFingerprintIsNoop(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths := selfReportGitHubScript(false)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"action":"recover","hive_id":"h1","fingerprint":"h1:queue-growth","class":"observation","body":"<!-- hive-fleet-fingerprint:h1:queue-growth -->\nrecovered"}`
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.OK || out.Reason != "unknown_fingerprint" {
+		t.Fatalf("response=%s err=%v", rec.Body.String(), err)
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues" {
+		t.Fatalf("github calls = %v", *paths)
+	}
+}
+
+func TestHubSelfReportRecoverCommentsAndClosesOpenObservation(t *testing.T) {
+	resetSelfReportRate(t)
+	var paths []string
+	var commentBody string
+	var closePayload map[string]string
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch {
+		case r.URL.Path == "/search/issues":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7",
+				"body": "<!-- hive-fleet-fingerprint:h1:queue-growth -->",
+			}}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode recovery comment: %v", err)
+			}
+			commentBody = payload["body"]
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			if err := json.NewDecoder(r.Body).Decode(&closePayload); err != nil {
+				t.Fatalf("decode close payload: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusTeapot)
+		}
+	}
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"action":"recover","hive_id":"h1","fingerprint":"h1:queue-growth","class":"observation","repo":"acme/widgets","body":"<!-- hive-fleet-fingerprint:h1:queue-growth -->\n\n| before | 15 |\n| after | 30 |"}`
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !out.OK || out.Number != 7 {
+		t.Fatalf("response=%s err=%v", rec.Body.String(), err)
+	}
+	if !strings.Contains(commentBody, "before") || !strings.Contains(commentBody, "after") {
+		t.Fatalf("recovery comment = %q", commentBody)
+	}
+	if closePayload["state"] != "closed" || closePayload["state_reason"] != "completed" {
+		t.Fatalf("close payload = %#v", closePayload)
+	}
+	if strings.Join(paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues/7/comments,PATCH /repos/hivecommons/hive/issues/7" {
+		t.Fatalf("github calls = %v", paths)
+	}
+}
+
 func TestHubSelfReportIngestRateLimitsCreatesNotJoins(t *testing.T) {
 	resetSelfReportRate(t)
 	handler, _ := selfReportGitHubScript(false)

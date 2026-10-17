@@ -20,10 +20,12 @@ import (
 // spoke would: one search for the marker, comment if found, create if not.
 
 const (
-	selfReportIngestPath      = "/api/selfreport/ingest"
-	selfReportMaxRequestBytes = 256 << 10
-	selfReportDefaultRepo     = "hivecommons/hive"
-	selfReportRelayLabel      = "hive/selfreport"
+	selfReportIngestPath       = "/api/selfreport/ingest"
+	selfReportMaxRequestBytes  = 256 << 10
+	selfReportDefaultRepo      = "hivecommons/hive"
+	selfReportRelayLabel       = "hive/selfreport"
+	selfReportRecoverAction    = "recover"
+	selfReportObservationClass = "observation"
 )
 
 // selfReportRate reuses the feedback limiter shape (per-hive, 24h window,
@@ -34,10 +36,11 @@ var selfReportRate feedbackRateLimiter
 // selfReportRelayRequest mirrors cmd/hive's wire struct; Evidence is kept
 // opaque so pkg/hub does not import pkg/fleetreport.
 type selfReportRelayRequest struct {
+	Action      string          `json:"action,omitempty"`
 	HiveID      string          `json:"hive_id"`
 	Fingerprint string          `json:"fingerprint"`
 	Class       string          `json:"class,omitempty"`
-	Title       string          `json:"title"`
+	Title       string          `json:"title,omitempty"`
 	Body        string          `json:"body"`
 	Labels      []string        `json:"labels,omitempty"`
 	Version     string          `json:"version,omitempty"`
@@ -47,26 +50,38 @@ type selfReportRelayRequest struct {
 
 type selfReportRelayResponse struct {
 	OK     bool   `json:"ok"`
-	Number int    `json:"number"`
-	URL    string `json:"url"`
-	Joined bool   `json:"joined"`
+	Number int    `json:"number,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Joined bool   `json:"joined,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 func validateSelfReportRelayRequest(req *selfReportRelayRequest) error {
+	req.Action = strings.ToLower(strings.TrimSpace(req.Action))
 	req.HiveID = sanitizeHeartbeatField(req.HiveID)
 	req.Fingerprint = strings.TrimSpace(req.Fingerprint)
+	req.Class = strings.ToLower(strings.TrimSpace(req.Class))
 	req.Title = strings.TrimSpace(req.Title)
 	req.Repo = strings.TrimSpace(req.Repo)
 	if req.Fingerprint == "" || len(req.Fingerprint) > 128 || strings.ContainsAny(req.Fingerprint, " \t\n\"'<>") {
 		return fmt.Errorf("invalid fingerprint")
 	}
-	if req.Title == "" || len(req.Title) > 256 {
-		return fmt.Errorf("title must be 1-256 characters")
+	switch req.Action {
+	case "":
+		if req.Title == "" || len(req.Title) > 256 {
+			return fmt.Errorf("title must be 1-256 characters")
+		}
+	case selfReportRecoverAction:
+		if req.Class != selfReportObservationClass {
+			return fmt.Errorf("recover action requires class observation")
+		}
+	default:
+		return fmt.Errorf("unsupported self-report action")
 	}
 	if strings.TrimSpace(req.Body) == "" || len(req.Body) > selfReportMaxRequestBytes {
 		return fmt.Errorf("body is required")
 	}
-	if req.Repo == "" {
+	if req.Action == selfReportRecoverAction || req.Repo == "" {
 		req.Repo = selfReportDefaultRepo
 	}
 	if _, _, err := splitHubRepo(req.Repo); err != nil {
@@ -141,6 +156,38 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 	_ = botLogin
 	client := hubFeedbackAuthoringHTTPClient()
 	owner, repo, _ := splitHubRepo(req.Repo)
+	if req.Action == selfReportRecoverAction {
+		existing, err := findSelfReportIssueByFingerprint(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Fingerprint)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Error("selfreport relay: recovery search failed", "hive", req.HiveID, "fingerprint", req.Fingerprint, "error", err)
+			}
+			npsJSONError(w, "failed to find observation issue", http.StatusBadGateway)
+			return
+		}
+		if existing.Number <= 0 {
+			// A closed or never-created issue is an idempotent no-op. The
+			// spoke must not turn this into an eval-cycle failure.
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "unknown_fingerprint"})
+			return
+		}
+		if _, err := postHubGitHubIssueComment(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, req.Body); err != nil {
+			if s.logger != nil {
+				s.logger.Error("selfreport relay: recovery comment failed", "hive", req.HiveID, "issue", existing.Number, "error", err)
+			}
+			npsJSONError(w, "failed to comment on observation issue", http.StatusBadGateway)
+			return
+		}
+		if err := closeHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number); err != nil {
+			if s.logger != nil {
+				s.logger.Error("selfreport relay: recovery close failed", "hive", req.HiveID, "issue", existing.Number, "error", err)
+			}
+			npsJSONError(w, "failed to close observation issue", http.StatusBadGateway)
+			return
+		}
+		writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{OK: true, Number: existing.Number, URL: existing.URL})
+		return
+	}
 
 	existing, err := findSelfReportIssueByFingerprint(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Fingerprint)
 	if err != nil && s.logger != nil {
@@ -276,6 +323,29 @@ func postHubGitHubIssueComment(ctx context.Context, client *http.Client, apiBase
 		return resp.StatusCode, fmt.Errorf("github create comment: %d", resp.StatusCode)
 	}
 	return resp.StatusCode, nil
+}
+
+func closeHubGitHubIssue(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int) error {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_recover")
+	data, _ := json.Marshal(map[string]string{"state": "closed", "state_reason": "completed"})
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d", strings.TrimRight(apiBase, "/"), owner, repo, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("github close issue: %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func postHubGitHubIssueLabels(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, labels []string) error {

@@ -40,6 +40,28 @@ Nous state lives in three places, none of which is `hive.yaml`:
 | Experiment campaigns | `/data/nous/campaigns.json` | `pkg/nous` campaign store (file version 2), written by `POST/PATCH /api/nous/campaigns` (including restarts) and by the legacy `PUT /api/nous/config/goals` / `POST /api/nous/campaign/start`; see [Campaigns and the per-campaign baseline](#campaigns-and-the-per-campaign-baseline) |
 | Mode, output mode, repo allow-list, fast-fail bounds, schedule | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard ⚙ *Experiment Lab Configuration* dialog (lab-wide guardrails only) or direct API calls |
 
+### Observation finding recovery
+
+Observation detectors keep their issue lifecycle in
+`/data/nous/observations.json`, keyed by finding fingerprint. Each record stores
+the issue number and URL, `opened_at`, `last_seen_at`, and (while the finding is
+absent) `recovered_since`, plus the before/after values and last evidence used
+in the recovery comment.
+
+Every evaluation reconciles the currently active findings with this ledger. An
+active finding clears `recovered_since`; an absent finding starts the recovery
+window. After **seven consecutive days** without the finding, the spoke sends
+the hub relay an `action: "recover"` request. The hub searches for the open
+issue marker, comments the before/after values and evidence, and closes the
+issue. A missing or already-closed fingerprint is an idempotent `ok: false`
+no-op, not an evaluation error.
+
+After a successful recovery, the ledger records `closed_at`. If the same
+fingerprint fires again, it starts a fresh lifecycle and the hub's open-only
+search creates a new issue rather than reopening the old one. The spoke never
+writes recovery comments or closes issues directly; the hub relay is the
+authoritative write path.
+
 The in-memory `Config` map (goals/repos/output/fast_fail/schedule/
 principles sections) is **not currently persisted back to disk
 across a process restart** — it is rebuilt from defaults each time the hive

@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/nous"
 )
 
 // fakeSelfReportWriter scripts the GitHub seam the publisher drives.
@@ -241,5 +242,94 @@ func TestSelfReportShouldRelay(t *testing.T) {
 		if got := selfReportShouldRelay(err); got != want {
 			t.Fatalf("selfReportShouldRelay(%v) = %v want %v", err, got, want)
 		}
+	}
+}
+
+func TestPublishObservationRecoveryUnknownHubIssueIsNoop(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	fp := "observation-recovery"
+	ledger := nous.NewObservationLedger(filepath.Join(t.TempDir(), "observations.json"))
+	if _, err := ledger.Reconcile([]nous.ActiveObservation{{
+		Fingerprint: fp,
+		IssueNumber: 42,
+		URL:         "https://github.com/hivecommons/hive/issues/42",
+		Before:      "p90=900ms",
+		After:       "p90=100ms",
+		Evidence:    "last sample",
+	}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.RecordIssue(fp, 42, "https://github.com/hivecommons/hive/issues/42", now); err != nil {
+		t.Fatal(err)
+	}
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		st.Open[fp] = fleetreport.OpenIssue{
+			Number: 42, URL: "https://github.com/hivecommons/hive/issues/42",
+			Trigger: selfReportObservationClass, Class: selfReportObservationClass, PostedAt: now,
+		}
+	})
+	w := &fakeSelfReportWriter{}
+	var relayed []selfReportRelayRequest
+	deps := selfReportDeps(w, &now)
+	deps.observations = ledger
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relayed = append(relayed, req)
+		return selfReportRelayResponse{Reason: "unknown_fingerprint"}, nil
+	}
+	now = now.Add(8 * 24 * time.Hour)
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{}, deps)
+	if len(relayed) != 1 {
+		t.Fatalf("recovery relays = %d, want 1", len(relayed))
+	}
+	if relayed[0].Action != "recover" || relayed[0].Class != selfReportObservationClass || !strings.Contains(relayed[0].Body, "p90=900ms") || !strings.Contains(relayed[0].Body, "p90=100ms") {
+		t.Fatalf("recovery relay = %#v", relayed[0])
+	}
+	records, err := ledger.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[fp].ClosedAt.IsZero() {
+		t.Fatalf("unknown hub fingerprint was not acknowledged locally: %#v", records[fp])
+	}
+	if !srv.FleetReportState().Open[fp].Recovered {
+		t.Fatal("dashboard state did not record observation recovery")
+	}
+}
+
+func TestPublishObservationReportsRelayThroughHubOnly(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	fp := "h1:queue-growth"
+	ledger := nous.NewObservationLedger(filepath.Join(t.TempDir(), "observations.json"))
+	w := &fakeSelfReportWriter{ensure: func(fleetreport.Report, github.FleetReportOptions) (github.FleetReportResult, error) {
+		t.Fatal("observation used the spoke GitHub writer")
+		return github.FleetReportResult{}, nil
+	}}
+	var relayed []selfReportRelayRequest
+	deps := selfReportDeps(w, &now)
+	deps.observations = ledger
+	deps.budgetOK = func() bool { return false }
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relayed = append(relayed, req)
+		return selfReportRelayResponse{OK: true, Number: 7, URL: "https://github.com/hivecommons/hive/issues/7"}, nil
+	}
+	report := fleetreport.Report{
+		Fingerprint: fp,
+		Trigger:     selfReportObservationClass,
+		Class:       selfReportObservationClass,
+		Title:       "Queue depth is growing",
+		Body:        "<!-- hive-fleet-fingerprint:h1:queue-growth -->\n| series | `[10,20]` |",
+	}
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Reports: []fleetreport.Report{report}}, deps)
+	if len(relayed) != 1 || relayed[0].Repo != "hivecommons/hive" || relayed[0].Action != "" || relayed[0].Class != selfReportObservationClass {
+		t.Fatalf("observation relay = %#v", relayed)
+	}
+	records, err := ledger.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[fp].IssueNumber != 7 || records[fp].Before != "10" || records[fp].After != "20" {
+		t.Fatalf("observation ledger = %#v", records[fp])
 	}
 }
