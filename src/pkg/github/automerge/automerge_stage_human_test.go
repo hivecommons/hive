@@ -370,7 +370,6 @@ func TestRequiresHumanLandsAt085WithSummary(t *testing.T) {
 
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(17, "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 17, *verdict)
-	e.noteStageAuthor("acme", "widget", 17, stagelabels.AuthorContributor)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
