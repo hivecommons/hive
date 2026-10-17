@@ -40,6 +40,9 @@ const (
 	// VerdictUnavailable: no reviewer is configured, so no verdict will
 	// come; unreviewed code is a human decision, not a human merge.
 	VerdictUnavailable
+	// VerdictRequiresHuman: the swarm answered requires_human for this head.
+	// A person owes a decision (085), not a review wait (050).
+	VerdictRequiresHuman
 )
 
 // DCOState is what the DCO context said about the head.
@@ -189,8 +192,11 @@ func RouteHuman(e Evidence) Route {
 		return Route{Stage: ReviewPending, Reasons: []string{"no reviewer verdict for this head yet"}, Summary: summary}
 	}
 	var decide []string
-	if e.Verdict == VerdictUnavailable {
+	switch e.Verdict {
+	case VerdictUnavailable:
 		decide = append(decide, "no reviewer agent is configured, so this head will never get a swarm verdict")
+	case VerdictRequiresHuman:
+		decide = append(decide, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
 	}
 	if e.Sentinel {
 		decide = append(decide, "a sentinel alert is open on this PR")
@@ -240,6 +246,8 @@ func summarize(e Evidence) string {
 		parts = append(parts, "verdict changes_requested @"+ShortSHA(e.Head))
 	case VerdictUnavailable:
 		parts = append(parts, "no reviewer configured")
+	case VerdictRequiresHuman:
+		parts = append(parts, "verdict requires_human @"+ShortSHA(e.Head))
 	default:
 		parts = append(parts, "verdict pending @"+ShortSHA(e.Head))
 	}

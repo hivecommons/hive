@@ -415,6 +415,9 @@ func ciReasonInconclusive(reason string) bool {
 	return false
 }
 
+// stageReasonVerdictRequiresHuman is stageVerdictReason for requires_human.
+const stageReasonVerdictRequiresHuman = "reviewer-verdict:requires_human"
+
 // stageVerdictReason is the recorded reason when the reviewer verdict, not
 // the lane's skip reason, decided the stage.
 func stageVerdictReason(d stageDetail) string {
@@ -573,8 +576,10 @@ func classifyStage(o stageObservation) stageVerdict {
 			// The reviewer DID answer — requires_human — but the lane folds
 			// every non-approve verdict into "no-verdict", so the PR sat at
 			// 050-review-pending for hours (hive #12417/#12438) while the
-			// reviewer skipped it as already reviewed. Hand it to a person.
-			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
+			// reviewer skipped it as already reviewed. Hand it to a person:
+			// Human routes it through routeHuman so the 085 entry comment
+			// is posted like every other needs-decision arrival.
+			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: stageVerdictReason(o.Detail)}
 		}
 		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 	}

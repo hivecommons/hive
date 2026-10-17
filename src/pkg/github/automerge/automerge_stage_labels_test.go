@@ -227,6 +227,11 @@ func TestClassifyStageMapping(t *testing.T) {
 			t.Errorf("%s: got %+v want stage=%v rank=%d terminal=%v reason=%q", tc.name, got, tc.want, tc.rank, tc.term, tc.reason)
 		}
 	}
+	// requires_human is a human hand-off too, so routeHuman posts the 085
+	// entry comment for it like every other needs-decision arrival.
+	if got := classifyStage(stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonNoVerdict, Detail: human}); !got.Human {
+		t.Fatalf("requires_human=%+v want human", got)
+	}
 }
 
 // TestClassifyCIReasonNeverRedForPendingOrInconclusive pins the CI reason

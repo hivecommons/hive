@@ -119,6 +119,7 @@ func TestRouteHumanDecision(t *testing.T) {
 		{"do-not-merge family", func(e *Evidence) { e.Holds = Holds([]string{"do-not-merge/work-in-progress"}) }, "the `do-not-merge/work-in-progress` label is set"},
 		{"needs-decision", func(e *Evidence) { e.Holds = Holds([]string{"needs-decision"}) }, "the `needs-decision` label is set"},
 		{"no reviewer", func(e *Evidence) { e.Verdict = VerdictUnavailable }, "no reviewer agent is configured, so this head will never get a swarm verdict"},
+		{"requires_human", func(e *Evidence) { e.Verdict = VerdictRequiresHuman }, "the reviewer swarm returned `requires_human` @abc1234"},
 		{"lane rule", func(e *Evidence) { e.Cause, e.CauseReason = CauseDecision, "the lane excludes `workflow-paths` edits" }, "the lane excludes `workflow-paths` edits"},
 		{"lane rule unnamed", func(e *Evidence) { e.Cause = CauseDecision }, "the automerge lane will not merge this unattended"},
 	}

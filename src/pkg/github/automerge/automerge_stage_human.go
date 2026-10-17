@@ -71,6 +71,8 @@ func humanVerdict(v ContributorLaneVerdict) stagelabels.VerdictState {
 		return stagelabels.VerdictApproved
 	case verdictBlocks(stageDetail{Verdict: v, VerdictKnown: true}):
 		return stagelabels.VerdictChangesRequested
+	case verdictNeedsHuman(stageDetail{Verdict: v, VerdictKnown: true}):
+		return stagelabels.VerdictRequiresHuman
 	}
 	return stagelabels.VerdictPending
 }
@@ -155,7 +157,8 @@ func decisionCause(reason string) string {
 		return "the PR edits CI workflow / action files, which the lane never merges unattended"
 	case reason == contributorLaneReasonTestsRemoved:
 		return "the PR removes tests, which the lane never merges unattended"
-	case reason == contributorLaneReasonNoReviewer:
+	case reason == contributorLaneReasonNoReviewer, reason == stageReasonVerdictRequiresHuman:
+		// RouteHuman renders the verdict itself from the evidence.
 		return ""
 	case reason == contributorLaneReasonReporterTrustHold:
 		return "the reporter-trust hold is in place"

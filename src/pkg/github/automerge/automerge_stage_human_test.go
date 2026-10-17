@@ -271,3 +271,56 @@ func TestTrustAndDecisionCauseProse(t *testing.T) {
 		t.Fatalf("dco lane reason asks = %v", asks)
 	}
 }
+
+// TestRequiresHumanLandsAt085WithEntryComment: a requires_human verdict the
+// lane reports as contributor-lane:no-verdict routes through the human
+// hand-off, so the PR gets stage/085-needs-decision AND the one-time
+// <!-- hive:stage-needs-decision --> comment naming the verdict
+// (hivecommons/hive#12560).
+func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)}
+	verdict := &ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
+	ctx := context.Background()
+	sweep := func(labels ...string) {
+		t.Helper()
+		api.reset()
+		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(13, labels...), contributorLaneReasonNoVerdict, false, nil)
+		e.noteStageVerdict("acme", "widget", 13, *verdict)
+		e.noteStageAuthor("acme", "widget", 13, stagelabels.AuthorContributor)
+		if _, err := e.ApplyStageLabels(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := humanVerdict(*verdict); got != stagelabels.VerdictRequiresHuman {
+		t.Fatalf("humanVerdict = %v", got)
+	}
+	if decisionCause(stageReasonVerdictRequiresHuman) != "" {
+		t.Fatal("verdict reason must not be rendered twice in the 085 comment")
+	}
+
+	sweep("author/contributor", "stage/050-review-pending")
+	if got := stageOf(t, store, 13); got != stagelabels.NeedsDecision {
+		t.Fatalf("stage=%v want 085", got)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) || !reflect.DeepEqual(api.removed, []string{"stage/050-review-pending"}) {
+		t.Fatalf("writes added=%v removed=%v", api.added, api.removed)
+	}
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) ||
+		!strings.Contains(api.comments[0], "the reviewer swarm returned `requires_human` @sha") ||
+		strings.Contains(api.comments[0], "the lane reported") {
+		t.Fatalf("085 entry comment = %q", api.comments)
+	}
+	if rec, _ := store.Get(stageKey("acme", "widget", 13)); rec.Reason != stageReasonVerdictRequiresHuman {
+		t.Fatalf("recorded reason = %q", rec.Reason)
+	}
+
+	// Same state again: no second entry comment, no writes.
+	sweep("author/contributor", "stage/085-needs-decision")
+	if len(api.comments) != 0 || api.writes() != 0 {
+		t.Fatalf("085 dedupe: comments=%q writes=%d", api.comments, api.writes())
+	}
+}
