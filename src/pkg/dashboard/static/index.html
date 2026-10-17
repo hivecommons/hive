@@ -12543,7 +12543,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 50: 'hive', 60: 'hive', 70: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12557,7 +12557,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_LABEL_CHIP_LIMIT = 24;
     const STAGE_TRACKER_CLOCK_MS = 10000;
     const STAGE_TRACKER_AGE_MS = { '1h': 3600000, '1d': 86400000, '1w': 604800000 };
-    const STAGE_TRACKER_ATTENTION_STAGES = [72, 85, 90];
+    const STAGE_TRACKER_ATTENTION_STAGES = [71, 72, 85, 90];
     // Label families a chip row is built from, in display order; other
     // labels follow when at least two items carry them.
     const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/'];
@@ -12582,6 +12582,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 50: return 'Waiting for review' + viaPR;
         case 60: return 'Reviewed' + viaPR;
         case 70: return 'Fixing review findings' + viaPR;
+        case 71: return 'Waiting on the author' + viaPR;
         case 72: return 'Back with the contributor' + viaPR;
         case 74: return 'Hive took it over' + viaPR;
         case 80: return 'Not yet admitted to auto merge' + viaPR;
@@ -15822,7 +15823,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     const REPO_ISSUE_BAND_DEFAULTS = {
-      waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
+      waitingLabels: ['blocked', 'stage/085-needs-decision', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
       doneLabels: ['hive/already-done', 'stage/040-covered-by-pr', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
       staleDays: 14
     };
@@ -15967,7 +15968,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (held) kinds.push('issue:held');
       if (labels.has('needs-human')) kinds.push('needs-human', 'issue:needs-human');
       if (labels.has('blocked')) kinds.push('issue:blocked');
-      if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('issue:needs-decision');
+      if (labels.has('stage/085-needs-decision') || labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('issue:needs-decision');
       if (labels.has('epic')) kinds.push('issue:epic');
       if (issueLabels.some(l => l === 'claimed' || l === 'hive/in-progress' || l === 'stage/020-claimed' || l === 'stage/030-pr-in-progress' || l.startsWith('hive/claimed-by-')) || ((issue && issue.assignees) || []).length) kinds.push('issue:claimed');
       if (info && info.role) kinds.push('issue:role');
@@ -15984,7 +15985,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (labels.has('needs-human')) kinds.push('needs-human', 'pr:needs-human');
       if (prSentinelFlagged(pr || {})) kinds.push('pr:sentinel');
       if (held || holdLabels((pr && pr.labels) || []).length) kinds.push('pr:held');
-      if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('pr:needs-decision');
+      if (labels.has('stage/085-needs-decision') || labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('pr:needs-decision');
       if ((pr && pr.review_class) === 'fix') kinds.push('pr:fix');
       const review = prGitHubReview(pr || {});
       if (review) {
@@ -17662,8 +17663,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     const OVERVIEW_ISSUE_BREAKDOWN_LABELS = {
       needs_human: 'needs-human',
-      needs_direction: 'needs-direction',
-      needs_decision: 'needs-decision',
+      needs_decision: 'needs human decision',
       needs_spec: 'needs-spec',
       reporter_confirmation: 'waiting on reporter',
       exempt: 'exempt',
@@ -17707,7 +17707,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         Object.keys(OVERVIEW_ISSUE_BREAKDOWN_LABELS).forEach(key => {
           let v = Number(ib[key] || 0);
           if (key === 'filtered') {
-            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_direction', 'needs_decision', 'needs_spec', 'reporter_confirmation', 'exempt']));
+            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_decision', 'needs_spec', 'reporter_confirmation', 'exempt']));
           }
           if (v > 0) totals.issues.breakdown[key] = (totals.issues.breakdown[key] || 0) + v;
         });
@@ -17781,7 +17781,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionGloss(row) {
       switch (row?.key) {
-        case 'needs-direction': return 'needs direction';
         case 'needs-decision': return 'needs decision';
         case 'needs-spec': return 'needs spec';
         case 'waiting-on-reporter': return 'waiting on reporter';
@@ -18329,7 +18328,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       { key: 'human', label: 'Human', tip: 'Filed by a person' },
       { key: 'bot', label: 'Bot', tip: 'Filed by another bot (renovate, dependabot, …)' }
     ]);
-    const HF_LABEL_TONE = Object.freeze({ 'needs-direction': 'direction', 'needs-decision': 'decision', 'needs-spec': 'spec', 'needs-signal': 'signal', 'needs-human': 'human' });
+    const HF_LABEL_TONE = Object.freeze({ 'stage/085-needs-decision': 'decision', 'needs-decision': 'decision', 'needs-spec': 'spec', 'needs-signal': 'signal', 'needs-human': 'human' });
     const HF_TEXT_DEBOUNCE_MS = 250;
     const HF_MAX_ROW_LABELS = 3;
 
@@ -42495,8 +42494,8 @@ function burnAreaChart() {
     }
 
     const OUTSIDE_BUCKET_DEFS = [
-      { key: 'needsDirection', saveKey: 'needs_direction', label: 'needs-direction', setting: 'project.issue_filter.hard_suppress_labels.needs_direction', fixed: false, definition: 'Issues waiting for maintainer direction before an agent may work them.' },
-      { key: 'needsDecision', saveKey: 'needs_decision', label: 'needs-decision', setting: 'project.issue_filter.hard_suppress_labels.needs_decision', fixed: false, definition: 'Issues waiting for a maintainer decision.' },
+      { key: 'needsDirection', saveKey: 'needs_direction', label: 'needs-direction (legacy)', setting: 'project.issue_filter.hard_suppress_labels.needs_direction', fixed: false, definition: 'Legacy spelling of the decision park; the hive migrates these onto stage/085-needs-decision and no longer writes them.' },
+      { key: 'needsDecision', saveKey: 'needs_decision', label: 'needs human decision', setting: 'project.issue_filter.hard_suppress_labels.needs_decision', fixed: false, definition: 'Issues parked for a maintainer ruling. stage/085-needs-decision is always recognised; add extra spellings here.' },
       { key: 'needsSpec', saveKey: 'needs_spec', label: 'needs-spec', setting: 'project.issue_filter.hard_suppress_labels.needs_spec', fixed: false, definition: 'Issues waiting for specification or acceptance criteria.' },
       { key: 'labels', saveKey: 'labels', label: 'exempt labels', setting: 'governor.labels.exempt', fixed: false, definition: 'Issues or PRs that must never be agent work; permanent do-not-merge and hold labels also apply.' },
       { key: 'reporterTrust', saveKey: 'reporter_trust', label: 'reporter triage', setting: 'project.issue_filter.reporter_trust', fixed: false, definition: 'When enabled, issues from untrusted reporters wait for a maintainer triage label.' },
@@ -42511,7 +42510,7 @@ function burnAreaChart() {
       return {
         needsHuman: Array.isArray(hs.needsHuman) ? hs.needsHuman : ['needs-human'],
         needsDirection: Array.isArray(hs.needsDirection) ? hs.needsDirection : ['needs-direction'],
-        needsDecision: Array.isArray(hs.needsDecision) ? hs.needsDecision : ['needs-decision'],
+        needsDecision: Array.isArray(hs.needsDecision) ? hs.needsDecision : ['stage/085-needs-decision'],
         needsSpec: Array.isArray(hs.needsSpec) ? hs.needsSpec : ['needs-spec']
       };
     }
@@ -42647,7 +42646,7 @@ function burnAreaChart() {
         <div class="config-toggle"><div class="config-toggle-switch ${stageStalledQuietOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_stalled_require_quiet"></div><span class="config-toggle-label">stage/stalled means no activity ${yamlHint('governor.labels.stage.stalled.require_quiet')} ${settingHelpMark('settings', 'labels', 'Stalled requires quiet', `On (default): stage/stalled is applied only when nobody but the hive has touched the item (head push, comment, review, CI state, label) for the stage's dwell, and never while required checks are running or the reviewer verdict for the current head is pending — those waits are on the hive. Any activity clears it at once. Off: the dwell is measured from entering the stage. See docs/labels-and-control-signals.md.`)}</span></div>
         <div class="config-field">
           <label for="cfg-stage-dwell">Dwell overrides ${yamlHint('governor.labels.stage.dwell.<key>')}</label>
-          <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">
+          <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, needs-author=24h, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">
           <div class="config-help">How long an item may sit in a stage before it gets <code>stage/stalled</code>; comma-separated <code>slug=duration</code>, <code>0</code> = never. Unset stages use the built-in table.</div>
         </div>
         <div class="config-toggle"><div class="config-toggle-switch ${stageNudgeOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_nudge_enabled"></div><span class="config-toggle-label">Contributor nudge on returned-to-contributor ${yamlHint('governor.labels.stage.contributor_nudge.enabled')} ${settingHelpMark('settings', 'labels', 'Contributor nudge', `When a contributor's PR enters stage/072-returned-to-contributor (red CI, changes requested, conflicts) the hive posts ONE @-mention comment per head with the failing checks / review asks and, for relay contributors, pushes a fix-pr task to their relay session (parallel sub-session when the relay advertises parallel_sessions, otherwise preempting the current task). Re-nudged once at the stall threshold; cap 2 per head. See docs/labels-and-control-signals.md.`)}</span></div>

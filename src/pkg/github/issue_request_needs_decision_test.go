@@ -15,7 +15,7 @@ import (
 // needs-decision label, standing in for config.IssueFilterConfig.
 type needsDecisionFilter struct{ label string }
 
-func (needsDecisionFilter) Admits([]string) bool { return true }
+func (needsDecisionFilter) Admits([]string) bool         { return true }
 func (f needsDecisionFilter) NeedsDecisionLabel() string { return f.label }
 
 // newIssueCreateLabelServer mocks the create path and records the labels sent
@@ -102,7 +102,7 @@ func TestIssueRequestWatcher_NeedsDecisionDefaultsLabel(t *testing.T) {
 		Repo: "o/r", Title: "[architect] Pick A or B", Body: "the maintainer picks A or B",
 		Agent: "architect", NeedsDecision: true,
 	})
-	if !hasLabelFold(labels, issueNeedsDecisionLabel) {
+	if !hasLabelFold(labels, NeedsDecisionStageLabel) {
 		t.Errorf("default needs-decision label not applied; create labels = %v", labels)
 	}
 }

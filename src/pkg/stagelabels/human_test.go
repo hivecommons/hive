@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/authorkind"
 )
 
 func readyEvidence() Evidence {
@@ -39,8 +41,8 @@ func TestRouteHumanReady(t *testing.T) {
 }
 
 // TestRouteHumanFixEvidence: each "do-not-merge" reason sends the PR back
-// to the author (072, or 070 when the hive wrote it), listing the concrete
-// reason and a lane-vocabulary reason for the nudge.
+// to the author (071 for a human, 072 for a clanker, 070 when the hive wrote
+// it), listing the concrete reason and a lane-vocabulary reason for the nudge.
 func TestRouteHumanFixEvidence(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -60,9 +62,18 @@ func TestRouteHumanFixEvidence(t *testing.T) {
 			e := readyEvidence()
 			tc.mutate(&e)
 			r := RouteHuman(e)
-			if r.Stage != ReturnedToContributor || len(r.Reasons) != 1 || r.Reasons[0] != tc.reason || r.LaneReason != tc.lane {
+			if r.Stage != NeedsAuthor || len(r.Reasons) != 1 || r.Reasons[0] != tc.reason || r.LaneReason != tc.lane {
 				t.Fatalf("route = %+v", r)
 			}
+			e.AuthorKind = authorkind.Clanker
+			if r := RouteHuman(e); r.Stage != ReturnedToContributor || r.LaneReason != tc.lane {
+				t.Fatalf("clanker route = %+v", r)
+			}
+			e.AuthorKind = authorkind.Hive
+			if r := RouteHuman(e); r.Stage != Fixing {
+				t.Fatalf("hive-kind route = %+v", r)
+			}
+			e.AuthorKind = authorkind.Unknown
 			e.SelfAuthored = true
 			if r := RouteHuman(e); r.Stage != Fixing {
 				t.Fatalf("self-authored route = %+v", r)
@@ -70,11 +81,11 @@ func TestRouteHumanFixEvidence(t *testing.T) {
 		})
 	}
 	// Fix evidence beats everything else, even a hold or a sentinel alert
-	// (#12471: sentinel + conflicts → 072, the author must rebase first).
+	// (#12471: sentinel + conflicts → 07x, the author must rebase first).
 	e := readyEvidence()
 	e.Sentinel, e.Conflict = true, true
 	e.Holds = []string{"hold"}
-	if r := RouteHuman(e); r.Stage != ReturnedToContributor || r.LaneReason != LaneReasonConflicting {
+	if r := RouteHuman(e); r.Stage != NeedsAuthor || r.LaneReason != LaneReasonConflicting {
 		t.Fatalf("sentinel+conflict route = %+v", r)
 	}
 	// Several reasons are all listed; the first sets the lane reason.

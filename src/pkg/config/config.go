@@ -4161,7 +4161,7 @@ type StageLabelsConfig struct {
 // StageDCOConfig is governor.labels.stage.dco.
 type StageDCOConfig struct {
 	// Required says, per repo, whether a missing Signed-off-by sends the PR
-	// to stage/072 (070 self-authored) at once. Keys are "owner/repo", a
+	// to stage/071 (human) / 072 (clanker), 070 when self-authored, at once. Keys are "owner/repo", a
 	// bare repo name, or "*"; values true/false override detection. A repo
 	// not listed is required only when the hive DETECTS a DCO gate on it: a
 	// `dco`/`DCO` context in the branch's required checks or reported on the
@@ -5778,7 +5778,8 @@ var defaultContributeSkipLabels = []string{
 	"epic",
 	"discussion",
 	"question",
-	"needs-decision",
+	DefaultNeedsDecisionLabel,
+	LegacyNeedsDecisionLabel,
 	"needs-triage",
 }
 
@@ -5829,7 +5830,7 @@ func normalizeContributeSkipLabels(labels []string, needsDecisionLabel string) [
 
 const (
 	blockedWorkflowSkipLabel  = "blocked"
-	defaultNeedsDecisionLabel = "needs-decision"
+	defaultNeedsDecisionLabel = DefaultNeedsDecisionLabel
 )
 
 // ContributeNeedsDecisionLabelOrDefault resolves the label relays should apply

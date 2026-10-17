@@ -102,8 +102,8 @@ func TestIssueRequestWatcher_LabelAddsRemovesAndAudits(t *testing.T) {
 func TestIssueRequestWatcher_LabelRefusesHiveControlledLabels(t *testing.T) {
 	for _, label := range []string{
 		AutoMergeQueuedLabel, "LGTM", "hold", "on-hold", HumanAckLabel,
-		"design-approved", "needs-human", "needs-decision", "blocked",
-		"hive/claimed-by-other", "hive/likely-done",
+		"design-approved", "needs-human", "needs-decision", "needs-direction", "blocked",
+		"hive/claimed-by-other", "hive/likely-done", "stage/010-actionable", "stage/stalled",
 	} {
 		t.Run(label, func(t *testing.T) {
 			var added, removed []string
@@ -168,10 +168,41 @@ func TestIssueRequestWatcher_LabelAllowsVerifiedOpenVerdict(t *testing.T) {
 	}
 }
 
+// stage/085-needs-decision is add-only for agents (hivecommons/hive#12683):
+// parking an item on a maintainer decision is the ADR-0019 escalation move
+// that replaced `needs-direction` / `needs-decision`; every other stage label
+// is refused and the un-park stays with a maintainer.
+func TestIssueRequestWatcher_LabelAllowsNeedsDecisionPark(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12683, Agent: "scanner",
+		Labels: []string{"Stage/085-Needs-Decision"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if got := strings.Join(added, ","); got != "Stage/085-Needs-Decision" {
+		t.Fatalf("labels added = %q, want stage/085-needs-decision", got)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("unexpected removed labels: %v", removed)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+}
+
 // A reserved label is refused in the remove direction too: taking `hold` off
 // a PR is exactly the escalation the guard exists for.
 func TestIssueRequestWatcher_LabelRefusesReservedRemoval(t *testing.T) {
-	for _, label := range []string{"hold", VerifiedOpenLabel} {
+	for _, label := range []string{"hold", VerifiedOpenLabel, NeedsDecisionStageLabel} {
 		t.Run(label, func(t *testing.T) {
 			var added, removed []string
 			srv := newLabelMockServer(t, &added, &removed)

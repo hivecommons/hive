@@ -130,13 +130,14 @@ const stages = [
   { number: 20, label: 'Claimed', short: 'Claimed' }, { number: 30, label: 'PR in progress', short: 'PR in progress' },
   { number: 40, label: 'Covered by PR', short: 'Covered by PR' },
   { number: 50, label: 'Review pending', short: 'CI / Review' }, { number: 60, label: 'Reviewed', short: 'Reviewed' },
-  { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 72, label: 'Returned to contributor', short: 'Returned to contributor', branch_from: 50 },
+  { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 71, label: 'Needs author', short: 'Needs author', branch_from: 50 },
+  { number: 72, label: 'Returned to contributor', short: 'Returned to contributor', branch_from: 50 },
   { number: 74, label: 'Adopted by hive', short: 'Adopted by hive', branch_from: 50 },
   { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' },
   { number: 85, label: 'Needs human decision', short: 'Needs human decision', branch_from: 80 }, { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
   { number: 100, label: 'Merge queue', short: 'Merge queue' }, { number: 110, label: 'Merged', short: 'Merged' },
 ];
-// needs-rebase always lands a PR in 070/072 (automerge_stage_labels.go), so a
+// needs-rebase always lands a PR in 070/071/072 (automerge_stage_labels.go), so a
 // fixture pairing it with 050/060 would draw a contradictory row.
 const rebaseCoherent = (it) => { if ((it.modifiers || []).includes('needs-rebase')) assert.ok(![50, 60].includes(Number(it.stage)), 'fixture #' + it.number + ' pairs needs-rebase with stage ' + it.stage); (it.linked_prs || []).forEach(rebaseCoherent); };
 const rawRowHtml = stageTrackerRowHtml;
@@ -244,6 +245,12 @@ assert.ok(row.includes('<svg class="ham-ico ham-actor-ico" viewBox="0 0 16 16"')
 assert.ok(!row.includes('ham-author-ico ham-actor') && !row.includes('ham-actor-ico ham-author-'), 'actor icon must not carry the author colour classes: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 72, author_kind: 'clanker' }, stages, ctx);
 assert.ok(row.includes('<title>Next move: clanker</title>') && row.includes('<span class="ham-detour">Returned to contributor</span><svg class="ham-ico ham-actor-ico"'), row);
+// 071 needs-author: a human's red PR rides the Review column as its own
+// detour, the person as the mover.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 71, author: 'sam', author_kind: 'human', history: [{stage:50},{stage:71}] }, stages, ctx);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
+assert.ok(row.includes('<title>Next move: human</title>') && row.includes('<span class="ham-detour">Needs author</span><svg class="ham-ico ham-actor-ico"'), row);
+assert.ok(tooltip(row).includes('Trail: 050 → 071'), tooltip(row));
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }] }, stages, ctx);
 assert.ok(subs(row).length === 0 && strip(row).includes('<title>Next move: clanker</title>') && strip(row).includes('<span class="ham-seg-t">PR in progress</span><svg class="ham-ico ham-actor-ico"'), 'single covering PR: the issue strip lights PR in progress with the PR author as the mover: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }, { number: 109, author_kind: 'hive', stage: 50 }] }, stages, ctx);
@@ -312,7 +319,7 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 // Every PR stage has an active word and an actor on its segment; the word
 // is what the chevron says, the actor is whose move it is.
 const prWords = {};
-for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Ready for auto merge', 'hive'], [70, 'Fixing', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Ready for auto merge', 'hive']]) {
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Ready for auto merge', 'hive'], [70, 'Fixing', 'author'], [71, 'Needs author', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Ready for auto merge', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   const m = /aria-current="step"><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*><title>Next move: ([a-z]+)<\/title>/.exec(r);
   assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);

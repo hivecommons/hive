@@ -311,6 +311,9 @@ type Client struct {
 	// stageFamily memoises repos whose stage/author label family has been
 	// provisioned this process (hivecommons/hive#12436). Zero value is ready.
 	stageFamily coveredByPRLabelState
+	// legacyDecisionLabels memoises repos whose retired needs-decision /
+	// needs-direction definitions were deleted (hivecommons/hive#12683).
+	legacyDecisionLabels coveredByPRLabelState
 	// issueStage resolves the live `governor.labels.stage` policy for the
 	// issue stage reconciler; nil disables it.
 	issueStage func() IssueStagePolicy
@@ -2846,14 +2849,16 @@ func (c *Client) getIssueFilter() IssueAdmitter {
 
 // needsDecisionLabel is the label the issue relay applies to park an
 // agent-filed issue on a maintainer decision: the first configured
-// hard_suppress_labels.needs_decision label, else the built-in default.
+// hard_suppress_labels.needs_decision label, else stage/085-needs-decision
+// (hivecommons/hive#12683). A configured legacy spelling is upgraded to the
+// stage label so no hive keeps writing a retired label.
 func (c *Client) needsDecisionLabel() string {
 	if labeler, ok := c.getIssueFilter().(NeedsDecisionLabeler); ok {
-		if label := strings.TrimSpace(labeler.NeedsDecisionLabel()); label != "" {
+		if label := strings.TrimSpace(labeler.NeedsDecisionLabel()); label != "" && !isLegacyDecisionLabel(label) {
 			return label
 		}
 	}
-	return issueNeedsDecisionLabel
+	return NeedsDecisionStageLabel
 }
 
 // appendLabelIfMissing returns labels with label added unless it is already
@@ -3834,13 +3839,14 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 }
 
 type RepoIssueBreakdown struct {
-	Actionable           int `json:"actionable"`
-	Hold                 int `json:"hold"`
-	HiveAdvisory         int `json:"hive_advisory"`
-	DependencyDashboard  int `json:"dependency_dashboard"`
-	Filtered             int `json:"filtered"`
-	NeedsHuman           int `json:"needs_human,omitempty"`
-	NeedsDirection       int `json:"needs_direction,omitempty"`
+	Actionable          int `json:"actionable"`
+	Hold                int `json:"hold"`
+	HiveAdvisory        int `json:"hive_advisory"`
+	DependencyDashboard int `json:"dependency_dashboard"`
+	Filtered            int `json:"filtered"`
+	NeedsHuman          int `json:"needs_human,omitempty"`
+	// NeedsDecision counts issues parked on stage/085-needs-decision (and,
+	// until migrated, the retired needs-decision / needs-direction labels).
 	NeedsDecision        int `json:"needs_decision,omitempty"`
 	NeedsSpec            int `json:"needs_spec,omitempty"`
 	ReporterConfirmation int `json:"reporter_confirmation,omitempty"`
@@ -3861,9 +3867,7 @@ func (b *RepoIssueBreakdown) addHardSuppress(label string) {
 	switch label {
 	case issueNeedsHumanLabel:
 		b.NeedsHuman++
-	case issueNeedsDirectionLabel:
-		b.NeedsDirection++
-	case issueNeedsDecisionLabel:
+	case NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel:
 		b.NeedsDecision++
 	case issueNeedsSpecLabel:
 		b.NeedsSpec++

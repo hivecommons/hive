@@ -360,6 +360,7 @@ func TestEvidenceBackfillUsageErrors(t *testing.T) {
 		"until first":  {"--since", "2026-02-01", "--until", "2026-01-01"},
 		"unknown flag": {"--since", "2026-01-01", "--flag", "tiny"},
 		"neg acmm":     {"--since", "2026-01-01", "--acmm-level", "-1"},
+		"bad refresh":  {"--since", "2026-01-01", "--refresh-fields", "merge.actor"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, _, err := runBackfill(t, api, args...)
@@ -542,5 +543,191 @@ func TestBackfillListPRsPagesUntilOlderThanSince(t *testing.T) {
 	}
 	if len(prs) != 50 || prs[len(prs)-1].Number != 199 {
 		t.Errorf("until: got %d PRs, last %d", len(prs), prs[len(prs)-1].Number)
+	}
+}
+
+// stripOpenedAt rewrites the bundle for number/head as a pre-#12465 backfill
+// would have left it: merged, backfilled, no merge.opened_at.
+func stripOpenedAt(t *testing.T, root string, number int, head string) *evidence.Bundle {
+	t.Helper()
+	b := loadBackfilled(t, root, number, head)
+	b.Merge.OpenedAt = time.Time{}
+	if err := writeBackfillBundle(ghpkg.ReviewEvidencePath(root, "acme/widgets", number, head), b, nil); err != nil {
+		t.Fatal(err)
+	}
+	return loadBackfilled(t, root, number, head)
+}
+
+func TestEvidenceBackfillRefreshFieldsFillsOpenedAtOnly(t *testing.T) {
+	api, calls := backfillAPI(t)
+	root := t.TempDir()
+	if _, stderr, err := runBackfill(t, api, "--since", "2026-01-01", "--root", root); err != nil {
+		t.Fatalf("first run: %v\n%s", err, stderr)
+	}
+	legacy105 := stripOpenedAt(t, root, 105, "h105")
+	legacy107 := stripOpenedAt(t, root, 107, "h107")
+	if _, ok := legacy105.TimeToMerge(); ok {
+		t.Fatal("fixture still has a time to merge")
+	}
+	untouched106 := loadBackfilled(t, root, 106, "h106")
+
+	// Dry run: counts only, one list call, nothing on disk changes.
+	atomic.StoreInt64(calls, 0)
+	summary, stderr, err := runBackfill(t, api, "--since", "2026-01-01", "--root", root, "--refresh-fields", "merge.opened_at", "--dry-run")
+	if err != nil {
+		t.Fatalf("dry run: %v\n%s", err, stderr)
+	}
+	if summary["to_refresh"].(float64) != 2 || summary["skipped"].(float64) != 7 || summary["refresh_fields"] != "merge.opened_at" {
+		t.Errorf("dry-run summary = %v", summary)
+	}
+	if _, ok := summary["refreshed"]; ok {
+		t.Errorf("dry run reported refreshes: %v", summary)
+	}
+	if got := atomic.LoadInt64(calls); got != 1 {
+		t.Errorf("dry run api calls = %d, want 1", got)
+	}
+	if got := loadBackfilled(t, root, 105, "h105"); got.Hash != legacy105.Hash {
+		t.Error("dry run rewrote a bundle")
+	}
+
+	// Write: the two legacy bundles gain opened_at from the list page and
+	// nothing else; the bundle that already had it is not rewritten.
+	atomic.StoreInt64(calls, 0)
+	summary, stderr, err = runBackfill(t, api, "--since", "2026-01-01", "--root", root, "--refresh-fields", "merge.opened_at")
+	if err != nil {
+		t.Fatalf("refresh: %v\n%s", err, stderr)
+	}
+	if summary["refreshed"].(float64) != 2 || summary["written"].(float64) != 0 || summary["write_errors"].(float64) != 0 {
+		t.Errorf("refresh summary = %v", summary)
+	}
+	if got := atomic.LoadInt64(calls); got != 1 {
+		t.Errorf("refresh api calls = %d, want 1 (list page only, no per-PR fetches)", got)
+	}
+	for _, tc := range []struct {
+		before *evidence.Bundle
+		head   string
+	}{{legacy105, "h105"}, {legacy107, "h107"}} {
+		got := loadBackfilled(t, root, tc.before.Number, tc.head)
+		if !got.Merge.OpenedAt.Equal(got.CreatedAt) {
+			t.Errorf("%d opened_at = %v, want created_at %v", got.Number, got.Merge.OpenedAt, got.CreatedAt)
+		}
+		if _, ok := got.TimeToMerge(); !ok {
+			t.Errorf("%d still has no time to merge", got.Number)
+		}
+		if got.Merge.Actor != tc.before.Merge.Actor || got.Merge.Method != tc.before.Merge.Method || !got.Merge.At.Equal(tc.before.Merge.At) || got.Merge.SHA != tc.before.Merge.SHA {
+			t.Errorf("%d merge changed beyond opened_at: %+v vs %+v", got.Number, got.Merge, tc.before.Merge)
+		}
+		if !got.UpdatedAt.Equal(tc.before.UpdatedAt) || !got.Backfill.At.Equal(tc.before.Backfill.At) || got.Author != tc.before.Author ||
+			got.Backfill.State != tc.before.Backfill.State || len(got.RevertedBy) != len(tc.before.RevertedBy) || len(got.FollowedUpBy) != len(tc.before.FollowedUpBy) {
+			t.Errorf("%d fields beyond opened_at changed", got.Number)
+		}
+		if err := got.Validate(); err != nil {
+			t.Error(err)
+		}
+	}
+	if got := loadBackfilled(t, root, 106, "h106"); got.Hash != untouched106.Hash {
+		t.Error("bundle that already had opened_at was rewritten")
+	}
+
+	// Idempotent: a second refresh finds nothing to fill and rewrites nothing.
+	after105 := loadBackfilled(t, root, 105, "h105")
+	summary, stderr, err = runBackfill(t, api, "--since", "2026-01-01", "--root", root, "--refresh-fields", "merge.opened_at")
+	if err != nil {
+		t.Fatalf("second refresh: %v\n%s", err, stderr)
+	}
+	if summary["refreshed"].(float64) != 0 || summary["to_refresh"].(float64) != 0 {
+		t.Errorf("second refresh summary = %v", summary)
+	}
+	if got := loadBackfilled(t, root, 105, "h105"); got.Hash != after105.Hash {
+		t.Error("second refresh rewrote a bundle")
+	}
+}
+
+func TestEvidenceBackfillRefreshFieldsLeavesLiveBundlesAlone(t *testing.T) {
+	api, _ := backfillAPI(t)
+	root := t.TempDir()
+	// A live bundle (not backfilled) recorded the merge without opened_at.
+	live := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion,
+		ID:            evidence.BundleID("acme/widgets", 105, "h105"),
+		Repo:          "acme/widgets",
+		Number:        105,
+		Author:        evidence.Author{Login: "alice", Kind: evidence.AuthorHuman},
+		BaseSHA:       "b105",
+		HeadSHA:       "h105",
+		Merge:         &evidence.MergeEvent{Actor: "carol", Method: "squash", At: time.Date(2026, 2, 6, 10, 0, 0, 0, time.UTC), SHA: "m105"},
+		CreatedAt:     time.Date(2026, 2, 5, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 2, 6, 10, 0, 0, 0, time.UTC),
+	}
+	path := ghpkg.ReviewEvidencePath(root, "acme/widgets", 105, "h105")
+	if err := writeBackfillBundle(path, live, nil); err != nil {
+		t.Fatal(err)
+	}
+	before := loadBackfilled(t, root, 105, "h105")
+	summary, stderr, err := runBackfill(t, api, "--since", "2026-01-01", "--until", "2026-02-06", "--root", root, "--refresh-fields", "merge.opened_at", "--skip-mergers")
+	if err != nil {
+		t.Fatalf("refresh: %v\n%s", err, stderr)
+	}
+	if summary["to_refresh"].(float64) != 0 || summary["refreshed"].(float64) != 0 || summary["skipped"].(float64) != 1 {
+		t.Errorf("summary = %v", summary)
+	}
+	got := loadBackfilled(t, root, 105, "h105")
+	if got.Backfilled || !got.Merge.OpenedAt.IsZero() {
+		t.Errorf("live bundle was refreshed: %+v", got.Merge)
+	}
+	// Backlinks from the newly written bundles may touch the live bundle;
+	// only the reverse-link lists are allowed to differ.
+	if got.Merge.Method != before.Merge.Method || got.Author != before.Author {
+		t.Errorf("live bundle changed: %+v", got)
+	}
+}
+
+func TestEvidenceBackfillRefreshFieldsSupplementSibling(t *testing.T) {
+	api, _ := backfillAPI(t)
+	root := t.TempDir()
+	// A live bundle without a merge was supplemented by an earlier pass whose
+	// sibling record predates opened_at.
+	live := &evidence.Bundle{
+		SchemaVersion: evidence.SchemaVersion,
+		ID:            evidence.BundleID("acme/widgets", 105, "h105"),
+		Repo:          "acme/widgets",
+		Number:        105,
+		Author:        evidence.Author{Login: "alice", Kind: evidence.AuthorHuman},
+		BaseSHA:       "b105",
+		HeadSHA:       "h105",
+		CreatedAt:     time.Date(2026, 2, 5, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 2, 5, 10, 0, 0, 0, time.UTC),
+	}
+	path := ghpkg.ReviewEvidencePath(root, "acme/widgets", 105, "h105")
+	if err := writeBackfillBundle(path, live, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, err := runBackfill(t, api, "--since", "2026-01-01", "--root", root); err != nil {
+		t.Fatalf("supplement: %v\n%s", err, stderr)
+	}
+	sup, err := ghpkg.LoadReviewEvidence(backfillSupplementPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sup.Merge.OpenedAt = time.Time{}
+	if err := writeBackfillBundle(backfillSupplementPath(path), sup, nil); err != nil {
+		t.Fatal(err)
+	}
+	summary, stderr, err := runBackfill(t, api, "--since", "2026-01-01", "--root", root, "--refresh-fields", "merge.opened_at")
+	if err != nil {
+		t.Fatalf("refresh: %v\n%s", err, stderr)
+	}
+	if summary["refreshed"].(float64) != 1 {
+		t.Errorf("summary = %v", summary)
+	}
+	got, err := ghpkg.LoadReviewEvidence(backfillSupplementPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Merge.OpenedAt.Equal(got.CreatedAt) {
+		t.Errorf("sibling opened_at = %v", got.Merge.OpenedAt)
+	}
+	if l := loadBackfilled(t, root, 105, "h105"); l.Backfilled || l.Merge != nil {
+		t.Errorf("live bundle touched: %+v", l)
 	}
 }

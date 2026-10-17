@@ -11,13 +11,14 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
-// issueNeedsDecisionLabel is one of the parking labels a /hive command clears.
-// `needs-human`, `needs-decision` and ADR-0019's `needs-direction` are the
-// only labels this sweep removes: `hold` is deliberately untouched because it
-// has several independent sources (the ACMM level gate, the SHA hold,
-// holdguard and a person), and clearing one of them from a comment would
-// silently clear all of them.
-const issueNeedsDecisionLabel = "needs-decision"
+// issueParkingLabels are the labels a /hive command clears: `needs-human`
+// and the park signal `stage/085-needs-decision` (hivecommons/hive#12683),
+// plus the retired `needs-decision` / `needs-direction` spellings until the
+// stage reconciler has migrated them. `hold` is deliberately untouched
+// because it has several independent sources (the ACMM level gate, the SHA
+// hold, holdguard and a person), and clearing one of them from a comment
+// would silently clear all of them.
+var issueParkingLabels = []string{issueNeedsHumanLabel, NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
 
 const maintainerCommandsDocURL = "https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md"
 
@@ -139,8 +140,8 @@ func (r *IssueUnparkSweepResult) actions() int {
 // SweepIssueUnparkCommands lets a maintainer re-queue a parked issue with a
 // one-line reply instead of editing labels (hivecommons/hive#9879).
 //
-// On every parked issue (`needs-human`, `needs-decision` or `needs-direction`)
-// the sweep keeps a "What to reply" comment listing the commands, because the
+// On every parked issue (`needs-human` or `stage/085-needs-decision`) the
+// sweep keeps a "What to reply" comment listing the commands, because the
 // maintainer should never have to remember what to type. When an eligible
 // person replies:
 //
@@ -500,9 +501,10 @@ func (c *Client) removeIssueLabel(ctx context.Context, owner, repo string, numbe
 }
 
 func isIssueParkingLabel(label string) bool {
-	switch strings.ToLower(strings.TrimSpace(label)) {
-	case issueNeedsHumanLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel:
-		return true
+	for _, parking := range issueParkingLabels {
+		if strings.EqualFold(strings.TrimSpace(label), parking) {
+			return true
+		}
 	}
 	return false
 }
@@ -513,8 +515,7 @@ func hasIssueParkingLabel(labels []string) bool {
 		return true
 	}
 	for _, label := range labels {
-		switch strings.ToLower(strings.TrimSpace(label)) {
-		case issueNeedsDecisionLabel, issueNeedsDirectionLabel:
+		if isIssueParkingLabel(label) {
 			return true
 		}
 	}
@@ -526,7 +527,7 @@ func hasIssueParkingLabel(labels []string) bool {
 // #5117 and the issue ranks as an agreed direction. A label that has already
 // gone is not an error.
 func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
-	for _, label := range []string{issueNeedsHumanLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel} {
+	for _, label := range issueParkingLabels {
 		if !labelPresent(labels, label) {
 			continue
 		}
@@ -720,10 +721,10 @@ const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive de
 
 // unparkLabelDrivenReply answers `/hive approve`, `/hive decision` and
 // `/hive help` on a repo with project.repo_policies[].label_driven set.
-const unparkLabelDrivenReply = "This repository is label-driven: Hive leaves `needs-human`, `needs-decision` and `needs-direction` to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision`. No labels were changed."
+const unparkLabelDrivenReply = "This repository is label-driven: Hive leaves `needs-human` and `stage/085-needs-decision` to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision`. No labels were changed."
 
 func renderUnparkAcceptedReply(actor, decision string) string {
-	return fmt.Sprintf("Un-parked by @%s. Decision: %s\n\n`needs-human`, `needs-decision` and `needs-direction` are cleared when present and `%s` is applied; any `hold` label is left exactly as it was.",
+	return fmt.Sprintf("Un-parked by @%s. Decision: %s\n\n`needs-human` and `stage/085-needs-decision` are cleared when present and `%s` is applied; any `hold` label is left exactly as it was.",
 		actor, decision, HumanAckLabel)
 }
 

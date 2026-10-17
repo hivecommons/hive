@@ -127,9 +127,11 @@ the body asks the maintainer to choose between options, or to approve before
 work can start. The script sends `"needs_decision": true` on the request, and
 the watcher adds the hive's configured needs-decision label
 (`project.issue_filter.hard_suppress_labels.needs_decision`, first entry;
-`needs-decision` by default) to the create itself, whatever labels the agent
-named ([#11215](https://github.com/hivecommons/hive/issues/11215)). The issue
-is then parked like any other `needs-decision` issue: it stays out of the
+`stage/085-needs-decision` by default — the retired `needs-decision` spelling
+is upgraded, [#12683](https://github.com/hivecommons/hive/issues/12683)) to the
+create itself, whatever labels the agent named
+([#11215](https://github.com/hivecommons/hive/issues/11215)). The issue is then
+parked like any other `stage/085-needs-decision` issue: it stays out of the
 actionable queue, the un-park sweep posts the "What to reply" notice, and the
 maintainer answers with `/hive approve` or `/hive decision` (see
 [maintainer-commands.md](maintainer-commands.md)). Every lane policy that files
@@ -191,8 +193,10 @@ required. Labels are added first, then removed, and the change is audited as
 Hive-controlled labels are refused in both directions: the merge-queue label
 (`lgtm`, or whatever the hive renamed it to), the hold labels, anything in the
 `hive/` namespace, and the labels that record a human decision
-(`approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
-`blocked`). They are inputs to hive automation or records of someone's
+(`approved-direction`, `design-approved`, `needs-human`, `blocked`, the
+retired `needs-decision` / `needs-direction`, and every `stage/*` label
+except `stage/085-needs-decision`, which an agent may *add* to park an item on
+a maintainer ruling — never remove, [#12683](https://github.com/hivecommons/hive/issues/12683)). They are inputs to hive automation or records of someone's
 verdict, so an agent may not set them through this operation; one reserved
 label refuses the whole request. Use `hive-open-issue claim` to record
 ownership. This refusal applies only to the `label` operation on an existing

@@ -246,8 +246,8 @@ func TestSweepIssueUnparkCommandsNeedsDirectionClearsParkingLabel(t *testing.T) 
 	if len(rec.added[6]) != 1 || rec.added[6][0] != HumanAckLabel {
 		t.Fatalf("expected %s added, got %v", HumanAckLabel, rec.added[6])
 	}
-	if joined := strings.Join(rec.posted[6], "\n"); !strings.Contains(joined, issueNeedsDirectionLabel) {
-		t.Fatalf("accepted reply should name %s, got %v", issueNeedsDirectionLabel, rec.posted[6])
+	if joined := strings.Join(rec.posted[6], "\n"); !strings.Contains(joined, NeedsDecisionStageLabel) {
+		t.Fatalf("accepted reply should name %s, got %v", NeedsDecisionStageLabel, rec.posted[6])
 	}
 }
 

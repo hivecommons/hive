@@ -6,7 +6,8 @@ package stagelabels
 // by reading the swarm verdict, CI, DCO, the sentinel label, the soak timer
 // and the hold modifiers by hand. The stage now answers it:
 //
-//   - 072 returned-to-contributor (070 fixing for a hive PR): the head is not
+//   - 071 needs-author / 072 returned-to-contributor (070 fixing for a hive
+//     PR; FixingStageFor picks by author kind): the head is not
 //     mergeable on its merits — verdict changes_requested, red checks, DCO
 //     missing, conflicts. The author acts.
 //   - 050 review-pending: no verdict for this head yet (or the head was just
@@ -27,6 +28,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/authorkind"
 )
 
 // VerdictState is the reviewer swarm's verdict for the CURRENT head.
@@ -116,13 +119,17 @@ type Evidence struct {
 	// HumanSummaries are reviewer summaries for requires_human verdicts that
 	// did not carry a structured decision question.
 	HumanSummaries []string
-	// SelfAuthored selects 070 fixing over 072 returned-to-contributor for
-	// the "author must act" outcome.
+	// SelfAuthored selects 070 fixing for the "author must act" outcome;
+	// otherwise AuthorKind picks 072 (clanker) or 071 (human / unknown).
 	SelfAuthored bool
+	AuthorKind   authorkind.Kind
 }
 
 // HoldLabels are the modifier labels that turn a human hand-off into a
 // decision (085). `do-not-merge/*` (prow's family) matches by prefix.
+// `needs-decision` is retired (hivecommons/hive#12683; nothing writes it)
+// and stays here only so a PR still carrying it keeps its decision routing
+// until the label is gone.
 var HoldLabels = []string{"hold", "do-not-merge", "needs-decision"}
 
 // Holds filters labels down to the decision-class modifiers, lower-cased.
@@ -166,10 +173,7 @@ const (
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
 func RouteHuman(e Evidence) Route {
-	fixing := ReturnedToContributor
-	if e.SelfAuthored {
-		fixing = Fixing
-	}
+	fixing := FixingStageFor(e.SelfAuthored, e.AuthorKind)
 	summary := summarize(e)
 	var fix []string
 	var laneReason string

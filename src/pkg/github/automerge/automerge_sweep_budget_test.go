@@ -112,8 +112,8 @@ func TestTrySweepSelfAuthoredBehindWithoutBudgetVsConflicting(t *testing.T) {
 	if err != nil || reason != "conflicting" || dirtyUpdates != 0 {
 		t.Fatalf("dirty: reason=%q err=%v updates=%d, want conflicting", reason, err, dirtyUpdates)
 	}
-	if v := classifyStage(stageObservation{Lane: stageLaneTrusted, Reason: "conflicting"}); v.Stage != stagelabels.ReturnedToContributor {
-		t.Fatalf("conflicting classified %+v, want 072", v)
+	if v := classifyStage(stageObservation{Lane: stageLaneTrusted, Reason: "conflicting"}); v.Stage != stagelabels.NeedsAuthor {
+		t.Fatalf("conflicting classified %+v, want 071", v)
 	}
 	if v := classifyStage(stageObservation{Lane: stageLaneTrusted, Reason: autoMergeReasonBehindBudgetExhausted}); v.Stage != stagelabels.MergeQueue {
 		t.Fatalf("budget-exhausted classified %+v, want merge queue", v)

@@ -675,15 +675,16 @@ func TestAdoptionBlockedByHold(t *testing.T) {
 }
 
 // The 072 interrupt is for author/clanker only: a human's PR (no hive
-// trailer, no profile) and a hive-authored PR (the App's own login) wait at
-// 072 with neither nudge nor adoption.
+// trailer, no profile) sits at 071 needs-author and a hive-authored PR (the
+// App's own login) at 070 fixing, with neither nudge nor adoption.
 func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		stage  string
 		mutate func(pr *gh.PullRequest)
 	}{
-		{"human", func(pr *gh.PullRequest) { pr.Body = gh.Ptr("Fixes the widget.\n") }},
-		{"hive", func(pr *gh.PullRequest) {
+		{"human", "stage/071-needs-author", func(pr *gh.PullRequest) { pr.Body = gh.Ptr("Fixes the widget.\n") }},
+		{"hive", "stage/070-fixing", func(pr *gh.PullRequest) {
 			// The App's own PR; an agent/<lane> stamp on a PR the App did
 			// not author is a stray (#12545) and is not hive evidence.
 			pr.User.Login = gh.Ptr(testHiveAppBotLogin)
@@ -697,8 +698,8 @@ func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
 			pr := adoptPR(7, "aaa")
 			tc.mutate(pr)
 			h.observe(pr, "check-failing:unit")
-			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/072-returned-to-contributor") {
-				t.Fatalf("072: %v", h.api.added)
+			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, tc.stage) || strings.Contains(added, "stage/072-returned-to-contributor") {
+				t.Fatalf("%s: %v", tc.stage, h.api.added)
 			}
 			if len(h.api.comments) != 0 || len(h.sink.nudges) != 0 {
 				t.Fatalf("interrupt fired for %s author: comments=%v nudges=%d", tc.name, h.api.comments, len(h.sink.nudges))

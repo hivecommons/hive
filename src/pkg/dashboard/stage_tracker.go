@@ -121,8 +121,8 @@ type StageTrackerItem struct {
 	Caption string `json:"caption"`
 	Actor   string `json:"actor,omitempty"`
 	// Modifiers are the health and control markers in effect: stalled,
-	// regressed, hold, needs-human, needs-decision, needs-rebase, blocked,
-	// draft.
+	// regressed, hold, needs-human, needs-decision (stage/085 carried as a
+	// park signal), needs-rebase, blocked, draft.
 	Modifiers     []string   `json:"modifiers"`
 	RegressedFrom int        `json:"regressed_from,omitempty"`
 	NudgeCount    int        `json:"nudge_count,omitempty"`
@@ -162,6 +162,7 @@ const (
 	trackerNumberAwaitingMerge  = 80
 	trackerNumberReviewPending  = 50
 	trackerNumberFixing         = 70
+	trackerNumberNeedsAuthor    = 71
 	trackerNumberReturned       = 72
 	trackerNumberAdopted        = 74
 	trackerNumberNeedsDecision  = 85
@@ -210,7 +211,7 @@ const (
 // lights the "Merge admission" chevron.
 func stageTrackerBranchFrom(number int) int {
 	switch number {
-	case trackerNumberFixing, trackerNumberReturned, trackerNumberAdopted:
+	case trackerNumberFixing, trackerNumberNeedsAuthor, trackerNumberReturned, trackerNumberAdopted:
 		return trackerNumberReviewPending
 	case trackerNumberNeedsDecision, trackerNumberReadyForHuman:
 		return trackerNumberAwaitingMerge
@@ -235,6 +236,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "Reviewed"
 	case stagelabels.Fixing:
 		return "Fixing"
+	case stagelabels.NeedsAuthor:
+		return "Needs author"
 	case stagelabels.ReturnedToContributor:
 		return "Returned to contributor"
 	case stagelabels.AdoptedByHive:
@@ -355,7 +358,9 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			set[modRegressed] = true
 		case "needs-human":
 			set[modNeedsHuman] = true
-		case "needs-decision":
+		case needsDecisionLabel, "needs-decision":
+			// The stage label is the park signal (hivecommons/hive#12683);
+			// the retired spelling is read until migrated.
 			set[modNeedsDecision] = true
 		case "needs-rebase":
 			set[modNeedsRebase] = true
@@ -499,6 +504,8 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("Review swarm approved; a gate is still pending", clause), "CI"
 	case stagelabels.Fixing:
 		return joinClause("Red or changes requested; a hive agent is fixing it", clause), "hive"
+	case stagelabels.NeedsAuthor:
+		return joinClause("Needs "+who, clause) + " — " + who + " must act", strings.TrimPrefix(who, "@")
 	case stagelabels.ReturnedToContributor:
 		c := joinClause("Returned to "+who, clause) + " — " + who + " must act"
 		if hasRec && rec.NudgeCount > 0 {
