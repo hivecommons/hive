@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
@@ -93,6 +94,23 @@ func TestAggregateReportsCarriesDecisionQuestion(t *testing.T) {
 	}
 	if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], r.DecisionQuestion) {
 		t.Fatalf("Reasons = %v, want question quoted", got.Reasons)
+	}
+}
+
+func TestAggregateReportsCarriesRequiresHumanSummary(t *testing.T) {
+	r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	r.Summary = "Trust-surface file by location; a relay owner should confirm before merge."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want requires_human", got)
+	}
+	if len(got.HumanSummaries) != 1 || !strings.Contains(got.HumanSummaries[0], "relay owner should confirm") {
+		t.Fatalf("HumanSummaries = %v, want reviewer summary", got.HumanSummaries)
+	}
+	if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "security requires human") {
+		t.Fatalf("Reasons = %v, want requires_human summary", got.Reasons)
 	}
 }
 
@@ -188,6 +206,58 @@ func TestValidateRoundTripAndCollect(t *testing.T) {
 	}
 	if loaded.HasAggregateApproval("other/hive", 2807, testSHA) {
 		t.Fatal("approval must not cross repository owners")
+	}
+}
+
+func TestCollectKeepsBodyDigestsSeparate(t *testing.T) {
+	dir := t.TempDir()
+	oldBody := PullRequestBodyDigest("fix links", "Closes #12397")
+	newBody := PullRequestBodyDigest("fix links", "Refs #12397")
+	reports := []PerspectiveReport{
+		func() PerspectiveReport {
+			r := baseReport(PerspectiveIntentAlignment, VerdictChangesRequested)
+			r.BodyDigest = oldBody
+			r.Summary = "closing keyword contradicts refs"
+			return r
+		}(),
+		func() PerspectiveReport {
+			r := baseReport(PerspectiveSecurity, VerdictApprove)
+			r.BodyDigest = newBody
+			return r
+		}(),
+	}
+	for _, r := range reports {
+		raw, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, ReviewReportFilePrefix+string(r.Perspective)+ReviewReportFileSuffix)
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	artifact, err := Collect(dir, AggregateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Items) != 2 {
+		t.Fatalf("items = %+v, want separate aggregates per body digest", artifact.Items)
+	}
+	if agg, ok := artifact.AggregateForBody("hivecommons/hive", 2807, testSHA, newBody); !ok || agg.BodyDigest != newBody {
+		t.Fatalf("new-body aggregate = %+v, %v", agg, ok)
+	}
+}
+
+func TestHasAggregateApprovalUsesNewestHeadAggregate(t *testing.T) {
+	old := time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC)
+	artifact := Artifact{Items: []Aggregate{
+		{Repo: "hivecommons/hive", Number: 2807, HeadSHA: testSHA, BodyDigest: "old", Verdict: VerdictApprove, MergeEligible: true, RecordedAt: old},
+		{Repo: "hivecommons/hive", Number: 2807, HeadSHA: testSHA, BodyDigest: "new", Verdict: VerdictChangesRequested, RecordedAt: old.Add(time.Hour)},
+	}}
+
+	if artifact.HasAggregateApproval("hivecommons/hive", 2807, testSHA) {
+		t.Fatal("stale approval for an older body digest must not approve the current head")
 	}
 }
 

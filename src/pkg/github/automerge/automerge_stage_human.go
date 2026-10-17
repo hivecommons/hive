@@ -83,14 +83,16 @@ var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable":
 
 // humanEvidence gathers the Evidence for one human-routed observation.
 func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, cause stagelabels.HumanCause, now time.Time) stagelabels.Evidence {
+	contributorVerdict := c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)
 	e := stagelabels.Evidence{
 		Head:             obs.HeadSHA,
-		Verdict:          humanVerdict(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)),
+		Verdict:          humanVerdict(contributorVerdict),
 		Conflict:         humanConflictReasons[obs.Reason] || hasLabelFold(obs.Labels, "needs-rebase"),
 		Holds:            stagelabels.Holds(obs.Labels),
 		Cause:            cause,
 		CauseReason:      decisionCause(obs.Reason),
-		DecisionQuestion: strings.TrimSpace(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA).DecisionQuestion),
+		DecisionQuestion: strings.TrimSpace(contributorVerdict.DecisionQuestion),
+		HumanSummaries:   append([]string(nil), contributorVerdict.HumanSummaries...),
 		SelfAuthored:     obs.Lane == stageLaneSelf,
 	}
 	sentinel := c.sentinelLabelName()

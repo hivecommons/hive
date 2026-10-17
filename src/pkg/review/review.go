@@ -124,6 +124,7 @@ type PerspectiveReport struct {
 	Repo        string      `json:"repo"`
 	Number      int         `json:"number"`
 	HeadSHA     string      `json:"head_sha,omitempty"`
+	BodyDigest  string      `json:"body_digest,omitempty"`
 	AuthorModel string      `json:"author_model,omitempty"`
 	ReviewModel string      `json:"review_model,omitempty"`
 	// DecisionRequested means the review found no code defect it can route
@@ -158,6 +159,7 @@ type Aggregate struct {
 	Repo              string                  `json:"repo"`
 	Number            int                     `json:"number"`
 	HeadSHA           string                  `json:"head_sha,omitempty"`
+	BodyDigest        string                  `json:"body_digest,omitempty"`
 	AuthorModel       string                  `json:"author_model,omitempty"`
 	ReviewModel       string                  `json:"review_model,omitempty"`
 	Verdict           Verdict                 `json:"verdict"`
@@ -167,6 +169,7 @@ type Aggregate struct {
 	CloseRecommended  bool                    `json:"close_recommended"`
 	DecisionRequested bool                    `json:"decision_requested,omitempty"`
 	DecisionQuestion  string                  `json:"decision_question,omitempty"`
+	HumanSummaries    []string                `json:"human_summaries,omitempty"`
 	FixAttempts       int                     `json:"fix_attempts,omitempty"`
 	MaxFixAttempts    int                     `json:"max_fix_attempts,omitempty"`
 	Threshold         outputschema.Severity   `json:"human_threshold"`
@@ -273,7 +276,11 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		effective := effectiveReports[i]
 		if agg.Repo == "" {
 			agg.Repo, agg.Number, agg.HeadSHA = r.Repo, r.Number, r.HeadSHA
+			agg.BodyDigest = strings.TrimSpace(r.BodyDigest)
 			agg.AuthorModel, agg.ReviewModel = r.AuthorModel, r.ReviewModel
+		}
+		if agg.BodyDigest == "" {
+			agg.BodyDigest = strings.TrimSpace(r.BodyDigest)
 		}
 		if agg.AuthorModel == "" {
 			agg.AuthorModel = r.AuthorModel
@@ -298,6 +305,12 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			}
 			agg.Reasons = append(agg.Reasons, decisionReason(r.DecisionQuestion))
 		}
+		if effective.Verdict == VerdictRequiresHuman {
+			if summary := humanSummaryReason(r); summary != "" {
+				agg.HumanSummaries = append(agg.HumanSummaries, summary)
+				agg.Reasons = append(agg.Reasons, summary)
+			}
+		}
 		for _, f := range r.Findings {
 			agg.Findings = append(agg.Findings, PerspectiveFinding{Perspective: r.Perspective, Finding: f})
 			if InScopeFinding(f) && severityAtLeast(f.Severity, threshold) {
@@ -306,6 +319,7 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		}
 	}
 	sortReasons(agg.Reasons)
+	sort.Strings(agg.HumanSummaries)
 
 	if decisionRequested {
 		agg.Verdict = VerdictRequiresHuman
@@ -362,6 +376,14 @@ func decisionReason(question string) string {
 		return "maintainer decision requested"
 	}
 	return "maintainer decision requested: " + question
+}
+
+func humanSummaryReason(r PerspectiveReport) string {
+	summary := strings.TrimSpace(r.Summary)
+	if summary == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s requires human: %s", r.Perspective, summary)
 }
 
 // incompleteCoverageReason names the configured perspectives this head has
@@ -443,7 +465,8 @@ func Collect(dir string, opts AggregateOptions) (Artifact, error) {
 		if err != nil {
 			return Artifact{}, fmt.Errorf("%s: %w", name, err)
 		}
-		groups[reviewKey(report.Repo, report.Number, report.HeadSHA)] = append(groups[reviewKey(report.Repo, report.Number, report.HeadSHA)], *report)
+		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
+		groups[key] = append(groups[key], *report)
 	}
 	artifact := Artifact{GeneratedAt: time.Now().UTC()}
 	for _, key := range sortedKeys(groups) {
@@ -513,7 +536,7 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 			if now.Sub(item.RecordedAt) > VerdictRetention && !item.RecordedAt.IsZero() {
 				continue
 			}
-			key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+			key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
 			if _, seen := merged[key]; !seen {
 				order = append(order, key)
 			}
@@ -523,7 +546,7 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 
 	for _, item := range fresh.Items {
 		item.RecordedAt = now
-		key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+		key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
 		if _, seen := merged[key]; !seen {
 			order = append(order, key)
 		}
@@ -607,15 +630,18 @@ func LoadArtifact(path string) (Artifact, error) {
 func (a Artifact) HasAggregateApproval(repo string, number int, headSHA string) bool {
 	wantRepo := strings.TrimSpace(repo)
 	wantSHA := strings.TrimSpace(headSHA)
+	var match Aggregate
+	var ok bool
 	for _, item := range a.Items {
-		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || !item.MergeEligible || item.Verdict != VerdictApprove {
+		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
 			continue
 		}
-		if strings.TrimSpace(item.HeadSHA) == wantSHA {
-			return true
+		if !ok || item.RecordedAt.After(match.RecordedAt) {
+			match = item
+			ok = true
 		}
 	}
-	return false
+	return ok && match.MergeEligible && match.Verdict == VerdictApprove
 }
 
 func agentReportJSON(r outputschema.AgentReport) []byte {
@@ -717,6 +743,9 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func reviewKey(repo string, number int, headSHA string) string {
-	return fmt.Sprintf("%s#%d@%s", repo, number, headSHA)
+func reviewKey(repo string, number int, headSHA, bodyDigest string) string {
+	if strings.TrimSpace(bodyDigest) == "" {
+		return fmt.Sprintf("%s#%d@%s", repo, number, headSHA)
+	}
+	return fmt.Sprintf("%s#%d@%s body:%s", repo, number, headSHA, bodyDigest)
 }
