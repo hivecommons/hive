@@ -28,3 +28,5 @@ Title the PR the way the TARGET repository titles PRs, and pass `--base` explici
 ## Publishable Content Boundary
 
 Attribution belongs ONLY in the issue or PR body and the DCO commit trailer. NEVER write `Filed by`, ACMM levels, agent names, or hive run metadata inside any committed file.
+
+When a change mirrors one made in another repository, link that repository's issue or PR only in the issue or PR body. Committed files cite this repository's own issues and PRs, or state the reasoning in place.
