@@ -380,7 +380,8 @@ func TestHubSelfReportRecoverCommentsAndClosesOpenObservation(t *testing.T) {
 		case r.URL.Path == "/search/issues":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
 				"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7",
-				"body": "<!-- hive-fleet-fingerprint:h1:queue-growth -->",
+				"body":   "<!-- hive-fleet-fingerprint:h1:queue-growth -->",
+				"labels": []map[string]any{{"name": "hive/selfreport"}, {"name": "hive-observation"}},
 			}}})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
 			var payload map[string]string
@@ -418,6 +419,41 @@ func TestHubSelfReportRecoverCommentsAndClosesOpenObservation(t *testing.T) {
 	}
 	if strings.Join(paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues/7/comments,PATCH /repos/hivecommons/hive/issues/7" {
 		t.Fatalf("github calls = %v", paths)
+	}
+}
+
+// TestHubSelfReportRecoverIgnoresNonObservationIssue: every hive-filed fleet
+// issue carries the fingerprint marker, and fingerprints are deterministic and
+// fleet-wide, so a spoke's recover must not comment on or close a matched
+// issue unless the hub filed it as an observation (hive-observation label).
+func TestHubSelfReportRecoverIgnoresNonObservationIssue(t *testing.T) {
+	resetSelfReportRate(t)
+	var paths []string
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if r.URL.Path == "/search/issues" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"number": 9, "html_url": "https://github.com/hivecommons/hive/issues/9",
+				"body":   "<!-- hive-fleet-fingerprint:runtime:panic:v5.1 -->\n" + fleetreport.AffectedBlockStart + "\n**Affected hives (2):** h1, h2\n" + fleetreport.AffectedBlockEnd,
+				"labels": []map[string]any{{"name": "hive/selfreport"}, {"name": "bug"}},
+			}}})
+			return
+		}
+		http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusTeapot)
+	}
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"action":"recover","hive_id":"h1","fingerprint":"runtime:panic:v5.1","class":"observation","body":"<!-- hive-fleet-fingerprint:runtime:panic:v5.1 -->\nrecovered"}`
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.OK || out.Number != 0 || out.Reason != "not_observation" {
+		t.Fatalf("response=%s err=%v", rec.Body.String(), err)
+	}
+	if strings.Join(paths, ",") != "GET /search/issues" {
+		t.Fatalf("github calls = %v, want search only (no comment, no close)", paths)
 	}
 }
 

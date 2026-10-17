@@ -120,6 +120,10 @@ type feedbackIssueResult struct {
 	// Body is populated by the self-report fingerprint search so the relay
 	// can edit the affected block in place.
 	Body string
+	// Labels is populated by the self-report fingerprint search so the
+	// recover path can tell a hub-filed observation issue from the other
+	// fleet issues that carry the same fingerprint marker.
+	Labels []string
 }
 type feedbackIssueStatus struct {
 	Owner     string `json:"owner"`
