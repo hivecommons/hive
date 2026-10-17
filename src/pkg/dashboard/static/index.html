@@ -12642,9 +12642,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     // Row = title line + thin strip. Non-active chevrons carry only a grey
     // icon; the active one carries words. Everything else is in the tooltip.
-    // An issue row owns the columns up to Claimed once a PR covers it (up to
-    // PR in progress while it has none) and nests one sub-row per covering
-    // PR, furthest along first; a PR row without an issue owns the whole strip.
+    // An issue row with no PR yet owns the whole strip; once a PR covers it
+    // the issue strip stops at Claimed and one sub-row per covering PR,
+    // furthest along first, continues it. A PR without an issue owns the
+    // whole strip.
     function stageTrackerRowHtml(item, stages, ctx) {
       ctx = ctx || {};
       const nowMs = Number(ctx.nowMs) || Date.now();
@@ -12655,7 +12656,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
         // With a covering PR the issue strip ends at Claimed, all passed and
         // nothing lit: the PR sub-rows carry the live chevron from here on.
-        range = { to: linked.length ? 20 : STAGE_TRACKER_PR_COLUMN };
+        range = linked.length ? { to: 20 } : null;
         if (linked.length && stageTrackerAnchor(item.stage, stages) <= 20) shown = Object.assign({}, item, { stage: 40 });
         const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
         linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages) - stageTrackerAnchor(x.stage, stages)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));

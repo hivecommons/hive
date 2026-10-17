@@ -119,14 +119,14 @@ const D = 'done', T = 'todo';
 
 // Issue claimed 30 min ago: Open + Actionable done, Claimed active, five ahead, cap todo.
 let row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', title: 'Fix <login>', url: 'https://x/7', stage: 20, stage_since: new Date(now - 30*60000).toISOString(), caption: 'Claimed by scanner', author: 'alice', author_kind: 'human', author_kind_source: 'label' }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, 'active', T, B, B, 'blank cap'], 'issue strips stop at PR in progress');
+assert.deepStrictEqual(segStates(row), [D, D, 'active', T, T, T, 'todo cap'], 'an issue with no PR yet draws the whole strip ahead');
 assert.ok(row.includes('aria-current="step"') && subs(row).length === 0);
 assert.ok(row.includes('Fix &lt;login&gt;'), 'title escaped');
 assert.strictEqual(prCol(row).length, 0, 'issue without a PR has an empty PR column');
 assert.ok(tooltip(row).includes('(author/human'), 'author kind stays in the tooltip');
 assert.ok(row.includes('<span class="ham-since">30m</span>'), row);
 assert.ok(row.includes('ham-kind-ico'), 'kind icon');
-assert.strictEqual((strip(row).match(/<svg class="ham-ico"/g) || []).length, 3, 'icons on every drawn non-active chevron');
+assert.strictEqual((strip(row).match(/<svg class="ham-ico"/g) || []).length, 6, 'icons on every drawn non-active chevron');
 assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Claimed</span></li>'), 'active chevron carries words, no icon');
 assert.ok(!row.includes('ham-caption'), 'no caption line under the strip');
 assert.ok(tooltip(row).includes('Claimed by scanner') && tooltip(row).includes('@alice') && tooltip(row).includes('30 min ago'), tooltip(row));
@@ -232,7 +232,7 @@ assert.ok(prCol(sr[1])[0].includes('ham-author-clanker') && prCol(sr[1])[0].incl
 assert.deepStrictEqual(segStates(sr[1]), [B, B, B, 'active', T, T, 'todo cap'], 'a PR at 030 lights PR in progress on its own sub-row');
 assert.ok(!row.slice(0, row.indexOf('<div class="ham-sub"')).includes('ham-pr-ref'), 'the issue title line itself lists no PRs');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', stage: 30 }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, 'active', B, B, 'blank cap'], 'kick running, no PR yet: the issue lights PR in progress');
+assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'kick running, no PR yet: the issue lights PR in progress and draws the steps ahead');
 assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">PR in progress</span></li>') && strip(row).includes('title="PR in progress'), row);
 assert.strictEqual(subs(row).length, 0, 'no PR yet');
 // A merged covering PR nests with the green cap lit.
@@ -246,7 +246,7 @@ assert.ok(head.includes('<span class="ham-since">since</span>'));
 
 // Unknown / zero stage lights "Open".
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 1, kind: 'issue', stage: 0 }, stages, ctx);
-assert.deepStrictEqual(segStates(row), ['active', T, T, T, B, B, 'blank cap']);
+assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 
 // Every PR stage has an active word and an actor on its segment; the word
 // is what the chevron says, the actor is whose move it is.
