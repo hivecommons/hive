@@ -440,7 +440,6 @@ classifier.jev.min_confidence # TODO #11854
 classifier.jev.model # TODO #11854
 classifier.jev.provider # TODO #11854
 classifier.jev.timeout # TODO #11854
-data.nous_dir # TODO #11854
 escalation.email.digest.at # TODO #11854
 escalation.email.digest.to[] # TODO #11854
 escalation.email.enabled # TODO #11854

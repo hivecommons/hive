@@ -15,7 +15,7 @@ func TestNousObservationsDefaultOff(t *testing.T) {
 	if cfg.Nous.Observations.Enabled {
 		t.Fatal("nous.observations.enabled must default to false")
 	}
-	if got := cfg.Nous.Observations.ResolvedMaxPerWeek(); got != DefaultNousObservationsMaxPerWeek || got != 5 {
+	if got := cfg.Nous.Observations.ResolvedMaxPerWeek(); got != DefaultNousObservationsMaxPerWeek || DefaultNousObservationsMaxPerWeek != 5 {
 		t.Fatalf("ResolvedMaxPerWeek() = %d, want 5", got)
 	}
 	if err := cfg.Nous.Validate(); err != nil {
