@@ -2300,6 +2300,8 @@
        wrapper scroll, same idea as .sum-table-wrap. */
     .gov-matrix-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     @media (max-width: 768px) {
+      /* Wide enough that the longest pill ("on demand") fits without
+         ellipsis; the wrapper scrolls horizontally to reach method/model. */
       .gov-matrix { min-width: 680px; }
     }
     .gov-matrix-templates-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-top: var(--sp-3); flex-wrap: wrap; }

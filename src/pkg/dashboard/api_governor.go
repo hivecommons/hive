@@ -582,6 +582,7 @@ func (s *Server) handleGovernorCadenceTemplates(w http.ResponseWriter, r *http.R
 	}
 
 	agentSet := make(map[string]bool)
+	updatedAgents := make(map[string]bool)
 	if s.deps != nil && s.deps.Config != nil {
 		for agentName := range s.deps.Config.Agents {
 			agentSet[agentName] = true
@@ -603,6 +604,7 @@ func (s *Server) handleGovernorCadenceTemplates(w http.ResponseWriter, r *http.R
 					continue
 				}
 				mode.Cadences[agentName] = cadVal
+				updatedAgents[agentName] = true
 				s.deps.Config.Governor.ClaimCadenceOwnership(modeName, agentName)
 			}
 			s.deps.Config.Governor.Modes[modeName] = mode
@@ -619,7 +621,7 @@ func (s *Server) handleGovernorCadenceTemplates(w http.ResponseWriter, r *http.R
 
 	s.auditFromRequest(r, "config_governor_cadence_template", auditDetail("template", body.Template), "")
 	floor := s.refreshAndPersistSeq()
-	jsonResponse(w, map[string]any{"ok": true, "status": "updated", "template": body.Template, "agentsUpdated": len(agentSet), "minStatusSeq": floor})
+	jsonResponse(w, map[string]any{"ok": true, "status": "updated", "template": body.Template, "agentsUpdated": len(updatedAgents), "minStatusSeq": floor})
 }
 
 // handleGovernorThresholdScalingGet returns the configured threshold-scaling
