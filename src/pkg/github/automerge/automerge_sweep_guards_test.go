@@ -113,6 +113,8 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				files = append(files, map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 0})
 			}
 			json.NewEncoder(w).Encode(files)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/status":
 			if fx.statusHTTPCode != 0 {
 				w.WriteHeader(fx.statusHTTPCode)

@@ -1460,7 +1460,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Review gate (#12592), on the re-verified head immediately before the
 	// merge call: the swarm verdict for exactly the SHA about to merge.
 	// Shadow (the default) records and merges; enforce holds.
-	if reviewReason := c.selfMergeReviewGate(displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA); reviewReason != "" {
+	if reviewReason := c.selfMergeReviewGate(ctx, displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA); reviewReason != "" {
 		return AutoMergeSweepEvent{}, reviewReason, nil
 	}
 

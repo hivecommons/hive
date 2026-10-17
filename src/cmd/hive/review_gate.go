@@ -20,7 +20,11 @@ const reviewEvaluatedAuditAction = "review_evaluated"
 // reviewEvaluatedAuditDetail renders the audit-log detail for one evaluation:
 // lane, would-hold, outcome code and enforce state.
 func reviewEvaluatedAuditDetail(e automerge.ReviewGateEvaluation) string {
-	return fmt.Sprintf("lane=%s would_hold=%t reason=%s enforce=%t head=%s", e.Lane, e.WouldHold, e.Outcome, e.Enforced, e.HeadSHA)
+	detail := fmt.Sprintf("lane=%s would_hold=%t reason=%s enforce=%t head=%s", e.Lane, e.WouldHold, e.Outcome, e.Enforced, e.HeadSHA)
+	if strings.TrimSpace(e.HumanApprover) != "" {
+		detail += fmt.Sprintf(" human_approver=%s", e.HumanApprover)
+	}
+	return detail
 }
 
 // selfMergeReviewGateVerdictFunc answers the self-merge review gate from the
@@ -97,7 +101,7 @@ func selfMergeReviewGate(cfg *config.Config, logger *slog.Logger, audit func(aut
 		},
 		RecordEvaluation: func(e automerge.ReviewGateEvaluation) {
 			logger.Info("self-merge review gate evaluated", "repo", e.Repo, "number", e.Number, "head", e.HeadSHA,
-				"outcome", e.Outcome, "would_hold", e.WouldHold, "enforce", e.Enforced)
+				"outcome", e.Outcome, "would_hold", e.WouldHold, "enforce", e.Enforced, "human_approver", e.HumanApprover)
 			if audit != nil {
 				audit(e)
 			}
