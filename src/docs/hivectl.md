@@ -833,7 +833,38 @@ profiles:
       registration_token: <secret>
       session: review          # optional: HIVE_SESSION for this profile
       added_at: 2026-09-21T10:00:00Z
+      selection:               # optional: absent preserves legacy unrestricted scope
+        mode: selected         # selected | all-current
+        repositories: [github/github.com/acme/component]
+        include: [github/github.com/acme/personal-addition]
+        exclude: [github/github.com/acme/excluded]
+        membership_snapshot: [] # accepted membership for all-current
+        follow_new_repositories: false
+        sources: [ecosystem]
+presets:                       # optional local review history, not an export
+    - id: ecosystem
+      source: https://ecosystem.example/hive-preset.yaml
+      reviewed_revision: "2026-10-17"
+      accepted_at: 2026-10-17T10:00:00Z
 ```
+
+Repository identities are lower-case `<forge>/<host>/<owner>/<name>` (forge:
+`github`, `gitlab`, or `gitea`; nested GitLab namespaces are preserved).
+`selected` uses `repositories`; `all-current` uses the saved
+`membership_snapshot`, not live discovery. Personal `include` entries are added,
+then canonical `exclude` entries win across scoped appearances. An explicit
+empty selection means **no repositories**, not unrestricted. Future following
+is off by default; recording it does not itself discover or accept new members.
+Selection and review history stay in the local store, not profile bundles or
+printed profile exports. Schema version remains 1.
+
+Discovery/onboarding helpers resolve Hive identity by the HTTP origin of its
+hub URL: `wss` maps to `https`, `ws` to `http`, hosts are lower-case, default
+ports are omitted, and paths do not distinguish Hives. Overlapping discovery
+paths reuse the saved endpoint, contributor ID, token and personal consent.
+Unrelated origins require separate credentials. Deliberate legacy profiles
+with different contributor IDs at the same origin remain separate; onboarding
+must ask which identity to use instead of silently merging them.
 
 `~/.config/hive/contributor.env` becomes a **generated projection** of that
 file. The relay, `src/compose-contributor.yaml` and `just contribute-k8s` keep
@@ -846,6 +877,17 @@ projection does not own —
 `CONTRIBUTOR_USERNAME`, `AGENT_BACKEND`, `HIVE_LITELLM_ENDPOINT` — are carried
 across rather than dropped, and the previous file is kept at
 `contributor.env.bak`.
+
+The projection also includes an aligned `HIVE_REPO_SCOPE`: `*` for a legacy
+profile, otherwise sorted canonical IDs joined by `;`, with an empty entry for
+no repositories. The value is shell-quoted so separators survive sourcing.
+`HIVE_REPO_SCOPE_VERSION` is persisted as `repo_scope_version` and incremented
+on every profile-store commit (including retries after projection failure).
+These fields provide local state for the repository-scope protocol; they do
+**not** by themselves enforce filtering on older relays/Hives. Scoped execution
+requires the companion relay/Hive acknowledgement and admission work in
+[#12570](https://github.com/hivecommons/hive/issues/12570). Operator admission,
+trust and quota gates remain authoritative.
 
 The first `hivectl hives` command on a machine that still has the old
 positional `contributor.env` migrates it: entries are named after their hub
