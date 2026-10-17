@@ -693,6 +693,10 @@ func isDCOContext(name string) bool {
 	return strings.EqualFold(strings.TrimSpace(name), "dco")
 }
 
+// IsDCOContext reports whether a status context / check-run name is a DCO
+// gate (`dco` from Prow's plugin, `DCO` from the DCO GitHub App).
+func IsDCOContext(name string) bool { return isDCOContext(name) }
+
 // CommitCIReasonIsPending reports whether a commit-CI skip reason means the
 // checks are still running or not yet reported, as opposed to failing.
 func CommitCIReasonIsPending(reason string) bool { return commitCIReasonIsPending(reason) }

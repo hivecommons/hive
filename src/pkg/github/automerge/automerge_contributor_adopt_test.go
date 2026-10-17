@@ -70,7 +70,7 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "html_url": "https://github.com/acme/widget/pull/90"})
 		return true
-	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/"):
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && !strings.HasSuffix(path, "/commits"):
 		var n int
 		_, _ = sscanInt(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), &n)
 		payload, ok := a.superseders[n]

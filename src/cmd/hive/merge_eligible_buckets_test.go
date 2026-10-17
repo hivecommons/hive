@@ -420,19 +420,22 @@ func TestWriteMergeEligible_NeedsRebaseLabelRoutesToConflictLane(t *testing.T) {
 // Eligible entries carry the fields the merge step and relay compare against:
 // the org-qualified repo, the head SHA (CWE-367 guard), the tri-state
 // mergeability as a string (a bool defaulted every PR to false, #M4), and the
-// DCO verdict decoded from the dco-signoff labels.
+// DCO verdict decoded from the `dco` / `no-dco` labels (legacy dco-signoff accepted).
 func TestWriteMergeEligible_EligibleEntryFields(t *testing.T) {
 	prs := []github.PullRequest{
 		{Repo: "hive", Number: 1, CIStatus: "success", Mergeable: github.MergeableYes, HeadSHA: "abc123", Labels: []string{"dco-signoff: yes", "kind/bug"}},
 		{Repo: "kubestellar/console", Number: 2, CIStatus: "success", Mergeable: github.MergeableYes, Labels: []string{"dco-signoff: no"}},
 		{Repo: "hive", Number: 3, CIStatus: "success", Mergeable: github.MergeableUnknown},
+		// hivecommons/hive#12542: hive's own `no-dco` outranks a stale Prow `dco-signoff: yes`.
+		{Repo: "hive", Number: 4, CIStatus: "success", Mergeable: github.MergeableYes, Labels: []string{"dco-signoff: yes", "no-dco"}},
+		{Repo: "hive", Number: 5, CIStatus: "success", Mergeable: github.MergeableYes, Labels: []string{"dco"}},
 	}
 	eligible, failing := runWriteMergeEligible(t, prs, mergeEligibleInputs{org: "hivecommons"})
 	if len(failing) != 0 {
 		t.Fatalf("unexpected ci_failing entries: %+v", failing)
 	}
-	if len(eligible) != 3 {
-		t.Fatalf("eligible = %+v, want 3 entries", eligible)
+	if len(eligible) != 5 {
+		t.Fatalf("eligible = %+v, want 5 entries", eligible)
 	}
 	byNumber := map[int]eligibleEntry{}
 	for _, e := range eligible {
@@ -446,6 +449,12 @@ func TestWriteMergeEligible_EligibleEntryFields(t *testing.T) {
 	}
 	if e := byNumber[3]; e.Mergeable != mergeableJSONUnknown || e.DCO != "unknown" {
 		t.Errorf("PR #3 entry = %+v (unknown mergeability must be spelled out, not the empty string)", e)
+	}
+	if e := byNumber[4]; e.DCO != "no" {
+		t.Errorf("PR #4 entry = %+v (hive's no-dco must outrank the legacy prow label)", e)
+	}
+	if e := byNumber[5]; e.DCO != "yes" {
+		t.Errorf("PR #5 entry = %+v (hive's dco label)", e)
 	}
 }
 

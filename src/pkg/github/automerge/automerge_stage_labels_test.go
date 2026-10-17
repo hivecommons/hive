@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -33,6 +34,11 @@ type stageAPI struct {
 	lists    int
 	gets     int
 	url      string
+	// commits is what GET /pulls/N/commits answers (one message per
+	// commit); a PR not listed has no commits, so its DCO state stays
+	// unknown and the test's label expectations are unaffected.
+	commits     map[int][]string
+	commitReads int
 	// extra handles routes beyond labels/comments (returns true when it
 	// served the request); the adoption tests use it for refs and pulls.
 	extra func(w http.ResponseWriter, r *http.Request) bool
@@ -84,6 +90,14 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 			}
 			stagePRTruthMu.Unlock()
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels})
+		case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && strings.HasSuffix(path, "/commits"):
+			n, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), "/commits"))
+			api.commitReads++
+			out := []map[string]any{}
+			for i, msg := range api.commits[n] {
+				out = append(out, map[string]any{"sha": fmt.Sprintf("c%d", i), "commit": map[string]any{"message": msg}, "parents": []map[string]string{{"sha": "p"}}})
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/labels"):
 			var body []string
 			_ = json.NewDecoder(r.Body).Decode(&body)
@@ -1282,6 +1296,209 @@ func TestApplyStageLabels_StripsStrayOwnershipLabelsFromContributorPR(t *testing
 		if strings.HasPrefix(l, "agent/") || strings.HasPrefix(l, "hive/") {
 			t.Fatalf("self-authored PR lost %q", l)
 		}
+	}
+}
+
+// hivecommons/hive#12542: the stage pass reads the head's commits itself.
+// An unsigned head goes to 072 on its FIRST evaluation — the lane only said
+// "no verdict yet" — with `no-dco`, the legacy Prow pill stripped, and a
+// nudge carrying the exact rebase command. A signed head gets the green
+// `dco`. One commits GET per head, none while the head is unchanged.
+func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}, commits: map[int][]string{
+		31: {"feat: a\n\nSigned-off-by: A <a@x>", "fix: b", "fix: c"},
+		32: {"feat: a\n\nSigned-off-by: A <a@x>", "merge\n"},
+	}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, ContributorNudge: true} }
+	ctx := context.Background()
+
+	pr := stagePR(31, "dco-signoff: yes", "bug")
+	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 31, stagelabels.RoleContributor)
+	e.noteStageDCOGate("acme", "widget", 31, "sha", nil, map[string]bool{"DCO": true, "build": true})
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := store.Get(stageKey("acme", "widget", 31))
+	if !ok || rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != stagelabels.LaneReasonDCOMissing {
+		t.Fatalf("record %+v ok=%v", rec, ok)
+	}
+	if rec.DCO("sha") != stagelabels.DCONo || rec.DCOTotal != 3 || rec.DCOUnsigned != 2 {
+		t.Fatalf("dco cache %+v", rec)
+	}
+	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/human", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor"}) {
+		t.Fatalf("added %v", api.added)
+	}
+	if !reflect.DeepEqual(api.removed, []string{"dco-signoff: yes"}) {
+		t.Fatalf("removed %v", api.removed)
+	}
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "@alice") || !strings.Contains(api.comments[0], "2 commits are missing the `Signed-off-by` trailer (DCO) — run `git rebase --signoff HEAD~3 && git push --force-with-lease`") {
+		t.Fatalf("nudge %q", api.comments)
+	}
+	if api.commitReads != 1 {
+		t.Fatalf("commit reads = %d", api.commitReads)
+	}
+	if api.labels[stagelabels.DCOLabel] != stagelabels.AuthorTrustedColor || api.labels[stagelabels.NoDCOLabel] != stagelabels.StalledColor {
+		t.Fatalf("provisioned colours %v", api.labels)
+	}
+
+	// Same head next cycle: cached, no second read, no writes.
+	api.reset()
+	pr = stagePR(31, "bug", "author/human", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor")
+	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 31, stagelabels.RoleContributor)
+	e.noteStageDCOGate("acme", "widget", 31, "sha", nil, map[string]bool{"DCO": true})
+	if _, err := e.ApplyStageLabels(ctx); err != nil || api.writes() != 0 || api.commitReads != 1 {
+		t.Fatalf("cached pass: err=%v writes=%d reads=%d", err, api.writes(), api.commitReads)
+	}
+
+	// Author signs and force-pushes: new head → re-read, green `dco`, back to 050.
+	api.reset()
+	api.mu.Lock()
+	api.commits[31] = []string{"feat: a\n\nSigned-off-by: A <a@x>", "fix: b\n\nSigned-off-by: A <a@x>", "fix: c\n\nsigned-off-by: A <a@x>"}
+	api.mu.Unlock()
+	pr = stagePR(31, "bug", "author/human", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor")
+	pr.Head.SHA = gh.Ptr("sha2")
+	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 31, stagelabels.RoleContributor)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if api.commitReads != 2 || !reflect.DeepEqual(api.added, [][]string{{stagelabels.DCOLabel, "stage/050-review-pending"}}) {
+		t.Fatalf("signed head: reads=%d added=%v removed=%v", api.commitReads, api.added, api.removed)
+	}
+	sort.Strings(api.removed)
+	if !reflect.DeepEqual(api.removed, []string{stagelabels.NoDCOLabel, "stage/072-returned-to-contributor"}) {
+		t.Fatalf("signed head removed %v", api.removed)
+	}
+
+	// Self-authored lane: an unsigned head is the hive's own rework (070),
+	// no contributor nudge.
+	api.reset()
+	api.mu.Lock()
+	api.commits[33] = []string{"fix: unsigned"}
+	api.mu.Unlock()
+	pr = stagePR(33)
+	pr.User = &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}
+	e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", pr, "ci-pending", false, nil)
+	e.noteStageDCOGate("acme", "widget", 33, "sha", map[string]bool{"dco": true}, nil)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{stagelabels.NoDCOLabel, "stage/070-fixing"}}) || len(api.comments) != 0 {
+		t.Fatalf("self-authored: added=%v comments=%v", api.added, api.comments)
+	}
+}
+
+// A repo without a DCO gate (no `dco`/`DCO` context required or reported)
+// still gets the `no-dco` label but keeps the lane's stage and is not asked
+// to rebase; `governor.labels.stage.dco.required` overrides detection both
+// ways (hivecommons/hive#12544 review: "the 072 override hits every repo").
+func TestApplyStageLabelsDCOGatePerRepo(t *testing.T) {
+	api := &stageAPI{labels: map[string]string{}, commits: map[int][]string{
+		41: {"fix: unsigned"},
+		42: {"fix: unsigned"},
+		43: {"fix: unsigned"},
+	}}
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)}
+	e, _, store := newStageEngine(t, srv.URL, clock)
+	required := map[string]bool{}
+	e.stageLabelPolicy = func() StageLabelPolicy {
+		return StageLabelPolicy{Enabled: true, ContributorNudge: true, DCORequired: func(display string) (bool, bool) {
+			v, ok := required[display]
+			return v, ok
+		}}
+	}
+	ctx := context.Background()
+
+	// Not detected, not configured: label only, stage from the lane.
+	pr := stagePR(41)
+	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 41, stagelabels.RoleContributor)
+	e.noteStageDCOGate("acme", "widget", 41, "sha", map[string]bool{"build": true}, map[string]bool{"build": true})
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := store.Get(stageKey("acme", "widget", 41))
+	if rec.Stage != stagelabels.ReviewPending || rec.Reason == stagelabels.LaneReasonDCOMissing {
+		t.Fatalf("ungated repo routed: %+v", rec)
+	}
+	if !reflect.DeepEqual(api.added, [][]string{{"author/human", stagelabels.NoDCOLabel, "role/contributor", "stage/050-review-pending"}}) || len(api.comments) != 0 {
+		t.Fatalf("ungated: added=%v comments=%v", api.added, api.comments)
+	}
+	// The informational `no-dco` head is cached too: one commits read per
+	// head, not one per cycle (hivecommons/hive#12544 review).
+	if t0, u0, cached := rec.DCOFor("sha"); !cached || t0 != 1 || u0 != 1 || api.commitReads != 1 {
+		t.Fatalf("ungated cache: cached=%v total=%d unsigned=%d reads=%d", cached, t0, u0, api.commitReads)
+	}
+	api.reset()
+	pr = stagePR(41, "author/human", stagelabels.NoDCOLabel, "role/contributor", "stage/050-review-pending")
+	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 41, stagelabels.RoleContributor)
+	if _, err := e.ApplyStageLabels(ctx); err != nil || api.writes() != 0 || api.commitReads != 1 {
+		t.Fatalf("ungated cached pass: err=%v writes=%d reads=%d", err, api.writes(), api.commitReads)
+	}
+
+	// Configured required=true beats "not detected".
+	api.reset()
+	required["acme/widget"] = true
+	pr = stagePR(42)
+	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 42, stagelabels.RoleContributor)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = store.Get(stageKey("acme", "widget", 42))
+	if rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != stagelabels.LaneReasonDCOMissing || len(api.comments) != 1 {
+		t.Fatalf("configured required: %+v comments=%d", rec, len(api.comments))
+	}
+
+	// Configured required=false beats a detected gate.
+	api.reset()
+	required["acme/widget"] = false
+	pr = stagePR(43)
+	pr.User = &gh.User{Login: gh.Ptr("alice")}
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageRole("acme", "widget", 43, stagelabels.RoleContributor)
+	e.noteStageDCOGate("acme", "widget", 43, "sha", nil, map[string]bool{"DCO": true})
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = store.Get(stageKey("acme", "widget", 43))
+	if rec.Stage != stagelabels.ReviewPending || len(api.comments) != 0 {
+		t.Fatalf("configured not required: %+v comments=%d", rec, len(api.comments))
+	}
+	if api.labels[stagelabels.NoDCOLabel] != stagelabels.StalledColor {
+		t.Fatalf("no-dco still provisioned: %v", api.labels)
+	}
+}
+
+func TestDCOCommitStatsSkipsMerges(t *testing.T) {
+	commits := []*gh.RepositoryCommit{
+		{Commit: &gh.Commit{Message: gh.Ptr("a\n\nSigned-off-by: A <a@x>")}, Parents: []*gh.Commit{{}}},
+		{Commit: &gh.Commit{Message: gh.Ptr("Merge branch 'v5'")}, Parents: []*gh.Commit{{}, {}}},
+		{Commit: &gh.Commit{Message: gh.Ptr("b")}, Parents: []*gh.Commit{{}}},
+	}
+	if total, unsigned := dcoCommitStats(commits); total != 2 || unsigned != 1 {
+		t.Fatalf("total=%d unsigned=%d", total, unsigned)
+	}
+	if dcoState(0, 0) != stagelabels.DCOUnknown || dcoState(2, 0) != stagelabels.DCOYes || dcoState(2, 1) != stagelabels.DCONo {
+		t.Fatal("dcoState")
+	}
+	if got := dcoAsk(stageDetail{DCOTotal: 1, DCOUnsigned: 1}); !strings.Contains(got, "1 commit is missing") || !strings.Contains(got, "HEAD~1") {
+		t.Fatalf("ask %q", got)
 	}
 }
 

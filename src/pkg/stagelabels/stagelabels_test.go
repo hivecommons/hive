@@ -95,9 +95,87 @@ func TestAllLabelDefsColours(t *testing.T) {
 			if d.Color != AuthorHiveColor {
 				t.Errorf("author/hive colour %s", d.Color)
 			}
+		case d.Name == DCOLabel:
+			// hivecommons/hive#12542: the same green as role/trusted.
+			if d.Color != RoleTrustedColor {
+				t.Errorf("dco colour %s want role/trusted's %s", d.Color, RoleTrustedColor)
+			}
+		case d.Name == NoDCOLabel:
+			if d.Color != StalledColor {
+				t.Errorf("no-dco colour %s want the engine's red %s", d.Color, StalledColor)
+			}
 		default:
 			t.Errorf("unexpected def %s", d.Name)
 		}
+	}
+}
+
+// hivecommons/hive#12542: exactly one of `dco` / `no-dco`, Prow's legacy pair
+// stripped once the commit check has spoken, nothing touched while unknown.
+func TestPlanDCO(t *testing.T) {
+	base := Desired{Stage: ReviewPending, Role: RoleContributor}
+	cur := []string{"stage/050-review-pending", "author/contributor", "dco-signoff: yes", "bug"}
+
+	yes := base
+	yes.DCO = DCOYes
+	add, remove := Plan(cur, yes)
+	if !reflect.DeepEqual(add, []string{DCOLabel}) || !reflect.DeepEqual(remove, []string{LegacyDCOYes}) {
+		t.Fatalf("yes: add=%v remove=%v", add, remove)
+	}
+	no := base
+	no.DCO = DCONo
+	add, remove = Plan([]string{"stage/050-review-pending", "author/contributor", DCOLabel, LegacyDCONo}, no)
+	if !reflect.DeepEqual(add, []string{NoDCOLabel}) || !reflect.DeepEqual(remove, []string{DCOLabel, LegacyDCONo}) {
+		t.Fatalf("no: add=%v remove=%v", add, remove)
+	}
+	// Unknown keeps whatever is there, own or legacy.
+	add, remove = Plan([]string{"stage/050-review-pending", "author/contributor", NoDCOLabel, LegacyDCOYes}, base)
+	if len(add)+len(remove) != 0 {
+		t.Fatalf("unknown: add=%v remove=%v", add, remove)
+	}
+	// Idempotent.
+	add, remove = Plan([]string{"stage/050-review-pending", "author/contributor", DCOLabel}, yes)
+	if len(add)+len(remove) != 0 {
+		t.Fatalf("idempotent: add=%v remove=%v", add, remove)
+	}
+}
+
+func TestDCOFromLabels(t *testing.T) {
+	cases := []struct {
+		labels []string
+		want   DCOState
+	}{
+		{nil, DCOUnknown},
+		{[]string{"bug"}, DCOUnknown},
+		{[]string{DCOLabel}, DCOYes},
+		{[]string{NoDCOLabel}, DCONo},
+		{[]string{DCOLabel, NoDCOLabel}, DCONo},
+		{[]string{LegacyDCOYes}, DCOYes},
+		{[]string{LegacyDCONo}, DCONo},
+		{[]string{LegacyDCOYes, NoDCOLabel}, DCONo},
+		{[]string{LegacyDCONo, DCOLabel}, DCOYes},
+	}
+	for _, c := range cases {
+		if got := DCOFromLabels(c.labels); got != c.want {
+			t.Errorf("%v → %v want %v", c.labels, got, c.want)
+		}
+	}
+	if DCOYes.String() != "yes" || DCONo.String() != "no" || DCOUnknown.String() != "unknown" || DCOUnknown.Label() != "" {
+		t.Fatal("DCOState renderings")
+	}
+}
+
+func TestRecordDCO(t *testing.T) {
+	r := Record{DCOHead: "abc", DCOTotal: 3, DCOUnsigned: 1}
+	if r.DCO("abc") != DCONo || r.DCO("def") != DCOUnknown {
+		t.Fatal("record DCO by head")
+	}
+	r.DCOUnsigned = 0
+	if r.DCO("abc") != DCOYes {
+		t.Fatal("signed head")
+	}
+	if (Record{DCOHead: "abc"}).DCO("abc") != DCOUnknown {
+		t.Fatal("no commits is unknown, not green")
 	}
 }
 

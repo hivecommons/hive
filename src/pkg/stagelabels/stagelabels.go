@@ -476,7 +476,99 @@ func LabelDefsFor(kinds authorkind.Names) []LabelDef {
 		out = append(out, roleDefs[r])
 	}
 	out = append(out, authorKindDefs(kinds)...)
+	out = append(out, dcoDefs[DCOYes], dcoDefs[DCONo])
 	return out
+}
+
+// DCO labels (hivecommons/hive#12542). The operator wanted "the label and
+// the green colour" instead of Prow's `dco-signoff: yes` pill, and red for
+// the failing case with as little text as possible. GitHub cannot colour one
+// label name two ways, so the pair is `dco` (green) / `no-dco` (red), mutually
+// exclusive, written only from the commit check — never copied from Prow.
+const (
+	DCOLabel   = "dco"
+	NoDCOLabel = "no-dco"
+)
+
+// DCOColor is the same green as `role/trusted` (the operator wants the two
+// pills to read as one family); NoDCOColor is the engine's one red.
+const (
+	DCOColor   = RoleTrustedColor
+	NoDCOColor = StalledColor
+)
+
+var dcoDefs = map[DCOState]LabelDef{
+	DCOYes: {Name: DCOLabel, Color: DCOColor, Description: "All commits are DCO signed-off"},
+	DCONo:  {Name: NoDCOLabel, Color: NoDCOColor, Description: "A commit is missing Signed-off-by — run `git rebase --signoff`"},
+}
+
+// LegacyDCOLabels are the Prow dco plugin's labels. They are retired on
+// hive-managed repos: once the hive has read a head's commits it removes
+// them so a PR shows exactly one DCO pill. Readers still ACCEPT them during
+// the migration (DCOFromLabels).
+var LegacyDCOLabels = []string{LegacyDCOYes, LegacyDCONo}
+
+const (
+	LegacyDCOYes = "dco-signoff: yes"
+	LegacyDCONo  = "dco-signoff: no"
+)
+
+// Label renders the DCO label, or "" for DCOUnknown.
+func (d DCOState) Label() string { return dcoDefs[d].Name }
+
+// String is "yes", "no" or "unknown" (the merge-eligible export's spelling).
+func (d DCOState) String() string {
+	switch d {
+	case DCOYes:
+		return "yes"
+	case DCONo:
+		return "no"
+	}
+	return "unknown"
+}
+
+// IsLegacyDCO reports whether label is one of Prow's dco-signoff labels.
+func IsLegacyDCO(label string) bool {
+	for _, l := range LegacyDCOLabels {
+		if strings.EqualFold(strings.TrimSpace(label), l) {
+			return true
+		}
+	}
+	return false
+}
+
+// dcoOwned reports whether label belongs to the DCO family the hive
+// reconciles (its own pair plus the retired Prow pair).
+func dcoOwned(label string) bool {
+	return label == DCOLabel || label == NoDCOLabel || IsLegacyDCO(label)
+}
+
+// DCOFromLabels reads the DCO verdict a label set carries. The hive's own
+// labels win; Prow's legacy pair is honoured only when neither is present,
+// so a reader keeps working through the migration cycle. `no-dco` beats
+// `dco` should an item transiently carry both.
+func DCOFromLabels(labels []string) DCOState {
+	own, legacy := DCOUnknown, DCOUnknown
+	for _, l := range labels {
+		switch strings.TrimSpace(l) {
+		case NoDCOLabel:
+			own = DCONo
+		case DCOLabel:
+			if own == DCOUnknown {
+				own = DCOYes
+			}
+		case LegacyDCONo:
+			legacy = DCONo
+		case LegacyDCOYes:
+			if legacy == DCOUnknown {
+				legacy = DCOYes
+			}
+		}
+	}
+	if own != DCOUnknown {
+		return own
+	}
+	return legacy
 }
 
 // Desired is the full hive-owned label set wanted on one item.
@@ -489,6 +581,9 @@ type Desired struct {
 	// KindLabels are the configured author/<kind> names; zero = defaults.
 	KindLabels authorkind.Names
 	Stalled    bool
+	// DCO is the commit check's verdict for the head; DCOUnknown leaves the
+	// item's existing DCO labels (own or legacy) untouched.
+	DCO DCOState
 }
 
 // Plan returns the labels to add and remove so current carries exactly the
@@ -497,7 +592,9 @@ type Desired struct {
 // Any `stage/*`, `role/*` or `author/*` label not wanted — including a
 // label from a previous table and the retired `author/<tier>` role
 // spellings — is removed. With Kind unset, `author/<kind>` labels are kept
-// as found. Non-hive labels are never touched.
+// as found. The `dco` / `no-dco` pair (and Prow's retired `dco-signoff: *`)
+// is reconciled only when want.DCO is known. Non-hive labels are never
+// touched.
 func Plan(current []string, want Desired) (add, remove []string) {
 	wanted := map[string]bool{}
 	if l := want.Stage.Label(); l != "" {
@@ -512,6 +609,9 @@ func Plan(current []string, want Desired) (add, remove []string) {
 	if want.Stalled {
 		wanted[StalledLabel] = true
 	}
+	if l := want.DCO.Label(); l != "" {
+		wanted[l] = true
+	}
 	have := map[string]bool{}
 	for _, l := range current {
 		l = strings.TrimSpace(l)
@@ -519,7 +619,18 @@ func Plan(current []string, want Desired) (add, remove []string) {
 			continue
 		}
 		have[l] = true
-		if !Owned(l) || wanted[l] {
+		if wanted[l] {
+			continue
+		}
+		// The DCO family (own pair + Prow's legacy pair) is reconciled only
+		// once the commit check has spoken; an unread head keeps its pills.
+		if dcoOwned(l) {
+			if want.DCO != DCOUnknown {
+				remove = append(remove, l)
+			}
+			continue
+		}
+		if !Owned(l) {
 			continue
 		}
 		if want.Kind == authorkind.Unknown && strings.HasPrefix(l, AuthorPrefix) && !IsLegacyRole(l) {

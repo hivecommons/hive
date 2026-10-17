@@ -176,12 +176,15 @@ referenced it) a lone `stage/050-review-pending`
   (the colour the retired `🐝 covered by PR` used) so the eye tracks the family
   across lists; `stage/stalled` `#d73a4a` is red; `role/*` is neutral grey
   `#6e7781` except `role/trusted` `#0e8a16`; `author/human` is the same grey,
-  `author/clanker` purple `#8250df`, `author/hive` blue `#1d76db`. The retired
+  `author/clanker` purple `#8250df`, `author/hive` blue `#1d76db`; `dco`
+  shares `role/trusted`'s green and `no-dco` shares `stage/stalled`'s red
+  (same constants, so the pair reads as one family). The retired
   `stage/regressed` is stripped from any item the sweep sees and is no longer
   provisioned.
-  The ensure-label step creates missing labels and PATCHes the colour of an
-  existing one only when it differs from the table, once per repo per
-  process.
+  The ensure-label step creates missing labels and PATCHes the colour or
+  description of an existing one only when it differs from the table, once
+  per repo per process — a PATCH keeps the label on every PR wearing it, so
+  an existing pill is recoloured, never removed and re-added.
 
 ### The table
 
@@ -392,6 +395,59 @@ retired `author/trusted|contributor|newcomer|untrusted` and adds the `role/*`
 equivalent in the same write; `stagelabels.RoleOf` still reads the old
 spelling until then so a claim hook never drops the tier. The role names are
 not configurable.
+
+### `dco` / `no-dco` — the hive-owned sign-off signal
+
+One per PR, written by the stage pass from the PR's **commits** — not copied
+from any CI context or bot label ([#12542](https://github.com/hivecommons/hive/issues/12542)).
+On each new head the pass reads the PR's commits once (cached per head in
+the stage store) and counts the non-merge commits without a `Signed-off-by:`
+trailer:
+
+| Label | Colour | Meaning |
+|---|---|---|
+| `dco` | green (`role/trusted`'s `#0e8a16`), description "All commits are DCO signed-off" | every non-merge commit on the head carries a `Signed-off-by:` trailer |
+| `no-dco` | red (`stage/stalled`'s `#d73a4a`), description "A commit is missing Signed-off-by — run `git rebase --signoff`" | at least one does not |
+
+The pair is mutually exclusive. A missing sign-off is the one author-side
+gate the hive decides **without waiting for CI or a reviewer verdict**: the
+PR goes to `stage/072-returned-to-contributor` (`070-fixing` when
+self-authored) with reason `dco-missing` on the first evaluation of the head,
+and the 072 nudge / relay `fix-pr` task names the exact fix —
+`git rebase --signoff HEAD~<n> && git push --force-with-lease` where `<n>` is
+the PR's commit count. Signing and force-pushing produces a new head, which
+is re-read and returns the PR to the normal path. A PR with no non-merge
+commits, or whose commits could not be read, is *unknown*: its existing DCO
+pills are left alone and no stage decision is made from DCO.
+
+The labels are written on every managed repo; the **072 routing is per
+repo**. It applies only where the repo actually enforces DCO — detected when
+a `dco` / `DCO` context is in the branch's required checks or reported on
+the PR head (the DCO GitHub App, Prow's plugin) during the lane's CI walk,
+no extra API call — or where `governor.labels.stage.dco.required` says so:
+
+```yaml
+governor:
+  labels:
+    stage:
+      dco:
+        required:          # "owner/repo", bare repo, or "*"; overrides detection
+          hivecommons/hive: true
+          acme/playground: false
+```
+
+On an ungated repo an unsigned head keeps the lane's stage, carries `no-dco`
+as information only, and the nudge does not ask for a rebase.
+
+Prow's `dco-signoff: yes` / `dco-signoff: no` (the Prow `dco` plugin's
+hard-coded names) are **retired** on hive-managed repos: once the hive has
+read a head's commits it removes them, so a PR shows exactly one DCO pill.
+Readers (`stagelabels.DCOFromLabels`, used by the merge-eligible export)
+still honour the legacy pair when neither hive label is present, so nothing
+breaks while Prow's plugin is being switched off. GitHub cannot colour one
+label name two ways, which is why the red case is `no-dco` rather than a red
+`dco`.
+
 
 ### `author/*` — who wrote this PR?
 
@@ -671,7 +727,8 @@ the reconciler never touches them: `hold` / `hold/*`, `needs-human`,
 `needs-decision`, `needs-direction`, `blocked`, `needs-rebase`,
 `hive/likely-done`, `hive/partially-addressed`, `hive/verified-open`,
 `hive/claimed-by-<who>` (the grey "who" modifier a stage cannot carry),
-`lgtm`, `role/*`, `author/*`, and the agent provenance labels.
+`lgtm`, `role/*`, `author/*`, `dco` / `no-dco`, and the agent provenance
+labels.
 
 `hive/partially-addressed` and `hive/verified-open` are *merged-PR evidence*,
 not stages, and stay coherent with the stage model: both describe what a PR
@@ -735,6 +792,12 @@ the claim relay and ledger mirror write `stage/020-claimed` /
 and the in-progress sweep still recognises `hive/in-progress` as a trigger for
 one migration cycle so a lapsed mark from an older spoke is cleared rather
 than orphaned. `hive/claimed-by-<who>` is kept as the grey "who" modifier.
+
+Prow's `dco-signoff: yes` / `dco-signoff: no` are retired the same way
+(#12542): the stage pass removes them from an open PR as soon as it has read
+that head's commits and written `dco` / `no-dco`; readers accept the legacy
+pair until then. The Prow `dco` plugin itself must be disabled for the org in
+the Prow `plugins.yaml` (kubestellar/infra) or it will keep re-adding them.
 
 ## Matching rules
 

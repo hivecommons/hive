@@ -115,6 +115,7 @@ func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy 
 			AuthorKindLabels:       cfg.Governor.Labels.Author.Names(),
 			RelayKnown:             contributorRelayKnown,
 			SharedCIIncident:       stageSharedCIIncident,
+			DCORequired:            stage.DCO.RequiredFor,
 		}
 	}
 }
@@ -1028,15 +1029,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			continue
 		}
 
-		dco := "unknown"
-		for _, l := range pr.Labels {
-			switch l {
-			case "dco-signoff: yes":
-				dco = "yes"
-			case "dco-signoff: no":
-				dco = "no"
-			}
-		}
+		// hive's own `dco` / `no-dco` first, Prow's legacy pair as fallback
+		// during the migration (hivecommons/hive#12542).
+		dco := stagelabels.DCOFromLabels(pr.Labels).String()
 		eligible = append(eligible, eligiblePR{
 			Number:    pr.Number,
 			Repo:      fullRepo,

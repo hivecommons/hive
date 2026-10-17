@@ -2279,6 +2279,7 @@ func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, bran
 	}
 	if prNumber > 0 {
 		c.noteStageRedChecks(owner, repo, prNumber, sha, st.FailingNonRequired)
+		c.noteStageDCOGate(owner, repo, prNumber, sha, required, st.Observed)
 	}
 	if configKnown && actualKnown {
 		c.warnRequiredChecksMismatch(owner, repo, configRequired, actualRequired, st.Observed)

@@ -179,6 +179,7 @@ governor.labels.author.clanker # label-name override; yaml-only (#12581)
 governor.labels.author.hive # label-name override; yaml-only (#12581)
 governor.labels.author.human # label-name override; yaml-only (#12581)
 governor.labels.exempt[] # TODO #11854
+governor.labels.stage.dco.required.<key> # TODO #12542
 governor.litellm.api_key_env # TODO #11854
 governor.litellm.api_key_file # TODO #11854
 governor.litellm.ca_bundle # TODO #11854

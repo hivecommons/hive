@@ -4073,6 +4073,44 @@ type StageLabelsConfig struct {
 	Adoption StageAdoptionConfig `yaml:"adoption"`
 	// Stalled configures the stage/stalled health marker.
 	Stalled StageStalledConfig `yaml:"stalled"`
+	// DCO configures the hive-owned `dco` / `no-dco` labels and the
+	// "missing sign-off returns the PR to its author" rule
+	// (hivecommons/hive#12542).
+	DCO StageDCOConfig `yaml:"dco"`
+}
+
+// StageDCOConfig is governor.labels.stage.dco.
+type StageDCOConfig struct {
+	// Required says, per repo, whether a missing Signed-off-by sends the PR
+	// to stage/072 (070 self-authored) at once. Keys are "owner/repo", a
+	// bare repo name, or "*"; values true/false override detection. A repo
+	// not listed is required only when the hive DETECTS a DCO gate on it: a
+	// `dco`/`DCO` context in the branch's required checks or reported on the
+	// PR head (the DCO App or Prow's plugin). The labels themselves are
+	// written on every managed repo regardless; only the stage routing and
+	// the nudge ask are gated.
+	Required map[string]bool `yaml:"required,omitempty"`
+}
+
+// RequiredFor resolves the per-repo override for display ("owner/repo"):
+// exact key, then bare repo, then "*". ok is false when no key matches.
+func (c StageDCOConfig) RequiredFor(display string) (required, ok bool) {
+	if len(c.Required) == 0 {
+		return false, false
+	}
+	display = strings.ToLower(strings.TrimSpace(display))
+	bare := display
+	if i := strings.LastIndex(display, "/"); i >= 0 {
+		bare = display[i+1:]
+	}
+	for _, key := range []string{display, bare, "*"} {
+		for k, v := range c.Required {
+			if strings.ToLower(strings.TrimSpace(k)) == key {
+				return v, true
+			}
+		}
+	}
+	return false, false
 }
 
 // StageStalledConfig is governor.labels.stage.stalled.
