@@ -111,6 +111,7 @@ func TestStageTrackerCacheServesWithoutGitHub(t *testing.T) {
 		s.handleStageTracker(rr, req)
 		return rr
 	}
+	before := stageTrackerRESTAccounting()
 	first := get("")
 	if first.Code != http.StatusOK || first.Header().Get("ETag") == "" || first.Header().Get("X-Hive-Stage-Tracker-Source") != "fresh" {
 		t.Fatalf("first: %d etag=%q src=%q", first.Code, first.Header().Get("ETag"), first.Header().Get("X-Hive-Stage-Tracker-Source"))
@@ -156,21 +157,30 @@ func TestStageTrackerCacheServesWithoutGitHub(t *testing.T) {
 		t.Fatalf("after TTL: %d src=%q", again.Code, again.Header().Get("X-Hive-Stage-Tracker-Source"))
 	}
 
-	found := false
-	for _, c := range github.RESTTopConsumers(50) {
-		if c.Caller == stageTrackerRESTCaller {
-			found = true
-			if c.Charged != 0 || c.Requests < 5 || c.NotModified != 1 {
-				t.Fatalf("accounting = %+v", c)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("stage tracker missing from REST accounting: %+v", github.RESTTopConsumers(50))
+	// The REST accounting store is process-wide, so other tests in the
+	// package also drive this caller; only the delta from this test counts.
+	after := stageTrackerRESTAccounting()
+	if after.Requests-before.Requests != 5 || after.Charged != before.Charged || after.NotModified-before.NotModified != 1 {
+		t.Fatalf("accounting delta: before=%+v after=%+v", before, after)
 	}
 }
 
-// TestStageTrackerCacheTTLDefaultsToEvalInterval pins the knob default.
+// stageTrackerRESTAccounting sums the REST accounting rows recorded under the
+// stage tracker's caller across endpoints, without a limit that could drop it
+// behind busier consumers.
+func stageTrackerRESTAccounting() github.RESTConsumer {
+	var sum github.RESTConsumer
+	sum.Caller = stageTrackerRESTCaller
+	for _, c := range github.RESTTopConsumers(1 << 20) {
+		if c.Caller == stageTrackerRESTCaller {
+			sum.Requests += c.Requests
+			sum.Charged += c.Charged
+			sum.NotModified += c.NotModified
+		}
+	}
+	return sum
+}
+
 func TestStageTrackerCacheTTLDefaultsToEvalInterval(t *testing.T) {
 	s := newTestServer()
 	deps := testDeps(t)
