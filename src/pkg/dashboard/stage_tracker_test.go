@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -266,6 +269,29 @@ func TestStageTrackerAuthorKindFallback(t *testing.T) {
 		k, src := stageTrackerAuthorKind(c.labels, c.author, c.app, c.attributed)
 		if k != c.wantKind || src != c.wantSrc {
 			t.Errorf("%v/%q/app=%v/attr=%v: got %q/%q want %q/%q", c.labels, c.author, c.app, c.attributed, k, src, c.wantKind, c.wantSrc)
+		}
+	}
+}
+
+func TestStageTrackerClaimantKind(t *testing.T) {
+	s := newTestServer()
+	if got := s.stageTrackerClaimantKind("acme/console", 1); got != "" {
+		t.Fatalf("ledger off: got %q, want empty", got)
+	}
+	l, err := claims.New(filepath.Join(t.TempDir(), "claims.json"), claims.DefaultPolicy(), claims.Hooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.deps = &Dependencies{IssueClaims: l}
+	for issue, kind := range map[int]claims.Kind{1: claims.KindHuman, 2: claims.KindAgent, 3: claims.KindContributor, 4: claims.KindExternal} {
+		if _, err := l.Claim(claims.Request{Repo: "acme/console", Issue: issue, Holder: "h" + strconv.Itoa(issue), Kind: kind}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[int]string{1: authorKindHuman, 2: authorKindHive, 3: authorKindClanker, 4: authorKindClanker, 5: ""}
+	for issue, kind := range want {
+		if got := s.stageTrackerClaimantKind("acme/console", issue); got != kind {
+			t.Errorf("issue %d: got %q, want %q", issue, got, kind)
 		}
 	}
 }

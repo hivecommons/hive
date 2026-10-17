@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -98,7 +99,10 @@ type StageTrackerItem struct {
 	NudgeCount    int        `json:"nudge_count,omitempty"`
 	LastNudgeAt   *time.Time `json:"last_nudge_at,omitempty"`
 	AdoptedBy     int        `json:"adopted_by,omitempty"`
-	LinkedPR      int        `json:"linked_pr,omitempty"`
+	// ClaimantKind is the author kind of whoever holds the live claim on a
+	// claimed issue (human / clanker / hive), from the worker-claim ledger.
+	ClaimantKind string `json:"claimant_kind,omitempty"`
+	LinkedPR     int    `json:"linked_pr,omitempty"`
 	// LinkedPRs lists the open pull requests covering an issue (the one
 	// named in the stage reason first) with the author kind of each, so
 	// the tracker can print "[author icon] #N title" in the PR column.
@@ -165,7 +169,7 @@ const (
 )
 
 // stageTrackerBranchFrom says which main segment a detour stage hangs off.
-// The PR strip collapses 050 and 060 into one "Review" chevron (lit during
+// The PR strip collapses 050 and 060 into one "CI / Review" chevron (lit during
 // 050, ticked from 060 on), so review-side detours hang off 050; 060 itself
 // lights the "Merge admission" chevron.
 func stageTrackerBranchFrom(number int) int {
@@ -190,7 +194,7 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.CoveredByPR:
 		return "Covered by PR"
 	case stagelabels.ReviewPending:
-		return "Review"
+		return "CI / Review"
 	case stagelabels.Reviewed:
 		return "Reviewed"
 	case stagelabels.Fixing:
@@ -568,6 +572,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 					it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
 				}
 				finish(&it, issue.Labels, labelStage(issue.Labels), rec, ok, false)
+				if it.Stage == trackerNumberClaimed {
+					it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
+				}
 				for _, lp := range issue.LinkedPRs {
 					if lp.Number > 0 && !lp.Merged && !strings.EqualFold(lp.State, "closed") {
 						it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
@@ -626,6 +633,30 @@ func trackerSince(it StageTrackerItem) time.Time {
 		return *it.StageSince
 	}
 	return time.Time{}
+}
+
+// stageTrackerClaimantKind maps the live claim holder's ledger kind onto
+// the tracker's author kinds: a person is human, one of the hive's own
+// agents is hive, a relay contributor or outside bot is clanker. Empty when
+// the ledger is off or holds no claim.
+func (s *Server) stageTrackerClaimantKind(repo string, number int) string {
+	l := s.claimsLedger()
+	if l == nil {
+		return ""
+	}
+	c, ok := l.Lookup(repo, number)
+	if !ok {
+		return ""
+	}
+	switch c.Kind {
+	case claims.KindHuman:
+		return authorKindHuman
+	case claims.KindAgent:
+		return authorKindHive
+	case claims.KindContributor, claims.KindExternal:
+		return authorKindClanker
+	}
+	return ""
 }
 
 // handleStageTracker serves GET /api/stage-tracker.

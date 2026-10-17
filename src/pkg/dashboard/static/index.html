@@ -1339,6 +1339,7 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { overflow: hidden; text-overflow: ellipsis; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
+    .ham-actor-ico { margin-right: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.active { background: var(--amber); color: var(--surface-0); animation: ham-pulse 1.6s ease-in-out infinite; }
@@ -12415,6 +12416,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_MERGE_COLUMN = 80;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 85: 'Needs human decision' };
+    // Whose move it is on each lit chevron: 'author' = the PR's author kind,
+    // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
+    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 50: 'hive', 60: 'hive', 70: 'hive', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12520,6 +12524,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + '\n' : '') + 'Author: ' + who)}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
     }
 
+    // Author kind of whoever must move on the item's current stage ('' = none).
+    function stageTrackerActorKind(item) {
+      const role = STAGE_TRACKER_ACTOR[Number(item.stage) || 0] || '';
+      if (role === 'claimant') return item.claimant_kind || '';
+      if (role === 'author') {
+        if (item.kind === 'pr') return item.author_kind || '';
+        const lp = Array.isArray(item.linked_prs) ? item.linked_prs[0] : null;
+        return (lp && lp.author_kind) || '';
+      }
+      return role;
+    }
+
     function stageTrackerShortAgo(ms) {
       const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
       if (sec < 60) return 'now';
@@ -12554,6 +12570,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ak = item.author_kind || '';
       const chips = [];
       if (mods.length) chips.push(`<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`);
+      // The lit chevron leads with the icon of whose move it is, in the chevron's ink.
+      const actorKind = stageTrackerActorKind(item);
+      const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       // PR column of the title line: the item's own PR, or the issue's covering PRs.
       let prRefs = [];
       if (item.kind === 'pr') prRefs = [stageTrackerPRRef(item.number, item.url, ak, item.author, title)];
@@ -12568,7 +12587,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         else if (sg.state === 'active' && curStage === 100) tip = sg.label + ' — admitted, merging';
         let inner;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
-        else if (sg.state === 'active') inner = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`;
+        else if (sg.state === 'active') inner = actorIco + (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`);
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}" title="${esc(tip)}"${sg.state === 'active' ? ' aria-current="step"' : ''}>${inner}</li>`;
       }).join('');
@@ -12580,6 +12599,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tipLines = [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
       if (item.author || ak) tipLines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.kind === 'issue' && prRefs.length) tipLines.push('Covering PR: ' + (Array.isArray(item.linked_prs) && item.linked_prs.length ? item.linked_prs.map(lp => '#' + lp.number).join(', ') : '#' + item.linked_pr));
+      if (actorKind) tipLines.push('Next move: ' + actorKind);
       if (mods.length) tipLines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       if (sinceMs) tipLines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) tipLines.push('Trail: ' + trail);
