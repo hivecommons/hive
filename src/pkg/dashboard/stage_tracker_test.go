@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 		stagelabels.Actionable: trackerNumberActionable, stagelabels.Claimed: trackerNumberClaimed,
 		stagelabels.PRInProgress: trackerNumberPRInProgress, stagelabels.CoveredByPR: trackerNumberCoveredByPR,
 		stagelabels.ReviewPending: trackerNumberReviewPending, stagelabels.Reviewed: trackerNumberReviewed,
-		stagelabels.Fixing: trackerNumberFixing, stagelabels.ReturnedToContributor: trackerNumberReturned,
+		stagelabels.Fixing: trackerNumberFixing, stagelabels.NeedsAuthor: trackerNumberNeedsAuthor, stagelabels.ReturnedToContributor: trackerNumberReturned,
 		stagelabels.AdoptedByHive: trackerNumberAdopted, stagelabels.AwaitingMergeAdmission: trackerNumberAwaitingMerge,
 		stagelabels.NeedsDecision: trackerNumberNeedsDecision, stagelabels.ReadyForHumanMerge: trackerNumberReadyForHuman,
 	}
@@ -46,8 +47,37 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 			t.Errorf("detour %s branches from %d", st.Slug, st.BranchFrom)
 		}
 	}
-	if mains != 8 || detours != 5 {
-		t.Fatalf("mains=%d detours=%d, want 8 main segments and 5 detours", mains, detours)
+	if mains != 8 || detours != 6 {
+		t.Fatalf("mains=%d detours=%d, want 8 main segments and 6 detours", mains, detours)
+	}
+}
+
+// Stage 07x by author kind: 071 needs-author (human) and 072
+// returned-to-contributor (clanker) are both review-side detours with their
+// own chevron word and an author-must-act caption.
+func TestStageTrackerNeedsAuthorAndReturnedWords(t *testing.T) {
+	for _, tc := range []struct {
+		stage             stagelabels.Stage
+		word, captionHead string
+	}{
+		{stagelabels.NeedsAuthor, "Needs author", "Needs @sam"},
+		{stagelabels.ReturnedToContributor, "Returned to contributor", "Returned to @sam"},
+		{stagelabels.Fixing, "Fixing", "Red or changes requested; a hive agent is fixing it"},
+	} {
+		if got := stageTrackerShort(tc.stage); got != tc.word {
+			t.Errorf("%v: short = %q, want %q", tc.stage, got, tc.word)
+		}
+		if got := stageTrackerBranchFrom(tc.stage.Number()); got != trackerNumberReviewPending {
+			t.Errorf("%v: branches from %d, want %d", tc.stage, got, trackerNumberReviewPending)
+		}
+		caption, _ := stageTrackerCaption(tc.stage, "check-failing:unit", "sam", "pr", false, stagelabels.Record{}, false, 0)
+		if !strings.HasPrefix(caption, tc.captionHead) {
+			t.Errorf("%v: caption = %q", tc.stage, caption)
+		}
+	}
+	caption, actor := stageTrackerCaption(stagelabels.NeedsAuthor, "check-failing:unit", "sam", "pr", false, stagelabels.Record{}, false, 0)
+	if caption != "Needs @sam — CI is red (check-failing:unit) — @sam must act" || actor != "sam" {
+		t.Errorf("071 caption = %q actor = %q", caption, actor)
 	}
 }
 

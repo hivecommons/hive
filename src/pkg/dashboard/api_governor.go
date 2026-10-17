@@ -1534,6 +1534,13 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		v := strings.TrimSpace(*body.ContributeNeedsDecisionLabel)
 		if previous != v {
 			cfg.Hub.ContributeSkipLabels = withoutExactLabel(cfg.Hub.ContributeSkipLabels, previous)
+			if previous == config.DefaultNeedsDecisionLabel {
+				// The retired spellings ride along with the default
+				// (hivecommons/hive#12683); a custom label replaces them too.
+				for _, legacy := range config.LegacyNeedsDecisionLabels {
+					cfg.Hub.ContributeSkipLabels = withoutExactLabel(cfg.Hub.ContributeSkipLabels, legacy)
+				}
+			}
 			if len(cfg.Hub.ContributeSkipLabels) == 0 {
 				cfg.Hub.ContributeSkipLabels = []string{"blocked"}
 			}

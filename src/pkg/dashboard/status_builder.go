@@ -2184,6 +2184,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 	heldIssuesByRepo := make(map[string][]any)
 	heldPrsByRepo := make(map[string][]any)
 	nonActionableIssuesByRepo := make(map[string][]any)
+	nonActionablePrsByRepo := make(map[string][]any)
 
 	if actionable != nil {
 		for _, issue := range actionable.Issues.Items {
@@ -2217,6 +2218,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			key := repoRowKey(repoRows, repo)
 			for _, issue := range details.Issues {
 				nonActionableIssuesByRepo[key] = append(nonActionableIssuesByRepo[key], issue)
+			}
+			for _, pr := range details.PRs {
+				nonActionablePrsByRepo[key] = append(nonActionablePrsByRepo[key], pr)
 			}
 		}
 	}
@@ -2261,6 +2265,7 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 			HeldIssues:          heldIssuesByRepo[repoName],
 			HeldPrs:             heldPrsByRepo[repoName],
 			NonActionableIssues: nonActionableIssuesByRepo[repoName],
+			NonActionablePrs:    nonActionablePrsByRepo[repoName],
 			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
 		}
 		// Deliberately iterating cfg.Project.Repos above, not ActiveRepos: a

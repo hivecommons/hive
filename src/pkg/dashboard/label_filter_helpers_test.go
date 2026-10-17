@@ -117,7 +117,7 @@ assert(hfResolveKey(edited, presets, 'saved:nope').source === 'custom', 'unknown
 assert(hfResolveKey(hfNormalizeStore(null), [], 'preset:needs-human').source === 'custom', 'missing payload presets degrade to custom, not a crash');
 const ordered = hfNormalizeStore({ saved: [{ id: 'a', name: 'A', pinned: true }, { id: 'b', name: 'B', pinned: true }], order: ['saved:b', 'preset:needs-human'] });
 eq(hfPinnedKeys(ordered, presets), ['saved:b', 'preset:needs-human', 'saved:a'], 'explicit order wins, the rest keep discovery order');
-assert(hfLabelToneClass('needs-direction') === 'hf-label-direction' && hfLabelToneClass('hold/review') === 'hf-label-hold' && hfLabelToneClass('bug') === '', 'label tones');
+assert(hfLabelToneClass('stage/085-needs-decision') === 'hf-label-decision' && hfLabelToneClass('hold/review') === 'hf-label-hold' && hfLabelToneClass('bug') === '', 'label tones');
 console.log('ok');
 `
 	dir := t.TempDir()

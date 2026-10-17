@@ -2,6 +2,7 @@ package stagelabels
 
 import (
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/config"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,7 +38,7 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 		Actionable: "stage/010-actionable", Claimed: "stage/020-claimed", PRInProgress: "stage/030-pr-in-progress",
 		CoveredByPR: "stage/040-covered-by-pr", ReviewPending: "stage/050-review-pending", Reviewed: "stage/060-reviewed",
 		AwaitingMergeAdmission: "stage/080-awaiting-merge-admission",
-		Fixing:                 "stage/070-fixing", ReturnedToContributor: "stage/072-returned-to-contributor", AdoptedByHive: "stage/074-adopted-by-hive",
+		Fixing:                 "stage/070-fixing", NeedsAuthor: "stage/071-needs-author", ReturnedToContributor: "stage/072-returned-to-contributor", AdoptedByHive: "stage/074-adopted-by-hive",
 		MergeQueue: "stage/100-merge-queue", ReadyForHumanMerge: "stage/090-ready-for-human-merge", NeedsDecision: "stage/085-needs-decision",
 	}
 	for s, l := range want {
@@ -898,5 +899,79 @@ func TestClampLabelDescription(t *testing.T) {
 	}
 	if got := ClampLabelDescription("short"); got != "short" {
 		t.Fatalf("clamp changed a short description: %q", got)
+	}
+}
+
+// Stage 07x by author kind: the "author must act" outcome is 070 fixing for
+// the hive's own PR, 071 needs-author for a human's, 072
+// returned-to-contributor for a clanker's. Same evidence, same transitions;
+// only who is on the hook differs.
+func TestFixingStageForByAuthorKind(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		self bool
+		kind authorkind.Kind
+		want Stage
+	}{
+		{"human", false, authorkind.Human, NeedsAuthor},
+		{"clanker", false, authorkind.Clanker, ReturnedToContributor},
+		{"hive kind", false, authorkind.Hive, Fixing},
+		{"self-authored lane", true, authorkind.Unknown, Fixing},
+		{"self-authored lane beats clanker kind", true, authorkind.Clanker, Fixing},
+		{"unknown kind reads as human", false, authorkind.Unknown, NeedsAuthor},
+	} {
+		if got := FixingStageFor(tc.self, tc.kind); got != tc.want {
+			t.Errorf("%s: FixingStageFor(%v, %q) = %v, want %v", tc.name, tc.self, tc.kind, got, tc.want)
+		}
+	}
+	for _, s := range []Stage{Fixing, NeedsAuthor, ReturnedToContributor} {
+		if !AuthorBlocked(s) {
+			t.Errorf("%v must be author-blocked", s)
+		}
+	}
+	for _, s := range []Stage{None, ReviewPending, AdoptedByHive, NeedsDecision, MergeQueue} {
+		if AuthorBlocked(s) {
+			t.Errorf("%v must not be author-blocked", s)
+		}
+	}
+	// 071 sits between 070 and 072, is a PR-only stage, dwells like 072, and
+	// reads from labels like any other stage.
+	d, ok := definition(NeedsAuthor)
+	if !ok || d.Number != 71 || d.Slug != "needs-author" || !d.PR || d.Issue || d.Dwell != ReturnedToContributor.Dwell() {
+		t.Fatalf("071 definition = %+v ok=%v", d, ok)
+	}
+	if !Fixing.Before(NeedsAuthor) || !NeedsAuthor.Before(ReturnedToContributor) {
+		t.Fatal("071 must order between 070 and 072")
+	}
+	if got := Current([]string{"kind/bug", "stage/071-needs-author"}); got != NeedsAuthor {
+		t.Fatalf("Current = %v", got)
+	}
+	// Leaving 071 for review of a new head is the repair route, not a
+	// regression; 074 → 071 is a declined adoption handed back, not a knock-back.
+	if IsRegression(NeedsAuthor, ReviewPending) || IsRegression(NeedsAuthor, Reviewed) || IsRegression(AdoptedByHive, NeedsAuthor) {
+		t.Fatal("071 repair transitions must not regress")
+	}
+	if !IsRegression(MergeQueue, NeedsAuthor) {
+		t.Fatal("100 → 071 is a regression")
+	}
+}
+
+func TestRenamesWithdrawnNeedsAuthorSpellingReads072(t *testing.T) {
+	if got := Current([]string{"stage/072-needs-author"}); got != ReturnedToContributor {
+		t.Fatalf("withdrawn 072 spelling = %v, want ReturnedToContributor", got)
+	}
+	if got := Current([]string{NeedsAuthor.Label()}); got != NeedsAuthor {
+		t.Fatalf("071 label = %v, want NeedsAuthor", got)
+	}
+	if NeedsAuthor.Label() != "stage/071-needs-author" || ReturnedToContributor.Label() != "stage/072-returned-to-contributor" {
+		t.Fatalf("labels: %q %q", NeedsAuthor.Label(), ReturnedToContributor.Label())
+	}
+}
+
+// hivecommons/hive#12683: config spells the decision park label out because
+// it cannot import this package; the two must never drift.
+func TestNeedsDecisionLabelMatchesConfigDefault(t *testing.T) {
+	if NeedsDecision.Label() != config.DefaultNeedsDecisionLabel {
+		t.Fatalf("stage label %q != config.DefaultNeedsDecisionLabel %q", NeedsDecision.Label(), config.DefaultNeedsDecisionLabel)
 	}
 }

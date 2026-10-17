@@ -85,16 +85,24 @@ func TestIssueFilterEqual(t *testing.T) {
 
 func TestIssueFilterHardSuppressDefaultsAndOverrides(t *testing.T) {
 	var f IssueFilterConfig
-	if got := f.HardSuppressIssueBucket([]string{"needs-direction"}); got != DefaultNeedsDirectionLabel {
-		t.Fatalf("default bucket = %q, want %q", got, DefaultNeedsDirectionLabel)
+	// hivecommons/hive#12683: the stage label is the decision bucket; the
+	// retired spellings stay recognised as legacy aliases of it.
+	for _, label := range []string{DefaultNeedsDecisionLabel, "needs-decision", "needs-direction", "Needs-Direction"} {
+		if got := f.HardSuppressIssueBucket([]string{label}); got != DefaultNeedsDecisionLabel {
+			t.Fatalf("default bucket for %q = %q, want %q", label, got, DefaultNeedsDecisionLabel)
+		}
 	}
 
 	f.HardSuppressLabels.NeedsDirection = []string{"direction-needed"}
-	if got := f.HardSuppressIssueBucket([]string{"needs-direction"}); got != "" {
-		t.Fatalf("default label matched after override: %q", got)
+	f.HardSuppressLabels.NeedsDecision = []string{"owner-call"}
+	if got := f.HardSuppressIssueBucket([]string{"needs-spec"}); got != DefaultNeedsSpecLabel {
+		t.Fatalf("needs-spec bucket = %q, want %q", got, DefaultNeedsSpecLabel)
 	}
-	if got := f.HardSuppressIssueBucket([]string{"Direction-Needed"}); got != DefaultNeedsDirectionLabel {
-		t.Fatalf("override bucket = %q, want %q", got, DefaultNeedsDirectionLabel)
+	// The stage label parks whatever the bucket is configured to.
+	for _, label := range []string{DefaultNeedsDecisionLabel, "Direction-Needed", "owner-call", "needs-direction", "needs-decision"} {
+		if got := f.HardSuppressIssueBucket([]string{label}); got != DefaultNeedsDecisionLabel {
+			t.Fatalf("override bucket for %q = %q, want %q", label, got, DefaultNeedsDecisionLabel)
+		}
 	}
 }
 

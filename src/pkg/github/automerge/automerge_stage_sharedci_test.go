@@ -31,9 +31,9 @@ func TestClassifyStageSharedCIIncidentKeepsRedOutOfRepairStages(t *testing.T) {
 		{name: "red optional while soaking", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h)", Detail: redOptional, SharedCIIncident: 4242}, want: stagelabels.Reviewed, reason: incident},
 		{name: "lane error with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Err: true, Detail: redOptional, SharedCIIncident: 4242}, want: stagelabels.Reviewed, reason: incident},
 		{name: "pending CI is unchanged", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-pending:build", SharedCIIncident: 4242}, want: stagelabels.ReviewPending},
-		{name: "conflicting stays author-facing", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "conflicting", SharedCIIncident: 4242}, want: stagelabels.ReturnedToContributor},
-		{name: "changes requested stays author-facing", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build", Detail: reject, SharedCIIncident: 4242}, want: stagelabels.ReturnedToContributor, reason: "reviewer-verdict:changes_requested"},
-		{name: "no incident is red CI", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build"}, want: stagelabels.ReturnedToContributor},
+		{name: "conflicting stays author-facing", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "conflicting", SharedCIIncident: 4242}, want: stagelabels.NeedsAuthor},
+		{name: "changes requested stays author-facing", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build", Detail: reject, SharedCIIncident: 4242}, want: stagelabels.NeedsAuthor, reason: "reviewer-verdict:changes_requested"},
+		{name: "no incident is red CI", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build"}, want: stagelabels.NeedsAuthor},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

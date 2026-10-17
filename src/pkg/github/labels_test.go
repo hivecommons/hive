@@ -3,7 +3,7 @@ package github
 import "testing"
 
 func TestEscalationIssueLabelDefinitions(t *testing.T) {
-	for _, name := range []string{"needs-direction", "needs-spec", "needs-reporter-confirmation", "needs-signal", PartiallyAddressedLabel, LikelyDoneLabel, "meta"} {
+	for _, name := range []string{NeedsDecisionStageLabel, "needs-spec", "needs-reporter-confirmation", "needs-signal", PartiallyAddressedLabel, LikelyDoneLabel, "meta"} {
 		t.Run(name, func(t *testing.T) {
 			def, ok := escalationIssueLabelDefinition(name)
 			if !ok {

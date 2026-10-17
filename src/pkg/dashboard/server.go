@@ -103,8 +103,12 @@ type Server struct {
 	// stageStore is the stage-label memory /api/stage-tracker reads; nil
 	// means the process-wide stagelabels.Shared(). Tests inject one.
 	stageStore *stagelabels.Store
-	sidebar    interface{}
-	sidebarMu  sync.RWMutex
+	// stageTrackerCache is the last /api/stage-tracker payload built from
+	// the status snapshot, served until its TTL lapses (stage_tracker.go).
+	stageTrackerCache   stageTrackerCache
+	stageTrackerCacheMu sync.Mutex
+	sidebar             interface{}
+	sidebarMu           sync.RWMutex
 
 	// startedAt marks process start, used by /api/livez to bound the
 	// startup-grace window before the first heartbeat has to have succeeded.
@@ -975,6 +979,11 @@ type FrontendRepo struct {
 	// filtered, reporter triage, and similar named exclusions). They keep the
 	// repo card's total honest without adding anything to the queues.
 	NonActionableIssues []any `json:"nonActionableIssues,omitempty"`
+	// NonActionablePrs are display-only github.RepoWorkPR records of the open
+	// PRs the enumeration sidelined (drafts, exempt labels) so the Hive
+	// activity monitor can list every open PR (hivecommons/hive#12682).
+	// Like NonActionableIssues they feed no queue.
+	NonActionablePrs []any `json:"nonActionablePrs,omitempty"`
 	// Paused and its provenance (#6203). A paused repo still gets a card —
 	// that is the point of pause over deleting it from project.repos — so the
 	// card has to say so, or a deliberately quiet repo is indistinguishable

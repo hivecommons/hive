@@ -1110,6 +1110,41 @@ func (e *InceptionEngine) SetCampaignDrift(id string, drift *CampaignDrift) (*In
 	return &archive, nil
 }
 
+// DeleteCampaignArchive removes a campaign's archive directory (saved state
+// plus the wiki snapshot copy). KB facts, Jam threads and anything already
+// scaffolded to the repo are untouched. When the campaign is also the active
+// L1 session its live state is cleared so the dashboard does not resurrect it
+// on the next refresh. Other revisions in the same chain are left alone; the
+// deleted id simply stops resolving.
+func (e *InceptionEngine) DeleteCampaignArchive(id string) (*InceptionCampaignArchive, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	slug := slugify(strings.TrimSpace(id))
+	if slug == "" {
+		return nil, fmt.Errorf("campaign id required")
+	}
+	archive, err := e.readArchiveLocked(slug)
+	activeMatches := e.state != nil && slugify(strings.TrimSpace(e.state.IdeaSlug)) == slug
+	if err != nil {
+		if !activeMatches {
+			return nil, err
+		}
+		archive = InceptionCampaignArchive{ID: slug, Engine: "Spec Kit", Type: "inception", State: copyInceptionState(e.state)}
+	}
+	root := filepath.Join(e.dataDir, inceptionCampaignsDir, slug)
+	if err := os.RemoveAll(root); err != nil {
+		return nil, fmt.Errorf("removing campaign archive: %w", err)
+	}
+	if activeMatches {
+		e.state = nil
+		if err := os.Remove(filepath.Join(e.dataDir, inceptionStateFile)); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("removing state file: %w", err)
+		}
+	}
+	e.logger.Info("inception campaign deleted", "campaign", slug, "was_active", activeMatches)
+	return &archive, nil
+}
+
 // RestoreCampaignArchive makes an archived inception campaign the active L1
 // session again and restores its working wiki files.
 func (e *InceptionEngine) RestoreCampaignArchive(id string) (*InceptionState, error) {

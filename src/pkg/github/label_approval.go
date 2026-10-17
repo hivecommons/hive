@@ -327,7 +327,7 @@ func (c *Client) evaluateLabelApproval(ctx context.Context, owner, repo string, 
 	}
 	for _, name := range labels {
 		lower := strings.ToLower(strings.TrimSpace(name))
-		isPark := lower == issueNeedsHumanLabel || lower == issueNeedsDecisionLabel || lower == issueNeedsDirectionLabel
+		isPark := isIssueParkingLabel(lower)
 		isHold := strings.Contains(lower, "hold")
 		if !isPark && !isHold {
 			continue

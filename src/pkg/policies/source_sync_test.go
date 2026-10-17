@@ -228,7 +228,7 @@ func TestEscalationPolicyPresent(t *testing.T) {
 	required := []string{
 		"## Escalate Instead of Stalling",
 		"ADR-0019",
-		"`needs-decision`",
+		"`stage/085-needs-decision`",
 		"`needs-spec`",
 		"`needs-signal`",
 		"`meta-issue`",

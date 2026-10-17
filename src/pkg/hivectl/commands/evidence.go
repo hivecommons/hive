@@ -106,6 +106,7 @@ func newEvidenceCommand(env *commandEnv) *cobra.Command {
 	}
 	cmd.AddCommand(newEvidenceExportCommand(env))
 	cmd.AddCommand(newEvidenceBackfillCommand(env))
+	cmd.AddCommand(newEvidenceBackfillIssuesCommand(env))
 	return cmd
 }
 
