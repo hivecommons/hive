@@ -245,6 +245,10 @@ type labelApprovalFinding struct {
 	// LaterHiveParkLabels are park labels the hive added after the
 	// acceptance; they stay (R14).
 	LaterHiveParkLabels []string
+	// KeptParkLabels are hive-added park labels no approval lifts:
+	// `needs-human` (unparkRemovableLabels). The approval is still recorded,
+	// but the issue is not released while one is present.
+	KeptParkLabels []string
 	// BlockingParkLabels are park labels whose newest addition was not by the
 	// hive (a person, another bot, or unreadable). While any is present the
 	// acceptance withholds approval (R3, A4, A29).
@@ -273,7 +277,7 @@ func (a labelAttribution) String() string {
 // Released reports whether acting on the finding leaves the issue with no
 // park label, so agents may pick it up.
 func (f labelApprovalFinding) Released() bool {
-	return f.Accepted && len(f.BlockingParkLabels) == 0 && len(f.LaterHiveParkLabels) == 0
+	return f.Accepted && len(f.BlockingParkLabels) == 0 && len(f.LaterHiveParkLabels) == 0 && len(f.KeptParkLabels) == 0
 }
 
 // Blocked reports whether a non-Hive park label withholds the approval.
@@ -344,6 +348,8 @@ func (c *Client) evaluateLabelApproval(ctx context.Context, owner, repo string, 
 		switch {
 		case !ok || !c.isHiveAccount(ev.Actor):
 			f.BlockingParkLabels = append(f.BlockingParkLabels, attr)
+		case isUnparkKeptLabel(name):
+			f.KeptParkLabels = append(f.KeptParkLabels, name)
 		case ev.At.After(f.At):
 			f.LaterHiveParkLabels = append(f.LaterHiveParkLabels, name)
 		default:
@@ -405,6 +411,9 @@ func renderLabelApprovalReply(f labelApprovalFinding, removed []string) string {
 	var kept []string
 	for _, l := range f.LaterHiveParkLabels {
 		kept = append(kept, fmt.Sprintf("`%s` (added by Hive after the acceptance; answer it with `/hive approve` or `/hive decision <option>`)", l))
+	}
+	for _, l := range f.KeptParkLabels {
+		kept = append(kept, fmt.Sprintf("`%s` (held for a person; only a person removes it)", l))
 	}
 	for _, a := range f.Holds {
 		kept = append(kept, a.String())

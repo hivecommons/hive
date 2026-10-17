@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // unparkWireIssue is the minimum of GitHub's issue shape the sweep reads.
@@ -113,6 +115,16 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 		switch {
 		case path == "issues" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(issues)
+
+		case strings.HasPrefix(path, "issues/") && !strings.Contains(strings.TrimPrefix(path, "issues/"), "/") && r.Method == http.MethodGet:
+			var n int
+			fmt.Sscanf(path, "issues/%d", &n)
+			issue, ok := byNum[n]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(issue)
 
 		case strings.HasSuffix(path, "/comments") && r.Method == http.MethodGet:
 			var n int
@@ -267,8 +279,11 @@ func TestSweepIssueUnparkCommandsApproveClearsParkingLabels(t *testing.T) {
 		t.Fatalf("actor = %q", result.Unparked[0].Actor)
 	}
 	removed := strings.Join(rec.removed[7], ",")
-	if !strings.Contains(removed, "needs-human") || !strings.Contains(removed, "needs-decision") {
-		t.Fatalf("expected both parking labels removed, got %v", rec.removed[7])
+	if !strings.Contains(removed, "needs-decision") {
+		t.Fatalf("expected the decision park label removed, got %v", rec.removed[7])
+	}
+	if strings.Contains(removed, "needs-human") {
+		t.Fatalf("needs-human must never be removed by an un-park, got %v", rec.removed[7])
 	}
 	if strings.Contains(removed, "hold") {
 		t.Fatalf("hold must never be removed, got %v", rec.removed[7])
@@ -612,5 +627,71 @@ func TestRenderUnparkHelpReplyListsDocumentedCommands(t *testing.T) {
 		if !strings.Contains(docBody, want) {
 			t.Fatalf("maintainer commands doc missing %q", want)
 		}
+	}
+}
+
+// The incident on hivecommons/hive#12680 / #12681 (2026-10-17): the owner
+// replied `/hive decision … Agents stand down` on issues carrying
+// `needs-human` + stage/085, the sweep removed every needs-* label including
+// `needs-human`, and both issues became stage/010-actionable. An un-park
+// records the decision and clears the decision park label, but never lifts
+// `needs-human`; the accepted reply says so; and the resulting label set
+// still derives stage/085 so the issue stays out of the agent queue.
+func TestSweepIssueUnparkCommandsKeepsNeedsHuman(t *testing.T) {
+	issue := parkedIssue(12680, humanComment(31, "owner", "/hive decision Agents stand down; owner/Console owners handle this"))
+	issue.Labels = []wireLabel{{Name: "needs-human"}, {Name: NeedsDecisionStageLabel}, {Name: "kind/bug"}}
+	server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, map[string]string{"owner": "admin"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Unparked) != 1 || result.Unparked[0].Decision != "Agents stand down; owner/Console owners handle this" {
+		t.Fatalf("decision not recorded: %+v", result.Unparked)
+	}
+	if got := strings.Join(rec.removed[12680], ","); got != NeedsDecisionStageLabel {
+		t.Fatalf("removed = %q, want only %s", got, NeedsDecisionStageLabel)
+	}
+	if len(rec.added[12680]) != 1 || rec.added[12680][0] != HumanAckLabel {
+		t.Fatalf("added = %v, want only %s", rec.added[12680], HumanAckLabel)
+	}
+	var accepted string
+	for _, body := range rec.posted[12680] {
+		if strings.Contains(body, "Un-parked by @owner") {
+			accepted = body
+		}
+	}
+	if accepted == "" || !strings.Contains(accepted, "`needs-human` stays") {
+		t.Fatalf("accepted reply must say needs-human stays, got %v", rec.posted[12680])
+	}
+
+	// What the issue carries after the sweep, as the stage reconciler sees it.
+	after := []string{"needs-human", "kind/bug", HumanAckLabel}
+	stage, _, reason := IssueStageFor(IssueStageInput{Repo: "org/repo", Number: 12680, Labels: after}, nil)
+	if stage != stagelabels.NeedsDecision || reason != "parked on a person: needs-human" {
+		t.Fatalf("stage after un-park = %s (%s), want %s parked on needs-human", stage, reason, stagelabels.NeedsDecision)
+	}
+	if !hasHardSuppressIssueLabel(after) {
+		t.Fatal("an issue still carrying needs-human must remain hard-suppressed after un-park")
+	}
+}
+
+// An issue carrying only `needs-human` is a person's to work; `/hive approve`
+// records the go-ahead but changes no park label.
+func TestSweepIssueUnparkCommandsNeedsHumanOnlyRecordsApprovalOnly(t *testing.T) {
+	issue := parkedIssue(12681, humanComment(32, "owner", "/hive approve"))
+	issue.Labels = []wireLabel{{Name: "needs-human"}}
+	server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, map[string]string{"owner": "write"})
+	c := newTestClient(t, server, "org", []string{"repo"})
+
+	if _, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{}); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(rec.removed[12681]) != 0 {
+		t.Fatalf("nothing should be removed, got %v", rec.removed[12681])
+	}
+	if len(rec.added[12681]) != 1 || rec.added[12681][0] != HumanAckLabel {
+		t.Fatalf("added = %v, want only %s", rec.added[12681], HumanAckLabel)
 	}
 }

@@ -1,9 +1,13 @@
 package github
 
 import (
+	"context"
+	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -31,7 +35,7 @@ var reservedExactLabels = []string{
 	// Human decisions and workflow gates.
 	HumanAckLabel,        // approved-direction: a person endorsed the direction
 	"design-approved",    // config.DefaultDesignApprovedLabel
-	"needs-human",        // escalation to a person
+	"needs-human",        // escalation to a person; agents may ADD it (agentMayAddLabel), never remove it
 	"needs-decision",     // retired park label (hivecommons/hive#12683); never written again
 	"needs-direction",    // retired park label (hivecommons/hive#12683); never written again
 	"blocked",            // workflow skip marker
@@ -52,18 +56,22 @@ var agentRecordableHiveStateLabels = []string{
 }
 
 // agentMayAddLabel reports whether an agent may ADD label through the relay
-// even though it is reserved: the recordable hive-state verdicts, and the
+// even though it is reserved: the recordable hive-state verdicts, the
 // hive's configured needs-decision label (`stage/085-needs-decision` by
-// default). Parking an item on a maintainer decision is ADR-0019's
-// escalation move (it replaced the retired `needs-direction` and
-// `needs-decision` labels, hivecommons/hive#12683); an agent that parks
-// itself gives up work, it never decides its own merge. Removing the label
-// — the un-park — stays a maintainer's `/hive approve` / `/hive decision`.
+// default), and `needs-human`. Parking an item on a maintainer decision is
+// ADR-0019's escalation move (it replaced the retired `needs-direction` and
+// `needs-decision` labels, hivecommons/hive#12683); handing an item to a
+// person with `needs-human` is the same move for work a human must do or
+// consent to. In both cases the agent gives up work; it never decides its
+// own merge. Removing either label — the un-park — stays with people: a
+// maintainer's `/hive approve` / `/hive decision` for the decision label, a
+// person's hand for `needs-human`.
 func (c *Client) agentMayAddLabel(label string) bool {
 	if agentRecordableHiveStateLabel(label) {
 		return true
 	}
-	return strings.EqualFold(strings.TrimSpace(label), c.needsDecisionLabel())
+	name := strings.TrimSpace(label)
+	return strings.EqualFold(name, c.needsDecisionLabel()) || strings.EqualFold(name, issueNeedsHumanLabel)
 }
 
 // reservedLabelForAgents reports whether label is refused to the label relay.
@@ -176,4 +184,95 @@ func (c *Client) reservedLabelRefusal(add, remove []string) (string, bool) {
 	return "label request names hive-controlled label(s) " + strings.Join(bad, ", ") +
 		": these drive hive automation or record a human decision and cannot be set by an agent. " +
 		"Use the claim relay for ownership, and ask a maintainer for merge, hold and decision labels.", true
+}
+
+// reparkDecisionRefusal returns the refusal reason, and true, when a label
+// request would re-park an issue on a maintainer decision that a maintainer
+// has already given (hivecommons/hive#12680 / #12681, 2026-10-17: the owner
+// replied `/hive decision … Agents stand down`, the sweep applied
+// `approved-direction`, and a contributor agent then read that decision and
+// re-parked the issue asking for one). The park is suppressed when the issue
+// carries `approved-direction` AND the hive's own un-park reply
+// (`<!-- hive:unpark-reply:… id=… -->`) is on the timeline with no newer,
+// different `/hive decision` after it — that is, the decision is unchanged.
+// A newer `/hive decision` with new text means direction is changing; the
+// un-park sweep answers it, so the park is allowed through. The reply tells
+// the agent what to do instead: follow the decision, or — when it reserves
+// the work for people — add `needs-human` and unclaim. A lookup failure is
+// returned so the caller retries rather than reading "unknown" as allowed.
+func (c *Client) reparkDecisionRefusal(ctx context.Context, repo string, number int, add []string) (string, bool, error) {
+	if number <= 0 || !containsLabelFold(add, c.needsDecisionLabel()) {
+		return "", false, nil
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		return "", false, fmt.Errorf("checking issue park labels: %w", err)
+	}
+	labels := extractLabels(issue.Labels)
+	if !labelPresent(labels, HumanAckLabel) {
+		return "", false, nil
+	}
+	comments, err := c.listIssueComments(ctx, owner, name, number)
+	if err != nil {
+		return "", false, err
+	}
+	decision, at, ok := c.lastRecordedUnparkDecision(comments)
+	if !ok {
+		return "", false, nil
+	}
+	if hasNewerDifferentDecisionCommand(comments, at, decision) {
+		return "", false, nil
+	}
+	return fmt.Sprintf("a maintainer already decided on %s#%d (recorded by Hive: %q) and `%s` is applied; "+
+		"re-parking it on `%s` asks for a decision that has been given. Follow the decision. "+
+		"If it reserves the work for people, add `%s` through this relay and `/unclaim` instead.",
+		repo, number, decision, HumanAckLabel, c.needsDecisionLabel(), issueNeedsHumanLabel), true, nil
+}
+
+// unparkDecisionLinePrefix is how the hive's accepted un-park reply records
+// the decision text (renderUnparkAcceptedReply).
+const unparkDecisionLinePrefix = "Decision: "
+
+// lastRecordedUnparkDecision reads the decision text out of the newest
+// un-park reply the hive itself posted.
+func (c *Client) lastRecordedUnparkDecision(comments []*gh.IssueComment) (decision string, at time.Time, ok bool) {
+	for i := len(comments) - 1; i >= 0; i-- {
+		cm := comments[i]
+		if cm == nil || !c.markerAuthorTrusted(cm.GetUser()) || !strings.Contains(cm.GetBody(), unparkReplyMarkerPrefix) {
+			continue
+		}
+		for _, line := range strings.Split(cm.GetBody(), "\n") {
+			if idx := strings.Index(line, unparkDecisionLinePrefix); idx >= 0 {
+				return strings.TrimSpace(line[idx+len(unparkDecisionLinePrefix):]), cm.GetCreatedAt().Time, true
+			}
+		}
+	}
+	return "", time.Time{}, false
+}
+
+// hasNewerDifferentDecisionCommand reports whether a `/hive decision` whose
+// text differs from recorded was posted after the recorded reply.
+func hasNewerDifferentDecisionCommand(comments []*gh.IssueComment, after time.Time, recorded string) bool {
+	for _, cm := range comments {
+		if cm == nil || !cm.GetCreatedAt().Time.After(after) {
+			continue
+		}
+		cmd, ok := parseUnparkCommand(cm.GetBody())
+		if !ok || cmd.Kind != unparkCommandDecision {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(cmd.Decision), strings.TrimSpace(recorded)) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsLabelFold(labels []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	return labelPresent(labels, want)
 }

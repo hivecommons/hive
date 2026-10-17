@@ -11,14 +11,25 @@ import (
 	gh "github.com/google/go-github/v72/github"
 )
 
-// issueParkingLabels are the labels a /hive command clears: `needs-human`
-// and the park signal `stage/085-needs-decision` (hivecommons/hive#12683),
-// plus the retired `needs-decision` / `needs-direction` spellings until the
-// stage reconciler has migrated them. `hold` is deliberately untouched
-// because it has several independent sources (the ACMM level gate, the SHA
-// hold, holdguard and a person), and clearing one of them from a comment
-// would silently clear all of them.
+// issueParkingLabels are the labels that park an issue on a person and so
+// make it the un-park sweep's business: `needs-human`, the park signal
+// `stage/085-needs-decision` (hivecommons/hive#12683), and the retired
+// `needs-decision` / `needs-direction` spellings until the stage reconciler
+// has migrated them. Only unparkRemovableLabels are ever cleared by a /hive
+// command. `hold` is deliberately untouched because it has several
+// independent sources (the ACMM level gate, the SHA hold, holdguard and a
+// person), and clearing one of them from a comment would silently clear all
+// of them.
 var issueParkingLabels = []string{issueNeedsHumanLabel, NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
+
+// unparkRemovableLabels are the park labels `/hive approve` / `/hive
+// decision` (and label approval) remove. `needs-human` is NOT among them:
+// it says a human-held identity or consent is required for the work itself
+// — a signal orthogonal to the decision state — so a decision never lifts
+// it. The incident on hivecommons/hive#12680 / #12681 (2026-10-17) had the
+// sweep clear it on `/hive decision … Agents stand down`, which dropped both
+// issues straight back into the agent queue. Only a person removes it.
+var unparkRemovableLabels = []string{NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel}
 
 const maintainerCommandsDocURL = "https://github.com/hivecommons/hive/blob/v5/src/docs/maintainer-commands.md"
 
@@ -320,14 +331,15 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return true, nil
 	}
 
-	if err := c.clearIssueParkingLabels(ctx, owner, repo, number, issueLabelNames(issue.Labels)); err != nil {
+	labels := issueLabelNames(issue.Labels)
+	if err := c.clearIssueParkingLabels(ctx, owner, repo, number, labels); err != nil {
 		return false, err
 	}
 	decision := strings.TrimSpace(command.Decision)
 	if decision == "" {
 		decision = "go with the recommendation"
 	}
-	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkAcceptedReply(actor, decision)); err != nil {
+	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkAcceptedReply(actor, decision, hasIssueNeedsHumanLabel(labels))); err != nil {
 		return false, err
 	}
 	event := IssueUnparkEvent{
@@ -442,6 +454,16 @@ func (c *Client) unparkLabelDrivenCommand(ctx context.Context, displayRepo, owne
 			continue
 		}
 		ev, ok := lastLabeledEvent(events, label)
+		if isUnparkKeptLabel(label) {
+			// needs-human stays whoever added it: a decision never lifts
+			// a hold for a person (hivecommons/hive#12680).
+			note := fmt.Sprintf("`%s`", label)
+			if ok {
+				note = labelAttribution{Label: label, Actor: safeGetLogin(ev.Actor)}.String()
+			}
+			kept = append(kept, note+" — a decision never lifts it")
+			continue
+		}
 		if !ok || !c.isHiveAccount(ev.Actor) {
 			kept = append(kept, labelAttribution{Label: label, Actor: safeGetLogin(ev.Actor)}.String())
 			continue
@@ -482,7 +504,7 @@ func renderUnparkLabelDrivenAcceptedReply(actor, decision string, removed, kept 
 	}
 	b.WriteString(".")
 	if len(kept) > 0 {
-		fmt.Fprintf(&b, " Left in place because Hive did not add them: %s.", strings.Join(kept, ", "))
+		fmt.Fprintf(&b, " Left in place: %s.", strings.Join(kept, ", "))
 	}
 	b.WriteString(" Any `hold` label is left exactly as it was.")
 	return b.String()
@@ -509,6 +531,21 @@ func isIssueParkingLabel(label string) bool {
 	return false
 }
 
+// isUnparkKeptLabel reports whether a park label survives an un-park:
+// `needs-human` does, every other park label is removable.
+func isUnparkKeptLabel(label string) bool {
+	return isIssueParkingLabel(label) && !isUnparkRemovableLabel(label)
+}
+
+func isUnparkRemovableLabel(label string) bool {
+	for _, removable := range unparkRemovableLabels {
+		if strings.EqualFold(strings.TrimSpace(label), removable) {
+			return true
+		}
+	}
+	return false
+}
+
 // hasIssueParkingLabel reports whether the issue is parked on a person.
 func hasIssueParkingLabel(labels []string) bool {
 	if hasIssueNeedsHumanLabel(labels) {
@@ -522,12 +559,14 @@ func hasIssueParkingLabel(labels []string) bool {
 	return false
 }
 
-// clearIssueParkingLabels removes the parking labels the issue actually
-// carries and adds the approval label, so the resulting PR is not held for
-// #5117 and the issue ranks as an agreed direction. A label that has already
-// gone is not an error.
+// clearIssueParkingLabels removes the removable parking labels the issue
+// actually carries and adds the approval label, so the resulting PR is not
+// held for #5117 and the issue ranks as an agreed direction. `needs-human`
+// stays (unparkRemovableLabels), so an issue carrying it remains
+// hard-suppressed and at stage/085 after the decision is recorded. A label
+// that has already gone is not an error.
 func (c *Client) clearIssueParkingLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
-	for _, label := range issueParkingLabels {
+	for _, label := range unparkRemovableLabels {
 		if !labelPresent(labels, label) {
 			continue
 		}
@@ -723,9 +762,14 @@ const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive de
 // `/hive help` on a repo with project.repo_policies[].label_driven set.
 const unparkLabelDrivenReply = "This repository is label-driven: Hive leaves `needs-human` and `stage/085-needs-decision` to maintainers, so accept or un-park this issue with the repository's triage labels instead of `/hive approve` / `/hive decision`. No labels were changed."
 
-func renderUnparkAcceptedReply(actor, decision string) string {
-	return fmt.Sprintf("Un-parked by @%s. Decision: %s\n\n`needs-human` and `stage/085-needs-decision` are cleared when present and `%s` is applied; any `hold` label is left exactly as it was.",
-		actor, decision, HumanAckLabel)
+func renderUnparkAcceptedReply(actor, decision string, needsHuman bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Un-parked by @%s. Decision: %s\n\n`%s` is cleared when present and `%s` is applied; any `hold` label is left exactly as it was.",
+		actor, decision, NeedsDecisionStageLabel, HumanAckLabel)
+	if needsHuman {
+		fmt.Fprintf(&b, " `%s` stays: this issue is held for a person and remains out of the agent queue until a person removes that label.", issueNeedsHumanLabel)
+	}
+	return b.String()
 }
 
 func renderUnparkHelpReply(issueBody string) string {

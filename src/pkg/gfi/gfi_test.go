@@ -529,3 +529,39 @@ func TestConvertAndStats(t *testing.T) {
 		t.Fatal("HasLabel")
 	}
 }
+
+// A parked, human-held or agent-claimed issue is never advertised, whatever
+// the caller's policy says (hivecommons/hive#12680 was stamped minutes after
+// its owner wrote "Agents stand down" and the un-park sweep had cleared
+// `needs-human`).
+func TestScoreAlwaysExcludesParkedAndClaimed(t *testing.T) {
+	// A policy that supplies NO hard-suppress set and REPLACES the default
+	// exclusions with something unrelated: the built-in set must still win.
+	policy := Policy{ExcludeLabels: []string{"wontfix"}}
+	cases := []struct {
+		name   string
+		labels []string
+		skip   string
+	}{
+		{"needs-human", []string{"kind/bug", "Needs-Human"}, "hard-suppress:needs-human"},
+		{"approved-direction with needs-human", []string{"approved-direction", "needs-human"}, "hard-suppress:needs-human"},
+		{"stage 085", []string{"kind/bug", "stage/085-needs-decision"}, "hard-suppress:stage/085-needs-decision"},
+		{"retired needs-decision", []string{"needs-decision"}, "hard-suppress:needs-decision"},
+		{"claimed-by", []string{"kind/bug", "hive/claimed-by-karibhou"}, "excluded-label:hive/claimed-by-karibhou"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := good()
+			c.Labels = tc.labels
+			d := Score(c, policy, now)
+			if d.Eligible || d.Skip != tc.skip {
+				t.Fatalf("eligible=%v skip=%q, want ineligible %q", d.Eligible, d.Skip, tc.skip)
+			}
+		})
+	}
+	c := good()
+	c.Labels = []string{"kind/bug", "approved-direction"}
+	if d := Score(c, policy, now); !d.Eligible {
+		t.Fatalf("approved-direction alone must not disqualify, skip=%q", d.Skip)
+	}
+}

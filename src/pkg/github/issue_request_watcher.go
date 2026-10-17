@@ -471,6 +471,18 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			resp.Number = req.Number
 		}
 	case "label":
+		// A re-park on a decision a maintainer already gave is refused; a
+		// failed lookup takes the retry path like the claim gate.
+		var reason string
+		var refused bool
+		reason, refused, err = c.reparkDecisionRefusal(ctx, req.Repo, req.Number, addLabels)
+		if err != nil {
+			break
+		}
+		if refused {
+			c.denyIssueRequest(path, req, reason, nowFn)
+			return
+		}
 		// Adds first, then removes: a request that both adds and removes ends
 		// in the state it asked for even when the same automation reads the
 		// item in between. A failure leaves the request on the retry path; the
