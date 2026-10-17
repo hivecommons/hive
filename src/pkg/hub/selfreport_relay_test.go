@@ -380,7 +380,7 @@ func TestHubSelfReportRecoverCommentsAndClosesOpenObservation(t *testing.T) {
 		case r.URL.Path == "/search/issues":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
 				"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7",
-				"body":   "<!-- hive-fleet-fingerprint:h1:queue-growth -->",
+				"body":   "<!-- hive-fleet-fingerprint:h1:queue-growth -->\n| hive id | h1 |",
 				"labels": []map[string]any{{"name": "hive/selfreport"}, {"name": "hive-observation"}},
 			}}})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -419,6 +419,69 @@ func TestHubSelfReportRecoverCommentsAndClosesOpenObservation(t *testing.T) {
 	}
 	if strings.Join(paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues/7/comments,PATCH /repos/hivecommons/hive/issues/7" {
 		t.Fatalf("github calls = %v", paths)
+	}
+}
+
+func TestHubSelfReportRecoverRequiresMatchedIssueHive(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		fingerprint string
+		evidence    string
+		wantOK      bool
+	}{
+		{"other hive", "h2:queue-growth", "| hive id | h2 |", false},
+		{"request prefix cannot override owner", "h1:queue-growth", "| hive id | h2 |", false},
+		{"missing owner", "h1:queue-growth", "", false},
+		{"empty owner", "h1:queue-growth", "| hive id | |", false},
+		{"partial owner match", "h1:queue-growth", "| hive id | h10 |", false},
+		{"conflicting owners", "h1:queue-growth", "| hive id | h1 |\n| hive id | h2 |", false},
+		{"duplicate owners", "h1:queue-growth", "| hive id | h1 |\n| hive id | h1 |", false},
+		{"malformed owner", "h1:queue-growth", "| hive id | h1 | extra |", false},
+		{"custom fingerprint", "detector-custom-key", "| hive id | h1 |", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resetSelfReportRate(t)
+			var paths []string
+			interceptFeedbackGitHub(t, func(w http.ResponseWriter, r *http.Request) {
+				paths = append(paths, r.Method+" "+r.URL.Path)
+				if r.URL.Path == "/search/issues" {
+					_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+						"number": 7,
+						"body":   "<!-- hive-fleet-fingerprint:" + tt.fingerprint + " -->\n" + tt.evidence,
+						"labels": []map[string]any{{"name": "hive-observation"}},
+					}}})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "id": 1})
+			})
+			s := npsTestHub("h1")
+			// Even a caller-supplied body claiming h1 must not override the
+			// ownership evidence on the matched GitHub issue.
+			body, err := json.Marshal(map[string]string{
+				"action": "recover", "hive_id": "h1", "class": "observation",
+				"fingerprint": tt.fingerprint, "body": "recovered\n| hive id | h1 |",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := selfReportIngest(s, string(body), s.heartbeatKeyFor("h1"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var out selfReportRelayResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.OK != tt.wantOK {
+				t.Fatalf("response=%s err=%v", rec.Body.String(), err)
+			}
+			wantPaths := "GET /search/issues"
+			if tt.wantOK {
+				wantPaths += ",POST /repos/hivecommons/hive/issues/7/comments,PATCH /repos/hivecommons/hive/issues/7"
+			} else if out.Reason != "hive_mismatch" || out.Number != 0 {
+				t.Fatalf("response=%s", rec.Body.String())
+			}
+			if strings.Join(paths, ",") != wantPaths {
+				t.Fatalf("github calls = %v, want %s", paths, wantPaths)
+			}
+		})
 	}
 }
 

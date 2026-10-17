@@ -1,0 +1,1 @@
+- Bind observation recovery to the matched issue's hive identity so a spoke cannot comment on or close another hive's observation; missing or ambiguous ownership is a no-op ([#12772](https://github.com/hivecommons/hive/issues/12772)).

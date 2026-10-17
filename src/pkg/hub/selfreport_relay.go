@@ -229,6 +229,13 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "not_observation"})
 			return
 		}
+		// Fingerprints may be supplied by detectors, so neither the request
+		// nor a fingerprint prefix proves ownership. Bind recovery to the
+		// hive identity recorded in the matched observation's evidence.
+		if !selfReportObservationBelongsToHive(existing.Body, req.HiveID) {
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "hive_mismatch"})
+			return
+		}
 		if _, err := postHubGitHubIssueComment(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, req.Body); err != nil {
 			if s.logger != nil {
 				s.logger.Error("selfreport relay: recovery comment failed", "hive", req.HiveID, "issue", existing.Number, "error", err)
@@ -321,6 +328,24 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		s.logger.Info("selfreport relay: created issue", "hive", req.HiveID, "issue", res.Number, "class", req.Class)
 	}
 	writeSelfReportRelayResponse(w, http.StatusCreated, selfReportRelayResponse{OK: true, Number: res.Number, URL: res.URL})
+}
+
+// selfReportObservationBelongsToHive reads the evidence field emitted by
+// fleetreport.BuildObservationReport. Missing, malformed or duplicate ownership
+// fields fail closed, including when the fingerprint looks hive-scoped.
+func selfReportObservationBelongsToHive(body, hiveID string) bool {
+	found := false
+	for _, line := range strings.Split(body, "\n") {
+		cells := strings.Split(strings.TrimSpace(line), "|")
+		if len(cells) < 2 || strings.TrimSpace(cells[1]) != "hive id" {
+			continue
+		}
+		if found || len(cells) != 4 || strings.TrimSpace(cells[0]) != "" || strings.TrimSpace(cells[3]) != "" || strings.TrimSpace(cells[2]) != hiveID {
+			return false
+		}
+		found = true
+	}
+	return found
 }
 
 func writeSelfReportRelayResponse(w http.ResponseWriter, status int, resp selfReportRelayResponse) {
