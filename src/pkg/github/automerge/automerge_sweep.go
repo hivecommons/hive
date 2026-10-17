@@ -1041,6 +1041,15 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				stage(trustedBotLaneSkipReason, false, nil)
 				continue
 			}
+			if lane, _ := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); lane == "self-authored" {
+				// The contributor lane vouches for the App's own PRs
+				// (RoleTrusted), so hand off with its reason rather than a
+				// contradictory untrusted-author-role.
+				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", contributorLaneReasonAppAuthored, "tier", "trusted-author")
+				result.Skipped++
+				stage(contributorLaneReasonAppAuthored, false, nil)
+				continue
+			}
 			if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
 				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", reason, "tier", "trusted-author")
 				result.Skipped++

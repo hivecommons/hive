@@ -7,7 +7,10 @@ package automerge
 // and the lane string recorded on the mutation claim distinguishes the two.
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -143,5 +146,32 @@ func TestTrustedAuthorSweepEvaluatesTrustedBotWhenSelfAuthoredLaneInactive(t *te
 	}
 	if result.Seen != 1 || result.Candidates != 0 || result.Skipped != 1 {
 		t.Fatalf("result = %+v, want trusted bot skipped as untrusted-author-role", result)
+	}
+}
+
+func TestTrustedAuthorSweepHandsAppAuthoredToContributorLaneReason(t *testing.T) {
+	// The contributor lane vouches for the App's own PRs (RoleTrusted), so the
+	// trusted-author tier must not log a contradictory untrusted-author-role,
+	// whether or not the self-authored lane is active.
+	for _, active := range []bool{false, true} {
+		fx := trustedSweepFixture{author: testHiveAppBotLogin}
+		api := newTrustedSweepAPI(t, &fx)
+		var logs bytes.Buffer
+		policy := TrustedAuthorPolicy{Enabled: true, RequireRole: "merger"}
+		c := newTrustedSweepEngine(api.URL, policy, Options{
+			Logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		})
+
+		result, err := c.SweepTrustedAuthorAutoMerges(context.Background(), AutoMergeSweepOptions{SelfAuthoredLaneActive: active})
+		api.Close()
+		if err != nil {
+			t.Fatalf("SweepTrustedAuthorAutoMerges(active=%v): %v", active, err)
+		}
+		if result.Seen != 1 || result.Candidates != 0 || result.Skipped != 1 {
+			t.Fatalf("active=%v result = %+v, want App PR counted as a skipped hand-off", active, result)
+		}
+		if strings.Contains(logs.String(), "untrusted-author-role") || !strings.Contains(logs.String(), "reason="+contributorLaneReasonAppAuthored) {
+			t.Fatalf("active=%v logs = %q, want reason %s and no untrusted-author-role", active, logs.String(), contributorLaneReasonAppAuthored)
+		}
 	}
 }

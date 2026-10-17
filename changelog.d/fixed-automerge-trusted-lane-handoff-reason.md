@@ -1,0 +1,1 @@
+- **Trusted-author lane no longer logs `untrusted-author-role` for the App's own PRs** — the lane now records the contributor lane's `app-authored` hand-off reason, matching the contributor lane's `role/trusted` vouching so a tick's logs are self-consistent; merge behaviour is unchanged ([#12795](https://github.com/hivecommons/hive/issues/12795)).
