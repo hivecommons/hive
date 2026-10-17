@@ -211,7 +211,7 @@ func (h *adoptHarness) addedLabels() []string {
 }
 
 func adoptPolicy() StageLabelPolicy {
-	return StageLabelPolicy{Enabled: true, ContributorNudge: true, Adoption: true, GraceOnline: 2 * time.Hour, GraceOffline: time.Hour, HiveID: "acme-hive"}
+	return StageLabelPolicy{Enabled: true, ContributorNudge: true, Adoption: true, AdoptionStrictAttribution: true, GraceOnline: 2 * time.Hour, GraceOffline: time.Hour, HiveID: "acme-hive"}
 }
 
 func TestAdoptionGraceSelection(t *testing.T) {
@@ -688,6 +688,7 @@ func TestAdoptionYieldsOnForgeableCommitIdentity(t *testing.T) {
 			h.observe(adoptPR(7, "aaa"), "check-failing:unit")
 			h.clock.advance(30 * time.Minute)
 			h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+			h.e.stageStoreOrShared().MarkHivePushedHead(stageKey("acme", "widget", 7), "prior-hive-head")
 			h.adopt.setCommitAuthor("bbb", tc.identity)
 
 			h.api.reset()
@@ -764,6 +765,28 @@ func TestAdoptionKeepsWhenHeadCommitLookupFails(t *testing.T) {
 	}
 	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "missing" {
 		t.Fatalf("adoption did not stay on unknown pusher: %+v", rec)
+	}
+}
+
+func TestAdoptionStrictAttributionSafetyValveBeforeRepoEvidence(t *testing.T) {
+	p := adoptPolicy()
+	p.AdoptInPlace = true
+	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, p)
+	defer done()
+	h.adopt.allowMaintainerEdits(7, true)
+	h.observe(adoptPR(7, "aaa"), "check-failing:unit")
+	h.clock.advance(30 * time.Minute)
+	h.observe(adoptPR(7, "aaa", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+	h.adopt.setCommitAuthor("bbb", "git:scanner")
+
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	if h.api.writes() != 0 {
+		t.Fatalf("safety valve churned: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bbb" {
+		t.Fatalf("safety valve did not keep adoption before repo evidence: %+v", rec)
 	}
 }
 

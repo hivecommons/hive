@@ -680,10 +680,17 @@ When a clanker-authored contributor PR goes red the hive does not just relabel i
      approved or red again — until the merge gate (080/085/090/100) takes
      the head (hivecommons/hive#12736). A later head keeps that ownership
      only when the commit's GitHub-linked author/committer is the App bot or
-     the stage store recorded that exact SHA as hive-pushed. Commit author or
-     committer **names/emails** are not trusted, because a contributor can
-     forge them. A head without this hive-controlled evidence means the
-     contributor is back: the hive yields — ONE
+     the stage store recorded that exact SHA as hive-pushed
+     (`governor.labels.stage.adoption.strict_attribution`, default `true`).
+     Hive launches push-capable App-authored agents with the App bot noreply
+     email as their git author/committer address, so normal fixer commits link
+     to the App while the commit name/sign-off still show the lane. Commit
+     author or committer **names/emails** that are not GitHub-linked are not
+     trusted, because a contributor can forge them. On the first deploy (or
+     old sessions) before any hive-push evidence has ever been recorded for
+     the repo, the reconciler logs a warning and keeps ownership rather than
+     reintroducing the yield loop; after evidence exists, a head without this
+     hive-controlled evidence means the contributor is back: the hive yields — ONE
      `<!-- hive:adoption-yield head=<sha> -->` note, the adoption is forgotten
      and the PR is back on the ordinary 072 flow (a fresh nudge for the new
      head; it may be adopted again under the same rules).

@@ -666,6 +666,25 @@ func (r Record) HivePushedHead(head string) bool {
 	return false
 }
 
+// HasHivePushEvidence reports whether any item in repo has recorded a
+// hive-pushed head. It lets the adoption reconciler keep old/first-deploy
+// in-place adoptions fail-open until the new attribution evidence exists.
+func (s *Store) HasHivePushEvidence(repo string) bool {
+	if s == nil {
+		return false
+	}
+	prefix := Key(repo, 0)
+	prefix = strings.TrimSuffix(prefix, "#0") + "#"
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, r := range s.items {
+		if strings.HasPrefix(key, prefix) && len(r.HivePushedHeads) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // AdoptionLive reports whether the hive currently owns this PR (stage 074):
 // an in-place adoption that was not yielded, or a superseding adoption of
 // exactly this head. Adoption is an ownership state, not a CI state — it

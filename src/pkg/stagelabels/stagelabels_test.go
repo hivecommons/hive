@@ -861,7 +861,7 @@ func TestStoreAdoptInPlaceAndYield(t *testing.T) {
 	}
 	s.MarkHivePushedHead(key, "c")
 	r, _ = s.Get(key)
-	if !r.HivePushedHead("c") || r.HivePushedHead("d") {
+	if !r.HivePushedHead("c") || r.HivePushedHead("d") || !s.HasHivePushEvidence("acme/widget") || s.HasHivePushEvidence("other/repo") {
 		t.Fatalf("hive pushed head not recorded: %+v", r)
 	}
 	s.MarkYielded(key, "c")

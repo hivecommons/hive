@@ -412,10 +412,12 @@ func (c *Engine) canPushToPRBranch(ctx context.Context, obs stageObservation) bo
 // stage store already recorded that exact head as pushed by the hive. Forgeable
 // git author/committer names and emails never count. If the commit lookup
 // fails, the pusher is unknown and the hive keeps adoption to avoid bounce
-// loops; otherwise missing hive evidence means the contributor is back, so the
-// hive yields once and the ordinary 072 flow re-arms.
+// loops. The first deploy after this rule also keeps adoption until this repo
+// has recorded any hive-push evidence; after that, missing hive evidence means
+// the contributor is back, so the hive yields once and the ordinary 072 flow
+// re-arms.
 // Returns the number of comments posted.
-func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record) (int, error) {
+func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record, policy StageLabelPolicy) (int, error) {
 	if !prev.AdoptedInPlace() || obs.HeadSHA == "" || obs.HeadSHA == prev.AdoptedHead {
 		return 0, nil
 	}
@@ -436,8 +438,19 @@ func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.S
 		return 0, nil
 	}
 	if commitByApp(commit, app) {
+		store.MarkHivePushedHead(key, obs.HeadSHA)
 		store.MarkAdoptedHead(key, obs.HeadSHA)
 		c.info("stage labels: adopted PR advanced by the hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "pusher", commitIdentity(commit))
+		return 0, nil
+	}
+	if !policy.AdoptionStrictAttribution {
+		store.MarkAdoptedHead(key, obs.HeadSHA)
+		c.warn("stage labels: adopted head changed without hive evidence; strict attribution disabled, keeping adoption", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "pusher", commitIdentity(commit))
+		return 0, nil
+	}
+	if !store.HasHivePushEvidence(obs.Owner + "/" + obs.Repo) {
+		store.MarkAdoptedHead(key, obs.HeadSHA)
+		c.warn("stage labels: adopted head changed without hive evidence; no repo evidence recorded yet, keeping adoption", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "pusher", commitIdentity(commit))
 		return 0, nil
 	}
 	store.MarkYielded(key, obs.HeadSHA)

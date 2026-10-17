@@ -57,6 +57,25 @@ func TestAgentEnvPairsGitIdentityHonoursEmailDomain(t *testing.T) {
 	}
 }
 
+func TestAgentEnvPairsGitIdentityUsesAppNoreplyWhenAppAuthored(t *testing.T) {
+	m := testManager(2)
+	m.project.AppAuthoredPRs = true
+	m.project.AppID = 3568013
+	m.project.AppBotLogin = "hivecommons-hive[bot]"
+	agent := &AgentProcess{
+		Name:   "scanner",
+		UID:    1001,
+		Config: config.AgentConfig{Backend: "claude", Mode: "ISSUES_AND_PRS"},
+	}
+
+	got := gitIdentityPairs(m.agentEnvPairs(agent))
+	wantEmail := "3568013+hivecommons-hive[bot]@users.noreply.github.com"
+	if got["GIT_AUTHOR_NAME"] != "scanner" || got["GIT_COMMITTER_NAME"] != "scanner" ||
+		got["GIT_AUTHOR_EMAIL"] != wantEmail || got["GIT_COMMITTER_EMAIL"] != wantEmail {
+		t.Errorf("git identity = %v, want scanner <%s>", got, wantEmail)
+	}
+}
+
 func TestAgentEnvPairsGitIdentityNotPinnedForSharedUID(t *testing.T) {
 	m := testManager(2)
 	agent := &AgentProcess{Name: "scanner", UID: 0, Config: config.AgentConfig{Backend: "claude"}}
@@ -83,7 +102,7 @@ func TestAgentGitIdentity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", tt.domain)
-			name, email, ok := agentGitIdentity(tt.agent)
+			name, email, ok := agentGitIdentity(tt.agent, 0, "")
 			if ok != tt.wantOK || email != tt.wantEmail {
 				t.Fatalf("agentGitIdentity(%q) = (%q, %q, %v), want email %q ok %v", tt.agent, name, email, ok, tt.wantEmail, tt.wantOK)
 			}
