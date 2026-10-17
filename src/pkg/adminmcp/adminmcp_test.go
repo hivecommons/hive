@@ -412,6 +412,35 @@ func TestWriteConfirmPassesHiveRefusalBodyThrough(t *testing.T) {
 	}
 }
 
+type agentsProvider struct{ agents any }
+
+func (p agentsProvider) Read(context.Context, string, map[string]any) (any, error) {
+	return p.agents, nil
+}
+
+func TestAgentResumePreviewDisclosesPauseOwnershipClaim(t *testing.T) {
+	args := map[string]any{"agent": "scanner"}
+	claim := "pause_owner: operator"
+	cases := []struct {
+		name     string
+		provider Provider
+		want     bool
+	}{
+		{"unowned", agentsProvider{[]any{map[string]any{"name": "scanner"}}}, true},
+		{"unreadable", errorProvider{fmt.Errorf("boom")}, true},
+		{"owned", agentsProvider{[]any{map[string]any{"name": "scanner", "pauseOwner": "operator"}}}, false},
+	}
+	for _, tc := range cases {
+		preview, err := agentResumeOp{}.PreviewWithProvider(context.Background(), args, tc.provider)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(strings.Join(preview.Effects, "\n"), claim); got != tc.want {
+			t.Fatalf("%s: claim disclosed = %v, effects = %v", tc.name, got, preview.Effects)
+		}
+	}
+}
+
 func TestAgentWriteOpsEscapeAgentPathSegment(t *testing.T) {
 	preview, err := agentPauseOp{}.Preview(context.Background(), map[string]any{"agent": "team/scanner"})
 	if err != nil {

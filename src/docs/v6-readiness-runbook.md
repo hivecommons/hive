@@ -708,10 +708,16 @@ Run:
    `expires_at`.
 4. **Confirmed write.** Call `write_confirm` with that `confirmation_id`. Save
    the result, the dashboard showing the agent paused, and the dashboard audit
-   entry for `pause`. That entry is attributed to `local` because confirmed
-   writes send only the dashboard token
+   entry for `pause`. That entry is attributed to the configured owner's login
+   (or `owner` when `dashboard.authorized_users` names no owner) because
+   confirmed writes send only the dashboard token
    ([Known gap: attribution](design/admin-mcp.md#known-gap-attribution)).
-   Preview and confirm `agent.resume` the same way to restore the agent.
+   Preview and confirm `agent.resume` the same way to restore the agent. Note
+   that resume leaves `pause_owner: operator` behind in
+   `/data/agent-configs/<name>.yaml` and the runtime config, which exempts the
+   agent from the ACMM pack visibility sweep; the `agent.resume` preview lists
+   this claim. Choose an agent that is already operator-owned, or afterwards
+   put the previous `pause_owner` value (usually empty) back by hand.
 5. **stdio roster select and read.** Start `hive-admin-mcp` from an MCP client
    and call `select_hive` with the live hive's roster name. Save the
    `{"data": {"selected": true, "active_hive": …}}` result, then run one read

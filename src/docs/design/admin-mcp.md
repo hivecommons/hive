@@ -91,7 +91,7 @@ Phase 3 adds the reusable contract that phases 4–6 extend. The MCP exposes two
 
 Writes are disabled by default on both transports. Set `HIVE_ADMIN_MCP_ENABLE_WRITES=1` to enable them. Pending confirmations are durable: the dashboard endpoint stores them in `/data/admin-mcp-pending-confirmations.json` by default, and the stdio binary stores them under the user's config directory; both support `HIVE_ADMIN_MCP_PENDING_FILE` as an explicit path. The confirmation is not a capability for any other action: it is action-bound, hive-bound, one-use, and time-limited.
 
-The write contract deliberately goes through existing dashboard REST endpoints and sends only the dashboard token. It never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision. Audit attribution therefore remains `local`, as recorded below.
+The write contract deliberately goes through existing dashboard REST endpoints and sends only the dashboard token. It never sends `X-Hive-User`, `X-Hive-Role`, or `X-Hive-Owner-Role-Verified`. A hive refusal from the underlying endpoint is returned as a `hive-refusal` result with the status and original response body preserved rather than rewritten as a client-side authorization decision. Audit attribution therefore falls back to the token-authenticated owner identity (the configured owner's login, or `owner`), as recorded below.
 
 Because a confirmed write re-authenticates with the dashboard token alone, the endpoint checks up front whether that can succeed for the current caller. When the dashboard enforces authentication and the caller was admitted some other way (a per-user session, hub proxy proof, or the internal header) rather than with `Authorization: Bearer <dashboard token>`, or when the spoke enforces direct-route authorization (which refuses the shared token), writes are reported as unavailable for that caller: `tools/list` and `exclusion_catalogue` show `writes_enabled: false` with the reason (`writes_unavailable_reason` in the catalogue), and `write_preview` refuses without minting a confirmation that could never execute.
 
@@ -774,14 +774,18 @@ explicitly not to.
 
 ## Known gap: attribution
 
-`requestUser` resolves the acting user from `X-Hive-User`, falling back to `"local"`. Because
-this client is forbidden from asserting an identity, every write it makes is audited as
-`local` — the same as any other token-authenticated caller, including `hivectl` and the SPA on
+`requestUser` resolves the acting user from `X-Hive-User`, falling back to `"local"` only when
+that header is empty. The bearer-token middleware fills the header with the owner identity
+(`verifiedOwnerUser`), so a token-authenticated write never reaches that fallback. Because this
+client is forbidden from asserting an identity, every write it makes is audited as the
+configured owner's login when `dashboard.authorized_users` names an owner, and as `owner`
+otherwise — the same as any other token-authenticated caller, including `hivectl` and the SPA on
 a self-hosted spoke.
 
 So `GET /api/audit` will show *that* an agent was paused and *when*, but not that an assistant
 mediated it. An operator reconstructing a timeline cannot separate conversational actions from
-dashboard ones.
+dashboard ones. Under a configured owner, an assistant-mediated write is recorded under a real
+person's login.
 
 **This was decided, not overlooked.** #8697 settled it: accepted as a recorded limitation, and
 the write contract will not carry a client-identity record. Three reasons, in the order they
@@ -794,7 +798,7 @@ matter:
   person?". That does not need to be unforgeable, and conflating the two is how a trivially
   spoofable field ends up being treated as proof.
 - It is not specific to this surface. `hivectl`, `curl` and the SPA on a self-hosted hive all
-  audit as `local` too. If recording the calling client is worth doing, it is worth doing for
+  audit as the same owner identity too. If recording the calling client is worth doing, it is worth doing for
   all of them — which makes it its own change, recording the caller as a *claim* rather than an
   identity, not a rider on this one.
 

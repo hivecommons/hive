@@ -462,6 +462,12 @@ func inputSchema(name string) map[string]any {
 	return map[string]any{"type": "object", "properties": props, "required": required, "additionalProperties": false}
 }
 
+// providerPreviewOp is implemented by write ops whose preview discloses live
+// hive state read through the Provider.
+type providerPreviewOp interface {
+	PreviewWithProvider(ctx context.Context, args map[string]any, provider Provider) (WritePreview, error)
+}
+
 func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, error) {
 	if !h.writesUsable() {
 		return nil, h.writesDisabledErr()
@@ -475,7 +481,13 @@ func (h *Handler) PreviewWrite(ctx context.Context, args map[string]any) (any, e
 	if opArgs == nil {
 		opArgs = map[string]any{}
 	}
-	preview, err := op.Preview(ctx, opArgs)
+	var preview WritePreview
+	var err error
+	if po, ok := op.(providerPreviewOp); ok {
+		preview, err = po.PreviewWithProvider(ctx, opArgs, h.Provider)
+	} else {
+		preview, err = op.Preview(ctx, opArgs)
+	}
 	if err != nil {
 		return nil, err
 	}

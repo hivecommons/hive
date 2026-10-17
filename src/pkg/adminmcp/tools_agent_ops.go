@@ -61,13 +61,45 @@ func (agentResumeOp) Description() string {
 	return "Resume one agent through POST /api/resume/{agent}."
 }
 func (agentResumeOp) InputSchema() map[string]any { return agentOpSchema() }
-func (agentResumeOp) Preview(_ context.Context, args map[string]any) (WritePreview, error) {
+func (op agentResumeOp) Preview(ctx context.Context, args map[string]any) (WritePreview, error) {
+	return op.PreviewWithProvider(ctx, args, nil)
+}
+
+// PreviewWithProvider discloses the pause-ownership claim handleResume stamps
+// (#5706) unless the agent is already operator-owned. When ownership cannot be
+// read the line is shown, since resume would claim it unless proven otherwise.
+func (agentResumeOp) PreviewWithProvider(ctx context.Context, args map[string]any, provider Provider) (WritePreview, error) {
 	agent, err := requiredString(args, "agent")
 	if err != nil {
 		return WritePreview{}, err
 	}
 	path := "/api/resume/" + url.PathEscape(agent)
-	return WritePreview{Operation: WriteOpAgentResume, Summary: "Resume agent " + agent, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: []string{"The named agent may accept work again."}, WideningDisclosure: "No widening: this operation targets exactly one named agent.", ConfirmationMessage: "Confirm resuming agent " + agent + ".", Details: map[string]any{"agent": agent}}, nil
+	effects := []string{"The named agent may accept work again."}
+	if !agentPauseOperatorOwned(ctx, provider, agent) {
+		effects = append(effects, "Claims operator ownership of this agent's pause state (`pause_owner: operator`), so the ACMM pack visibility sweep will no longer pause it.")
+	}
+	return WritePreview{Operation: WriteOpAgentResume, Summary: "Resume agent " + agent, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: effects, WideningDisclosure: "No widening: this operation targets exactly one named agent.", ConfirmationMessage: "Confirm resuming agent " + agent + ".", Details: map[string]any{"agent": agent}}, nil
+}
+
+func agentPauseOperatorOwned(ctx context.Context, provider Provider, agent string) bool {
+	if provider == nil {
+		return false
+	}
+	data, err := provider.Read(ctx, ToolAgentsList, nil)
+	if err != nil {
+		return false
+	}
+	if m, ok := data.(map[string]any); ok {
+		data = m["agents"]
+	}
+	list, _ := data.([]any)
+	for _, item := range list {
+		entry, _ := item.(map[string]any)
+		if entry["name"] == agent {
+			return entry["pauseOwner"] == "operator"
+		}
+	}
+	return false
 }
 
 func (agentNudgeOp) Name() string { return WriteOpAgentNudge }

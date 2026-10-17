@@ -24,6 +24,7 @@ type agentListEntry struct {
 	Managed     bool   `json:"managed"`
 	Backend     string `json:"backend"`
 	Model       string `json:"model"`
+	PauseOwner  string `json:"pauseOwner,omitempty"`
 	// Repos is the agent's repository scope (#6204) as declared, and
 	// WatchedRepos is that scope intersected with project.repos. Both are
 	// absent for an unscoped agent — which is every agent on a hive that does
@@ -51,6 +52,7 @@ func (s *Server) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 			Managed:     cfg.Managed,
 			Backend:     cfg.Backend,
 			Model:       cfg.Model,
+			PauseOwner:  cfg.PauseOwner,
 		}
 		if scope := s.deps.Config.AgentRepoScope(name); len(scope) > 0 {
 			entry.Repos = scope

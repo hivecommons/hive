@@ -381,7 +381,10 @@ Registered operations:
 Anything not on this list is refused; the assistant must not approximate it by
 combining other operations.
 
-Every write is recorded in the audit log as user `local`, whoever confirmed it.
+Every write is recorded in the audit log as the configured owner's login when
+`dashboard.authorized_users` names an owner, and as `owner` otherwise, whoever
+confirmed it. The audit log cannot tell an assistant-mediated write from a
+dashboard action.
 
 Confirmed writes re-authenticate with your `Authorization: Bearer` token. A
 caller admitted another way (dashboard session, hub proxy, internal header)
