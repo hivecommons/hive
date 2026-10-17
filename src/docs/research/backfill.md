@@ -137,10 +137,30 @@ Readers (`/api/evidence/summary`, `hivectl evidence export` [#12367](https://git
 filter on `backfilled` and `backfill.flags`; the rows stay on disk so the
 exclusion is auditable.
 
+## Filling fields on bundles written by an older `hivectl`
+
+Bundles already on disk are skipped, so a field the tool learned to record
+later (e.g. `merge.opened_at`, [#12465](https://github.com/hivecommons/hive/issues/12465))
+stays absent on earlier runs' bundles. `--refresh-fields` fills it without a
+delete-and-rewrite and without re-fetching mergers: the list page already
+carries `created_at`, so the cost is ~1 request per 100 PRs. Only the named
+field is set, only where absent, and only on `backfilled: true` bundles
+(including `.backfill.json` siblings); everything else — merger, timestamps,
+links, `backfill.at` — is left exactly as written, and the bundle is re-sealed
+(re-signed when `--signing-key-file` is given). Dry-run first, as always:
+
+```bash
+hivectl evidence backfill --repo <owner/repo> --since 2025-01-01 --root "$EVIDENCE_ROOT" --refresh-fields merge.opened_at --dry-run   # to_refresh
+hivectl evidence backfill --repo <owner/repo> --since 2025-01-01 --root "$EVIDENCE_ROOT" --refresh-fields merge.opened_at             # refreshed
+```
+
+Re-running reports `to_refresh: 0` and rewrites nothing.
+
 ## What to report on #12371 after each run
 
 - The exact command, the dry-run summary and the write summary (`written`,
-  `skipped`, `relinked`, `write_errors`, `api_calls`).
+  `skipped`, `relinked`, `refreshed` when `--refresh-fields` was given,
+  `write_errors`, `api_calls`).
 - Date range: earliest and latest `created_at` among written bundles.
 - Row counts per `backfill.state` and `author.kind`, and the flags applied.
 - Console only: the L0→L6 transition dates used for `--acmm-level`.

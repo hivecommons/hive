@@ -286,6 +286,7 @@ hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run  
 hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --root ./evidence   # write schema v1 bundles
 hivectl evidence backfill --repo kubestellar/console --since 2026-03-01 --until 2026-05-01 --acmm-level 3
 hivectl evidence backfill --repo hivecommons/hive --since 2026-06-01 --flag hive_on_hive
+hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --refresh-fields merge.opened_at  # fill a field on old bundles
 ```
 
 `evidence backfill` reconstructs evidence bundles from GitHub pull-request history for PRs created in
@@ -298,7 +299,10 @@ with timestamps, merger, and revert / follow-up links under the live recorder's 
 exclusions are stamped as `backfill.flags` (`--flag placeholder_hive|hive_on_hive|under_min_merged`; `hive_on_hive`
 and `under_min_merged` are added automatically), never applied by dropping PRs. Bundles that already exist are
 skipped, so re-running is safe; `--skip-mergers` saves one request per merged PR; `--signing-key-file` signs the
-output. Record-only: nothing here reads into or alters merge eligibility. See
+output. `--refresh-fields <list>` additionally fills the named fields (currently `merge.opened_at`) on bundles an
+earlier backfill already wrote, only where absent and only from the list page (no per-PR requests, ~1 call per 100
+PRs); nothing else on those bundles changes, bundles that already have the field are not rewritten, and live
+(non-backfilled) bundles are never touched. The summary reports `to_refresh` / `refreshed`. Record-only: nothing here reads into or alters merge eligibility. See
 [Review evidence bundle, Backfilled bundles](review-evidence.md#backfilled-bundles) and the run plan in
 [`research/backfill.md`](research/backfill.md).
 
