@@ -707,11 +707,15 @@ through the helper — the claim relay (`hive-open-issue claim`,
 claim's own label and strip only backend-named `hive/claimed-by-*` labels
 when a claim lands (another party's principal label is kept), and remove
 the holder's label — only the holder's — when the ledger releases or hands
-the claim over. The issue reconciler heals the one malformed form a
-hand-applied label can introduce: a backend-named suffix is swapped for the
-live holder's login (dropped when the issue carries no live claim); a label
-naming a principal is never touched, so an issue may carry one label per
-party (a person's and a contributor's) while both claims are live.
+the claim over. The ledger maintains at most one live claim per (repo, issue);
+thus, co-party `hive/claimed-by-*` labels on the same issue arise only from
+hand-applied labels or persistent debris left by an earlier holder, never
+from the ledger modeling concurrent co-parties. The issue reconciler heals
+the one malformed form a hand-applied label can introduce: a backend-named
+suffix is swapped for the live holder's login (dropped when the issue carries
+no live claim); a label naming a principal is never touched, so an issue may
+carry one label per party (a person's and a contributor's) while both claims
+are live.
 
 ### Migration from retired labels
 
