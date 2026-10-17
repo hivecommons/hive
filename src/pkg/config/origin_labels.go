@@ -117,13 +117,33 @@ func AgentLaneLabel(source string) string {
 	return agentLabelPrefix + source
 }
 
+// CanonicalAgentLaneLabel maps the accepted lane label spellings for a known
+// agent lane to the single writer/reader form, agent/<lane>. During the
+// origin/<lane> transition readers use this to understand legacy labels while
+// writers emit only the returned agent/* label.
+func CanonicalAgentLaneLabel(name string) (string, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	source := name
+	switch {
+	case strings.HasPrefix(name, agentLabelPrefix):
+		source = strings.TrimPrefix(name, agentLabelPrefix)
+	case strings.HasPrefix(name, OriginLabelPrefix):
+		source = strings.TrimPrefix(name, OriginLabelPrefix)
+	}
+	source = OriginLaneFromAgent(source)
+	if !IsKnownOriginLane(source) {
+		return "", false
+	}
+	return AgentLaneLabel(source), true
+}
+
 // OriginLabelForAgent returns the provenance label for an agent name. Agent
 // lanes use agent/<lane>; non-agent sources still use origin/<source>.
 func OriginLabelForAgent(agent string) string {
-	lane := OriginLaneFromAgent(agent)
-	if IsKnownOriginLane(lane) {
-		return AgentLaneLabel(lane)
+	if label, ok := CanonicalAgentLaneLabel(agent); ok {
+		return label
 	}
+	lane := OriginLaneFromAgent(agent)
 	return OriginLabel(lane)
 }
 
@@ -145,8 +165,9 @@ func IsAgentLaneLabel(name string) bool {
 	return strings.HasPrefix(name, agentLabelPrefix) && len(name) > len(agentLabelPrefix)
 }
 
-// FirstOriginLabel returns the first origin/* label in labels (canonical
-// spelling) and whether one was present.
+// FirstOriginLabel returns the first origin/* label in labels after canonical
+// legacy mapping (so origin/<lane> returns agent/<lane>) and whether one was
+// present.
 func FirstOriginLabel(labels []string) (string, bool) {
 	for _, l := range labels {
 		if IsOriginLabel(l) {

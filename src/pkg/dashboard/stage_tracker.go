@@ -659,8 +659,8 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.Origin = config.OriginSourceOf(l)
 		} else {
 			for _, l := range issue.Labels {
-				if config.IsAgentLaneLabel(l) {
-					it.Origin = config.OriginSourceOf(l)
+				if canonical, ok := config.CanonicalAgentLaneLabel(l); ok {
+					it.Origin = config.OriginSourceOf(canonical)
 					break
 				}
 			}

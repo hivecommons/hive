@@ -139,6 +139,7 @@ func TestCanonicalOriginLabelRenameMapping(t *testing.T) {
 		{"origin/review", "agent/reviewer", true},
 		{" Origin/Review ", "agent/reviewer", true},
 		{"origin/reviewer", "agent/reviewer", true},
+		{"origin/scanner", "agent/scanner", true},
 		{"nit", "nit", false},
 		{"agent/reviewer", "agent/reviewer", false},
 	}

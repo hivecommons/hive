@@ -107,12 +107,18 @@ var OriginLabelRenames = map[string]string{
 }
 
 // CanonicalOriginLabel returns the canonical replacement for a retired
-// provenance label, or the trimmed input unchanged when it is not renamed.
-// renamed reports whether a mapping applied.
+// provenance label, maps legacy origin/<lane> labels to agent/<lane>, or
+// returns the trimmed input unchanged when it is not renamed. renamed reports
+// whether a mapping applied.
 func CanonicalOriginLabel(name string) (canonical string, renamed bool) {
 	name = strings.TrimSpace(name)
 	if to, ok := OriginLabelRenames[strings.ToLower(name)]; ok {
 		return to, true
+	}
+	if IsOriginLabel(name) {
+		if to, ok := CanonicalAgentLaneLabel(name); ok {
+			return to, true
+		}
 	}
 	return name, false
 }

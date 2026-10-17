@@ -20,7 +20,7 @@ func TestWithOriginLabelKeepsExactlyOne(t *testing.T) {
 		{"keeps caller origin", []string{"origin/dashboard", "agent/scanner"}, "scanner", "origin/dashboard,agent/scanner"},
 		{"drops extra origins", []string{"origin/forge", "origin/convergence", "kind/bug"}, "governor", "origin/forge,kind/bug"},
 		{"canonicalises legacy reviewer", []string{LegacyOriginReviewLabel, "agent/reviewer"}, "reviewer", "agent/reviewer"},
-		{"drops retired lane origins", []string{"origin/scanner", "kind/bug"}, "forge", "kind/bug,origin/forge"},
+		{"maps legacy lane origins", []string{"origin/scanner", "kind/bug"}, "forge", "agent/scanner,kind/bug,origin/forge"},
 		{"drops blanks", []string{" ", "kind/bug"}, "forge", "kind/bug,origin/forge"},
 		{"blank source is a no-op", []string{"kind/bug"}, "", "kind/bug"},
 	}
@@ -54,7 +54,7 @@ func TestWithIssueOriginLabelDropsRedundantAgentLaneAliases(t *testing.T) {
 		{"keeps human topic words and workflow labels", []string{"community", "help wanted", "stage/020-triage"}, "outreach", "community,help wanted,stage/020-triage,agent/outreach"},
 		{"replaces other known lane labels", []string{"agent/scanner", "scanner"}, "outreach", "agent/outreach"},
 		{"keeps aliases for non-lane source", []string{"agent/scanner", "scanner"}, OriginSourceDashboard, "agent/scanner,scanner,origin/dashboard"},
-		{"drops lane origin for non-lane source", []string{"origin/scanner", "kind/bug"}, OriginSourceForge, "kind/bug,origin/forge"},
+		{"maps lane origin for non-lane source", []string{"origin/scanner", "kind/bug"}, OriginSourceForge, "agent/scanner,kind/bug,origin/forge"},
 		{"keeps open ended lane labels", []string{"agent/new-lane", "new-lane"}, "new-lane", "agent/new-lane,new-lane,origin/new-lane"},
 		{"drops origin lane and bare label", []string{"origin/scanner", "agent/scanner", "scanner"}, "scanner", "agent/scanner"},
 		{"caller origin keeps non-lane provenance but bare filing lane dedupes", []string{"origin/dashboard", "agent/scanner", "scanner", "kind/bug"}, "scanner", "origin/dashboard,agent/scanner,kind/bug"},
@@ -80,6 +80,19 @@ func TestOriginLaneFromAgentStripsReplicaSuffix(t *testing.T) {
 	}
 	if got := OriginLabelForAgent("quality-2"); got != "agent/quality" {
 		t.Fatalf("OriginLabelForAgent = %q", got)
+	}
+	for in, want := range map[string]string{
+		"scanner":        "agent/scanner",
+		"scanner-2":      "agent/scanner",
+		"agent/scanner":  "agent/scanner",
+		"origin/scanner": "agent/scanner",
+	} {
+		if got, ok := CanonicalAgentLaneLabel(in); !ok || got != want {
+			t.Fatalf("CanonicalAgentLaneLabel(%q) = %q, %v; want %q, true", in, got, ok, want)
+		}
+	}
+	if got, ok := CanonicalAgentLaneLabel("origin/forge"); ok || got != "" {
+		t.Fatalf("CanonicalAgentLaneLabel(origin/forge) = %q, %v; want no lane", got, ok)
 	}
 }
 
