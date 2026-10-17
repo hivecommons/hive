@@ -1,0 +1,1 @@
+- The hub evidence drill-down now keeps "Revert rate by author kind" when a hive or ACMM-level filter is active: each hive row carries its `by_author_kind` counts and the selection re-pools them instead of showing dashes, and the waiting item for it only appears while no selected hive reports it.

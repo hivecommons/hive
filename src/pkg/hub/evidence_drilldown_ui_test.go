@@ -312,7 +312,6 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 		// The autonomy table carries the column; a level without it says so, never 0.
 		"<th title=\"Median of the per-hive median times from PR opened to merged. Not a pooled median: each hive counts once however many PRs it merged.\">Median time-to-merge (median of hive medians)</th>",
 		`<span class="evidence-rate-main">10.0% of 30</span><span class="evidence-rate-margin" title="Margin (95%): the true value is very likely inside this range. Fewer cases, wider range.">margin 3.5% – 25.6%</span></td><td class="evidence-empty">not reported</td></tr>`,
-		"<li>Revert rate by author kind per hive — not reported by any hive build yet.</li>",
 		// The per-axis criteria table renders; hives without criteria read
 		// "Not reported", never unmet.
 		`<th class="evidence-sticky-col">Hive</th><th>Axis</th><th>Met</th><th>Unmet</th><th>Not reported</th>`,
@@ -537,7 +536,8 @@ func evidenceFleetFixtureRegistry() []RegistryEntry {
 const evidencePooledJS = `function pooled(v) { return {spokes: v.spokes, reporting: v.reporting, record_coverage: v.record_coverage, calibration: v.calibration,
   by_acmm_level: (v.by_acmm_level || []).map(function(a) { return {level: a.level, hives: a.hives, merged_90d: a.merged_90d, revert_rate: a.revert_rate}; }),
   family_false_approve_rate: v.family_false_approve_rate, outcomes_by_author_kind: v.outcomes_by_author_kind || null,
-  write_counters: v.write_counters || null, shadow_gate: v.shadow_gate || null}; }`
+  write_counters: v.write_counters || null, shadow_gate: v.shadow_gate || null,
+  revert_rate_by_author_kind: v.revert_rate_by_author_kind || null}; }`
 
 // TestEvidenceRepoolMatchesServer: re-pooling every hive client-side must
 // reproduce the server's pooled numbers exactly, so a filtered selection is

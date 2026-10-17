@@ -1973,10 +1973,19 @@
       var covered = 0, mergedTotal = 0;
       var outcomes = {}, outcomeHives = 0, writes = {}, writeHives = 0;
       var shadow = { hives: 0, review_gate: { hives: 0, held: evidenceOutcomeZero(), passed: evidenceOutcomeZero() }, intent: { hives: 0, held: evidenceOutcomeZero(), passed: evidenceOutcomeZero() } };
+      var authorKinds = {};
       hives.forEach(function(h) {
         var c = h && h.reported && h.counts;
         if (!c) return;
         out.reporting++;
+        if (c.by_author_kind && typeof c.by_author_kind === 'object') {
+          ['human', 'agent', 'bot'].forEach(function(k) {
+            var b = c.by_author_kind[k];
+            if (!b) return;
+            var p = authorKinds[k] || (authorKinds[k] = { n: 0, bad: 0 });
+            p.n += Number(b.n) || 0; p.bad += Number(b.bad) || 0;
+          });
+        }
         if (c.recorded_90d !== null && c.recorded_90d !== undefined && h.prs_merged_90d !== null && h.prs_merged_90d !== undefined) {
           covered += Number(c.recorded_90d) || 0; mergedTotal += Number(h.prs_merged_90d) || 0;
         }
@@ -2014,6 +2023,8 @@
         }
       });
       out.record_coverage = evidenceRateOf(covered, mergedTotal);
+      out.revert_rate_by_author_kind = {};
+      Object.keys(authorKinds).forEach(function(k) { out.revert_rate_by_author_kind[k] = evidenceRateOf(authorKinds[k].bad, authorKinds[k].n); });
       out.calibration = pooled.map(function(b, j) { var r = evidenceRateOf(b.bad, b.n); r.bucket = j; r.bad = b.bad; return r; });
       out.family_false_approve_rate = {};
       Object.keys(fam).forEach(function(k) { out.family_false_approve_rate[k] = evidenceRateOf(fam[k].bad, fam[k].n); });
@@ -2231,7 +2242,7 @@
       out.push('CI gate (claim vs verdict) totals \u2014 not reported by any hive build yet.');
       var ttm = (Array.isArray(v.by_acmm_level) ? v.by_acmm_level : []).some(function(a) { return a && a.time_to_merge; });
       if (!ttm) out.push('Median time-to-merge per autonomy level \u2014 no selected hive reports it yet (it needs a build that records when each merged PR was opened).');
-      out.push('Revert rate by author kind per hive \u2014 not reported by any hive build yet.');
+      if (!Object.keys(v.revert_rate_by_author_kind || {}).length) out.push('Revert rate by author kind \u2014 ' + upgrade + '.');
       return out;
     }
 

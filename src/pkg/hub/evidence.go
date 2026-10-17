@@ -493,6 +493,9 @@ type EvidenceHiveCounts struct {
 	WriteCounters        map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
 	ShadowGate           *EvidenceShadow               `json:"shadow_gate,omitempty"`
 	TimeToMerge          *EvidenceTimeToMerge          `json:"time_to_merge,omitempty"`
+	// ByAuthorKind is the hive's merged / linked-revert counts per author
+	// kind (see HeartbeatEvidence.ByAuthorKind); nil on older spokes.
+	ByAuthorKind map[string]EvidenceBucket `json:"by_author_kind,omitempty"`
 }
 
 // EvidenceAuthorKindOutcome is the pooled outcome of one author kind: Hives
@@ -852,7 +855,8 @@ func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) Evidence
 			counts := &EvidenceHiveCounts{Verdicts90d: e.Verdicts90d, FalseApprove90d: e.FalseApprove90d,
 				FalseBlock90d: e.FalseBlock90d, Merged90d: e.Merged90d, Reverted14d90d: e.Reverted14d90d,
 				Calibration: e.Calibration[:], OutcomesByAuthorKind: e.OutcomesByAuthorKind,
-				WriteCounters: e.WriteCounters, ShadowGate: e.ShadowGate, TimeToMerge: e.TimeToMerge}
+				WriteCounters: e.WriteCounters, ShadowGate: e.ShadowGate, TimeToMerge: e.TimeToMerge,
+				ByAuthorKind: e.ByAuthorKind}
 			row.Counts = counts
 			if h.PRsMerged90d != nil && win.Coverage {
 				// Both counts are 90-day merged PRs; the record count comes from
