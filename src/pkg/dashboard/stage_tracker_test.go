@@ -140,7 +140,7 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 		Name: "console", Full: "acme/console",
 		ActionableIssues: []any{
 			github.Issue{Number: 7, Title: "Login redirect loops", Author: "karibhou", AuthorIsHuman: true, Labels: []string{"stage/100-merge-queue"}},
-			github.Issue{Number: 8, Title: "Flaky test", Author: "hive-app[bot]", Labels: []string{"stage/010-actionable", "agent/scanner", "origin/scanner"}},
+			github.Issue{Number: 8, Title: "Flaky test", Author: "hive-app[bot]", Labels: []string{"stage/010-actionable", "agent/scanner"}},
 			// GitHub's issues feed returns pull requests too. These are copies
 			// of PRs 101 (also in OpenPrs) and 106 (URL says /pull/, not in the
 			// PR set); neither may become an issue row.
@@ -233,8 +233,8 @@ func TestStageTrackerEndpoint(t *testing.T) {
 			}
 		}
 	}
-	// The origin/<source> provenance label is surfaced as-is for hive-filed
-	// issues; a human-filed issue carries none.
+	// The provenance source is surfaced for hive-filed issues from the
+	// canonical agent/<lane> label; a human-filed issue carries none.
 	if got := trackerItem(t, resp, "issue", 8).Origin; got != "scanner" {
 		t.Fatalf("issue 8 origin = %q, want scanner", got)
 	}

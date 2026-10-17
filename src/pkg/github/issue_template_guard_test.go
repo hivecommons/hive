@@ -161,7 +161,7 @@ func TestCreateIssueRejectsUnfilledTemplateBeforeAnyAPICall(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, org, []string{repo})
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: org + "/" + repo, Title: issue7153Title, Body: issue7153Body, Labels: []string{"documentation"}, Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: org + "/" + repo, Title: issue7153Title, Body: issue7153Body, Labels: []string{"documentation"}, Origin: "governor"})
 	if err == nil {
 		t.Fatal("CreateIssue must refuse an issue that is still a template")
 	}
@@ -185,7 +185,7 @@ func TestCreateIssueAcceptsAFilledTemplate(t *testing.T) {
 	// Only the guard is under test here: a properly filled request must get
 	// PAST it and fail later, at the (unrouted) API, rather than being refused
 	// outright. A guard that rejected everything would pass the test above.
-	_, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: org + "/" + repo, Title: "[guide] the install guide omits the HTTPS proxy step", Body: "## Documentation Gap\n\nHTTPS_PROXY is never mentioned.", Origin: "test"})
+	_, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: org + "/" + repo, Title: "[guide] the install guide omits the HTTPS proxy step", Body: "## Documentation Gap\n\nHTTPS_PROXY is never mentioned.", Origin: "governor"})
 	if err != nil && strings.Contains(err.Error(), "placeholder") {
 		t.Fatalf("a filled-in issue must not be refused by the template guard, got: %v", err)
 	}

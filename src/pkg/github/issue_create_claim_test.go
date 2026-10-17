@@ -121,7 +121,7 @@ func TestCreateIssue_SameFindingRewordedReplaysJournaledIssue(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.SetMutationBoundary(replayTestBoundary(t))
 
-	first, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — extract cache helpers", Body: "web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts", Labels: []string{"agent/scanner"}, Origin: "test"})
+	first, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — extract cache helpers", Body: "web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts", Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("first CreateIssue: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestCreateIssue_SameFindingRewordedReplaysJournaledIssue(t *testing.T) {
 		t.Fatalf("first CreateIssue = %+v, want a fresh #99", first)
 	}
 
-	second, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) -- pull out snapshot helpers", Body: "Different prose entirely: web/e2e/helpers.ts and web/e2e/card-cache.spec.ts:900.", Labels: []string{"agent/scanner"}, Origin: "test"})
+	second, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) -- pull out snapshot helpers", Body: "Different prose entirely: web/e2e/helpers.ts and web/e2e/card-cache.spec.ts:900.", Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("second CreateIssue must be idempotent success, got %v", err)
 	}
@@ -140,7 +140,7 @@ func TestCreateIssue_SameFindingRewordedReplaysJournaledIssue(t *testing.T) {
 		t.Fatalf("second CreateIssue = %+v, want #99 reported as AlreadyExisted", second)
 	}
 
-	third, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — and web/e2e/fixtures.ts too", Body: "web/e2e/card-cache.spec.ts, web/e2e/helpers.ts and web/e2e/fixtures.ts", Labels: []string{"agent/scanner"}, Origin: "test"})
+	third, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — and web/e2e/fixtures.ts too", Body: "web/e2e/card-cache.spec.ts, web/e2e/helpers.ts and web/e2e/fixtures.ts", Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("third CreateIssue: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestCreateIssue_SameFindingStraddlingBucketBoundaryReplays(t *testing.T) {
 
 	title := "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — extract cache helpers"
 	body := "web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts"
-	first, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: title, Body: body, Labels: []string{"agent/scanner"}, Origin: "test"})
+	first, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: title, Body: body, Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("first CreateIssue: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestCreateIssue_SameFindingStraddlingBucketBoundaryReplays(t *testing.T) {
 	}
 
 	clock = midnight.Add(time.Second)
-	second, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) -- pull out snapshot helpers", Body: "Different prose: web/e2e/helpers.ts and web/e2e/card-cache.spec.ts:900.", Labels: []string{"agent/scanner"}, Origin: "test"})
+	second, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) -- pull out snapshot helpers", Body: "Different prose: web/e2e/helpers.ts and web/e2e/card-cache.spec.ts:900.", Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("second CreateIssue must be idempotent success, got %v", err)
 	}
@@ -204,7 +204,7 @@ func TestCreateIssue_SameFindingStraddlingBucketBoundaryReplays(t *testing.T) {
 	}
 
 	clock = midnight.Add(issueCreateIdempotencyWindow + time.Second)
-	third, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: title, Body: body, Labels: []string{"agent/scanner"}, Origin: "test"})
+	third, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: title, Body: body, Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("third CreateIssue: %v", err)
 	}

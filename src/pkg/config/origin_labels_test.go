@@ -15,11 +15,12 @@ func TestWithOriginLabelKeepsExactlyOne(t *testing.T) {
 		source string
 		want   string
 	}{
-		{"appends when absent", []string{"agent/scanner", "kind/bug"}, "scanner", "agent/scanner,kind/bug,origin/scanner"},
+		{"agent lane source is a no-op", []string{"agent/scanner", "kind/bug"}, "scanner", "agent/scanner,kind/bug"},
 		{"nil labels", nil, OriginSourceSelfReport, "origin/selfreport"},
 		{"keeps caller origin", []string{"origin/dashboard", "agent/scanner"}, "scanner", "origin/dashboard,agent/scanner"},
 		{"drops extra origins", []string{"origin/forge", "origin/convergence", "kind/bug"}, "governor", "origin/forge,kind/bug"},
-		{"canonicalises legacy reviewer", []string{LegacyOriginReviewLabel, "agent/reviewer"}, "reviewer", OriginReviewerLabel + ",agent/reviewer"},
+		{"canonicalises legacy reviewer", []string{LegacyOriginReviewLabel, "agent/reviewer"}, "reviewer", "agent/reviewer"},
+		{"drops retired lane origins", []string{"origin/scanner", "kind/bug"}, "forge", "kind/bug,origin/forge"},
 		{"drops blanks", []string{" ", "kind/bug"}, "forge", "kind/bug,origin/forge"},
 		{"blank source is a no-op", []string{"kind/bug"}, "", "kind/bug"},
 	}
@@ -49,13 +50,15 @@ func TestWithIssueOriginLabelDropsRedundantAgentLaneAliases(t *testing.T) {
 		source string
 		want   string
 	}{
-		{"drops matching bare lane only", []string{"agent/outreach", "outreach", "kind/bug"}, "outreach", "agent/outreach,kind/bug,origin/outreach"},
-		{"keeps human topic words and workflow labels", []string{"community", "help wanted", "stage/020-triage"}, "outreach", "community,help wanted,stage/020-triage,origin/outreach"},
-		{"keeps other lane labels", []string{"agent/scanner", "scanner"}, "outreach", "agent/scanner,scanner,origin/outreach"},
+		{"drops matching bare lane and ensures agent lane only", []string{"agent/outreach", "outreach", "kind/bug"}, "outreach", "agent/outreach,kind/bug"},
+		{"keeps human topic words and workflow labels", []string{"community", "help wanted", "stage/020-triage"}, "outreach", "community,help wanted,stage/020-triage,agent/outreach"},
+		{"replaces other known lane labels", []string{"agent/scanner", "scanner"}, "outreach", "agent/outreach"},
 		{"keeps aliases for non-lane source", []string{"agent/scanner", "scanner"}, OriginSourceDashboard, "agent/scanner,scanner,origin/dashboard"},
+		{"drops lane origin for non-lane source", []string{"origin/scanner", "kind/bug"}, OriginSourceForge, "kind/bug,origin/forge"},
 		{"keeps open ended lane labels", []string{"agent/new-lane", "new-lane"}, "new-lane", "agent/new-lane,new-lane,origin/new-lane"},
-		{"caller origin still uses filing lane for bare dedupe", []string{"origin/scanner", "agent/scanner", "scanner"}, "outreach", "origin/scanner,agent/scanner,scanner"},
-		{"caller origin keeps provenance but bare filing lane dedupes", []string{"origin/dashboard", "agent/scanner", "scanner", "kind/bug"}, "scanner", "origin/dashboard,agent/scanner,kind/bug"},
+		{"drops origin lane and bare label", []string{"origin/scanner", "agent/scanner", "scanner"}, "scanner", "agent/scanner"},
+		{"caller origin keeps non-lane provenance but bare filing lane dedupes", []string{"origin/dashboard", "agent/scanner", "scanner", "kind/bug"}, "scanner", "origin/dashboard,agent/scanner,kind/bug"},
+		{"outreach filed issue gets agent outreach only", []string{"origin/outreach", "outreach"}, "outreach", "agent/outreach"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,17 +78,18 @@ func TestOriginLaneFromAgentStripsReplicaSuffix(t *testing.T) {
 			t.Errorf("OriginLaneFromAgent(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := OriginLabelForAgent("quality-2"); got != "origin/quality" {
+	if got := OriginLabelForAgent("quality-2"); got != "agent/quality" {
 		t.Fatalf("OriginLabelForAgent = %q", got)
 	}
 }
 
-// The reviewer source must resolve to the same label the review-backlog sink
-// and the rename migration use, and every known source needs a description
-// so the label-ensure path never creates an undocumented origin label.
+// The reviewer source must resolve to the agent lane label the review-backlog
+// sink and the rename migration use, and every origin source needs a
+// description so the label-ensure path never creates an undocumented origin
+// label.
 func TestOriginVocabularyIsConsistent(t *testing.T) {
-	if OriginLabel(OriginSourceReviewer) != OriginReviewerLabel || OriginLabel(OriginSourceReviewer) != DefaultReviewBacklogLabel {
-		t.Fatalf("reviewer label drift: %q %q %q", OriginLabel(OriginSourceReviewer), OriginReviewerLabel, DefaultReviewBacklogLabel)
+	if OriginLabel(OriginSourceReviewer) != "" || OriginLabelForAgent(OriginSourceReviewer) != DefaultReviewBacklogLabel {
+		t.Fatalf("reviewer label drift: origin=%q agent=%q default=%q", OriginLabel(OriginSourceReviewer), OriginLabelForAgent(OriginSourceReviewer), DefaultReviewBacklogLabel)
 	}
 	sources := KnownOriginSources()
 	if len(sources) == 0 {
@@ -105,9 +109,14 @@ func TestOriginVocabularyIsConsistent(t *testing.T) {
 			t.Fatalf("origin/%s description = %q", s, d)
 		}
 	}
-	for _, must := range []string{"reviewer", "selfreport", "scanner", "quality", "ci-maintainer", "sec-check", "architect", "guide", "strategist", "outreach", "dedupe", "supervisor", "tester", "governor", "dashboard", "forge", "convergence"} {
+	for _, must := range []string{"selfreport", "governor", "dashboard", "forge", "convergence"} {
 		if !seen[must] {
 			t.Errorf("source %q missing from KnownOriginSources", must)
+		}
+	}
+	for _, lane := range []string{"reviewer", "scanner", "quality", "ci-maintainer", "sec-check", "architect", "guide", "strategist", "outreach", "dedupe", "supervisor", "tester"} {
+		if seen[lane] {
+			t.Errorf("agent lane %q must not be an origin source", lane)
 		}
 	}
 	if seen["human"] {

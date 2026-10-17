@@ -49,7 +49,8 @@ const (
 	AuditActionHoldMigrationLabelAdded = "hold_migration_label_added"
 	// AuditActionOriginLabelMigrated is recorded for each open item the
 	// one-time provenance-label reconciler moves from a retired name
-	// (from-review, origin/review) to origin/reviewer (origin_labels.go).
+	// (from-review, origin/review, origin/reviewer) to agent/reviewer
+	// (origin_labels.go).
 	AuditActionOriginLabelMigrated = "origin_label_migrated"
 	// AuditActionHiveIDLabelRetired is recorded for each open item the
 	// boot-time self-heal sweep strips the retired hive/<hive-id> provenance

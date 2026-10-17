@@ -5918,9 +5918,10 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
 		}
-		// Provenance-only rename (from-review / origin/review → origin/reviewer). Nothing reads
-		// either label as a gate, so a failure here only leaves old names on
-		// open items; the marker is not written and the next boot retries.
+		// Provenance-only migration. Retired reviewer labels map to agent/reviewer;
+		// redundant lane-origin labels are removed. Nothing reads origin/* as a gate,
+		// so a failure here only leaves old names on open items; the marker is not
+		// written and the next boot retries.
 		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
 			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyOriginReviewLabel+" or "+github.LegacyFromReviewLabel, "error", err)
 		}

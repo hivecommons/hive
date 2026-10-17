@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/outputschema"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -20,7 +21,7 @@ import (
 const (
 	DefaultReviewBacklogIssueCap = 3
 	reviewBacklogFile            = "review-backlog-issues.json"
-	reviewBacklogLabel           = OriginReviewerLabel
+	reviewBacklogLabel           = config.DefaultReviewBacklogLabel
 	reviewBacklogSummaryMarker   = "<!-- hive:review-backlog-summary v1 -->"
 	reviewBacklogLinkMarker      = "<!-- hive:review-backlog-link "
 )

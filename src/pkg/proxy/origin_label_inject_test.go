@@ -9,9 +9,8 @@ import (
 )
 
 // An agent's `gh issue create` never passes through the issue-request watcher,
-// so the proxy injects origin/<lane> itself. The agent's own origin label
-// wins, a second origin label is never added, and redundant bare lane
-// provenance aliases are dropped from issue creates.
+// so the proxy injects agent/<lane> itself. Redundant origin/<lane> and bare
+// lane provenance aliases are dropped from issue creates.
 func TestInjectOriginLabelAddsLaneOnceAndKeepsAgentChoice(t *testing.T) {
 	const path = "/repos/org/repo/issues"
 	tests := []struct {
@@ -23,11 +22,11 @@ func TestInjectOriginLabelAddsLaneOnceAndKeepsAgentChoice(t *testing.T) {
 		wantOK     bool
 		wantLabels []string
 	}{
-		{name: "no labels field", method: http.MethodPost, path: path, body: `{"title":"t","body":"b"}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/scanner"}},
-		{name: "bare lane label dropped, replica suffix stripped", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["agent/scanner","scanner","kind/bug"]}`, agent: "scanner-2", wantOK: true, wantLabels: []string{"agent/scanner", "kind/bug", "origin/scanner"}},
+		{name: "no labels field", method: http.MethodPost, path: path, body: `{"title":"t","body":"b"}`, agent: "scanner", wantOK: true, wantLabels: []string{"agent/scanner"}},
+		{name: "bare lane label dropped, replica suffix stripped", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["agent/scanner","scanner","kind/bug"]}`, agent: "scanner-2", wantOK: true, wantLabels: []string{"agent/scanner", "kind/bug"}},
 		{name: "agent-supplied origin kept while bare filing lane drops", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/dashboard","agent/scanner","scanner"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/dashboard", "agent/scanner"}},
-		{name: "agent-supplied matching origin drops redundant bare label", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/scanner","agent/scanner","scanner","kind/bug"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/scanner", "agent/scanner", "kind/bug"}},
-		{name: "null labels", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":null}`, agent: "guide", wantOK: true, wantLabels: []string{"origin/guide"}},
+		{name: "agent-supplied matching origin drops redundant origin and bare label", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/scanner","agent/scanner","scanner","kind/bug"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"agent/scanner", "kind/bug"}},
+		{name: "null labels", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":null}`, agent: "guide", wantOK: true, wantLabels: []string{"agent/guide"}},
 		{name: "label objects forwarded as written", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":[{"name":"kind/bug"}]}`, agent: "guide", wantOK: false},
 		{name: "comment route untouched", method: http.MethodPost, path: "/repos/org/repo/issues/1/comments", body: `{"body":"b"}`, agent: "guide", wantOK: false},
 		{name: "issue edit untouched", method: http.MethodPatch, path: "/repos/org/repo/issues/1", body: `{"title":"t"}`, agent: "guide", wantOK: false},
@@ -60,22 +59,22 @@ func TestInjectOriginLabelAddsLaneOnceAndKeepsAgentChoice(t *testing.T) {
 			if strings.Join(payload.Labels, ",") != strings.Join(tc.wantLabels, ",") {
 				t.Fatalf("labels = %v, want %v", payload.Labels, tc.wantLabels)
 			}
-			origins := 0
+			laneLabels := 0
 			for _, l := range payload.Labels {
-				if strings.HasPrefix(l, "origin/") {
-					origins++
+				if strings.HasPrefix(l, "agent/") {
+					laneLabels++
 				}
 			}
-			if origins != 1 {
-				t.Fatalf("exactly one origin/* label expected, got %v", payload.Labels)
+			if laneLabels != 1 {
+				t.Fatalf("exactly one agent/* label expected, got %v", payload.Labels)
 			}
 		})
 	}
 }
 
-// The shape gate and the origin injection share one buffered read: a body
+// The shape gate and lane-label injection share one buffered read: a body
 // that fails shape validation is denied unmodified, and one that passes is
-// forwarded with the lane's origin label and a matching Content-Length.
+// forwarded with the lane's agent label and a matching Content-Length.
 func TestEnforceIssueShapeForInjectsOriginAfterShapePasses(t *testing.T) {
 	p := &GitHubProxy{logger: discardLogger()}
 	body := `{"title":"Real title","body":"real body","labels":["agent/tester","tester","kind/bug"]}`
@@ -86,7 +85,7 @@ func TestEnforceIssueShapeForInjectsOriginAfterShapePasses(t *testing.T) {
 		t.Fatalf("well-formed body denied: reason=%q deny=%v err=%v", reason, deny, err)
 	}
 	forwarded := readAllString(t, req)
-	if !strings.Contains(forwarded, `"origin/tester"`) || !strings.Contains(forwarded, `"agent/tester"`) || strings.Contains(forwarded, `"tester"`) || !strings.Contains(forwarded, `"kind/bug"`) {
+	if strings.Contains(forwarded, `"origin/tester"`) || !strings.Contains(forwarded, `"agent/tester"`) || strings.Contains(forwarded, `"tester"`) || !strings.Contains(forwarded, `"kind/bug"`) {
 		t.Fatalf("forwarded body = %s", forwarded)
 	}
 	if req.ContentLength != int64(len(forwarded)) {

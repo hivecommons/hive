@@ -569,7 +569,7 @@ func TestWriteIssueRequest_Errors(t *testing.T) {
 // CreateIssue input validation and degraded-path behavior.
 func TestCreateIssue_ValidationAndDegradedPaths(t *testing.T) {
 	var nilClient *Client
-	if _, err := nilClient.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "t", Body: "b", Origin: "test"}); !errors.Is(err, ErrNoGitHubClient) {
+	if _, err := nilClient.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "t", Body: "b", Origin: "governor"}); !errors.Is(err, ErrNoGitHubClient) {
 		t.Fatalf("nil client: want ErrNoGitHubClient, got %v", err)
 	}
 
@@ -578,12 +578,12 @@ func TestCreateIssue_ValidationAndDegradedPaths(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "   ", Body: "b", Origin: "test"}); err == nil {
+	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "   ", Body: "b", Origin: "governor"}); err == nil {
 		t.Fatal("blank title must be rejected")
 	}
 
 	// Blank labels are skipped, usable ones attached; create succeeds.
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "with labels", Body: "b", Labels: []string{" ", "security"}, Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "with labels", Body: "b", Labels: []string{" ", "security"}, Origin: "governor"})
 	if err != nil || res.Number != 99 {
 		t.Fatalf("create with labels: res=%+v err=%v", res, err)
 	}
@@ -610,7 +610,7 @@ func TestCreateIssue_DedupeRetryableFailureFailsClosed(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Origin: "test"}); err == nil || !isRetryableGitHubError(err) {
+	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Origin: "governor"}); err == nil || !isRetryableGitHubError(err) {
 		t.Fatalf("dedupe rate limit must return retryable error, got %v", err)
 	}
 	if created != 0 {
@@ -639,7 +639,7 @@ func TestCreateIssue_DedupeTooManyRequestsFailsClosed(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Origin: "test"}); err == nil || !isRetryableGitHubError(err) {
+	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Origin: "governor"}); err == nil || !isRetryableGitHubError(err) {
 		t.Fatalf("dedupe 429 must return retryable error, got %v", err)
 	}
 	if created != 0 {
@@ -671,7 +671,7 @@ func TestCreateIssue_LabelEnsureRetryableFailureFailsClosed(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/quality"}, Origin: "test"}); err == nil || !isRetryableGitHubError(err) {
+	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/quality"}, Origin: "governor"}); err == nil || !isRetryableGitHubError(err) {
 		t.Fatalf("label rate limit must return retryable error, got %v", err)
 	}
 	if created != 0 {
@@ -718,7 +718,7 @@ func TestCreateIssue_LabelEnsureConcurrentCreateKeepsLabel(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/quality"}, Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/quality"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("concurrent label creation should keep label: %v", err)
 	}
@@ -759,13 +759,13 @@ func TestCreateIssue_LabelEnsureTerminalFailureCreatesWithoutLabel(t *testing.T)
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"bad label"}, Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"bad label"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("terminal label ensure failure should create without label: %v", err)
 	}
-	// The bad label is dropped; the origin/* label survives because a 422 on
-	// an origin create means another writer defined it first.
-	if created != 1 || res.Number != 123 || strings.Join(createLabels, ",") != "origin/test" {
+	// The bad label is dropped; the non-lane origin/* label survives because a
+	// 422 on an origin create means another writer defined it first.
+	if created != 1 || res.Number != 123 || strings.Join(createLabels, ",") != "origin/governor" {
 		t.Fatalf("unexpected create result: created=%d labels=%v res=%+v", created, createLabels, res)
 	}
 }
@@ -1085,10 +1085,9 @@ func TestIssueRequestWatcher_ParentLinkFailureDoesNotFailCreate(t *testing.T) {
 	}
 }
 
-// The central helper is where the origin axis becomes universal: every
-// caller must name its source, the label is injected when absent, a caller's
-// own origin label is kept and never doubled, and the created label carries
-// the family colour.
+// The central helper is where issue provenance is normalized: agent lanes use
+// exactly one agent/<lane> label with any bare lane label stripped; non-lane
+// origins still use origin/<source>.
 func TestCreateIssue_InjectsExactlyOneOriginLabel(t *testing.T) {
 	var createLabels [][]string
 	var labelColors []string
@@ -1138,21 +1137,20 @@ func TestCreateIssue_InjectsExactlyOneOriginLabel(t *testing.T) {
 	if _, err := c.CreateIssue(ctx, CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"origin/dashboard", "origin/forge", "agent/scanner", "scanner"}, Origin: "scanner"}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"agent/scanner,kind/bug,origin/scanner", "origin/dashboard,agent/scanner"}
+	want := []string{"agent/scanner,kind/bug", "origin/dashboard,agent/scanner"}
 	for i, labels := range createLabels {
 		if strings.Join(labels, ",") != want[i] {
 			t.Fatalf("create %d labels = %v, want %s", i, labels, want[i])
 		}
 	}
-	if strings.Join(labelColors, ",") != OriginLabelColor+","+OriginLabelColor {
+	if strings.Join(labelColors, ",") != OriginLabelColor {
 		t.Fatalf("origin label colours = %v", labelColors)
 	}
 }
 
-// Provenance is never a gate: a retryable failure ensuring the origin/* label
-// files the issue without it, while the same failure on a routing label
-// (agent/*) still fails closed so the request stays queued.
-func TestCreateIssue_OriginLabelEnsureBlipDoesNotBlockFiling(t *testing.T) {
+// Agent lane provenance is a gate: retryable failure ensuring agent/<lane>
+// still fails closed so the request stays queued.
+func TestCreateIssue_AgentLabelEnsureAllowsFilingWhenPresent(t *testing.T) {
 	var createLabels [][]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1181,7 +1179,7 @@ func TestCreateIssue_OriginLabelEnsureBlipDoesNotBlockFiling(t *testing.T) {
 
 	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/scanner"}, Origin: "scanner"})
 	if err != nil || res.Number != 9 {
-		t.Fatalf("origin label blip must not block filing: res=%+v err=%v", res, err)
+		t.Fatalf("agent label present should allow filing: res=%+v err=%v", res, err)
 	}
 	if len(createLabels) != 1 || strings.Join(createLabels[0], ",") != "agent/scanner" {
 		t.Fatalf("labels = %v, want the agent author-kind label only", createLabels)

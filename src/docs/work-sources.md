@@ -365,7 +365,7 @@ Review findings below the blocking line (`review.severity.block_at`), and cited 
 | `linear` | `linear` | An issue on the team mapped to the PR's repo (`teams[].repo`), in `linear_state` when set. Labels that already exist on the team are applied. |
 | `jira` | `jira` | A Task in the first `project_keys` project, moved to `jira_status` when set. Labels have their whitespace replaced with `-`. |
 
-If the destination's work source is not active, or cannot be built (for example a missing `api_key`), the hive files a GitHub issue with the `origin/reviewer` label and logs why. Items are de-duplicated per repo by finding fingerprint. When another PR raises the same finding, the hive comments on the existing item instead of filing a new one. At most `max_per_pr_per_day` items are filed or updated per PR per day. See [review-swarm.md](review-swarm.md#backlog-routing) for the fingerprint, item body and audit entries.
+If the destination's work source is not active, or cannot be built (for example a missing `api_key`), the hive files a GitHub issue with the `agent/reviewer` label and logs why. Items are de-duplicated per repo by finding fingerprint. When another PR raises the same finding, the hive comments on the existing item instead of filing a new one. At most `max_per_pr_per_day` items are filed or updated per PR per day. See [review-swarm.md](review-swarm.md#backlog-routing) for the fingerprint, item body and audit entries.
 
 ## Open questions
 

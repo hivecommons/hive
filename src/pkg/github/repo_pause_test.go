@@ -228,7 +228,7 @@ func TestIssueRequestWatcher_RepoPause(t *testing.T) {
 				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 					_, _ = io.WriteString(w, `{"name":"agent/security"}`)
 				case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/origin/"):
-					// origin/<lane> recoloured to the family colour on create.
+					// non-lane origin labels are recoloured to the family colour on create.
 					_, _ = io.WriteString(w, `{"name":"origin/scanner","color":"8250df"}`)
 				case r.Method == http.MethodPost && r.URL.Path == tc.endpoint:
 					writes.Add(1)
