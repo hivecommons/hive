@@ -481,7 +481,7 @@ governor:
       #   require_quiet: true           # measure dwell from the last outside activity (push/comment/review/CI); false = from stage entry
       # dwell:                          # Per-stage "stalled" thresholds by slug; 0 = never
       #   review-pending: 1h
-      #   returned-to-contributor: 24h
+      #   needs-author: 24h
       #   awaiting-merge-admission: 30m  # a stall here = the lane, not the author; the hive comments the last skip reason
       # contributor_nudge:              # stage/072: one @-mention comment per head + relay fix-pr interrupt (#12436)
       #   enabled: true

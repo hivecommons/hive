@@ -197,7 +197,7 @@ referenced it) a lone `stage/050-review-pending`
 | `stage/050-review-pending` | PR | review swarm requested/dispatched; awaiting a verdict for the current head (or CI still pending with no verdict) | 1h |
 | `stage/060-reviewed` | PR | swarm verdict approve but a gate is still pending (CI running, soak not started) | 30m |
 | `stage/070-fixing` | PR | hive-authored (App/taken-over) PR: CI red, changes requested or needs-rebase; a hive agent is reworking it | 2h |
-| `stage/072-returned-to-contributor` | PR | contributor PR (relay or external): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the author's court | 24h |
+| `stage/072-needs-author` | PR | a PR of any author kind that is red or blocked on something only its author can do: CI red / changes requested / conflicting / DCO missing / needs rebase. One label; the display word follows the author kind — "Needs author" (`author/human`), "Returned to contributor" (`author/clanker`) — see below. (Was `stage/072-returned-to-contributor`; the engine renames the GitHub label in place, and both spellings read as 072 during the rollout) | 24h |
 | `stage/074-adopted-by-hive` | PR | the author (a clanker) was unavailable — relay offline, never registered, or silent past the grace (see below); the hive took the PR over: in place on the PR's own branch when it may push there (the scanner's red-PR fix kick rebases and fixes it, then the normal `050 → 100` path), otherwise via `hive/adopt-<n>` and a superseding App PR that keeps the author's commits (the original closes automatically when the superseder merges). A push by the contributor on an in-place adoption hands the PR back (072) | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green (no red check on the head, required or not), verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
 | `stage/085-needs-decision` | PR, issue | on an issue: parked on a person by a hard-suppress label (`needs-human`, `needs-decision`, `needs-spec`, or the retired legacy alias `needs-direction`) — it is outside the agent work queue until a maintainer replies; a lapsed claim on a parked issue never shows 030. On a PR: a person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
@@ -220,7 +220,7 @@ stateDiagram-v2
     s050: 050 review-pending
     s060: 060 reviewed
     s070: 070 fixing
-    s072: 072 returned-to-contributor
+    s072: 072 needs-author
     s074: 074 adopted-by-hive
     s080: 080 awaiting-merge-admission
     s085: 085 needs-decision
@@ -317,10 +317,10 @@ used to admit the PR:
 | `contributor-lane:no-verdict`, CI pending with no verdict | `050-review-pending` |
 | CI pending, verdict approve | `060-reviewed` |
 | CI green, verdict approve, no modifier, yet the lane stopped on a reason no stage claims or tripped on a transient error (`review-state-check`, …) | `080-awaiting-merge-admission` (weak opinion: any lane's definite stage wins) |
-| CI red (`check-failing:*`, `required-check-failing:*`, `status-*`), `conflicting`, `not-mergeable`, `changes-requested`, verdict changes_requested/reject, `needs-rebase` present | `070-fixing` (self-authored lane) / `072-returned-to-contributor` (trusted-author or contributor lane) |
+| CI red (`check-failing:*`, `required-check-failing:*`, `status-*`), `conflicting`, `not-mergeable`, `changes-requested`, verdict changes_requested/reject, `needs-rebase` present | `070-fixing` (self-authored lane) / `072-needs-author` (trusted-author or contributor lane) |
 | `contributor-lane:soaking(...)`, `head-changed-since-eval`, `merge-failed`, `required-checks-expected`, `behind`, `updated-branch`, `behind-update-budget-exhausted` (a behind self-authored PR the sweep did not update only because this tick's branch-update budget was spent; retried next tick, waits on the hive, [#12607](https://github.com/hivecommons/hive/issues/12607)), `release-hold*` — and no red check on the head | `100-merge-queue` |
 | CI red (required or optional check) while the PR is deferred to an open `[shared-ci]` incident (`<!-- hive-shared-ci-<n> -->`, the governor's `deferred_incident`) for the same head | `050-review-pending` / `060-reviewed`, reason `shared-ci-incident:<n>`: the base or a shared check is what is red, so the PR is never sent to 070/072, never nudged and never stalled; once the incident closes a still-red head is handed back as usual. Conflicts and requested changes stay author-facing ([#12606](https://github.com/hivecommons/hive/issues/12606)) |
-| any **non-required** check on the current head is red, whatever the lane's reason (the lane gates on required checks only, so it still soaks and merges; a reader of the rollup sees ✗). Parking modifiers (`hold`, `needs-human`, admission reasons) still win | `070-fixing` / `072-returned-to-contributor`, reason `optional-check-failing:<check>` (the nudge lists every red check); never 080 or 100. A red *required* check is the lane's own `required-check-failing:*` → 070/072 ([#12538](https://github.com/hivecommons/hive/issues/12538), seen on [#12457](https://github.com/hivecommons/hive/pull/12457)) |
+| any **non-required** check on the current head is red, whatever the lane's reason (the lane gates on required checks only, so it still soaks and merges; a reader of the rollup sees ✗). Parking modifiers (`hold`, `needs-human`, admission reasons) still win | `070-fixing` / `072-needs-author`, reason `optional-check-failing:<check>` (the nudge lists every red check); never 080 or 100. A red *required* check is the lane's own `required-check-failing:*` → 070/072 ([#12538](https://github.com/hivecommons/hive/issues/12538), seen on [#12457](https://github.com/hivecommons/hive/pull/12457)) |
 | `label:hold`, `held`, `label:needs-human`, `exempt-label`, `excluded-label:*`, `sentinel`, `human-merge-path*`, `intent-*`, `contributor-lane:workflow-path` / `tests-removed` / `no-reviewer` / `reporter-trust-hold` | human hand-off, **decision** cause → routed by the head's evidence (below); lands at `085-needs-decision` when the head is otherwise clean |
 | `contributor-lane:no-claim` / `claim-*` / `author-association` / `no-linked-issue`, `untrusted-author-role`, `author-permission-missing` | human hand-off, **trust** cause → routed by the head's evidence (below); lands at `090-ready-for-human-merge` when the head is otherwise clean |
 | hand-offs (`not-app-authored`, `trusted-bot-lane`, `contributor-lane:app-authored`), transient fetch errors | no opinion — the owning lane decides; nothing is written |
@@ -361,7 +361,7 @@ conflict reason and the contributor lane's soak — and
 
 | Evidence | Stage |
 |---|---|
-| verdict changes_requested at the head, any red gating check, DCO sign-off missing, merge conflict (`conflicting` / `needs-rebase`) | `072-returned-to-contributor` (`070-fixing` when self-authored); the 072 nudge lists every reason. Moving 085/090 → 072 is not a regression |
+| verdict changes_requested at the head, any red gating check, DCO sign-off missing, merge conflict (`conflicting` / `needs-rebase`) | `072-needs-author` (`070-fixing` when self-authored); the 072 nudge lists every reason. Moving 085/090 → 072 is not a regression |
 | no verdict for this head yet, or nothing has reported on the head (just pushed) | `050-review-pending` — never 090 without a current-head approve |
 | sentinel alert, hold-class label, no reviewer configured, or a non-trust human-only lane rule | `085-needs-decision` + one entry comment naming the decision ("Needs a decision, not a merge: a sentinel alert is open on this PR.") |
 | checks still running / unreadable, or the lane's soak not yet elapsed | `060-reviewed` |
@@ -411,7 +411,7 @@ trailer:
 
 The pair is mutually exclusive. A missing sign-off is the one author-side
 gate the hive decides **without waiting for CI or a reviewer verdict**: the
-PR goes to `stage/072-returned-to-contributor` (`070-fixing` when
+PR goes to `stage/072-needs-author` (`070-fixing` when
 self-authored) with reason `dco-missing` on the first evaluation of the head,
 and, for an `author/clanker` PR, the 072 nudge / relay `fix-pr` task names
 the exact fix — `git rebase --signoff HEAD~<n> && git push --force-with-lease`
@@ -496,16 +496,25 @@ governor:
 
 ### Stage 072 by author kind
 
-`stage/072-returned-to-contributor` means the same thing for every kind —
+`stage/072-needs-author` means the same thing for every kind —
 CI red, changes requested or conflicting, and the author must act — and
 every kind reaches and leaves it through the same lane transitions. What
 differs is whether the hive has anyone to *interrupt*:
 
-| Kind | At 072 | Contributor nudge (`<!-- hive:contributor-nudge -->` + relay interrupt) | Offline adoption (074) |
-|---|---|---|---|
-| `author/clanker` | the contributor's hive is poked to fix its own PR | yes | yes — after the grace, the hive adopts |
-| `author/human` | plain wait on the person; they push or comment | no | no |
-| `author/hive` | plain wait, like any other PR; the hive's own lanes pick the head up on their ordinary cycle | no | no |
+| Kind | Display word (tracker chevron, caption) | At 072 | Contributor nudge (`<!-- hive:contributor-nudge -->` + relay interrupt) | Offline adoption (074) |
+|---|---|---|---|---|
+| `author/clanker` | **Returned to contributor** | the contributor's hive is poked to fix its own PR | yes | yes — after the grace, the hive adopts |
+| `author/human` | **Needs author** | plain wait on the person; they push or comment | no | no |
+| `author/hive` | **Needs author** (fallback — a hive-authored red PR is at `070-fixing`, not 072) | plain wait, like any other PR; the hive's own lanes pick the head up on their ordinary cycle | no | no |
+
+The label slug is `stage/072-needs-author` for every kind; only the word the
+dashboard shows differs (`stagelabels.NeedsAuthorWord`). "Returned to
+contributor" is the right idiom for a contributor-run hive being handed its
+PR back; everything else — human, unknown, or a hive PR that somehow carries
+072 — reads "Needs author". The GitHub label description says
+both: "Needs author — returned to contributor for clanker PRs". The clanker
+nudge comment keeps its "back in your court" wording; human and hive PRs get
+no comment at all.
 
 Only a clanker PR has a hive on the other end, so only it gets the nudge
 comment, the relay interrupt and adoption; a human or hive PR at 072 just sits
@@ -579,7 +588,7 @@ does not bump itself.
 When a contributor PR goes red the hive does not just relabel it (full flow in
 [hive-merge.md](hive-merge.md#stage-labels)):
 
-1. `stage/072-returned-to-contributor` and ONE `<!-- hive:contributor-nudge
+1. `stage/072-needs-author` and ONE `<!-- hive:contributor-nudge
    head=<sha> n=<1|2> mode=<comment|queued|spawn|preempt> -->` comment
    @-mentioning the author with the failing checks / review asks and "reply
    here or push a new head". Re-posted only for a new head; re-nudged once

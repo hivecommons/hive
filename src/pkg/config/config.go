@@ -4131,7 +4131,7 @@ type StageLabelsConfig struct {
 	// "1h"). Unset slugs keep the built-in table default; "0" means never.
 	Dwell map[string]string `yaml:"dwell,omitempty"`
 	// ContributorNudge configures the comment + relay interrupt the hive
-	// sends a contributor whose PR entered stage/072-returned-to-contributor
+	// sends a contributor whose PR entered stage/072-needs-author
 	// (hivecommons/hive#12436).
 	ContributorNudge ContributorNudgeConfig `yaml:"contributor_nudge"`
 	// PresenceWindow is how recent a relay heartbeat must be for the

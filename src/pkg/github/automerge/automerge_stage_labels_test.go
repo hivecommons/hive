@@ -217,12 +217,12 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "tide pending is not red", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-pending:tide"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
 		{name: "head too young is pending", obs: stageObservation{Lane: stageLaneContributor, Reason: "pending: head pushed 33s ago (< min_head_age)"}, want: stagelabels.ReviewPending, rank: stageRankOwned},
 		{name: "self ci red", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-failing:unit"}, want: stagelabels.Fixing, rank: stageRankOwned},
-		{name: "contributor ci red", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
-		{name: "trusted conflicting", obs: stageObservation{Lane: stageLaneTrusted, Reason: "conflicting"}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "contributor ci red", obs: stageObservation{Lane: stageLaneContributor, Reason: "required-check-failing:unit"}, want: stagelabels.NeedsAuthor, rank: stageRankOwned},
+		{name: "trusted conflicting", obs: stageObservation{Lane: stageLaneTrusted, Reason: "conflicting"}, want: stagelabels.NeedsAuthor, rank: stageRankOwned},
 		{name: "self changes requested", obs: stageObservation{Lane: stageLaneSelf, Reason: "check-pending", Detail: reject}, want: stagelabels.Fixing, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
-		{name: "changes requested while head too young", obs: stageObservation{Lane: stageLaneContributor, Reason: "pending: head pushed 1m0s ago (< min_head_age)", Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
-		{name: "changes requested behind no-verdict", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: reject}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
-		{name: "contributor changes requested", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "changes requested while head too young", obs: stageObservation{Lane: stageLaneContributor, Reason: "pending: head pushed 1m0s ago (< min_head_age)", Detail: reject}, want: stagelabels.NeedsAuthor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
+		{name: "changes requested behind no-verdict", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoVerdict, Detail: reject}, want: stagelabels.NeedsAuthor, rank: stageRankOwned, reason: "reviewer-verdict:changes_requested"},
+		{name: "contributor changes requested", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonChangesRequested}, want: stagelabels.NeedsAuthor, rank: stageRankOwned},
 		{name: "soaking", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonSoaking + "(30m)"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "merge pool", obs: stageObservation{Lane: stageLaneSelf, Reason: "head-changed-since-eval"}, want: stagelabels.MergeQueue, rank: stageRankOwned},
 		{name: "hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "label:hold"}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
@@ -230,7 +230,7 @@ func TestClassifyStageMapping(t *testing.T) {
 		{name: "needs-rebase hold", obs: stageObservation{Lane: stageLaneSelf, Reason: "excluded-label:needs-rebase", Labels: []string{"needs-rebase"}}, want: stagelabels.Fixing, rank: stageRankOwned},
 		{name: "no claim is a weak admission opinion", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},
 		{name: "claim tier below require_tiers", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonClaimTier}, want: stagelabels.ReadyForHumanMerge, rank: stageRankAdmission},
-		{name: "no claim but needs-rebase", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Labels: []string{"needs-rebase"}}, want: stagelabels.ReturnedToContributor, rank: stageRankOwned},
+		{name: "no claim but needs-rebase", obs: stageObservation{Lane: stageLaneContributor, Reason: contributorLaneReasonNoClaim, Labels: []string{"needs-rebase"}}, want: stagelabels.NeedsAuthor, rank: stageRankOwned},
 		{name: "untrusted role weak", obs: stageObservation{Lane: stageLaneTrusted, Reason: "untrusted-author-role"}, want: stagelabels.ReadyForHumanMerge, rank: stageRankRole},
 		{name: "human merge path", obs: stageObservation{Lane: stageLaneSelf, Reason: autoMergeReasonHumanMergePath}, want: stagelabels.NeedsDecision, rank: stageRankOwned},
 		{name: "approved green unclassified reason", obs: stageObservation{Lane: stageLaneContributor, Reason: "something-new", Detail: approve}, want: stagelabels.AwaitingMergeAdmission, rank: stageRankRole},
@@ -1013,14 +1013,14 @@ func TestApplyStageLabelsRecordsVerdictReason(t *testing.T) {
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-needs-author"}}) {
 		t.Fatalf("added=%v", api.added)
 	}
 	rec, _ := store.Get(stageKey("acme", "widget", 12403))
 	if rec.Reason != "reviewer-verdict:changes_requested" {
 		t.Fatalf("stored reason %q", rec.Reason)
 	}
-	if len(api.comments) == 0 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 072-returned-to-contributor: reviewer-verdict:changes_requested") {
+	if len(api.comments) == 0 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 072-needs-author: reviewer-verdict:changes_requested") {
 		t.Fatalf("comments=%v", api.comments)
 	}
 }
@@ -1043,17 +1043,17 @@ func TestClassifyStageRedCheckIsRepairStageNever080Or100(t *testing.T) {
 		reason string
 	}{
 		// would be 100
-		{name: "soaking with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
-		{name: "merge-failed with red optional", obs: stageObservation{Lane: stageLaneTrusted, HeadSHA: "sha", Reason: "merge-failed", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "soaking with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: red}, want: stagelabels.NeedsAuthor, reason: named},
+		{name: "merge-failed with red optional", obs: stageObservation{Lane: stageLaneTrusted, HeadSHA: "sha", Reason: "merge-failed", Detail: red}, want: stagelabels.NeedsAuthor, reason: named},
 		{name: "self-authored release-hold with red optional", obs: stageObservation{Lane: stageLaneSelf, HeadSHA: "sha", Reason: "release-hold", Detail: red}, want: stagelabels.Fixing, reason: named},
 		// would be 080
-		{name: "author side done with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
-		{name: "lane error with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Err: true, Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "author side done with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Detail: red}, want: stagelabels.NeedsAuthor, reason: named},
+		{name: "lane error with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Err: true, Detail: red}, want: stagelabels.NeedsAuthor, reason: named},
 		// would be 050/060
-		{name: "pending with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-pending:lint", Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
-		{name: "no verdict with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonNoVerdict, Detail: red}, want: stagelabels.ReturnedToContributor, reason: named},
+		{name: "pending with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-pending:lint", Detail: red}, want: stagelabels.NeedsAuthor, reason: named},
+		{name: "no verdict with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonNoVerdict, Detail: red}, want: stagelabels.NeedsAuthor, reason: named},
 		// red required: the lane's own reason
-		{name: "red required", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: red}, want: stagelabels.ReturnedToContributor},
+		{name: "red required", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: red}, want: stagelabels.NeedsAuthor},
 		{name: "red required self-authored", obs: stageObservation{Lane: stageLaneSelf, HeadSHA: "sha", Reason: "required-check-failing:build-gate", Detail: approve}, want: stagelabels.Fixing},
 		// green
 		{name: "soaking all green", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h39m)", Detail: approve}, want: stagelabels.MergeQueue},
@@ -1115,7 +1115,7 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 	// An optional check on the same head went red: 100 → 072, named.
 	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), soaking, []string{redName})
 	// Retired label: the backward hop is recorded as history + comment, never as stage/regressed.
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-needs-author"}}) || !reflect.DeepEqual(api.removed, []string{"stage/100-merge-queue"}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
 	rec, _ := store.Get(key)
@@ -1125,12 +1125,12 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 	if rec.Reason != "optional-check-failing:"+redName {
 		t.Fatalf("stored reason %q", rec.Reason)
 	}
-	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 072-returned-to-contributor: optional-check-failing:"+redName) {
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "stage 100-merge-queue → 072-needs-author: optional-check-failing:"+redName) {
 		t.Fatalf("comments=%v", api.comments)
 	}
 
 	// Same head, check re-run green: the lane's soaking reason is 100 again.
-	cycle(stagePR(12457, "stage/072-returned-to-contributor", "role/trusted", "author/human"), soaking, nil)
+	cycle(stagePR(12457, "stage/072-needs-author", "role/trusted", "author/human"), soaking, nil)
 	if !reflect.DeepEqual(api.added, [][]string{{"stage/100-merge-queue"}}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
@@ -1138,16 +1138,16 @@ func TestApplyStageLabelsRedCheckDisplacesMergeQueueAndAwaitingAdmission(t *test
 	// Red again while the lane stops on a reason no stage claims (would be
 	// 080): still 072.
 	cycle(stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human"), "review-state-check", []string{redName})
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-needs-author"}}) {
 		t.Fatalf("added=%v removed=%v", api.added, api.removed)
 	}
 	cycle(stagePR(12457, "stage/080-awaiting-merge-admission", "role/trusted", "author/human"), "review-state-check", []string{redName})
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-returned-to-contributor"}}) || !reflect.DeepEqual(api.removed, []string{"stage/080-awaiting-merge-admission"}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/072-needs-author"}}) || !reflect.DeepEqual(api.removed, []string{"stage/080-awaiting-merge-admission"}) {
 		t.Fatalf("080 with red CI: added=%v removed=%v", api.added, api.removed)
 	}
 
 	// New head pushed: a note recorded for the old head does not bind it.
-	cycle(stagePR(12457, "stage/072-returned-to-contributor", "role/trusted", "author/human"), soaking, nil)
+	cycle(stagePR(12457, "stage/072-needs-author", "role/trusted", "author/human"), soaking, nil)
 	pr := stagePR(12457, "stage/100-merge-queue", "role/trusted", "author/human")
 	pr.Head.SHA = gh.Ptr("sha2")
 	cycle(pr, soaking, []string{redName})
@@ -1172,10 +1172,10 @@ func TestApplyStageLabelsRecordsAuthor(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, ok := store.Get(stageKey("acme", "widget", 21))
-	if !ok || rec.Stage != stagelabels.ReturnedToContributor || rec.Author != "alice" {
+	if !ok || rec.Stage != stagelabels.NeedsAuthor || rec.Author != "alice" {
 		t.Fatalf("record %+v ok=%v", rec, ok)
 	}
-	if got := store.ByAuthor("alice", stagelabels.ReturnedToContributor); len(got) != 1 {
+	if got := store.ByAuthor("alice", stagelabels.NeedsAuthor); len(got) != 1 {
 		t.Fatalf("ByAuthor = %+v", got)
 	}
 }
@@ -1223,7 +1223,7 @@ func TestApplyStageLabels_HealsDuplicateStage(t *testing.T) {
 	if !reflect.DeepEqual(api.removed, []string{"stage/020-claimed", "stage/050-review-pending"}) {
 		t.Fatalf("removed %v, want both 020 and 050", api.removed)
 	}
-	if len(api.added) != 1 || strings.Join(api.added[0], ",") != "stage/072-returned-to-contributor" {
+	if len(api.added) != 1 || strings.Join(api.added[0], ",") != "stage/072-needs-author" {
 		t.Fatalf("added %v, want only 072", api.added)
 	}
 }
@@ -1330,13 +1330,13 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, ok := store.Get(stageKey("acme", "widget", 31))
-	if !ok || rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != stagelabels.LaneReasonDCOMissing {
+	if !ok || rec.Stage != stagelabels.NeedsAuthor || rec.Reason != stagelabels.LaneReasonDCOMissing {
 		t.Fatalf("record %+v ok=%v", rec, ok)
 	}
 	if rec.DCO("sha") != stagelabels.DCONo || rec.DCOTotal != 3 || rec.DCOUnsigned != 2 {
 		t.Fatalf("dco cache %+v", rec)
 	}
-	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor"}) {
+	if len(api.added) != 1 || !reflect.DeepEqual(api.added[0], []string{"author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-needs-author"}) {
 		t.Fatalf("added %v", api.added)
 	}
 	if !reflect.DeepEqual(api.removed, []string{"dco-signoff: yes"}) {
@@ -1354,7 +1354,7 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 
 	// Same head next cycle: cached, no second read, no writes.
 	api.reset()
-	pr = stagePR(31, "bug", "author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor")
+	pr = stagePR(31, "bug", "author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-needs-author")
 	pr.User = &gh.User{Login: gh.Ptr("alice")}
 	pr.Body = gh.Ptr(clankerBody)
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
@@ -1369,7 +1369,7 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	api.mu.Lock()
 	api.commits[31] = []string{"feat: a\n\nSigned-off-by: A <a@x>", "fix: b\n\nSigned-off-by: A <a@x>", "fix: c\n\nsigned-off-by: A <a@x>"}
 	api.mu.Unlock()
-	pr = stagePR(31, "bug", "author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-returned-to-contributor")
+	pr = stagePR(31, "bug", "author/clanker", stagelabels.NoDCOLabel, "role/contributor", "stage/072-needs-author")
 	pr.Head.SHA = gh.Ptr("sha2")
 	pr.User = &gh.User{Login: gh.Ptr("alice")}
 	pr.Body = gh.Ptr(clankerBody)
@@ -1382,7 +1382,7 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 		t.Fatalf("signed head: reads=%d added=%v removed=%v", api.commitReads, api.added, api.removed)
 	}
 	sort.Strings(api.removed)
-	if !reflect.DeepEqual(api.removed, []string{stagelabels.NoDCOLabel, "stage/072-returned-to-contributor"}) {
+	if !reflect.DeepEqual(api.removed, []string{stagelabels.NoDCOLabel, "stage/072-needs-author"}) {
 		t.Fatalf("signed head removed %v", api.removed)
 	}
 
@@ -1469,7 +1469,7 @@ func TestApplyStageLabelsDCOGatePerRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, _ = store.Get(stageKey("acme", "widget", 42))
-	if rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != stagelabels.LaneReasonDCOMissing || len(api.comments) != 1 {
+	if rec.Stage != stagelabels.NeedsAuthor || rec.Reason != stagelabels.LaneReasonDCOMissing || len(api.comments) != 1 {
 		t.Fatalf("configured required: %+v comments=%d", rec, len(api.comments))
 	}
 

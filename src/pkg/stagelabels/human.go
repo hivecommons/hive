@@ -6,7 +6,7 @@ package stagelabels
 // by reading the swarm verdict, CI, DCO, the sentinel label, the soak timer
 // and the hold modifiers by hand. The stage now answers it:
 //
-//   - 072 returned-to-contributor (070 fixing for a hive PR): the head is not
+//   - 072 needs-author (070 fixing for a hive PR): the head is not
 //     mergeable on its merits — verdict changes_requested, red checks, DCO
 //     missing, conflicts. The author acts.
 //   - 050 review-pending: no verdict for this head yet (or the head was just
@@ -116,7 +116,7 @@ type Evidence struct {
 	// HumanSummaries are reviewer summaries for requires_human verdicts that
 	// did not carry a structured decision question.
 	HumanSummaries []string
-	// SelfAuthored selects 070 fixing over 072 returned-to-contributor for
+	// SelfAuthored selects 070 fixing over 072 needs-author for
 	// the "author must act" outcome.
 	SelfAuthored bool
 }
@@ -166,7 +166,7 @@ const (
 
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
 func RouteHuman(e Evidence) Route {
-	fixing := ReturnedToContributor
+	fixing := NeedsAuthor
 	if e.SelfAuthored {
 		fixing = Fixing
 	}

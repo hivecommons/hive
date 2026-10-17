@@ -738,7 +738,7 @@ func fixingStage(o stageObservation) stagelabels.Stage {
 	if o.Lane == stageLaneSelf {
 		return stagelabels.Fixing
 	}
-	return stagelabels.ReturnedToContributor
+	return stagelabels.NeedsAuthor
 }
 
 // classifyStage maps one lane observation to a stage opinion. Reason
@@ -1057,7 +1057,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			store.Forget(key)
 			c.resolveNudge(ctx, prevRec, hadPrev, obs)
 		} else {
-			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && prevRec.AdoptedInPlace() {
+			if verdict.Stage == stagelabels.NeedsAuthor && hadPrev && prevRec.AdoptedInPlace() {
 				// In-place adoption: a head the hive pushed keeps the
 				// adoption; a head the contributor pushed yields it.
 				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec)
@@ -1067,7 +1067,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 				prevRec, _ = store.Get(key)
 			}
-			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && (prevRec.Adopted(obs.HeadSHA) || prevRec.AdoptedInPlace()) {
+			if verdict.Stage == stagelabels.NeedsAuthor && hadPrev && (prevRec.Adopted(obs.HeadSHA) || prevRec.AdoptedInPlace()) {
 				// Adopted at this head: the lane still sees a red
 				// contributor PR, but the hive owns it now.
 				verdict.Stage = stagelabels.AdoptedByHive
@@ -1079,7 +1079,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if dcoRead {
 				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned)
 			}
-			if verdict.Stage != stagelabels.ReturnedToContributor {
+			if verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
 			}
 			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
@@ -1162,7 +1162,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
-		if want.Stage == stagelabels.ReturnedToContributor && (policy.ContributorNudge || policy.Adoption) {
+		if want.Stage == stagelabels.NeedsAuthor && (policy.ContributorNudge || policy.Adoption) {
 			// The 072 interrupt machinery (nudge + adoption) is for
 			// author/clanker only: there is a hive on the other end to
 			// interrupt or stand in for. Human and hive-authored PRs

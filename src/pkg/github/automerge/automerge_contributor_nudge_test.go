@@ -137,7 +137,7 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 
 	// Same head, same stage, next cycles: idempotent.
 	api.reset()
-	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	labels := []string{"stage/072-needs-author", "role/contributor", "author/clanker"}
 	clock.advance(time.Hour)
 	observe(nudgePR(7, "aaa", labels...), "check-failing:unit")
 	if api.writes() != 0 || len(sink.nudges) != 1 {
@@ -158,14 +158,14 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 	}
 	api.reset()
 	clock.advance(48 * time.Hour)
-	observe(nudgePR(7, "aaa", "stage/stalled", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
+	observe(nudgePR(7, "aaa", "stage/stalled", "stage/072-needs-author", "role/contributor", "author/clanker"), "check-failing:unit")
 	if len(nudgeComments(api)) != 0 || len(sink.nudges) != 2 {
 		t.Fatalf("third nudge posted: %v", api.comments)
 	}
 
 	// Author pushes a new head that is still red: count restarts.
 	api.reset()
-	observe(nudgePR(7, "bbb", "stage/stalled", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "changes-requested")
+	observe(nudgePR(7, "bbb", "stage/stalled", "stage/072-needs-author", "role/contributor", "author/clanker"), "changes-requested")
 	if got := nudgeComments(api); len(got) != 1 || !strings.Contains(got[0], "head=bbb n=1") || !strings.Contains(got[0], "reviewer requested changes") {
 		t.Fatalf("new-head nudge: %v", api.comments)
 	}
@@ -178,7 +178,7 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 
 	// New head goes green and awaits review: leaves 072 → Resolve once.
 	api.reset()
-	observe(nudgePR(7, "ccc", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "required-check-missing:unit")
+	observe(nudgePR(7, "ccc", "stage/072-needs-author", "role/contributor", "author/clanker"), "required-check-missing:unit")
 	if !reflect.DeepEqual(sink.resolved, []int{7}) {
 		t.Fatalf("resolved=%v", sink.resolved)
 	}
@@ -237,7 +237,7 @@ func TestContributorNudgeTerminalDisabledAndNilSink(t *testing.T) {
 	// RenudgeInterval overrides the dwell: second nudge after 1h, not 24h.
 	api.reset()
 	clock.advance(time.Hour)
-	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", nudgePR(9, "aaa", "stage/072-returned-to-contributor", "role/trusted", "author/clanker"), "status-failure", false, nil)
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", nudgePR(9, "aaa", "stage/072-needs-author", "role/trusted", "author/clanker"), "status-failure", false, nil)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
