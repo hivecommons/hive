@@ -673,12 +673,15 @@ type FrontendAgent struct {
 	// the prompt. The SPA renders this as "Waiting on CI" instead of
 	// "Working" so a stalled-on-CI agent no longer looks indistinguishable
 	// from one making progress.
-	AwaitingCI        bool   `json:"awaitingCI,omitempty"`
-	Paused            bool   `json:"paused"`
-	PausedAt          string `json:"pausedAt,omitempty"`
-	PausedReason      string `json:"pausedReason,omitempty"`
-	PausedTrigger     string `json:"pausedTrigger,omitempty"`
-	PausedBy          string `json:"pausedBy,omitempty"`
+	AwaitingCI    bool   `json:"awaitingCI,omitempty"`
+	Paused        bool   `json:"paused"`
+	PausedAt      string `json:"pausedAt,omitempty"`
+	PausedReason  string `json:"pausedReason,omitempty"`
+	PausedTrigger string `json:"pausedTrigger,omitempty"`
+	PausedBy      string `json:"pausedBy,omitempty"`
+	// OperatorStopped is true when the agent was stopped explicitly (not by a
+	// crash), so the governor will not revive it.
+	OperatorStopped   bool   `json:"operatorStopped,omitempty"`
 	OffByCadence      bool   `json:"offByCadence"`
 	NoCadence         bool   `json:"noCadence"`
 	NeedsLogin        bool   `json:"needsLogin"`

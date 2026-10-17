@@ -54,3 +54,15 @@ func TestStartClearsOperatorStopped(t *testing.T) {
 		t.Fatal("Start must clear the operator-stop marker")
 	}
 }
+
+func TestRestartClearsOperatorStopped(t *testing.T) {
+	m := testManager(5)
+	m.agents["a"] = &AgentProcess{Name: "a", State: StateStopped, OperatorStopped: true}
+	_ = m.Restart(t.Context(), "a") // relaunch outcome irrelevant; the marker is cleared first
+	if m.agents["a"].OperatorStopped {
+		t.Fatal("Restart must clear the operator-stop marker")
+	}
+	if !m.GovernorMayStart("a") && m.agents["a"].State == StateStopped {
+		t.Fatal("restarted agent must be eligible for governor crash recovery")
+	}
+}

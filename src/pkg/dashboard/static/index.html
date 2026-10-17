@@ -10074,7 +10074,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       /* 'disabled' outranks 'down': both reach here with state!=='running',
          but a switched-off agent is not a fault, and labelling it "down" sent
          operators looking for a crash that never happened. */
-      const stateLabel = agentSessionUnavailable(a) ? 'disabled' : needsLoginDown ? 'needs login' : isStopped ? 'down' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : isRunning ? (a.awaitingCI ? 'Waiting on CI' : 'working') : 'idle';
+      const stateLabel = agentSessionUnavailable(a) ? 'disabled' : needsLoginDown ? 'needs login' : isStopped ? (a.operatorStopped ? 'stopped by operator' : 'down') : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? agentCadenceOffLabel() : isRunning ? (a.awaitingCI ? 'Waiting on CI' : 'working') : 'idle';
 
       const kickId = `oc-kick-${a.name}`;
       const prevInput = document.getElementById(kickId);

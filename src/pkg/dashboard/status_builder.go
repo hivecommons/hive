@@ -1051,6 +1051,7 @@ func buildAgentsWithHidden(statuses map[string]*agent.AgentProcess, cfg *config.
 			PausedReason:    redactTokens(proc.PausedReason),
 			PausedTrigger:   proc.PausedTrigger,
 			PausedBy:        proc.PausedBy,
+			OperatorStopped: proc.OperatorStopped,
 			OffByCadence:    offByCadence,
 			NoCadence:       noCadence,
 			CLI:             cli,
