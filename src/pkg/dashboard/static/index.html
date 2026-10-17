@@ -3899,6 +3899,11 @@
     /* Experiment cards (#12532) reuse the Inception campaign list look:
        .campaigns-card / .campaign-row / .campaign-pill / .campaign-row-actions. */
     .nous-exp-row .campaign-row-title { white-space: normal; overflow-wrap: anywhere; }
+    /* Breathing room on the card: title → meta row → stage / baseline (#12697). */
+    .nous-exp-row .campaign-row-meta { margin-top: var(--sp-3); }
+    .nous-exp-row .nous-exp-stage, .nous-exp-row .nous-exp-baseline { margin-top: var(--sp-3); }
+    /* The stat tiles used to touch the Experiments card below them. */
+    .nous-stat-grid + .nous-exp-cards { margin-top: var(--sp-4); }
     .nous-exp-row[data-status="paused"] { opacity: 0.75; }
     .nous-exp-pill[data-status="active"] { border-color: var(--green); color: var(--green); }
     .nous-exp-pill[data-status="paused"] { border-color: var(--yellow); color: var(--yellow); }
@@ -3916,11 +3921,18 @@
     .nous-exp-stage[data-stage="running"] .nous-exp-stage-label { color: var(--accent); }
     .nous-exp-stage-detail { color: var(--muted); }
     .nous-stat .lbl .config-info { margin-left: var(--sp-1); }
-    .nous-new-exp { border: 1px dashed var(--border); border-radius: var(--r); padding: var(--sp-4); margin-bottom: var(--sp-4); display: grid; gap: var(--sp-3); }
-    .nous-new-exp label { font-size: var(--fs-sm); font-weight: 600; }
+    /* Add / edit experiment is a modal (hive-dialog recipe), never an inline
+       slot under the Experiments header: New and Edit used to share that
+       slot and ✎ silently morphed an open New form into Edit (#12697). */
+    .nous-exp-dialog { width: 560px; }
+    .nous-exp-dialog .hive-dialog-title { margin-bottom: var(--sp-2); }
+    .nous-exp-dialog-help { font-size: var(--fs-sm); color: var(--muted); line-height: 1.45; margin-bottom: var(--sp-5); }
+    .nous-new-exp { display: grid; gap: var(--sp-4); margin-bottom: var(--sp-5); }
+    .nous-new-exp label { display: block; font-size: var(--fs-sm); font-weight: 600; margin-bottom: var(--sp-3); }
     .nous-new-exp textarea, .nous-new-exp input[type="text"] { width: 100%; box-sizing: border-box; }
     .nous-new-exp .nous-lab-chips { margin-top: var(--sp-1); }
     .nous-new-exp-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; flex-wrap: wrap; }
+    .nous-exp-dialog .nous-conflict-warn { margin-bottom: var(--sp-5); }
     /* In-app scope-conflict warning: never window.alert/confirm. */
     .nous-conflict-warn { background: color-mix(in srgb, var(--yellow) 12%, transparent); border: 1px solid var(--yellow); border-radius: var(--r); padding: var(--sp-4); font-size: var(--fs-sm); display: grid; gap: var(--sp-2); }
     .nous-conflict-warn strong { color: var(--text); }
@@ -3932,7 +3944,6 @@
     .nous-exp-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .nous-exp-version { font-size: var(--fs-sm); margin-top: var(--sp-1); }
     .nous-exp-scope-warn { font-size: var(--fs-sm); margin-top: var(--sp-1); font-style: italic; }
-    .nous-new-exp-title { font-weight: 600; }
     .nous-data-note { display: grid; gap: var(--sp-2); }
 
     /* Knowledge Panel */
@@ -6687,12 +6698,12 @@
 
         <details class="faq-q" id="faq-create-experiment">
           <summary>Where do I create an experiment?</summary>
-          <p>On the Experiment Lab section itself: press <strong>+ New experiment</strong> and fill in the research question, an optional hypothesis and the scope (which repos it may touch; none selected = hive-wide). That inline form is the only place an experiment is defined. The ⚙ <em>Experiment Lab Configuration</em> dialog holds <strong>lab-wide guardrails</strong> only — the Trust Ladder, the Output Mode and safety labels, fast-fail bounds, timing, and <em>Repos experiments may target</em>, the allow-list the scope pills are drawn from (none selected = any repo). If the allow-list changes later, running experiments keep their scope and their card shows a muted note for any repo that is no longer allowed. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">defining experiments</a>.</p>
+          <p>On the Experiment Lab section itself: press <strong>+ New experiment</strong> and fill in the research question, an optional hypothesis and the scope (which repos it may touch; none selected = hive-wide) in the <em>New experiment</em> dialog. That dialog is the only place an experiment is defined. The ⚙ <em>Experiment Lab Configuration</em> dialog holds <strong>lab-wide guardrails</strong> only — the Trust Ladder, the Output Mode and safety labels, fast-fail bounds, timing, and <em>Repos experiments may target</em>, the allow-list the scope pills are drawn from (none selected = any repo). If the allow-list changes later, running experiments keep their scope and their card shows a muted note for any repo that is no longer allowed. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">defining experiments</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-edit-experiment">
           <summary>Can I change an experiment after it starts?</summary>
-          <p>Yes — the ✎ <em>Edit experiment</em> icon on its card opens the same form pre-filled. Changing only the hypothesis (or tags) is saved in place and keeps the baseline. Changing the <strong>research question or the scope</strong> invalidates the baseline and the hypotheses judged against it, so the lab asks first: <em>"Changing the question or scope restarts this experiment: baseline resets to 0/672 (≈7 days) and hypotheses/proposals so far are archived with the old version."</em> <strong>Restart experiment</strong> archives the current card as version N (it stays readable under <em>Previous experiments</em>) and creates version N+1 with the edited fields and a fresh baseline — after running the same scope-conflict check as a new experiment; <strong>Keep as is</strong> changes nothing. The new card reads <em>v2 · restarted from #1</em>. Paused and concluded experiments follow the same rule. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">editing an experiment</a>.</p>
+          <p>Yes — the ✎ <em>Edit experiment</em> icon on its card opens the same dialog pre-filled (titled <em>Edit experiment #N</em>; finish or cancel an open form before opening another). Changing only the hypothesis (or tags) is saved in place and keeps the baseline. Changing the <strong>research question or the scope</strong> invalidates the baseline and the hypotheses judged against it, so the lab asks first: <em>"Changing the question or scope restarts this experiment: baseline resets to 0/672 (≈7 days) and hypotheses/proposals so far are archived with the old version."</em> <strong>Restart experiment</strong> archives the current card as version N (it stays readable under <em>Previous experiments</em>) and creates version N+1 with the edited fields and a fresh baseline — after running the same scope-conflict check as a new experiment; <strong>Keep as is</strong> changes nothing. The new card reads <em>v2 · restarted from #1</em>. Paused and concluded experiments follow the same rule. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">editing an experiment</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-multiple-experiments">
@@ -24366,24 +24377,32 @@ function burnAreaChart() {
       </div>`;
     }
 
-    // Inline experiment form state: kept across status re-renders the way
-    // Inception carries its campaign filters (#11032). editId > 0 means the
-    // form edits that experiment; original holds its pre-edit values so a
-    // question/scope change can be told from a hypothesis-only one.
-    let _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
+    // Add / edit experiment dialog state. editId > 0 means the dialog edits
+    // that experiment; original holds its pre-edit values so a question /
+    // scope change can be told from a hypothesis-only one; returnFocus is
+    // the button that opened it, re-focused on close (#12697).
+    let _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null, returnFocus: null };
+    const NOUS_EXP_DIALOG_ID = 'nous-exp-overlay';
+    const NOUS_EXP_EDIT_HELP = 'Changing the question or scope restarts it; the hypothesis may change freely.';
+    const NOUS_EXP_NEW_HELP = 'Enter the research question and pick the repos it may touch; the baseline starts at 0 immediately.';
+    const NOUS_EXP_DIALOG_BUSY = 'Finish or cancel the open experiment form first';
 
     // The one place an experiment is defined (new or edited): question,
-    // hypothesis and scope. The scope pills are the allow-list from the ⚙
-    // dialog (all project repos when it is empty) plus, when editing, any
-    // repo the experiment already targets so it can still be deselected.
+    // hypothesis and scope, rendered as the panel of a modal dialog. The
+    // scope pills are the allow-list from the ⚙ dialog (all project repos
+    // when it is empty) plus, when editing, any repo the experiment already
+    // targets so it can still be deselected.
     function nousNewExperimentForm(allowedRepos, presetRepos, conflict, edit) {
       const repos = Array.isArray(allowedRepos) ? allowedRepos.slice() : [];
       const preset = Array.isArray(presetRepos) ? presetRepos : [];
       for (const r of preset) if (!repos.includes(r)) repos.push(r);
       const editing = !!edit;
       const editId = editing ? (Number(edit.id) || 0) : 0;
-      let h = `<div class="nous-new-exp" id="nous-new-exp" role="form" aria-label="${editing ? `Edit experiment #${editId}` : 'New experiment'}"${editing ? ` data-edit-id="${editId}"` : ''}>`;
-      if (editing) h += `<div class="nous-new-exp-title">Edit experiment #${editId} <span class="nous-lab-h3-note">changing the question or scope restarts it; the hypothesis may change freely</span></div>`;
+      const title = editing ? `Edit experiment #${editId}` : 'New experiment';
+      let h = `<div class="hive-dialog nous-exp-dialog" role="dialog" aria-modal="true" aria-labelledby="nous-exp-dialog-title" aria-describedby="nous-exp-dialog-help"${editing ? ` data-edit-id="${editId}"` : ''}>`;
+      h += `<div id="nous-exp-dialog-title" class="hive-dialog-title">${escapeHtml(title)}</div>`;
+      h += `<div id="nous-exp-dialog-help" class="nous-exp-dialog-help">${escapeHtml(editing ? NOUS_EXP_EDIT_HELP : NOUS_EXP_NEW_HELP)}</div>`;
+      h += `<div class="nous-new-exp" id="nous-new-exp" role="form" aria-label="${escapeHtml(title)}">`;
       h += `<div><label for="nous-ne-question">Research question</label><textarea id="nous-ne-question" rows="2" placeholder="Can we cut CI time by 20% by sharding the slowest test package?">${editing ? escapeHtml(nousResearchQuestionText(edit.question)) : ''}</textarea></div>`;
       h += `<div><label for="nous-ne-hypothesis">Hypothesis <span class="nous-lab-h3-note">(optional)</span></label><input type="text" id="nous-ne-hypothesis" placeholder="What you expect to change, and by how much" value="${editing ? escapeHtml(edit.hypothesis || '') : ''}"></div>`;
       h += '<div><label>Scope <span class="nous-lab-h3-note">(repos this experiment may touch, from the lab\'s allow-list; none selected = hive-wide)</span></label>';
@@ -24398,7 +24417,7 @@ function burnAreaChart() {
         }
         h += '</div>';
       }
-      h += '</div>';
+      h += '</div></div>';
       if (conflict) h += nousConflictWarning(conflict);
       h += '<div class="nous-new-exp-actions">';
       h += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="nousCancelNewExperiment">Cancel</button>';
@@ -24430,12 +24449,7 @@ function burnAreaChart() {
       const open = (campaigns || []).filter(c => c && c.status !== 'archived');
       let h = '<div class="campaigns-card nous-exp-cards">';
       h += '<div class="campaigns-head"><div><div class="campaigns-title">Experiments</div><div class="campaigns-subtitle">Each running experiment has its own research question, scope and baseline. Experiments may run side by side when their scopes do not overlap.</div></div>';
-      h += `<button class="hv-btn btn-primary btn-sm" data-action="nousOpenNewExperiment" title="Start another experiment with its own question, scope and baseline"${_nousNewExp.open ? ' disabled' : ''}>+ New experiment</button></div>`;
-      if (_nousNewExp.open) {
-        const edit = _nousNewExp.editId ? (campaigns || []).find(c => c && Number(c.id) === _nousNewExp.editId) : null;
-        const preset = edit ? ((edit.scope && edit.scope.repos) || []) : [];
-        h += nousNewExperimentForm(nousAllowedRepos(st), preset, _nousNewExp.conflict, edit);
-      }
+      h += '<button class="hv-btn btn-primary btn-sm" data-action="nousOpenNewExperiment" title="Start another experiment with its own question, scope and baseline">+ New experiment</button></div>';
       h += '<div class="campaigns-list" id="nous-exp-list">';
       if (open.length === 0) {
         h += '<div class="campaign-empty">Add an experiment: enter a research question and pick the repos it may touch.</div>';
@@ -24465,29 +24479,94 @@ function burnAreaChart() {
       document.querySelectorAll('#nous-new-exp .nous-ne-pill').forEach(p => nousRepoPillSetState(p, v.repos.includes(p.dataset.repo)));
     }
 
-    function nousOpenNewExperiment() {
-      if (!experimentLabEnabled()) return;
-      _nousNewExp = { open: true, conflict: null, pending: false, editId: 0, original: null };
-      renderNous();
+    // Render (or re-render) the add/edit dialog into its body-level overlay.
+    // It lives outside #nous-panel so status re-renders never touch it; the
+    // hive-dialog-overlay class puts it on the shared Esc handler
+    // (hiveDismissTopOverlay → hiveDialogClose) under any hiveConfirm on top.
+    function nousRenderExperimentDialog() {
+      const s = (_nousCache && _nousCache.status) || {};
+      const edit = _nousNewExp.editId ? (s.campaigns || []).find(c => c && Number(c.id) === _nousNewExp.editId) : null;
+      const preset = edit ? ((edit.scope && edit.scope.repos) || []) : [];
+      let overlay = document.getElementById(NOUS_EXP_DIALOG_ID);
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = NOUS_EXP_DIALOG_ID;
+        overlay.className = 'hive-dialog-overlay nous-exp-overlay';
+        hiveRememberModalOpen(overlay);
+        overlay.hiveDialogClose = nousCancelNewExperiment;
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) nousCancelNewExperiment(); });
+        overlay.addEventListener('keydown', nousExperimentDialogTrapTab);
+        document.body.appendChild(overlay);
+      }
+      overlay.innerHTML = nousNewExperimentForm(nousAllowedRepos(s), preset, _nousNewExp.conflict, edit);
+      return overlay;
+    }
+
+    // Keep Tab inside the dialog while it is open (same loop as hiveWireDialog).
+    function nousExperimentDialogTrapTab(e) {
+      if (e.key !== 'Tab') return;
+      const overlay = e.currentTarget;
+      const nodes = Array.from(overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter(el => !el.disabled && el.offsetParent !== null);
+      if (!nodes.length) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+
+    function nousFocusExperimentQuestion() {
       const q = document.getElementById('nous-ne-question');
       if (q) q.focus();
     }
 
-    // Edit opens the same form pre-filled from the card (#12532 follow-up).
+    // Only one add/edit dialog at a time: a second trigger while one is open
+    // (e.g. ✎ while a New draft is being typed) is blocked, the open dialog
+    // is re-focused and a toast says why, so no draft is ever silently
+    // replaced (#12697).
+    function nousExperimentDialogBusy() {
+      if (!_nousNewExp.open) return false;
+      showToast(NOUS_EXP_DIALOG_BUSY, 'info');
+      nousFocusExperimentQuestion();
+      return true;
+    }
+
+    function nousOpenNewExperiment() {
+      if (!experimentLabEnabled()) return;
+      if (nousExperimentDialogBusy()) return;
+      _nousNewExp = { open: true, conflict: null, pending: false, editId: 0, original: null, returnFocus: document.activeElement };
+      nousRenderExperimentDialog();
+      nousFocusExperimentQuestion();
+    }
+
+    // Edit opens the same dialog pre-filled from the card (#12532 follow-up).
     function nousEditExperiment(id) {
       if (!experimentLabEnabled()) return;
       const s = (_nousCache && _nousCache.status) || {};
       const c = (s.campaigns || []).find(x => x && Number(x.id) === Number(id));
       if (!c) { showToast(`Experiment #${id} not found`, 'error'); return; }
-      _nousNewExp = { open: true, conflict: null, pending: false, editId: Number(id), original: { question: nousResearchQuestionText(c.question), repos: ((c.scope && c.scope.repos) || []).slice() } };
-      renderNous();
-      const q = document.getElementById('nous-ne-question');
-      if (q) q.focus();
+      if (nousExperimentDialogBusy()) return;
+      _nousNewExp = { open: true, conflict: null, pending: false, editId: Number(id), original: { question: nousResearchQuestionText(c.question), repos: ((c.scope && c.scope.repos) || []).slice() }, returnFocus: document.activeElement };
+      nousRenderExperimentDialog();
+      nousFocusExperimentQuestion();
     }
 
+    // Close + reset, then return focus to the button that opened the dialog.
+    // The panel may have re-rendered meanwhile, so fall back to the matching
+    // trigger by selector when the remembered element is gone.
     function nousCancelNewExperiment() {
-      _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
-      renderNous();
+      const { editId, returnFocus } = _nousNewExp;
+      _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null, returnFocus: null };
+      const overlay = document.getElementById(NOUS_EXP_DIALOG_ID);
+      if (overlay) overlay.remove();
+      let target = returnFocus && returnFocus.isConnected ? returnFocus : null;
+      if (!target) target = editId ? document.querySelector(`.nous-exp-icon-edit[data-arg0="${editId}"]`) : document.querySelector('[data-action="nousOpenNewExperiment"]');
+      if (target && typeof target.focus === 'function') target.focus();
+    }
+
+    function nousSetExperimentDialogPending(pending) {
+      _nousNewExp.pending = !!pending;
+      const btn = document.querySelector(`#${NOUS_EXP_DIALOG_ID} [data-action="nousSubmitNewExperiment"]`);
+      if (btn) btn.disabled = !!pending;
     }
 
     function nousNarrowScope() {
@@ -24497,11 +24576,10 @@ function burnAreaChart() {
         const repo = String(p.dataset.repo || '').toLowerCase();
         if (shared.size === 0 || shared.has(repo)) nousRepoPillSetState(p, false);
       });
-      const warn = document.querySelector('#nous-new-exp .nous-conflict-warn');
+      const warn = document.querySelector(`#${NOUS_EXP_DIALOG_ID} .nous-conflict-warn`);
       if (warn) warn.remove();
       _nousNewExp.conflict = null;
-      const q = document.getElementById('nous-ne-question');
-      if (q) q.focus();
+      nousFocusExperimentQuestion();
     }
 
     // nousEditIsMaterial: a changed question or repo set invalidates the
@@ -24535,7 +24613,7 @@ function burnAreaChart() {
         if (!(await hiveConfirm(NOUS_RESTART_CONFIRM))) { showToast('Experiment kept as is', 'info'); return; }
         restart = true;
       }
-      _nousNewExp.pending = true;
+      nousSetExperimentDialogPending(true);
       try {
         const body = { question: v.question, hypothesis: v.hypothesis, scope: { repos: v.repos } };
         let r, j;
@@ -24544,9 +24622,9 @@ function burnAreaChart() {
           ({ r, j } = await nousPatchCampaign(editId, body));
           // The server saw a material change we did not (stale card): ask now.
           if (r.status === 409 && j.code === 'restart_required') {
-            _nousNewExp.pending = false;
+            nousSetExperimentDialogPending(false);
             if (!(await hiveConfirm(NOUS_RESTART_CONFIRM))) { showToast('Experiment kept as is', 'info'); return; }
-            _nousNewExp.pending = true;
+            nousSetExperimentDialogPending(true);
             body.restart = true;
             ({ r, j } = await nousPatchCampaign(editId, body));
           }
@@ -24560,7 +24638,7 @@ function burnAreaChart() {
         if (r.status === 409 && j.code === 'scope_conflict') {
           _nousNewExp.conflict = j;
           _nousNewExp.pending = false;
-          renderNous();
+          nousRenderExperimentDialog();
           nousRestoreNewExperimentValues(v);
           return;
         }
@@ -24569,15 +24647,13 @@ function burnAreaChart() {
           if (!editId) showToast(`Experiment #${cid} started — baseline starts at 0`, 'success');
           else if (j.status === 'restarted') showToast(`Experiment #${editId} archived as v${(j.archived && j.archived.version) || 1}; #${cid} restarted at baseline 0`, 'success');
           else showToast(`Experiment #${editId} updated — baseline kept`, 'success');
-          _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
+          nousCancelNewExperiment();
           fetchNousStatus();
           return;
         }
         showToast(j.error || (editId ? 'Failed to update experiment' : 'Failed to start experiment'), 'error');
       } catch (e) { showToast('Failed: ' + e.message, 'error'); }
-      _nousNewExp.pending = false;
-      renderNous();
-      nousRestoreNewExperimentValues(v);
+      nousSetExperimentDialogPending(false);
     }
 
     async function nousPatchCampaign(id, body) {
@@ -24596,7 +24672,7 @@ function burnAreaChart() {
         showToast(`Experiment #${id} paused`, 'info');
       } catch (e) { showToast('Failed: ' + e.message, 'error'); return; }
       _nousNewExp.conflict = null;
-      renderNous();
+      nousRenderExperimentDialog();
       nousRestoreNewExperimentValues(v);
       await nousSubmitNewExperiment();
     }
@@ -24904,10 +24980,9 @@ function burnAreaChart() {
         html += '</div>';
       }
 
-      // Carry the inline new-experiment draft across a re-render.
-      const draft = _nousNewExp.open ? nousNewExperimentValues() : null;
+      // The add/edit dialog lives outside the panel, so a re-render never
+      // disturbs a draft (#12697).
       setIfChanged(panel, html);
-      if (draft) nousRestoreNewExperimentValues(draft);
     }
 
     async function nousSetMode(mode) {
