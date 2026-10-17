@@ -267,7 +267,7 @@ func (s *Server) nousCampaignOutcome(c nous.Campaign) nous.Outcome {
 	for k, v := range ns.Config {
 		config[k] = v
 	}
-	ledger := append([]map[string]interface{}(nil), ns.Ledger...)
+	ledger := nousRepoOnlyLedger(ns.Ledger)
 	principles := append([]NousPrinciple(nil), ns.Principles...)
 	ns.Mu.Unlock()
 
