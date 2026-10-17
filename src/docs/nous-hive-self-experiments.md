@@ -2,6 +2,9 @@
 
 This guide documents the **Hive-self background experiment mode** within the Nous experiment framework: what it is, the outcome questions it answers, how it differs fundamentally from repository-scoped experiments run in the Experiment Lab, its opt-in background-only boundary, and its guardrails and auto-revert mechanisms.
 
+> [!IMPORTANT]
+> **Delivery status:** This guide describes the Hive-self design, not a fully delivered runner. The opt-in and heartbeat feature-flag delivery seam is tracked in [PR #12421](https://github.com/hivecommons/hive/pull/12421) and is not yet available on `v5`. Cohort scheduling and fast-fail evaluation are separate work; image-channel switching is not implemented by this seam.
+
 ---
 
 ## What is Hive-self experiment mode?
@@ -32,11 +35,11 @@ The boundaries between repo experiments and Hive-self experiments are strictly e
 
 | Dimension | Repo-scoped Experiment ([Experiment Lab](strategy-lab.md)) | Hive-self Background Experiment Mode |
 |---|---|---|
-| **Subject** | Repository files, CI workflows, build scripts, tests | Hive product behavior, agent cadences, model routing, feature flags, release channels (`candidate` vs `stable`) |
+| **Subject** | Repository files, CI workflows, build scripts, tests | Hive product behavior, agent cadences, model routing, feature flags; image-channel trials remain future work |
 | **Visibility** | Spoke dashboard (Experiment Lab panel at ACMM L4+) | **Hidden from spoke dashboard**; zero spoke UI presence |
 | **Execution Surface** | Foregrounds in operator UI; proposals reviewed in dashboard | **Background-only scheduler**; runs silently on opt-in worker hives |
 | **Population** | Single local repository | Matched cohorts of consenting hives (matched on ACMM level, repository count, workload density) |
-| **Control / Delivery** | Local `/api/nous/*` endpoints, dashboard config | Hub heartbeat-delivered feature flags and release channel assignments |
+| **Control / Delivery** | Local `/api/nous/*` endpoints, dashboard config | Planned hub heartbeat-delivered feature flags; no release channel assignments |
 | **Output / Reporting** | Local repo pull requests, issues, or state-only ledger | Aggregated fleet scorecard, Hub owner evidence view, and upstream reports to `hivecommons/hive` |
 | **User Role** | Repository operator directly reviews and applies proposals | Spoke owner opts in to compute contribution; no day-to-day management |
 
@@ -49,10 +52,10 @@ The boundaries between repo experiments and Hive-self experiments are strictly e
 
 The Hive-self runner respects strict operational and privacy boundaries:
 
-1. **Strictly opt-in:** A hive never participates in Hive-self experiments without explicit operator consent.
+1. **Strictly opt-in:** A hive never participates in Hive-self experiments without explicit operator consent. The feature-flag delivery seam in [PR #12421](https://github.com/hivecommons/hive/pull/12421) uses `HIVE_SELF_EXPERIMENTS_OPT_IN=true` in the spoke process environment as its local consent mechanism (default off; the hub cannot opt a spoke in). This variable is not available on `v5` until that implementation lands. Opting in permits assignments; it does not itself start an experiment.
 2. **Hidden from spoke dashboards:** Spoke dashboards show only repo experiments. The Experiment Lab panel, sidebar items, and local status endpoints filter out Hive-self execution state.
 3. **Never on spoke dashboards or spoke repos:** Hive-self experiments never open issues or pull requests on the spoke's managed repositories.
-4. **Delivered via heartbeat:** Active experiment assignments and channel configurations (`candidate` vs `stable`) are delivered via the hub heartbeat control plane.
+4. **Delivered via heartbeat (planned):** The feature-flag delivery seam carries assignments through the hub heartbeat control plane. It does not assign `candidate` or `stable` image channels.
 5. **Reported upstream to `hivecommons/hive`:** Aggregated results, observations, and telemetry are transmitted to `hivecommons/hive` using deduplicated self-reporting rather than local noise. Cross-hive trends and effectiveness scorecards are visible exclusively in the hub owner evidence view.
 
 ---
@@ -95,10 +98,11 @@ Every Hive-self experiment runs through three distinct temporal phases to avoid 
 - **Experiment Window (`experiment_duration_hours`):** Active intervention window where the candidate code, prompt, or feature flag is enabled.
 - **Cooldown Window (`cooldown_hours`):** Mandatory cooldown pause (typically 2–24 hours) after reverting or terminating the experiment, ensuring lingering background tasks or CI queues do not contaminate subsequent trials.
 
-### Feature flag & release channel gating
-Hive-self experiments leverage heartbeat-delivered feature flags:
-- Experiments can assign a hive to evaluate `candidate` vs `stable` image channels as a natural, zero-downtime A/B trial.
-- Specific agent lanes or scheduler features are enabled dynamically via heartbeat response flags without editing local `hive.yaml` configuration files.
+### Feature-flag gating and release-channel boundary
+The delivery seam proposed in [PR #12421](https://github.com/hivecommons/hive/pull/12421) provides heartbeat-delivered **feature flags only**, gated by explicit local opt-in:
+- Background runtime consumers can use the assigned flag to gate behavior without editing local `hive.yaml` configuration files. The seam does not itself implement cohort scheduling or fast-fail evaluation.
+- Withdrawal, an explicit disable, or local opt-out clears the previous assignment when the heartbeat response is applied.
+- Experiments do **not** automatically assign or switch `candidate` vs `stable` image channels. Channel switching remains deferred to the separate image-upgrade protocol; do not expect image-channel A/B trials or image rollback from feature-flag delivery.
 
 ---
 
@@ -111,7 +115,7 @@ Hive-self experiments operate in production environments, making safety and auto
    - **SLA Spike:** Task queue MTTR or actionable backlog exceeds pre-registered safety limits (e.g. `mttr_max_minutes` exceeded by >20%).
    - **Token Blow-up:** Token burn rate spikes beyond allowable variance (`budget_burn_rate_max_pct`).
    - **Error Streaks:** Repeated agent crashes or failed GitHub API calls occur in succession.
-3. **Instant auto-revert:** On fast-fail detection, the scheduler immediately flips the heartbeat feature flag or rolls back the release channel. The hive cleanly returns to its baseline control state without requiring manual human intervention.
+3. **Feature-flag auto-revert (design):** The scheduler is intended to disable or withdraw the assigned flag on fast-fail detection. The delivery seam applies that change on the next heartbeat response, not instantaneously. Fast-fail evaluation is separate scheduler work; this mechanism does not roll back an image or release channel.
 4. **Isolated blast radius:** Because Hive-self experiments cannot write to spoke repository code or merge unvetted changes, an experiment failure cannot corrupt customer repositories.
 
 ---
