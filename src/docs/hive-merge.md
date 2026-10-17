@@ -474,7 +474,11 @@ sweep's own red-PR route: the superseding App PR it opens from `hive/adopt-<n>`
 is red with the contributor's failures, lands in `ci-failing.json` like any
 hive-authored red PR, and the scanner's FIX-BEFORE-NEW kick rebases and fixes
 it on that branch (never a replacement PR), after which it follows the normal
-`050 → 100` path. The issues a PR covers
+`050 → 100` path. When adoption is in-place on the contributor PR's own
+branch, a changed head stays adopted only with hive-controlled evidence
+(GitHub-linked App commit metadata or a locally recorded hive-pushed SHA);
+forgeable git author/committer names and emails are treated as contributor
+pushes and release adoption. The issues a PR covers
 follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
 writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same
