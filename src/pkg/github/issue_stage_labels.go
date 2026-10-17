@@ -9,9 +9,10 @@ package github
 //   - withheld by a live issue claim         → stage/020-claimed, or
 //     stage/030-pr-in-progress when the claim marker is kind=agent
 //   - withheld by the in-progress sweep      → stage/030-pr-in-progress
-//   - withheld because an open PR covers it  → the covering PR's own stage
-//     (read from the shared stage store the automerge sweep fills) or
-//     stage/040-covered-by-pr until the lanes have seen that PR
+//   - withheld because an open PR covers it  → stage/040-covered-by-pr; the
+//     covering PR's own stage (read from the shared stage store the
+//     automerge sweep fills) is narrated in the reason, never written as
+//     a second label — 050+ are PR-only stages (hivecommons/hive#12451)
 //   - carrying hive/likely-done (merged PR, awaiting confirmation), or
 //     filtered out of the pipeline by an exempt label → no stage.
 //
@@ -21,13 +22,13 @@ package github
 // issue so exactly one stage label survives (hivecommons/hive#12512). It
 // also strips the retired `claimed`, `hive/in-progress` and `🐝 covered by
 // PR` labels: one cycle after upgrade every open issue carries its stage
-// label instead. Health (`stage/stalled`) is tracked for
-// the issue's own stages (010–030); an issue mirroring its PR's stage
-// leaves health to the PR, where the reason is legible. For those issue
-// stages the dwell is still measured from stage entry: the issue list
-// payload carries no comment count or activity timestamp the hive did not
-// bump itself (hivecommons/hive#12491), so the PR engine's no-activity
-// clock (Store.NoteActivity, require_quiet) does not apply here.
+// label instead. Health (`stage/stalled`) is tracked for the issue's own
+// stages (010–030); a covered issue (040) leaves health to the PR, where the
+// reason is legible. For those issue stages the dwell is still measured
+// from stage entry: the issue list payload carries no comment count or
+// activity timestamp the hive did not bump itself (hivecommons/hive#12491),
+// so the PR engine's no-activity clock (Store.NoteActivity, require_quiet)
+// does not apply here.
 
 import (
 	"context"
@@ -99,10 +100,14 @@ type IssueStageInput struct {
 	Claim     *IssueClaimContext
 }
 
-// IssueStageFor classifies one enumerated issue. mirrored reports whether
-// the stage is the covering PR's (health then belongs to the PR). prStage
-// resolves the covering PR's current stage from the shared store.
-func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) stagelabels.Stage) (stage stagelabels.Stage, mirrored bool, reason string) {
+// IssueStageFor classifies one enumerated issue. covered reports whether an
+// open PR the lanes have staged covers it (health then belongs to the PR,
+// whose stage the reason names). prStage resolves the covering PR's current
+// stage from the shared store. The issue itself never goes past
+// 040-covered-by-pr: 050+ are PR stages (stagelabels.Table, PR: true) and
+// mirroring them onto the issue is what left hivecommons/hive#12451 wearing
+// stage/050-review-pending next to its own stages (hivecommons/hive#12451).
+func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) stagelabels.Stage) (stage stagelabels.Stage, covered bool, reason string) {
 	if issueHasLabel(in.Labels, LikelyDoneLabel) {
 		return stagelabels.None, false, "merged PR awaiting confirmation"
 	}
@@ -123,7 +128,7 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 				prRepo = in.Repo
 			}
 			if s := prStage(prRepo, in.Claim.PRNumber); s != stagelabels.None && !s.Before(stagelabels.CoveredByPR) {
-				return s, true, "mirrors PR #" + strconv.Itoa(in.Claim.PRNumber)
+				return stagelabels.CoveredByPR, true, "open PR #" + strconv.Itoa(in.Claim.PRNumber) + " covers it (PR at " + s.String() + ")"
 			}
 		}
 		return stagelabels.CoveredByPR, false, "open PR covers it"
@@ -192,7 +197,7 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 		seen[key] = true
 		res.Items++
 		res.ClaimedByHealed += healBackendClaimedByLabels(ctx, client, in, logger)
-		stage, mirrored, reason := IssueStageFor(in, prStage)
+		stage, covered, reason := IssueStageFor(in, prStage)
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
 		if stage == stagelabels.None {
@@ -201,7 +206,7 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 			tr = store.Observe(key, stage, reason)
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{Stage: stage}
-			if !mirrored {
+			if !covered {
 				want.Stalled = stagelabels.Stalled(rec, policy.Dwell, now)
 			}
 		}
@@ -218,7 +223,8 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 		// Enforce re-reads the issue before writing so a stage a claim hook
 		// placed since the list payload was fetched is replaced, not joined
 		// (hivecommons/hive#12512), and any duplicate it finds is healed.
-		out, err := stagelabels.Enforce(ctx, client.StageLabeler(), owner, name, in.Number, in.Labels, want)
+		// IssueItem clamps the stage to the issue stages (hivecommons/hive#12451).
+		out, err := stagelabels.Enforce(ctx, client.StageLabeler(), stagelabels.IssueItem, owner, name, in.Number, in.Labels, want)
 		if err != nil && logger != nil {
 			logger.Warn("issue stage labels: write failed", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "error", err)
 		}
@@ -230,12 +236,12 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 			res.Healed++
 		}
 		if logger != nil && (out.Changed() || err != nil) {
-			logger.Info("issue stage labels reconciled", "repo", in.Repo, "issue", in.Number, "stage", want.Stage.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "reason", reason, "bucket", in.Bucket)
+			logger.Info("issue stage labels reconciled", "repo", in.Repo, "issue", in.Number, "stage", out.Stage.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "clamped", out.Clamped, "wanted", out.Wanted.String(), "reason", reason, "bucket", in.Bucket)
 		}
 		// A regression between the issue's OWN stages (a claim or kick that
 		// lapsed without a PR) is the hive's failure and gets the one-line
-		// note; a fall from a mirrored PR stage is narrated on the PR.
-		if tr.Regressed && !mirrored && tr.Prev.Before(stagelabels.CoveredByPR) {
+		// note; a covering PR's own falls are narrated on the PR.
+		if tr.Regressed && !covered && tr.Prev.Before(stagelabels.CoveredByPR) {
 			if rec, ok := store.Get(key); ok && !rec.RegressionCommented {
 				if err := client.CreateIssueComment(ctx, in.Repo, in.Number, stagelabels.RegressionComment(tr.Prev, tr.Next, reason)); err != nil {
 					if logger != nil {

@@ -947,7 +947,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// Enforce re-reads the PR so a stage another writer placed since
 			// the lane's snapshot is replaced, never joined (hivecommons/hive#12512).
 			var err error
-			out, err = stagelabels.Enforce(ctx, engineStageLabeler{c.gh}, obs.Owner, obs.Repo, obs.Number, obs.Labels, want)
+			out, err = stagelabels.Enforce(ctx, engineStageLabeler{c.gh}, stagelabels.PRItem, obs.Owner, obs.Repo, obs.Number, obs.Labels, want)
 			if err != nil {
 				c.warn("stage labels: write failed", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "error", err)
 				if firstErr == nil {
@@ -963,7 +963,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 		}
 		if out.Changed() {
-			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", want.Stage.String(), "author", author.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "reason", obs.Reason, "lane", obs.Lane)
+			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", out.Stage.String(), "author", author.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "clamped", out.Clamped, "wanted", out.Wanted.String(), "reason", obs.Reason, "lane", obs.Lane)
 		}
 		if want.Stalled && want.Stage.StallNote() {
 			if rec, ok := store.Get(key); ok && !rec.StallCommented {

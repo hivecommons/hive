@@ -34,23 +34,34 @@ type Outcome struct {
 	Healed bool
 	// Reread is set when the item was re-read before writing.
 	Reread bool
+	// Clamped is set when the stage asked for does not apply to the item's
+	// kind (a PR stage on an issue, an issue stage on a PR) and was replaced
+	// by Stage.For before planning (hivecommons/hive#12451). Wanted is the
+	// stage the caller asked for; Stage is what was enforced.
+	Clamped bool
+	Wanted  Stage
+	Stage   Stage
 }
 
 // Changed reports whether any label was written.
 func (o Outcome) Changed() bool { return len(o.Added)+len(o.Removed) > 0 }
 
-// Enforce makes the item carry exactly want. hint is the label set the
-// caller's cycle already has (the list payload); when it implies no change
-// nothing is read or written, so an unchanged item stays free. When it
-// implies a write — including when it already carries two stage labels —
+// Enforce makes the item of kind k carry exactly want. hint is the label
+// set the caller's cycle already has (the list payload); when it implies no
+// change nothing is read or written, so an unchanged item stays free. When
+// it implies a write — including when it already carries two stage labels —
 // the item is re-read and the plan recomputed from truth. Removes happen
 // before adds so a transient state never shows two stages. A failed remove
 // does not stop the others; the first error is returned after the adds.
-func Enforce(ctx context.Context, l Labeler, owner, repo string, number int, hint []string, want Desired) (Outcome, error) {
+// want.Stage is clamped to the stages the Table allows on k (Stage.For), so
+// a PR-only stage never lands on an issue and vice versa; Outcome.Clamped
+// reports when that happened.
+func Enforce(ctx context.Context, l Labeler, k Item, owner, repo string, number int, hint []string, want Desired) (Outcome, error) {
 	var out Outcome
 	if l == nil {
 		return out, errors.New("stagelabels: nil labeler")
 	}
+	want.Stage, out = clampFor(k, want.Stage, out)
 	add, remove := Plan(hint, want)
 	if len(add)+len(remove) == 0 {
 		return out, nil
@@ -65,17 +76,18 @@ func Enforce(ctx context.Context, l Labeler, owner, repo string, number int, hin
 	return applyPlan(ctx, l, owner, repo, number, add, remove, out)
 }
 
-// EnforceStage sets the pipeline stage on an item whose other hive-owned
+// EnforceStage sets the pipeline stage on an item of kind k whose other hive-owned
 // labels (author tier, health) the caller has no opinion about: the
 // claim-ledger hooks, which know a claim began but not what the lanes think.
 // It always re-reads, keeps the author and health labels it finds, and
 // leaves exactly stage among `stage/NNN-*` (None clears them all). Retired
 // labels (`claimed`, `hive/in-progress`, `🐝 covered by PR`) come off too.
-func EnforceStage(ctx context.Context, l Labeler, owner, repo string, number int, stage Stage) (Outcome, error) {
+func EnforceStage(ctx context.Context, l Labeler, k Item, owner, repo string, number int, stage Stage) (Outcome, error) {
 	var out Outcome
 	if l == nil {
 		return out, errors.New("stagelabels: nil labeler")
 	}
+	stage, out = clampFor(k, stage, out)
 	fresh, err := l.Labels(ctx, owner, repo, number)
 	if err != nil {
 		return out, err
@@ -90,6 +102,15 @@ func EnforceStage(ctx context.Context, l Labeler, owner, repo string, number int
 	}
 	add, remove := Plan(fresh, want)
 	return applyPlan(ctx, l, owner, repo, number, add, remove, out)
+}
+
+// clampFor records the asked-for stage in out and returns the stage that
+// may be written to an item of kind k.
+func clampFor(k Item, want Stage, out Outcome) (Stage, Outcome) {
+	out.Wanted = want
+	out.Stage = want.For(k)
+	out.Clamped = out.Stage != want
+	return out.Stage, out
 }
 
 func applyPlan(ctx context.Context, l Labeler, owner, repo string, number int, add, remove []string, out Outcome) (Outcome, error) {

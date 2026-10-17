@@ -2019,7 +2019,7 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
 		// The covered-by-PR stage label itself is written by the issue stage
 		// reconciler (SyncIssueStageLabels, hivecommons/hive#12436), which
-		// mirrors the covering PR's own stage once it advances; here only the
+		// keeps the issue at 040 while the PR is open; here only the
 		// retired spellings are stripped so the migration completes one cycle
 		// after upgrade, and the in-memory copy reflects the claim either way.
 		for _, name := range legacyCoveredByPRLabels {
