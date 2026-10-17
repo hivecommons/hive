@@ -1115,6 +1115,28 @@
                           "author": {
                             "type": "string"
                           },
+                          "labels": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "updated_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "bucket": {
+                            "type": "string",
+                            "description": "Display-only enumeration bucket for an item outside the actionable or held sets."
+                          },
+                          "bucket_reason": {
+                            "type": "string",
+                            "description": "Display-only reason enumeration assigned to the bucket."
+                          },
                           "author_kind": {
                             "type": "string",
                             "enum": [

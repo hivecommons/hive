@@ -1573,6 +1573,9 @@ func reviewScopeContract(title, body, defaultRepo, runKey, planRef string) strin
 	return ""
 }
 
+// fetchPRs retains the legacy return shape for callers that only need queue
+// partitions. The enumeration path calls fetchPRsWithDetails so the same
+// open-PR list also yields display-only records for the activity monitor.
 func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *reporterTrustWaitBudget) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
 	actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, _, err = c.fetchPRsWithDetails(ctx, repo, clankerBudget)
 	return actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, err

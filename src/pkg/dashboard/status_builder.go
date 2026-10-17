@@ -2316,6 +2316,9 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govStat
 		if r.NonActionableIssues == nil {
 			r.NonActionableIssues = []any{}
 		}
+		if r.NonActionablePrs == nil {
+			r.NonActionablePrs = []any{}
+		}
 		repos = append(repos, r)
 	}
 
