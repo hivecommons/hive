@@ -262,18 +262,20 @@ hivectl evidence export --root ./evidence --format csv | column -ts,
 
 `evidence export` reads the schema v1 bundles under `--root` (default `/data/evidence`, layout
 `<org>/<repo>/<pr>/<sha>.json`) directly from the filesystem — no hive session, no network — and emits one row per
-pull request from the **newest bundle per PR**, the same rule `GET /api/evidence/summary` applies, so the numbers
-reconcile with the dashboard Evidence charts. `--since` takes an RFC3339 timestamp or a Go duration (`72h`) and keeps
-bundles created at or after it; `--repo` narrows to one `owner/name` (case-insensitive); `--format` is `jsonl`
+pull request, folding every bundle of the PR (verdicts from the newest bundle; outcome, links and open time from
+whichever bundle recorded them) exactly as `GET /api/evidence/summary` does, so the numbers reconcile with the
+dashboard Evidence charts.
+`--since` takes an RFC3339 timestamp or a Go duration (`72h`) and keeps PRs opened at or after it; `--repo` narrows
+to one `owner/name` (case-insensitive); `--format` is `jsonl`
 (default) or `csv`; `--out FILE` writes a file instead of stdout. Rows are ordered by repo then PR number. Bundles that
 do not parse or are not schema v1 are skipped and counted on stderr, never fabricated.
 
 Columns: `repo`, `pr`, `head_sha`, `bundle_id`, `author_login`, `author_kind`, `author_model`, `acmm_level`,
 `perspectives`, `reviewer_models`, `verdicts` (per perspective: perspective, verdict, model, backend, confidence),
-`ci_conclusion`, `ci_captured_at`, `outcome` (`merged` or `open` — schema v1 does not record a close without merge),
+`ci_conclusion`, `ci_captured_at`, `outcome` (`merged`, `closed` when a backfilled bundle records a close without merge, else `open`),
 `merged_at`, `revert_of`, `reverted_by`, `followup_of`, `followed_up_by`, `shadow_review_would_have_held`,
 `shadow_intent_would_have_blocked` (empty/`null` when the gate was not evaluated), `sentinel_hits`, `signed`,
-`created_at`, `updated_at`. In CSV, lists join with `;` and each verdict is `perspective:verdict:model:backend:confidence`.
+`created_at`, `updated_at`, `opened_at`. In CSV, lists join with `;` and each verdict is `perspective:verdict:model:backend:confidence`.
 Reporting only: nothing here reads into or alters merge eligibility. See
 [Review evidence bundle](review-evidence.md#exporting).
 
@@ -284,6 +286,7 @@ hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run  
 hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --root ./evidence   # write schema v1 bundles
 hivectl evidence backfill --repo kubestellar/console --since 2026-03-01 --until 2026-05-01 --acmm-level 3
 hivectl evidence backfill --repo hivecommons/hive --since 2026-06-01 --flag hive_on_hive
+hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --refresh-fields merge.opened_at  # fill a field on old bundles
 ```
 
 `evidence backfill` reconstructs evidence bundles from GitHub pull-request history for PRs created in
@@ -296,9 +299,22 @@ with timestamps, merger, and revert / follow-up links under the live recorder's 
 exclusions are stamped as `backfill.flags` (`--flag placeholder_hive|hive_on_hive|under_min_merged`; `hive_on_hive`
 and `under_min_merged` are added automatically), never applied by dropping PRs. Bundles that already exist are
 skipped, so re-running is safe; `--skip-mergers` saves one request per merged PR; `--signing-key-file` signs the
-output. Record-only: nothing here reads into or alters merge eligibility. See
+output. `--refresh-fields <list>` additionally fills the named fields (currently `merge.opened_at`) on bundles an
+earlier backfill already wrote, only where absent and only from the list page (no per-PR requests, ~1 call per 100
+PRs); nothing else on those bundles changes, bundles that already have the field are not rewritten, and live
+(non-backfilled) bundles are never touched. The summary reports `to_refresh` / `refreshed`. Record-only: nothing here reads into or alters merge eligibility. See
 [Review evidence bundle, Backfilled bundles](review-evidence.md#backfilled-bundles) and the run plan in
 [`research/backfill.md`](research/backfill.md).
+
+`hivectl evidence backfill-issues --repo <owner/repo> --since <date> [--until <date>] [--root <dir>] [--agent-login <login>] [--dry-run]`
+records GitHub issues opened and closed in the range as ISO-week files at
+`<root>/<owner>/<repo>/issues/<year>-W<week>.json`. GitHub's issues endpoint also
+contains pull requests; these are excluded. The command scans older issues too,
+so a close in the range is counted even if the issue opened earlier. Each file
+includes zero-count weeks, event times for exact custom summary windows, and
+coverage bounds. Re-run it to refresh recent weeks. The files are reporting data
+for operators and downstream readers; the dashboard work-balance card now uses
+its collector-maintained rollup, and neither path affects merge eligibility.
 
 ### observe — read-only metrics
 

@@ -38,12 +38,12 @@ The same settings are exposed in the dashboard under Settings → Governor →
 "Self-Reported Issues" (owner role) and over
 `GET`/`PUT /api/config/governor/fleet-report`.
 
-## The three triggers
+## The four triggers
 
 A report is only ever built from evidence marked **attributable** — evidence
 the hive believes points at hive's own behaviour rather than at your repos,
 your prompts, or your infrastructure. Non-attributable evidence never produces
-a report under either trigger.
+the report under a trigger.
 
 ### `acmm-shortfall`
 
@@ -99,6 +99,20 @@ and a redacted diagnostics excerpt inside `<details>`. Secrets are never
 collected; the diagnostics go through the same scrubber as the other
 triggers.
 
+
+### `observation`
+
+Nous detector findings use the `observation` self-report class and the
+`hive-observation` label. The body contains only hive metadata (hive id/slug,
+project organization, ACMM level, hive version, and `cluster_id`) plus
+aggregate evidence and a JSON daily series suitable for a sparkline. Watched
+repository names, issue numbers, and file paths are not part of this report.
+
+Observation reports never use the spoke's GitHub client. A hub-managed spoke
+posts them to `POST /api/selfreport/ingest`; the hub forces the destination to
+`hivecommons/hive`, adds the configured needs-decision label, and searches the
+open issue body for the detector fingerprint before creating or commenting.
+
 ## Exactly what leaves the hive
 
 Each report carries:
@@ -106,6 +120,7 @@ Each report carries:
 | Field | Value |
 |---|---|
 | anonymous instance | first **16 hex characters of the SHA-256** of your hive ID |
+| owner(s) | the GitHub login(s) of the hive's owner(s) — `dashboard.authorized_users` entries with the owner role plus the device-flow operator — as `@login`; `(anonymous)` when `include_owners: false` (`runtime-error` only) |
 | hive version, commit | build stamp, short commit |
 | mode | the hive's mode |
 | ACMM level | e.g. `L3` |
@@ -114,7 +129,7 @@ Each report carries:
 | error class | the classified error, not the raw message |
 | count + window | how many occurrences, over what window |
 | detected periodicity | if the failures look periodic |
-| repos, owners | `runtime-error` only: the `owner/repo` names this hive watches (`project.repos`) and the distinct owners derived from them, as `N: a/b, c/d` — see [Repositories and owners](#repositories-and-owners) |
+| repos, owners | `runtime-error` only: the `owner/repo` names this hive watches (`project.repos`) and the distinct owners derived from them, as `N: a/b, c/d` — see [Repositories and repo owners](#repositories-and-repo-owners) |
 | repo, ref | `runtime-error` only: the item the error was scoped to, when the class carries one (today `advisory_post_failed` → the digest's repo); `—` otherwise |
 | self-recovered | `no` on a report, `yes` on a recovery |
 
@@ -131,13 +146,16 @@ report look changed. It is omitted when the hive has no snapshot in the last
 
 The same fields appear as issue labels (`fleet-report`, `component:…`,
 `severity:…`, `version:…`, `instance:…`, `trigger:…`, and `criterion:…` for
-shortfalls).
+shortfalls). Observation issues additionally carry `hive-observation` and
+`observation:<kind>`.
 
 ### What it does not send
 
-- **Your raw hive ID never leaves the hive.** Only the truncated SHA-256
-  digest is sent. The digest is stable, so upstream can tell "the same hive
-  again" from "a second hive" without learning which hive either is.
+- Legacy ACMM, hive-code-defect, and runtime reports send only an anonymous
+  instance digest; the raw hive id never leaves the hive for those triggers.
+- Observation reports use the hub-provided hive id/slug and project
+  organization metadata required for maintainer triage, but never send watched
+  repository names, issue numbers, or file paths.
 - **No raw log lines, error messages, or repository content.** Evidence is
   reduced to a classified error *class*, a component, and counts.
 - Titles and bodies are passed through `logscrub` before leaving the hive,
@@ -168,13 +186,46 @@ hive adds itself to that issue instead of opening a new one:
 - one comment `Also seen on **<hive>** (v<version>, <cluster>) at <time>`
   carrying a `<!-- hive:selfreport-seen hive=<slug> fp=… -->` marker and its
   diagnostics excerpt — at most once per hive per 24h;
-- its `hive/<slug>` label (created if missing) and `hive/selfreport`;
-- a bump to the `Affected hives (N): …` block in the issue body, edited
-  idempotently between `<!-- hive:selfreport-affected -->` markers, with the
-  joining hive's repos merged into the block's `Affected repos (N)` /
-  `Affected owners (N)` union (below).
+- the `hive/selfreport` and `origin/selfreport` labels (the per-hive `hive/<slug>` label is retired, #12539; `hive/selfreport` is deprecated in favour of the `origin/selfreport` provenance label and is kept only so existing filters and the joiner's `label:hive/selfreport` search keep working);
+- a bump to the `Affected hives (N)` block in the issue body, edited
+  idempotently between `<!-- hive:selfreport-affected -->` markers: the
+  joining hive gets (or updates) its own line naming its owner(s), and its
+  repos are merged into the block's `Affected repos (N)` /
+  `Affected repo owners (N)` union (below).
 
-### Repositories and owners
+### Who is affected
+
+So a maintainer can tell **who** is affected and ping them — not just which
+namespace-style hive name — every hive renders on its own line of the
+affected block (hivecommons/hive#12529 follow-up):
+
+```
+<!-- hive:selfreport-affected -->
+**Affected hives (2):**
+- hosted-aslom (instance b04ca59b7312017e) — owner(s): @alice, @bob — seen 3, last 2026-10-17T11:00:00Z
+- hosted-oke-11-r05x — owner(s): (anonymous) — seen 1, last 2026-10-16T19:56:47Z
+seen_count: 4
+<!-- /hive:selfreport-affected -->
+```
+
+- `owner(s)` are the GitHub logins the spoke knows for its owner:
+  `dashboard.authorized_users` entries holding the owner role (the first
+  entry without an explicit role, plus any `:owner` entry) and the operator
+  who completed the device flow (`/data/gh-user-token`). They travel in the
+  report as an explicit `owners` field; non-GitHub identities (`ibmid:…`)
+  and anything that is not a plausible login are dropped before they leave
+  the hive. `unknown` means the hive sent none (a pre-owners spoke).
+- `seen N, last <time>` are per hive; `seen_count` stays the total.
+- **Privacy.** `governor.fleet_report.include_owners: false` (default
+  `true`) renders `(anonymous)` in both the evidence table and the hive's
+  line, sends no logins, and a later report never re-attaches them.
+- When a spoke that predates the field relays through the hub, the hub
+  fills the line from its own record of the hive owner (unless the spoke
+  opted out). Existing issues with the older inline
+  `**Affected hives (1):** <hive>` list are upgraded to the per-hive form on
+  the hive's next join, so an old issue gains the owner on the next sweep.
+
+### Repositories and repo owners
 
 So a maintainer can tell whether a fleet issue is confined to one project or
 one org, a `runtime-error` report names the repositories the reporting hive
@@ -184,16 +235,19 @@ reported, re-derived idempotently on each join:
 
 ```
 <!-- hive:selfreport-affected -->
-**Affected hives (2):** hosted-aslom, hosted-available-oke-11-placeholder-r05x
+**Affected hives (2):**
+- hosted-aslom (instance b04ca59b7312017e) — owner(s): @alice — seen 2, last 2026-10-17T11:00:00Z
+- hosted-available-oke-11-placeholder-r05x — owner(s): @carol — seen 1, last 2026-10-16T19:56:47Z
 **Affected repos (3):** acme/widgets, hivecommons/hive, hivecommons/pluk
-**Affected owners (2):** acme, hivecommons
+**Affected repo owners (2):** acme, hivecommons
 seen_count: 3
 <!-- /hive:selfreport-affected -->
 ```
 
 - `Affected repos` is the sorted union of every reporting hive's watched repos
-  plus any triggering `repo`; `Affected owners` is always re-derived from it,
-  never parsed back. A hive that re-reports with nothing new leaves the body
+  plus any triggering `repo`; `Affected repo owners` (the orgs/users owning
+  those repos — distinct from the per-hive `owner(s)` logins above) is
+  always re-derived from it, never parsed back. A hive that re-reports with nothing new leaves the body
   untouched; a known hive bringing a new repo edits only the block.
 - Repo names are validated to exactly `owner/name` (lower-cased, GitHub-safe
   characters) before they leave the hive; anything else is dropped.

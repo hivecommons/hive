@@ -9,10 +9,12 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-// The hive/in-progress label: a GitHub-visible, timestamped "an agent has
-// started a PR for this issue" signal.
+// The pr-in-progress stage label (`stage/030-pr-in-progress`, formerly
+// `hive/in-progress`): a GitHub-visible, timestamped "an agent has started a
+// PR for this issue" signal.
 //
 // Before this label the only forge-visible evidence that the scanner had
 // picked an issue was the pull request itself. A kick lists up to
@@ -30,7 +32,7 @@ import (
 //     governor.claims is off — with it on, the ledger's 🔒 comment carries the
 //     same marker (ClaimComment includes at=);
 //   - removed by the pr-request watcher the moment a PR naming the issue
-//     opens (the PR-claim sync then mirrors `🐝 covered by PR`), by the
+//     opens (the issue moves to `stage/040-covered-by-pr`), by the
 //     ledger release hook (claims on), and by the enumeration sweep when the
 //     marker has lapsed (agent TTL) or the issue carries PR evidence;
 //   - while present with a live marker the issue is withheld from every kick
@@ -38,15 +40,32 @@ import (
 //     governor.claims on.
 
 const (
-	// InProgressLabel marks an issue a hive agent has started a PR for.
-	InProgressLabel = "hive/in-progress"
-	// inProgressLabelColor / inProgressLabelDescription seed the label when a
-	// repo does not define it yet.
-	inProgressLabelColor       = "fbca04"
-	inProgressLabelDescription = "A hive agent has started work on this issue; the hive:claim marker comment says who, which hive and since when"
+	// InProgressLabel marks an issue a hive agent has started a PR for. It is
+	// the `stage/030-pr-in-progress` stage label (hivecommons/hive#12436);
+	// the `hive/in-progress` label it replaced is claims.LegacyLabelInProgress
+	// and is only recognised, never written, during the migration cycle.
+	InProgressLabel = claims.LabelPRInProgress
+	// inProgressLabelDescription seeds the label when a repo does not define
+	// it yet; the colour is the shared stage-family amber.
+	inProgressLabelDescription = "An agent kick is running; no PR yet"
 	// inProgressWorkBucket is the RepoWork detail bucket for a withheld issue.
 	inProgressWorkBucket = "in_progress"
 )
+
+// inProgressTriggerLabels are the labels that make the sweep read the
+// hive:claim marker: the live claimed / pr-in-progress stages and the
+// retired `hive/in-progress`. The marker, not the label, decides whether
+// the issue is withheld.
+var inProgressTriggerLabels = []string{claims.LabelPRInProgress, claims.LabelClaimed, claims.LegacyLabelInProgress}
+
+func hasInProgressTrigger(labels []string) bool {
+	for _, l := range inProgressTriggerLabels {
+		if issueHasLabel(labels, l) {
+			return true
+		}
+	}
+	return false
+}
 
 // InProgressSetting is the live hive/in-progress configuration.
 type InProgressSetting struct {
@@ -102,13 +121,22 @@ func InProgressCommentBody(agent, hiveID string, started, expires time.Time) str
 }
 
 // inProgressLabelsForClaim returns the labels a `claim` request applies: the
-// per-agent ownership label and, when enabled, hive/in-progress.
+// per-agent ownership label and, when enabled, stage/030-pr-in-progress.
 func (c *Client) inProgressLabelsForClaim(agent string) []string {
-	labels := []string{claimLabelPrefix + sanitizeAgentName(agent)}
+	labels := []string{claims.ClaimedByLabel(claims.Claim{Holder: agent, Kind: claims.KindAgent})}
 	if c.inProgressSetting().Enabled {
 		labels = append(labels, InProgressLabel)
 	}
 	return labels
+}
+
+// claimStage is the stage a `claim` request enforces: pr-in-progress when
+// the in-progress mark is on, else no opinion.
+func (c *Client) claimStage() stagelabels.Stage {
+	if c.inProgressSetting().Enabled {
+		return stagelabels.PRInProgress
+	}
+	return stagelabels.None
 }
 
 // markInProgressStarted is the post-label half of a `claim` request: it seeds
@@ -121,21 +149,22 @@ func (c *Client) markInProgressStarted(ctx context.Context, repo string, number 
 	if !set.Enabled {
 		return
 	}
-	if err := c.EnsureIssueLabel(ctx, repo, InProgressLabel, inProgressLabelColor, inProgressLabelDescription); err != nil && c.logger != nil {
+	if err := c.EnsureIssueLabel(ctx, repo, InProgressLabel, stagelabels.StageColor, inProgressLabelDescription); err != nil && c.logger != nil {
 		c.logger.Warn("in-progress: ensuring label definition failed", "repo", repo, "issue", number, "error", err)
 	}
 	if claimsOn, _ := c.issueClaimsSetting(); claimsOn {
 		return
 	}
 	body := InProgressCommentBody(agent, set.HiveID, now, now.Add(set.TTL))
-	if err := c.CreateIssueComment(ctx, repo, number, body); err != nil && c.logger != nil {
+	if err := c.CreateIssueCommentBudgeted(ctx, repo, number, body); err != nil && c.logger != nil {
 		c.logger.Warn("in-progress: posting start mark failed", "repo", repo, "issue", number, "agent", agent, "error", err)
 	}
 }
 
-// clearInProgressForPR removes hive/in-progress from every issue a freshly
-// opened PR names. Best-effort and off the request path: the PR is the
-// stronger signal and the enumeration sweep converges the label anyway.
+// clearInProgressForPR moves every issue a freshly opened PR names from the
+// claimed / pr-in-progress stage to covered-by-pr. Best-effort and off the
+// request path: the PR is the stronger signal and the stage reconciler
+// converges the labels on the next cycle anyway.
 func (c *Client) clearInProgressForPR(ctx context.Context, repo string, issues []int) {
 	if !c.inProgressSetting().Enabled || len(issues) == 0 {
 		return
@@ -144,15 +173,24 @@ func (c *Client) clearInProgressForPR(ctx context.Context, repo string, issues [
 		if n <= 0 {
 			continue
 		}
-		if err := c.RemoveLabel(ctx, repo, n, InProgressLabel); err != nil && c.logger != nil {
-			c.logger.Warn("in-progress: removing label after PR open failed", "repo", repo, "issue", n, "error", err)
+		if err := c.EnsureCoveredByPRLabel(ctx, repo); err != nil {
+			if c.logger != nil {
+				c.logger.Warn("in-progress: ensuring covered-by-pr label after PR open failed", "repo", repo, "issue", n, "error", err)
+			}
+			continue
+		}
+		// One enforced write: re-reads the issue, takes the claimed /
+		// pr-in-progress (and retired) labels off and puts 040 on, journaled
+		// against that read so a later PR on the same issue can do it again.
+		if _, err := c.ApplyStageLabel(ctx, repo, n, stagelabels.CoveredByPR); err != nil && c.logger != nil {
+			c.logger.Warn("in-progress: moving issue to covered-by-pr after PR open failed", "repo", repo, "issue", n, "error", err)
 		}
 	}
 }
 
-// SweepInProgressIssues reconciles hive/in-progress on the actionable issues
-// and withholds the ones still legitimately in progress. For each issue
-// carrying the label:
+// SweepInProgressIssues reconciles the claimed / pr-in-progress stage labels
+// (and the retired hive/in-progress) on the actionable issues and withholds
+// the ones still legitimately in progress. For each issue carrying one:
 //   - PR evidence on the issue (covered-by-pr, likely-done or a linked PR)
 //     supersedes the mark: the label comes off, the issue stays as the
 //     PR-claim guard left it;
@@ -175,7 +213,7 @@ func SweepInProgressIssues(ctx context.Context, client *Client, result *Actionab
 	kept := make([]Issue, 0, len(result.Issues.Items))
 	withheld := 0
 	for _, issue := range result.Issues.Items {
-		if !issueHasLabel(issue.Labels, InProgressLabel) {
+		if !hasInProgressTrigger(issue.Labels) {
 			kept = append(kept, issue)
 			continue
 		}
@@ -193,12 +231,12 @@ func SweepInProgressIssues(ctx context.Context, client *Client, result *Actionab
 					"repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
 			withheld++
-			appendRepoWorkIssueDetail(result, issue, inProgressWorkBucket, "hive/in-progress; marker unreadable")
+			appendRepoWorkIssueDetail(result, issue, inProgressWorkBucket, "in progress; marker unreadable")
 		case live:
 			withheld++
 			appendRepoWorkIssueDetail(result, issue, inProgressWorkBucket, "In progress by "+claim.Identity+" since "+startedLabel(claim))
 			if logger != nil {
-				logger.Info("withholding issue: hive/in-progress with a live start mark",
+				logger.Info("withholding issue: in-progress stage with a live start mark",
 					"repo", issue.Repo, "issue", issue.Number, "agent", claim.Identity,
 					"started_at", claim.StartedAt, "expires_at", claim.ExpiresAt)
 			}
@@ -231,17 +269,25 @@ func issueHasPREvidence(issue Issue) bool {
 }
 
 func (c *Client) removeInProgressLabel(ctx context.Context, issue *Issue, why string, logger *slog.Logger) {
-	issue.Labels = removeIssueLabel(issue.Labels, InProgressLabel)
-	if c.client == nil {
-		return
-	}
-	if err := c.RemoveLabel(ctx, issue.Repo, issue.Number, InProgressLabel); err != nil {
-		if logger != nil {
-			logger.Warn("in-progress: removing label failed", "repo", issue.Repo, "issue", issue.Number, "why", why, "error", err)
+	for _, l := range inProgressTriggerLabels {
+		if !issueHasLabel(issue.Labels, l) {
+			continue
 		}
-		return
-	}
-	if logger != nil {
-		logger.Info("in-progress: label removed", "repo", issue.Repo, "issue", issue.Number, "why", why)
+		issue.Labels = removeIssueLabel(issue.Labels, l)
+		if c.client == nil {
+			continue
+		}
+		// Journaled against the list payload's updated_at: the same label
+		// removed from the same issue once before (a lapsed earlier mark)
+		// must not replay as "already applied" and stay on the issue.
+		if err := c.removeLabelObserved(ctx, issue.Repo, issue.Number, l, observedState(issue.UpdatedAt)); err != nil {
+			if logger != nil {
+				logger.Warn("in-progress: removing label failed", "repo", issue.Repo, "issue", issue.Number, "label", l, "why", why, "error", err)
+			}
+			continue
+		}
+		if logger != nil {
+			logger.Info("in-progress: label removed", "repo", issue.Repo, "issue", issue.Number, "label", l, "why", why)
+		}
 	}
 }

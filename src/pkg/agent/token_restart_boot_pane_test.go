@@ -240,8 +240,14 @@ func TestTokenRestartCapReArmsAfterGenuineRecovery(t *testing.T) {
 	if a.tokenRestartAttempts != 0 {
 		t.Fatalf("attempts = %d after recovery, want 0", a.tokenRestartAttempts)
 	}
-	if got := a.decideTokenRestart(now); got != tokenRestartFire {
-		t.Fatalf("after recovery: got %v, want fire", got)
+	// The per-boot cap is re-armed, but the rolling 24h budget was spent by
+	// the three restarts above (#12466): a nudge inside the window still
+	// gives up, and a nudge once the window has rolled on fires again.
+	if got := a.decideTokenRestart(now); got != tokenRestartGiveUp {
+		t.Fatalf("after recovery inside the window: got %v, want giveUp", got)
+	}
+	if got := a.decideTokenRestart(now.Add(tokenRestartWindow + time.Second)); got != tokenRestartFire {
+		t.Fatalf("after recovery and a full window: got %v, want fire", got)
 	}
 }
 

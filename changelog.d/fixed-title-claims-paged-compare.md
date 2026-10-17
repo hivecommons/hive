@@ -1,0 +1,1 @@
+- `hive-open-pr` now checks title claims (workflow/test/migration) against the full paged compare file list, so large diffs whose matching files sit beyond the first 300 are no longer wrongly rejected ([#12666](https://github.com/hivecommons/hive/issues/12666)).

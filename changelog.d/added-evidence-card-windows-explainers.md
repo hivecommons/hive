@@ -1,1 +1,0 @@
-- Evidence card: 24h / 7d / 30d / custom from–to window pills (persisted per browser; `GET /api/evidence/summary` accepts `from=`/`to=`) and a plain-language ⓘ explainer per panel with a live "What ours shows" section and a Strong / Fair / Weak / Not enough data grade (RFC #12062).

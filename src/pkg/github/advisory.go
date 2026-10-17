@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
@@ -240,8 +241,20 @@ func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, err
 		Title: gh.Ptr(advisoryTitle),
 		Body:  gh.Ptr(body),
 	}
+	var labels []string
 	if labelExists {
-		req.Labels = &[]string{advisoryLabelName}
+		labels = append(labels, advisoryLabelName)
+	}
+	// The governor files this on its own behalf: origin/governor is its
+	// provenance label (hive/advisory stays the standing-issue signal).
+	originLabel := config.OriginLabel(config.OriginSourceGovernor)
+	if err := c.ensureOriginLabel(ctx, owner, repo, originLabel); err != nil {
+		c.logger.Warn("could not ensure origin label, advisory issue will be created without it", slog.String("label", originLabel), slog.String("error", err.Error()))
+	} else {
+		labels = append(labels, originLabel)
+	}
+	if len(labels) > 0 {
+		req.Labels = &labels
 	}
 	// Idempotency across concurrent callers (#11579): findAdvisoryIssue is a
 	// search-then-create with no key, so two EnsureAdvisoryIssue callers

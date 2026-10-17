@@ -110,6 +110,40 @@ func TestAnonymousInstanceAndScrubbing(t *testing.T) {
 	}
 }
 
+func TestBuildObservationReportContainsHiveMetadataAndSeriesOnly(t *testing.T) {
+	r := BuildObservationReport(ObservationFinding{
+		Kind:           "queue-growth",
+		Title:          "Queue depth is growing",
+		Evidence:       "p90 depth 30 versus 15",
+		SuspectedCause: "intake is outpacing throughput",
+		NextStep:       "review the oldest queue items",
+		Fingerprint:    "h1:queue-growth",
+		Series:         []float64{15, 18, 30},
+	}, ObservationMetadata{
+		HiveID:     "h1",
+		HiveSlug:   "hosted-h1",
+		ProjectOrg: "acme",
+		ACMMLevel:  3,
+		Version:    "v5.1.0",
+		ClusterID:  "oke-11",
+		Now:        time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC),
+	})
+	for _, want := range []string{"h1", "hosted-h1", "acme", "L3", "v5.1.0", "oke-11", "[15,18,30]"} {
+		if !strings.Contains(r.Body, want) {
+			t.Fatalf("observation body missing %q:\n%s", want, r.Body)
+		}
+	}
+	if strings.Contains(r.Body, "acme/widgets") || strings.Contains(r.Body, "foo.go") {
+		t.Fatalf("observation body leaked project repository identity:\n%s", r.Body)
+	}
+	if r.Trigger != TriggerObservation || r.Class != TriggerObservation || r.Observation == nil || r.Observation.Kind != "queue-growth" {
+		t.Fatalf("observation report = %#v", r)
+	}
+	if !contains(r.Labels, LabelObservation) {
+		t.Fatalf("observation labels = %v", r.Labels)
+	}
+}
+
 func contains(xs []string, want string) bool {
 	for _, x := range xs {
 		if x == want {
@@ -398,5 +432,20 @@ func TestReportsCarryHiveStateOutsideBody(t *testing.T) {
 		if r.Body != bare[i].Body {
 			t.Errorf("report %d body changed with hive state; trends must not alter the body hash", i)
 		}
+	}
+}
+
+// Selfreports keep the deprecated hive/selfreport marker for operators'
+// existing filters and ALSO carry origin/selfreport, the universal
+// provenance axis every hive-created issue records.
+func TestRuntimeReportCarriesBothSelfReportLabels(t *testing.T) {
+	ev := Evidence{Component: "merge", ErrorClass: "conflict", Severity: "high", Class: "unclassified_error_repeated", Message: "boom"}
+	r := BuildRuntimeReport(Observation{Mode: "busy"}, ev, "fp", "inst", "hive", "v", "c", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	has := map[string]bool{}
+	for _, l := range r.Labels {
+		has[l] = true
+	}
+	if !has[LabelSelfReport] || !has[LabelOriginSelfReport] || LabelOriginSelfReport != "origin/selfreport" {
+		t.Fatalf("labels = %v, want both %s and origin/selfreport", r.Labels, LabelSelfReport)
 	}
 }

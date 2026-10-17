@@ -21,10 +21,11 @@ import (
 
 // `hivectl evidence export` (hivecommons/hive#12367, RFC #12062 proposal B):
 // the raw per-PR evidence off a spoke as CSV or JSON Lines, one row per PR
-// (newest bundle per PR, the same rule GET /api/evidence/summary applies), with
-// the column set the dashboard Evidence charts aggregate so the numbers
-// reconcile. Local filesystem only: no network, no hive session, and nothing
-// here reads into or alters merge eligibility.
+// (every bundle of a PR folded by evidence.FoldPRs and windowed on PR open
+// time, the same rule GET /api/evidence/summary applies), with the column set
+// the dashboard Evidence charts aggregate so the numbers reconcile. Local
+// filesystem only: no network, no hive session, and nothing here reads into
+// or alters merge eligibility.
 
 const (
 	evidenceExportFormatJSONL = "jsonl"
@@ -34,6 +35,7 @@ const (
 	// evidenceExportFieldSep joins the fields of one verdict in CSV output.
 	evidenceExportFieldSep = ":"
 	evidenceOutcomeMerged  = "merged"
+	evidenceOutcomeClosed  = "closed"
 	evidenceOutcomeOpen    = "open"
 )
 
@@ -49,7 +51,8 @@ type evidenceExportVerdict struct {
 	Confidence  float64 `json:"confidence"`
 }
 
-// evidenceExportRow is one PR's latest bundle flattened to the chart schema.
+// evidenceExportRow is one PR's folded bundles (evidence.PR) flattened to the
+// chart schema.
 // Field order is the CSV column order.
 type evidenceExportRow struct {
 	Repo           string                  `json:"repo"`
@@ -78,6 +81,8 @@ type evidenceExportRow struct {
 	Signed                       bool      `json:"signed"`
 	CreatedAt                    time.Time `json:"created_at"`
 	UpdatedAt                    time.Time `json:"updated_at"`
+	// OpenedAt is the PR open time --since windows on.
+	OpenedAt time.Time `json:"opened_at"`
 }
 
 // evidenceExportColumns is the CSV header; it must match evidenceExportRow.csv.
@@ -89,7 +94,7 @@ var evidenceExportColumns = []string{
 	"outcome", "merged_at",
 	"revert_of", "reverted_by", "followup_of", "followed_up_by",
 	"shadow_review_would_have_held", "shadow_intent_would_have_blocked",
-	"sentinel_hits", "signed", "created_at", "updated_at",
+	"sentinel_hits", "signed", "created_at", "updated_at", "opened_at",
 }
 
 func newEvidenceCommand(env *commandEnv) *cobra.Command {
@@ -101,6 +106,7 @@ func newEvidenceCommand(env *commandEnv) *cobra.Command {
 	}
 	cmd.AddCommand(newEvidenceExportCommand(env))
 	cmd.AddCommand(newEvidenceBackfillCommand(env))
+	cmd.AddCommand(newEvidenceBackfillIssuesCommand(env))
 	return cmd
 }
 
@@ -108,17 +114,19 @@ func newEvidenceExportCommand(_ *commandEnv) *cobra.Command {
 	var root, since, format, repo, out string
 	cmd := &cobra.Command{
 		Use:   "export",
-		Short: "Export the latest evidence bundle per PR as CSV or JSON Lines",
+		Short: "Export one folded evidence row per PR as CSV or JSON Lines",
 		Long: "Export one row per pull request from the schema v1 evidence bundles stored under --root\n" +
-			"(<root>/<org>/<repo>/<pr>/<sha>.json), using the newest bundle per PR exactly as GET /api/evidence/summary\n" +
-			"does, so exported counts reconcile with the dashboard Evidence charts. Columns: repo, pr, head_sha, bundle_id,\n" +
-			"author login/kind/model, policy.acmm_level, perspectives, reviewer models, per-perspective verdicts\n" +
-			"(perspective, verdict, model, backend, confidence), ci conclusion and captured_at, outcome (merged/open) and\n" +
-			"merged_at, revert_of / reverted_by / followup_of / followed_up_by, shadow review-gate would_have_held, shadow\n" +
-			"intent would_have_blocked, sentinel hit count, signed, created_at, updated_at.\n\n" +
-			"--since takes an RFC3339 timestamp or a Go duration (e.g. 72h) and keeps bundles created at or after it.\n" +
+			"(<root>/<org>/<repo>/<pr>/<sha>.json), folding every bundle of a PR exactly as GET /api/evidence/summary\n" +
+			"does, so exported counts reconcile with the dashboard Evidence charts: verdicts, CI, sentinel, shadow flags and\n" +
+			"the identity columns come from the newest bundle; outcome, merged_at, the link lists and opened_at come from\n" +
+			"whichever bundle of the PR recorded them (a live bundle and a backfilled one are one row). Columns: repo, pr,\n" +
+			"head_sha, bundle_id, author login/kind/model, policy.acmm_level, perspectives, reviewer models, per-perspective\n" +
+			"verdicts (perspective, verdict, model, backend, confidence), ci conclusion and captured_at, outcome\n" +
+			"(merged/closed/open) and merged_at, revert_of / reverted_by / followup_of / followed_up_by, shadow review-gate\n" +
+			"would_have_held, shadow intent would_have_blocked, sentinel hit count, signed, created_at, updated_at, opened_at.\n\n" +
+			"--since takes an RFC3339 timestamp or a Go duration (e.g. 72h) and keeps PRs opened at or after it.\n" +
 			"Rows are ordered by repo then PR number. Bundles that do not parse are skipped and counted on stderr, never\n" +
-			"fabricated. Schema v1 does not record a close without merge, so outcome is merged or open.\n" +
+			"fabricated. outcome is closed only when a backfilled bundle records a close without merge.\n" +
 			"Reads the local filesystem only; no network, no hive session, and nothing here affects merge eligibility.",
 		Example: "  hivectl evidence export                                  # all PRs, JSON Lines on stdout\n" +
 			"  hivectl evidence export --since 168h --format csv --out evidence.csv\n" +
@@ -200,11 +208,12 @@ func parseEvidenceSince(s string, now time.Time) (time.Time, error) {
 	return now.Add(-d), nil
 }
 
-// exportEvidenceRows walks root, keeps the newest readable v1 bundle per PR
-// created at or after cutoff (zero = all time) in repo (empty = all), and
-// returns rows ordered by repo then PR number plus the unreadable count.
+// exportEvidenceRows walks root, folds the readable v1 bundles in repo
+// (empty = all) per PR, keeps the PRs opened at or after cutoff (zero = all
+// time), and returns rows ordered by repo then PR number plus the unreadable
+// count.
 func exportEvidenceRows(root string, cutoff time.Time, repo string) ([]evidenceExportRow, int, error) {
-	latest := map[string]*evidence.Bundle{}
+	var bundles []*evidence.Bundle
 	unreadable := 0
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -221,24 +230,19 @@ func exportEvidenceRows(root string, cutoff time.Time, repo string) ([]evidenceE
 			unreadable++
 			return nil
 		}
-		if repo != "" && !strings.EqualFold(b.Repo, repo) {
-			return nil
-		}
-		if !cutoff.IsZero() && b.CreatedAt.Before(cutoff) {
-			return nil
-		}
-		key := strings.ToLower(b.Repo) + "#" + strconv.Itoa(b.Number)
-		if cur, ok := latest[key]; !ok || b.CreatedAt.After(cur.CreatedAt) {
-			latest[key] = b
-		}
+		bundles = append(bundles, b)
 		return nil
 	})
 	if err != nil {
 		return nil, unreadable, fmt.Errorf("reading evidence under %s: %w", root, err)
 	}
-	rows := make([]evidenceExportRow, 0, len(latest))
-	for _, b := range latest {
-		rows = append(rows, evidenceRowFromBundle(b))
+	prs := evidence.FoldPRs(bundles, repo, "")
+	rows := make([]evidenceExportRow, 0, len(prs))
+	for _, p := range prs {
+		if !cutoff.IsZero() && p.OpenedAt.Before(cutoff) {
+			continue
+		}
+		rows = append(rows, evidenceRowFromPR(p))
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		ri, rj := strings.ToLower(rows[i].Repo), strings.ToLower(rows[j].Repo)
@@ -250,7 +254,11 @@ func exportEvidenceRows(root string, cutoff time.Time, repo string) ([]evidenceE
 	return rows, unreadable, nil
 }
 
-func evidenceRowFromBundle(b *evidence.Bundle) evidenceExportRow {
+// evidenceRowFromPR flattens one folded PR: the newest bundle's verdicts,
+// CI, shadow flags and identity, with the outcome, links and open time from
+// whichever bundle of the PR recorded them.
+func evidenceRowFromPR(p *evidence.PR) evidenceExportRow {
+	b := p.Bundle
 	row := evidenceExportRow{
 		Repo: b.Repo, PR: b.Number, HeadSHA: b.HeadSHA, BundleID: b.ID,
 		AuthorLogin: b.Author.Login, AuthorKind: b.Author.Kind, AuthorModel: b.Author.Model,
@@ -259,20 +267,23 @@ func evidenceRowFromBundle(b *evidence.Bundle) evidenceExportRow {
 		Verdicts:     make([]evidenceExportVerdict, 0, len(b.Verdicts)),
 		CIConclusion: b.CI.Status,
 		Outcome:      evidenceOutcomeOpen,
-		RevertOf:     nonNil(b.RevertOf), RevertedBy: nonNil(b.RevertedBy),
-		FollowupOf: nonNil(b.FollowupOf), FollowedUpBy: nonNil(b.FollowedUpBy),
+		RevertOf:     nonNil(p.RevertOf), RevertedBy: nonNil(p.RevertedBy),
+		FollowupOf: nonNil(p.FollowupOf), FollowedUpBy: nonNil(p.FollowedUpBy),
 		SentinelHits: len(b.Sentinel),
 		Signed:       b.Signed,
-		CreatedAt:    b.CreatedAt, UpdatedAt: b.UpdatedAt,
+		CreatedAt:    b.CreatedAt, UpdatedAt: b.UpdatedAt, OpenedAt: p.OpenedAt,
 	}
 	if !b.CI.CapturedAt.IsZero() {
 		t := b.CI.CapturedAt
 		row.CICapturedAt = &t
 	}
-	if b.Merge != nil {
+	switch {
+	case p.Merge != nil:
 		row.Outcome = evidenceOutcomeMerged
-		t := b.Merge.At
+		t := p.Merge.At
 		row.MergedAt = &t
+	case p.Closed:
+		row.Outcome = evidenceOutcomeClosed
 	}
 	models := map[string]bool{}
 	for _, v := range b.Verdicts {
@@ -358,5 +369,6 @@ func (r evidenceExportRow) csv() []string {
 		strings.Join(r.RevertOf, evidenceExportListSep), strings.Join(r.RevertedBy, evidenceExportListSep), strings.Join(r.FollowupOf, evidenceExportListSep), strings.Join(r.FollowedUpBy, evidenceExportListSep),
 		optBool(r.ShadowReviewWouldHaveHeld), optBool(r.ShadowIntentWouldHaveBlocked),
 		strconv.Itoa(r.SentinelHits), strconv.FormatBool(r.Signed), r.CreatedAt.UTC().Format(time.RFC3339), r.UpdatedAt.UTC().Format(time.RFC3339),
+		r.OpenedAt.UTC().Format(time.RFC3339),
 	}
 }

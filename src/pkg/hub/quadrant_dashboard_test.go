@@ -94,7 +94,7 @@ func TestQuadrantSortsReachable(t *testing.T) {
 func TestQuadrantCacheVersionBumped(t *testing.T) {
 	html := dashScript(t)
 	if !strings.Contains(html, "var HIVES_CACHE_VERSION = 7;") {
-		t.Error("HIVES_CACHE_VERSION was not bumped — a cached pre-restart-telemetry paint would render the Quadrant column empty")
+		t.Error("HIVES_CACHE_VERSION was not bumped — a cached pre-explainer paint would render the per-axis explainers empty")
 	}
 	// The fleet average must be cached WITH the rows, or a cached paint draws
 	// kites with no reference polygon and every row reads as an absolute.
@@ -162,33 +162,6 @@ func TestFleetQuadrantHeaderWiring(t *testing.T) {
 // TestQuadrantUnscoredCollapsesToCentre is the visual half of the same rule: an
 // unscored axis must plot at the origin so the polygon visibly caves in, rather
 // than drawing a small symmetric shape that reads as uniformly mediocre.
-func TestQuadrantAxisExplainers(t *testing.T) {
-	src := strings.Join([]string{
-		`function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }`,
-		jsFunc(t, "escAttr"),
-		`var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];`,
-		`var QUADRANT_AXIS_LABELS = {trust:'Trust', productivity:'Productivity', satisfaction:'Satisfaction', efficiency:'Efficiency'};`,
-		jsFunc(t, "quadrantAxisExplanationHTML"),
-		`result = {html: quadrantAxisExplanationHTML({axis:'trust', summary:'Trust 80/100', criteria:[
-		 {name:'revert_rate', covers:'<img src=x onerror=alert(1)>', measured:true, value:0.05, score:80, unit:'ratio', source:'90 days', how:'linear', good:'No reverts'},
-		 {name:'missing', measured:false, reason:'Not measured yet', source:'heartbeat', how:'excluded', good:'Not collected'}]})};`,
-	}, "\n")
-	var got struct{ HTML string }
-	runEvidenceJS(t, src, &got)
-	for _, want := range []string{"<details", "<summary", "ⓘ Trust", "What this covers", "How it's scored", "What good looks like", "What ours shows", "0.05 ratio → 80/100", "Not measured yet", "&lt;img", "event.stopPropagation()"} {
-		if !strings.Contains(got.HTML, want) {
-			t.Errorf("explainer missing %q: %s", want, got.HTML)
-		}
-	}
-	if strings.Contains(got.HTML, "<img") {
-		t.Fatal("heartbeat text injected HTML")
-	}
-	html := dashScript(t)
-	if strings.Count(html, "quadrantAxisExplanationHTML(") < 3 || !strings.Contains(html, "quadrantSummaryHTML(q)") || !strings.Contains(html, "(a.n || 0)") {
-		t.Fatal("explanations, summary or population n not wired to both surfaces")
-	}
-}
-
 func TestQuadrantUnscoredCollapsesToCentre(t *testing.T) {
 	html := dashScript(t)
 	if !strings.Contains(html, "if (!scored) return [cx, cy];") {

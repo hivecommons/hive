@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
@@ -57,6 +58,12 @@ func TestAggregateReportsMatrix(t *testing.T) {
 		{name: "changes requested enters fix cycle", reps: append(allApprove()[:1], baseReport(PerspectiveSecurity, VerdictChangesRequested)), want: VerdictChangesRequested, fix: true},
 		{name: "severity threshold requires human", reps: []PerspectiveReport{baseReport(PerspectiveSecurity, VerdictApprove, highFinding)}, want: VerdictRequiresHuman, human: true},
 		{name: "explicit requires human wins", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove), baseReport(PerspectiveSecurity, VerdictRequiresHuman)}, want: VerdictRequiresHuman, human: true},
+		{name: "decision request marker wins", reps: []PerspectiveReport{func() PerspectiveReport {
+			r := baseReport(PerspectiveCorrectness, VerdictApprove)
+			r.DecisionRequested = true
+			r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+			return r
+		}()}, want: VerdictRequiresHuman, human: true},
 		{name: "reject recommends close", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictReject)}, want: VerdictReject, close: true},
 		{name: "fix cap requires human", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictChangesRequested)}, opts: AggregateOptions{FixAttempts: DefaultFixCycleCap}, want: VerdictRequiresHuman, human: true},
 		{name: "missing perspectives is incomplete, not a human hold", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictIncomplete},
@@ -69,6 +76,41 @@ func TestAggregateReportsMatrix(t *testing.T) {
 				t.Fatalf("aggregate = verdict:%s merge:%v fix:%v human:%v close:%v", got.Verdict, got.MergeEligible, got.FixCycle, got.RequiresHuman, got.CloseRecommended)
 			}
 		})
+	}
+}
+
+func TestAggregateReportsCarriesDecisionQuestion(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictApprove)
+	r.DecisionRequested = true
+	r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want requires_human decision request", got)
+	}
+	if got.DecisionQuestion != r.DecisionQuestion {
+		t.Fatalf("DecisionQuestion = %q, want %q", got.DecisionQuestion, r.DecisionQuestion)
+	}
+	if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], r.DecisionQuestion) {
+		t.Fatalf("Reasons = %v, want question quoted", got.Reasons)
+	}
+}
+
+func TestAggregateReportsCarriesRequiresHumanSummary(t *testing.T) {
+	r := baseReport(PerspectiveSecurity, VerdictRequiresHuman)
+	r.Summary = "Trust-surface file by location; a relay owner should confirm before merge."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman {
+		t.Fatalf("aggregate = %+v, want requires_human", got)
+	}
+	if len(got.HumanSummaries) != 1 || !strings.Contains(got.HumanSummaries[0], "relay owner should confirm") {
+		t.Fatalf("HumanSummaries = %v, want reviewer summary", got.HumanSummaries)
+	}
+	if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], "security requires human") {
+		t.Fatalf("Reasons = %v, want requires_human summary", got.Reasons)
 	}
 }
 
@@ -164,6 +206,90 @@ func TestValidateRoundTripAndCollect(t *testing.T) {
 	}
 	if loaded.HasAggregateApproval("other/hive", 2807, testSHA) {
 		t.Fatal("approval must not cross repository owners")
+	}
+}
+
+func TestCollectKeepsBodyDigestsSeparate(t *testing.T) {
+	dir := t.TempDir()
+	oldBody := PullRequestBodyDigest("fix links", "Closes #12397")
+	newBody := PullRequestBodyDigest("fix links", "Refs #12397")
+	reports := []PerspectiveReport{
+		func() PerspectiveReport {
+			r := baseReport(PerspectiveIntentAlignment, VerdictChangesRequested)
+			r.BodyDigest = oldBody
+			r.Summary = "closing keyword contradicts refs"
+			return r
+		}(),
+		func() PerspectiveReport {
+			r := baseReport(PerspectiveSecurity, VerdictApprove)
+			r.BodyDigest = newBody
+			return r
+		}(),
+	}
+	for _, r := range reports {
+		raw, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, ReviewReportFilePrefix+string(r.Perspective)+ReviewReportFileSuffix)
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	artifact, err := Collect(dir, AggregateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Items) != 2 {
+		t.Fatalf("items = %+v, want separate aggregates per body digest", artifact.Items)
+	}
+	if agg, ok := artifact.AggregateForBody("hivecommons/hive", 2807, testSHA, newBody); !ok || agg.BodyDigest != newBody {
+		t.Fatalf("new-body aggregate = %+v, %v", agg, ok)
+	}
+}
+
+// Perspective reports that omit body_digest must join the digest-keyed
+// aggregate for the same head; apart, a full approval reads as two
+// "incomplete" items (hivecommons/hive#12332 @19b51e2).
+func TestCollectFoldsDigestlessReportsIntoHeadGroup(t *testing.T) {
+	dir := t.TempDir()
+	body := PullRequestBodyDigest("fix links", "Refs #12397")
+	for _, p := range []Perspective{PerspectiveCorrectness, PerspectiveSecurity, PerspectiveIntentAlignment, PerspectiveStyle, PerspectiveDocsCurrency} {
+		r := baseReport(p, VerdictApprove)
+		if p != PerspectiveStyle && p != PerspectiveCorrectness {
+			r.BodyDigest = body
+		}
+		raw, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ReviewReportFilePrefix+string(p)+ReviewReportFileSuffix), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artifact, err := Collect(dir, AggregateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Items) != 1 {
+		t.Fatalf("items = %+v, want one aggregate for the head", artifact.Items)
+	}
+	agg := artifact.Items[0]
+	if agg.BodyDigest != body || len(agg.Perspectives) != 5 || agg.Verdict != VerdictApprove || !agg.MergeEligible {
+		t.Fatalf("aggregate = %+v, want 5/5 approve with digest %s", agg, body)
+	}
+}
+
+func TestHasAggregateApprovalUsesNewestHeadAggregate(t *testing.T) {
+	old := time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC)
+	artifact := Artifact{Items: []Aggregate{
+		{Repo: "hivecommons/hive", Number: 2807, HeadSHA: testSHA, BodyDigest: "old", Verdict: VerdictApprove, MergeEligible: true, RecordedAt: old},
+		{Repo: "hivecommons/hive", Number: 2807, HeadSHA: testSHA, BodyDigest: "new", Verdict: VerdictChangesRequested, RecordedAt: old.Add(time.Hour)},
+	}}
+
+	if artifact.HasAggregateApproval("hivecommons/hive", 2807, testSHA) {
+		t.Fatal("stale approval for an older body digest must not approve the current head")
 	}
 }
 

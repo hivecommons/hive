@@ -1230,7 +1230,36 @@ const RELAY_PROTOCOL_VERSION = '1.4';
 // contributorProtocolVersion), so RELAY_PROTOCOL_VERSION is deliberately NOT
 // bumped here and stays in step with the hub, keeping
 // TestRelayProtocolVersionMatchesHub honest.
-const RELAY_CAPABILITIES = ['quota_preflight_v1', 'run-stage'];
+const RELAY_CAPABILITIES = ['quota_preflight_v1', 'run-stage', 'fix_pr_interrupt_v1'];
+
+// ── Stage-072 `fix-pr` interrupts (hivecommons/hive#12436) ──────────────────
+// When one of this contributor's earlier PRs goes red the hub pushes a
+// task_assign of kind `fix-pr` with priority `interrupt` WHILE a task is
+// running. Two client-side modes, chosen by the hub from what this relay
+// advertised:
+//   spawn   — a parallel one-shot (headless) child works the red PR while the
+//             primary session keeps its task. Advertised as the
+//             `parallel_sessions` capability + `max_parallel_fixes`, only when
+//             the backend has a headless entry point (the fix child is one).
+//   preempt — no parallel capacity: the primary agent is told to park its
+//             current work (WIP committed/stashed, claim kept alive by the
+//             relay's unchanged lease), fix the PR, print a done marker, then
+//             resume. In headless mode there is no pane to interrupt, so the
+//             fix is DEFERRED and runs before the next `ready`.
+// A fix never replaces currentTask: the primary lease stays owned and renewed.
+const FIX_PR_KIND = 'fix-pr';
+const FIX_PR_MAX_PARALLEL = Math.max(0, Math.min(16, Number(process.env.HIVE_MAX_PARALLEL_FIXES || 1) || 0));
+const FIX_PR_DONE_MARKER = 'HIVE_FIX_PR_DONE';
+const FIX_PR_FAILED_MARKER = 'HIVE_FIX_PR_FAILED';
+const FIX_PR_CHILD_TIMEOUT_MS = Number(process.env.HIVE_FIX_PR_TIMEOUT_MS || 2 * 60 * 60 * 1000);
+// task_id → { task, hub, child, mode, startedAt }
+const parallelFixes = new Map();
+// Fix tasks accepted while a headless primary is running; dispatched before
+// the next `ready` so the hub's "fix what you broke before new work" ordering
+// holds on the client too.
+const deferredFixes = [];
+// The fix currently preempting the interactive primary (at most one).
+let preemptingFix = null;
 
 const KNOWLEDGE_AGENT_MD = process.env.HIVE_AGENT_MD || path.join(process.env.HOME || require('os').homedir() || process.cwd(), 'agent.md');
 const KNOWLEDGE_STATE_POLL_MS = Number(process.env.HIVE_KNOWLEDGE_STATE_POLL_MS || (RELAY_TEST_TIMING ? 200 : 30000));
@@ -1856,6 +1885,10 @@ function requestWork(hub, trigger, expectedConnectGeneration = null) {
     logSkippedWorkRequest(hub, trigger, `already working on ${currentTask.task_id || taskKey(currentTask)}`);
     return false;
   }
+  // hivecommons/hive#12436: a fix accepted while the previous task ran is
+  // served before asking for new work — "clean up your mess before taking on
+  // new stuff" holds on the client as well as on the hub.
+  if (startDeferredFix(hub, trigger)) return false;
   if (hub.readyOutstanding) {
     logSkippedWorkRequest(hub, trigger, 'ready already outstanding');
     return false;
@@ -2366,6 +2399,10 @@ function detectCapabilities() {
     // (kubestellar/hive#6954). Copied so a caller cannot mutate the constant.
     relay_capabilities: RELAY_CAPABILITIES.slice(),
   };
+  if (relaySupportsParallelFixes()) {
+    caps.relay_capabilities.push('parallel_sessions');
+    caps.max_parallel_fixes = FIX_PR_MAX_PARALLEL;
+  }
   // Container runtime: prefer docker, then podman, else none. `command -v` is a
   // cheap presence check; failure just means the runtime is absent.
   let runtime = 'none';
@@ -3587,6 +3624,200 @@ function installRepoToolchain(task, then) {
     if (code !== 0) console.error(`repo-toolchain exited ${code} — continuing without the declared tools`);
     finish();
   });
+}
+
+// ── fix-pr interrupt implementation (hivecommons/hive#12436) ─────────────────
+
+function relaySupportsParallelFixes() {
+  return FIX_PR_MAX_PARALLEL > 0 && headlessSupportsBackend();
+}
+
+function fixPRLabel(task) {
+  const prs = Array.isArray(task && task.fix_prs) ? task.fix_prs : [];
+  if (!prs.length) return `${sanitizeHubText(task && task.repo)}#${task && task.number}`;
+  return prs.map(p => `${sanitizeHubText(p.repo)}#${p.number}`).join(', ');
+}
+
+function fixPRWorkspaceDir(task) {
+  const safe = String(task.task_id || Date.now()).replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 64);
+  return path.join(TASK_WORKSPACE_DIR, `.hive-fix-${safe}`);
+}
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// handleFixPRInterrupt decides spawn / preempt / defer for a fix-pr task that
+// arrived while currentTask is running.
+function handleFixPRInterrupt(msg, hub) {
+  if (parallelFixes.has(msg.task_id) || deferredFixes.some(d => d.task.task_id === msg.task_id)
+    || (preemptingFix && preemptingFix.task_id === msg.task_id)) {
+    console.log(`Ignoring duplicate fix-pr ${sanitizeHubText(msg.task_id)} — already handling it`);
+    return;
+  }
+  if (msg.github_token) {
+    // The fix works the same repos the primary task was authorized for; a
+    // fresh task-scoped credential supersedes the primary's for both.
+    injectGhToken(msg.github_token);
+    tokenExpiresAt = msg.token_expires_at ? new Date(msg.token_expires_at).getTime() : null;
+    tokenRefreshFailedAt = null;
+  }
+  recordAuthorizedRepo(msg.repo);
+  const wantSpawn = msg.mode !== 'preempt';
+  if (wantSpawn && relaySupportsParallelFixes() && parallelFixes.size < FIX_PR_MAX_PARALLEL) {
+    spawnParallelFix(msg, hub);
+    return;
+  }
+  if (CONTRIBUTOR_MODE === MODE_HEADLESS) {
+    // One-shot child in flight: nothing to interrupt. Run it next.
+    deferredFixes.push({ task: msg, hub });
+    sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
+    console.log(`fix-pr ${fixPRLabel(msg)} deferred until the current headless task exits (${deferredFixes.length} queued)`);
+    return;
+  }
+  if (preemptingFix) {
+    deferredFixes.push({ task: msg, hub });
+    sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
+    console.log(`fix-pr ${fixPRLabel(msg)} queued behind the fix already preempting the primary task`);
+    return;
+  }
+  preemptInteractiveSession(msg, hub);
+}
+
+// spawnParallelFix runs the fix as a one-shot headless child beside the
+// interactive/headless primary. Its exit is the fix's verdict.
+function spawnParallelFix(msg, hub) {
+  let built;
+  try {
+    built = buildHeadlessArgv(resolveTaskPrompt(msg));
+  } catch (e) {
+    sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen, reason: e.message, failure_kind: 'environment' });
+    return;
+  }
+  const dir = fixPRWorkspaceDir(msg);
+  try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* cwd falls back below */ }
+  sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
+  const { bin, args } = built;
+  console.log(`fix-pr ${fixPRLabel(msg)}: spawning a parallel fix session (${parallelFixes.size + 1}/${FIX_PR_MAX_PARALLEL}); the primary task keeps running`);
+  const output = createBoundedOutputCapture(HEADLESS_MAX_OUTPUT_BYTES);
+  const entry = { task: msg, hub, child: null, mode: 'spawn', startedAt: Date.now() };
+  parallelFixes.set(msg.task_id, entry);
+  let settled = false;
+  let timeout = null;
+  const finish = (ok, reason) => {
+    if (settled) return;
+    settled = true;
+    if (timeout) clearTimeout(timeout);
+    parallelFixes.delete(msg.task_id);
+    const outTail = output.text().split('\n').slice(-TMUX_TAIL_LINES);
+    if (ok) {
+      sendTo(hub, { type: 'task_complete', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen, result: 'completed', summary: `fix-pr ${fixPRLabel(msg)}: parallel fix session exited 0`, tmux_output: outTail });
+    } else {
+      sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen, reason, tmux_output: outTail });
+    }
+    console.log(`fix-pr ${fixPRLabel(msg)}: parallel fix session ${ok ? 'completed' : 'failed: ' + reason}`);
+  };
+  timeout = setTimeout(() => {
+    if (entry.child && !entry.child.killed) entry.child.kill('SIGKILL');
+    finish(false, `fix session exceeded ${formatDuration(FIX_PR_CHILD_TIMEOUT_MS)}`);
+  }, FIX_PR_CHILD_TIMEOUT_MS);
+  if (timeout.unref) timeout.unref();
+  let child;
+  try {
+    child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], cwd: fs.existsSync(dir) ? dir : TASK_WORKSPACE_DIR, env: headlessChildEnv() });
+  } catch (e) {
+    finish(false, `spawn failed: ${e.message}`);
+    return;
+  }
+  entry.child = child;
+  if (child.stdout) child.stdout.on('data', chunk => output.append(chunk));
+  if (child.stderr) child.stderr.on('data', chunk => output.append(chunk));
+  child.on('error', err => finish(false, `spawn error: ${err.message}`));
+  if (child.stdin) child.stdin.end();
+  child.on('close', (code, signal) => {
+    if (code === 0) finish(true);
+    else finish(false, `fix session exited ${code === null ? `on ${signal}` : code}`);
+  });
+}
+
+// preemptInteractiveSession tells the primary agent, in its own pane, to park
+// its work and fix the PR first. The primary lease is untouched; completion
+// of the fix is read back from the pane markers.
+function preemptInteractiveSession(msg, hub) {
+  preemptingFix = msg;
+  Object.defineProperty(preemptingFix, '_hub', { value: hub, enumerable: false, writable: true, configurable: true });
+  sendTo(hub, { type: 'task_accepted', seq: nextSeq(), task_id: msg.task_id, task_gen: msg.task_gen });
+  const parked = currentTask ? `${sanitizeHubText(currentTask.repo)}#${currentTask.number}` : 'your current task';
+  const prompt = [
+    `INTERRUPT (hive fix-pr, preempt mode): one of your earlier PRs needs fixing before you continue.`,
+    `1. Park ${parked}: commit or stash your work in progress on its branch (its claim stays alive; do not close or abandon it).`,
+    `2. ${resolveTaskPrompt(msg).trim()}`,
+    `3. When the fix is pushed, print exactly this line on its own: ${FIX_PR_DONE_MARKER} ${msg.task_id}`,
+    `   If you cannot fix it, print exactly: ${FIX_PR_FAILED_MARKER} ${msg.task_id} <short reason>`,
+    `4. Then resume ${parked} where you left off.`,
+  ].join('\n');
+  console.log(`fix-pr ${fixPRLabel(msg)}: preempting the primary task (no parallel capacity)`);
+  tmuxSendKeys(prompt);
+}
+
+// scanPaneForFixMarkers settles the preempting fix when the agent prints its
+// done/failed marker, and dispatches the next queued fix if any.
+function scanPaneForFixMarkers(lines) {
+  if (!preemptingFix || !Array.isArray(lines)) return;
+  const id = escapeRegExp(preemptingFix.task_id);
+  const done = new RegExp(`${FIX_PR_DONE_MARKER}\\s+${id}(\\s|$)`);
+  const failed = new RegExp(`${FIX_PR_FAILED_MARKER}\\s+${id}\\s*(.*)$`);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = String(lines[i] || '');
+    // Skip the echoed instruction: it names the marker followed by the id too.
+    if (/print exactly/.test(line)) continue;
+    let m;
+    if ((m = failed.exec(line))) {
+      settlePreemptingFix(false, (m[1] || 'agent reported failure').trim().slice(0, 300));
+      return;
+    }
+    if (done.test(line)) {
+      settlePreemptingFix(true);
+      return;
+    }
+  }
+}
+
+function settlePreemptingFix(ok, reason) {
+  const fix = preemptingFix;
+  if (!fix) return;
+  preemptingFix = null;
+  const hub = fix._hub || currentTaskHub() || hubs[activeHubIndex];
+  if (ok) {
+    sendTo(hub, { type: 'task_complete', seq: nextSeq(), task_id: fix.task_id, task_gen: fix.task_gen, result: 'completed', summary: `fix-pr ${fixPRLabel(fix)}: agent reported the fix pushed (preempt mode)` });
+  } else {
+    sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: fix.task_id, task_gen: fix.task_gen, reason });
+  }
+  console.log(`fix-pr ${fixPRLabel(fix)}: preempting fix ${ok ? 'completed' : 'failed: ' + reason}`);
+  if (deferredFixes.length && currentTask && CONTRIBUTOR_MODE !== MODE_HEADLESS) {
+    const next = deferredFixes.shift();
+    preemptInteractiveSession(next.task, next.hub);
+  }
+}
+
+// startDeferredFix dispatches the oldest deferred fix as the next task instead
+// of sending `ready`. Returns true when it took the slot.
+function startDeferredFix(hub, trigger) {
+  if (currentTask || !deferredFixes.length) return false;
+  const next = deferredFixes.shift();
+  const target = next.hub || hub;
+  console.log(`Running deferred fix-pr ${fixPRLabel(next.task)} before asking for new work (trigger=${trigger})`);
+  // Re-enter the ordinary assignment path: the hub still owns the task.
+  handleMessage(JSON.stringify(next.task), target);
+  return true;
+}
+
+function fixPRState() {
+  return {
+    parallel: Array.from(parallelFixes.keys()),
+    deferred: deferredFixes.map(d => d.task.task_id),
+    preempting: preemptingFix ? preemptingFix.task_id : null,
+  };
 }
 
 function runHeadlessTask(task) {
@@ -7543,6 +7774,7 @@ function progressTick() {
   // destructive to the paneStalled() fingerprint (#5333).
   const paneScanLines = captureTmuxLines(PR_SCAN_LINES);
   const tmuxLines = paneScanLines.slice(-TMUX_TAIL_LINES);
+  scanPaneForFixMarkers(paneScanLines);
 
   // #5321: forward progress renews the max-duration lease. Recorded here,
   // before any branch below can return, so EVERY pane state gets the credit —
@@ -8119,6 +8351,13 @@ function handleMessage(data, hub) {
       if (!currentTask && hub !== hubs[activeHubIndex]) {
         console.log(`Rejecting task ${msg.repo}#${msg.number} from ${hub.url} — hub is not the active polling slot`);
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hub is not the active polling slot' });
+        break;
+      }
+      // hivecommons/hive#12436: a fix-pr interrupt arriving mid-task runs
+      // BESIDE the primary (spawn) or preempts it; it is never "Already has
+      // active task". With no task running it takes the ordinary path below.
+      if (currentTask && msg.kind === FIX_PR_KIND) {
+        handleFixPRInterrupt(msg, hub);
         break;
       }
       if (currentTask) {
@@ -8895,6 +9134,13 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getLastResetAtCount: () => lastResetAtCount,
     getCurrentTask: () => currentTask,
     setCurrentTask: (v) => { currentTask = v; },
+    // Stage-072 fix-pr interrupt surface (hivecommons/hive#12436).
+    FIX_PR_KIND,
+    FIX_PR_DONE_MARKER,
+    FIX_PR_FAILED_MARKER,
+    fixPRState,
+    scanPaneForFixMarkers,
+    relaySupportsParallelFixes,
     blockingPromptKey,
     getCLIState,
     setWs: (w) => { hubs[0].ws = w; },

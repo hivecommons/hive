@@ -1,0 +1,1 @@
+- Connected contributor agents cards label the relay's advertised slot count "max parallel" (it is the contributor's setting) and size the status and tier pills identically.

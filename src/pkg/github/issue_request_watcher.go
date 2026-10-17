@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/logscrub"
@@ -118,12 +119,6 @@ type IssueRequest struct {
 	// the actionable queue whatever labels the agent named.
 	NeedsDecision bool `json:"needs_decision,omitempty"` // issue only
 }
-
-// claimLabelPrefix is the label namespace applied for a "claim" request. The
-// full label is claimLabelPrefix + <sanitized agent name>, e.g.
-// "hive/claimed-by-scanner". Namespaced so it is easy to filter/sweep and never
-// collides with a project's own labels.
-const claimLabelPrefix = "hive/claimed-by-"
 
 // IssueResponse is written next to a consumed request as <name>.result.json.
 type IssueResponse struct {
@@ -458,22 +453,67 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			c.denyIssueRequest(path, req, "issue claim refused: "+reason, nowFn)
 			return
 		}
+		// A claim right after a hive verification with nothing in between is
+		// the re-verify loop, not new work (#12733). Deny it with the reason;
+		// a lookup failure falls through to the claim.
+		if verified, lookupErr := c.issueLatestCommentIsRecentVerification(ctx, req.Repo, req.Number, nowFn()); lookupErr != nil {
+			c.logger.Warn("issue-request watcher: verification lookup before claim failed, claiming anyway",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", lookupErr.Error()))
+		} else if verified {
+			c.denyIssueRequest(path, req, "issue claim refused: a hive agent verified this issue less than "+
+				verificationClaimCooldown.String()+" ago and nothing has changed since; do not re-verify it, and open a PR without a claim if you intend to fix it", nowFn)
+			return
+		}
 		// Apply a namespaced ownership label (App bots can't be assignees)
-		// and, when enabled, hive/in-progress — the timestamped "an agent
-		// started a PR for this" signal (see issue_inprogress.go).
-		err = c.AddLabels(ctx, req.Repo, req.Number, c.inProgressLabelsForClaim(req.Agent))
+		// and, when enabled, stage/030-pr-in-progress — the timestamped "an
+		// agent started a PR for this" signal (see issue_inprogress.go). The
+		// stage goes through the one enforcer and both writes are journaled
+		// against a fresh read, so a second claim on an issue whose earlier
+		// labels lapsed is written, not replayed (hivecommons/hive#12512).
+		err = c.AddLabelsFresh(ctx, req.Repo, req.Number, c.claimStage(), c.inProgressLabelsForClaim(req.Agent)...)
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
 			c.markInProgressStarted(ctx, req.Repo, req.Number, req.Agent, nowFn())
 		}
 	case "comment":
-		err = c.CreateIssueComment(ctx, req.Repo, req.Number, body)
+		// A verification marker already on the issue means this comment was
+		// posted on an earlier kick: acknowledge it, do not post again
+		// (#12733). A failed lookup posts — suppression only on evidence.
+		if marker := verificationMarker(req.Body); marker != "" {
+			found, lookupErr := c.IssueCommentsContain(ctx, req.Repo, req.Number, marker)
+			if lookupErr != nil {
+				c.logger.Warn("issue-request watcher: verification-marker lookup failed, posting anyway",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", lookupErr.Error()))
+			} else if found {
+				c.logger.Info("issue-request watcher: verification marker already on issue, not re-posting",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("agent", req.Agent), slog.String("marker", marker))
+				resp.OK, resp.Number, resp.AlreadyExisted = true, req.Number, true
+				break
+			}
+		}
+		err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, body)
+		if errors.Is(err, ErrIssueCommentBudget) {
+			c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
+			return
+		}
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
 		}
 	case "label":
+		// A re-park on a decision a maintainer already gave is refused; a
+		// failed lookup takes the retry path like the claim gate.
+		var reason string
+		var refused bool
+		reason, refused, err = c.reparkDecisionRefusal(ctx, req.Repo, req.Number, addLabels)
+		if err != nil {
+			break
+		}
+		if refused {
+			c.denyIssueRequest(path, req, reason, nowFn)
+			return
+		}
 		// Adds first, then removes: a request that both adds and removes ends
 		// in the state it asked for even when the same automation reads the
 		// item in between. A failure leaves the request on the retry path; the
@@ -515,7 +555,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if req.NeedsDecision {
 			createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
 		}
-		res, err = c.createIssue(ctx, req.Repo, req.Title, body, createLabels, true)
+		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: body, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: true})
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict
@@ -597,7 +637,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
-	if signal := issueRequestStartSignal(kind); signal != "" {
+	if signal := issueRequestStartSignal(kind, req.Body, req.Labels); signal != "" {
 		c.notifyAgentStart(req.Agent, req.Repo, req.Number, signal)
 	}
 
@@ -736,29 +776,60 @@ type CreateIssueResult struct {
 	Consolidated bool
 }
 
+// CreateIssueRequest is what every hive issue-create path hands the central
+// helper. Origin is required: it names the origin/<source> provenance label
+// the issue carries (config.OriginSource* or an agent lane), so no hive-filed
+// issue reaches GitHub without exactly one origin/* label. A label already in
+// Labels that belongs to the family wins over Origin, and further origin/*
+// entries are dropped, so an agent that labelled its own filing is honoured
+// without ever double-labelling.
+type CreateIssueRequest struct {
+	// Repo may be "owner/repo" or bare (owner defaults to the hive org).
+	Repo   string
+	Title  string
+	Body   string
+	Labels []string
+	// Origin is the origin/<source> provenance source (without the prefix).
+	// Agent-filed issues pass the agent name; it is reduced to its lane.
+	Origin string
+	// ConsolidateOpen turns on open-twin consolidation: a finding over the
+	// same files as an open hive-filed issue is folded into it (#9376).
+	ConsolidateOpen bool
+}
+
+// OriginLabel returns the origin/* label this request resolves to: the one
+// already present in Labels, else origin/<Origin>.
+func (r CreateIssueRequest) OriginLabel() string {
+	if label, ok := config.FirstOriginLabel(r.Labels); ok {
+		return label
+	}
+	return config.OriginLabelForAgent(r.Origin)
+}
+
+// ErrOriginRequired is returned when a create carries no origin/* label and
+// names no Origin source.
+var ErrOriginRequired = errors.New("CreateIssue: origin/<source> provenance is required (set Origin or pass an origin/* label)")
+
 // CreateIssue creates an issue as the hive's App bot, ensuring requested labels
-// exist first and deduping by exact open-issue title. repo may be "owner/repo"
-// or bare (owner defaults to the hive org).
-func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labels []string) (CreateIssueResult, error) {
-	return c.createIssue(ctx, repo, title, body, labels, false)
+// exist first and deduping by exact open-issue title. Every issue gets
+// exactly one origin/<source> label (see CreateIssueRequest.Origin).
+func (c *Client) CreateIssue(ctx context.Context, req CreateIssueRequest) (CreateIssueResult, error) {
+	return c.createIssue(ctx, req)
 }
 
-// CreateIssueConsolidated is CreateIssue with open-twin consolidation on, for
-// hive lanes outside this package (the convergence publisher and the
-// dashboard's ACMM gap issues) that must fold into an open twin over the same
-// files instead of filing beside it (#11578).
-func (c *Client) CreateIssueConsolidated(ctx context.Context, repo, title, body string, labels []string) (CreateIssueResult, error) {
-	return c.createIssue(ctx, repo, title, body, labels, true)
-}
-
-// createIssue is CreateIssue with the open-twin consolidation switch. The
-// agent issue-request watcher turns it on: agents file findings one at a time
-// and cannot see each other's, so two findings about the same files become
-// two issues, two PRs, and a merge conflict (#9376). Hive-internal callers
-// (fleet report, review backlog, and through CreateIssueConsolidated the
-// convergence publisher and ACMM gap issues) also turn it on; the public
-// CreateIssue wrapper keeps plain semantics.
-func (c *Client) createIssue(ctx context.Context, repo, title, body string, labels []string, consolidateOpen bool) (CreateIssueResult, error) {
+// createIssue is the one create path. The agent issue-request watcher turns
+// ConsolidateOpen on: agents file findings one at a time and cannot see each
+// other's, so two findings about the same files become two issues, two PRs,
+// and a merge conflict (#9376). Hive-internal callers (fleet report, review
+// backlog, the convergence publisher through the forge seam, and the
+// dashboard's ACMM gap issues) also turn it on.
+func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (CreateIssueResult, error) {
+	repo, title, body, consolidateOpen := req.Repo, req.Title, req.Body, req.ConsolidateOpen
+	originLabel := req.OriginLabel()
+	if originLabel == "" {
+		return CreateIssueResult{}, ErrOriginRequired
+	}
+	labels := config.WithOriginLabel(req.Labels, originLabel)
 	if c == nil || c.client == nil {
 		return CreateIssueResult{}, ErrNoGitHubClient
 	}
@@ -905,7 +976,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		}
 	}
 	if componentTwin != nil {
-		if err := c.CreateIssueComment(ctx, owner+"/"+repoName, componentTwin.GetNumber(),
+		if err := c.appendFoldedFinding(ctx, owner, repoName, componentTwin.GetNumber(),
 			foldedComponentFindingComment(title, body, componentPath, componentCount, componentClosed)); err != nil {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: folding into open issue #%d in %s/%s: %w", componentTwin.GetNumber(), owner, repoName, err)
 		}
@@ -918,8 +989,10 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	}
 
 	// Ensure labels exist. Retryable failures keep the whole request queued
-	// because provenance labels (agent/*, hive/*) drive hive filtering and
-	// duplicate guards. Terminal label failures still degrade to unlabeled.
+	// because routing labels (agent/*) drive hive filtering and duplicate
+	// guards. Terminal label failures still degrade to unlabeled, and so does
+	// any failure on the origin/* label: provenance is never a gate, so a
+	// label-API blip must not block the filing itself.
 	var usable []string
 	for _, l := range labels {
 		l = strings.TrimSpace(l)
@@ -927,19 +1000,23 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 			continue
 		}
 		if err := c.ensureCreateIssueLabel(ctx, owner, repoName, l); err != nil {
-			if isRetryableGitHubError(err) {
+			if isRetryableGitHubError(err) && !IsOriginLabel(l) {
 				return CreateIssueResult{}, fmt.Errorf("CreateIssue: could not ensure label %q in %s/%s due to retryable error: %w", l, owner, repoName, err)
 			}
+			reasonClass := "terminal"
+			if isRetryableGitHubError(err) {
+				reasonClass = "retryable"
+			}
 			c.logger.Warn("CreateIssue: could not ensure label, creating without it",
-				slog.String("repo", repoName), slog.String("label", l), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
+				slog.String("repo", repoName), slog.String("label", l), slog.String("reason_class", reasonClass), slog.String("error", err.Error()))
 			continue
 		}
 		usable = append(usable, l)
 	}
 
-	req := &gh.IssueRequest{Title: gh.Ptr(title), Body: gh.Ptr(body)}
+	ghReq := &gh.IssueRequest{Title: gh.Ptr(title), Body: gh.Ptr(body)}
 	if len(usable) > 0 {
-		req.Labels = &usable
+		ghReq.Labels = &usable
 	}
 	var issue *gh.Issue
 	claim := issueCreateClaim(owner+"/"+repoName, title, body, issueCreateNow())
@@ -949,7 +1026,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		res, err = effects.Execute(ctx, c.mutationBoundary(), claim,
 			func(ctx context.Context) (effects.Result, error) {
 				var apiErr error
-				issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, req)
+				issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, ghReq)
 				if apiErr != nil {
 					return effects.Result{}, apiErr
 				}
@@ -1416,6 +1493,95 @@ func foldedComponentFindingComment(title, body, path string, openSiblings, close
 	b.WriteString("\n\n")
 	b.WriteString(body)
 	return b.String()
+}
+
+// foldedCommentMaxChars is how large one fold-trail comment may grow before a
+// new one is started; GitHub rejects comment bodies over 65536 characters.
+const foldedCommentMaxChars = 60000
+
+// appendFoldedFinding records a same-component fold on the tracker issue
+// without notifying its subscribers again (#12733): the newest existing
+// <!-- hive-finding-folded --> comment that still has room is EDITED to carry
+// the new finding as another section. GitHub does not notify on an edit, so
+// a tracker that collects dozens of variants costs one notification, not one
+// per variant. Only when no fold comment exists (or every one is full) is a
+// new comment posted, through the per-issue budget. A failed comment list
+// falls back to posting; a failed edit or post is returned so the request
+// retries rather than dropping the finding.
+func (c *Client) appendFoldedFinding(ctx context.Context, owner, repo string, number int, comment string) error {
+	section := strings.TrimPrefix(comment, hiveFindingFoldedMarker+"\n")
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		c.logger.Warn("CreateIssue: fold-trail lookup failed, posting a new fold comment",
+			slog.String("repo", repo), slog.Int("number", number), slog.String("error", err.Error()))
+		return c.CreateIssueCommentBudgeted(ctx, owner+"/"+repo, number, comment)
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		cm := comments[i]
+		if cm == nil || !strings.Contains(cm.GetBody(), hiveFindingFoldedMarker) {
+			continue
+		}
+		if len(cm.GetBody())+len(section) > foldedCommentMaxChars {
+			break
+		}
+		merged := cm.GetBody() + "\n\n---\n\n" + section
+		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(merged)}); err != nil {
+			return fmt.Errorf("appending to fold comment %d: %w", cm.GetID(), err)
+		}
+		c.logger.Info("CreateIssue: appended folded finding to the existing fold comment",
+			slog.String("repo", repo), slog.Int("number", number), slog.Int64("comment_id", cm.GetID()))
+		return nil
+	}
+	err = c.CreateIssueCommentBudgeted(ctx, owner+"/"+repo, number, comment)
+	if errors.Is(err, ErrIssueCommentBudget) {
+		// The finding is folded either way; the forge trail resumes tomorrow.
+		c.logger.Warn("CreateIssue: fold comment suppressed by the per-issue budget, finding folded silently",
+			slog.String("repo", repo), slog.Int("number", number))
+		return nil
+	}
+	return err
+}
+
+// verificationMarkerRE matches the agent-authored verification markers that
+// follow the `<!-- hive-* -->` convention: `<!-- hive-466-verified -->`,
+// `<!-- hive-verified -->`, `<!-- hive-verification: head=abc123 -->`. The
+// whole marker, including any head SHA it carries, is the idempotence key, so
+// a verification against a new head still posts.
+var verificationMarkerRE = regexp.MustCompile(`<!--\s*hive-(?:[A-Za-z0-9_]+-)*verif(?:ied|ication)\b[^>]*-->`)
+
+// verificationMarker returns the first verification marker in body, or "".
+func verificationMarker(body string) string {
+	return verificationMarkerRE.FindString(body)
+}
+
+// verificationClaimCooldown is how long after a hive verification comment a
+// `claim` on the same issue is refused when nothing else happened since.
+const verificationClaimCooldown = 24 * time.Hour
+
+// issueLatestCommentIsRecentVerification reports whether the newest comment
+// on the issue is a hive-bot verification posted within
+// verificationClaimCooldown of now. Any later comment — a human reply, a
+// fold, a PR link — is a state change and lets the claim through.
+func (c *Client) issueLatestCommentIsRecentVerification(ctx context.Context, repo string, number int, now time.Time) (bool, error) {
+	owner, repoName := c.splitRepo(repo)
+	comments, err := c.listIssueComments(ctx, owner, repoName, number)
+	if err != nil {
+		return false, err
+	}
+	if len(comments) == 0 {
+		return false, nil
+	}
+	last := comments[len(comments)-1]
+	if last == nil || verificationMarker(last.GetBody()) == "" {
+		return false, nil
+	}
+	if login := last.GetUser().GetLogin(); login != "" && !isHiveBotLogin(c.hiveBotLogins(), login) {
+		return false, nil
+	}
+	if at := last.GetCreatedAt().Time; !at.IsZero() && now.Sub(at) > verificationClaimCooldown {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (c *Client) ensureCreateIssueLabel(ctx context.Context, owner, repo, name string) error {

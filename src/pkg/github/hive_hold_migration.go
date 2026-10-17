@@ -66,6 +66,9 @@ type HiveHoldMigrationItem struct {
 	Title  string   `json:"title,omitempty"`
 	Labels []string `json:"labels,omitempty"`
 	Reason string   `json:"reason"`
+	// Body is carried for the origin-marker check in the hive/<hive-id>
+	// retire sweep; it is never written to a report.
+	Body string `json:"-"`
 }
 
 type hiveHoldAuditEntry struct {
@@ -230,6 +233,7 @@ func (c *Client) openItemsWithLabel(ctx context.Context, label string) ([]HiveHo
 					Type:   itemType,
 					Title:  issue.GetTitle(),
 					Labels: extractLabels(issue.Labels),
+					Body:   issue.GetBody(),
 				})
 			}
 			if resp == nil || resp.NextPage == 0 {

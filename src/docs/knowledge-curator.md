@@ -459,7 +459,40 @@ knowledge:
 | `target_layer` | Layer the synth vault is registered at with the primer; empty defaults to `personal` (`main.go:2525-2528`). |
 | `max_facts_per_cycle` | Cap per synthesis cycle after dedup; `0` means unlimited (`bead_synthesizer.go:223-226`). |
 | `max_api_calls_per_cycle` | Cap on charged `GET /pulls/{n}` calls per synthesis cycle; default `40`. PR GETs are conditional (`If-None-Match`, ETag and body kept across cycles), so a `304` reuses the cached PR. The `HIVE_BEAD_SYNTH_MAX_API_CALLS` env var overrides this (`0` = unlimited). |
-| `vault_path` | Defaults to `/data/vaults/bead-synth-wiki`; the directory is created and auto-connected as vault `bead-synth-wiki` (`main.go:2510-2522`). |
+| `vault_path` | Defaults to `/data/vaults/bead-synth-wiki`; the directory is created and auto-connected as vault `bead-synth-wiki` (`main.go:2510-2522`). Only the default path is included in [owner-triggered spoke backups](backup-restore.md#owner-triggered-spoke-backup); facts under a custom `vault_path` are not backed up. |
+
+### Repository publish (`knowledge.bead_synthesizer.publish`)
+
+Optionally the synthesizer also publishes its facts into a repository as
+markdown files at `<path>/<slug>.md`. This is **off by default** and separate
+from the connector mirror in `knowledge.publish`. Publishing is always one
+pull request on the fixed branch `hive/bead-synth-knowledge`, updated in place
+while it is open.
+
+```yaml
+knowledge:
+  bead_synthesizer:
+    publish:
+      enabled: true
+      repo: ""                 # empty = project.primary_repo
+      path: docs/knowledge/
+      base_branch: ""          # empty = the repo's default branch
+      mode: pr
+      cadence: per_run
+```
+
+| Field | Current behavior |
+| --- | --- |
+| `enabled` | Default `false`. The block alone does nothing until this is `true`. |
+| `repo` | Target repository (`owner/name`, or a name under `project.org`). Empty selects `project.primary_repo`, then the first `project.repos` entry. |
+| `path` | Directory in the repo that receives the facts. Default `docs/knowledge/`; use `.hive/knowledge/` to keep them out of the published docs tree. Must be relative with no `..` components. |
+| `base_branch` | Branch the PR targets. Empty selects the repo's default branch. Must not be `hive/bead-synth-knowledge`. |
+| `mode` | `pr` (default) or `commit`. **PR-vs-commit policy:** hives at ACMM level 4 or below publish via PR only. Direct commit is allowed only where policy permits it, and the current publisher does not honor `commit`: it logs a warning and still opens a PR. |
+| `cadence` | `per_run` (default, publish after each synthesis cycle that produced facts) or `daily`. |
+
+The local vault write is unaffected by publish failures, which are logged.
+Whether or not publishing is enabled, the default `bead-synth-wiki` vault is
+included in [spoke backups](backup-restore.md#owner-triggered-spoke-backup).
 
 `retention_policy` drives a bead lifecycle manager that archives old beads —
 it is always constructed, whether or not the block is present

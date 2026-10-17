@@ -222,8 +222,14 @@ func TestIssueRequestWatcher_RepoPause(t *testing.T) {
 					_, _ = io.WriteString(w, `[]`)
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42":
 					_, _ = io.WriteString(w, `{"number":42,"labels":[]}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42/comments":
+					// The claim path reads comments for the re-verify guard (#12733).
+					_, _ = io.WriteString(w, `[]`)
 				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 					_, _ = io.WriteString(w, `{"name":"agent/security"}`)
+				case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/origin/"):
+					// origin/<lane> recoloured to the family colour on create.
+					_, _ = io.WriteString(w, `{"name":"origin/scanner","color":"8250df"}`)
 				case r.Method == http.MethodPost && r.URL.Path == tc.endpoint:
 					writes.Add(1)
 					_, _ = io.WriteString(w, tc.response)

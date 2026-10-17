@@ -264,7 +264,7 @@ func (p *Publisher) file(ctx context.Context, f Finding, grant Grant, mode strin
 	}
 	effect := p.effect(f, grant, mutation.EffectCreateIssue, channelPublic)
 	res, err := p.execute(ctx, f, grant, mode, effect, lookup, func() (string, error) {
-		ref, err := p.Issues.CreateIssue(ctx, f.Repo, f.Title, f.Body(), append([]string{PublicLabel}, f.Labels...))
+		ref, err := p.Issues.CreateIssue(ctx, f.Repo, f.Title, f.Body(), config.WithOriginLabel(append([]string{PublicLabel}, f.Labels...), config.OriginSourceConvergence))
 		if err != nil {
 			return "", err
 		}

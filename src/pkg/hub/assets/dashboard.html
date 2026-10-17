@@ -377,17 +377,41 @@
        parent .table-wrap keeps overflow visible, so this escapes the cell. */
     .quadrant-cell .quadrant-hover {
       display: none; position: absolute; right: 0; bottom: calc(100% + 8px);
-      z-index: 60; width: 340px; max-height: 70vh; overflow-y: auto; padding: 10px 12px; text-align: left;
+      z-index: 60; width: 240px; padding: 10px 12px; text-align: left;
       background: var(--bg-soft); border: 1px solid var(--line); border-radius: 8px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.45); cursor: default; white-space: normal;
       font-size: 0.72rem; line-height: 1.4; color: var(--text);
     }
     .quadrant-cell:hover .quadrant-hover, .quadrant-cell:focus-within .quadrant-hover { display: block; }
-    .quadrant-axis-explainer { text-align: left; font-size: var(--fs-2xs); }
-    .quadrant-axis-explainer summary { cursor: pointer; }
-    .quadrant-axis-explainer > div { max-width: 36rem; max-height: 50vh; overflow-y: auto; white-space: normal; }
-    .quadrant-axis-explainer li { margin-bottom: var(--sp-3); }
-    .quadrant-summary { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-3); }
+    /* Per-axis explainers: the ⓘ beside each axis label opens one popover
+       (fleet card and per-hive hover share the renderer). Classes + tokens
+       only — the style ratchet forbids new inline sizing here. */
+    .quadrant-axes { display: flex; gap: var(--sp-4); }
+    .quadrant-axis { display: flex; flex-direction: column; align-items: center; gap: var(--sp-0); min-width: 3.5em; position: relative; }
+    .quadrant-axis-label { display: inline-flex; align-items: center; gap: var(--sp-1); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+    .quadrant-axis-score { font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+    .quadrant-axis-score.is-unscored { color: var(--muted); }
+    .quadrant-info { background: none; border: 1px solid var(--border); border-radius: var(--r-pill); color: var(--muted); width: 1.4em; height: 1.4em; padding: var(--sp-0); font: inherit; font-size: var(--fs-2xs); line-height: 1; cursor: pointer; flex-shrink: 0; text-transform: none; letter-spacing: 0; }
+    .quadrant-info:hover, .quadrant-info:focus-visible, .quadrant-info[aria-expanded="true"] { color: var(--hub-dashboard-accent); border-color: var(--hub-dashboard-accent); outline: none; }
+    .quadrant-explainer { position: absolute; left: 0; top: 100%; z-index: 70; width: max-content; max-width: 26rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--sp-4) var(--sp-5); font-size: var(--fs-xs); color: var(--text); line-height: 1.45; box-shadow: var(--shadow-lg, 0 8px 24px var(--overlay-scrim)); text-align: left; text-transform: none; letter-spacing: 0; font-weight: 400; cursor: default; }
+    .quadrant-explainer[hidden] { display: none; }
+    .quadrant-explainer h4 { margin: var(--sp-3) 0 var(--sp-1); font-size: var(--fs-2xs); color: var(--hub-dashboard-accent); text-transform: uppercase; letter-spacing: 0.5px; }
+    .quadrant-explainer h4:first-child { margin-top: 0; }
+    .quadrant-explainer p { margin: 0; }
+    .quadrant-explainer-close { float: right; background: none; border: 0; color: var(--muted); font: inherit; cursor: pointer; padding: var(--sp-0) var(--sp-2); }
+    .quadrant-criteria { list-style: none; margin: 0; padding: 0; }
+    .quadrant-criteria li { display: flex; gap: var(--sp-2); align-items: baseline; padding: var(--sp-0) 0; }
+    .quadrant-criteria .quadrant-criterion-label { flex: 1 1 auto; }
+    .quadrant-criteria .quadrant-criterion-value { color: var(--muted); white-space: nowrap; }
+    .quadrant-criteria .quadrant-criterion-score { font-weight: 600; min-width: 2.5em; text-align: right; }
+    .quadrant-criteria .quadrant-criterion-weight { color: var(--muted); font-size: var(--fs-2xs); }
+    .quadrant-criteria li.is-unmeasured { color: var(--muted); }
+    .quadrant-criteria li.is-unmeasured .quadrant-criterion-reason { font-style: italic; }
+    .quadrant-summary { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-1); max-width: 28rem; }
+    .quadrant-summary strong { color: var(--text); font-weight: 600; }
+    .quadrant-hover .quadrant-axes { justify-content: center; flex-wrap: wrap; margin-top: var(--sp-2); }
+    .quadrant-hover .quadrant-explainer { left: auto; right: 0; }
+    .fleet-quadrant-n { color: var(--muted); }
     .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: var(--fs-sm); color: var(--muted); }
 
@@ -977,7 +1001,7 @@
     }
 
     /* ---- Quadrant kite -------------------------------------------------
-       Trust / Efficiency / Satisfaction / Productivity, drawn as a four-axis
+       Trust / Productivity / Satisfaction / Efficiency, drawn as a four-axis
        polygon. ONE renderer at two sizes: a ~22px shape in the table column and
        the same shape at ~170px with labels and numbers in its hover. They must
        never fork — the small kite is legible only because it is literally the
@@ -990,6 +1014,16 @@
        QuadrantAxisOrder and the two must not drift. */
     var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];
     var QUADRANT_AXIS_LABELS = { trust: 'Trust', productivity: 'Prod', satisfaction: 'Satis', efficiency: 'Effic' };
+    var QUADRANT_AXIS_FULL = { trust: 'Trust', productivity: 'Productivity', satisfaction: 'Satisfaction', efficiency: 'Efficiency' };
+    /* One-letter corner marks for unlabelled kites; clockwise from north this
+       reads T, P, S, E — the same order as the TRUST / PROD / SATIS / EFFIC
+       tiles beside the chart. */
+    var QUADRANT_AXIS_LETTERS = { trust: 'T', productivity: 'P', satisfaction: 'S', efficiency: 'E' };
+    /* Smallest unlabelled kite that gets corner letters; px font size; and the
+       gap between the outer diamond's tip and the letter. */
+    var QUADRANT_LETTER_MIN_SIZE = 48;
+    var QUADRANT_LETTER_FONT_SIZE = 9;
+    var QUADRANT_LETTER_GAP = 5;
     /* Angles clockwise from north, index-aligned with QUADRANT_AXES. */
     var QUADRANT_ANGLES = [0, 90, 180, 270];
 
@@ -1032,7 +1066,13 @@
        must calibrate; it is omitted when the fleet scored nothing, since an
        empty reference would collapse to a dot and read as data. */
     function quadrantSVG(q, fleet, size, labelled) {
-      var pad = labelled ? size * 0.26 : 2;
+      /* Unlabelled kites of a legible size get one letter per axis tip
+         (T/P/S/E) so a viewer can tell which corner is which without the
+         hover. The 22px table kite is too small for even that — its letters
+         would be noise and collide with neighbouring cells — so it stays bare
+         and relies on its hover panel. */
+      var lettered = !labelled && size >= QUADRANT_LETTER_MIN_SIZE;
+      var pad = labelled ? size * 0.26 : (lettered ? size * 0.14 : 2);
       var cx = size / 2, cy = size / 2, radius = size / 2 - pad;
       var s = '<svg viewBox="0 0 ' + size + ' ' + size + '" width="' + size + '" height="' + size +
         '" role="img" aria-label="' + escAttr(quadrantAriaLabel(q)) + '" style="display:block;overflow:visible">';
@@ -1063,6 +1103,21 @@
         if (!a.scored) continue;
         var p = quadrantPoint(i, a.score, true, cx, cy, radius);
         s += '<circle cx="' + p[0].toFixed(2) + '" cy="' + p[1].toFixed(2) + '" r="' + (labelled ? 2.5 : 1.5) + '" fill="var(--hub-dashboard-accent)"/>';
+      }
+      if (lettered) {
+        for (var i = 0; i < 4; i++) {
+          var name = QUADRANT_AXES[i];
+          var lp = quadrantPoint(i, 100, true, cx, cy, radius + QUADRANT_LETTER_GAP);
+          var ang = QUADRANT_ANGLES[i];
+          var anchor = ang === 90 ? 'start' : (ang === 270 ? 'end' : 'middle');
+          /* North sits on its baseline above the tip, south hangs below it,
+             east/west centre vertically on the tip. */
+          var baseline = ang === 0 ? 'auto' : (ang === 180 ? 'hanging' : 'central');
+          s += '<text x="' + lp[0].toFixed(2) + '" y="' + lp[1].toFixed(2) + '" text-anchor="' + anchor +
+            '" dominant-baseline="' + baseline + '" font-size="' + QUADRANT_LETTER_FONT_SIZE +
+            '" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="var(--muted)" opacity="0.75">' +
+            '<title>' + esc(QUADRANT_AXIS_FULL[name]) + '</title>' + esc(QUADRANT_AXIS_LETTERS[name]) + '</text>';
+        }
       }
       if (labelled) {
         for (var i = 0; i < 4; i++) {
@@ -1120,6 +1175,102 @@
       return pill + fw;
     }
 
+    /* ---- Per-axis explainers ---------------------------------------------
+       Every axis carries its criteria from the server (quadrant.go
+       CriterionScore): label, current value, sub-score, weight, and for an
+       unmeasured criterion the reason it is excluded from the axis average.
+       The popover has four sections — what this covers, how it is scored,
+       what good looks like, what ours shows — mirroring the evidence
+       explainers so one learned pattern serves both surfaces. Rendered
+       hidden alongside the ⓘ; quadrantToggleExplainer shows one at a time. */
+    var _quadrantExplainerSeq = 0;
+    function quadrantExplainerId(prefix, axis) {
+      _quadrantExplainerSeq++;
+      return 'quadrant-explainer-' + prefix + '-' + axis + '-' + _quadrantExplainerSeq;
+    }
+
+    function quadrantCriteriaListHTML(crits) {
+      if (!crits || !crits.length) return '<p class="text-muted">No criteria reported for this axis yet.</p>';
+      return '<ul class="quadrant-criteria">' + crits.map(function(c) {
+        var w = c.weight ? '<span class="quadrant-criterion-weight">×' + esc(String(c.weight)) + '</span>' : '';
+        if (c.measured) {
+          return '<li class="is-measured"><span class="quadrant-criterion-label">' + esc(c.label || c.name) + '</span>' +
+            '<span class="quadrant-criterion-value">' + esc(c.display || String(c.value)) + '</span>' +
+            '<span class="quadrant-criterion-score">' + esc(String(c.score)) + '</span>' + w + '</li>';
+        }
+        return '<li class="is-unmeasured"><span class="quadrant-criterion-label">' + esc(c.label || c.name) + '</span>' +
+          '<span class="quadrant-criterion-reason">' + esc(c.reason || 'Not measured yet') + '</span>' + w + '</li>';
+      }).join('') + '</ul>';
+    }
+
+    function quadrantExplainerHTML(a, id) {
+      if (!a) return '';
+      var label = QUADRANT_AXIS_FULL[a.axis] || a.axis;
+      var crits = a.criteria || [];
+      var measured = crits.filter(function(c) { return c.measured; });
+      var how = measured.length ? measured.map(function(c) { return c.how; }).filter(Boolean) : crits.map(function(c) { return c.how; }).filter(Boolean);
+      var good = measured.length ? measured.map(function(c) { return c.good; }).filter(Boolean) : crits.map(function(c) { return c.good; }).filter(Boolean);
+      var ours = a.scored ? (a.summary || (label + ' ' + a.score)) : (a.reason || 'Not measured yet');
+      var scaleNote = 'Each criterion maps to 0–100 on a fixed, documented curve; the axis is the weighted mean of the measured criteria only. ' +
+        'Criteria marked "not measured yet" are left out of the average rather than counted as zero.';
+      return '<div id="' + escAttr(id) + '" class="quadrant-explainer" role="region" aria-label="' + escAttr('About the ' + label + ' axis') + '" hidden onclick="event.stopPropagation()">' +
+        '<button type="button" class="quadrant-explainer-close" aria-label="Close explanation" onclick="event.stopPropagation();quadrantCloseExplainers()">\u00D7</button>' +
+        '<h4>What this covers</h4>' + quadrantCriteriaListHTML(crits) +
+        '<h4>How it\'s scored</h4><p>' + esc(scaleNote) + (how.length ? ' ' + esc(how.join(' ')) : '') + '</p>' +
+        '<h4>What good looks like</h4><p>' + (good.length ? esc(good.join(' ')) : esc('No measured criteria yet, so there is nothing to compare against.')) + '</p>' +
+        '<h4>What ours shows</h4><p>' + esc(ours) + '</p></div>';
+    }
+
+    function quadrantInfoButtonHTML(a, id) {
+      var label = QUADRANT_AXIS_FULL[a.axis] || a.axis;
+      return '<button type="button" class="quadrant-info" aria-expanded="false" aria-controls="' + escAttr(id) + '"' +
+        ' aria-label="' + escAttr('What the ' + label + ' axis covers') + '" title="' + escAttr('What the ' + label + ' axis covers') + '"' +
+        ' onclick="event.stopPropagation();quadrantToggleExplainer(this, \'' + escAttr(id) + '\')">i</button>';
+    }
+
+    /* quadrantAxisTileHTML is one labelled axis (label + ⓘ + score) with its
+       hidden explainer; shared by the fleet card and the per-hive hover. */
+    function quadrantAxisTileHTML(a, prefix) {
+      var id = quadrantExplainerId(prefix, a.axis);
+      var val = a.scored ? String(a.score) : '—';
+      return '<div class="quadrant-axis">' +
+        '<span class="quadrant-axis-label">' + esc(QUADRANT_AXIS_LABELS[a.axis] || a.axis) + quadrantInfoButtonHTML(a, id) + '</span>' +
+        '<span class="quadrant-axis-score' + (a.scored ? '' : ' is-unscored') + '">' + esc(val) + '</span>' +
+        quadrantExplainerHTML(a, id) +
+        '</div>';
+    }
+
+    /* quadrantSummaryHTML is the one-line plain reading under the glyph:
+       the strongest and weakest measured criteria of the weakest scored axis,
+       or the first axis summary the server sent. */
+    function quadrantSummaryHTML(q) {
+      if (!q) return '';
+      var scored = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
+        .filter(function(a) { return a.scored && a.summary; });
+      if (!scored.length) return '';
+      scored.sort(function(x, y) { return x.score - y.score; });
+      return '<div class="quadrant-summary">' + esc(scored[0].summary) + '</div>';
+    }
+
+    function quadrantCloseExplainers() {
+      if (!document.querySelectorAll) return false;
+      var any = false;
+      document.querySelectorAll('.quadrant-explainer:not([hidden])').forEach(function(el) { el.hidden = true; any = true; });
+      document.querySelectorAll('.quadrant-info[aria-expanded="true"]').forEach(function(b) { b.setAttribute('aria-expanded', 'false'); });
+      return any;
+    }
+
+    function quadrantToggleExplainer(btn, id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var open = !el.hidden;
+      quadrantCloseExplainers();
+      if (!open) {
+        el.hidden = false;
+        if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', 'true');
+      }
+    }
+
     /* quadrantCell is the table column: the small kite plus its own hover
        panel, so a lopsided shape can be diagnosed without leaving the row.
        Renders nothing at all for a hive with no quadrant — the server omits it
@@ -1128,7 +1279,7 @@
     function quadrantCell(h) {
       var q = h && h.quadrant;
       if (!q) return '';
-      return '<span class="quadrant-cell" tabindex="0" style="position:relative;display:inline-block;cursor:help">' +
+      return '<span class="quadrant-cell" style="position:relative;display:inline-block;cursor:help">' +
         quadrantSVG(q, _fleetQuadrant, 22, false) +
         '<span class="quadrant-hover">' + quadrantPanelHTML(q) + '</span>' +
         '</span>';
@@ -1137,32 +1288,6 @@
     /* quadrantPanelHTML is the shared hover body — the same chart drawn large,
        with the composite and whichever nudges apply. Used by BOTH the column
        hover and the status hover so the two can never drift. */
-    function quadrantAxisExplanationHTML(a) {
-      var criteria = (a.criteria || []).map(function(c) {
-        return '<li><strong>' + esc(c.name) + '</strong>: ' + esc(c.covers) +
-          '<br>' + (c.measured ? esc(String(c.value)) + ' ' + esc(c.unit) + ' → ' + esc(String(c.score)) + '/100' :
-            esc(c.reason || 'Not measured yet')) +
-          '<br>Source: ' + esc(c.source) + '<br>How it\'s scored: ' + esc(c.how) +
-          '<br>What good looks like: ' + esc(c.good) + '</li>';
-      }).join('');
-      return '<details class="quadrant-axis-explainer" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">' +
-        '<summary aria-label="' + escAttr((QUADRANT_AXIS_LABELS[a.axis] || a.axis) + ' explanation') + '">ⓘ ' +
-        esc(QUADRANT_AXIS_LABELS[a.axis] || a.axis) + '</summary>' +
-        '<div><strong>What this covers</strong><ul>' + criteria + '</ul>' +
-        '<p><strong>How it\'s scored</strong>: weighted mean of measured criteria only (weight 1 each). ' +
-        'Fleet score is the median of scored hives, not a percentile; criterion medians are descriptive, not pooled rates.</p>' +
-        '<p><strong>What ours shows</strong>: ' + esc(a.summary || a.reason || 'Not measured yet') + '</p></div></details>';
-    }
-
-    function quadrantSummaryHTML(q) {
-      var measured = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
-        .filter(function(a) { return a.scored; }).sort(function(a, b) { return a.score - b.score; });
-      if (!measured.length) return '<div class="quadrant-summary">No measured axes yet; missing inputs are not failures.</div>';
-      return '<div class="quadrant-summary">Lowest measured axis: ' +
-        esc(QUADRANT_AXIS_LABELS[measured[0].axis]) + ' (' + esc(String(measured[0].score)) + '/100). ' +
-        measured.length + ' of 4 axes measured; missing inputs excluded.</div>';
-    }
-
     function quadrantPanelHTML(q) {
       if (!q) return '';
       var nudges = QUADRANT_AXES.map(function(name) { return quadrantAxis(q, name); })
@@ -1179,20 +1304,20 @@
           return '<div class="text-muted mt-1">' +
             esc(QUADRANT_AXIS_LABELS[a.axis]) + ': ' + esc(a.reason) + '</div>';
         }).join('');
+      var tiles = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'hive'); }).join('');
       return '<div style="display:flex;flex-direction:column;align-items:center;gap:var(--sp-3)">' +
           quadrantSVG(q, _fleetQuadrant, 170, true) +
           '<div style="font-size:0.7rem;color:var(--muted)">Composite <span style="color:var(--text);font-weight:600">' +
             (q.scored_axes ? q.composite : '—') + '</span> · ' + (q.scored_axes || 0) + ' of 4 axes scored</div>' +
+          '<div class="quadrant-axes">' + tiles + '</div>' +
+          quadrantSummaryHTML(q) +
         '</div>' +
         (nudges ? '<div style="font-size:0.7rem;margin-top:var(--sp-3);border-top:1px solid var(--line);padding-top:var(--sp-3)">' + nudges + '</div>' : '') +
-        (reasons ? '<div style="font-size:0.65rem;margin-top:var(--sp-2)">' + reasons + '</div>' : '') +
-        quadrantSummaryHTML(q) + QUADRANT_AXES.map(function(name) {
-          return quadrantAxisExplanationHTML(quadrantAxis(q, name));
-        }).join('');
+        (reasons ? '<div style="font-size:0.65rem;margin-top:var(--sp-2)">' + reasons + '</div>' : '');
     }
 
     /* fleetQuadrantHeaderHTML is the aggregate above the table: the same kite,
-       taking scored-hive medians over the CURRENT filtered view.
+       averaged over the CURRENT filtered view.
 
        This is the surface that turns the instrument from per-hive feedback into
        a platform signal. One hive with a collapsed efficiency spoke is that
@@ -1212,16 +1337,10 @@
     function fleetQuadrantHeaderHTML() {
       var q = _fleetQuadrant;
       if (!q || !q.scored_axes) return '';
-      var axes = QUADRANT_AXES.map(function(name) {
-        var a = quadrantAxis(q, name);
-        var val = a.scored ? String(a.score) : '—';
-        return '<div style="display:flex;flex-direction:column;align-items:center;gap:1px;min-width:52px">' +
-          '<span style="font-size:var(--fs-2xs);text-transform:uppercase;letter-spacing:0.5px;color:var(--muted)">' +
-            esc(QUADRANT_AXIS_LABELS[name]) + '</span>' +
-          '<span style="font-size:0.95rem;font-weight:600;color:' + (a.scored ? 'var(--text)' : 'var(--muted)') + '">' +
-            esc(val) + '</span><span class="text-muted">n=' + (a.n || 0) + '</span>' +
-          quadrantAxisExplanationHTML(a) + '</div>';
-      }).join('');
+      var axes = QUADRANT_AXES.map(function(name) { return quadrantAxisTileHTML(quadrantAxis(q, name), 'fleet'); }).join('');
+      /* n is the number of hives the median was taken over; it can be smaller
+         than the rows in view because unscored hives do not enter the median. */
+      var agg = (q.aggregate || 'median') + (q.n ? ' of ' + q.n : '');
       /* No fleet ghost behind the aggregate — it IS the fleet, and drawing it
          against itself would render two identical overlaid polygons. */
       return '<div' + fleetQuadrantDrillAttrs() + ' style="display:flex;align-items:center;gap:var(--sp-6);margin:0 auto 12px;padding:10px 14px;' +
@@ -1229,9 +1348,10 @@
           quadrantSVG(q, null, 78, false) +
           '<div>' +
             '<div class="fleet-quadrant-head" style="font-size:0.72rem;color:var(--muted);margin-bottom:var(--sp-2)">' +
-              '<span>Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view</span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
-            '<div style="display:flex;gap:14px">' + axes + '</div>' +
-            quadrantSummaryHTML(q) + fleetQuadrantHintHTML() +
+              '<span>Fleet quadrant · ' + (_allDashHives || []).length + ' hives in view <span class="fleet-quadrant-n">· ' + esc(agg) + '</span></span>' + fleetQuadrantEvidenceButtonHTML() + '</div>' +
+            '<div class="quadrant-axes">' + axes + '</div>' +
+            quadrantSummaryHTML(q) +
+            fleetQuadrantHintHTML() +
           '</div>' +
         '</div>';
     }
@@ -1497,7 +1617,7 @@
           return {
             measured: 'Revert rate grouped by ACMM level \u2014 the autonomy level a hive runs at, from L1 (advice only) to L6 (merges on green CI without a human).',
             why: 'If more autonomy came with more reverted merges, that would be the signal to slow down. If it does not, the higher levels are earning their trust.',
-            how: 'Each hive is filed under its level; reverted \u00F7 merged PRs within ' + winText + ' is pooled per level. Median time-to-merge is not reported by spokes yet. ' + EVIDENCE_CI_NOTE,
+            how: 'Each hive is filed under its level; reverted \u00F7 merged PRs within ' + winText + ' is pooled per level. Median time-to-merge is the time from PR opened to merged: each hive reports its own median over the merged PRs that recorded when they were opened, and the level shows the median of those hive medians (each hive counts once, however many PRs it merged). Hives on older builds, and PRs merged before open times were recorded, show as not reported rather than 0. ' + EVIDENCE_CI_NOTE,
             ours: ours, grade: grade
           };
         }
@@ -1810,6 +1930,38 @@
     }
     function evidenceOutcomeZero() { return { n: 0, merged: 0, reverted: 0 }; }
 
+    /* evidenceLevelTimeToMerge mirrors newEvidenceLevelTimeToMerge: medians
+       cannot be pooled, so a level reports the median of its hives'
+       medians (even count: mean of the middle two, rounded down to the
+       second) plus the PRs behind them. null when no hive reports one. */
+    function evidenceLevelTimeToMerge(list) {
+      if (!list || !list.length) return null;
+      var medians = list.map(function(t) { return Number(t.median_s) || 0; }).sort(function(x, y) { return x - y; });
+      var n = 0;
+      list.forEach(function(t) { n += Number(t.n) || 0; });
+      var mid = Math.floor(medians.length / 2);
+      var m = medians.length % 2 === 1 ? medians[mid] : medians[mid - 1] + Math.floor((medians[mid] - medians[mid - 1]) / 2);
+      return { hives: list.length, n: n, median_of_hive_medians_s: m };
+    }
+
+    /* evidenceDuration renders whole seconds as minutes, hours or days. */
+    function evidenceDuration(sec) {
+      sec = Number(sec) || 0;
+      if (sec < 3600) return Math.max(0, Math.round(sec / 60)) + 'm';
+      if (sec < 48 * 3600) return (sec / 3600).toFixed(1) + 'h';
+      return (sec / 86400).toFixed(1) + 'd';
+    }
+
+    /* evidenceTimeToMergeCell is a level's median time-to-merge cell;
+       "not reported" (never 0) when no hive at the level reports one. */
+    function evidenceTimeToMergeCell(t) {
+      if (!t || !(Number(t.hives) > 0)) return '<td class="evidence-empty">not reported</td>';
+      var hives = Number(t.hives) || 0, n = Number(t.n) || 0;
+      var note = 'median of ' + hives + ' hive median' + (hives === 1 ? '' : 's') + ', ' + n + ' PR' + (n === 1 ? '' : 's');
+      return '<td class="evidence-rate"><span class="evidence-rate-main">' + esc(evidenceDuration(t.median_of_hive_medians_s)) + '</span>' +
+        '<span class="evidence-rate-margin">' + esc(note) + '</span></td>';
+    }
+
     /* evidenceRepool rebuilds a GET /api/hub/evidence body for a subset of
        hives. Hives without counts (never reported) only count toward spokes. */
     function evidenceRepool(data, hives) {
@@ -1830,8 +1982,9 @@
         }
         if (fam[h.family_mix]) { fam[h.family_mix].n += Number(c.verdicts_90d) || 0; fam[h.family_mix].bad += Number(c.false_approve_90d) || 0; }
         var lvl = Number(h.acmm_level) || 0;
-        var a = acmm[lvl] || (acmm[lvl] = { level: lvl, hives: 0, merged: 0, reverted: 0 });
+        var a = acmm[lvl] || (acmm[lvl] = { level: lvl, hives: 0, merged: 0, reverted: 0, ttm: [] });
         a.hives++; a.merged += Number(c.merged_90d) || 0; a.reverted += Number(c.reverted_14d_90d) || 0;
+        if (c.time_to_merge && (Number(c.time_to_merge.n) || 0) > 0) a.ttm.push(c.time_to_merge);
         (Array.isArray(c.calibration) ? c.calibration : []).forEach(function(b, j) {
           if (j < 6 && b) { pooled[j].n += Number(b.n) || 0; pooled[j].bad += Number(b.bad) || 0; }
         });
@@ -1866,7 +2019,10 @@
       Object.keys(fam).forEach(function(k) { out.family_false_approve_rate[k] = evidenceRateOf(fam[k].bad, fam[k].n); });
       out.by_acmm_level = Object.keys(acmm).map(Number).sort(function(x, y) { return x - y; }).map(function(l) {
         var a = acmm[l];
-        return { level: a.level, hives: a.hives, merged_90d: a.merged, revert_rate: evidenceRateOf(a.reverted, a.merged) };
+        var row = { level: a.level, hives: a.hives, merged_90d: a.merged, revert_rate: evidenceRateOf(a.reverted, a.merged) };
+        var ttm = evidenceLevelTimeToMerge(a.ttm);
+        if (ttm) row.time_to_merge = ttm;
+        return row;
       });
       if (outcomeHives > 0) {
         out.outcomes_by_author_kind = EVIDENCE_AUTHOR_KINDS.map(function(k) {
@@ -2072,11 +2228,12 @@
       if (!Array.isArray(v.outcomes_by_author_kind)) out.push('Outcome by author kind \u2014 ' + upgrade + '.');
       if (!Array.isArray(v.write_counters)) out.push('Boundary enforcement (agent writes the guardrail proxy blocked) \u2014 ' + upgrade + '.');
       if (!(v.shadow_gate && typeof v.shadow_gate === 'object')) out.push('Shadow gates \u2014 shadow mode is off on every selected hive, or none has reported it yet (' + upgrade + ').');
-      return out.concat([
-        'Per-axis criteria table \u2014 not reported by any hive build yet.',
-        'Claim-vs-verdict totals \u2014 not reported by any hive build yet.',
-        'Median time-to-merge per autonomy level \u2014 not reported by any hive build yet.',
-        'Revert rate by author kind per hive \u2014 not reported by any hive build yet.']);
+      out.push('Per-axis criteria table \u2014 not reported by any hive build yet.');
+      out.push('CI gate (claim vs verdict) totals \u2014 not reported by any hive build yet.');
+      var ttm = (Array.isArray(v.by_acmm_level) ? v.by_acmm_level : []).some(function(a) { return a && a.time_to_merge; });
+      if (!ttm) out.push('Median time-to-merge per autonomy level \u2014 no selected hive reports it yet (it needs a build that records when each merged PR was opened).');
+      out.push('Revert rate by author kind per hive \u2014 not reported by any hive build yet.');
+      return out;
     }
 
     /* The "What this says" block: server findings for the unfiltered view,
@@ -2266,10 +2423,11 @@
       out += evidenceOutcomesPanel(view);
 
       var acmm = Array.isArray(view.by_acmm_level) ? view.by_acmm_level : [];
-      out += evidenceTable('Autonomy level \u00D7 outcome', '<th>Autonomy level</th><th>Hives</th><th>Merged (' + esc(win) + ')</th>' + evidenceRateHeads('Reverted within 14 days', 'Share of the merged PRs that were reverted or needed a follow-up fix within 14 days.'),
+      out += evidenceTable('Autonomy level \u00D7 outcome', '<th>Autonomy level</th><th>Hives</th><th>Merged (' + esc(win) + ')</th>' + evidenceRateHeads('Reverted within 14 days', 'Share of the merged PRs that were reverted or needed a follow-up fix within 14 days.') +
+          '<th title="Median of the per-hive median times from PR opened to merged. Not a pooled median: each hive counts once however many PRs it merged.">Median time-to-merge (median of hive medians)</th>',
         acmm.map(function(a) {
           return '<tr><td>L' + evidenceCount(a.level) + '</td><td>' + evidenceCount(a.hives) + '</td><td>' + evidenceCount(a.merged_90d) + '</td>' +
-            evidenceRateCells(a.revert_rate) + '</tr>';
+            evidenceRateCells(a.revert_rate) + evidenceTimeToMergeCell(a.time_to_merge) + '</tr>';
         }).join(''),
         'Each hive files under the autonomy level it runs at, from L1 (advice only) to L6 (merges on green CI without a human).', 'acmm', view);
 
@@ -2934,6 +3092,7 @@
       var tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
       if (tag === 'select') return;
       if (typeof evidenceCloseExplainers === 'function' && evidenceCloseExplainers()) { e.preventDefault(); e.stopPropagation(); return; }
+      if (typeof quadrantCloseExplainers === 'function' && quadrantCloseExplainers()) { e.preventDefault(); e.stopPropagation(); return; }
       if (!hiveHubDismissTopModal()) return;
       e.preventDefault();
       e.stopPropagation();
@@ -3646,14 +3805,23 @@
         'inference auth</span>';
     }
 
+    /* The 24h restart count behind a storm badge. Prefer the verdict's ledger;
+       fall back to the count the hub already wrote into restartProblem
+       ("agent restarts: guide ×23/24h (...)") so a hub that omits the ledger
+       can never render ×0 beside a storm (#12466). */
+    function restartStormCount(a) {
+      var n = Number(((a && a.restarts) || {}).last_24h);
+      if (n > 0) return n;
+      var m = /×(\d+)\/24h/.exec((a && a.restartProblem) || '');
+      return m ? Number(m[1]) : 0;
+    }
     function restartStormSummary(h) {
       var agents = (h && h.agentVerdicts) || [];
       var bad = agents.filter(function(a) { return a && a.restartProblem; });
       if (!bad.length) return '';
       var first = bad[0];
       var title = bad.map(function(a) { return a.restartProblem; }).join('\n');
-      var count = ((first.restarts || {}).last_24h) || 0;
-      var label = 'agent restarts: ' + first.name + ' ×' + count + '/24h';
+      var label = 'agent restarts: ' + first.name + ' ×' + restartStormCount(first) + '/24h';
       if (bad.length > 1) label = bad.length + ' restart storms';
       var reset = roleAtLeast(h.role, 'owner')
         /* Inline text action, not a full hv-btn: a padded button nested inside
@@ -4422,7 +4590,7 @@
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
-    /* Fleet-median quadrant for the CURRENT view, served alongside the rows.
+    /* Fleet-average quadrant for the CURRENT view, served alongside the rows.
        Null until the first payload lands, which quadrantSVG handles by drawing
        no reference polygon rather than an empty one collapsed at the centre. */
     var _fleetQuadrant = null;
@@ -4463,10 +4631,13 @@
        expected/actual/able per agent); a v4 cache would omit the new per-agent
        drill-down until the first poll landed.
        v6: agent verdicts carry restart-storm telemetry and reset markers.
-       v7: fixed-reference quadrant scores and median fleet aggregation. Older
-       ranks must not be painted as though they used the new scoring model. */
+       v7: quadrant axes carry criteria, summaries and the fleet median n that
+       the per-axis explainers render; a v6 cache would paint empty ⓘ popovers. */
     var HIVES_CACHE_VERSION = 7;
-    var HIVES_CACHE_MIN_READ_VERSION = 7;
+    /* v5/v6 only added optional per-row telemetry. Rendering tolerates those
+       fields being absent, so keep accepting a recent cache instead of showing
+       the spinner for the whole /api/saas/my-hives round-trip after a deploy. */
+    var HIVES_CACHE_MIN_READ_VERSION = 5;
     /* 10 minutes: long enough to cover a reload or a tab restore, short enough
        that a cached fleet is never wildly out of date before the poll lands. */
     var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -4933,21 +5104,30 @@
                            the operator's target bucket.
              ''          — neither: up to date, or behind with auto-upgrade off
                            and no pending action.
-           Map each to a human-readable header. '' is rendered as its own
-           "Up to date" group rather than falling through to Unspecified, since
-           for this dimension "no pending upgrade" is a meaningful, expected
-           bucket rather than missing data. */
-        var st = hiveUpgradeState(h);
-        if (st === UPGRADE_FILTER_QUEUED) return HIVE_UPGRADE_GROUP_QUEUED;
-        if (st === UPGRADE_FILTER_UPGRADING) return HIVE_UPGRADE_GROUP_UPGRADING;
-        return HIVE_UPGRADE_GROUP_UPTODATE;
+           Map each to a human-readable header via hiveUpgradeGroupLabel. */
+        return hiveUpgradeGroupLabel(h);
       }, sort: function(a, b) {
         /* Queued first — it is why this dimension exists (systems READY for an
            upgrade that have not triggered) — then Upgrading (in flight), then
-           Up to date. Any unexpected label sorts last. */
+           Behind, then Up to date. Any unexpected label sorts last. */
         return _upgradeGroupOrder(a) - _upgradeGroupOrder(b);
       }}
     ];
+
+    /* Group header for the Upgrade-state dimension. The '' state covers two
+       very different hives: genuinely current ones, and ones 100+ commits
+       behind whose auto-upgrade is off (or whose channel has not promoted).
+       Splitting on commitsBehindTarget keeps "Up to date" honest — #12466 saw
+       an "Up to date (6)" header over six rows each reading "107–161 behind".
+       '' is still rendered as a named group rather than Unspecified, since
+       "no pending upgrade" is a meaningful bucket rather than missing data. */
+    function hiveUpgradeGroupLabel(h) {
+      var st = hiveUpgradeState(h);
+      if (st === UPGRADE_FILTER_QUEUED) return HIVE_UPGRADE_GROUP_QUEUED;
+      if (st === UPGRADE_FILTER_UPGRADING) return HIVE_UPGRADE_GROUP_UPGRADING;
+      if (Number((h || {}).commitsBehindTarget) > 0) return HIVE_UPGRADE_GROUP_BEHIND;
+      return HIVE_UPGRADE_GROUP_UPTODATE;
+    }
 
     /* Header labels for the Upgrade-state dimension. Named constants so the
        of() grouper and the sort comparator can never drift on a string typo.
@@ -4955,16 +5135,18 @@
        three surfaces, one wording. */
     var HIVE_UPGRADE_GROUP_QUEUED = 'Queued for auto-upgrade (not yet upgrading)';
     var HIVE_UPGRADE_GROUP_UPGRADING = 'Upgrading';
+    var HIVE_UPGRADE_GROUP_BEHIND = 'Behind target (no upgrade pending)';
     var HIVE_UPGRADE_GROUP_UPTODATE = 'Up to date';
 
     /* Sort weight for an upgrade-state group header. Queued (the actionable
-       "ready but not triggered" bucket) sorts first, then Upgrading, then Up to
-       date; anything else sorts last. */
+       "ready but not triggered" bucket) sorts first, then Upgrading, then
+       Behind, then Up to date; anything else sorts last. */
     var UPGRADE_GROUP_UNKNOWN_ORDER = Number.MAX_SAFE_INTEGER;
     function _upgradeGroupOrder(label) {
       if (label === HIVE_UPGRADE_GROUP_QUEUED) return 0;
       if (label === HIVE_UPGRADE_GROUP_UPGRADING) return 1;
-      if (label === HIVE_UPGRADE_GROUP_UPTODATE) return 2;
+      if (label === HIVE_UPGRADE_GROUP_BEHIND) return 2;
+      if (label === HIVE_UPGRADE_GROUP_UPTODATE) return 3;
       return UPGRADE_GROUP_UNKNOWN_ORDER;
     }
 
@@ -9060,7 +9242,7 @@
         /* QUADRANT folds the four axis sorts plus the composite. Sorting by a
            single axis is the point of the column: "weakest efficiency" turns
            the table into a worklist rather than a picture. */
-        '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored against the hives in the current view. Hover a kite for the numbers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: autonomy level, governor posture, merge acceptance and enrolled scope') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: token burn rate, spend per merged PR, rework and output per agent') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merged PRs, relay throughput, work-source autonomy and work stalled on a human')) + '</th>' +
+        '<th style="vertical-align:middle" title="Trust, Efficiency, Satisfaction and Productivity, each scored 0–100 on fixed curves from the hive\'s own evidence; the fleet shape behind each kite is the median. Hover a kite for the numbers and ⓘ for what each axis covers.">' + stackHeader('Quadrant', subSort('quadrant', 'All ⇅', 'Sort by the composite of every scored axis') + subSort('quadrantTrust', 'T ⇅', 'Sort by Trust: revert rate, false-approve rate, autonomy level, delegation, merge acceptance, evidence coverage and boundary blocks') + subSort('quadrantEfficiency', 'E ⇅', 'Sort by Efficiency: tokens per merged PR, burn rate, rework, output per agent and agent idle time') + subSort('quadrantProductivity', 'P ⇅', 'Sort by Productivity: merge throughput per active repo, relay throughput, contributor engagement, work-source autonomy and work stalled on a human')) + '</th>' +
         '<th class="th-mid" title="Compliance framework profiles and the pass rate of the latest posture-check run; click the pill to open the hive&#39;s Compliance settings">Compliance</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
@@ -9697,6 +9879,15 @@
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/upgrade', {method: 'POST'});
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Upgrade failed', 'error'); delete _upgradingHives[id]; loadHives(); return; }
+        if (data.status === 'current') {
+          /* Already at the reachable target: the hub armed nothing. This is
+             the normal shape of a click on a row rendered before the daily
+             auto-upgrade landed — say so plainly, never "failed" (#12494). */
+          hiveToast(data.message || ('Already up to date at ' + (data.current || toSHA)), 'info');
+          delete _upgradingHives[id];
+          loadHives();
+          return;
+        }
         _upgradingHives[id] = currentSHA;
         hiveToast('Upgrade started for ' + id + ' — waiting for rollout', 'success');
         loadHives();

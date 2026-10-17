@@ -80,11 +80,30 @@ const (
 	ReasonClaimedByHive = "claimed-by-hive"
 )
 
+// AlwaysExcludeLabels disqualify an issue whatever Policy.ExcludeLabels or
+// Policy.HardSuppressLabels say: an issue held for a person (`needs-human`,
+// hivecommons/hive#12680 was stamped `good first issue` minutes after its
+// owner said "Agents stand down"), parked on a maintainer decision
+// (`stage/085-needs-decision` and the retired spellings), or waiting on a
+// spec is never a newcomer's first issue. `approved-direction` on its own
+// is fine — it is the maintainer's go-ahead — but next to `needs-human` the
+// go-ahead is for people, and `needs-human` still wins.
+var AlwaysExcludeLabels = []string{
+	"needs-human", "stage/085-needs-decision", "needs-decision", "needs-direction", "needs-spec",
+}
+
+// ClaimedByPrefix is the hive's issue-claim label namespace; any label under
+// it disqualifies the issue (an agent owns it).
+const ClaimedByPrefix = "hive/claimed-by-"
+
 // DefaultExcludeLabels are labels that disqualify an issue outright, beyond
 // the hard-suppress set the caller supplies.
 var DefaultExcludeLabels = []string{
 	"kind/epic", "epic", "meta", "meta-tracker", "tracker", "roadmap", "security", "kind/security",
 	"blocked", "hold", "do-not-merge", "wontfix", "duplicate", "invalid",
+	// Claimed / in-progress / PR-covered issues, under the stage labels
+	// (hivecommons/hive#12436) and the retired spellings they replaced.
+	"stage/020-claimed", "stage/030-pr-in-progress", "stage/040-covered-by-pr",
 	"hive/in-progress", "hive/already-done", "hive/covered-by-pr", "🐝 covered by pr",
 	// The hive's own reports to itself are never a newcomer's first issue.
 	"hive/advisory", "hive/selfreport", "hive/sentinel", "hive/fleet", "fleet",
@@ -258,6 +277,11 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 	case c.HasLinkedPR:
 		return skip(d, "linked-pr")
 	}
+	for _, l := range AlwaysExcludeLabels {
+		if labels[l] {
+			return skip(d, "hard-suppress:"+l)
+		}
+	}
 	for _, l := range p.HardSuppressLabels {
 		if labels[strings.ToLower(strings.TrimSpace(l))] {
 			return skip(d, "hard-suppress:"+l)
@@ -269,7 +293,7 @@ func Score(c Candidate, p Policy, now time.Time) Decision {
 		}
 	}
 	for _, l := range c.Labels {
-		if strings.HasPrefix(strings.ToLower(l), "hive/claimed-by-") {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(l)), ClaimedByPrefix) {
 			return skip(d, "excluded-label:"+l)
 		}
 	}

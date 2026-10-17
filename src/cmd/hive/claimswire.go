@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -103,12 +104,19 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 			go func() {
 				if comment && outcome == claims.OutcomeClaimed {
 					run("claim comment", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.CreateIssueComment(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
+						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
 					})
 				}
 				if label {
 					run("claimed label", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.AddLabels(ctx, c.Repo, c.Issue, claimLabelsFor(c))
+						_, err := gh.ApplyStageLabel(ctx, c.Repo, c.Issue, claimStageFor(c))
+						return err
+					})
+					// The "who" modifier: login of the principal, agent name for
+					// a hive-agent claim, never a backend name (claims.ClaimedByPrefix).
+					run("claimed-by label", c, func(ctx context.Context, gh *github.Client) error {
+						_, _, err := gh.ApplyClaimedByLabel(ctx, c.Repo, c.Issue, c)
+						return err
 					})
 				}
 			}()
@@ -122,7 +130,17 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 				}
 				if label {
 					run("preempted label", now, func(ctx context.Context, gh *github.Client) error {
-						return gh.AddLabels(ctx, now.Repo, now.Issue, []string{claims.LabelClaimed, claims.PreemptedLabel(previous.Holder)})
+						if _, err := gh.ApplyStageLabel(ctx, now.Repo, now.Issue, claimStageFor(now)); err != nil {
+							return err
+						}
+						return gh.AddLabels(ctx, now.Repo, now.Issue, []string{claims.PreemptedLabel(previous.Holder)})
+					})
+					run("claimed-by label", now, func(ctx context.Context, gh *github.Client) error {
+						if err := gh.RemoveClaimedByLabel(ctx, previous.Repo, previous.Issue, previous); err != nil {
+							return err
+						}
+						_, _, err := gh.ApplyClaimedByLabel(ctx, now.Repo, now.Issue, now)
+						return err
 					})
 				}
 			}()
@@ -130,21 +148,26 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 		OnReleased: func(c claims.Claim, reason string) {
 			go func() {
 				if label {
-					run("remove claimed label", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.LabelClaimed)
-					})
+					// One fresh read, then only the labels still present come
+					// off, journaled against that read: the plain remove
+					// replayed as "already applied" the second time a claim on
+					// the same issue lapsed (hivecommons/hive#12512). The
+					// preempted label names the holder this claim DISPLACED,
+					// not the holder being released. The claimed-by label is
+					// this claim's own; another holder's survives.
+					remove := []string{claims.LabelClaimed}
+					if l := claims.ClaimedByLabel(c); l != "" {
+						remove = append(remove, l)
+					}
 					if c.Kind == claims.KindAgent {
-						run("remove in-progress label", c, func(ctx context.Context, gh *github.Client) error {
-							return gh.RemoveLabel(ctx, c.Repo, c.Issue, github.InProgressLabel)
-						})
+						remove = append(remove, github.InProgressLabel)
 					}
-					// The preempted label names the holder this claim DISPLACED,
-					// not the holder being released.
 					if c.TakenFrom != "" {
-						run("remove preempted label", c, func(ctx context.Context, gh *github.Client) error {
-							return gh.RemoveLabel(ctx, c.Repo, c.Issue, claims.PreemptedLabel(c.TakenFrom))
-						})
+						remove = append(remove, claims.PreemptedLabel(c.TakenFrom))
 					}
+					run("remove claim labels", c, func(ctx context.Context, gh *github.Client) error {
+						return gh.RemoveLabelsFresh(ctx, c.Repo, c.Issue, remove...)
+					})
 				}
 				// Releases are frequent (every relay task completion) and the
 				// closing PR already tells the story; only narrate a release
@@ -159,16 +182,20 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 	}
 }
 
-// claimLabelsFor returns the labels mirrored onto an issue for a new claim:
-// `claimed` for every kind, plus hive/in-progress for a hive agent's own
-// claim — the agent claim is recorded on its start signal (#10527), which is
-// exactly the "an agent began a PR for this" instant the label states.
-func claimLabelsFor(c claims.Claim) []string {
-	labels := []string{claims.LabelClaimed}
+// claimStageFor returns the stage mirrored onto an issue for a new claim
+// (hivecommons/hive#12436): stage/030-pr-in-progress for a hive agent's own
+// claim — recorded on its start signal (#10527), which is exactly the "an
+// agent began a PR for this" instant — and stage/020-claimed for every other
+// kind. The hooks write it through Client.ApplyStageLabel, which re-reads the
+// issue and removes any other `stage/*` label, so a claim landing seconds
+// after the reconciler staged the issue 010 replaces that label rather than
+// joining it (hivecommons/hive#12512). The ledger, not the label, is what
+// claim detection reads.
+func claimStageFor(c claims.Claim) stagelabels.Stage {
 	if c.Kind == claims.KindAgent {
-		labels = append(labels, github.InProgressLabel)
+		return stagelabels.PRInProgress
 	}
-	return labels
+	return stagelabels.Claimed
 }
 
 // claimsInflightLookup makes the ledger a scheduler in-flight source: an

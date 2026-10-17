@@ -1447,7 +1447,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// same shape rules here so both creation paths are covered. Skip the
 		// control plane — its issue writes are already validated upstream.
 		if !blocked && agentName != internalCallerName {
-			if reason, deny, shapeErr := p.enforceIssueShape(req); shapeErr != nil {
+			if reason, deny, shapeErr := p.enforceIssueShapeFor(req, agentName); shapeErr != nil {
 				// Fail closed: a body we could not read is a body we could not
 				// shape-check.
 				p.logTimeout("proxy issue-shape body read timed out", shapeErr, "agent", agentName, "path", req.URL.Path)
@@ -1991,11 +1991,19 @@ type bodyReadCloser struct {
 	io.Closer
 }
 
-// enforceIssueShape buffers an agent's issue/comment REST body, validates its
-// shape, and reconstructs req.Body so the request can still be forwarded when
-// it passes. It returns deny=true with an actionable reason for a malformed
-// body, and a non-nil error only when the body could not be read (fail closed).
+// enforceIssueShape is enforceIssueShapeFor with no agent identity, so no
+// origin/* label is injected.
 func (p *GitHubProxy) enforceIssueShape(req *http.Request) (reason string, deny bool, readErr error) {
+	return p.enforceIssueShapeFor(req, "")
+}
+
+// enforceIssueShapeFor buffers an agent's issue/comment REST body, validates
+// its shape, and reconstructs req.Body so the request can still be forwarded
+// when it passes. It returns deny=true with an actionable reason for a
+// malformed body, and a non-nil error only when the body could not be read
+// (fail closed). A well-formed issue create from an identified agent also
+// gets its origin/<lane> provenance label injected (see injectOriginLabel).
+func (p *GitHubProxy) enforceIssueShapeFor(req *http.Request, agentName string) (reason string, deny bool, readErr error) {
 	if req.Body == nil || !isIssueShapeRESTWrite(req.Method, req.URL.Path) {
 		return "", false, nil
 	}
@@ -2012,12 +2020,66 @@ func (p *GitHubProxy) enforceIssueShape(req *http.Request) (reason string, deny 
 		return "", false, nil
 	}
 	_ = req.Body.Close()
-	req.Body = io.NopCloser(bytes.NewReader(body))
-	req.ContentLength = int64(len(body))
 	if v := githubIssueShapeViolation(req.Method, req.URL.Path, body); v != "" {
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		req.ContentLength = int64(len(body))
 		return v, true, nil
 	}
+	if rewritten, ok := injectOriginLabel(req.Method, req.URL.Path, body, agentName); ok {
+		body = rewritten
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	req.ContentLength = int64(len(body))
 	return "", false, nil
+}
+
+// isIssueCreateRESTWrite reports whether (method, path) is POST
+// /repos/{o}/{r}/issues — the one route whose body creates an issue.
+func isIssueCreateRESTWrite(method, path string) bool {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	return method == http.MethodPost && issueCreateRESTPathRE.MatchString(path)
+}
+
+// injectOriginLabel adds origin/<lane> to an agent's issue-create JSON body
+// when it carries no origin/* label, so an issue filed with `gh issue create`
+// through the proxy records its provenance exactly as one filed through the
+// issue-request watcher does. An origin label the agent chose is kept and
+// never doubled; agent/<lane> (the routing axis) is untouched. The body is
+// returned unchanged (ok=false) for other routes, an unidentified caller, a
+// body that is not a JSON object, or a labels field in an unexpected shape
+// (GitHub accepts label objects too; those are forwarded as written rather
+// than guessed at).
+func injectOriginLabel(method, path string, body []byte, agentName string) ([]byte, bool) {
+	lane := config.OriginLaneFromAgent(agentName)
+	if lane == "" || agentName == internalCallerName || !isIssueCreateRESTWrite(method, path) {
+		return body, false
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil || payload == nil {
+		return body, false
+	}
+	var labels []string
+	if raw, present := payload["labels"]; present && len(bytes.TrimSpace(raw)) > 0 && string(bytes.TrimSpace(raw)) != "null" {
+		if err := json.Unmarshal(raw, &labels); err != nil {
+			return body, false
+		}
+	}
+	if _, has := config.FirstOriginLabel(labels); has {
+		return body, false
+	}
+	labels = config.WithOriginLabel(labels, lane)
+	encoded, err := json.Marshal(labels)
+	if err != nil {
+		return body, false
+	}
+	payload["labels"] = encoded
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		return body, false
+	}
+	return rewritten, true
 }
 
 // internalCallerName attributes a connection that originated from the hive's

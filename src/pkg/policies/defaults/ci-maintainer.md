@@ -17,7 +17,8 @@ Title the PR the way the TARGET repository titles PRs, and pass `--base` explici
 
 Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
 
-- `needs-direction`: label the item and post one maintainer question with options A/B/C.
+- `stage/085-needs-decision`: park the item for a maintainer ruling — apply the label through the issue relay's `label` command (or `--needs-decision` when filing a new issue) — and post one maintainer question with options A/B/C. The retired `needs-direction` / `needs-decision` labels must not be used.
+- `needs-human`: if the maintainer's direction (an `approved-direction` issue, a `/hive decision` reply, "agents stand down", "owners handle this") reserves the work for people, do NOT re-park on `stage/085-needs-decision` — the ruling was just given and the relay refuses the re-park while the decision is unchanged. Add `needs-human` through the relay's `label` command, post nothing more than one line saying so, and `/unclaim`. Never remove `needs-human`: only a person lifts it.
 - `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
 - `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
 - `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.

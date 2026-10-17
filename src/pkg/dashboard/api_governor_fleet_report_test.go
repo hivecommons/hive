@@ -145,3 +145,41 @@ func TestGovernorFleetReportIncludeReposToggleGatesWatchedRepos(t *testing.T) {
 		t.Fatalf("opted-out hive still names repos: %v", got)
 	}
 }
+
+// TestGovernorFleetReportIncludeOwnersToggleGatesOwnerLogins: the owners a
+// self-report names are the authorized users holding the owner role plus
+// the device-flow operator; include_owners=false hides them (#12529).
+func TestGovernorFleetReportIncludeOwnersToggleGatesOwnerLogins(t *testing.T) {
+	SetFleetReportStatePathForTest(t, filepath.Join(t.TempDir(), "fleet-report-state.json"))
+	prev := fleetReportOperatorLogin
+	fleetReportOperatorLogin = func(string) string { return "Operator" }
+	t.Cleanup(func() { fleetReportOperatorLogin = prev })
+	s := covApiServer(t)
+	s.deps.Config.Dashboard.AuthorizedUsers = []string{"github:Alice", "viewer", "bob:owner", "ibmid:5500087VJB:owner"}
+
+	rec := doOwnerGet(s, "/api/config/governor/fleet-report")
+	var body struct {
+		IncludeOwners bool     `json:"include_owners"`
+		Owners        []string `json:"owners"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || !body.IncludeOwners {
+		t.Fatalf("include_owners should default to true: %s (%v)", rec.Body.String(), err)
+	}
+	if got := s.FleetReportOwners(); len(got) != 3 || got[0] != "alice" || got[1] != "bob" || got[2] != "operator" {
+		t.Fatalf("FleetReportOwners = %v (api: %v)", got, body.Owners)
+	}
+	if len(body.Owners) != 3 {
+		t.Fatalf("api owners = %v", body.Owners)
+	}
+
+	rec = doPut(s, "/api/config/governor/fleet-report", map[string]any{"include_owners": false})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT include_owners=false: %d %s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.IncludeOwners || body.Owners != nil {
+		t.Fatalf("include_owners not persisted: %s", rec.Body.String())
+	}
+	if got := s.FleetReportOwners(); got != nil {
+		t.Fatalf("opted-out hive still names owners: %v", got)
+	}
+}

@@ -104,6 +104,14 @@ project:
 #       url: https://github.com/hivecommons/hive/blob/v5/src/docs/contributor-relay.md
 #     - label: Chat with other contributors
 #       url: https://hivecommons.dev/discord
+#   # Stage-072 fix budget (hivecommons/hive#12436): how many red-PR fix-pr
+#   # sub-sessions one contributor's relay may run beside its primary session
+#   # (the relay advertises its own count; the hub clamps to this). 1 forces
+#   # preempt mode. Queued fixes are served before new work.
+#   max_parallel_fixes: 2
+#   # Preempt mode: minimum uninterrupted run time of a resumed primary task
+#   # before the hub may preempt that contributor again.
+#   min_focus_window: 30m
 
 # GitHub App / PR policy. The #5117 self-authorization hold defaults on through
 # ACMM L5 and off at ACMM L6 Fully Autonomous. App-authored PRs whose only
@@ -387,6 +395,25 @@ governor:
   conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
   optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
 
+  # First-time contributor welcome (see docs/good-first-issue.md#welcoming-first-time-contributors).
+  # When a human whose GitHub author_association is FIRST_TIME_CONTRIBUTOR /
+  # FIRST_TIMER opens a PR, post one comment (per author per repo, marker
+  # <!-- hive:first-timer-welcome -->) inviting them to run their own hive.
+  # Needs dashboard.public_url (or a hub-assigned dashboard URL).
+  # first_timer_welcome:
+  #   enabled: true           # default; false opts out
+  #   template_path: ""       # optional text/template file over firsttimer.Vars; must contain {{ .Marker }}
+
+  # Self-merge review gate (#12592). Immediately before the hive merges its
+  # own (App-authored) PR, read the swarm review verdict for the head SHA:
+  # no-review-bundle / awaiting-review-approval / changes-requested:<perspectives>
+  # hold the merge in enforce mode; shadow (default) only records what the gate
+  # would have held in the evidence bundle and merges as today. The effective
+  # mode is the strictest of this knob, review.require_approval (enforce) and
+  # review.shadow (shadow); all three are re-read on every evaluation.
+  # review_gate:
+  #   mode: shadow            # off | shadow | enforce
+
   # Kick prompt list caps (#7368). Every issue list and every PR list in a
   # kick is cut at these counts, with an explicit "… and N more" line, so a
   # large backlog cannot balloon the prompt (302 open PRs once produced a
@@ -449,11 +476,22 @@ governor:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
     stage:                              # Hive-owned stage/NN-* pipeline labels (docs/labels-and-control-signals.md)
-      enabled: true                     # One stage label per open issue/PR, plus author/* and stage/stalled|regressed
+      enabled: true                     # One stage label per open issue/PR, plus author/* and the stage/stalled marker
+      # stalled:                        # stage/stalled = "no activity"; never applied while the item waits on the hive (#12534)
+      #   require_quiet: true           # measure dwell from the last outside activity (push/comment/review/CI); false = from stage entry
       # dwell:                          # Per-stage "stalled" thresholds by slug; 0 = never
       #   review-pending: 1h
-      #   returned-to-contributor: 24h
+      #   needs-author: 24h            # stage/071: human-authored red PR, the author must act
+      #   returned-to-contributor: 24h  # stage/072: clanker red PR handed back to its hive
       #   awaiting-merge-admission: 30m  # a stall here = the lane, not the author; the hive comments the last skip reason
+      # contributor_nudge:              # stage/072: one @-mention comment per head + relay fix-pr interrupt (#12436)
+      #   enabled: true
+      #   renudge_interval: 24h         # second (and last) nudge; default = the stage dwell
+      # presence_window: 15m            # relay heartbeat this fresh = contributor online → relay interrupt, else comment only
+      # contributor_grace_online: 2h    # nudge unanswered this long (online author) → stage/074 adoption
+      # contributor_grace_offline: 1h   # same for offline / external authors (comment-only nudge)
+      # adoption:                       # stage/074-adopted-by-hive: supersede a still-red contributor PR with an App PR
+      #   enabled: true                 # that keeps the author's commits; the scanner's red-PR fix kick finishes it
 
   # Optional: read actionable work from Linear instead of GitHub Issues.
   # Secrets should come from env interpolation, not literal values.
@@ -857,6 +895,8 @@ dashboard:
   # authorized_users: [owner, reviewer:read, maintainer:read-write]
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
+  # stage_tracker:
+  #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom
   # theme_overrides:
   #   tokens: { "--accent": "#e0a33a" } # CSS variables from the dashboard :root allow-list
@@ -1044,6 +1084,14 @@ knowledge:
                                              # Defaults to true when retention_policy is
                                              # ABSENT, but false when the block is present
                                              # without this key — set it explicitly.
+    # publish:                               # Publish facts to a repo via PR (OFF by default)
+    #   enabled: false                       # The block does nothing until true
+    #   repo: ""                             # owner/name; empty = project.primary_repo
+    #   path: docs/knowledge/                # Or .hive/knowledge/; relative, no ".."
+    #   base_branch: ""                      # Empty = the repo's default branch
+    #   mode: pr                             # pr (default) | commit. ACMM L<=4 hives publish via
+    #                                        # PR only; commit is not honored and opens a PR
+    #   cadence: per_run                     # per_run (default) | daily
   # code_maps:                               # Generated repository code maps (#11106).
   #   enabled: true                          # OPT-IN; absent or false = never generated
   #   schedule: hourly                       # HEAD check cadence: hourly (default) or daily

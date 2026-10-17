@@ -3964,6 +3964,9 @@ func TestHandleNousStatus_ResearchQuestion(t *testing.T) {
 		{"stale governor scope still uses repo goal", "governor", map[string]interface{}{"governorGoal": "gov?", "repoGoal": "repo?"}, "repo?"},
 		{"governor goal alone is ignored", "both", map[string]interface{}{"governorGoal": "gov?"}, ""},
 		{"no goals", "", nil, ""},
+		{"pasted yaml key and folded marker are stripped", "repo", map[string]interface{}{"repoGoal": "research_question: > Can prefilter gates be tightened?"}, "Can prefilter gates be tightened?"},
+		{"blockquote marker alone is stripped", "repo", map[string]interface{}{"repoGoal": ">Can we cut CI time?"}, "Can we cut CI time?"},
+		{"folded newlines collapse to spaces", "repo", map[string]interface{}{"repoGoal": "Can we\n  cut CI\n  time?"}, "Can we cut CI time?"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

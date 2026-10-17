@@ -11,7 +11,9 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const (
@@ -286,7 +288,8 @@ func closeOnMergeBackfillCandidate(issue *gh.Issue) bool {
 	labels := issueLabelNames(issue.Labels)
 	return HasCoveredByPRLabel(labels) ||
 		labelPresent(labels, LikelyDoneLabel) ||
-		labelPresent(labels, "claimed")
+		labelPresent(labels, claims.LabelClaimed) ||
+		labelPresent(labels, claims.LegacyLabelClaimed)
 }
 
 func (c *Client) closeOnMergeLinkedPRs(ctx context.Context, owner, repo string, issue *gh.Issue) []int {
@@ -491,7 +494,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			res.Action, res.Reason = CloseOnMergeNoop, "awaiting_comment_failed"
 			return res
 		}
-		if err := c.EnsureIssueLabel(ctx, issueRepo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && opts.Logger != nil {
+		if err := c.EnsureIssueLabel(ctx, issueRepo, LikelyDoneLabel, LikelyDoneLabelColor, LikelyDoneLabelDescription); err != nil && opts.Logger != nil {
 			opts.Logger.Warn("close-on-merge: ensuring likely-done label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
 		} else if err := c.AddLabels(ctx, issueRepo, issueNumber, []string{LikelyDoneLabel}); err != nil && opts.Logger != nil {
 			opts.Logger.Warn("close-on-merge: adding likely-done label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
@@ -518,7 +521,23 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		return res
 	}
 	res.Action, res.Reason = CloseOnMergeClosed, "closed_completed"
+	c.stripStageLabelsOnClose(ctx, issueRepo, issueNumber, issueLabelNames(issue.Labels), opts.Logger)
 	return res
+}
+
+// stripStageLabelsOnClose removes the hive-owned stage/author labels from an
+// issue the hive just closed (hivecommons/hive#12436): a closed item is out
+// of the pipeline and the enumeration sweep will never see it again to
+// reconcile. Labels only; best-effort.
+func (c *Client) stripStageLabelsOnClose(ctx context.Context, repo string, number int, labels []string, logger *slog.Logger) {
+	for _, l := range labels {
+		if !stagelabels.Owned(l) {
+			continue
+		}
+		if err := c.RemoveLabel(WithRESTCaller(ctx, "hive:close_on_merge"), repo, number, l); err != nil && logger != nil {
+			logger.Warn("close-on-merge: removing stage label on close failed", "repo", repo, "issue", number, "label", l, "error", err)
+		}
+	}
 }
 
 // closeOnMergeCoverage is how much of an issue a merged PR claims to cover
@@ -578,7 +597,7 @@ func (c *Client) markPartiallyAddressed(ctx context.Context, issueRepo string, i
 			"repo", issueRepo, "issue", issueNumber, "pr", prNumber,
 			"closing_keyword", cov.Closing, "remainder", cov.Remainder, "untouched", cov.Untouched)
 	}
-	if err := c.EnsureIssueLabel(ctx, issueRepo, PartiallyAddressedLabel, "fbca04", "A merged PR addressed only part of this issue; remainder still actionable"); err != nil && opts.Logger != nil {
+	if err := c.EnsureIssueLabel(ctx, issueRepo, PartiallyAddressedLabel, PartiallyAddressedLabelColor, PartiallyAddressedLabelDescription); err != nil && opts.Logger != nil {
 		opts.Logger.Warn("close-on-merge: ensuring partially-addressed label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
 	} else if err := c.AddLabels(ctx, issueRepo, issueNumber, []string{PartiallyAddressedLabel}); err != nil && opts.Logger != nil {
 		opts.Logger.Warn("close-on-merge: adding partially-addressed label failed", "repo", issueRepo, "issue", issueNumber, "error", err)

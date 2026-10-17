@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -49,6 +50,10 @@ type consolidationMock struct {
 	// listCommentsStatus, when non-zero, fails every comment list GET with
 	// that status; otherwise the list serves the comments posted so far.
 	listCommentsStatus int
+	// edited counts comment PATCHes; an edit rewrites commentBodies in place.
+	edited int
+	// editStatus, when non-zero, fails every comment PATCH with that status.
+	editStatus int
 }
 
 // consolidationMockServer serves open issues newest-first (the order the
@@ -76,6 +81,22 @@ func consolidationMockServer(t *testing.T, open []openTwin, m *consolidationMock
 			m.commentedOn = append(m.commentedOn, n)
 			m.commentBodies = append(m.commentBodies, in.Body)
 			_, _ = io.WriteString(w, `{"id":1}`)
+		case r.Method == "PATCH" && strings.Contains(r.URL.Path, "/comments/"):
+			if m.editStatus != 0 {
+				w.WriteHeader(m.editStatus)
+				return
+			}
+			var in struct {
+				Body string `json:"body"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			parts := strings.Split(r.URL.Path, "/")
+			id, _ := strconv.Atoi(parts[len(parts)-1])
+			if id >= 1 && id <= len(m.commentBodies) {
+				m.commentBodies[id-1] = in.Body
+			}
+			m.edited++
+			_, _ = io.WriteString(w, `{"id":`+strconv.Itoa(id)+`}`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
 			if m.listCommentsStatus != 0 {
 				w.WriteHeader(m.listCommentsStatus)
@@ -86,11 +107,14 @@ func consolidationMockServer(t *testing.T, open []openTwin, m *consolidationMock
 			out := make([]map[string]any, 0, len(m.commentedOn))
 			for i, on := range m.commentedOn {
 				if on == n {
-					out = append(out, map[string]any{"id": i + 1, "body": m.commentBodies[i]})
+					out = append(out, map[string]any{"id": i + 1, "body": m.commentBodies[i], "user": map[string]any{"login": testBot}})
 				}
 			}
 			b, _ := json.Marshal(out)
 			_, _ = w.Write(b)
+		case r.Method == "GET" && issueNumberPathRE.MatchString(r.URL.Path):
+			parts := strings.Split(r.URL.Path, "/")
+			_, _ = io.WriteString(w, `{"number":`+parts[len(parts)-1]+`,"state":"open","labels":[],"html_url":"https://github.example/o/r/issues/`+parts[len(parts)-1]+`"}`)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
 			if r.URL.Query().Get("state") != "open" {
 				m.closedLists++
@@ -136,6 +160,8 @@ func consolidationMockServer(t *testing.T, open []openTwin, m *consolidationMock
 }
 
 const testBot = "hive-app[bot]"
+
+var issueNumberPathRE = regexp.MustCompile(`/issues/[0-9]+$`)
 
 // fileRequest drops one agent issue request, runs the watcher once, and
 // returns the request path plus the parsed result.
@@ -458,7 +484,7 @@ func TestCreateIssue_DirectCallDoesNotConsolidate(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.appBotLogin = testBot
 
-	res, err := c.CreateIssue(context.Background(), "o/r", "[review] b in x.go", "pkg/x.go:9", nil)
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[review] b in x.go", Body: "pkg/x.go:9", Origin: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

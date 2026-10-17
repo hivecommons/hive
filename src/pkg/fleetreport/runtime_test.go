@@ -100,7 +100,7 @@ func TestBuildRuntimeReportCarriesMarkersAndLabels(t *testing.T) {
 	if !strings.HasPrefix(r.Title, "[selfreport] restart_storm: ") {
 		t.Fatalf("title = %q", r.Title)
 	}
-	for _, want := range []string{"hive-fleet-fingerprint:" + fp, SelfReportMarker(fp, "hosted-aslom"), AffectedBlockStart, "**Affected hives (1):** hosted-aslom", "<details>"} {
+	for _, want := range []string{"hive-fleet-fingerprint:" + fp, SelfReportMarker(fp, "hosted-aslom"), AffectedBlockStart, "**Affected hives (1):**\n- hosted-aslom (instance inst) — owner(s): unknown — seen 1, last 2026-09-24T12:00:00Z", "<details>"} {
 		if !strings.Contains(r.Body, want) {
 			t.Fatalf("body missing %q:\n%s", want, r.Body)
 		}
@@ -116,7 +116,7 @@ func TestBuildRuntimeReportCarriesMarkersAndLabels(t *testing.T) {
 		}
 		return false
 	}
-	for _, l := range []string{LabelSelfReport, LabelKindBug, LabelNeedsTriage, LabelFleetReport, "class:restart-storm", "severity:high", "trigger:" + TriggerRuntimeError, "hive/hosted-aslom"} {
+	for _, l := range []string{LabelSelfReport, LabelKindBug, LabelNeedsTriage, LabelFleetReport, "class:restart-storm", "severity:high", "trigger:" + TriggerRuntimeError} {
 		if !hasLabel(l) {
 			t.Fatalf("labels missing %q: %v", l, r.Labels)
 		}
@@ -133,7 +133,7 @@ func TestAffectedBlockRoundTripAndIdempotentUpdate(t *testing.T) {
 		t.Fatalf("parse = %v %d %v", hives, seen, ok)
 	}
 	updated, changed := UpdateAffectedBlock(body, "hive-c", true)
-	if !changed || !strings.Contains(updated, "**Affected hives (3):** hive-a, hive-b, hive-c") || !strings.Contains(updated, "seen_count: 3") {
+	if !changed || !strings.Contains(updated, "**Affected hives (3):**\n- hive-a — owner(s): unknown — seen 1\n- hive-b — owner(s): unknown — seen 1\n- hive-c — owner(s): unknown — seen 1\n") || !strings.Contains(updated, "seen_count: 3") {
 		t.Fatalf("update:\n%s", updated)
 	}
 	if !strings.HasPrefix(updated, "intro\n\n") || !strings.HasSuffix(updated, "\n\ntrailer") {
@@ -144,7 +144,7 @@ func TestAffectedBlockRoundTripAndIdempotentUpdate(t *testing.T) {
 		t.Fatalf("re-adding an existing hive without bump changed the body")
 	}
 	appended, changed := UpdateAffectedBlock("human filed body", "hive-z", true)
-	if !changed || !strings.Contains(appended, "human filed body") || !strings.Contains(appended, "**Affected hives (1):** hive-z") {
+	if !changed || !strings.Contains(appended, "human filed body") || !strings.Contains(appended, "**Affected hives (1):**\n- hive-z — owner(s): unknown — seen 1\n") {
 		t.Fatalf("append to body without block:\n%s", appended)
 	}
 }
@@ -299,18 +299,22 @@ func TestShortMessageDiagnosticsAndLabelHelpers(t *testing.T) {
 	if got := boundDiagnostics(big); len(got) > maxDiagnosticsBytes+4 || !strings.HasPrefix(got, "…\n") {
 		t.Fatalf("diagnostics not bounded: len=%d prefix=%q", len(got), got[:4])
 	}
-	if HiveLabel("") != "" || HiveLabel("Hosted X") != "hive/hosted-x" {
-		t.Fatalf("HiveLabel = %q %q", HiveLabel(""), HiveLabel("Hosted X"))
-	}
 	if displayVersion("") != "vunknown" || displayVersion("v5.1.0") != "v5.1.0" || displayVersion("5.1.0") != "v5.1.0" {
 		t.Fatalf("displayVersion: %q %q %q", displayVersion(""), displayVersion("v5.1.0"), displayVersion("5.1.0"))
 	}
-	// Anonymous hives (no slug) carry no hive/<slug> label.
-	r := BuildRuntimeReport(Observation{}, Evidence{Class: ClassRestartStorm, Severity: "high"}, "fp", "inst", "", "v5", "c", time.Now())
-	for _, l := range r.Labels {
-		if strings.HasPrefix(l, "hive/") && l != LabelSelfReport {
-			t.Fatalf("anonymous report carries %q", l)
+	// The hive/<slug> provenance label is retired (hivecommons/hive#12539):
+	// neither a named nor an anonymous report carries one; the body marker
+	// names the hive instead.
+	for _, hive := range []string{"", "Hosted X"} {
+		r := BuildRuntimeReport(Observation{}, Evidence{Class: ClassRestartStorm, Severity: "high"}, "fp", "inst", hive, "v5", "c", time.Now())
+		for _, l := range r.Labels {
+			if strings.HasPrefix(l, "hive/") && l != LabelSelfReport {
+				t.Fatalf("report for %q carries %q", hive, l)
+			}
 		}
+	}
+	if r := BuildRuntimeReport(Observation{}, Evidence{Class: ClassRestartStorm, Severity: "high"}, "fp", "inst", "Hosted X", "v5", "c", time.Now()); !strings.Contains(r.Body, "hive=hosted-x") {
+		t.Fatalf("report body does not name the hive: %q", r.Body)
 	}
 }
 
@@ -498,7 +502,7 @@ func TestBuildRuntimeReportCarriesReposOwnersAndItem(t *testing.T) {
 		"| owners | 2: acme, hivecommons |",
 		"| repo | acme/widgets |",
 		"| ref | acme/widgets#42 |",
-		"**Affected hives (1):** hosted-aslom\n**Affected repos (4):** acme/tools, acme/widgets, hivecommons/hive, hivecommons/pluk\n**Affected owners (2):** acme, hivecommons\nseen_count: 1",
+		"**Affected hives (1):**\n- hosted-aslom (instance inst) — owner(s): unknown — seen 1, last 2026-10-16T12:00:00Z\n**Affected repos (4):** acme/tools, acme/widgets, hivecommons/hive, hivecommons/pluk\n**Affected repo owners (2):** acme, hivecommons\nseen_count: 1",
 	} {
 		if !strings.Contains(r.Body, want) {
 			t.Fatalf("body missing %q:\n%s", want, r.Body)
@@ -516,12 +520,12 @@ func TestBuildRuntimeReportWithoutReposRendersDashesAndLegacyBlock(t *testing.T)
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	ev := Evidence{Class: ClassRestartStorm, Component: "agent-runtime", Severity: "high", Count: 4, Message: "restart storm: agent quality restarted 4 times in 10m"}
 	r := BuildRuntimeReport(Observation{HiveID: "hive-a", Version: "v5.1.0"}, ev, "fp", "inst", "", "v5.1.0", "abcdef1", now)
-	for _, want := range []string{"| repos | — |", "| owners | — |", "| repo | — |", "| ref | — |", AffectedBlockStart + "\n**Affected hives (1):** inst\nseen_count: 1\n" + AffectedBlockEnd} {
+	for _, want := range []string{"| repos | — |", "| owners | — |", "| repo | — |", "| ref | — |", AffectedBlockStart + "\n**Affected hives (1):**\n- inst — owner(s): unknown — seen 1, last 2026-10-16T12:00:00Z\nseen_count: 1\n" + AffectedBlockEnd} {
 		if !strings.Contains(r.Body, want) {
 			t.Fatalf("body missing %q:\n%s", want, r.Body)
 		}
 	}
-	if strings.Contains(r.Body, "Affected repos") || strings.Contains(r.Body, "Affected owners") || r.Repos != nil {
+	if strings.Contains(r.Body, "Affected repos") || strings.Contains(r.Body, "Affected repo owners") || r.Repos != nil {
 		t.Fatalf("opted-out hive still named repos:\n%s", r.Body)
 	}
 }
@@ -534,7 +538,7 @@ func TestAffectedBlockReposUnionAcrossHivesIsIdempotent(t *testing.T) {
 	}
 
 	updated, changed := UpdateAffectedBlockWithRepos(body, "hive-b", []string{"acme/widgets", "hivecommons/hive", "hivecommons/pluk"}, true)
-	wantBlock := AffectedBlockStart + "\n**Affected hives (2):** hive-a, hive-b\n**Affected repos (3):** acme/widgets, hivecommons/hive, hivecommons/pluk\n**Affected owners (2):** acme, hivecommons\nseen_count: 2\n" + AffectedBlockEnd
+	wantBlock := AffectedBlockStart + "\n**Affected hives (2):**\n- hive-a — owner(s): unknown — seen 1\n- hive-b — owner(s): unknown — seen 1\n**Affected repos (3):** acme/widgets, hivecommons/hive, hivecommons/pluk\n**Affected repo owners (2):** acme, hivecommons\nseen_count: 2\n" + AffectedBlockEnd
 	if !changed || !strings.Contains(updated, wantBlock) {
 		t.Fatalf("union update:\n%s\nwant block:\n%s", updated, wantBlock)
 	}
@@ -549,19 +553,19 @@ func TestAffectedBlockReposUnionAcrossHivesIsIdempotent(t *testing.T) {
 	}
 	// A known hive bringing one new repo edits the body even without a bump.
 	grown, changed := UpdateAffectedBlockWithRepos(updated, "hive-a", []string{"acme/tools"}, false)
-	if !changed || !strings.Contains(grown, "**Affected repos (4):** acme/tools, acme/widgets, hivecommons/hive, hivecommons/pluk") || !strings.Contains(grown, "**Affected hives (2):** hive-a, hive-b") || !strings.Contains(grown, "seen_count: 2") {
+	if !changed || !strings.Contains(grown, "**Affected repos (4):** acme/tools, acme/widgets, hivecommons/hive, hivecommons/pluk") || !strings.Contains(grown, "**Affected hives (2):**\n- hive-a — owner(s): unknown — seen 1\n- hive-b") || !strings.Contains(grown, "seen_count: 2") {
 		t.Fatalf("new repo from a known hive:\n%s", grown)
 	}
 
 	// Legacy blocks (hives only) keep their shape until a hive brings repos.
 	legacy := RenderAffectedBlock([]string{"hive-a"}, 1)
 	kept, changed := UpdateAffectedBlockWithRepos(legacy, "hive-c", nil, true)
-	if !changed || strings.Contains(kept, "Affected repos") || !strings.Contains(kept, "**Affected hives (2):** hive-a, hive-c") {
+	if !changed || strings.Contains(kept, "Affected repos") || !strings.Contains(kept, "**Affected hives (2):**\n- hive-a — owner(s): unknown — seen 1\n- hive-c — owner(s): unknown — seen 1\n") {
 		t.Fatalf("legacy block grew repo lines without repos:\n%s", kept)
 	}
 	// A human-filed body with no block gets one appended, repos included.
 	appended, changed := UpdateAffectedBlockWithRepos("human filed body", "hive-z", []string{"acme/widgets"}, true)
-	if !changed || !strings.HasPrefix(appended, "human filed body") || !strings.Contains(appended, "**Affected owners (1):** acme") {
+	if !changed || !strings.HasPrefix(appended, "human filed body") || !strings.Contains(appended, "**Affected repo owners (1):** acme") {
 		t.Fatalf("append to body without block:\n%s", appended)
 	}
 }

@@ -309,6 +309,31 @@ func (m *Manager) AgentAuthAvailable(agentName string) (available, known bool) {
 	return m.AgentAuthState(agentName, proc.UID, backend, proc.State == StateRunning, needsLogin)
 }
 
+// AgentCredentialRefreshable reports whether this agent's Claude credential can
+// put it back to work without a human login — claude.HasUsableToken over the
+// agent's own credential paths, the same question the restart-heal gates ask.
+// known is false for every other backend: ADR-0024 records no verified
+// idle-refresh path for them, so hive does not claim one.
+func (m *Manager) AgentCredentialRefreshable(agentName string) (refreshable, known bool) {
+	if m == nil {
+		return false, false
+	}
+	m.mu.RLock()
+	proc := m.agents[agentName]
+	m.mu.RUnlock()
+	if proc == nil {
+		return false, false
+	}
+	backend := proc.Config.Backend
+	if proc.BackendOverride != "" {
+		backend = proc.BackendOverride
+	}
+	if backend != "claude" {
+		return false, false
+	}
+	return m.credentialFileProves(agentName, proc.UID, backend), true
+}
+
 // credentialFileProves answers ONLY the positive half of the file probe: is
 // there, right now, on-disk (or in-process) evidence that this agent's backend
 // is authenticated?

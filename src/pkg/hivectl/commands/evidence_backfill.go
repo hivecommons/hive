@@ -66,20 +66,28 @@ const (
 // bin/gh-wrapper.sh appends to agent-authored bodies.
 const hiveIdentityFooterMarker = "🐝 **Hive Agent**"
 
+// Fields --refresh-fields can fill on an existing backfilled bundle. Each
+// must be derivable from the list page alone (no per-PR request) and is only
+// ever set when absent; nothing else on the bundle is touched.
+const refreshFieldMergeOpenedAt = "merge.opened_at"
+
+var backfillRefreshFields = []string{refreshFieldMergeOpenedAt}
+
 type evidenceBackfillOptions struct {
-	repo        string
-	since       string
-	until       string
-	root        string
-	dryRun      bool
-	acmmLevel   int
-	agentLogins []string
-	flags       []string
-	minMerged   int
-	apiBase     string
-	tokenEnv    string
-	signingKey  string
-	skipMergers bool
+	repo          string
+	since         string
+	until         string
+	root          string
+	dryRun        bool
+	acmmLevel     int
+	agentLogins   []string
+	flags         []string
+	minMerged     int
+	apiBase       string
+	tokenEnv      string
+	signingKey    string
+	skipMergers   bool
+	refreshFields []string
 }
 
 func newEvidenceBackfillCommand(env *commandEnv) *cobra.Command {
@@ -92,13 +100,19 @@ func newEvidenceBackfillCommand(env *commandEnv) *cobra.Command {
 			"records is written: author (with a documented kind heuristic), outcome and timestamps,\n" +
 			"merge actor, and revert / follow-up links under the same rules as the live recorder.\n" +
 			"Verdicts, CI, sentinel and shadow observations are left absent, never fabricated, and\n" +
-			"every bundle is marked backfilled: true. Existing bundles are skipped, so re-running is\n" +
-			"safe. Nothing here reads into or alters merge eligibility.\n\n" +
+			"every bundle is marked backfilled: true. Existing backfilled bundles and live bundles that already\n" +
+			"record a merge are skipped; a live bundle without a merge gets a sibling .backfill.json\n" +
+			"(reported as supplemented), so re-running is safe. Nothing here reads into or alters merge eligibility.\n\n" +
+			"--refresh-fields names fields to fill on bundles an earlier backfill already wrote (backfilled: true)\n" +
+			"when they are absent, from the list page alone (no per-PR requests): " + strings.Join(backfillRefreshFields, ", ") + ".\n" +
+			"Only the named fields are set; everything else on the bundle is left as written, and a bundle that\n" +
+			"already has them is not rewritten.\n\n" +
 			"Authentication: the token in $GITHUB_TOKEN (or --github-token-env), else `gh auth token`.",
 		Args: argsNone(),
 		Example: "  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run\n" +
 			"  hivectl evidence backfill --repo kubestellar/console --since 2026-03-01 --until 2026-05-01 --acmm-level 3\n" +
-			"  hivectl evidence backfill --repo hivecommons/hive --since 2026-06-01 --flag hive_on_hive --root ./evidence",
+			"  hivectl evidence backfill --repo hivecommons/hive --since 2026-06-01 --flag hive_on_hive --root ./evidence\n" +
+			"  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --refresh-fields merge.opened_at",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runEvidenceBackfill(cmd, env, opts)
 		},
@@ -117,6 +131,7 @@ func newEvidenceBackfillCommand(env *commandEnv) *cobra.Command {
 	f.StringVar(&opts.tokenEnv, "github-token-env", evidenceBackfillTokenEnv, "environment variable holding the GitHub token")
 	f.StringVar(&opts.signingKey, "signing-key-file", "", "Ed25519 key to sign written bundles (default: unsigned)")
 	f.BoolVar(&opts.skipMergers, "skip-mergers", false, "do not fetch each merged PR for its merger (one request per merged PR)")
+	f.StringSliceVar(&opts.refreshFields, "refresh-fields", nil, "fill these fields on existing backfilled bundles when absent (comma-separated): "+strings.Join(backfillRefreshFields, ", "))
 	return cmd
 }
 
@@ -361,6 +376,67 @@ func backfillBundle(repo string, pr backfillPR, now time.Time, opts *evidenceBac
 	return b
 }
 
+// backfillSupplementPath is where a backfilled record is written beside a live
+// bundle at path; the evidence loader reads every *.json under the PR dir.
+func backfillSupplementPath(path string) string {
+	return strings.TrimSuffix(path, ".json") + ".backfill.json"
+}
+
+// backfillTarget decides where the backfilled record for the bundle path goes.
+// A free path is used as is. A live bundle that has no merge event and is not
+// itself backfilled gets a sibling .backfill.json so the PR gains a GitHub
+// outcome; anything else already on disk is skipped.
+func backfillTarget(path string) (target string, skip bool) {
+	if _, err := os.Stat(path); err != nil {
+		return path, false
+	}
+	existing, err := ghpkg.LoadReviewEvidence(path)
+	if err != nil || existing.Backfilled || existing.Backfill != nil || existing.Merge != nil {
+		return "", true
+	}
+	sup := backfillSupplementPath(path)
+	if _, err := os.Stat(sup); err == nil {
+		return "", true
+	}
+	return sup, false
+}
+
+// refreshBackfilled fills the named fields on an existing backfilled bundle
+// from the list-page view of its PR, only where they are absent, and reports
+// whether anything changed. Live bundles (not backfilled) are never touched:
+// the live recorder owns them.
+func refreshBackfilled(b *evidence.Bundle, pr backfillPR, fields []string) bool {
+	if b == nil || !b.Backfilled {
+		return false
+	}
+	changed := false
+	for _, field := range fields {
+		switch field {
+		case refreshFieldMergeOpenedAt:
+			if b.Merge != nil && b.Merge.OpenedAt.IsZero() && !pr.CreatedAt.IsZero() && !pr.CreatedAt.After(b.Merge.At) {
+				b.Merge.OpenedAt = pr.CreatedAt.UTC()
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+// backfillRefreshable returns the backfilled bundles already on disk for the
+// PR head at path: the bundle itself when an earlier backfill wrote it, or
+// the .backfill.json sibling a supplement left beside a live bundle.
+func backfillRefreshable(path string) map[string]*evidence.Bundle {
+	out := map[string]*evidence.Bundle{}
+	for _, p := range []string{path, backfillSupplementPath(path)} {
+		b, err := ghpkg.LoadReviewEvidence(p)
+		if err != nil || !b.Backfilled {
+			continue
+		}
+		out[p] = b
+	}
+	return out
+}
+
 // backfillStore is the on-disk view the run links against: bundles written
 // by this run plus any already present under root. latest returns the
 // newest bundle for a PR, loading from disk when it was not built here.
@@ -515,6 +591,13 @@ func validateBackfillOptions(opts *evidenceBackfillOptions) (since, until time.T
 	if opts.acmmLevel < 0 {
 		return since, until, &usageError{message: "--acmm-level must be 0 or positive"}
 	}
+	for i, field := range opts.refreshFields {
+		field = strings.TrimSpace(field)
+		if !slices.Contains(backfillRefreshFields, field) {
+			return since, until, &usageError{message: fmt.Sprintf("--refresh-fields %q: expected one of %s", field, strings.Join(backfillRefreshFields, ", "))}
+		}
+		opts.refreshFields[i] = field
+	}
 	return since, until, nil
 }
 
@@ -564,15 +647,35 @@ func runEvidenceBackfill(cmd *cobra.Command, env *commandEnv, opts *evidenceBack
 	store := &backfillStore{root: opts.root, repo: opts.repo, built: map[int]*evidence.Bundle{}, disk: map[int]*evidence.Bundle{}}
 	counts := map[string]int{"open": 0, "closed": 0, "merged": 0, "human": 0, "agent": 0, "bot": 0}
 	var toWrite []*evidence.Bundle
-	skipped := 0
+	skipped, supplemented := 0, 0
+	paths := map[int]string{}
+	// toRefresh holds existing backfilled bundles that gained a field under
+	// --refresh-fields, keyed by their on-disk path; nothing else about them
+	// changes. Registering them in store.disk keeps a later backlink from
+	// rewriting a stale copy over the refreshed one.
+	toRefresh := map[string]*evidence.Bundle{}
 	fetchErrors := 0
 	for i := range prs {
 		pr := &prs[i]
 		path := ghpkg.ReviewEvidencePath(opts.root, opts.repo, pr.Number, pr.Head.SHA)
-		if _, statErr := os.Stat(path); statErr == nil {
+		target, skip := backfillTarget(path)
+		if skip {
 			skipped++
+			if len(opts.refreshFields) == 0 {
+				continue
+			}
+			for p, existing := range backfillRefreshable(path) {
+				if refreshBackfilled(existing, *pr, opts.refreshFields) {
+					toRefresh[p] = existing
+					store.disk[pr.Number] = existing
+				}
+			}
 			continue
 		}
+		if target != path {
+			supplemented++
+		}
+		paths[pr.Number] = target
 		if pr.MergedAt != nil && !opts.skipMergers && !opts.dryRun {
 			if err := fetcher.mergedBy(ctx, opts.repo, pr); err != nil {
 				if ctx.Err() != nil {
@@ -620,6 +723,7 @@ func runEvidenceBackfill(cmd *cobra.Command, env *commandEnv, opts *evidenceBack
 		"fetched":       len(prs),
 		"to_write":      len(toWrite),
 		"skipped":       skipped,
+		"supplemented":  supplemented,
 		"merged":        counts["merged"],
 		"closed":        counts["closed"],
 		"open":          counts["open"],
@@ -631,6 +735,10 @@ func runEvidenceBackfill(cmd *cobra.Command, env *commandEnv, opts *evidenceBack
 		"api_calls":     fetcher.calls,
 		"merger_errors": fetchErrors,
 		"dry_run":       opts.dryRun,
+	}
+	if len(opts.refreshFields) > 0 {
+		summary["refresh_fields"] = strings.Join(opts.refreshFields, ",")
+		summary["to_refresh"] = len(toRefresh)
 	}
 	if !until.IsZero() {
 		summary["until"] = until.Format(time.RFC3339)
@@ -652,15 +760,28 @@ func runEvidenceBackfill(cmd *cobra.Command, env *commandEnv, opts *evidenceBack
 			diskTouched[bl.target.ID] = bl.target
 		}
 	}
-	written, relinked := 0, 0
+	written, relinked, refreshed := 0, 0, 0
 	var writeErrs []error
 	for _, b := range toWrite {
-		path := ghpkg.ReviewEvidencePath(opts.root, opts.repo, b.Number, b.HeadSHA)
-		if err := writeBackfillBundle(path, b, key); err != nil {
+		if err := writeBackfillBundle(paths[b.Number], b, key); err != nil {
 			writeErrs = append(writeErrs, fmt.Errorf("%s: %w", b.ID, err))
 			continue
 		}
 		written++
+	}
+	// Refreshed bundles go back to the path they were read from; a bundle
+	// that also gained a backlink is the same pointer, so it is written once
+	// here with both changes and skipped below.
+	for path, b := range toRefresh {
+		if err := writeBackfillBundle(path, b, key); err != nil {
+			writeErrs = append(writeErrs, fmt.Errorf("refresh %s: %w", b.ID, err))
+			continue
+		}
+		refreshed++
+		if _, linked := diskTouched[b.ID]; linked {
+			relinked++
+			delete(diskTouched, b.ID)
+		}
 	}
 	for _, b := range diskTouched {
 		path := ghpkg.ReviewEvidencePath(opts.root, b.Repo, b.Number, b.HeadSHA)
@@ -672,6 +793,9 @@ func runEvidenceBackfill(cmd *cobra.Command, env *commandEnv, opts *evidenceBack
 	}
 	summary["written"] = written
 	summary["relinked"] = relinked
+	if len(opts.refreshFields) > 0 {
+		summary["refreshed"] = refreshed
+	}
 	summary["write_errors"] = len(writeErrs)
 	for _, e := range writeErrs {
 		_, _ = fmt.Fprintf(errOut, "warning: %v\n", e)

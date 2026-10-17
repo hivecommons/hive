@@ -37,6 +37,8 @@ type Client struct {
 	client *gh.Client
 	// foldedTrackers records issues that finding folds landed on (#11587).
 	foldedTrackers foldedTrackerSet
+	// commentBudget caps automated comments per issue per day (#12733).
+	commentBudget issueCommentBudget
 	// rateLimits clamps rate-limit readings to be monotone within a window
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.
@@ -308,6 +310,15 @@ type Client struct {
 	// under its current spelling (hivecommons/hive#11888). Zero value is
 	// ready to use.
 	coveredByPRLabel coveredByPRLabelState
+	// stageFamily memoises repos whose stage/author label family has been
+	// provisioned this process (hivecommons/hive#12436). Zero value is ready.
+	stageFamily coveredByPRLabelState
+	// legacyDecisionLabels memoises repos whose retired needs-decision /
+	// needs-direction definitions were deleted (hivecommons/hive#12683).
+	legacyDecisionLabels coveredByPRLabelState
+	// issueStage resolves the live `governor.labels.stage` policy for the
+	// issue stage reconciler; nil disables it.
+	issueStage func() IssueStagePolicy
 	// mergeReEngage is Fix #2's re-engagement hook. When a merge attempt fails
 	// terminally BECAUSE a required check failed (not a true conflict or a
 	// permission error), the watcher calls this instead of silently abandoning
@@ -634,6 +645,11 @@ type Issue struct {
 	ClaimedBy      string     `json:"claimed_by,omitempty"`
 	ClaimExpiresAt *time.Time `json:"claim_expires_at,omitempty"`
 	ClaimSource    string     `json:"claim_source,omitempty"`
+	// ClaimKind is the marker's kind= (agent, human, contributor, external)
+	// when the live claim came from a `hive:claim` marker; empty otherwise.
+	// The issue stage reconciler reads it to tell stage/030-pr-in-progress
+	// (an agent kick is working) from stage/020-claimed.
+	ClaimKind string `json:"claim_kind,omitempty"`
 }
 
 // IssueDependency is the transport form of a source-aware work dependency.
@@ -663,20 +679,28 @@ type IssueClaimContext struct {
 }
 
 type PullRequest struct {
-	ReporterTrustReason string    `json:"reporter_trust_reason,omitempty"`
-	Repo                string    `json:"repo"`
-	Number              int       `json:"number"`
-	Title               string    `json:"title"`
-	Author              string    `json:"author"`
-	AppAuthored         bool      `json:"app_authored,omitempty"`
-	Labels              []string  `json:"labels"`
-	Draft               bool      `json:"draft"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	ClosedAt            time.Time `json:"closed_at,omitempty"`
-	MergedAt            time.Time `json:"merged_at,omitempty"`
-	State               string    `json:"state,omitempty"`
-	URL                 string    `json:"url"`
+	ReporterTrustReason string `json:"reporter_trust_reason,omitempty"`
+	Repo                string `json:"repo"`
+	Number              int    `json:"number"`
+	Title               string `json:"title"`
+	Author              string `json:"author"`
+	AppAuthored         bool   `json:"app_authored,omitempty"`
+	// AuthorAssociation is GitHub's author_association for the PR author
+	// (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR,
+	// FIRST_TIMER, NONE), read from the list payload so the first-timer
+	// welcome (pkg/firsttimer) costs no per-PR call.
+	AuthorAssociation string `json:"author_association,omitempty"`
+	// AuthorNonHuman is true when the author is a Bot account, the App's own
+	// login or one of this hive's identities (the negation of isHumanAuthor).
+	AuthorNonHuman bool      `json:"author_non_human,omitempty"`
+	Labels         []string  `json:"labels"`
+	Draft          bool      `json:"draft"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	ClosedAt       time.Time `json:"closed_at,omitempty"`
+	MergedAt       time.Time `json:"merged_at,omitempty"`
+	State          string    `json:"state,omitempty"`
+	URL            string    `json:"url"`
 	// HiveAttributed is true when the PR body carries the `— hive:`
 	// attribution trailer (HasAttributionTrailer). It is how a PR a hive agent
 	// opened on a PERSON's credentials — a contributor relay, or an operator
@@ -700,6 +724,7 @@ type PullRequest struct {
 	// judge this PR against, derived from closing keywords before the body is
 	// discarded from the actionable snapshot.
 	ScopeContract string        `json:"scope_contract,omitempty"`
+	BodyDigest    string        `json:"body_digest,omitempty"`
 	Rework        PRReworkStats `json:"rework,omitempty"`
 	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
 	// It is intentionally NOT a bool: a bool zero-values to false, which is
@@ -1225,7 +1250,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		allIssues = append(allIssues, issues...)
 		holdItems = append(holdItems, held...)
 
-		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, err := c.fetchPRs(ctx, repo, clankerRequestedBudget)
+		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, sidelinedPRs, err := c.fetchPRsWithDetails(ctx, repo, clankerRequestedBudget)
 		if err != nil {
 			// Issues for this repo were already collected; a PR-only failure
 			// is partial and must not count toward the all-repos-failed guard,
@@ -1241,7 +1266,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 
 		totalByRepo[repo] = RepoCounts{Issues: issueTotal, PRs: prTotal}
 		workBreakdownByRepo[repo] = RepoWorkBreakdown{Issues: issueBreakdown, PRs: prBreakdown}
-		workDetailsByRepo[repo] = RepoWorkDetails{Issues: issueDetails}
+		workDetailsByRepo[repo] = RepoWorkDetails{Issues: issueDetails, PRs: sidelinedPRs}
 	}
 
 	// If every repo failed (e.g. API rate limit exhausted), returning a
@@ -1550,7 +1575,18 @@ func reviewScopeContract(title, body, defaultRepo, runKey, planRef string) strin
 	return ""
 }
 
+// fetchPRs retains the legacy return shape for callers that only need queue
+// partitions. The enumeration path calls fetchPRsWithDetails so the same
+// open-PR list also yields display-only records for the activity monitor.
 func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *reporterTrustWaitBudget) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
+	actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, _, err = c.fetchPRsWithDetails(ctx, repo, clankerBudget)
+	return actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, err
+}
+
+// fetchPRsWithDetails is fetchPRs plus the display-only records of the open
+// PRs it sidelined (drafts, exempt labels, held drafts) so the snapshot can
+// account for every open PR of the repo without another list call.
+func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBudget *reporterTrustWaitBudget) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, sidelined []RepoWorkPR, err error) {
 	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.PullRequestListOptions{
@@ -1562,7 +1598,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 	for {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
-			return nil, nil, nil, nil, nil, 0, RepoPRBreakdown{}, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
+			return nil, nil, nil, nil, nil, 0, RepoPRBreakdown{}, nil, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
 		}
 		allPRs = append(allPRs, prs...)
 		if resp.NextPage == 0 {
@@ -1640,17 +1676,21 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 					RequestedReviewers:  reqLogins,
 					RequestedTeams:      reqTeams,
 				})
+			} else {
+				sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRDraft, "Held draft"))
 			}
 			continue
 		}
 
 		if c.isExempt(labels) {
 			breakdown.Filtered++
+			sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRFiltered, "Exempt label"))
 			continue
 		}
 
 		if pr.GetDraft() {
 			breakdown.Draft++
+			sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRDraft, "Draft"))
 			author := safeGetLogin(pr.GetUser())
 			if strings.EqualFold(author, c.appBotLogin) && now.Sub(pr.GetCreatedAt().Time) > staleDraftAfter {
 				reqLogins, reqTeams := prRequestedReviews(pr)
@@ -1686,18 +1726,20 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		reqLogins, reqTeams := prRequestedReviews(pr)
 
 		actionable = append(actionable, PullRequest{
-			Repo:        repo,
-			Number:      pr.GetNumber(),
-			Title:       pr.GetTitle(),
-			Author:      author,
-			AppAuthored: strings.EqualFold(author, c.appBotLogin) && c.appBotLogin != "",
-			Labels:      labels,
-			Draft:       pr.GetDraft(),
-			CreatedAt:   pr.GetCreatedAt().Time,
-			UpdatedAt:   pr.GetUpdatedAt().Time,
-			State:       pr.GetState(),
-			URL:         pr.GetHTMLURL(),
-			ReviewClass: ClassifyReviewClass(pr.GetTitle(), labels),
+			Repo:              repo,
+			Number:            pr.GetNumber(),
+			Title:             pr.GetTitle(),
+			Author:            author,
+			AppAuthored:       strings.EqualFold(author, c.appBotLogin) && c.appBotLogin != "",
+			AuthorAssociation: pr.GetAuthorAssociation(),
+			AuthorNonHuman:    !c.isHumanAuthor(pr.GetUser()),
+			Labels:            labels,
+			Draft:             pr.GetDraft(),
+			CreatedAt:         pr.GetCreatedAt().Time,
+			UpdatedAt:         pr.GetUpdatedAt().Time,
+			State:             pr.GetState(),
+			URL:               pr.GetHTMLURL(),
+			ReviewClass:       ClassifyReviewClass(pr.GetTitle(), labels),
 			// The list payload carries the body, so the hive-mediated test
 			// costs no extra call (hivecommons/hive#7638).
 			HiveAttributed: hasAttr,
@@ -1707,6 +1749,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 			HiveRun:        runKey,
 			HivePlan:       planRef,
 			ScopeContract:  scopeContract,
+			BodyDigest:     review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody()),
 			// Mergeable is deliberately NOT set here. The PullRequests.List
 			// endpoint never populates "mergeable" — GitHub computes it
 			// per-PR and returns it only from the single-PR GET. Reading it
@@ -1737,7 +1780,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		breakdown.Other += unclassified
 	}
 
-	return actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, nil
+	return actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, sidelined, nil
 }
 
 func collectAttributedPRsFromList(repo string, prs []*gh.PullRequest) []PullRequest {
@@ -1990,7 +2033,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 	latestCheckRuns := latestCheckRunsByNameAndApp(allCheckRuns)
 	// Snapshot the CI verdict for the evidence bundle once it is known. Never
 	// affects the verdict or any merge decision.
-	defer func() { c.recordReviewEvidenceCI(pr.Repo, pr.Number, pr.HeadSHA, pr.CIStatus, latestCheckRuns) }()
+	defer func() { c.recordReviewEvidenceCI(pr.Repo, pr.Number, pr.HeadSHA, pr.CIStatus, full, latestCheckRuns) }()
 	reported := make(map[string]bool, len(latestCheckRuns))
 	for _, cr := range latestCheckRuns {
 		if name := cr.GetName(); name != "" {
@@ -2315,6 +2358,10 @@ type PRState struct {
 	State    string
 	MergedAt time.Time
 	ClosedAt time.Time
+	// BaseRef is the branch the PR targets ("" on an abbreviated payload).
+	BaseRef string
+	// MergedBy is the login that merged the PR ("" when not merged or unknown).
+	MergedBy string
 }
 
 // GetPRState fetches a single PR's state. The review-outcome ledger calls it
@@ -2336,7 +2383,7 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 		}
 		c.storePRDetail(repo, number, pr)
 	}
-	st := PRState{State: pr.GetState()}
+	st := PRState{State: pr.GetState(), BaseRef: prBaseRef(pr), MergedBy: pr.GetMergedBy().GetLogin()}
 	if !pr.GetMergedAt().IsZero() {
 		st.MergedAt = pr.GetMergedAt().Time
 	}
@@ -2470,6 +2517,17 @@ func (c *Client) EnsureIssueLabel(ctx context.Context, repo, name, color, descri
 // AddLabels adds labels to an issue or PR (no-op for an empty list), mirroring
 // forge.Forge.AddLabels for the same swap-in reason as CreateIssueComment.
 func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
+	return c.addLabelsObserved(ctx, repo, number, labels, "")
+}
+
+// addLabelsObserved is AddLabels keyed to the item state the caller just
+// read. The mutation journal treats an effect with the same inputs as
+// applied forever, which is right for a merge but not for a label another
+// writer can put back: a stage label removed once could never be removed
+// again (hivecommons/hive#12512). Carrying the observed updated_at in the
+// claim makes "remove X as of state T" a new effect each time the item
+// changed, while a crash-retry within the same state still dedupes.
+func (c *Client) addLabelsObserved(ctx context.Context, repo string, number int, labels []string, observed string) error {
 	if c == nil {
 		return ErrNoGitHubClient
 	}
@@ -2481,7 +2539,7 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,
 		Target: strconv.Itoa(number),
-		Inputs: map[string]string{"labels": strings.Join(labels, ",")},
+		Inputs: labelMutationInputs(map[string]string{"labels": strings.Join(labels, ",")}, observed),
 	}, func(ctx context.Context) (effects.Result, error) {
 		_, _, apiErr := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, labels)
 		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
@@ -2492,6 +2550,12 @@ func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels 
 // RemoveLabel removes one label from an issue or PR. A label that is not
 // present (404) is not an error — the desired end state already holds.
 func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label string) error {
+	return c.removeLabelObserved(ctx, repo, number, label, "")
+}
+
+// removeLabelObserved is RemoveLabel keyed to observed item state; see
+// addLabelsObserved.
+func (c *Client) removeLabelObserved(ctx context.Context, repo string, number int, label string, observed string) error {
 	if c == nil {
 		return ErrNoGitHubClient
 	}
@@ -2503,7 +2567,7 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,
 		Target: strconv.Itoa(number),
-		Inputs: map[string]string{"remove_label": label},
+		Inputs: labelMutationInputs(map[string]string{"remove_label": label}, observed),
 	}, func(ctx context.Context) (effects.Result, error) {
 		_, apiErr := c.client.Issues.RemoveLabelForIssue(ctx, owner, repoName, number, url.PathEscape(label))
 		if githubStatusError(apiErr, http.StatusNotFound) {
@@ -2512,6 +2576,15 @@ func (c *Client) RemoveLabel(ctx context.Context, repo string, number int, label
 		return effects.Result{Provenance: owner + "/" + repoName + "#" + strconv.Itoa(number)}, apiErr
 	})
 	return err
+}
+
+// labelMutationInputs adds the observed item state to a label mutation's
+// journal inputs when the caller has one.
+func labelMutationInputs(inputs map[string]string, observed string) map[string]string {
+	if observed != "" {
+		inputs["observed_at"] = observed
+	}
+	return inputs
 }
 
 func extractLabels(labels []*gh.Label) []string {
@@ -2664,6 +2737,10 @@ func CanonicalHiveHoldLabel(hiveID string) string {
 	return "hive-pause/" + hiveID
 }
 
+// HiveProvenanceLabel is the retired hive/<hive-id> label
+// (hivecommons/hive#12539). Nothing writes it any more; it is kept so the
+// hold migration can recognise it and RetireHiveIDLabels can strip it.
+// OriginHive reads the body marker that replaced it.
 func HiveProvenanceLabel(hiveID string) string {
 	hiveID = strings.TrimSpace(hiveID)
 	if hiveID == "" {
@@ -2777,14 +2854,16 @@ func (c *Client) getIssueFilter() IssueAdmitter {
 
 // needsDecisionLabel is the label the issue relay applies to park an
 // agent-filed issue on a maintainer decision: the first configured
-// hard_suppress_labels.needs_decision label, else the built-in default.
+// hard_suppress_labels.needs_decision label, else stage/085-needs-decision
+// (hivecommons/hive#12683). A configured legacy spelling is upgraded to the
+// stage label so no hive keeps writing a retired label.
 func (c *Client) needsDecisionLabel() string {
 	if labeler, ok := c.getIssueFilter().(NeedsDecisionLabeler); ok {
-		if label := strings.TrimSpace(labeler.NeedsDecisionLabel()); label != "" {
+		if label := strings.TrimSpace(labeler.NeedsDecisionLabel()); label != "" && !isLegacyDecisionLabel(label) {
 			return label
 		}
 	}
-	return issueNeedsDecisionLabel
+	return NeedsDecisionStageLabel
 }
 
 // appendLabelIfMissing returns labels with label added unless it is already
@@ -3637,6 +3716,55 @@ type RepoWorkBreakdown struct {
 // every non-actionable bucket without making those items selectable by agents.
 type RepoWorkDetails struct {
 	Issues []RepoWorkIssue `json:"issues,omitempty"`
+	// PRs are the open pull requests fetchPRs sidelined from the actionable
+	// and held sets — drafts and exempt-labelled PRs — kept so the Hive
+	// activity monitor can list every open PR without a second fetch
+	// (hivecommons/hive#12682). Display-only: nothing may act on them.
+	PRs []RepoWorkPR `json:"prs,omitempty"`
+}
+
+// RepoWorkPR is a display-only record of an open PR outside the actionable
+// and held sets; Bucket is the RepoPRBreakdown bucket it was counted in
+// ("draft" or "filtered") and Reason says why.
+type RepoWorkPR struct {
+	Repo           string    `json:"repo"`
+	Number         int       `json:"number"`
+	Title          string    `json:"title"`
+	Author         string    `json:"author,omitempty"`
+	Labels         []string  `json:"labels,omitempty"`
+	Draft          bool      `json:"draft,omitempty"`
+	AppAuthored    bool      `json:"app_authored,omitempty"`
+	HiveAttributed bool      `json:"hive_attributed,omitempty"`
+	CreatedAt      time.Time `json:"created_at,omitzero"`
+	UpdatedAt      time.Time `json:"updated_at,omitzero"`
+	URL            string    `json:"url,omitempty"`
+	Bucket         string    `json:"bucket"`
+	Reason         string    `json:"reason,omitempty"`
+}
+
+// Work-detail buckets for sidelined PRs (RepoPRBreakdown field names).
+const (
+	workBucketPRDraft    = "draft"
+	workBucketPRFiltered = "filtered"
+)
+
+func (c *Client) repoWorkPR(repo string, pr *gh.PullRequest, labels []string, hiveAttributed bool, bucket, reason string) RepoWorkPR {
+	author := safeGetLogin(pr.GetUser())
+	return RepoWorkPR{
+		Repo:           repo,
+		Number:         pr.GetNumber(),
+		Title:          pr.GetTitle(),
+		Author:         author,
+		Labels:         append([]string(nil), labels...),
+		Draft:          pr.GetDraft(),
+		AppAuthored:    c.appBotLogin != "" && strings.EqualFold(author, c.appBotLogin),
+		HiveAttributed: hiveAttributed,
+		CreatedAt:      pr.GetCreatedAt().Time,
+		UpdatedAt:      pr.GetUpdatedAt().Time,
+		URL:            pr.GetHTMLURL(),
+		Bucket:         bucket,
+		Reason:         reason,
+	}
 }
 
 type RepoWorkIssue struct {
@@ -3651,6 +3779,10 @@ type RepoWorkIssue struct {
 	URL       string    `json:"url,omitempty"`
 	Bucket    string    `json:"bucket"`
 	Reason    string    `json:"reason,omitempty"`
+	// ClaimKind and ClaimedBy are Issue.ClaimKind / Issue.ClaimedBy, copied
+	// for the issue stage reconciler.
+	ClaimKind string `json:"claim_kind,omitempty"`
+	ClaimedBy string `json:"claimed_by,omitempty"`
 	// LinkedPRs and ClaimContext carry the PR-claim evidence of an issue the
 	// duplicate-PR guard suppressed into the claimed_by_pr bucket
 	// (hivecommons/hive#12144), so the repo card can render the same
@@ -3673,6 +3805,8 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		URL:          issue.URL,
 		Bucket:       bucket,
 		Reason:       reason,
+		ClaimKind:    issue.ClaimKind,
+		ClaimedBy:    issue.ClaimedBy,
 		LinkedPRs:    append([]IssueLinkedPR(nil), issue.LinkedPRs...),
 		ClaimContext: issue.ClaimContext,
 	}
@@ -3710,13 +3844,14 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 }
 
 type RepoIssueBreakdown struct {
-	Actionable           int `json:"actionable"`
-	Hold                 int `json:"hold"`
-	HiveAdvisory         int `json:"hive_advisory"`
-	DependencyDashboard  int `json:"dependency_dashboard"`
-	Filtered             int `json:"filtered"`
-	NeedsHuman           int `json:"needs_human,omitempty"`
-	NeedsDirection       int `json:"needs_direction,omitempty"`
+	Actionable          int `json:"actionable"`
+	Hold                int `json:"hold"`
+	HiveAdvisory        int `json:"hive_advisory"`
+	DependencyDashboard int `json:"dependency_dashboard"`
+	Filtered            int `json:"filtered"`
+	NeedsHuman          int `json:"needs_human,omitempty"`
+	// NeedsDecision counts issues parked on stage/085-needs-decision (and,
+	// until migrated, the retired needs-decision / needs-direction labels).
 	NeedsDecision        int `json:"needs_decision,omitempty"`
 	NeedsSpec            int `json:"needs_spec,omitempty"`
 	ReporterConfirmation int `json:"reporter_confirmation,omitempty"`
@@ -3737,9 +3872,7 @@ func (b *RepoIssueBreakdown) addHardSuppress(label string) {
 	switch label {
 	case issueNeedsHumanLabel:
 		b.NeedsHuman++
-	case issueNeedsDirectionLabel:
-		b.NeedsDirection++
-	case issueNeedsDecisionLabel:
+	case NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel:
 		b.NeedsDecision++
 	case issueNeedsSpecLabel:
 		b.NeedsSpec++

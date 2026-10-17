@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 func resetSelfReportRate(t *testing.T) {
@@ -47,7 +52,7 @@ func selfReportGitHubScript(searchHit bool) (http.HandlerFunc, *[]string) {
 		case r.URL.Path == "/search/issues":
 			items := []map[string]any{}
 			if searchHit {
-				items = append(items, map[string]any{"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "<!-- hive-fleet-fingerprint:abc123 -->"})
+				items = append(items, map[string]any{"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "<!-- hive-fleet-fingerprint:abc123 -->\n" + fleetreport.RenderAffectedBlock([]string{"other-hive"}, 1)})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -55,6 +60,8 @@ func selfReportGitHubScript(searchHit bool) (http.HandlerFunc, *[]string) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
 			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 42, "html_url": "https://github.com/hivecommons/hive/issues/42"})
@@ -130,6 +137,101 @@ func TestHubSelfReportIngestCreatesUnderAppIdentity(t *testing.T) {
 	}
 }
 
+func TestHubSelfReportObservationCreatesThenJoins(t *testing.T) {
+	resetSelfReportRate(t)
+	oldSaaSHivesDir := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldSaaSHivesDir })
+	decisionLabel := "owner-call"
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "h1",
+		IssueFilter: &config.IssueFilterConfig{
+			HardSuppressLabels: config.HardSuppressLabelsConfig{NeedsDecision: []string{decisionLabel}},
+		},
+	}); err != nil {
+		t.Fatalf("save hive config: %v", err)
+	}
+
+	var mu sync.Mutex
+	searches := 0
+	creates := 0
+	comments := 0
+	var createdBody struct {
+		Labels []string `json:"labels"`
+		Body   string   `json:"body"`
+	}
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/search/issues":
+			mu.Lock()
+			searches++
+			hit := searches > 1
+			mu.Unlock()
+			items := []map[string]any{}
+			if hit {
+				items = append(items, map[string]any{
+					"number":   42,
+					"html_url": "https://github.com/hivecommons/hive/issues/42",
+					"body":     "<!-- hive-fleet-fingerprint:h1:queue-growth -->",
+				})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
+			mu.Lock()
+			creates++
+			mu.Unlock()
+			if err := json.NewDecoder(r.Body).Decode(&createdBody); err != nil {
+				t.Fatalf("decode create payload: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 42, "html_url": "https://github.com/hivecommons/hive/issues/42"})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			mu.Lock()
+			comments++
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			_ = json.NewEncoder(w).Encode([]any{})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusTeapot)
+		}
+	}
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"hive_id":"h1","fingerprint":"h1:queue-growth","class":"observation","title":"Queue depth is growing","body":"<!-- hive-fleet-fingerprint:h1:queue-growth -->\nproject organization: acme\nseries: [15,18,30]","labels":["fleet-report"],"version":"v5.1.0","repo":"acme/widgets","observation":{"kind":"queue-growth","series":[15,18,30]}}`
+
+	first := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first status=%d body=%s", first.Code, first.Body.String())
+	}
+	var firstOut selfReportRelayResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &firstOut); err != nil || !firstOut.OK || firstOut.Joined {
+		t.Fatalf("first response=%s (%v)", first.Body.String(), err)
+	}
+
+	second := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status=%d body=%s", second.Code, second.Body.String())
+	}
+	var secondOut selfReportRelayResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &secondOut); err != nil || !secondOut.OK || !secondOut.Joined {
+		t.Fatalf("second response=%s (%v)", second.Body.String(), err)
+	}
+	if creates != 1 || comments != 1 {
+		t.Fatalf("creates=%d comments=%d, want one create and one join comment", creates, comments)
+	}
+	if strings.Contains(createdBody.Body, "acme/widgets") || strings.Contains(createdBody.Body, "foo.go") {
+		t.Fatalf("observation body leaked project repo identity: %q", createdBody.Body)
+	}
+	labels := strings.Join(createdBody.Labels, ",")
+	for _, want := range []string{selfReportObservationLabel, selfReportRelayLabel, decisionLabel} {
+		if !strings.Contains(labels, want) {
+			t.Fatalf("create labels=%v missing %q", createdBody.Labels, want)
+		}
+	}
+}
+
 func TestHubSelfReportIngestJoinsExistingFingerprint(t *testing.T) {
 	resetSelfReportRate(t)
 	handler, paths := selfReportGitHubScript(true)
@@ -155,8 +257,167 @@ func TestHubSelfReportIngestJoinsExistingFingerprint(t *testing.T) {
 	}
 	var labels map[string][]string
 	_ = json.Unmarshal(gh.bodies[2], &labels)
-	if strings.Join(labels["labels"], ",") != "hive/h1,hive/selfreport" {
+	if strings.Join(labels["labels"], ",") != "hive/selfreport" {
 		t.Fatalf("labels = %v", labels)
+	}
+	// The affected block is edited in place: the joining hive gets its own
+	// line (owners unknown here: the payload carried none and no SaaS record
+	// exists) and seen_count is bumped.
+	if !strings.Contains(joined, "PATCH /repos/hivecommons/hive/issues/7") {
+		t.Fatalf("github calls = %v", *paths)
+	}
+	var patch map[string]string
+	_ = json.Unmarshal(gh.bodies[3], &patch)
+	if !strings.Contains(patch["body"], "**Affected hives (2):**\n- h1 — owner(s): unknown — seen 1, last ") || !strings.Contains(patch["body"], "\n- other-hive — owner(s): unknown — seen 1\n") || !strings.Contains(patch["body"], "seen_count: 2") {
+		t.Fatalf("patched body = %q", patch["body"])
+	}
+}
+
+// TestHubSelfReportIngestJoinNamesOwners: the spoke's owners field lands on
+// the hive's affected line, and a spoke that predates the field is named
+// from the hub's own SaaS owner record.
+func TestHubSelfReportIngestJoinNamesOwners(t *testing.T) {
+	resetSelfReportRate(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	if err := os.MkdirAll(filepath.Join(saasHivesDir, "h1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saasHivesDir, "h1", "meta.json"), []byte(`{"id":"h1","owner":"Dana"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, extra, want string
+	}{
+		{"spoke owners", `"instance_id":"b04ca59b7312017e","owners":["@Alice","github:bob","ibmid:123"],`, "- h1 (instance b04ca59b7312017e) — owner(s): @alice, @bob — seen 1, last "},
+		{"hub fallback", ``, "- h1 — owner(s): @dana — seen 1, last "},
+		{"anonymous opt-out", `"owners_hidden":true,`, "- h1 — owner(s): (anonymous) — seen 1, last "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, _ := selfReportGitHubScript(true)
+			gh := interceptFeedbackGitHub(t, handler)
+			s := npsTestHub("h1")
+			body := strings.Replace(selfReportValidBody, `"hive_id":"h1",`, `"hive_id":"h1",`+tc.extra, 1)
+			rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var patch map[string]string
+			_ = json.Unmarshal(gh.bodies[3], &patch)
+			if !strings.Contains(patch["body"], tc.want) {
+				t.Fatalf("patched body = %q, want line %q", patch["body"], tc.want)
+			}
+			if strings.Contains(patch["body"], "ibmid") || (tc.name == "anonymous opt-out" && strings.Contains(patch["body"], "dana")) {
+				t.Fatalf("patched body leaked an identity: %q", patch["body"])
+			}
+		})
+	}
+}
+
+// TestHubSelfReportIngestCreateFillsOwnersForLegacySpoke: a spoke whose body
+// still carries the inline hive list gets its line filled from the hub's
+// owner record before the issue is created.
+func TestHubSelfReportIngestCreateFillsOwnersForLegacySpoke(t *testing.T) {
+	resetSelfReportRate(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	if err := os.MkdirAll(filepath.Join(saasHivesDir, "h1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saasHivesDir, "h1", "meta.json"), []byte(`{"id":"h1","owner":"dana"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, paths := selfReportGitHubScript(false)
+	gh := interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	legacyBlock := strings.ReplaceAll(fleetreport.AffectedBlockStart+"\n**Affected hives (1):** h1\nseen_count: 1\n"+fleetreport.AffectedBlockEnd, "\n", `\n`)
+	body := strings.Replace(selfReportValidBody, `\nbody"`, `\nbody\n\n`+legacyBlock+`"`, 1)
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues" {
+		t.Fatalf("github calls = %v", *paths)
+	}
+	var payload struct {
+		Body string `json:"body"`
+	}
+	_ = json.Unmarshal(gh.bodies[1], &payload)
+	if !strings.Contains(payload.Body, "**Affected hives (1):**\n- h1 — owner(s): @dana — seen 1, last ") || !strings.Contains(payload.Body, "seen_count: 1") {
+		t.Fatalf("created body = %q", payload.Body)
+	}
+}
+
+func TestHubSelfReportRecoverUnknownFingerprintIsNoop(t *testing.T) {
+	resetSelfReportRate(t)
+	handler, paths := selfReportGitHubScript(false)
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"action":"recover","hive_id":"h1","fingerprint":"h1:queue-growth","class":"observation","body":"<!-- hive-fleet-fingerprint:h1:queue-growth -->\nrecovered"}`
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.OK || out.Reason != "unknown_fingerprint" {
+		t.Fatalf("response=%s err=%v", rec.Body.String(), err)
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues" {
+		t.Fatalf("github calls = %v", *paths)
+	}
+}
+
+func TestHubSelfReportRecoverCommentsAndClosesOpenObservation(t *testing.T) {
+	resetSelfReportRate(t)
+	var paths []string
+	var commentBody string
+	var closePayload map[string]string
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch {
+		case r.URL.Path == "/search/issues":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{
+				"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7",
+				"body": "<!-- hive-fleet-fingerprint:h1:queue-growth -->",
+			}}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode recovery comment: %v", err)
+			}
+			commentBody = payload["body"]
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			if err := json.NewDecoder(r.Body).Decode(&closePayload); err != nil {
+				t.Fatalf("decode close payload: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "closed"})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusTeapot)
+		}
+	}
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"action":"recover","hive_id":"h1","fingerprint":"h1:queue-growth","class":"observation","repo":"acme/widgets","body":"<!-- hive-fleet-fingerprint:h1:queue-growth -->\n\n| before | 15 |\n| after | 30 |"}`
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out selfReportRelayResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || !out.OK || out.Number != 7 {
+		t.Fatalf("response=%s err=%v", rec.Body.String(), err)
+	}
+	if !strings.Contains(commentBody, "before") || !strings.Contains(commentBody, "after") {
+		t.Fatalf("recovery comment = %q", commentBody)
+	}
+	if closePayload["state"] != "closed" || closePayload["state_reason"] != "completed" {
+		t.Fatalf("close payload = %#v", closePayload)
+	}
+	if strings.Join(paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues/7/comments,PATCH /repos/hivecommons/hive/issues/7" {
+		t.Fatalf("github calls = %v", paths)
 	}
 }
 

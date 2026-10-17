@@ -119,6 +119,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}
+	if err := c.Governor.Labels.Author.Validate(); err != nil {
+		return err
+	}
 	if err := c.Publication.Validate(); err != nil {
 		return err
 	}
@@ -167,6 +170,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := ValidateGoodFirstIssue(c.GoodFirstIssue); err != nil {
 		return err
 	}
+	if err := ValidateFirstTimerWelcome(c.Governor.FirstTimerWelcome); err != nil {
+		return err
+	}
 	if err := c.Review.Backlog.Validate(); err != nil {
 		return err
 	}
@@ -181,7 +187,7 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	} else {
 		c.Dashboard.PublicURL = normalized
 	}
-	if normalized, err := ValidateSnapshotURL(c.Hub.SnapshotURL); err != nil {
+	if normalized, err := validateSnapshotURL(c.Hub.SnapshotURL, true); err != nil {
 		return err
 	} else {
 		c.Hub.SnapshotURL = normalized
@@ -199,6 +205,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if !ValidateCadenceScope(c.Governor.CadenceScope) {
 		return fmt.Errorf("governor: invalid cadence_scope %q (must be aggregate or per_repo)", c.Governor.CadenceScope)
+	}
+	if !ValidReviewGateModes[c.Governor.ReviewGate.Mode] {
+		return fmt.Errorf("governor: invalid review_gate.mode %q (must be off, shadow or enforce)", c.Governor.ReviewGate.Mode)
 	}
 	if err := ValidateBobSessionLabel("governor.bob.session_prefix", strings.TrimSpace(c.Governor.Bob.SessionPrefix)); err != nil {
 		return err

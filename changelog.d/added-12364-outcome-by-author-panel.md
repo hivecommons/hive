@@ -1,1 +1,0 @@
-- Added the **Outcome by author kind** panel to the dashboard Evidence sub-panel: merged, closed and reverted-within-14-days counts per human / agent / bot author from `outcomes_by_author_kind` in `GET /api/evidence/summary`, with `n=` and a note on what the bundle schema does not record. Reporting only; no merge behaviour changes. Fixes #12364.

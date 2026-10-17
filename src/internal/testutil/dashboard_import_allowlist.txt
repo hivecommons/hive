@@ -20,6 +20,7 @@ github.com/hivecommons/hive/pkg/convergence
 github.com/hivecommons/hive/pkg/dashboard
 github.com/hivecommons/hive/pkg/defsrc
 github.com/hivecommons/hive/pkg/evidence
+github.com/hivecommons/hive/pkg/fixqueue
 github.com/hivecommons/hive/pkg/fleetreport
 github.com/hivecommons/hive/pkg/github
 github.com/hivecommons/hive/pkg/governor
@@ -32,6 +33,7 @@ github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
 github.com/hivecommons/hive/pkg/knowledge
 github.com/hivecommons/hive/pkg/notify
+github.com/hivecommons/hive/pkg/nous
 github.com/hivecommons/hive/pkg/planning
 github.com/hivecommons/hive/pkg/policies
 github.com/hivecommons/hive/pkg/promptsrc
@@ -43,6 +45,7 @@ github.com/hivecommons/hive/pkg/rotation
 github.com/hivecommons/hive/pkg/scheduler
 github.com/hivecommons/hive/pkg/skillreg
 github.com/hivecommons/hive/pkg/spokebackup
+github.com/hivecommons/hive/pkg/stagelabels
 github.com/hivecommons/hive/pkg/terminalassert
 github.com/hivecommons/hive/pkg/timeline
 github.com/hivecommons/hive/pkg/tokens

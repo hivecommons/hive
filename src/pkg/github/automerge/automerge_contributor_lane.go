@@ -191,7 +191,10 @@ type ContributorLaneVerdict struct {
 	// merge-eligible.
 	Approved bool
 	// Verdict is the raw aggregate verdict for the audit comment, if any.
-	Verdict string
+	Verdict           string
+	DecisionRequested bool
+	DecisionQuestion  string
+	HumanSummaries    []string
 }
 
 // ContributorLaneVerdictFunc resolves the reviewer verdict for repo#number at
@@ -222,6 +225,17 @@ func contributorSoakKey(owner, repo string, number int, sha string) string {
 // observeGreen records that key was green at now and returns when it was
 // first seen green.
 func (t *ContributorSoakTracker) observeGreen(key string, now time.Time) time.Time {
+	return t.observeGreenSince(key, now, time.Time{})
+}
+
+// observeGreenSince is observeGreen with a seed for a key this process has
+// not seen yet: when the forge already knows when the head went green
+// (greenSince, non-zero and before now), the soak is measured from there
+// rather than from this first sighting. The tracker lives in memory only, so
+// without the seed every pod restart or upgrade would restart every open
+// soak from zero (hivecommons/hive#12413 never finished a 2h soak across a
+// day of candidate rolls).
+func (t *ContributorSoakTracker) observeGreenSince(key string, now, greenSince time.Time) time.Time {
 	if t == nil {
 		return now
 	}
@@ -230,7 +244,10 @@ func (t *ContributorSoakTracker) observeGreen(key string, now time.Time) time.Ti
 	first, ok := t.firstGreen[key]
 	if !ok {
 		first = now
-		t.firstGreen[key] = now
+		if !greenSince.IsZero() && greenSince.Before(now) {
+			first = greenSince
+		}
+		t.firstGreen[key] = first
 	}
 	t.lastSeen[key] = now
 	for k, seen := range t.lastSeen {
@@ -251,6 +268,35 @@ func (t *ContributorSoakTracker) FirstGreen(owner, repo string, number int, sha 
 	defer t.mu.Unlock()
 	first, ok := t.firstGreen[contributorSoakKey(owner, repo, number, sha)]
 	return first, ok
+}
+
+// headGreenSince is when the forge says sha turned green: the latest
+// completed_at over its completed check runs (and the latest status
+// update). Zero when nothing carries a timestamp or the lookup fails, in
+// which case the caller measures from its own first sighting as before.
+func (c *Engine) headGreenSince(ctx context.Context, owner, repo, sha string) time.Time {
+	if c == nil || c.gh == nil || strings.TrimSpace(sha) == "" {
+		return time.Time{}
+	}
+	caller := hgithub.WithRESTCaller(ctx, "hive:automerge_sweep")
+	var latest time.Time
+	runs, _, err := c.gh.Checks.ListCheckRunsForRef(caller, owner, repo, sha, &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}})
+	if err != nil {
+		return time.Time{}
+	}
+	for _, run := range runs.CheckRuns {
+		if at := run.GetCompletedAt(); !at.IsZero() && at.Time.After(latest) {
+			latest = at.Time
+		}
+	}
+	if statuses, _, err := c.gh.Repositories.GetCombinedStatus(caller, owner, repo, sha, &gh.ListOptions{PerPage: 100}); err == nil {
+		for _, st := range statuses.Statuses {
+			if at := st.GetUpdatedAt(); !at.IsZero() && at.Time.After(latest) {
+				latest = at.Time
+			}
+		}
+	}
+	return latest
 }
 
 func (c *Engine) currentContributorLanePolicy() ContributorLanePolicy {
@@ -651,6 +697,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
@@ -660,7 +707,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if err != nil {
 		return AutoMergeSweepEvent{}, claim.Reason, err
 	}
-	c.noteStageAuthor(owner, repo, number, stagelabels.AuthorFromTier(claim.ObservedTier, policy.RequireTiers))
+	c.noteStageRole(owner, repo, number, stagelabels.RoleFromTier(claim.ObservedTier, policy.RequireTiers))
 	c.noteStageVerdict(owner, repo, number, c.contributorLaneVerdictFor(owner+"/"+repo, number, headSHA))
 	if claim.Reason != "" {
 		// Neither this hive's registry nor an App-authored marker vouches
@@ -714,10 +761,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	var headPushedAt time.Time
-	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
-		headPushedAt = updatedAt.Time
-	}
+	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
@@ -733,7 +777,12 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return AutoMergeSweepEvent{}, contributorLaneReasonNoVerdict, nil
 	}
 	now := c.now()
-	firstGreen := c.contributorSoak.observeGreen(contributorSoakKey(owner, repo, number, headSHA), now)
+	soakKey := contributorSoakKey(owner, repo, number, headSHA)
+	var greenSince time.Time
+	if _, seen := c.contributorSoak.FirstGreen(owner, repo, number, headSHA); !seen {
+		greenSince = c.headGreenSince(ctx, owner, repo, headSHA)
+	}
+	firstGreen := c.contributorSoak.observeGreenSince(soakKey, now, greenSince)
 	if soaked := now.Sub(firstGreen); soaked < policy.Soak {
 		return AutoMergeSweepEvent{}, contributorLaneSoakReason(policy.Soak - soaked), nil
 	}

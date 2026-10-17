@@ -106,6 +106,9 @@ func evidenceHarness(t *testing.T) string {
 		jsFunc(t, "evidenceFilterHives"),
 		jsFunc(t, "evidenceOutcomeAdd"),
 		jsFunc(t, "evidenceOutcomeZero"),
+		jsFunc(t, "evidenceLevelTimeToMerge"),
+		jsFunc(t, "evidenceDuration"),
+		jsFunc(t, "evidenceTimeToMergeCell"),
 		jsFunc(t, "evidenceRepool"),
 		jsFunc(t, "evidenceChip"),
 		jsFunc(t, "evidenceChipsHTML"),
@@ -153,11 +156,10 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 		"function esc(s) { return String(s == null ? '' : s); }",
 		"var QUADRANT_AXES = ['trust', 'productivity', 'satisfaction', 'efficiency'];",
 		"var QUADRANT_AXIS_LABELS = {trust:'Trust', productivity:'Productivity', satisfaction:'Satisfaction', efficiency:'Efficiency'};",
-		"function escAttr(s) { return esc(s); }",
 		"function quadrantAxis(q, name) { return {axis: name, scored: true, score: 50}; }",
-		jsFunc(t, "quadrantAxisExplanationHTML"),
-		jsFunc(t, "quadrantSummaryHTML"),
 		"function quadrantSVG() { return '<svg></svg>'; }",
+		"function quadrantAxisTileHTML(a) { return '<div class=\"quadrant-axis\">' + a.axis + '</div>'; }",
+		"function quadrantSummaryHTML() { return ''; }",
 		"var _allDashHives = [{}, {}];",
 		"var _fleetQuadrant = {scored_axes: 4};",
 		"var _isAdmin = false;",
@@ -193,7 +195,7 @@ func TestFleetQuadrantCardDrillGatedOnAdmin(t *testing.T) {
 	if strings.Count(got.Admin, "openEvidenceModal()") != 3 {
 		t.Errorf("admin fleet card should wire the drill click, its keydown and the button, got:\n%s", got.Admin)
 	}
-	for _, forbidden := range []string{"openEvidenceModal", `role="button"`, "tabindex", "fleet-quadrant-drill", "fleet-quadrant-evidence-btn", "fleet-quadrant-hint"} {
+	for _, forbidden := range []string{"openEvidenceModal", `role="button"`, "tabindex", "fleet-quadrant-drill", "onkeydown", "fleet-quadrant-evidence-btn", "fleet-quadrant-hint"} {
 		if strings.Contains(got.Member, forbidden) {
 			t.Errorf("member fleet card must stay unchanged but contains %q:\n%s", forbidden, got.Member)
 		}
@@ -302,7 +304,10 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 		// Sections #12117 lists that spokes do not report yet are collapsed
 		// into one "Waiting on hives" list at the bottom, with no issue numbers.
 		"Waiting on hives",
-		"<li>Median time-to-merge per autonomy level — not reported by any hive build yet.</li>",
+		"<li>Median time-to-merge per autonomy level — no selected hive reports it yet (it needs a build that records when each merged PR was opened).</li>",
+		// The autonomy table carries the column; a level without it says so, never 0.
+		"<th title=\"Median of the per-hive median times from PR opened to merged. Not a pooled median: each hive counts once however many PRs it merged.\">Median time-to-merge (median of hive medians)</th>",
+		`<span class="evidence-rate-main">10.0% of 30</span><span class="evidence-rate-margin" title="Margin (95%): the true value is very likely inside this range. Fewer cases, wider range.">margin 3.5% – 25.6%</span></td><td class="evidence-empty">not reported</td></tr>`,
 		"<li>Revert rate by author kind per hive — not reported by any hive build yet.</li>",
 		"<li>Per-axis criteria table — not reported by any hive build yet.</li>",
 		"Evidence coverage", "Reviewer confidence", "Autonomy level × outcome",
@@ -342,7 +347,7 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 		"<li>Outcome by author kind — hives report this once upgraded to the Oct 16 build or later. <button",
 		"<li>Boundary enforcement (agent writes the guardrail proxy blocked) — hives report this once upgraded to the Oct 16 build or later. <button",
 		"<li>Shadow gates — shadow mode is off on every selected hive, or none has reported it yet (hives report this once upgraded to the Oct 16 build or later). <button",
-		"<li>Claim-vs-verdict totals — not reported by any hive build yet.</li>",
+		"<li>CI gate (claim vs verdict) totals — not reported by any hive build yet.</li>",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("evidence panel is missing %q", want)

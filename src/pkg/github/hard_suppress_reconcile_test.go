@@ -17,6 +17,16 @@ type hardSuppressFixture struct {
 	events   []map[string]any
 	comments []wireComment
 	timeline []map[string]any
+	// blockedBy is the native "blocked by" dependency payload; nil serves [].
+	blockedBy []map[string]any
+}
+
+func blocker(number int, state string) map[string]any {
+	return map[string]any{
+		"number": number, "state": state,
+		"html_url":       fmt.Sprintf("https://github.com/testorg/console/issues/%d", number),
+		"repository_url": "https://api.github.com/repos/testorg/console",
+	}
 }
 
 func labelEvent(kind, actor, at, label string) map[string]any {
@@ -64,6 +74,14 @@ func runHardSuppressFixture(t *testing.T, appBot string, fx hardSuppressFixture)
 	mux.HandleFunc(base+"/timeline", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(mustMarshal(t, fx.timeline))
+	})
+	mux.HandleFunc(base+"/dependencies/blocked_by", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if fx.blockedBy == nil {
+			w.Write([]byte(`[]`))
+			return
+		}
+		w.Write(mustMarshal(t, fx.blockedBy))
 	})
 	mux.HandleFunc(base+"/comments", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -179,6 +197,53 @@ func TestReconcileHiveHardSuppress(t *testing.T) {
 			},
 		},
 		{
+			name:   "app-applied blocked lifted once every native blocker closed (#12522)",
+			appBot: testHiveAppBotLogin,
+			fx: hardSuppressFixture{
+				number: 12450, label: "blocked",
+				events:    []map[string]any{labelEvent("labeled", testHiveAppBotLogin, "2026-10-16T16:07:35Z", "blocked")},
+				blockedBy: []map[string]any{blocker(12447, "closed")},
+			},
+			wantRemoved: []string{"blocked"},
+			wantLifted:  1,
+		},
+		{
+			name:   "blocked stays while any native blocker is open",
+			appBot: testHiveAppBotLogin,
+			fx: hardSuppressFixture{
+				number: 12451, label: "blocked",
+				events:    []map[string]any{labelEvent("labeled", testHiveAppBotLogin, "2026-10-16T16:14:20Z", "blocked")},
+				blockedBy: []map[string]any{blocker(12447, "closed"), blocker(12448, "open")},
+			},
+		},
+		{
+			name:   "blocked without native blockers or a merged PR stays",
+			appBot: testHiveAppBotLogin,
+			fx: hardSuppressFixture{
+				number: 1, label: "blocked",
+				events: []map[string]any{labelEvent("labeled", testHiveAppBotLogin, "2026-10-14T18:12:08Z", "blocked")},
+			},
+		},
+		{
+			name:   "human-applied blocked is not lifted by closed blockers",
+			appBot: testHiveAppBotLogin,
+			fx: hardSuppressFixture{
+				number: 1, label: "blocked",
+				events:    []map[string]any{labelEvent("labeled", "alice", "2026-10-14T18:12:08Z", "blocked")},
+				blockedBy: []map[string]any{blocker(2, "closed")},
+			},
+		},
+		{
+			name:   "hold is not lifted by closed blockers",
+			appBot: testHiveAppBotLogin,
+			fx: hardSuppressFixture{
+				number: 1, label: "hold",
+				events:    []map[string]any{labelEvent("labeled", testHiveAppBotLogin, "2026-10-13T12:00:00Z", "hold")},
+				comments:  []wireComment{shaNotice},
+				blockedBy: []map[string]any{blocker(2, "closed")},
+			},
+		},
+		{
 			name:   "no app bot login fails closed",
 			appBot: "",
 			fx: hardSuppressFixture{
@@ -209,10 +274,31 @@ func TestHardSuppressLiftedNoteCarriesMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	note := hardSuppressLiftedNote("blocked", at, "#11990")
-	for _, want := range []string{hardSuppressLiftedMarker, "`blocked`", "#11990", "2026-10-14T18:12:08Z"} {
+	note := hardSuppressLiftedNote("blocked", at, "#11990 merged since")
+	for _, want := range []string{hardSuppressLiftedMarker, "`blocked`", "#11990 merged since", "2026-10-14T18:12:08Z"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q: %s", want, note)
 		}
+	}
+}
+
+func TestBlockersAllClosedRefs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/testorg/console/issues/5/dependencies/blocked_by", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(mustMarshal(t, []map[string]any{
+			blocker(3, "closed"),
+			{"number": 9, "state": "closed", "html_url": "https://github.com/other/repo/issues/9", "repository_url": "https://api.github.com/repos/other/repo"},
+		}))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	c := newTestClient(t, server, "testorg", []string{"console"})
+	refs, err := c.blockersAllClosed(context.Background(), "testorg", "console", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(refs); got != "[#3 other/repo#9]" {
+		t.Errorf("refs = %s, want [#3 other/repo#9]", got)
 	}
 }

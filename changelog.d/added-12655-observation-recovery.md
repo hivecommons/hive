@@ -1,0 +1,1 @@
+- Add Nous observation recovery tracking with a seven-day lifecycle, hub-relayed recovery comments, and issue closure.

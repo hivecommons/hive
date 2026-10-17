@@ -67,10 +67,10 @@ func (b *boot) newConfiguredGitHubAppClient(auth *github.AppAuth) *github.Client
 // per-hive hold label (hive-pause/<id>), the configured sentinel alert label,
 // plus the clanker-requested label while reporter_trust.clanker_requested is
 // on. The legacy hive/<id> spelling is deliberately NOT part of it: that label
-// is the provenance label on every item the hive claims, and
-// github.HasHoldLabelWith never treats it as a hold (#9371), so carrying it
-// here could hold nothing and treating it as a hold would park every claimed
-// item.
+// was the provenance label on every item the hive claimed (retired in
+// #12539; the boot sweep strips leftovers), and github.HasHoldLabelWith never
+// treats it as a hold (#9371), so carrying it here could hold nothing and
+// treating it as a hold would park every claimed item.
 func (b *boot) githubHoldLabels() []string {
 	labels := []string{github.CanonicalHiveHoldLabel(b.cfg.HiveID), b.cfg.Sentinel.LabelOrDefault()}
 	return append(labels, b.cfg.Project.IssueFilter.ReporterTrust.ExtraHoldLabels()...)

@@ -63,6 +63,9 @@ type contributorLaneFixture struct {
 	comments        int
 	updates         int
 	lastComment     string
+	// checkCompletedAt, when set, is the completed_at the check-runs
+	// endpoint reports for sha7 (RFC 3339); empty omits the field.
+	checkCompletedAt string
 }
 
 func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.Server {
@@ -152,9 +155,13 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 				"statuses":    []map[string]string{{"context": "ci/build", "state": "success"}},
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/check-runs":
+			run := map[string]string{"name": "build", "status": "completed", "conclusion": "success"}
+			if fx.checkCompletedAt != "" {
+				run["completed_at"] = fx.checkCompletedAt
+			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"total_count": 1,
-				"check_runs":  []map[string]string{{"name": "build", "status": "completed", "conclusion": "success"}},
+				"check_runs":  []map[string]string{run},
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
 			fx.merges++
@@ -803,6 +810,46 @@ func TestTrySweepContributorLanePRSoakTiming(t *testing.T) {
 	event, reason, err := engine.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy)
 	if err != nil || reason != "" || fx.merges != 1 || event.Tier != contributorLaneTier {
 		t.Fatalf("post-soak reason=%q err=%v merges=%d event=%+v", reason, err, fx.merges, event)
+	}
+}
+
+// A head this process has not seen yet measures its soak from when the
+// forge says it went green (the check run's completed_at), not from the
+// first sighting — so a pod restart or upgrade mid-soak does not restart it.
+func TestTrySweepContributorLanePRSoakSurvivesRestart(t *testing.T) {
+	fx := validContributorFixture()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+	fx.checkCompletedAt = clock.at.Add(-90 * time.Minute).Format(time.RFC3339)
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	tracker := NewContributorSoakTracker()
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: tracker})
+	ctx := context.Background()
+
+	_, reason, err := engine.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy)
+	if err != nil || reason != contributorLaneReasonSoaking+"(remaining=30m0s)" {
+		t.Fatalf("fresh process reason=%q err=%v, want 30m remaining from the check's completed_at", reason, err)
+	}
+	if first, ok := tracker.FirstGreen("acme", "widget", 7, "sha7"); !ok || !first.Equal(clock.at.Add(-90*time.Minute)) {
+		t.Fatalf("first green = %v ok=%v, want seeded from completed_at", first, ok)
+	}
+	// The seed is read once; later sweeps use the pinned value.
+	fx.checkCompletedAt = clock.at.Add(-10 * time.Minute).Format(time.RFC3339)
+	clock.advance(30 * time.Minute)
+	event, reason, err := engine.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy)
+	if err != nil || reason != "" || fx.merges != 1 || event.Tier != contributorLaneTier {
+		t.Fatalf("post-soak reason=%q err=%v merges=%d", reason, err, fx.merges)
+	}
+
+	// A completed_at in the future (clock skew) is ignored: soak from now.
+	fx2 := validContributorFixture()
+	fx2.checkCompletedAt = clock.at.Add(time.Hour).Format(time.RFC3339)
+	api2 := newContributorLaneAPI(t, &fx2)
+	defer api2.Close()
+	engine2 := newContributorLaneEngine(api2.URL, policy, clock, Options{ContributorSoak: NewContributorSoakTracker()})
+	if _, reason, err := engine2.trySweepContributorLanePR(ctx, "widget", "acme", "widget", 7, policy); err != nil || reason != contributorLaneReasonSoaking+"(remaining=2h0m0s)" {
+		t.Fatalf("future completed_at reason=%q err=%v", reason, err)
 	}
 }
 

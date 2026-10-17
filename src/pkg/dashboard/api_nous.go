@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 )
 
@@ -16,6 +17,18 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 		status[k] = v
 	}
 	goals := s.deps.Nous.Config["goals"]
+	config := make(map[string]interface{}, len(s.deps.Nous.Config))
+	for k, v := range s.deps.Nous.Config {
+		config[k] = v
+	}
+	ledger := append([]map[string]interface{}(nil), s.deps.Nous.Ledger...)
+	principles := append([]NousPrinciple(nil), s.deps.Nous.Principles...)
+	// Mode is the live trust-ladder knob (PUT /api/nous/mode); the Status
+	// map only carries the boot-time value, so without this the lab kept
+	// reporting "observe" after the operator switched to suggest (#12532).
+	if s.deps.Nous.Mode != "" {
+		status["mode"] = s.deps.Nous.Mode
+	}
 	s.deps.Nous.Mu.Unlock()
 	// The Experiment Lab is repo-only: the reported scope is always "repo"
 	// and any governor phase block published by the experiment loop is
@@ -23,6 +36,17 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 	status["scope"] = NousScopeRepo
 	status["phases"] = nousRepoOnlyPhases(status["phases"])
 	status["researchQuestion"] = nousResearchQuestion(goals)
+	if status["researchQuestion"] == "" {
+		// The goals section is in-memory only; after a restart the active
+		// campaign still knows the question.
+		if c, ok := s.deps.Nous.ActiveCampaign(); ok {
+			status["researchQuestion"] = c.Question
+		}
+	}
+	s.addNousProgressStatus(status, config, ledger, principles)
+	status["projectRepos"] = s.nousProjectRepos()
+	status["availableRepos"] = status["projectRepos"]
+	status["repoTargets"] = s.nousRepoTargets()
 	jsonResponse(w, status)
 }
 
@@ -49,7 +73,23 @@ func nousResearchQuestion(goals interface{}) string {
 		return ""
 	}
 	repo, _ := m["repoGoal"].(string)
-	return strings.TrimSpace(repo)
+	return normalizeNousResearchQuestion(repo)
+}
+
+var (
+	nousResearchQuestionKeyRe    = regexp.MustCompile(`(?i)^research[_ -]?question\s*:\s*`)
+	nousResearchQuestionMarkerRe = regexp.MustCompile(`^(?:[>|][-+]?\s*)+`)
+	nousResearchQuestionSpaceRe  = regexp.MustCompile(`\s+`)
+)
+
+// normalizeNousResearchQuestion strips a pasted YAML key
+// ("research_question:") and folded-scalar / blockquote markers ("> ", "|")
+// from a stored research question so the dashboard shows only the question.
+func normalizeNousResearchQuestion(raw string) string {
+	text := strings.TrimSpace(raw)
+	text = nousResearchQuestionKeyRe.ReplaceAllString(text, "")
+	text = nousResearchQuestionMarkerRe.ReplaceAllString(text, "")
+	return strings.TrimSpace(nousResearchQuestionSpaceRe.ReplaceAllString(text, " "))
 }
 
 func (s *Server) handleNousLedger(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +160,9 @@ func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.deps.Nous != nil {
+		s.deps.Nous.Mu.Lock()
 		s.deps.Nous.Mode = body.Mode
+		s.deps.Nous.Mu.Unlock()
 	}
 
 	s.auditFromRequest(r, "nous_set_mode", auditDetail("mode", body.Mode), "")
@@ -245,13 +287,122 @@ func (s *Server) handleNousConfigGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deps.Nous.Mu.Lock()
-	cfg := s.deps.Nous.Config
+	cfg := make(map[string]interface{}, len(s.deps.Nous.Config)+6)
+	for k, v := range s.deps.Nous.Config {
+		cfg[k] = v
+	}
+	mode := s.deps.Nous.Mode
+	principles := append([]NousPrinciple(nil), s.deps.Nous.Principles...)
 	s.deps.Nous.Mu.Unlock()
+
+	projectRepos := s.nousProjectRepos()
+	repoTargets := s.nousRepoTargetsFrom(cfg, projectRepos)
+	cfg["projectRepos"] = projectRepos
+	cfg["availableRepos"] = projectRepos
+	cfg["repoTargets"] = repoTargets
+	cfg["principles"] = principles
+
+	campaign := map[string]interface{}{"mode": mode}
+	if ff, ok := cfg["fast_fail"]; ok {
+		campaign["fast_fail"] = ff
+	}
+	if sched, ok := cfg["schedule"]; ok {
+		campaign["schedule"] = sched
+	}
+	cfg["campaign"] = campaign
+
+	// Per-campaign baseline (hivecommons/hive#12501): expose the active
+	// experiment and fall back to its question when goals are unset
+	// (for example after a restart, when Config is in-memory only).
+	if c, ok := s.deps.Nous.ActiveCampaign(); ok {
+		cfg["activeCampaign"] = nousCampaignToView(s.deps.Nous, c)
+		if nousResearchQuestion(cfg["goals"]) == "" && c.Question != "" {
+			cfg["goals"] = map[string]interface{}{"repoGoal": c.Question}
+		}
+	}
+
+	repoCampaign := map[string]interface{}{}
+	if goals, ok := cfg["goals"].(map[string]interface{}); ok {
+		if rq, ok := goals["repoGoal"].(string); ok {
+			repoCampaign["research_question"] = strings.TrimSpace(rq)
+		}
+	}
+	cfg["repoCampaign"] = repoCampaign
 	jsonResponse(w, cfg)
 }
 
-func (s *Server) handleNousConfigGoals(w http.ResponseWriter, r *http.Request) {
-	s.handleNousConfigSection(w, r, "goals")
+func (s *Server) nousProjectRepos() []string {
+	if s == nil || s.deps.Config == nil {
+		return nil
+	}
+	cfg := s.deps.Config
+	seen := map[string]bool{}
+	var repos []string
+	add := func(repo string) {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			return
+		}
+		key := strings.ToLower(repo)
+		if !seen[key] {
+			seen[key] = true
+			repos = append(repos, repo)
+		}
+	}
+	for _, repo := range cfg.Project.Repos {
+		add(repo)
+	}
+	add(cfg.Project.PrimaryRepo)
+	return repos
+}
+
+func (s *Server) nousRepoTargets() []string {
+	if s == nil || s.deps.Nous == nil {
+		return nil
+	}
+	s.deps.Nous.Mu.Lock()
+	cfg := make(map[string]interface{}, len(s.deps.Nous.Config))
+	for k, v := range s.deps.Nous.Config {
+		cfg[k] = v
+	}
+	s.deps.Nous.Mu.Unlock()
+	return s.nousRepoTargetsFrom(cfg, s.nousProjectRepos())
+}
+
+func (s *Server) nousRepoTargetsFrom(cfg map[string]interface{}, projectRepos []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(repo string) {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			return
+		}
+		key := strings.ToLower(repo)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, repo)
+		}
+	}
+	if reposCfg, ok := cfg["repos"].(map[string]interface{}); ok {
+		if raw, ok := reposCfg["repos"].([]interface{}); ok {
+			for _, v := range raw {
+				if s, ok := v.(string); ok {
+					add(s)
+				}
+			}
+		}
+		if raw, ok := reposCfg["repos"].([]string); ok {
+			for _, v := range raw {
+				add(v)
+			}
+		}
+	}
+	if len(out) == 0 {
+		for _, repo := range projectRepos {
+			add(repo)
+		}
+	}
+	return out
 }
 
 func (s *Server) handleNousConfigRepos(w http.ResponseWriter, r *http.Request) {

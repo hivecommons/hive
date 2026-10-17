@@ -162,6 +162,34 @@ auto_merge:
     - your-org/docs-only-repo
 ```
 
+### Self-merge review gate
+
+Immediately before the self-authored sweep merges one of the App's own PRs
+(after the head SHA is re-verified), it reads the swarm review verdict for that
+head from the same `review-verdicts.json` the merge-eligible lane uses and
+classifies it as `no-review-bundle`, `awaiting-review-approval`,
+`changes-requested:<perspectives>` or `approved`
+([#12592](https://github.com/hivecommons/hive/issues/12592)). The mode is
+`governor.review_gate.mode: off | shadow | enforce` (default `shadow`), raised
+to `enforce` by `review.require_approval` and to at least `shadow` by
+`review.shadow`; all three are re-read on every evaluation, so a config reload
+takes effect without a restart.
+
+- **shadow** (default): the merge proceeds as before; the evidence bundle for
+  the head (started on the spot when none exists) records
+  `shadow.review_gate` with `lane: self-merge`, `would_have_held` and the
+  reason, so the Evidence card's Shadow gates panel can show what the gate
+  would have held.
+- **enforce**: anything but `approved` holds the merge with reason
+  `review-gate:<outcome>`; the PR is retried on a later sweep.
+- **off**: no evaluation.
+
+Each evaluation writes one audit line, action `review_evaluated`, detail
+`lane=self-merge would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`.
+The gate applies to the `self-authored` lane only; trusted-bot PRs are
+unchanged. The merge and the CI snapshot are recorded in the evidence bundle
+in every mode, including when the bundle is created at merge time.
+
 ### Trusted bot authors
 
 The self-authored automerge sweep merges the App's own open, CI-green PRs. It
@@ -357,10 +385,13 @@ A PR merges through this tier only when all of the following hold:
   and no reviewer has an outstanding `CHANGES_REQUESTED`.
 - No excluded label (`hold`, `do-not-merge*`, `needs-human`, `blocked`,
   `needs-rebase` by default), not draft, mergeable, no human-merge path.
-- The head SHA has stayed green for `soak_minutes` (default 120). The first
-  green sighting per (repo, PR, head) is tracked in process; a new push restarts
+- The head SHA has stayed green for `soak_minutes` (`0`/unset = default 30;
+  the shortest real soak is `1`). The soak is measured from when the head
+  went green — the latest `completed_at` over its check runs, read once per
+  (repo, PR, head) and then pinned in process — so a pod restart or upgrade
+  does not restart it; a new push restarts
   the soak and the skip reason reports the time left
-  (`contributor-lane:soaking(remaining=1h30m0s)`).
+  (`contributor-lane:soaking(remaining=25m0s)`).
 
 Merges squash through the same effect-claimed `MergePR` path as the other tiers,
 log `automerge merged tier=contributor-lane admitted_by=<path>`, record the
@@ -373,7 +404,7 @@ trusted tier in this hive's contributor registry.` for the registry path.
 auto_merge:
   contributor_lane:
     enabled: true                 # default on; false restores the human /lgtm wait
-    soak_minutes: 120
+    soak_minutes: 30
     require_reviewer_verdict: true
     repos: []                     # optional allow-list; empty = all watched repos
     exclude_labels:
@@ -411,14 +442,25 @@ tier before the issue is leased.
 
 Every sweep cycle also writes the hive-owned `stage/NNN-*` label for each PR
 it evaluated, derived from the same per-lane reason it logs
-(`contributor-lane:no-verdict` → `stage/050-review-pending`,
+(`contributor-lane:no-verdict` → `stage/050-review-pending`, unless the
+swarm's known verdict is `requires_human`, which the lane also reports as
+no-verdict → `stage/085-needs-decision` with reason
+`reviewer-verdict:requires_human`,
 `contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
-contributor PR → `stage/072-returned-to-contributor`, hold / untrusted author →
-`stage/090-needs-human`, merged → no stage), plus one `author/*` label saying
-which admission tier the lane actually used and `stage/stalled` /
-`stage/regressed` when the progression is disrupted. Writes happen only when
+human-authored PR → `stage/071-needs-author`, on a clanker PR →
+`stage/072-returned-to-contributor`, hold / sentinel alert →
+`stage/085-needs-decision`, untrusted author with an approve verdict at the
+current head, green checks, DCO and soak done →
+`stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
+missing), merged → no stage), plus one `role/*` label saying
+which admission tier the lane actually used, one `author/*` label saying who
+wrote the PR (`human`, `clanker` = a contributor's hive, `hive` = this repo's
+own; #12581) and `stage/stalled` when nobody
+but the hive has touched the PR for the stage's dwell (never while checks run
+or the reviewer verdict is pending). Backward moves are a one-line stage
+comment and dashboard history, not a label. Writes happen only when
 the planned set differs from the labels already on the PR, under the
 `hive:stage_labels` REST caller, and the whole family is switched by
 `governor.labels.stage.enabled`. The mapping table, numbering rules, dwell
@@ -426,7 +468,29 @@ thresholds, the mermaid state machine and the off-happy-path flow
 (072 → nudge → 074 → takeover) are in
 [labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine);
 the code is `src/pkg/stagelabels` and
-`src/pkg/github/automerge/automerge_stage_labels.go`.
+`src/pkg/github/automerge/automerge_stage_labels.go`. Adoption
+(`stage/074-adopted-by-hive`, `automerge_contributor_adopt.go`) reuses this
+sweep's own red-PR route: the superseding App PR it opens from `hive/adopt-<n>`
+is red with the contributor's failures, lands in `ci-failing.json` like any
+hive-authored red PR, and the scanner's FIX-BEFORE-NEW kick rebases and fixes
+it on that branch (never a replacement PR), after which it follows the normal
+`050 → 100` path. The issues a PR covers
+follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
+writes the same stage on each linked issue (`stage/040-covered-by-pr` until
+then), so the issue list and the PR list read the same
+([#12436](https://github.com/hivecommons/hive/issues/12436)).
+
+A clanker PR entering `stage/072-returned-to-contributor` also triggers the
+contributor nudge: the sweep posts one `<!-- hive:contributor-nudge head=…
+-->` comment per head naming the failing checks / review asks (re-nudged
+once at the stall threshold, cap 2) and hands the diagnosis to the contribute
+hub, which — when the author's relay heartbeat is fresh — pushes a `fix-pr`
+interrupt task into their relay session (parallel sub-session or preempt,
+per the relay's declared capability) under a per-contributor fix budget;
+queued fixes are served before new work ("contributors should clean up their
+mess before taking on new stuff"). Code:
+`src/pkg/github/automerge/automerge_contributor_nudge.go`, `src/pkg/fixqueue`
+and `src/pkg/dashboard/contribute_fixqueue.go`.
 
 ## Usage
 
@@ -511,7 +575,7 @@ A malformed request file (invalid JSON) is renamed `.bad`.
 | `/var/run/hive-metrics/merge-requests` | request files the watcher consumes |
 | `/var/run/hive-metrics/gh-app-token.cache` | cached App token, used to auto-resolve `--expect-sha` |
 | `/var/run/hive/uid-map.json` | UID → agent-name map, used for a nicer log line |
-| `/data/stage-labels.json` | persisted stage timing for `stage/stalled` / `stage/regressed` |
+| `/data/stage-labels.json` | persisted stage timing, last-activity clock and transition history for `stage/stalled` and the review-queue stage history |
 
 The UID map is **informational only** here. The watcher re-derives ownership
 from the file's UID regardless.

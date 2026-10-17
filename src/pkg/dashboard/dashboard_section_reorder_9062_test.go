@@ -9,14 +9,14 @@ import (
 )
 
 var dashboardLayoutIDs9062 = []string{
-	"overview-section", "governor", "pr-throughput-section", "repos-section", "knowledge-section", "review-queue-section",
+	"overview-section", "governor", "pr-throughput-section", "repos-section", "activity-monitor-section", "knowledge-section", "review-queue-section",
 	"contributors-section", "advisory-section", "token-panel", "cost-panel", "inception-section", "acmm-eval-section",
 	"debug-section", "audit-section", "approvals-section", "nous-section", "logs-section", "agents-section", "agent-activity-section",
 	"faq-section",
 }
 
 var dashboardDefaultNavOrder9062 = []string{
-	"overview-section", "governor", "pr-throughput-section", "repos-section", "knowledge-section", "review-queue-section",
+	"overview-section", "governor", "pr-throughput-section", "repos-section", "activity-monitor-section", "knowledge-section", "review-queue-section",
 	"contributors-section", "advisory-section", "token-panel", "cost-panel", "inception-section", "acmm-eval-section",
 	"debug-section", "audit-section", "faq-section",
 }
@@ -26,7 +26,7 @@ var dashboardDefaultLayoutOrder9062 = append(append(append([]string{}, dashboard
 	"faq-section",
 )
 
-const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
+const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
 
 func jsArray9062(ids []string) string {
 	var b strings.Builder
@@ -165,7 +165,7 @@ func TestDashboardLayoutNormalizeFutureUnknownAndMissing(t *testing.T) {
 	html := indexHTML(t)
 	script := dashboardLayoutPreamble9062() + jsFunc(t, html, "dashboardLayoutAllIds") + "\n" + jsFunc(t, html, "dashboardLayoutNormalize") + `
 const got = dashboardLayoutNormalize({v:99, main:['faq-section','beads-section','unknown','governor','faq-section']});
-const want = ` + jsArray9062([]string{"faq-section", "overview-section", "governor", "pr-throughput-section", "repos-section", "knowledge-section", "review-queue-section", "contributors-section", "advisory-section", "token-panel", "cost-panel", "inception-section", "acmm-eval-section", "debug-section", "audit-section", "approvals-section", "nous-section", "logs-section", "agents-section", "agent-activity-section"}) + `;
+const want = ` + jsArray9062([]string{"faq-section", "overview-section", "governor", "pr-throughput-section", "repos-section", "activity-monitor-section", "knowledge-section", "review-queue-section", "contributors-section", "advisory-section", "token-panel", "cost-panel", "inception-section", "acmm-eval-section", "debug-section", "audit-section", "approvals-section", "nous-section", "logs-section", "agents-section", "agent-activity-section"}) + `;
 if (got.v !== 1) throw new Error('version not normalized: '+got.v);
 if (got.main.includes('beads-section')) throw new Error('legacy beads section survived normalization: '+JSON.stringify(got.main));
 if (JSON.stringify(got.main) !== JSON.stringify(want)) throw new Error('normalized order '+JSON.stringify(got.main));
@@ -287,7 +287,7 @@ if (middle !== 'nous-section,logs-section,agents-section,agent-activity-section,
 if (new Set(got).size !== got.length) throw new Error('duplicate ids: '+JSON.stringify(got));
 const moved = dashboardLayoutNormalize({v:1, main:['faq-section','cost-panel','overview-section']}).main;
 if (moved[0] !== 'faq-section') throw new Error('operator-moved FAQ not respected: '+JSON.stringify(moved));
-if (moved.length !== 20) throw new Error('missing sections not restored: '+moved.length);
+if (moved.length !== 21) throw new Error('missing sections not restored: '+moved.length);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

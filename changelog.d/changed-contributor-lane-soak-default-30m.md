@@ -1,0 +1,1 @@
+- Settings and docs now state that `auto_merge.contributor_lane.soak_minutes: 0` means the built-in default rather than an instant merge (the operator reference previously claimed the opposite), and that default drops from 120 to 30 minutes so reviewed contributor PRs stop parking for two hours.

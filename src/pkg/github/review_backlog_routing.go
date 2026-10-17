@@ -95,7 +95,7 @@ type githubIssueBacklogSink struct{ c *Client }
 func (githubIssueBacklogSink) Destination() string { return config.ReviewBacklogGitHubIssue }
 
 func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBacklogItem) (ReviewBacklogRef, error) {
-	res, err := s.c.createIssue(ctx, item.Repo, item.Title, item.Body, item.Labels, true)
+	res, err := s.c.createIssue(ctx, CreateIssueRequest{Repo: item.Repo, Title: item.Title, Body: item.Body, Labels: item.Labels, Origin: config.OriginSourceReviewer, ConsolidateOpen: true})
 	if err != nil {
 		return ReviewBacklogRef{}, err
 	}
@@ -149,7 +149,7 @@ func (s githubIssueBacklogSink) ItemOpen(ctx context.Context, repo string, ref R
 // reviewBacklogTarget resolves the sink and labels for one filing pass. When
 // the configured destination could not be built (its work source is not
 // active or not configured) the sink is the GitHub issue fallback, and the
-// origin/review label is always applied so the fallback items stay findable.
+// origin/reviewer label is always applied so the fallback items stay findable.
 func (c *Client) reviewBacklogTarget(r ReviewBacklogRouting) (ReviewBacklogSink, []string) {
 	labels := append([]string(nil), r.Backlog.EffectiveLabels()...)
 	sink := r.Sink

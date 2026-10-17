@@ -1,7 +1,7 @@
 package hub
 
 // Branch tests for small pure helpers whose edge branches had no coverage:
-// hexVal's letter/invalid classes, clampScore's actual clamps, absolute scoring's
+// hexVal's letter/invalid classes, clampScore's actual clamps,
 // small-fleet floor, medianOf's empty/odd cases, the effective* nil-cluster and
 // override branches, truncateReachRunes's truncation, isFailingCheckStatus's
 // full status table, overallHealthStatus's critical threshold, and
@@ -42,15 +42,6 @@ func TestClampScoreBounds(t *testing.T) {
 		if got := clampScore(c.in); got != c.want {
 			t.Errorf("clampScore(%d) = %d, want %d", c.in, got, c.want)
 		}
-	}
-}
-
-// Fixed curves do not require a percentile population, even for one hive.
-func TestAbsoluteScoreSmallFleet(t *testing.T) {
-	q := ScoreFleet([]quadrantInputs{{slaViolations: iptr(0)}})[0]
-	a, _ := axisOf(q, AxisSatisfaction)
-	if !a.Scored || a.Score != 100 || a.N != 1 {
-		t.Fatalf("single-hive measured zero SLA count: %+v", a)
 	}
 }
 

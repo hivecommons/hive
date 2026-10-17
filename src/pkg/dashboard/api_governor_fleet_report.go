@@ -10,8 +10,8 @@ import (
 // Self-report settings (hivecommons/hive#11868): a Settings switch, repo
 // field and daily cap for governor.fleet_report — the keys
 // governor.fleet_report.enabled, governor.fleet_report.repo,
-// governor.fleet_report.max_per_day, governor.fleet_report.include_repos
-// and the legacy governor.fleet_report.file_upstream opt-in. Mirrors the
+// governor.fleet_report.max_per_day, governor.fleet_report.include_repos,
+// governor.fleet_report.include_owners and the legacy governor.fleet_report.file_upstream opt-in. Mirrors the
 // question-autoclose GET/PUT pair: its own small endpoint under its own
 // config block, owner-only.
 
@@ -39,10 +39,11 @@ func (s *Server) handleGovernorFleetReportSet(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body struct {
-		Enabled      *bool   `json:"enabled"`
-		Repo         *string `json:"repo"`
-		MaxPerDay    *int    `json:"max_per_day"`
-		IncludeRepos *bool   `json:"include_repos"`
+		Enabled       *bool   `json:"enabled"`
+		Repo          *string `json:"repo"`
+		MaxPerDay     *int    `json:"max_per_day"`
+		IncludeRepos  *bool   `json:"include_repos"`
+		IncludeOwners *bool   `json:"include_owners"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -74,6 +75,10 @@ func (s *Server) handleGovernorFleetReportSet(w http.ResponseWriter, r *http.Req
 		v := *body.IncludeRepos
 		cfg.Governor.FleetReport.IncludeRepos = &v
 	}
+	if body.IncludeOwners != nil {
+		v := *body.IncludeOwners
+		cfg.Governor.FleetReport.IncludeOwners = &v
+	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after fleet-report update", "error", err)
 	}
@@ -102,14 +107,16 @@ func (s *Server) fleetReportSectionResponse(cfg *config.Config) map[string]inter
 	fr := cfg.Governor.FleetReport
 	hubManaged := s.FleetReportHubManaged()
 	out := map[string]interface{}{
-		"enabled":       fr.FilesUpstream(hubManaged),
-		"explicit":      fr.Enabled != nil || fr.FileUpstream,
-		"hub_managed":   hubManaged,
-		"repo":          fr.EffectiveRepo(),
-		"max_per_day":   fr.EffectiveMaxPerDay(),
-		"include_repos": fr.IncludesRepos(),
-		"hive_slug":     s.FleetReportHiveSlug(),
-		"open_reports":  s.fleetReportOpenSummary(),
+		"enabled":        fr.FilesUpstream(hubManaged),
+		"explicit":       fr.Enabled != nil || fr.FileUpstream,
+		"hub_managed":    hubManaged,
+		"repo":           fr.EffectiveRepo(),
+		"max_per_day":    fr.EffectiveMaxPerDay(),
+		"include_repos":  fr.IncludesRepos(),
+		"include_owners": fr.IncludesOwners(),
+		"owners":         s.FleetReportOwners(),
+		"hive_slug":      s.FleetReportHiveSlug(),
+		"open_reports":   s.fleetReportOpenSummary(),
 	}
 	return out
 }

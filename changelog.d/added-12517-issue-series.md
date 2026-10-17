@@ -1,0 +1,1 @@
+- `hivectl evidence backfill-issues` writes weekly GitHub issue-open and issue-close series files for reporting and downstream evidence readers ([#12517](https://github.com/hivecommons/hive/issues/12517)).

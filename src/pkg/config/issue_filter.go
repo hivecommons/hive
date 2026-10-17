@@ -38,11 +38,28 @@ import (
 // gate. The exempt/hold checks keep their own looser matching; this filter
 // does not change them.
 const (
-	DefaultNeedsHumanLabel     = "needs-human"
-	DefaultNeedsDirectionLabel = "needs-direction"
-	DefaultNeedsDecisionLabel  = "needs-decision"
+	DefaultNeedsHumanLabel = "needs-human"
+	// DefaultNeedsDecisionLabel is the single "parked for a human ruling"
+	// signal (hivecommons/hive#12683): the stage label itself. It replaced
+	// the `needs-decision` and `needs-direction` labels, which said the same
+	// thing twice next to it. Spelled out here because pkg/stagelabels
+	// imports this package; stagelabels tests pin the two spellings together.
+	DefaultNeedsDecisionLabel = "stage/085-needs-decision"
+	// DefaultNeedsDirectionLabel is the RETIRED spelling the `needs_direction`
+	// bucket defaulted to; it is now a legacy alias of the decision bucket.
+	DefaultNeedsDirectionLabel = LegacyNeedsDirectionLabel
 	DefaultNeedsSpecLabel      = "needs-spec"
+
+	// LegacyNeedsDecisionLabel and LegacyNeedsDirectionLabel are the retired
+	// park labels. Every hive still reads them as the decision bucket so an
+	// issue never un-parks before the stage reconciler has migrated it to
+	// DefaultNeedsDecisionLabel and removed them.
+	LegacyNeedsDecisionLabel  = "needs-decision"
+	LegacyNeedsDirectionLabel = "needs-direction"
 )
+
+// LegacyNeedsDecisionLabels are the retired spellings of the decision bucket.
+var LegacyNeedsDecisionLabels = []string{LegacyNeedsDecisionLabel, LegacyNeedsDirectionLabel}
 
 // HardSuppressLabelsConfig names label buckets that remove issues from the
 // actionable queue because a maintainer must supply input first. Empty slices
@@ -224,13 +241,26 @@ func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
 				return DefaultNeedsHumanLabel
 			}
 		}
+		// The retired needs_direction bucket and the legacy spellings are
+		// the decision bucket (hivecommons/hive#12683).
 		for _, configured := range f.HardSuppressLabels.EffectiveNeedsDirection() {
 			if labelMatches(configured, actual) {
-				return DefaultNeedsDirectionLabel
+				return DefaultNeedsDecisionLabel
 			}
 		}
 		for _, configured := range f.HardSuppressLabels.EffectiveNeedsDecision() {
 			if labelMatches(configured, actual) {
+				return DefaultNeedsDecisionLabel
+			}
+		}
+		// The stage label is the park signal whatever the bucket is
+		// configured to, and the legacy spellings stay recognised until
+		// the reconciler has migrated them.
+		if labelMatches(DefaultNeedsDecisionLabel, actual) {
+			return DefaultNeedsDecisionLabel
+		}
+		for _, legacy := range LegacyNeedsDecisionLabels {
+			if labelMatches(legacy, actual) {
 				return DefaultNeedsDecisionLabel
 			}
 		}

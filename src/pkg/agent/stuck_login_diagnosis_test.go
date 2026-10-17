@@ -317,8 +317,90 @@ func TestTokenRestartCounterResetRearms(t *testing.T) {
 	a.tokenRestartAttempts = 0
 	a.tokenRestartGaveUp = false
 
+	// The poller's re-arm clears the per-boot cap only. The rolling 24h
+	// budget is already spent, so the very next decision still gives up —
+	// that is the whole point of #12466 (see TestTokenRestartWindowBoundsRearms).
+	if got := a.decideTokenRestart(now); got != tokenRestartGiveUp {
+		t.Fatalf("after poller re-arm inside the window: got %v, want giveUp", got)
+	}
+	// Once the window has rolled past the spent attempts the nudge is a
+	// fresh theory again and may fire.
+	later := now.Add(tokenRestartWindow + time.Second)
+	if got := a.decideTokenRestart(later); got != tokenRestartFire {
+		t.Fatalf("after reset and a full window: got %v, want fire", got)
+	}
+}
+
+// Live shape behind hivecommons/hive#12466: a Copilot CLI whose credential is
+// present but rejected boots to a clean ready prompt every time, so the
+// poller legitimately re-arms the per-boot cap after every restart, and the
+// heal fired as "attempt 1 of 3" 5–17 times a day on six hosted hives. The
+// rolling window must hold across those re-arms.
+func TestTokenRestartWindowBoundsRearms(t *testing.T) {
+	a := &AgentProcess{Name: "supervisor"}
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+
+	fires := 0
+	// 48 hourly cycles of: pane cleared → poller re-arms → login returns →
+	// decide. Without the window this fires 48 times; the hub's storm bar is
+	// 5/24h.
+	const cycles = 48
+	for i := 0; i < cycles; i++ {
+		started := now.Add(-10 * time.Minute)
+		if a.shouldResetTokenRestartCap(true, &started, now) {
+			a.tokenRestartAttempts = 0
+			a.tokenRestartGaveUp = false
+		}
+		if a.decideTokenRestart(now) == tokenRestartFire {
+			fires++
+		}
+		now = now.Add(time.Hour)
+	}
+	// Two 24h windows elapsed, so at most two budgets may be spent.
+	if want := 2 * tokenRestartWindowMax; fires > want {
+		t.Fatalf("fired %d times across %d hourly re-arms, want at most %d (window budget %d/24h)",
+			fires, cycles, want, tokenRestartWindowMax)
+	}
+	if fires < tokenRestartWindowMax {
+		t.Fatalf("fired only %d times: the window must still allow a full budget", fires)
+	}
+}
+
+// An operator reset/resume is the one path that re-arms the rolling window
+// too: that click means "I have looked at this", and must let the heal run
+// again immediately — unlike the poller's own re-arm.
+func TestTokenRestartOperatorClearRearmsWindow(t *testing.T) {
+	a := &AgentProcess{Name: "guide"}
+	now := time.Now()
+	cooldown := time.Duration(tokenRestartCooldownSec) * time.Second
+	for i := 0; i < tokenRestartWindowMax; i++ {
+		if got := a.decideTokenRestart(now); got != tokenRestartFire {
+			t.Fatalf("attempt %d: got %v, want fire", i, got)
+		}
+		now = now.Add(cooldown)
+	}
+	if got := a.decideTokenRestart(now); got != tokenRestartGiveUp {
+		t.Fatalf("budget spent: got %v, want giveUp", got)
+	}
+	a.clearTokenRestartCap()
 	if got := a.decideTokenRestart(now); got != tokenRestartFire {
-		t.Fatalf("after reset: got %v, want fire", got)
+		t.Fatalf("after operator clear: got %v, want fire", got)
+	}
+	if len(a.tokenRestartFiredAt) != 1 {
+		t.Fatalf("ledger after clear+fire = %d entries, want 1", len(a.tokenRestartFiredAt))
+	}
+}
+
+// The window budget must sit below the hub's restart-storm bar (5/24h,
+// pkg/hub/spoke.DefaultAgentRestartProblemThreshold — not importable here
+// without a cycle) so token-triggered restarts alone can never be a storm.
+func TestTokenRestartWindowMaxBelowHubStormBar(t *testing.T) {
+	const hubStormBar = 5
+	if tokenRestartWindowMax >= hubStormBar {
+		t.Fatalf("tokenRestartWindowMax = %d must be below the hub storm bar %d", tokenRestartWindowMax, hubStormBar)
+	}
+	if tokenRestartWindow != 24*time.Hour {
+		t.Fatalf("tokenRestartWindow = %v must match the hub's 24h storm window", tokenRestartWindow)
 	}
 }
 

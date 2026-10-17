@@ -18,7 +18,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fixqueue"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -113,6 +115,13 @@ type ContributorConnection struct {
 	assignedRole  string // owner-selected role; "none" forces general work
 	connectedAt   time.Time
 	currentTask   *WSTaskAssign
+	// fixTasks are the fix-pr tasks in flight on this connection, keyed by
+	// task id (hivecommons/hive#12436). They never replace currentTask: a
+	// spawned fix runs beside the primary task and a preempting one parks it.
+	fixTasks map[string]*WSTaskAssign
+	// fixTasksAt is when each fixTasks entry was dispatched, for the fleet
+	// view's started_at (hivecommons/hive#12502).
+	fixTasksAt map[string]time.Time
 	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
 	// hive#2568, the Gate). It is a monotonically increasing token minted per
 	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
@@ -449,8 +458,13 @@ func wsMessageFromExternal(msg ExternalExecutionMessage) WSMessage {
 }
 
 type WSMessage struct {
-	Type                         string                      `json:"type"`
-	Seq                          int                         `json:"seq,omitempty"`
+	Type string `json:"type"`
+	Seq  int    `json:"seq,omitempty"`
+	// Priority, Mode and FixPRs mirror WSTaskAssign for Kind "fix-pr"
+	// task_assign messages (hivecommons/hive#12436).
+	Priority                     string                      `json:"priority,omitempty"`
+	Mode                         string                      `json:"mode,omitempty"`
+	FixPRs                       []WSFixPR                   `json:"fix_prs,omitempty"`
 	Nonce                        string                      `json:"nonce,omitempty"`
 	ContributorID                string                      `json:"contributor_id,omitempty"`
 	TrustTier                    string                      `json:"trust_tier,omitempty"`
@@ -734,6 +748,14 @@ type WSTaskAssign struct {
 	// contributor routing. Nil means this task carried no explicit requirements.
 	Requirements *ContributorTaskRequirements `json:"requirements,omitempty"`
 	Complexity   string                       `json:"complexity,omitempty"`
+	// Priority, Mode and FixPRs are set on Kind "fix-pr" tasks
+	// (hivecommons/hive#12436; docs/contributor-relay.md): Priority is
+	// "interrupt" (push now) or "queued" (handed out at a task boundary); Mode
+	// is "spawn" (parallel sub-session), "preempt" (park the primary task) or
+	// "boundary"; FixPRs lists the red PRs the task covers (coalesced by cause).
+	Priority string    `json:"priority,omitempty"`
+	Mode     string    `json:"mode,omitempty"`
+	FixPRs   []WSFixPR `json:"fix_prs,omitempty"`
 }
 
 // identityKey returns the canonical identity of the assigned item. It prefers
@@ -812,6 +834,18 @@ func (c *ContributorConnection) advisor() advisorInfo {
 type ContributeWSHub struct {
 	connections map[string]*ContributorConnection
 	mu          sync.RWMutex
+	// fixSched is the per-contributor red-PR fix scheduler behind stage 072
+	// (hivecommons/hive#12436; contribute_fixqueue.go). fixOwners maps a
+	// lower-cased username to the PR keys in their queue so Resolve can find
+	// the owner without a GitHub call. fixDispatched is a test hook.
+	fixQueueMu    sync.Mutex
+	fixSched      *fixqueue.Scheduler
+	fixOwners     map[string]map[string]bool
+	fixDispatched func(*ContributorConnection, WSMessage)
+	// stageStore is the stage-label memory the fleet view reads "PRs returned
+	// to this contributor" from (hivecommons/hive#12502). Nil means the
+	// process-wide stagelabels.Shared(); tests inject an in-memory store.
+	stageStore *stagelabels.Store
 	// claimCommenter is the forge seam issue claims are posted through
 	// (hivecommons/hive#8380). Nil means "use the wired GitHub client"; tests
 	// inject a recorder. See contribute_claims.go.
@@ -3468,6 +3502,12 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 // ledgers, rewards, and releasing the task.
 func (s *wsSession) handleTaskComplete(msg WSMessage) {
 	h := s.h
+	// hivecommons/hive#12436: a fix-pr task settles in the contributor's fix
+	// queue (freeing its slot and refilling it) and never touches currentTask.
+	if s.contributor != nil && msg.TaskID != "" && h.completeFixTask(s.contributor, msg.TaskID) {
+		h.logger.Info("[contribute-ws] fix-pr task done", "username", identityOf(s.contributor), "task", msg.TaskID)
+		return
+	}
 	if s.contributor != nil {
 		s.contributor.mu.Lock()
 		// #2568 (the Gate, critical guarantee): a worker whose task was revoked
@@ -3789,6 +3829,12 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 // cooldowns, and releasing the task.
 func (s *wsSession) handleTaskFailed(msg WSMessage) {
 	h := s.h
+	// hivecommons/hive#12436: a fix-pr task settles in the contributor's fix
+	// queue (freeing its slot and refilling it) and never touches currentTask.
+	if s.contributor != nil && msg.TaskID != "" && h.completeFixTask(s.contributor, msg.TaskID) {
+		h.logger.Info("[contribute-ws] fix-pr task failed", "username", identityOf(s.contributor), "task", msg.TaskID)
+		return
+	}
 	if s.contributor != nil {
 		s.contributor.mu.Lock()
 		// #2568 (the Gate): reject a STALE worker's failure the same way as its

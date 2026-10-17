@@ -15,6 +15,13 @@ const (
 	copilotQuestionFormCondition   = "copilot-question-form"
 	busyUndeliverableThreshold     = 3
 	transcriptLivenessScanInterval = 10 * time.Second
+	// busyNoActivityRecoveryKicks and busyNoActivityRecoveryFactor bound when
+	// a busy-no-activity pane stops being visibility-only and is restarted
+	// (#12505): twice the kicks that raise the condition, and twice the
+	// configured silence threshold (60m by default). A live turn writes
+	// transcript events, so only a wedged CLI clears both bars.
+	busyNoActivityRecoveryKicks  = 2 * busyUndeliverableThreshold
+	busyNoActivityRecoveryFactor = 2
 )
 
 const copilotQuestionFormMessage = "Copilot CLI asked the user a question; no human is attached — dismissed with Escape so the kick can be delivered"
@@ -239,6 +246,38 @@ func busyCondition(agent *AgentProcess, now time.Time) (string, string) {
 	}
 
 	return "", ""
+}
+
+// busyNoActivityStall reports why a pane that still shows Working, refuses
+// every kick, and has produced no transcript activity for far longer than the
+// busy-no-activity threshold should be restarted, or "" when it should not.
+// Without this the condition was visibility-only: a wedged CLI refused kicks
+// indefinitely and nothing broke the loop (#12505). Restarts share the
+// session-liveness cooldown so a pane that wedges again is not churned.
+// Caller holds m.mu (read or write).
+func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string {
+	if agent.KicksUndeliverable < busyNoActivityRecoveryKicks {
+		return ""
+	}
+	if !paneShowsAgentWorking(pane) && !paneShowsActiveWork(pane) {
+		return ""
+	}
+	if now.Sub(agent.lastSessionStallRestart) < sessionStallRestartCooldown {
+		return ""
+	}
+	lastActivity := agent.LastTranscriptActivity
+	if lastActivity.IsZero() {
+		lastActivity = agent.BusySince
+	}
+	if lastActivity.IsZero() {
+		return ""
+	}
+	silentFor := now.Sub(lastActivity)
+	if silentFor < busyNoActivityRecoveryFactor*agent.Config.EffectiveBusyNoActivityThreshold() {
+		return ""
+	}
+	return fmt.Sprintf("%s: pane shows Working with no transcript activity for %s; %d kicks undeliverable",
+		busyNoActivityCondition, roundDurationForHumans(silentFor), agent.KicksUndeliverable)
 }
 
 func roundDurationForHumans(d time.Duration) string {

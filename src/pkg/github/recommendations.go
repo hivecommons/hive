@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/advisory"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -82,6 +84,16 @@ func (c *Client) PostRecommendations(ctx context.Context, repo, title, body stri
 			c.logger.Debug("recommendations: nothing actionable and no issue exists — not opening one",
 				slog.String("repo", repo))
 			return RecommendationsResult{}, nil
+		}
+		// Governor-filed living document: origin/governor is its provenance
+		// label unless the caller already chose an origin.
+		labels = config.WithOriginLabel(labels, config.OriginSourceGovernor)
+		if originLabel, ok := config.FirstOriginLabel(labels); ok {
+			if err := c.ensureOriginLabel(ctx, owner, repoName, originLabel); err != nil {
+				c.logger.Warn("recommendations: could not ensure origin label, creating without it",
+					slog.String("label", originLabel), slog.String("error", err.Error()))
+				labels = slices.DeleteFunc(labels, config.IsOriginLabel)
+			}
 		}
 		created, _, err := c.client.Issues.Create(ctx, owner, repoName, &gh.IssueRequest{
 			Title:  gh.Ptr(title),
