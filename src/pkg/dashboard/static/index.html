@@ -6135,6 +6135,7 @@
       <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
+      <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" hidden></span>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
@@ -29418,6 +29419,7 @@ function burnAreaChart() {
       if (ocHiveId) ocHiveId.textContent = hiveId;
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
+      renderProviderStrip(document.getElementById('oc-providers'), data.providers);
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
@@ -30577,6 +30579,28 @@ function burnAreaChart() {
       ocHealth.style.color = '';
       ocHealth.style.background = '';
       ocHealth.style.borderColor = '';
+    }
+
+    // Providers strip (ADR-0024): per-provider auth vs availability, two
+    // separate dimensions so "needs login" never reads as "provider down".
+    // Hidden while every provider is usable and available.
+    function renderProviderStrip(el, providers) {
+      if (!el) return;
+      const bad = (providers || []).filter(p => p && (p.auth_state !== 'usable' || p.availability_state !== 'available'));
+      if (!bad.length) {
+        el.hidden = true;
+        el.textContent = '';
+        el.title = '';
+        return;
+      }
+      const severe = bad.some(p => p.auth_state === 'needs-login' || p.auth_state === 'store-inaccessible' ||
+        p.availability_state === 'unavailable' || p.availability_state === 'quota-exhausted');
+      el.dataset.status = severe ? 'error' : 'warn';
+      el.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Providers: ' +
+        escapeHtml(bad.map(p => p.provider).join(', ')) + '</span>';
+      el.title = bad.map(p => p.provider + ': auth ' + p.auth_state + ', availability ' + p.availability_state +
+        (p.next_action ? ' — ' + p.next_action : '')).join('\n');
+      el.hidden = false;
     }
 
     function qualityDiagnosticsAgent(agents) {

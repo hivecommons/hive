@@ -448,6 +448,10 @@ type StatusPayload struct {
 	HiveIDLockReason string           `json:"hiveIdLockReason,omitempty"`
 	Features         FrontendFeatures `json:"features"`
 	Agents           []FrontendAgent  `json:"agents"`
+	// Providers rolls Agents up per provider into two separate dimensions,
+	// auth_state and availability_state (ADR-0024, #12611). Redacted; the
+	// same block the hub heartbeat carries. Omitted when disabled.
+	Providers []agent.ProviderStatus `json:"providers,omitempty"`
 	// HiddenAgents is diagnostic-only (#6581): agent-manager runtime entries
 	// that were left out of Agents (the dashboard cards), each with the stable
 	// reason category it was omitted for. It exists so an operator whose
@@ -757,6 +761,11 @@ type FrontendAgent struct {
 	BackendAuthStatus    string `json:"backendAuthStatus,omitempty"`
 	BackendAuthSince     string `json:"backendAuthSince,omitempty"`
 	BackendAuthLastError string `json:"backendAuthLastError,omitempty"`
+	// BackendAuthRefreshable is claude.HasUsableToken over this agent's own
+	// credential (ADR-0024): true = a CLI restart heals an expired access
+	// token, false = a human must log in. Absent for backends with no
+	// verified refresh semantics.
+	BackendAuthRefreshable *bool `json:"backendAuthRefreshable,omitempty"`
 	// InferenceLastError is the full text of the most recent inference error
 	// hive's proxy returned to this agent (#11761), shown while Claude Code's
 	// own retry line is still clipped to one pane row. Empty when unknown,

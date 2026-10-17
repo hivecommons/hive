@@ -91,6 +91,9 @@ type Config struct {
 	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
 	// at pack apply and by PUT /api/config/agent/{name}/models.
 	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// Providers configures the read-only per-provider auth/availability
+	// status (ADR-0024). See ProvidersConfig.
+	Providers ProvidersConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
 	// Issues tunes issue lifecycle automation. Zero value keeps the safe
 	// defaults: close issues after their fix PR merges, and backfill hourly.
 	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`

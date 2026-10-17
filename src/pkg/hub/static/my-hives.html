@@ -602,6 +602,24 @@ function diagnosisHTML(h) {
   if (h.authHealth === "down" || h.authHealth === "degraded") {
     add("agent auth", esc(h.authHealthReason || h.authHealth), true);
   }
+  // Providers strip (ADR-0024): auth and availability are separate
+  // dimensions, so "needs login" never reads as "provider down". Fully
+  // usable + available providers are omitted to keep green rows empty.
+  var provs = (h.providers || []).filter(function (p) {
+    return p && (p.auth_state !== "usable" || p.availability_state !== "available");
+  });
+  if (provs.length) {
+    var provBad = provs.some(function (p) {
+      return p.auth_state === "needs-login" || p.auth_state === "store-inaccessible" ||
+        p.availability_state === "unavailable" || p.availability_state === "quota-exhausted";
+    });
+    add("providers", provs.map(function (p) {
+      var bit = esc(p.provider) + ": auth " + esc(p.auth_state) + " · availability " + esc(p.availability_state);
+      if (p.since) bit += " · since " + esc(relTime(p.since));
+      if (p.next_action) bit += " — " + esc(p.next_action);
+      return bit;
+    }).join(" · "), provBad);
+  }
   var blocked = (h.agentVerdicts || []).filter(function (a) { return a.problem && a.blockedReason; });
   if (blocked.length) {
     add("blocked agents", blocked.map(function (a) { return esc(a.name) + ": " + esc(a.blockedReason); }).join(" · "), true);

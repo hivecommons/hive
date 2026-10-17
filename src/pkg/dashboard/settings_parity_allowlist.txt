@@ -358,6 +358,7 @@ project.repo_policies[].repo # TODO #11854
 project.repo_policies[].reporter_trust_hold # TODO #11854
 project.repo_policies[].self_authorization_hold # TODO #11854
 project.repos[] # TODO #11854
+providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
 review.backlog.labels[] # TODO #11854
 review.perspective_prompts.<key> # TODO #11854
