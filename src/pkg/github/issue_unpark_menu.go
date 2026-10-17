@@ -69,13 +69,19 @@ func isUnparkOwnerStepText(text string) bool {
 }
 
 // unparkMenuFor reads the menu from the issue body and from the hive's own
-// comments. The newest hive comment that lists options wins over the body,
+// comments. The body's owner-step marker counts only when the hive authored
+// the issue. The newest hive comment that lists options wins over the body,
 // because agents often post the options in a comment after filing, and the
 // recommended option is read from the newest text that states a
 // recommendation, so a body-level recommendation is never pinned onto
 // options a later comment listed.
-func (c *Client) unparkMenuFor(issueBody string, comments []*gh.IssueComment) unparkMenu {
+func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments []*gh.IssueComment) unparkMenu {
 	m := unparkMenuFromBody(issueBody)
+	if !c.isHiveAccount(issueAuthor) {
+		// Only a hive-authored body can park the issue on an owner step; the
+		// author of any other issue could otherwise edit the marker in.
+		m.ownerStep, m.releaseStep = false, nil
+	}
 	recommendationSource := ""
 	if m.hasRecommendation {
 		recommendationSource = issueBody

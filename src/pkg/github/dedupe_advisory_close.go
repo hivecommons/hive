@@ -229,7 +229,7 @@ func (c *Client) reclassifyDedupeChecklist(ctx context.Context, repo, owner, rep
 			res.Action, res.Reason = CloseOnMergeNoop, "issue_read_failed"
 			return res
 		}
-		if err := c.ensureUnparkNoticeComment(ctx, owner, repoName, number, issue.GetBody(), comments); err != nil {
+		if err := c.ensureUnparkNoticeComment(ctx, owner, repoName, number, issue.GetBody(), issue.GetUser(), comments); err != nil {
 			res.Action, res.Reason = CloseOnMergeNoop, "notice_failed"
 			return res
 		}

@@ -18,6 +18,8 @@ func ghComment(login, body string) *gh.IssueComment {
 	return &gh.IssueComment{User: &gh.User{Login: gh.Ptr(login)}, Body: gh.Ptr(body)}
 }
 
+var menuTestHiveUser = &gh.User{Login: gh.Ptr("hive[bot]")}
+
 func menuTestClient() *Client {
 	c := &Client{}
 	c.SetAppBotLogin("hive[bot]")
@@ -54,7 +56,7 @@ func TestUnparkMenuReadsOptionsFromHiveComment(t *testing.T) {
 		ghComment("hive[bot]", dakotaStyleOptions),
 		ghComment("hive[bot]", unparkNoticeMarker+"\n**What to reply**\n- `/hive decision <your instructions>`: go ahead"),
 	}
-	notice := renderUnparkNotice(c.unparkMenuFor("A finding with no options in the body.", comments))
+	notice := renderUnparkNotice(c.unparkMenuFor("A finding with no options in the body.", menuTestHiveUser, comments))
 	for _, want := range []string{
 		"`/hive approve`: go with the recommendation (option B)",
 		"`/hive decision A`: go with option A",
@@ -70,7 +72,7 @@ func TestUnparkMenuReadsOptionsFromHiveComment(t *testing.T) {
 
 	// A comment from someone other than the hive does not set the options.
 	stranger := []*gh.IssueComment{ghComment("someone", dakotaStyleOptions)}
-	if got := c.unparkMenuFor("no options", stranger); len(got.options) != 0 {
+	if got := c.unparkMenuFor("no options", menuTestHiveUser, stranger); len(got.options) != 0 {
 		t.Fatalf("a stranger's comment must not set options, got %v", got.options)
 	}
 }
@@ -128,12 +130,12 @@ func TestUnparkMenuOffersDoneForOwnerStep(t *testing.T) {
 		t.Fatal("the marker is added once")
 	}
 
-	m := c.unparkMenuFor("body", []*gh.IssueComment{ghComment("hive[bot]", step)})
+	m := c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", step)})
 	if !m.ownerStep || !strings.Contains(m.bullets(), "`/hive done`") {
 		t.Fatalf("owner step must offer /hive done:\n%s", m.bullets())
 	}
 	// A spoofed marker from someone else does not count.
-	if c.unparkMenuFor("body", []*gh.IssueComment{ghComment("someone", step)}).ownerStep {
+	if c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("someone", step)}).ownerStep {
 		t.Fatal("only the hive's own comment marks an owner step")
 	}
 	// Answered: only the hive's reply to an accepted command clears it.
@@ -142,20 +144,20 @@ func TestUnparkMenuOffersDoneForOwnerStep(t *testing.T) {
 	help := ghComment("hive[bot]", unparkReplyMarkerPrefix+"4 -->\n"+renderUnparkHelpFor(m))
 	hint := ghComment("hive[bot]", unparkReplyMarkerPrefix+"6 -->\n"+unparkProseHintReply)
 	refusal := ghComment("hive[bot]", unparkReplyMarkerPrefix+"7 -->\n"+renderUnparkAIAuthorRefusal("bot-ish"))
-	if !c.unparkMenuFor("body", []*gh.IssueComment{ghComment("hive[bot]", step), help, hint, refusal}).ownerStep {
+	if !c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", step), help, hint, refusal}).ownerStep {
 		t.Fatal("/hive help, the prose hint and the refusal must not answer an owner step")
 	}
 	answered := ghComment("hive[bot]", unparkReplyMarkerPrefix+"5 -->\n"+renderUnparkAcceptedReply("owner", unparkDoneDecision, []string{issueNeedsDecisionLabel}))
-	if c.unparkMenuFor("body", []*gh.IssueComment{ghComment("hive[bot]", step), help, answered}).ownerStep {
+	if c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", step), help, answered}).ownerStep {
 		t.Fatal("an answered owner step must not offer /hive done again")
 	}
 	labelDrivenAnswer := ghComment("hive[bot]", unparkReplyMarkerPrefix+"8 -->\n"+renderUnparkLabelDrivenAcceptedReply("owner", unparkDoneDecision, nil, nil))
-	if c.unparkMenuFor("body", []*gh.IssueComment{ghComment("hive[bot]", step), labelDrivenAnswer}).ownerStep {
+	if c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", step), labelDrivenAnswer}).ownerStep {
 		t.Fatal("a label-driven acceptance answers the owner step too")
 	}
 	// A needs-decision comment that lists options is a choice, not a step.
 	choice := ownerStepCommentBody("Option A: one\nOption B: two", true)
-	if c.unparkMenuFor("body", []*gh.IssueComment{ghComment("hive[bot]", choice)}).ownerStep {
+	if c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", choice)}).ownerStep {
 		t.Fatal("a choice between options is not an owner step")
 	}
 	if strings.Contains(unparkNoticeBody("Recommendation: option A.\nOption A: x"), "/hive done") {
@@ -164,11 +166,15 @@ func TestUnparkMenuOffersDoneForOwnerStep(t *testing.T) {
 	// An issue filed with `hive-open-issue issue --needs-decision` carries the
 	// marker in its body and offers /hive done the same way.
 	body := ownerStepCommentBody("Remaining step is yours: install the app.", true)
-	if !unparkMenuFromBody(body).ownerStep || !c.unparkMenuFor(body, nil).ownerStep {
+	if !unparkMenuFromBody(body).ownerStep || !c.unparkMenuFor(body, menuTestHiveUser, nil).ownerStep {
 		t.Fatal("a body-level owner step must offer /hive done")
 	}
-	if c.unparkMenuFor(body, []*gh.IssueComment{answered}).ownerStep {
+	if c.unparkMenuFor(body, menuTestHiveUser, []*gh.IssueComment{answered}).ownerStep {
 		t.Fatal("an accepted reply answers a body-level owner step")
+	}
+	// A body-level owner step counts only when the hive authored the issue.
+	if m := c.unparkMenuFor(body, &gh.User{Login: gh.Ptr("someone")}, nil); m.ownerStep || m.releaseStep != nil {
+		t.Fatal("a body-level owner step from a non-hive author must be ignored")
 	}
 	if unparkMenuFromBody(ownerStepCommentBody("Option A: one\nOption B: two", true)).ownerStep {
 		t.Fatal("a body that lists options is a choice, not an owner step")
@@ -181,7 +187,7 @@ func TestUnparkMenuRecommendationFollowsItsOwnText(t *testing.T) {
 	// recommendation is resolved against the body, not the first option.
 	body := "Recommendation: option B, the smaller change."
 	options := ghComment("hive[bot]", "Option A: rewrite\nOption B: patch")
-	m := c.unparkMenuFor(body, []*gh.IssueComment{options})
+	m := c.unparkMenuFor(body, menuTestHiveUser, []*gh.IssueComment{options})
 	if m.recommended != "B" {
 		t.Fatalf("recommended = %q, want B", m.recommended)
 	}
@@ -192,7 +198,7 @@ func TestUnparkMenuRecommendationFollowsItsOwnText(t *testing.T) {
 
 	// A recommendation that names none of the listed options is not pinned
 	// onto the first one; every option stays an explicit decision.
-	m = c.unparkMenuFor("I recommend the smaller change.", []*gh.IssueComment{options})
+	m = c.unparkMenuFor("I recommend the smaller change.", menuTestHiveUser, []*gh.IssueComment{options})
 	bullets = m.bullets()
 	if m.recommended != "" || strings.Contains(bullets, "(option") {
 		t.Fatalf("no option may be attributed to a recommendation that names none:\n%s", bullets)
@@ -205,7 +211,7 @@ func TestUnparkMenuRecommendationFollowsItsOwnText(t *testing.T) {
 
 	// The newest text that states a recommendation wins.
 	later := ghComment("hive[bot]", "On reflection my recommendation is A.")
-	if got := c.unparkMenuFor(body, []*gh.IssueComment{options, later}).recommended; got != "A" {
+	if got := c.unparkMenuFor(body, menuTestHiveUser, []*gh.IssueComment{options, later}).recommended; got != "A" {
 		t.Fatalf("recommended = %q, want A from the newest recommendation", got)
 	}
 }

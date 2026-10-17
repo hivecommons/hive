@@ -77,7 +77,7 @@ func TestReleaseStepMenuRemainsManual(t *testing.T) {
 	c := menuTestClient()
 	step := testReleaseStep()
 	body := issueOwnerStepBody("Remaining step: cut the release.", true, step)
-	for _, m := range []unparkMenu{unparkMenuFromBody(body), c.unparkMenuFor("body", []*gh.IssueComment{ghComment("hive[bot]", body)})} {
+	for _, m := range []unparkMenu{unparkMenuFromBody(body), c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", body)})} {
 		if !m.ownerStep || !reflect.DeepEqual(m.releaseStep, step) {
 			t.Fatalf("lost release metadata: %+v", m)
 		}
@@ -85,19 +85,19 @@ func TestReleaseStepMenuRemainsManual(t *testing.T) {
 			t.Fatalf("release metadata must not enable execution; menu = %q, want %q", got, want)
 		}
 	}
-	if m := c.unparkMenuFor("body", []*gh.IssueComment{ghComment("someone", body)}); m.ownerStep || m.releaseStep != nil {
+	if m := c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("someone", body)}); m.ownerStep || m.releaseStep != nil {
 		t.Fatal("non-Hive comment supplied a release proposal")
 	}
 	accepted := ghComment("hive[bot]", unparkReplyMarkerPrefix+"5 -->\n"+renderUnparkAcceptedReply("owner", unparkDoneDecision, nil))
-	if m := c.unparkMenuFor(body, []*gh.IssueComment{accepted}); m.ownerStep || m.releaseStep != nil {
+	if m := c.unparkMenuFor(body, menuTestHiveUser, []*gh.IssueComment{accepted}); m.ownerStep || m.releaseStep != nil {
 		t.Fatal("accepted reply must clear release proposal")
 	}
 	manual := ghComment("hive[bot]", ownerStepCommentBody("Change settings instead.", true))
-	if m := c.unparkMenuFor(body, []*gh.IssueComment{manual}); !m.ownerStep || m.releaseStep != nil {
+	if m := c.unparkMenuFor(body, menuTestHiveUser, []*gh.IssueComment{manual}); !m.ownerStep || m.releaseStep != nil {
 		t.Fatal("newest manual step must supersede release proposal")
 	}
 	choice := issueOwnerStepBody("Option A: release\nOption B: wait", true, step)
-	if m := c.unparkMenuFor("body", []*gh.IssueComment{ghComment("hive[bot]", choice)}); m.ownerStep || m.releaseStep != nil {
+	if m := c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", choice)}); m.ownerStep || m.releaseStep != nil {
 		t.Fatal("lettered options must not become a release action")
 	}
 }
