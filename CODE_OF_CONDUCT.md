@@ -19,7 +19,7 @@ Reports are handled confidentially by the Maintainers, excluding anyone who is a
 
 ## Enforcement
 
-Maintainers may remove, edit, or reject comments, commits, issues, pull requests, and other contributions that do not align with this Code of Conduct. Enforcement decisions concerning a Maintainer require a 2/3 supermajority of the other Maintainers, per [GOVERNANCE.md](GOVERNANCE.md). Escalation follows the CNCF Code of Conduct.
+Maintainers may remove, edit, or reject comments, commits, issues, pull requests, and other contributions that do not align with this Code of Conduct. Enforcement decisions concerning a Maintainer require a 2/3 supermajority of the other Maintainers, per the [Hive Commons Code of Conduct](https://github.com/hivecommons/.github/blob/main/CODE_OF_CONDUCT.md). Escalation follows the CNCF Code of Conduct.
 
 ## Acknowledgements
 
