@@ -21,12 +21,12 @@ import (
 // knowledge.SetBaseDirForTest convention.
 var fleetReportStatePath = "/data/fleet-report-state.json"
 
-// SetFleetReportStatePathForTest redirects fleet-report state persistence to
-// path for the lifetime of t.
 // fleetStallNudgeMinEvents mirrors fleetreport's unexported periodicMinEvents:
 // the recurrence bar before a stall nudge count becomes evidence.
 const fleetStallNudgeMinEvents = 3
 
+// SetFleetReportStatePathForTest redirects fleet-report state persistence to
+// path for the lifetime of t.
 func SetFleetReportStatePathForTest(t interface {
 	Helper()
 	Cleanup(func())
