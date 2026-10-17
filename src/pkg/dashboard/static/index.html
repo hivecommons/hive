@@ -1339,7 +1339,7 @@
     .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
     .ham-seg-t { overflow: hidden; text-overflow: ellipsis; }
     .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
-    .ham-actor-ico { margin-right: var(--sp-1); stroke-width: 2; }
+    .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
     .ham-seg.active { background: var(--amber); color: var(--surface-0); animation: ham-pulse 1.6s ease-in-out infinite; }
@@ -12570,7 +12570,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ak = item.author_kind || '';
       const chips = [];
       if (mods.length) chips.push(`<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`);
-      // The lit chevron leads with the icon of whose move it is, in the chevron's ink.
+      // The lit chevron ends with the icon of whose move it is, in the chevron's ink.
       const actorKind = stageTrackerActorKind(item);
       const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
       // PR column of the title line: the item's own PR, or the issue's covering PRs.
@@ -12587,7 +12587,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         else if (sg.state === 'active' && curStage === 100) tip = sg.label + ' — admitted, merging';
         let inner;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
-        else if (sg.state === 'active') inner = actorIco + (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`);
+        else if (sg.state === 'active') inner = (sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`) + actorIco;
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}" title="${esc(tip)}"${sg.state === 'active' ? ' aria-current="step"' : ''}>${inner}</li>`;
       }).join('');
