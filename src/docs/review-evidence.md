@@ -30,7 +30,7 @@ The machine-readable schema is [`pkg/evidence/schema/v1.json`](../pkg/evidence/s
 | `ci` | CI for the head: `status` (the merge gate's verdict, `success`, `failure` or `pending`; absent on bundles written before it was captured), `checks[]` (`name`, `conclusion`, `url`) and `captured_at`. |
 | `sentinel` | Why the sentinel sweep flagged the PR, if it did: `rule`, `summary`, `paths`. |
 | `human_actions` | Approvals, label changes, hold lifts: `actor`, `kind`, `detail`, `at`. |
-| `merge` | Present once merged: `actor`, `method`, `at`, `sha`. Absent before merge. |
+| `merge` | Present once merged: `actor`, `method`, `at`, `sha`, and `opened_at` (when the PR was opened on GitHub, so `at` − `opened_at` is its time to merge; absent on bundles recorded before it was captured — such a merge is left out of time-to-merge, never counted as zero). Absent before merge. |
 | `revert_of`, `followup_of` | Bundle ids of earlier merged PRs this PR reverts or follows up with a fix (see [Change-failure links](#change-failure-links)). |
 | `reverted_by`, `followed_up_by` | Bundle ids of later PRs that reverted or followed up this one. |
 | `shadow` | Optional. What shadow-mode gates would have done, recorded only: `review_gate` (`would_have_held`) and `intent` (`would_have_blocked`), each with `reason`, `tier`, `confidence` and `evaluated_at`. Absent unless a shadow gate ran; it never affects a merge ([#12103](https://github.com/hivecommons/hive/issues/12103)). |
@@ -237,6 +237,28 @@ Visible modal copy never cites an issue number
 | **False approve** | the reviewer approved, but the PR was never merged or was reverted. |
 | **False block** | the reviewer blocked, but the PR merged anyway after a human override. |
 | **Autonomy level** | the ACMM level the hive runs at, L1 (advice only) to L6 (merges on green CI without a human). |
+| **Median time-to-merge (median of hive medians)** | column of the *Autonomy level × outcome* table: time from PR opened to merged. See below. |
+
+### Median time-to-merge per autonomy level
+
+Each spoke reports, per heartbeat window, the median time-to-merge
+(`merge.at` − `merge.opened_at`, via `evidence.MedianTimeToMerge`) of the
+merged PRs opened in that window that recorded `merge.opened_at`, plus that
+sample size, as `time_to_merge` (`median_s`, `n`) in its heartbeat evidence
+block. Medians cannot be averaged or summed, and the heartbeat carries one
+median per hive rather than a distribution, so the hub reports, per ACMM
+level, the **median of the per-hive medians** (`by_acmm_level[].time_to_merge`:
+`median_of_hive_medians_s`, `hives`, `n`; with an even number of hives, the
+mean of the two middle medians, rounded down to the second). Each hive counts
+once however many PRs it merged; `n` is the total PRs behind the medians and
+is shown under the value. The column header says *median of hive medians* so
+it is not read as a pooled median. A level where no hive reports it — older
+builds, or only PRs merged before `opened_at` was captured — shows
+**not reported**, never 0, and the item stays under **Waiting on hives**.
+The client re-pools a hive / level selection by the same rule
+(`newEvidenceLevelTimeToMerge` in `pkg/hub/evidence.go`, mirrored by
+`evidenceLevelTimeToMerge` in `dashboard.html`). Reporting only: nothing reads
+it to decide a merge.
 
 ### Reviewer-confidence ranges
 

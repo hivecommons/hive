@@ -393,9 +393,15 @@ forge outcome:
   → `{held, passed}`, each `{n, merged, reverted}`: what the shadow gate would
   have done versus how the PR turned out). A spoke predating #12370 sends none
   of them and the hub shows "not reported", never zero.
+- `time_to_merge` ([#12464](https://github.com/hivecommons/hive/issues/12464))
+  — `{median_s, n}`: the median time from PR opened to merged, in seconds,
+  over the `n` merged PRs that recorded `merge.opened_at`. Omitted when no
+  merged PR in the window recorded it (and by older spokes); the hub shows
+  "not reported", never zero. The hub reports the median of hive medians per
+  ACMM level (see [review evidence](review-evidence.md#median-time-to-merge-per-autonomy-level)).
 - `windows` ([RFC #12062](https://github.com/hivecommons/hive/issues/12062)) —
   the same counts (verdicts, false approves/blocks, merged, reverted,
-  calibration, author-kind outcomes, shadow gates) re-counted over trailing
+  calibration, author-kind outcomes, shadow gates, time to merge) re-counted over trailing
   windows keyed `24h`, `7d` and `30d`, so the hub evidence view can switch
   between windows. The field names keep their `_90d` suffix for wire
   compatibility; `write_counters` (lifetime) and `automerge_self_authored`

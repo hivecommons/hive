@@ -1617,7 +1617,7 @@
           return {
             measured: 'Revert rate grouped by ACMM level \u2014 the autonomy level a hive runs at, from L1 (advice only) to L6 (merges on green CI without a human).',
             why: 'If more autonomy came with more reverted merges, that would be the signal to slow down. If it does not, the higher levels are earning their trust.',
-            how: 'Each hive is filed under its level; reverted \u00F7 merged PRs within ' + winText + ' is pooled per level. Median time-to-merge is not reported by spokes yet. ' + EVIDENCE_CI_NOTE,
+            how: 'Each hive is filed under its level; reverted \u00F7 merged PRs within ' + winText + ' is pooled per level. Median time-to-merge is the time from PR opened to merged: each hive reports its own median over the merged PRs that recorded when they were opened, and the level shows the median of those hive medians (each hive counts once, however many PRs it merged). Hives on older builds, and PRs merged before open times were recorded, show as not reported rather than 0. ' + EVIDENCE_CI_NOTE,
             ours: ours, grade: grade
           };
         }
@@ -1930,6 +1930,38 @@
     }
     function evidenceOutcomeZero() { return { n: 0, merged: 0, reverted: 0 }; }
 
+    /* evidenceLevelTimeToMerge mirrors newEvidenceLevelTimeToMerge: medians
+       cannot be pooled, so a level reports the median of its hives'
+       medians (even count: mean of the middle two, rounded down to the
+       second) plus the PRs behind them. null when no hive reports one. */
+    function evidenceLevelTimeToMerge(list) {
+      if (!list || !list.length) return null;
+      var medians = list.map(function(t) { return Number(t.median_s) || 0; }).sort(function(x, y) { return x - y; });
+      var n = 0;
+      list.forEach(function(t) { n += Number(t.n) || 0; });
+      var mid = Math.floor(medians.length / 2);
+      var m = medians.length % 2 === 1 ? medians[mid] : medians[mid - 1] + Math.floor((medians[mid] - medians[mid - 1]) / 2);
+      return { hives: list.length, n: n, median_of_hive_medians_s: m };
+    }
+
+    /* evidenceDuration renders whole seconds as minutes, hours or days. */
+    function evidenceDuration(sec) {
+      sec = Number(sec) || 0;
+      if (sec < 3600) return Math.max(0, Math.round(sec / 60)) + 'm';
+      if (sec < 48 * 3600) return (sec / 3600).toFixed(1) + 'h';
+      return (sec / 86400).toFixed(1) + 'd';
+    }
+
+    /* evidenceTimeToMergeCell is a level's median time-to-merge cell;
+       "not reported" (never 0) when no hive at the level reports one. */
+    function evidenceTimeToMergeCell(t) {
+      if (!t || !(Number(t.hives) > 0)) return '<td class="evidence-empty">not reported</td>';
+      var hives = Number(t.hives) || 0, n = Number(t.n) || 0;
+      var note = 'median of ' + hives + ' hive median' + (hives === 1 ? '' : 's') + ', ' + n + ' PR' + (n === 1 ? '' : 's');
+      return '<td class="evidence-rate"><span class="evidence-rate-main">' + esc(evidenceDuration(t.median_of_hive_medians_s)) + '</span>' +
+        '<span class="evidence-rate-margin">' + esc(note) + '</span></td>';
+    }
+
     /* evidenceRepool rebuilds a GET /api/hub/evidence body for a subset of
        hives. Hives without counts (never reported) only count toward spokes. */
     function evidenceRepool(data, hives) {
@@ -1950,8 +1982,9 @@
         }
         if (fam[h.family_mix]) { fam[h.family_mix].n += Number(c.verdicts_90d) || 0; fam[h.family_mix].bad += Number(c.false_approve_90d) || 0; }
         var lvl = Number(h.acmm_level) || 0;
-        var a = acmm[lvl] || (acmm[lvl] = { level: lvl, hives: 0, merged: 0, reverted: 0 });
+        var a = acmm[lvl] || (acmm[lvl] = { level: lvl, hives: 0, merged: 0, reverted: 0, ttm: [] });
         a.hives++; a.merged += Number(c.merged_90d) || 0; a.reverted += Number(c.reverted_14d_90d) || 0;
+        if (c.time_to_merge && (Number(c.time_to_merge.n) || 0) > 0) a.ttm.push(c.time_to_merge);
         (Array.isArray(c.calibration) ? c.calibration : []).forEach(function(b, j) {
           if (j < 6 && b) { pooled[j].n += Number(b.n) || 0; pooled[j].bad += Number(b.bad) || 0; }
         });
@@ -1986,7 +2019,10 @@
       Object.keys(fam).forEach(function(k) { out.family_false_approve_rate[k] = evidenceRateOf(fam[k].bad, fam[k].n); });
       out.by_acmm_level = Object.keys(acmm).map(Number).sort(function(x, y) { return x - y; }).map(function(l) {
         var a = acmm[l];
-        return { level: a.level, hives: a.hives, merged_90d: a.merged, revert_rate: evidenceRateOf(a.reverted, a.merged) };
+        var row = { level: a.level, hives: a.hives, merged_90d: a.merged, revert_rate: evidenceRateOf(a.reverted, a.merged) };
+        var ttm = evidenceLevelTimeToMerge(a.ttm);
+        if (ttm) row.time_to_merge = ttm;
+        return row;
       });
       if (outcomeHives > 0) {
         out.outcomes_by_author_kind = EVIDENCE_AUTHOR_KINDS.map(function(k) {
@@ -2192,11 +2228,12 @@
       if (!Array.isArray(v.outcomes_by_author_kind)) out.push('Outcome by author kind \u2014 ' + upgrade + '.');
       if (!Array.isArray(v.write_counters)) out.push('Boundary enforcement (agent writes the guardrail proxy blocked) \u2014 ' + upgrade + '.');
       if (!(v.shadow_gate && typeof v.shadow_gate === 'object')) out.push('Shadow gates \u2014 shadow mode is off on every selected hive, or none has reported it yet (' + upgrade + ').');
-      return out.concat([
-        'Per-axis criteria table \u2014 not reported by any hive build yet.',
-        'Claim-vs-verdict totals \u2014 not reported by any hive build yet.',
-        'Median time-to-merge per autonomy level \u2014 not reported by any hive build yet.',
-        'Revert rate by author kind per hive \u2014 not reported by any hive build yet.']);
+      out.push('Per-axis criteria table \u2014 not reported by any hive build yet.');
+      out.push('Claim-vs-verdict totals \u2014 not reported by any hive build yet.');
+      var ttm = (Array.isArray(v.by_acmm_level) ? v.by_acmm_level : []).some(function(a) { return a && a.time_to_merge; });
+      if (!ttm) out.push('Median time-to-merge per autonomy level \u2014 no selected hive reports it yet (it needs a build that records when each merged PR was opened).');
+      out.push('Revert rate by author kind per hive \u2014 not reported by any hive build yet.');
+      return out;
     }
 
     /* The "What this says" block: server findings for the unfiltered view,
@@ -2386,10 +2423,11 @@
       out += evidenceOutcomesPanel(view);
 
       var acmm = Array.isArray(view.by_acmm_level) ? view.by_acmm_level : [];
-      out += evidenceTable('Autonomy level \u00D7 outcome', '<th>Autonomy level</th><th>Hives</th><th>Merged (' + esc(win) + ')</th>' + evidenceRateHeads('Reverted within 14 days', 'Share of the merged PRs that were reverted or needed a follow-up fix within 14 days.'),
+      out += evidenceTable('Autonomy level \u00D7 outcome', '<th>Autonomy level</th><th>Hives</th><th>Merged (' + esc(win) + ')</th>' + evidenceRateHeads('Reverted within 14 days', 'Share of the merged PRs that were reverted or needed a follow-up fix within 14 days.') +
+          '<th title="Median of the per-hive median times from PR opened to merged. Not a pooled median: each hive counts once however many PRs it merged.">Median time-to-merge (median of hive medians)</th>',
         acmm.map(function(a) {
           return '<tr><td>L' + evidenceCount(a.level) + '</td><td>' + evidenceCount(a.hives) + '</td><td>' + evidenceCount(a.merged_90d) + '</td>' +
-            evidenceRateCells(a.revert_rate) + '</tr>';
+            evidenceRateCells(a.revert_rate) + evidenceTimeToMergeCell(a.time_to_merge) + '</tr>';
         }).join(''),
         'Each hive files under the autonomy level it runs at, from L1 (advice only) to L6 (merges on green CI without a human).', 'acmm', view);
 

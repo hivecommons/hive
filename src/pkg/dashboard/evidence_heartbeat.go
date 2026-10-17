@@ -90,6 +90,7 @@ func buildHeartbeatEvidenceWindow(prs map[string]*evidence.PR, now time.Time, wi
 	outcomes := map[string]spoke.HeartbeatEvidenceOutcome{}
 	var shadow spoke.HeartbeatEvidenceShadow
 	shadowSeen := false
+	var mergedPRs []*evidence.Bundle
 	for _, b := range prs {
 		if b.OpenedAt.Before(cutoff) {
 			continue
@@ -98,6 +99,7 @@ func buildHeartbeatEvidenceWindow(prs map[string]*evidence.PR, now time.Time, wi
 		failed := merged && (len(b.RevertedBy) > 0 || len(b.FollowedUpBy) > 0)
 		if merged {
 			out.Merged90d++
+			mergedPRs = append(mergedPRs, &evidence.Bundle{Merge: b.Merge})
 		}
 		if failed {
 			out.Reverted14d90d++
@@ -152,7 +154,20 @@ func buildHeartbeatEvidenceWindow(prs map[string]*evidence.PR, now time.Time, wi
 	if shadowSeen {
 		out.ShadowGate = &shadow
 	}
+	out.TimeToMerge = heartbeatTimeToMerge(mergedPRs)
 	return out
+}
+
+// heartbeatTimeToMerge is the median time-to-merge of the folded merged PRs
+// (each carries its PR's merge event, which holds opened_at when captured).
+// PRs without opened_at are skipped by evidence.MedianTimeToMerge, never
+// counted as zero; nil when none qualify.
+func heartbeatTimeToMerge(merged []*evidence.Bundle) *spoke.HeartbeatEvidenceTimeToMerge {
+	median, n := evidence.MedianTimeToMerge(merged)
+	if n == 0 {
+		return nil
+	}
+	return &spoke.HeartbeatEvidenceTimeToMerge{MedianSeconds: int64((median + time.Second/2) / time.Second), N: n}
 }
 
 func addHeartbeatOutcome(o spoke.HeartbeatEvidenceOutcome, merged, failed bool) spoke.HeartbeatEvidenceOutcome {
