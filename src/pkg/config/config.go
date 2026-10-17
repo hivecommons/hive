@@ -4064,7 +4064,8 @@ type StageLabelsConfig struct {
 	// head before the hive adopts the PR (default 2h).
 	ContributorGraceOnline string `yaml:"contributor_grace_online,omitempty"`
 	// ContributorGraceOffline is the same grace for an offline or external
-	// author who only got the GitHub comment (default 1h).
+	// author who only got the GitHub comment (default 15m): an online
+	// clanker keeps its claim; an offline one gets fifteen minutes.
 	ContributorGraceOffline string `yaml:"contributor_grace_offline,omitempty"`
 	// Adoption configures stage/074-adopted-by-hive: the hive supersedes a
 	// contributor PR that is still red after the grace with an App PR that
@@ -4095,12 +4096,13 @@ type StageAdoptionConfig struct {
 	Enabled *bool `yaml:"enabled"`
 	// AfterOffline is how long the author's relay must have been offline
 	// (no heartbeat within presence_window) after the 072 nudge before the
-	// hive adopts a clanker PR (default 30m). Applies to authors with a
+	// hive adopts a clanker PR (default 15m). Applies to authors with a
 	// contributor profile on this hive.
 	AfterOffline string `yaml:"after_offline,omitempty"`
 	// AfterUnregistered is the wait after the 072 nudge, with no new head,
 	// before the hive adopts a clanker PR whose author has NO contributor
-	// profile on this hive (another hive posted it; default 2h).
+	// profile on this hive (another hive posted it; default 15m — no
+	// presence reads as offline).
 	AfterUnregistered string `yaml:"after_unregistered,omitempty"`
 	// InPlace lets the hive adopt by pushing to the PR's own branch when
 	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
@@ -4116,16 +4118,16 @@ func (c StageAdoptionConfig) InPlaceEnabled() bool { return c.InPlace == nil || 
 
 // Defaults for the offline-adoption waits (stage 074, hivecommons/hive#12436).
 const (
-	DefaultAdoptAfterOffline      = 30 * time.Minute
-	DefaultAdoptAfterUnregistered = 2 * time.Hour
+	DefaultAdoptAfterOffline      = 15 * time.Minute
+	DefaultAdoptAfterUnregistered = 15 * time.Minute
 )
 
-// EffectiveAfterOffline parses AfterOffline (default 30m).
+// EffectiveAfterOffline parses AfterOffline (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
 	return parseDurationOr(c.AfterOffline, DefaultAdoptAfterOffline)
 }
 
-// EffectiveAfterUnregistered parses AfterUnregistered (default 2h).
+// EffectiveAfterUnregistered parses AfterUnregistered (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
 	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
 }
@@ -4133,7 +4135,7 @@ func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
 // Default graces before a red contributor PR is adopted (stage 074).
 const (
 	DefaultContributorGraceOnline  = 2 * time.Hour
-	DefaultContributorGraceOffline = time.Hour
+	DefaultContributorGraceOffline = 15 * time.Minute
 )
 
 // EffectiveContributorGraceOnline parses ContributorGraceOnline (default 2h).
@@ -4141,7 +4143,7 @@ func (s StageLabelsConfig) EffectiveContributorGraceOnline() time.Duration {
 	return parseDurationOr(s.ContributorGraceOnline, DefaultContributorGraceOnline)
 }
 
-// EffectiveContributorGraceOffline parses ContributorGraceOffline (default 1h).
+// EffectiveContributorGraceOffline parses ContributorGraceOffline (default 15m).
 func (s StageLabelsConfig) EffectiveContributorGraceOffline() time.Duration {
 	return parseDurationOr(s.ContributorGraceOffline, DefaultContributorGraceOffline)
 }

@@ -26,6 +26,19 @@ func (s lateContributorNudgeSink) Nudge(ctx context.Context, n automerge.Contrib
 	return automerge.ContributorNudgeOutcome{}
 }
 
+// Presence implements automerge.ContributorPresenceSource by delegating to
+// the hub. Without this the engine's type assertion failed (the hub has the
+// method, the wrapper did not), so adoption never saw live presence and
+// every clanker PR waited the nudge-time grace instead of the offline wait.
+func (s lateContributorNudgeSink) Presence(ctx context.Context, login string) automerge.ContributorPresence {
+	if h := s.hub(); h != nil {
+		return h.Presence(ctx, login)
+	}
+	return automerge.ContributorPresence{}
+}
+
+var _ automerge.ContributorPresenceSource = lateContributorNudgeSink{}
+
 func (s lateContributorNudgeSink) Resolve(ctx context.Context, owner, repo string, number int) {
 	if h := s.hub(); h != nil {
 		h.Resolve(ctx, owner, repo, number)
