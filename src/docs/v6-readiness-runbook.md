@@ -408,14 +408,13 @@ Prerequisites:
   on a hub-managed spoke by the heartbeat's authorized-user list
   (`AuthorizedUsersCallback`, same file). The author is the request's
   `X-Hive-User`, or `local` when that header is empty (`requestUser` in
-  `src/pkg/dashboard/audit.go`), and the lookup is an exact string match: no
-  case folding, no `github:` prefix stripping (`parseAllowedUser` in
-  `src/pkg/chat/chat.go`). Until
-  [#9131](https://github.com/hivecommons/hive/issues/9131) lands, the panel
-  author therefore has to match an allowlist entry byte-for-byte. In practice:
-  sign in with a per-user dashboard session whose login matches an entry
-  exactly. The shared dashboard token, and open or local-dev spokes, submit as
-  `local`, and their commands are refused.
+  `src/pkg/dashboard/audit.go`). Chat allowlist identities use case-insensitive,
+  `github:`-tolerant normalization (`config.IdentityMatchKey`), and authenticated
+  dashboard roles are routed through to the spine (#9131, fixed by
+  [#9210](https://github.com/hivecommons/hive/pull/9210),
+  [#9211](https://github.com/hivecommons/hive/pull/9211), and
+  [#9523](https://github.com/hivecommons/hive/pull/9523)), so token and open
+  spokes no longer depend on byte-for-byte allowlist matches or drop local commands.
 - `!status` needs only allowlist membership, not a particular role.
 
 Run:
