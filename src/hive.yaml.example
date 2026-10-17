@@ -966,6 +966,17 @@ dashboard:
 # See docs/strategy-lab.md for the experiment lifecycle, trust modes,
 # fast-fail bounds, schedule, and gate-decision flow.
 
+# Hive-self experiments — background-only scheduler for experiments on Hive
+# itself (not the Experiment Lab above; never shown there and never touches
+# governor config). Default off. The tick runs only with enabled: true AND
+# mode: background; it judges each unresolved experiment in the local ledger
+# and durably reverts fast-failed or finished treatments.
+# self_experiments:
+#   scheduler:
+#     enabled: false
+#     mode: background   # the only mode that runs
+#     interval_s: 300
+
 # Knowledge — 4-layer wiki system powered by llm-wiki (geronimo-iia/llm-wiki)
 # Facts are primed into agent kicks automatically — agents never query the wiki.
 # Personal layer stays on your machine; project layer lives in the repo.
