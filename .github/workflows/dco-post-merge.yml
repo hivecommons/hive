@@ -245,6 +245,13 @@ env:
   # Accepted by maintainer disposition in #11412: the maintainer merging the PR
   # that adds this entry IS that disposition.
 
+  # a9200f3d278fcdbf6291f37f921845113814686e — the squash of #12707 (closes
+  # #12690), on v5. author=James Reilly <jreilly1821@gmail.com>, but the squash
+  # retained only the scanner <scanner@hive.kubestellar.io> Signed-off-by
+  # instead of the author's. #12707 was maintainer-reviewed and merged. v5
+  # history is protected and is not rewritten. Accepted by maintainer
+  # disposition in #12727 (@clubanderson): per-commit waiver for this exact SHA.
+
   # KNOWN FAILING COMMITS THAT ARE DELIBERATELY *NOT* WAIVED
   #
   # Deep history carries further genuine mismatches — 8b536911 and, on v5
@@ -256,7 +263,7 @@ env:
   # regression. They are intentionally left unwaived: pre-approving them would
   # grow this list for commits that are not actually being reported, which is
   # the exact failure mode #6770 was filed about.
-  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda'
+  DCO_WAIVED_COMMITS: 'b798382a4d98ada28b0cb813644a595db0c58b08 7e01fee4a2c1a37f4a4072bf2d17e76e27113d01 d8f376e8e95f7b0c7d48d2b05b3a2a07ac9ee69b 4b9261183378a1a02a921cd0cc9df31e6f37993b 01bd2469e7a4022fff3fc04c42226c4d90c2f410 e29343efbb6e0721ca665ed8bd587d08997325e2 a8104b0cbeee1c4ac41034ac3f9951e6b5ac1200 692d068ffa198895ab91bd7ad663971f2b8ad358 b893b01c90e6ffff951523d20b19e9dfbfa80184 a0de3f920ded7e0cfc287bb5009d542e5a14f014 c6c78c3a26c33c6d1530996df20ead0a6b699dda a9200f3d278fcdbf6291f37f921845113814686e'
   # Tide/tagged-release failures discussed in #6276 came from human squash
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
