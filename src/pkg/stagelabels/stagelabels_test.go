@@ -954,3 +954,15 @@ func TestFixingStageForByAuthorKind(t *testing.T) {
 		t.Fatal("100 → 071 is a regression")
 	}
 }
+
+func TestRenamesWithdrawnNeedsAuthorSpellingReads072(t *testing.T) {
+	if got := Current([]string{"stage/072-needs-author"}); got != ReturnedToContributor {
+		t.Fatalf("withdrawn 072 spelling = %v, want ReturnedToContributor", got)
+	}
+	if got := Current([]string{NeedsAuthor.Label()}); got != NeedsAuthor {
+		t.Fatalf("071 label = %v, want NeedsAuthor", got)
+	}
+	if NeedsAuthor.Label() != "stage/071-needs-author" || ReturnedToContributor.Label() != "stage/072-returned-to-contributor" {
+		t.Fatalf("labels: %q %q", NeedsAuthor.Label(), ReturnedToContributor.Label())
+	}
+}

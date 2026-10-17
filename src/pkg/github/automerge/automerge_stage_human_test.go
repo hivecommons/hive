@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -224,6 +225,20 @@ func TestEnsureStageLabelsRenamesInPlace(t *testing.T) {
 	// The PR itself: old spelling removed, 050 added (the verdict is pending).
 	if !reflect.DeepEqual(api.added, [][]string{{"role/contributor", "stage/050-review-pending"}}) || !reflect.DeepEqual(api.removed, []string{"stage/090-needs-human"}) {
 		t.Fatalf("pr writes added=%v removed=%v", api.added, api.removed)
+	}
+
+	// The withdrawn #12713 spelling of 072 is renamed back in place too.
+	api3 := &stageAPI{labels: map[string]string{"stage/072-needs-author": stagelabels.StageColor}}
+	srv3 := newStageAPI(t, api3)
+	defer srv3.Close()
+	e3, _, _ := newStageEngine(t, srv3.URL, clock)
+	e3.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12, "author/human", "stage/072-needs-author"), contributorLaneReasonNoVerdict, false, nil)
+	e3.noteStageRole("acme", "widget", 12, stagelabels.RoleContributor)
+	if _, err := e3.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, old := api3.labels["stage/072-needs-author"]; old || api3.labels["stage/072-returned-to-contributor"] != stagelabels.StageColor || !slices.Contains(api3.edits, "stage/072-returned-to-contributor="+stagelabels.StageColor) {
+		t.Fatalf("072 rename-back edits=%v labels=%v", api3.edits, api3.labels)
 	}
 
 	// A repo that already has both spellings: no PATCH, nothing created twice.

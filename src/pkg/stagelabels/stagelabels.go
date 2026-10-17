@@ -725,6 +725,9 @@ func Owned(label string) bool {
 // Current reads the old spelling as the new stage until then.
 var Renames = map[string]Stage{
 	"stage/090-needs-human": ReadyForHumanMerge,
+	// #12713 briefly renamed 072 to `stage/072-needs-author`; that spelling
+	// was withdrawn when 071 took the "needs author" meaning for human PRs.
+	"stage/072-needs-author": ReturnedToContributor,
 }
 
 // Current returns the stage a label set carries, or None. An unknown
