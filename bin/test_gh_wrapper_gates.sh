@@ -740,6 +740,47 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# The ownership cache lives in world-writable /tmp, so a planted "yes" must
+# not short-circuit the author lookup: only a cached "no" is honoured, and a
+# positive verdict is re-verified against the API every time. Seed the file
+# for the contributor PR and prove the lookup still runs and still says no.
+OWNER_CACHE_777="${WORK}/.hive-labels-ensured-owner-owner_repo-777"
+run_owner_wrapper_seeded() {
+  local login_file="$1"; shift
+  [ "${1:-}" = "--" ] && shift
+  : >"$STUB_LOG"
+  rm -f "${WORK}"/.hive-labels-ensured-*
+  printf 'yes\n' >"$OWNER_CACHE_777"
+  local out rc
+  out="$(
+    HIVE_GH_WRAPPER_REAL_GH="$OWNER_STUB" \
+    HIVE_GH_WRAPPER_BOT_LOGIN_FILE="$login_file" \
+    STUB_LOG="$STUB_LOG" \
+    HIVE_AGENT="testagent" \
+    HIVE_AGENT_ID="testagent" \
+    HIVE_ID="hive-test" \
+    HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+    HIVE_ACMM_LEVEL=5 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    HIVE_CONTRIBUTOR_MODE="false" \
+    bash "$WRAPPER" "$@" 2>&1
+  )"
+  rc=$?
+  local cached="(absent)"
+  [ -f "$OWNER_CACHE_777" ] && cached="$(tr -d '[:space:]' <"$OWNER_CACHE_777")"
+  rm -f "${WORK}"/.hive-labels-ensured-*
+  echo "exit=${rc} cache=${cached} ::: $(tr '\n' '|' <"$STUB_LOG")"
+}
+result="$(run_owner_wrapper_seeded "$TRUSTED_LOGIN_FILE" -- pr edit 777 --repo owner/repo --body b)"
+if [[ "$result" == "exit=0 cache=no :::"* && "$result" == *"::: pr view 777 --repo owner/repo --json author"* && "$result" == *"|pr edit 777 --repo owner/repo --body b|"* && "$result" != *"add-label"* ]]; then
+  echo "  PASS: a planted 'yes' in the owner cache is ignored; author is re-checked and no labels are stamped"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: a planted 'yes' in the owner cache is ignored; author is re-checked and no labels are stamped"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
+
 # Unknown author (view failed) → fail closed: edit proceeds, no labels.
 result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr edit 999 --repo owner/repo --title t)"
 if [[ "$result" == exit=0* && "$result" == *"|pr edit 999 --repo owner/repo --title t|"* && "$result" != *"add-label"* ]]; then
