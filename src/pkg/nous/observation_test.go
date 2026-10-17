@@ -47,7 +47,11 @@ func TestObservationLedgerRoundTripAndSevenDayRecovery(t *testing.T) {
 		t.Fatalf("recovered_since = %v, want %v", records["h1:queue-growth"].RecoveredSince, want)
 	}
 
-	requests, err := NewObservationLedger(path).Reconcile(nil, t0.Add(7*24*time.Hour))
+	// Day 7 is only six days into the inactive run that began on day 1.
+	if got, err := NewObservationLedger(path).Reconcile(nil, t0.Add(7*24*time.Hour)); err != nil || len(got) != 0 {
+		t.Fatalf("recovery day 7 = %#v, err=%v", got, err)
+	}
+	requests, err := NewObservationLedger(path).Reconcile(nil, t0.Add(8*24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +64,7 @@ func TestObservationLedgerRoundTripAndSevenDayRecovery(t *testing.T) {
 		}
 	}
 
-	closedAt := t0.Add(7*24*time.Hour + time.Hour)
+	closedAt := t0.Add(8*24*time.Hour + time.Hour)
 	if err := NewObservationLedger(path).MarkClosed("h1:queue-growth", closedAt); err != nil {
 		t.Fatal(err)
 	}
@@ -123,14 +127,20 @@ func TestObservationLedgerRecoveryResetsWhenFindingRegresses(t *testing.T) {
 
 func TestRecoverySinceSyntheticSeries(t *testing.T) {
 	t0 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	// Unsorted on purpose: the inactive run starts at the first inactive
+	// sample after the last active one, regardless of slice order.
 	series := []ObservationSample{
-		{At: t0.Add(6 * 24 * time.Hour), Active: false},
+		{At: t0.Add(1 * 24 * time.Hour), Active: false},
 		{At: t0, Active: true},
 		{At: t0.Add(7 * 24 * time.Hour), Active: false},
 		{At: t0.Add(8 * 24 * time.Hour), Active: false},
 	}
-	since, recovered := RecoverySince(series, t0.Add(8*24*time.Hour))
-	if !since.Equal(t0.Add(7*24*time.Hour)) || !recovered {
+	since, recovered := RecoverySince(series, t0.Add(7*24*time.Hour))
+	if !since.Equal(t0.Add(24*time.Hour)) || recovered {
+		t.Fatalf("six-day series = since %v recovered %v", since, recovered)
+	}
+	since, recovered = RecoverySince(series, t0.Add(8*24*time.Hour))
+	if !since.Equal(t0.Add(24*time.Hour)) || !recovered {
 		t.Fatalf("recovery series = since %v recovered %v", since, recovered)
 	}
 

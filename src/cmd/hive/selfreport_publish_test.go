@@ -307,6 +307,12 @@ func TestPublishObservationRecoveryUnknownHubIssueIsNoop(t *testing.T) {
 		relayed = append(relayed, req)
 		return selfReportRelayResponse{Reason: "unknown_fingerprint"}, nil
 	}
+	// The first cycle without the finding starts the seven-day window; the
+	// recovery request is produced only by a later cycle past that window.
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{}, deps)
+	if len(relayed) != 0 {
+		t.Fatalf("recovery relayed before the seven-day window: %#v", relayed)
+	}
 	now = now.Add(8 * 24 * time.Hour)
 	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{}, deps)
 	if len(relayed) != 1 {
