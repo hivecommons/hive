@@ -35044,7 +35044,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled regressed author tier governor.labels.stage.enabled' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
-      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline' },
+      { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff' },
@@ -41775,6 +41775,15 @@ function burnAreaChart() {
       const stageAdoptionOn = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_enabled !== undefined)
         ? _configState.dirty.labels.stage_adoption_enabled
         : (_configState.data.stageAdoptionEnabled !== false);
+      const stageAdoptionAfterOffline = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_after_offline !== undefined)
+        ? _configState.dirty.labels.stage_adoption_after_offline
+        : (_configState.data.stageAdoptionAfterOffline || '');
+      const stageAdoptionAfterUnregistered = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_after_unregistered !== undefined)
+        ? _configState.dirty.labels.stage_adoption_after_unregistered
+        : (_configState.data.stageAdoptionAfterUnregistered || '');
+      const stageAdoptionInPlace = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_in_place !== undefined)
+        ? _configState.dirty.labels.stage_adoption_in_place
+        : (_configState.data.stageAdoptionInPlace !== false);
       const stageGraceOnline = (_configState.dirty.labels && _configState.dirty.labels.stage_grace_online !== undefined)
         ? _configState.dirty.labels.stage_grace_online
         : (_configState.data.stageGraceOnline || '');
@@ -41828,7 +41837,18 @@ function burnAreaChart() {
           <input type="text" id="cfg-stage-presence-window" value="${esc(stagePresenceWindow)}" placeholder="15m" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_presence_window" data-arg-types="s,s,w">
           <div class="config-help">A contributor counts as online when their relay heartbeat is within this window; online contributors get the fix-pr interrupt immediately, offline ones only the comment (their fix waits in the queue).</div>
         </div>
-        <div class="config-toggle"><div class="config-toggle-switch ${stageAdoptionOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_adoption_enabled"></div><span class="config-toggle-label">Adopt red contributor PRs after the grace ${yamlHint('governor.labels.stage.adoption.enabled')} ${settingHelpMark('settings', 'labels', 'Adopt red contributor PRs', `When a nudged contributor PR is still red after its grace (online 2h / offline 1h, below) the hive moves it to stage/074-adopted-by-hive: it pushes hive/adopt-N at the contributor's head (commits and sign-off preserved), opens a superseding App PR carrying the original Closes lines, comments once on the original, and the scanner's red-PR fix-first kick rebases and fixes CI on that branch. The original closes automatically when the superseding PR merges. Off: the PR stays in 072 and just stalls. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageAdoptionOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_adoption_enabled"></div><span class="config-toggle-label">Adopt red contributor PRs after the grace ${yamlHint('governor.labels.stage.adoption.enabled')} ${settingHelpMark('settings', 'labels', 'Adopt red contributor PRs', `When a nudged contributor PR is still red after its grace (online 2h / offline 1h, below) the hive moves it to stage/074-adopted-by-hive: it adopts in place when the PR allows maintainer edits, otherwise it pushes hive/adopt-N at the contributor's head (commits and sign-off preserved), opens a superseding App PR carrying the original Closes lines, comments once on the original, and the scanner's red-PR fix-first kick rebases and fixes CI on that branch. Off: the PR stays in 072 and just stalls. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-field">
+          <label for="cfg-stage-adoption-after-offline">Offline adoption wait ${yamlHint('governor.labels.stage.adoption.after_offline')}</label>
+          <input type="text" id="cfg-stage-adoption-after-offline" value="${esc(stageAdoptionAfterOffline)}" placeholder="30m" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_adoption_after_offline" data-arg-types="s,s,w">
+          <div class="config-help">Go duration after the later of first nudge and last heartbeat before adopting a clanker PR whose relay has gone offline.</div>
+        </div>
+        <div class="config-field">
+          <label for="cfg-stage-adoption-after-unregistered">Unregistered adoption wait ${yamlHint('governor.labels.stage.adoption.after_unregistered')}</label>
+          <input type="text" id="cfg-stage-adoption-after-unregistered" value="${esc(stageAdoptionAfterUnregistered)}" placeholder="2h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_adoption_after_unregistered" data-arg-types="s,s,w">
+          <div class="config-help">Go duration after the first nudge before adopting a clanker PR with no contributor profile on this hive.</div>
+        </div>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageAdoptionInPlace ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_adoption_in_place"></div><span class="config-toggle-label">Adopt in place when maintainers may edit ${yamlHint('governor.labels.stage.adoption.in_place')} ${settingHelpMark('settings', 'labels', 'Adopt in place', `When enabled, same-repo PRs and forks with maintainer edits allowed are repaired on the contributor PR branch instead of superseded by hive/adopt-N. Disable to always use the superseding App PR path.`)}</span></div>
         <div class="config-field">
           <label for="cfg-stage-grace-online">Online contributor grace ${yamlHint('governor.labels.stage.contributor_grace_online')}</label>
           <input type="text" id="cfg-stage-grace-online" value="${esc(stageGraceOnline)}" placeholder="2h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_grace_online" data-arg-types="s,s,w">

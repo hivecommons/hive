@@ -362,6 +362,8 @@ stage but written only on change:
 
 ### Off the happy path: 072 → nudge → 074 → takeover
 
+#### Stage 072 by author kind
+
 When a contributor PR goes red the hive does not just relabel it (full flow in
 [hive-merge.md](hive-merge.md#stage-labels)):
 
@@ -399,8 +401,7 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
    `author/clanker` PRs only — there is a hive on the other end to interrupt
    or stand in for. `author/human` and `author/hive` PRs follow the same
    stage transitions and simply wait at 072 for a push or a comment: no
-   nudge, no adoption, no extra comment
-   ([Stage 072 by author kind](#stage-072-by-author-kind)).
+   nudge, no adoption, no extra comment.
 3. If the author stays unavailable the hive adopts the PR
    (`governor.labels.stage.adoption.enabled`, default `true`). "Unavailable"
    is decided against the contributor's **live** presence on the hub at

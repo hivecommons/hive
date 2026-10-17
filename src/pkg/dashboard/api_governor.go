@@ -158,11 +158,14 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"stageNudgeEnabled":   cfg.Governor.Labels.Stage.ContributorNudge.IsEnabled(),
 		"stageNudgeRenudge":   cfg.Governor.Labels.Stage.ContributorNudge.RenudgeInterval,
 		"stagePresenceWindow": cfg.Governor.Labels.Stage.PresenceWindow,
-		// governor.labels.stage.adoption.enabled / contributor_grace_*: the
+		// governor.labels.stage.adoption.* / contributor_grace_*: the
 		// stage-074 adoption of red contributor PRs.
-		"stageAdoptionEnabled": cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
-		"stageGraceOnline":     cfg.Governor.Labels.Stage.ContributorGraceOnline,
-		"stageGraceOffline":    cfg.Governor.Labels.Stage.ContributorGraceOffline,
+		"stageAdoptionEnabled":           cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
+		"stageAdoptionAfterOffline":      cfg.Governor.Labels.Stage.Adoption.AfterOffline,
+		"stageAdoptionAfterUnregistered": cfg.Governor.Labels.Stage.Adoption.AfterUnregistered,
+		"stageAdoptionInPlace":           cfg.Governor.Labels.Stage.Adoption.InPlaceEnabled(),
+		"stageGraceOnline":               cfg.Governor.Labels.Stage.ContributorGraceOnline,
+		"stageGraceOffline":              cfg.Governor.Labels.Stage.ContributorGraceOffline,
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -695,11 +698,14 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		StageNudgeEnabled   *bool   `json:"stage_nudge_enabled"`
 		StageNudgeRenudge   *string `json:"stage_nudge_renudge_interval"`
 		StagePresenceWindow *string `json:"stage_presence_window"`
-		// Stage-074 adoption: governor.labels.stage.adoption.enabled and
+		// Stage-074 adoption: governor.labels.stage.adoption.* and
 		// governor.labels.stage.contributor_grace_online / _offline.
-		StageAdoptionEnabled *bool   `json:"stage_adoption_enabled"`
-		StageGraceOnline     *string `json:"stage_grace_online"`
-		StageGraceOffline    *string `json:"stage_grace_offline"`
+		StageAdoptionEnabled           *bool   `json:"stage_adoption_enabled"`
+		StageAdoptionAfterOffline      *string `json:"stage_adoption_after_offline"`
+		StageAdoptionAfterUnregistered *string `json:"stage_adoption_after_unregistered"`
+		StageAdoptionInPlace           *bool   `json:"stage_adoption_in_place"`
+		StageGraceOnline               *string `json:"stage_grace_online"`
+		StageGraceOffline              *string `json:"stage_grace_offline"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -796,10 +802,12 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for name, v := range map[string]*string{
-		"stage_nudge_renudge_interval": body.StageNudgeRenudge,
-		"stage_presence_window":        body.StagePresenceWindow,
-		"stage_grace_online":           body.StageGraceOnline,
-		"stage_grace_offline":          body.StageGraceOffline,
+		"stage_nudge_renudge_interval":      body.StageNudgeRenudge,
+		"stage_presence_window":             body.StagePresenceWindow,
+		"stage_adoption_after_offline":      body.StageAdoptionAfterOffline,
+		"stage_adoption_after_unregistered": body.StageAdoptionAfterUnregistered,
+		"stage_grace_online":                body.StageGraceOnline,
+		"stage_grace_offline":               body.StageGraceOffline,
 	} {
 		if v == nil || strings.TrimSpace(*v) == "" {
 			continue
@@ -900,6 +908,16 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	if body.StageAdoptionEnabled != nil {
 		v := *body.StageAdoptionEnabled
 		s.deps.Config.Governor.Labels.Stage.Adoption.Enabled = &v
+	}
+	if body.StageAdoptionAfterOffline != nil {
+		s.deps.Config.Governor.Labels.Stage.Adoption.AfterOffline = strings.TrimSpace(*body.StageAdoptionAfterOffline)
+	}
+	if body.StageAdoptionAfterUnregistered != nil {
+		s.deps.Config.Governor.Labels.Stage.Adoption.AfterUnregistered = strings.TrimSpace(*body.StageAdoptionAfterUnregistered)
+	}
+	if body.StageAdoptionInPlace != nil {
+		v := *body.StageAdoptionInPlace
+		s.deps.Config.Governor.Labels.Stage.Adoption.InPlace = &v
 	}
 	if body.StageGraceOnline != nil {
 		s.deps.Config.Governor.Labels.Stage.ContributorGraceOnline = strings.TrimSpace(*body.StageGraceOnline)
