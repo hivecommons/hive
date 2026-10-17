@@ -1,0 +1,1 @@
+- Add a Nous scheduler executor that durably latches Hive-self fast-fail results in the experiment ledger before reverting, disables reverted flag experiments locally via a per-experiment deny-list that survives heartbeat assignments, reverts channel experiments through an injectable hook, and records improved/regressed/inconclusive judgements.
