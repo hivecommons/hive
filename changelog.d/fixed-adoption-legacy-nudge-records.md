@@ -1,1 +1,1 @@
-Stage-074 adoption now counts the grace from `last_nudge_at` for contributor PRs whose stage record was nudged before `first_nudge_at` existed; those records (nudged by an earlier build) previously never became due for adoption.
+- Stage-074 adoption now counts the grace from `last_nudge_at` for contributor PRs whose stage record was nudged before `first_nudge_at` existed; those records (nudged by an earlier build) previously never became due for adoption.

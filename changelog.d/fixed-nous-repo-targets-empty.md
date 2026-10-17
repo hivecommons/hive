@@ -1,1 +1,1 @@
-fixed: list configured project repositories in Nous Experiment Lab repo targets.
+- List configured project repositories in Nous Experiment Lab repo targets.
