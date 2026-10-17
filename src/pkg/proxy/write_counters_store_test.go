@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -104,5 +105,56 @@ func TestLoadDurableWriteCountsMissingAndCorrupt(t *testing.T) {
 	}
 	if d, _ := LoadDurableWriteCounts(bad); d.Totals["ADVISORY"].Attempted != 1 {
 		t.Errorf("corrupt file not replaced: %+v", d)
+	}
+}
+
+// TestMigrateWriteCountersAndRecordedSince pins the move of the counter file
+// under /data (hivecommons/hive#12368): a file left at the legacy
+// container-local path is folded into the durable one and removed, and the
+// durable file records when it started counting (floored to its earliest
+// week) so a reader can say "not recorded before <date>".
+func TestMigrateWriteCountersAndRecordedSince(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "run", "write-counters.json")
+	durable := filepath.Join(dir, "data", "write-counters.json")
+	wk := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC) // a Monday
+	now := wk.Add(3 * 24 * time.Hour)
+
+	var c writeCounters
+	c.now = func() time.Time { return wk.Add(time.Hour) }
+	c.record("ISSUES_ONLY", "")
+	c.record("ISSUES_ONLY", DenyReasonMode)
+	if err := c.flush(legacy, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateWriteCounters(legacy, durable, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("legacy file should be removed after migration, stat err = %v", err)
+	}
+	got, err := LoadDurableWriteCounts(durable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Totals["ISSUES_ONLY"].Attempted != 2 || got.Totals["ISSUES_ONLY"].Blocked != 1 {
+		t.Errorf("totals = %+v", got.Totals)
+	}
+	if got.EarliestWeek() != "2026-10-12" {
+		t.Errorf("earliest week = %q", got.EarliestWeek())
+	}
+	if !got.RecordedSince.Equal(wk) {
+		t.Errorf("recorded_since = %s, want floored to earliest week %s", got.RecordedSince, wk)
+	}
+	// Idempotent: nothing left to migrate, durable file untouched.
+	if err := MigrateWriteCounters(legacy, durable, now.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := LoadDurableWriteCounts(durable)
+	if !again.RecordedSince.Equal(wk) || again.Totals["ISSUES_ONLY"].Attempted != 2 {
+		t.Errorf("second migrate changed the file: %+v", again)
+	}
+	if err := MigrateWriteCounters(durable, durable, now); err != nil {
+		t.Errorf("same-path migrate must be a no-op, got %v", err)
 	}
 }

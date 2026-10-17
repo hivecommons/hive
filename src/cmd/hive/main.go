@@ -2694,6 +2694,9 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	intent.SetEvaluationAuditSink(func(o intent.Observation) {
 		b.dashSrv.AuditLogRecord("system", intentEvaluatedAuditAction, intentEvaluatedAuditDetail(o), "", o.Repo, o.Number)
 	})
+	if err := intent.MigrateCounters(intent.LegacyCountersPath, intent.CountersPath, time.Now()); err != nil {
+		b.logger.Warn("intent counters: legacy file not migrated", "error", err)
+	}
 	b.preShutdownHooks.add("flush-intent-counters", intent.StartEvaluationCounterPersistence(intent.CountersPath, b.logger))
 
 	// The scheduler's classifier pass records KindClassified journeys the
@@ -4107,6 +4110,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
 		// Durable attempted-vs-blocked write counters (#12069); observation only.
+		if err := proxy.MigrateWriteCounters(proxy.LegacyWriteCountersPath, proxy.WriteCountersPath, time.Now()); err != nil {
+			b.logger.Warn("write counters: legacy file not migrated", "error", err)
+		}
 		stopWriteCounters := b.githubProxy.StartWriteCounterPersistence(proxy.WriteCountersPath)
 		b.preShutdownHooks.add("flush-write-counters", stopWriteCounters)
 		b.githubProxy.SetAgentGitHubBudgetConfig(b.cfg.AgentGitHubAPIHourlyCap, b.cfg.GitHubAgentReserveFloor)
