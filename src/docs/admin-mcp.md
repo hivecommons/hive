@@ -129,10 +129,15 @@ The image carries it at `/usr/local/share/hive/hive-admin-mcp`. There is no
 separate release artifact today. Copy it out of the container:
 
 ```bash
-podman create --name hive-admin-mcp-extract ghcr.io/hivecommons/hive:stable
+podman create --name hive-admin-mcp-extract ghcr.io/hivecommons/hive:edge
 podman cp hive-admin-mcp-extract:/usr/local/share/hive/hive-admin-mcp ~/.local/bin/hive-admin-mcp
 podman rm hive-admin-mcp-extract
 ```
+
+The image tag must match the hive's own release line: use `:edge` for v6 (today's
+v6 publishing channel), `:stable` once v6 is promoted to stable, etc. The binary
+warns on build skew with the hub it talks to, so matching lines ensures they
+agree on the protocol.
 
 Or build it from a checkout of the `v6` branch: `cd src && go build -o hive-admin-mcp ./cmd/hive-admin-mcp`.
 
