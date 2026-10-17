@@ -407,10 +407,12 @@ func (c *Engine) canPushToPRBranch(ctx context.Context, obs stageObservation) bo
 }
 
 // settleInPlaceAdoption handles a head change on an in-place-adopted PR:
-// the hive's own fix push keeps the adoption (and moves it to the new head);
-// anyone else's push means the contributor is back, so the hive yields —
-// one note, adoption forgotten, the ordinary 072 flow re-arms. Returns the
-// number of comments posted.
+// a push by the contributor means they are back, so the hive yields — one
+// note, adoption forgotten, the ordinary 072 flow re-arms. Any other push
+// keeps the adoption and moves it to the new head: the App's own commits,
+// and the fixer agents' commits, which carry a bare git identity (e.g.
+// "scanner") with no GitHub login and so cannot be matched to the App.
+// Returns the number of comments posted.
 func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record) (int, error) {
 	if !prev.AdoptedInPlace() || obs.HeadSHA == "" || obs.HeadSHA == prev.AdoptedHead {
 		return 0, nil
@@ -426,9 +428,9 @@ func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.S
 		store.MarkAdoptedHead(key, obs.HeadSHA)
 		return 0, nil
 	}
-	if commitByLogin(commit, app) {
+	if commitByLogin(commit, app) || !commitByContributor(commit, obs.Author) {
 		store.MarkAdoptedHead(key, obs.HeadSHA)
-		c.info("stage labels: adopted PR advanced by the hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
+		c.info("stage labels: adopted PR advanced by the hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "pusher", commitIdentity(commit))
 		return 0, nil
 	}
 	store.MarkYielded(key, obs.HeadSHA)
@@ -438,6 +440,42 @@ func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.S
 		return 0, err
 	}
 	return 1, nil
+}
+
+// commitByContributor reports whether the commit is attributable to the PR
+// author: a matching GitHub login, or — for an unlinked identity — a git
+// author/committer name equal to the login.
+func commitByContributor(commit *gh.RepositoryCommit, author string) bool {
+	author = strings.ToLower(strings.TrimSpace(author))
+	if commit == nil || author == "" {
+		return false
+	}
+	if commitByLogin(commit, author) {
+		return true
+	}
+	if c := commit.GetCommit(); c != nil {
+		for _, u := range []*gh.CommitAuthor{c.GetAuthor(), c.GetCommitter()} {
+			if strings.EqualFold(strings.TrimSpace(u.GetName()), author) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// commitIdentity renders the commit's pusher for logs: the GitHub login when
+// linked, else the git author name.
+func commitIdentity(commit *gh.RepositoryCommit) string {
+	if commit == nil {
+		return ""
+	}
+	if l := commit.GetAuthor().GetLogin(); l != "" {
+		return l
+	}
+	if l := commit.GetCommitter().GetLogin(); l != "" {
+		return l
+	}
+	return commit.GetCommit().GetAuthor().GetName()
 }
 
 // commitByLogin reports whether the commit's GitHub author or committer is
