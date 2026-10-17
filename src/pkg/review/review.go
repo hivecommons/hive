@@ -468,11 +468,43 @@ func Collect(dir string, opts AggregateOptions) (Artifact, error) {
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
 		groups[key] = append(groups[key], *report)
 	}
+	groups = foldDigestlessReports(groups)
 	artifact := Artifact{GeneratedAt: time.Now().UTC()}
 	for _, key := range sortedKeys(groups) {
 		artifact.Items = append(artifact.Items, AggregateReports(groups[key], opts))
 	}
 	return artifact, nil
+}
+
+// foldDigestlessReports merges reports that carry no body digest into the
+// digest-keyed group for the same repo/number/head when exactly one such
+// group exists. Perspective reports from one swarm run do not all record the
+// digest (observed: style on hivecommons/hive#12421, correctness and
+// docs-currency on #12332), and keyed apart they read as two "incomplete"
+// aggregates — a 5/5 approval never became merge-eligible. With several
+// digest groups for a head the digestless reports cannot be attributed and
+// stay separate.
+func foldDigestlessReports(groups map[string][]PerspectiveReport) map[string][]PerspectiveReport {
+	byHead := map[string][]string{}
+	for key, reports := range groups {
+		if len(reports) == 0 || strings.TrimSpace(reports[0].BodyDigest) == "" {
+			continue
+		}
+		head := reviewKey(reports[0].Repo, reports[0].Number, reports[0].HeadSHA, "")
+		byHead[head] = append(byHead[head], key)
+	}
+	for head, keys := range byHead {
+		if len(keys) != 1 {
+			continue
+		}
+		loose, ok := groups[head]
+		if !ok {
+			continue
+		}
+		groups[keys[0]] = append(groups[keys[0]], loose...)
+		delete(groups, head)
+	}
+	return groups
 }
 
 func WriteArtifact(path string, artifact Artifact) error {
