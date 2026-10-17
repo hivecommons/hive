@@ -899,6 +899,58 @@ guessed at, because pairing a token with the wrong hub points a live
 credential at the wrong hive; fix the file (or re-run
 `just contribute-setup`) and try again.
 
+### Editing repository selections
+
+`hivectl hives repos <hive>` displays saved repository consent and each entry's
+source (reviewed membership, snapshot, preset, or personal override). It never
+prints registration tokens. JSON/YAML output includes excluded entries with
+`selected: false` and distinguishes legacy unrestricted consent from an empty
+selection.
+
+```bash
+hivectl hives repos acme
+hivectl hives repos acme --select all-current  # review today's eligible membership
+hivectl hives repos acme --exclude org/repo
+hivectl hives repos acme --include other/project
+hivectl hives repos acme --toggle-exclude org/repo
+hivectl hives repos acme --clear org/repo      # clear both personal overrides
+hivectl hives repos acme --select none         # explicitly select nothing
+hivectl hives repos acme --reset --yes         # restore legacy unrestricted consent
+```
+
+`all-current` snapshots the public `GET /api/contribute/repositories` response;
+it does not follow future additions. Discovery errors (including an older Hive
+without this endpoint) leave the saved selection unchanged. Personal additions
+and exclusions survive a new snapshot; exclusions always win, even over an
+explicit inclusion. `none` clears membership and additions, turns following off,
+and retains exclusions so later snapshots cannot silently restore excluded work.
+Only `--reset --yes` drops the entire selection. To exclude from a legacy
+unrestricted profile, first accept an `all-current` snapshot: an unreviewed
+"all except one" wildcard is not a supported selection.
+
+Repository arguments accept `owner/name` (defaults: `--forge github --host
+github.com`) or canonical `forge/host/owner/name` IDs. Bare names are refused;
+IDs are normalized to lower case. GitLab nested namespaces are supported.
+`hives list` and the Hives overlay show the saved effective scope as `all`,
+`N repos`, or `none`. In the overlay, **x** opens a repository exclusion toggle;
+enter an ID (or GitHub `owner/name`) and press enter. This is the same operation
+as `--toggle-exclude`, preserving personal additions when an exclusion is lifted.
+Initialize snapshots or reset consent using the CLI.
+
+Every selection write uses `ProfileStore.Commit` and then the existing relay
+signal path. Adding/removing a Hive also signals the relay, including from the
+TUI. If no relay is running, the receipt says the change applies on next start.
+An already executing task keeps its original Hive credentials and lease.
+
+**Compatibility:** these commands edit local consent and its generated
+projection, not operator admission policy. Runtime scope negotiation,
+fail-closed enforcement, and remote `unsupported` telemetry are companion work
+in #12805 and #12806. A relay that does not understand `HIVE_REPO_SCOPE` cannot
+enforce a saved repository selection; do not rely on this editor alone as an
+execution boundary. Upgrade the Hive and relay together before relying on live
+repository filtering. The scope column describes saved consent, not an
+acknowledgement from the remote Hive.
+
 Notes:
 
 - **The same list is in the TUI.** `just contribute-tui` (or `hivectl tui --hives`) opens the
