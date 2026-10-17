@@ -78,9 +78,9 @@ func (agentResumeOp) PreviewWithProvider(ctx context.Context, args map[string]an
 	effects := []string{"The named agent may accept work again."}
 	switch agentPauseOwnership(ctx, provider, agent) {
 	case pauseOwnershipUnowned:
-		effects = append(effects, "Claims operator ownership of this agent's pause state (`pause_owner: operator`), so the ACMM pack visibility sweep will no longer pause it.")
+		effects = append(effects, "If the agent is paused, resume claims operator ownership of this agent's pause state (`pause_owner: operator`), so the ACMM pack visibility sweep will no longer pause it.")
 	case pauseOwnershipUnknown:
-		effects = append(effects, "May claim operator ownership of this agent's pause state (`pause_owner: operator`) unless it is already operator-owned, so the ACMM pack visibility sweep would no longer pause it; current ownership could not be determined because the agents list was truncated.")
+		effects = append(effects, "If the agent is paused, resume may claim operator ownership of this agent's pause state (`pause_owner: operator`) unless it is already operator-owned, so the ACMM pack visibility sweep would no longer pause it; current ownership could not be determined because the agents list was truncated.")
 	}
 	return WritePreview{Operation: WriteOpAgentResume, Summary: "Resume agent " + agent, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: effects, WideningDisclosure: "No widening: this operation targets exactly one named agent.", ConfirmationMessage: "Confirm resuming agent " + agent + ".", Details: map[string]any{"agent": agent}}, nil
 }
@@ -97,7 +97,7 @@ func agentPauseOwnership(ctx context.Context, provider Provider, agent string) p
 	if provider == nil {
 		return pauseOwnershipUnowned
 	}
-	data, err := provider.Read(ctx, ToolAgentsList, nil)
+	data, err := provider.Read(ctx, ToolAgentsList, map[string]any{"limit": MaxResultLimit})
 	if err != nil {
 		return pauseOwnershipUnowned
 	}

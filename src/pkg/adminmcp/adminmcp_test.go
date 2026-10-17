@@ -436,7 +436,7 @@ func TestAgentResumePreviewHedgesWhenCappedListHidesAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	effects := strings.Join(preview.Effects, "\n")
-	if !strings.Contains(effects, "May claim operator ownership") || strings.Contains(effects, "\nClaims operator ownership") {
+	if !strings.Contains(effects, "resume may claim operator ownership") || strings.Contains(effects, "\nIf the agent is paused, resume claims operator ownership") {
 		t.Fatalf("effects = %v", preview.Effects)
 	}
 }
