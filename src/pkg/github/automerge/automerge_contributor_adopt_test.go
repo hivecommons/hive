@@ -87,6 +87,11 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 			w.WriteHeader(http.StatusNotFound)
 			return true
 		}
+		if name, ok := strings.CutPrefix(login, "git:"); ok {
+			// Unlinked identity: bare git author/committer name, no GitHub user.
+			_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": nil, "committer": nil, "commit": map[string]any{"author": map[string]any{"name": name}, "committer": map[string]any{"name": name}}})
+			return true
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"sha": sha, "author": map[string]any{"login": login}, "committer": map[string]any{"login": login}})
 		return true
 	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/acme/widget/pulls/"):
@@ -609,6 +614,19 @@ func TestAdoptionInPlaceWhenMaintainerCanModify(t *testing.T) {
 	}
 	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bbb" {
 		t.Fatalf("adoption did not follow the hive's head: %+v", rec)
+	}
+
+	// A fixer agent pushes with a bare git identity (no GitHub login): that
+	// is the hive's work too, not the contributor returning.
+	h.adopt.setCommitAuthor("bb2", "git:scanner")
+	h.api.reset()
+	h.clock.advance(time.Minute)
+	h.observe(adoptPR(7, "bb2", adopted...), "check-failing:unit")
+	if h.api.writes() != 0 {
+		t.Fatalf("churn after fixer push: added=%v removed=%v comments=%v", h.api.added, h.api.removed, h.api.comments)
+	}
+	if rec, _ := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7)); !rec.AdoptedInPlace() || rec.AdoptedHead != "bb2" {
+		t.Fatalf("adoption did not follow the fixer's head: %+v", rec)
 	}
 
 	// The contributor is back and pushes: one yield note, adoption forgotten,
