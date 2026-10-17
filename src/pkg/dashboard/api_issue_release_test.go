@@ -39,7 +39,7 @@ func TestRepoIssueReleaseRefusedOnLabelDrivenRepo12635(t *testing.T) {
 	s := &Server{deps: &Dependencies{
 		GHClient: &ghpkg.Client{},
 		Config: &config.Config{Project: config.ProjectConfig{Org: "o", RepoPolicies: []config.RepoPolicy{
-			{Repo: "r", LabelDriven: true, ReleaseOnApprove: true},
+			{Repo: "r", LabelDriven: true, LabelDrivenApprovalLabels: []string{}, ReleaseOnApprove: true},
 		}}},
 	}}
 	req := httptest.NewRequest(http.MethodPost, "/api/repos/o/r/issues/7/release", nil)

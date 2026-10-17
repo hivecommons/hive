@@ -73,8 +73,12 @@ func parseIssueOwnerStep(body string) *IssueOwnerStep {
 	return s
 }
 
-func issueOwnerStepSnapshotKey(repo string, number int) string {
-	return strings.ToLower(strings.TrimSpace(repo)) + "#" + fmt.Sprint(number)
+// issueOwnerStepSnapshotKey keys the cache by owner/repo, so a bare
+// configured repo name (the sweep) and the dashboard's owner/repo path name
+// the same entry.
+func (c *Client) issueOwnerStepSnapshotKey(repo string, number int) string {
+	owner, name := c.splitRepo(strings.TrimSpace(repo))
+	return strings.ToLower(owner+"/"+name) + "#" + fmt.Sprint(number)
 }
 
 func cloneIssueOwnerStep(step *IssueOwnerStep) *IssueOwnerStep {
@@ -96,7 +100,7 @@ func (c *Client) rememberIssueOwnerStep(repo string, number int, step *IssueOwne
 	if c.issueOwnerSteps == nil {
 		c.issueOwnerSteps = make(map[string]*IssueOwnerStep)
 	}
-	c.issueOwnerSteps[issueOwnerStepSnapshotKey(repo, number)] = cloneIssueOwnerStep(step)
+	c.issueOwnerSteps[c.issueOwnerStepSnapshotKey(repo, number)] = cloneIssueOwnerStep(step)
 	c.issueOwnerStepsMu.Unlock()
 }
 
@@ -107,7 +111,7 @@ func (c *Client) issueOwnerStepForSnapshot(repo string, issue *gh.Issue) *IssueO
 	if c == nil || issue == nil {
 		return nil
 	}
-	key := issueOwnerStepSnapshotKey(repo, issue.GetNumber())
+	key := c.issueOwnerStepSnapshotKey(repo, issue.GetNumber())
 	c.issueOwnerStepsMu.RLock()
 	cached, resolved := c.issueOwnerSteps[key]
 	c.issueOwnerStepsMu.RUnlock()

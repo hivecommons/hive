@@ -28976,6 +28976,95 @@
         }
       }
     },
+    "/api/repos/{owner}/{repo}/issues/{number}/release": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Execute the typed release owner step on one parked issue",
+        "description": "Owners, repository owners, and users with GitHub write, maintain, or admin permission may run the same live-validated release action as `/hive approve` on an issue parked on a trusted kind=release owner step. Tag and target come from the issue's current owner step, never from the request. Refused with 409 on label-driven repositories, when release_on_approve is not enabled, or when a live precondition (default-branch ancestry, existing tag, required checks, version source) fails; the issue then stays parked.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "tag": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "minStatusSeq": {
+                      "type": "integer"
+                    },
+                    "warning": {
+                      "type": "string",
+                      "description": "Present when the release was created but the follow-up issue comment failed"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Repository write permission required"
+          },
+          "409": {
+            "description": "Release refused: label-driven repository, release_on_approve not enabled, no trusted release owner step, or a live precondition failed"
+          },
+          "502": {
+            "description": "GitHub release write failed"
+          },
+          "503": {
+            "description": "Release action not configured"
+          }
+        }
+      }
+    },
     "/api/repos/pauses": {
       "get": {
         "tags": [
