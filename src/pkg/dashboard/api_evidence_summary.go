@@ -53,9 +53,18 @@ type EvidenceSummary struct {
 	// WriteCounters is the proxy's attempted-vs-blocked agent write totals per
 	// intent tier (#12069); omitted when the counter file is absent or unreadable.
 	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
+	// WriteActivity is every agent GitHub write observed in the window —
+	// direct writes through the proxy (from the durable counter file's weekly
+	// buckets) plus hive-mediated writes from the audit log — with the
+	// refusals of each, so the boundary rate has an honest denominator.
+	WriteActivity EvidenceWriteActivity `json:"write_activity"`
 	// ClaimVsVerdict is panel 5 (#12365): per ISO week, agent-authored PRs
 	// whose author said "done" versus what CI and the swarm said.
 	ClaimVsVerdict []EvidenceClaimWeek `json:"claim_vs_verdict"`
+	// CIRecovery is panel 5's headline: of agent PRs that were CI-red when
+	// the agent claimed done, how many recovered (went green and merged),
+	// how fast, and how many were abandoned, under the hive's CI policy.
+	CIRecovery EvidenceCIRecovery `json:"ci_recovery"`
 	// IntentCounters is the intent gate's evaluated-vs-would-block totals per
 	// tier (#12362), same shape as WriteCounters: Attempted is evaluations,
 	// Blocked is the subset BlocksMerge(true) would have withheld, whether or
@@ -69,7 +78,10 @@ type EvidenceSummary struct {
 	// WorkBalance is panel 6 (#12366): per ISO week, audited issues opened by
 	// actor kind against issues closed, over the same window and repo.
 	WorkBalance []EvidenceWorkBalanceWeek `json:"work_balance"`
-	Missing     EvidenceMissing           `json:"missing"`
+	// WorkBalanceSources names where each work_balance series came from and
+	// where GitHub-truth issue coverage begins (#12517).
+	WorkBalanceSources EvidenceWorkBalanceSources `json:"work_balance_sources"`
+	Missing            EvidenceMissing            `json:"missing"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
@@ -507,7 +519,15 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
 	resp.IntentCounters = loadEvidenceWriteCounters(intentCountersPath)
 	resp.ComplexityByRepo = loadEvidenceComplexity(ghpkg.ReviewEvidenceRoot)
-	resp.WorkBalance = buildEvidenceWorkBalance(evidenceWorkBalanceEntries(s.audit), win, repo)
+	resp.WorkBalance, resp.WorkBalanceSources = buildEvidenceWorkBalance(evidenceWorkBalanceInputs{
+		Entries: evidenceWorkBalanceEntries(s.audit),
+		Rollup:  loadIssueActivityRollup(issueActivityPath),
+		PRs:     evidence.FoldPRs(bundles, repo, ""),
+		Buckets: s.evidenceWorkBalanceBuckets(win),
+	}, win, repo)
+	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == ""
+	resp.WriteActivity = buildEvidenceWriteActivity(writeCountersPath, evidenceWriteActivityEntries(s.audit), win, repo, now)
+	resp.CIRecovery = buildEvidenceCIRecovery(evidenceCIClaims(bundles, evidence.FoldPRs(bundles, "", "")), loadCIRecoveryRollup(ciRecoveryPath), win, repo, evidenceCIPolicy(s))
 
 	days := (hours + 23) / 24
 	if days < 1 || days > reviewerAccuracyMaxWindowDays {
