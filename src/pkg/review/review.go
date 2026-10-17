@@ -126,6 +126,10 @@ type PerspectiveReport struct {
 	HeadSHA     string      `json:"head_sha,omitempty"`
 	AuthorModel string      `json:"author_model,omitempty"`
 	ReviewModel string      `json:"review_model,omitempty"`
+	// DecisionRequested means the review found no code defect it can route
+	// to the author, but explicitly deferred a maintainer/product decision.
+	DecisionRequested bool   `json:"decision_requested,omitempty"`
+	DecisionQuestion  string `json:"decision_question,omitempty"`
 	// NotApplicable marks a report whose perspective had nothing to judge on
 	// this PR -- today only plan_match on a PR with no Hive-Run / Hive-Plan
 	// trailer. It is neither an approval nor a withheld one: the aggregate
@@ -151,22 +155,24 @@ type AggregateOptions struct {
 }
 
 type Aggregate struct {
-	Repo             string                  `json:"repo"`
-	Number           int                     `json:"number"`
-	HeadSHA          string                  `json:"head_sha,omitempty"`
-	AuthorModel      string                  `json:"author_model,omitempty"`
-	ReviewModel      string                  `json:"review_model,omitempty"`
-	Verdict          Verdict                 `json:"verdict"`
-	MergeEligible    bool                    `json:"merge_eligible"`
-	FixCycle         bool                    `json:"fix_cycle"`
-	RequiresHuman    bool                    `json:"requires_human"`
-	CloseRecommended bool                    `json:"close_recommended"`
-	FixAttempts      int                     `json:"fix_attempts,omitempty"`
-	MaxFixAttempts   int                     `json:"max_fix_attempts,omitempty"`
-	Threshold        outputschema.Severity   `json:"human_threshold"`
-	Reasons          []string                `json:"reasons,omitempty"`
-	Findings         []PerspectiveFinding    `json:"findings,omitempty"`
-	Perspectives     map[Perspective]Verdict `json:"perspectives"`
+	Repo              string                  `json:"repo"`
+	Number            int                     `json:"number"`
+	HeadSHA           string                  `json:"head_sha,omitempty"`
+	AuthorModel       string                  `json:"author_model,omitempty"`
+	ReviewModel       string                  `json:"review_model,omitempty"`
+	Verdict           Verdict                 `json:"verdict"`
+	MergeEligible     bool                    `json:"merge_eligible"`
+	FixCycle          bool                    `json:"fix_cycle"`
+	RequiresHuman     bool                    `json:"requires_human"`
+	CloseRecommended  bool                    `json:"close_recommended"`
+	DecisionRequested bool                    `json:"decision_requested,omitempty"`
+	DecisionQuestion  string                  `json:"decision_question,omitempty"`
+	FixAttempts       int                     `json:"fix_attempts,omitempty"`
+	MaxFixAttempts    int                     `json:"max_fix_attempts,omitempty"`
+	Threshold         outputschema.Severity   `json:"human_threshold"`
+	Reasons           []string                `json:"reasons,omitempty"`
+	Findings          []PerspectiveFinding    `json:"findings,omitempty"`
+	Perspectives      map[Perspective]Verdict `json:"perspectives"`
 	// Confidence is the derived 0–5 mergeability score (hivecommons/hive#8182),
 	// computed from the same reports as the verdict so the two never disagree.
 	Confidence Confidence `json:"confidence"`
@@ -261,6 +267,8 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		return agg
 	}
 	seenVerdicts := map[Verdict]bool{}
+	var decisionRequested bool
+	var decisionQuestion string
 	for i, r := range reports {
 		effective := effectiveReports[i]
 		if agg.Repo == "" {
@@ -283,6 +291,13 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		}
 		agg.Perspectives[r.Perspective] = effective.Verdict
 		seenVerdicts[effective.Verdict] = true
+		if r.DecisionRequested {
+			decisionRequested = true
+			if decisionQuestion == "" {
+				decisionQuestion = strings.TrimSpace(r.DecisionQuestion)
+			}
+			agg.Reasons = append(agg.Reasons, decisionReason(r.DecisionQuestion))
+		}
 		for _, f := range r.Findings {
 			agg.Findings = append(agg.Findings, PerspectiveFinding{Perspective: r.Perspective, Finding: f})
 			if InScopeFinding(f) && severityAtLeast(f.Severity, threshold) {
@@ -292,6 +307,13 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	}
 	sortReasons(agg.Reasons)
 
+	if decisionRequested {
+		agg.Verdict = VerdictRequiresHuman
+		agg.RequiresHuman = true
+		agg.DecisionRequested = true
+		agg.DecisionQuestion = decisionQuestion
+		return agg
+	}
 	if seenVerdicts[VerdictReject] {
 		agg.Verdict = VerdictReject
 		agg.CloseRecommended = true
@@ -332,6 +354,14 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	agg.RequiresHuman = true
 	agg.Reasons = []string{"review perspectives did not unanimously approve"}
 	return agg
+}
+
+func decisionReason(question string) string {
+	question = strings.TrimSpace(question)
+	if question == "" {
+		return "maintainer decision requested"
+	}
+	return "maintainer decision requested: " + question
 }
 
 // incompleteCoverageReason names the configured perspectives this head has

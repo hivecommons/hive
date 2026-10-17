@@ -84,13 +84,14 @@ var humanConflictReasons = map[string]bool{"conflicting": true, "not-mergeable":
 // humanEvidence gathers the Evidence for one human-routed observation.
 func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, cause stagelabels.HumanCause, now time.Time) stagelabels.Evidence {
 	e := stagelabels.Evidence{
-		Head:         obs.HeadSHA,
-		Verdict:      humanVerdict(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)),
-		Conflict:     humanConflictReasons[obs.Reason] || hasLabelFold(obs.Labels, "needs-rebase"),
-		Holds:        stagelabels.Holds(obs.Labels),
-		Cause:        cause,
-		CauseReason:  decisionCause(obs.Reason),
-		SelfAuthored: obs.Lane == stageLaneSelf,
+		Head:             obs.HeadSHA,
+		Verdict:          humanVerdict(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)),
+		Conflict:         humanConflictReasons[obs.Reason] || hasLabelFold(obs.Labels, "needs-rebase"),
+		Holds:            stagelabels.Holds(obs.Labels),
+		Cause:            cause,
+		CauseReason:      decisionCause(obs.Reason),
+		DecisionQuestion: strings.TrimSpace(c.contributorLaneVerdictFor(obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA).DecisionQuestion),
+		SelfAuthored:     obs.Lane == stageLaneSelf,
 	}
 	sentinel := c.sentinelLabelName()
 	if sentinel == "" {
@@ -157,7 +158,7 @@ func decisionCause(reason string) string {
 		return "the PR edits CI workflow / action files, which the lane never merges unattended"
 	case reason == contributorLaneReasonTestsRemoved:
 		return "the PR removes tests, which the lane never merges unattended"
-	case reason == contributorLaneReasonNoReviewer, reason == stageReasonVerdictRequiresHuman:
+	case reason == contributorLaneReasonNoReviewer, reason == stageReasonVerdictRequiresHuman, reason == stageReasonDecisionRequested:
 		// RouteHuman renders the verdict itself from the evidence.
 		return ""
 	case reason == contributorLaneReasonReporterTrustHold:

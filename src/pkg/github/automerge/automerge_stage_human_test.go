@@ -324,3 +324,34 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 		t.Fatalf("085 dedupe: comments=%q writes=%d", api.comments, api.writes())
 	}
 }
+
+func TestDecisionRequestedLandsAt085WithQuestion(t *testing.T) {
+	api, closeAPI := seededStageAPI(t)
+	defer closeAPI()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)}
+	verdict := &ContributorLaneVerdict{
+		Configured:        true,
+		Verdict:           "requires_human",
+		DecisionRequested: true,
+		DecisionQuestion:  "@clubanderson should decide whether this groundwork lands before its consumer.",
+	}
+	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
+	ctx := context.Background()
+
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(17, "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.noteStageVerdict("acme", "widget", 17, *verdict)
+	e.noteStageAuthor("acme", "widget", 17, stagelabels.AuthorContributor)
+	if _, err := e.ApplyStageLabels(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := stageOf(t, store, 17); got != stagelabels.NeedsDecision {
+		t.Fatalf("stage=%v want 085", got)
+	}
+	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "reviewer question: @clubanderson should decide whether this groundwork lands before its consumer.") {
+		t.Fatalf("085 entry comment = %q", api.comments)
+	}
+	if rec, _ := store.Get(stageKey("acme", "widget", 17)); rec.Reason != stageReasonDecisionRequested {
+		t.Fatalf("recorded reason = %q", rec.Reason)
+	}
+}

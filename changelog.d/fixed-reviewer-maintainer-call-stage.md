@@ -1,0 +1,1 @@
+- Route reviewer-deferred maintainer calls to `stage/085-needs-decision` instead of leaving the PR at review-pending/stalled when the review comment/verdict asks for a human decision.

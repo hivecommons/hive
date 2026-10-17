@@ -191,7 +191,9 @@ type ContributorLaneVerdict struct {
 	// merge-eligible.
 	Approved bool
 	// Verdict is the raw aggregate verdict for the audit comment, if any.
-	Verdict string
+	Verdict           string
+	DecisionRequested bool
+	DecisionQuestion  string
 }
 
 // ContributorLaneVerdictFunc resolves the reviewer verdict for repo#number at

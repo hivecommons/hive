@@ -120,6 +120,10 @@ func TestRouteHumanDecision(t *testing.T) {
 		{"needs-decision", func(e *Evidence) { e.Holds = Holds([]string{"needs-decision"}) }, "the `needs-decision` label is set"},
 		{"no reviewer", func(e *Evidence) { e.Verdict = VerdictUnavailable }, "no reviewer agent is configured, so this head will never get a swarm verdict"},
 		{"requires_human", func(e *Evidence) { e.Verdict = VerdictRequiresHuman }, "the reviewer swarm returned `requires_human` @abc1234"},
+		{"requires_human question", func(e *Evidence) {
+			e.Verdict = VerdictRequiresHuman
+			e.DecisionQuestion = "@clubanderson should decide whether to land this now."
+		}, "reviewer question: @clubanderson should decide whether to land this now."},
 		{"lane rule", func(e *Evidence) { e.Cause, e.CauseReason = CauseDecision, "the lane excludes `workflow-paths` edits" }, "the lane excludes `workflow-paths` edits"},
 		{"lane rule unnamed", func(e *Evidence) { e.Cause = CauseDecision }, "the automerge lane will not merge this unattended"},
 	}
@@ -128,11 +132,11 @@ func TestRouteHumanDecision(t *testing.T) {
 			e := readyEvidence()
 			tc.mutate(&e)
 			r := RouteHuman(e)
-			if r.Stage != NeedsDecision || len(r.Reasons) != 1 || r.Reasons[0] != tc.want {
+			if r.Stage != NeedsDecision || !containsString(r.Reasons, tc.want) {
 				t.Fatalf("route = %+v", r)
 			}
 			got := DecisionComment(r)
-			if !strings.HasPrefix(got, DecisionCommentMarker+"\nNeeds a decision, not a merge: "+tc.want+".") || !strings.Contains(got, "Head: ") {
+			if !strings.Contains(got, tc.want) || !strings.Contains(got, "Head: ") {
 				t.Fatalf("DecisionComment = %q", got)
 			}
 		})
@@ -180,6 +184,15 @@ func TestHoldsAndShortSHA(t *testing.T) {
 	if ShortSHA("abc") != "abc" || ShortSHA(" 0123456789 ") != "0123456" {
 		t.Fatal("ShortSHA")
 	}
+}
+
+func containsString(list []string, want string) bool {
+	for _, got := range list {
+		if got == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestRenamedLabelStillReads: a PR carrying the pre-#12528 spelling reads as

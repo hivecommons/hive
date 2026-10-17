@@ -418,9 +418,14 @@ func ciReasonInconclusive(reason string) bool {
 // stageReasonVerdictRequiresHuman is stageVerdictReason for requires_human.
 const stageReasonVerdictRequiresHuman = "reviewer-verdict:requires_human"
 
+const stageReasonDecisionRequested = "contributor-lane:decision-requested"
+
 // stageVerdictReason is the recorded reason when the reviewer verdict, not
 // the lane's skip reason, decided the stage.
 func stageVerdictReason(d stageDetail) string {
+	if d.Verdict.DecisionRequested {
+		return stageReasonDecisionRequested
+	}
 	return "reviewer-verdict:" + strings.ToLower(strings.TrimSpace(d.Verdict.Verdict))
 }
 
@@ -441,6 +446,9 @@ func verdictBlocks(d stageDetail) bool {
 func verdictNeedsHuman(d stageDetail) bool {
 	if !d.VerdictKnown || d.Verdict.Approved {
 		return false
+	}
+	if d.Verdict.DecisionRequested {
+		return true
 	}
 	return strings.ToLower(strings.TrimSpace(d.Verdict.Verdict)) == "requires_human"
 }
@@ -556,6 +564,14 @@ func classifyStage(o stageObservation) stageVerdict {
 		// (CI pending, no-verdict, …) is not what the author has to act on.
 		return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageVerdictReason(o.Detail)}
 	}
+	if verdictNeedsHuman(o.Detail) {
+		// The reviewer DID answer — requires_human / needs-decision — but
+		// the lane folds every non-approve verdict into non-mergeable reasons
+		// such as no-verdict or pending CI. Hand it to a person instead of
+		// leaving it in review-pending while the reviewer skips it as already
+		// reviewed (hive #12417/#12438).
+		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: stageVerdictReason(o.Detail)}
+	}
 	if classifyCIReason(reason) == ciReasonRed {
 		// A red required check is the lane's own diagnosis; it outranks a
 		// red optional one in the recorded reason.
@@ -572,15 +588,6 @@ func classifyStage(o stageObservation) stageVerdict {
 		return stageVerdict{Stage: stagelabels.MergeQueue, Rank: stageRankOwned}
 	}
 	if reason == contributorLaneReasonNoVerdict {
-		if verdictNeedsHuman(o.Detail) {
-			// The reviewer DID answer — requires_human — but the lane folds
-			// every non-approve verdict into "no-verdict", so the PR sat at
-			// 050-review-pending for hours (hive #12417/#12438) while the
-			// reviewer skipped it as already reviewed. Hand it to a person:
-			// Human routes it through routeHuman so the 085 entry comment
-			// is posted like every other needs-decision arrival.
-			return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: stageVerdictReason(o.Detail)}
-		}
 		return stageVerdict{Stage: stagelabels.ReviewPending, Rank: stageRankOwned}
 	}
 	if classifyCIReason(reason) == ciReasonPending {

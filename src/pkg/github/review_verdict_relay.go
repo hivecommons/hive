@@ -73,6 +73,7 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.Per
 			slog.String("agent", req.Agent), slog.String("error", err.Error()))
 		return nil
 	}
+	decisionRequested, decisionQuestion := reviewDecisionRequestFromBody(req.Body)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		c.logger.Warn("review-request watcher: could not create report dir",
 			slog.String("dir", dir), slog.String("error", err.Error()))
@@ -80,11 +81,61 @@ func (c *Client) recordReviewVerdict(req ReviewRequest, dir string) []review.Per
 	}
 	var recorded []review.PerspectiveReport
 	for _, report := range reports {
+		if decisionRequested {
+			report.DecisionRequested = true
+			report.DecisionQuestion = decisionQuestion
+			report.Verdict = review.VerdictRequiresHuman
+		}
 		if written, ok := c.writeOneVerdict(req, report, dir); ok {
 			recorded = append(recorded, written)
 		}
 	}
 	return recorded
+}
+
+func reviewDecisionRequestFromBody(body string) (bool, string) {
+	const (
+		verdictMarker  = "<!-- hive-verdict: needs-decision -->"
+		questionPrefix = "<!-- hive-decision-question:"
+	)
+	var requested bool
+	var question string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if lower == verdictMarker {
+			requested = true
+			continue
+		}
+		if strings.HasPrefix(lower, questionPrefix) && strings.HasSuffix(trimmed, "-->") {
+			question = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(trimmed[len(questionPrefix):]), "-->"))
+		}
+	}
+	if requested {
+		return true, question
+	}
+	if fallback := maintainerCallQuestion(body); fallback != "" {
+		return true, fallback
+	}
+	return false, ""
+}
+
+func maintainerCallQuestion(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !strings.Contains(lower, "maintainer call") || !strings.Contains(trimmed, "@") {
+			continue
+		}
+		if strings.Contains(lower, "not a maintainer call") ||
+			strings.Contains(lower, "is not a maintainer call") ||
+			strings.Contains(lower, "isn't a maintainer call") ||
+			strings.Contains(lower, "no maintainer call") {
+			continue
+		}
+		return trimmed
+	}
+	return ""
 }
 
 // writeOneVerdict commits a single perspective's verdict where review.Collect

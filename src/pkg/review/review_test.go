@@ -57,6 +57,12 @@ func TestAggregateReportsMatrix(t *testing.T) {
 		{name: "changes requested enters fix cycle", reps: append(allApprove()[:1], baseReport(PerspectiveSecurity, VerdictChangesRequested)), want: VerdictChangesRequested, fix: true},
 		{name: "severity threshold requires human", reps: []PerspectiveReport{baseReport(PerspectiveSecurity, VerdictApprove, highFinding)}, want: VerdictRequiresHuman, human: true},
 		{name: "explicit requires human wins", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove), baseReport(PerspectiveSecurity, VerdictRequiresHuman)}, want: VerdictRequiresHuman, human: true},
+		{name: "decision request marker wins", reps: []PerspectiveReport{func() PerspectiveReport {
+			r := baseReport(PerspectiveCorrectness, VerdictApprove)
+			r.DecisionRequested = true
+			r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+			return r
+		}()}, want: VerdictRequiresHuman, human: true},
 		{name: "reject recommends close", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictReject)}, want: VerdictReject, close: true},
 		{name: "fix cap requires human", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictChangesRequested)}, opts: AggregateOptions{FixAttempts: DefaultFixCycleCap}, want: VerdictRequiresHuman, human: true},
 		{name: "missing perspectives is incomplete, not a human hold", reps: []PerspectiveReport{baseReport(PerspectiveCorrectness, VerdictApprove)}, want: VerdictIncomplete},
@@ -69,6 +75,24 @@ func TestAggregateReportsMatrix(t *testing.T) {
 				t.Fatalf("aggregate = verdict:%s merge:%v fix:%v human:%v close:%v", got.Verdict, got.MergeEligible, got.FixCycle, got.RequiresHuman, got.CloseRecommended)
 			}
 		})
+	}
+}
+
+func TestAggregateReportsCarriesDecisionQuestion(t *testing.T) {
+	r := baseReport(PerspectiveCorrectness, VerdictApprove)
+	r.DecisionRequested = true
+	r.DecisionQuestion = "@clubanderson should decide whether this groundwork lands before its consumer."
+
+	got := AggregateReports([]PerspectiveReport{r}, AggregateOptions{})
+
+	if got.Verdict != VerdictRequiresHuman || !got.RequiresHuman || !got.DecisionRequested {
+		t.Fatalf("aggregate = %+v, want requires_human decision request", got)
+	}
+	if got.DecisionQuestion != r.DecisionQuestion {
+		t.Fatalf("DecisionQuestion = %q, want %q", got.DecisionQuestion, r.DecisionQuestion)
+	}
+	if len(got.Reasons) != 1 || !strings.Contains(got.Reasons[0], r.DecisionQuestion) {
+		t.Fatalf("Reasons = %v, want question quoted", got.Reasons)
 	}
 }
 

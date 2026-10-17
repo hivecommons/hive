@@ -161,17 +161,23 @@ func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automer
 			return automerge.ContributorLaneVerdict{Configured: true}
 		}
 		approved := artifact.HasAggregateApproval(repo, number, headSHA)
-		return automerge.ContributorLaneVerdict{Configured: true, Approved: approved, Verdict: contributorLaneVerdictText(artifact, repo, number, headSHA)}
+		return contributorLaneVerdictFromArtifact(artifact, repo, number, headSHA, approved)
 	}
 }
 
-func contributorLaneVerdictText(artifact review.Artifact, repo string, number int, headSHA string) string {
+func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, number int, headSHA string, approved bool) automerge.ContributorLaneVerdict {
 	for _, item := range artifact.Items {
 		if item.Number == number && strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) && strings.TrimSpace(item.HeadSHA) == strings.TrimSpace(headSHA) {
-			return string(item.Verdict)
+			return automerge.ContributorLaneVerdict{
+				Configured:        true,
+				Approved:          approved,
+				Verdict:           string(item.Verdict),
+				DecisionRequested: item.DecisionRequested,
+				DecisionQuestion:  item.DecisionQuestion,
+			}
 		}
 	}
-	return ""
+	return automerge.ContributorLaneVerdict{Configured: true, Approved: approved}
 }
 
 func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func(repo, login string) github.SentinelAuthorTrust {

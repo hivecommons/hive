@@ -114,6 +114,48 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 	}
 }
 
+func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHead(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123")
+	withVerdictDispatchState(t, review.DispatchState{Recent: []review.RecentReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveCorrectness,
+		Agent:       "reviewer",
+		HeadSHA:     "abc123",
+		Confirmed:   time.Now().UTC(),
+	}}})
+	body := "Looks correct, but this is a maintainer decision.\n\n<!-- hive-verdict: needs-decision -->\n<!-- hive-decision-question: @clubanderson should decide whether this groundwork lands before its consumer. -->"
+
+	recorded := c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw, Body: body}, dir)
+
+	if len(recorded) != 1 || recorded[0].Verdict != review.VerdictRequiresHuman || !recorded[0].DecisionRequested {
+		t.Fatalf("recorded = %+v, want promoted decision request", recorded)
+	}
+	artifact, err := review.Collect(dir, review.AggregateOptions{})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := artifact.Items[0]
+	if got.Verdict != review.VerdictRequiresHuman || !got.DecisionRequested ||
+		!strings.Contains(got.DecisionQuestion, "groundwork lands before its consumer") {
+		t.Fatalf("aggregate = %+v, want decision request", got)
+	}
+}
+
+func TestReviewDecisionRequestFallbackRequiresMaintainerCallLine(t *testing.T) {
+	got, question := reviewDecisionRequestFromBody("This is a maintainer call, not a code defect — @clubanderson should decide.")
+	if !got || !strings.Contains(question, "@clubanderson") {
+		t.Fatalf("fallback = %v, %q; want decision request with question", got, question)
+	}
+
+	got, question = reviewDecisionRequestFromBody("This is not a maintainer call for @clubanderson; approve.")
+	if got || question != "" {
+		t.Fatalf("negated fallback = %v, %q; want no decision request", got, question)
+	}
+}
+
 // A verdict naming a different PR than the one reviewed must be discarded: an
 // agent authorized to comment on one PR must not be able to record a binding
 // verdict against another.

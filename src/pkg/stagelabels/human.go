@@ -110,6 +110,9 @@ type Evidence struct {
 	// CauseReason is the lane's reason string, rendered when Cause is a
 	// decision the comment has to name.
 	CauseReason string
+	// DecisionQuestion is the maintainer-facing question from the reviewer
+	// verdict/comment, when the swarm explicitly deferred a product call.
+	DecisionQuestion string
 	// SelfAuthored selects 070 fixing over 072 returned-to-contributor for
 	// the "author must act" outcome.
 	SelfAuthored bool
@@ -197,6 +200,9 @@ func RouteHuman(e Evidence) Route {
 		decide = append(decide, "no reviewer agent is configured, so this head will never get a swarm verdict")
 	case VerdictRequiresHuman:
 		decide = append(decide, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
+		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
+			decide = append(decide, "reviewer question: "+q)
+		}
 	}
 	if e.Sentinel {
 		decide = append(decide, "a sentinel alert is open on this PR")
