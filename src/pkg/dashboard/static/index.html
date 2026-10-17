@@ -12532,13 +12532,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
        queue → ✓ merged. An issue keeps advancing with its covering PR's
        stage; a PR filed without an issue shows the issue steps as passed.
        060 Reviewed lights Merge admission; 070/072/074 ride Review and
-       085/090 ride Merge admission as detour badges.
+       085/090 ride Merge admission as detour badges — except an ISSUE on
+       085, which is parked on a person before any PR exists and so rides
+       Actionable (the issue side), not the merge gate.
        stageTrackerRowHtml() is pure (no DOM) so stage_tracker_ui_test.go can
        execute it under node. */
     const STAGE_TRACKER_POLL_MS = 30000;
     const STAGE_TRACKER_PATH = [0, 10, 20, 30, 50, 80];
     const STAGE_TRACKER_PR_COLUMN = 30;
     const STAGE_TRACKER_MERGE_COLUMN = 80;
+    const STAGE_TRACKER_NEEDS_DECISION = 85;
+    // Where an issue parked on 085 lights: Actionable, the issue side.
+    const STAGE_TRACKER_ISSUE_DECISION_COLUMN = 10;
     // Stages that share a column (or a detour word) and what the lit chevron says.
     const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
@@ -12572,7 +12577,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.indexOf('stalled') >= 0) return 'Stalled';
       if (mods.indexOf('regressed') >= 0) return 'Sent back';
-      const viaPR = item.kind === 'issue' && n >= 50 ? ' (its PR)' : '';
+      // An issue on 085 of its own (no covering PR) is parked on a person
+      // itself, so no "(its PR)" suffix.
+      const viaPR = item.kind === 'issue' && n >= 50 && (n !== 85 || item.via_pr) ? ' (its PR)' : '';
       switch (n) {
         case 0: return 'Open';
         case 10: return 'Waiting for a worker';
@@ -12596,9 +12603,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Which strip segment a stage lights: main stages light themselves,
     // 040 shares the PR in progress column with 030, 060 and 100 share the
     // Merge gate column with 080, detours light the segment they branch from.
-    function stageTrackerAnchor(stage, stages) {
+    // kind is 'issue' or 'pr': an issue on 085 is parked on a person before
+    // any PR exists, so it lights Actionable rather than the merge gate.
+    function stageTrackerAnchor(stage, stages, kind) {
       const cur = Number(stage) || 0;
       if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
+      if (cur === STAGE_TRACKER_NEEDS_DECISION && kind === 'issue') return STAGE_TRACKER_ISSUE_DECISION_COLUMN;
       if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
       if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
       if (cur === 60 || cur === 100) return STAGE_TRACKER_MERGE_COLUMN;
@@ -12615,7 +12625,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       (stages || []).forEach(st => { byNum[st.number] = st; });
       const cur = Number(item.stage) || 0;
       const curStage = byNum[cur] || {};
-      const anchor = stageTrackerAnchor(cur, stages);
+      const anchor = stageTrackerAnchor(cur, stages, item.via_pr ? 'pr' : item.kind);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== 40 && cur !== 60 && cur !== 100)
         ? { text: STAGE_TRACKER_ACTIVE_WORD[cur] || item.stage_short || curStage.short || curStage.label || String(cur) } : null;
@@ -12785,7 +12795,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerLinkedSorted(item, stages) {
       const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
       const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
-      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages) - stageTrackerAnchor(x.stage, stages)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
+      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages, 'pr') - stageTrackerAnchor(x.stage, stages, 'pr')) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
     }
 
     // List order: furthest along the strip first — a covered issue counts as
@@ -12793,7 +12803,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerSortKey(item, stages) {
       const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
       const lead = linked.length && linked[0].stage ? linked[0] : item;
-      return { anchor: stageTrackerAnchor(lead.stage, stages), since: Date.parse(lead.stage_since || '') || Infinity };
+      const kind = lead === item ? item.kind : 'pr';
+      return { anchor: stageTrackerAnchor(lead.stage, stages, kind), since: Date.parse(lead.stage_since || '') || Infinity };
     }
 
     // Row = title line (number, title, chips, since) + thin strip. Non-active
@@ -12816,12 +12827,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // One covering PR: a single entry whose strip the PR's stage drives.
           const lp = linked[0];
           prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title)];
-          shown = Object.assign({}, item, { stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason });
+          shown = Object.assign({}, item, { via_pr: true, stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
           range = { to: 20 };
-          if (stageTrackerAnchor(item.stage, stages) <= 20) shown = Object.assign({}, item, { stage: 40 });
+          if (stageTrackerAnchor(item.stage, stages, item.kind) <= 20) shown = Object.assign({}, item, { stage: 40 });
           subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
         }
       } else {

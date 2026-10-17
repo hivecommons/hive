@@ -75,6 +75,8 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_PATH"),
 		jsConstLine(t, html, "STAGE_TRACKER_PR_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_COLUMN"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIVE_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTOR"),
@@ -244,6 +246,17 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && !row.includes('ham-mod-needs-decision'), row);
 assert.ok(tooltip(row).includes('Needs a human decision'), row);
+// An ISSUE on 085 is parked on a person before any PR exists: it lights
+// Actionable (the issue side) as a detour, not the merge gate, and its
+// headline carries no "(its PR)" suffix.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 355, kind: 'issue', stage: 85 }, stages, ctx);
+assert.deepStrictEqual(segStates(row), [D, 'active detoured', T, T, T, T, 'todo cap'], row);
+assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && tooltip(row).includes('Needs a human decision') && !tooltip(row).includes('(its PR)'), row);
+// ...but an issue whose single covering PR sits on 085 still rides the PR's
+// merge gate, with the "(its PR)" suffix.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 356, kind: 'issue', stage: 40, linked_prs: [{ number: 109, author_kind: 'hive', stage: 85 }] }, stages, ctx);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap'], row);
+assert.ok(tooltip(row).includes('Needs a human decision (its PR)'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 50, modifiers: ['needs-decision'] }, stages, ctx);
 assert.ok(row.includes('ham-mod-needs-decision">needs human decision</span>') && tooltip(row).includes('Flags: needs human decision'), row);
 // Whose move it is, as an ink-coloured icon after the word: Review = hive,
@@ -305,6 +318,9 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 12, kind: 'issue', tit
 assert.ok(/<li class="ham-seg ham-head-lead"><div class="ham-head-main">[\s\S]*?<span class="ham-title" title="A very long issue title that must not wrap">A very long issue title that must not wrap<\/span>[\s\S]*?<\/li><li class="ham-seg ham-head-pr"><\/li><li class="ham-seg cap"><span class="ham-badges"><\/span><\/li>/.test(row), row);
 // Sort key: a covered issue counts as far along as its furthest PR.
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1, stage: 30 }, { number: 2, stage: 90 }] }, stages).anchor, 80);
+// An issue parked on 085 with no PR sorts at Actionable, not past the merge gate.
+assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 85 }, stages).anchor, 10);
+assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 85 }, stages).anchor, 80);
 assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1 }] }, stages).anchor, 30, 'unknown PR stage falls back to the issue');
 assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 72 }, stages).anchor, 50);
 
@@ -371,6 +387,8 @@ func TestStageTrackerFilterSortPage(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_SORTS"),
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
 		jsConstLine(t, html, "STAGE_TRACKER_PATH"),
+		jsConstLine(t, html, "STAGE_TRACKER_NEEDS_DECISION"),
+		jsConstLine(t, html, "STAGE_TRACKER_ISSUE_DECISION_COLUMN"),
 		jsFunc(t, html, "stageTrackerDefaultFilter"),
 		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
 		jsFunc(t, html, "stageTrackerAnchor"),
