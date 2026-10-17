@@ -82,6 +82,11 @@ type StageLabelPolicy struct {
 	// hive (runs a relay that targets it) — authorkind's weakest signal for
 	// author/clanker. nil = unknown.
 	RelayKnown func(login string) bool
+	// SharedCIIncident returns the open [shared-ci] incident the PR
+	// (repo "owner/name", number, head SHA) is deferred to, or 0. A red PR
+	// deferred to one is kept out of 070/072 and never nudged
+	// (hivecommons/hive#12606). nil = unknown (no deferral).
+	SharedCIIncident func(repo string, number int, head string) int
 }
 
 // ownershipRoutingPrefix is the lane routing label family. `agent/<lane>`
@@ -222,6 +227,9 @@ type stageObservation struct {
 	// human and the evidence routed it (feeds the entry comments and the
 	// 072 nudge diagnosis).
 	Route *stagelabels.Route
+	// SharedCIIncident is the open shared-CI incident the head is deferred
+	// to (StageLabelPolicy.SharedCIIncident), 0 when none.
+	SharedCIIncident int
 }
 
 // StageTracker accumulates observations across the lanes of one cycle. One
@@ -350,7 +358,8 @@ func (c *Engine) stageStoreOrShared() *stagelabels.Store {
 // reason it settled on (""+merged for a merge). It is a no-op when the
 // policy is off so lanes never pay for it.
 func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullRequest, reason string, merged bool, err error) {
-	if !c.stagePolicy().Enabled || pr == nil || pr.GetNumber() <= 0 {
+	policy := c.stagePolicy()
+	if !policy.Enabled || pr == nil || pr.GetNumber() <= 0 {
 		return
 	}
 	obs := stageObservation{
@@ -378,6 +387,7 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	obs.URL = pr.GetHTMLURL()
 	obs.Body = pr.GetBody()
 	obs.OpenedAt = pr.GetCreatedAt().Time
+	obs.SharedCIIncident = stageSharedCIIncident(policy, owner, repo, obs.Number, obs.HeadSHA)
 	c.stageTrackerOrShared().record(obs)
 }
 
@@ -495,7 +505,7 @@ func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Ac
 	a.Digest = verdict + "|ci:" + ci.String() + "|" + strings.Join(labels, ",")
 	// Checks still running, or a review-pending head with no reviewer
 	// verdict yet, is waiting on the hive, not on a person.
-	a.WaitingOnHive = ci == ciReasonPending ||
+	a.WaitingOnHive = ci == ciReasonPending || stageReasonWaitsOnHive(obs.Reason) ||
 		(stage == stagelabels.ReviewPending && !(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
 	return a
 }
@@ -660,6 +670,7 @@ var stageNeedsHumanReasons = map[string]bool{
 var stageMergeQueueReasons = map[string]bool{
 	"head-changed-since-eval": true, "merge-failed": true, "merge-not-applied": true,
 	"required-checks-expected": true, "behind": true, "updated-branch": true, "update-branch": true,
+	autoMergeReasonBehindBudgetExhausted: true,
 }
 
 // stageFixingReasons are reasons an agent (or the author) must fix the head.
@@ -689,6 +700,9 @@ func classifyStage(o stageObservation) stageVerdict {
 	if o.Err {
 		// The lane tripped before deciding. If every author-side gate is
 		// already satisfied the PR is waiting on the hive, not the author.
+		if v, ok := sharedCIDeferredStage(o); ok {
+			return v
+		}
 		if name := o.Detail.redCheck(o.HeadSHA); name != "" {
 			return stageVerdict{Stage: fixing, Rank: stageRankOwned, Reason: stageReasonOptionalCheckFailing + name}
 		}
@@ -736,6 +750,10 @@ func classifyStage(o stageObservation) stageVerdict {
 		// leaving it in review-pending while the reviewer skips it as already
 		// reviewed (hive #12417/#12438).
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: stageVerdictReason(o.Detail)}
+	}
+	if v, ok := sharedCIDeferredStage(o); ok {
+		// The red is the shared incident's, not the head's.
+		return v
 	}
 	if classifyCIReason(reason) == ciReasonRed {
 		// A red required check is the lane's own diagnosis; it outranks a

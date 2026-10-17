@@ -6774,6 +6774,7 @@ func runEvalCycle(
 	reviewQueue := stampReviewQueue(cfg, actionable, logger)
 
 	lastActionable.Store(actionable)
+	publishStageSharedCIIncidents(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
 		atomicWrite(lastActionablePath, data)
 	}
