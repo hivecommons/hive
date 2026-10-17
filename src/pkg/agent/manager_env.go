@@ -167,11 +167,12 @@ const (
 
 // agentGitIdentity returns the lane-distinct commit identity. When this hive
 // intentionally authors/pushes as its GitHub App, the email is the App bot's
-// noreply address so GitHub links the commit to the App; otherwise it is
-// "<agent>@<HIVE_GIT_BOT_EMAIL_DOMAIN>" (#9478). In both cases the name is
-// still the lane, so `git commit -s` identifies which agent did the work.
-func agentGitIdentity(agentName string, appID int64, appBotLogin string) (name, email string, ok bool) {
-	if name, email, ok := gitidentity.AppLinkedAgentIdentity(agentName, appID, appBotLogin); ok {
+// noreply address (keyed by the bot's GitHub user id) so GitHub links the
+// commit to the App; otherwise it is "<agent>@<HIVE_GIT_BOT_EMAIL_DOMAIN>"
+// (#9478). In both cases the name is still the lane, so `git commit -s`
+// identifies which agent did the work.
+func agentGitIdentity(agentName string, botUserID int64, appBotLogin string) (name, email string, ok bool) {
+	if name, email, ok := gitidentity.AppLinkedAgentIdentity(agentName, botUserID, appBotLogin); ok {
 		return name, email, true
 	}
 	return gitidentity.AgentIdentity(agentName)
@@ -481,11 +482,11 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		// every config layer (system, global and repo-local), and
 		// `git commit -s` signs off with the committer identity, so author,
 		// committer and Signed-off-by all name the lane that did the work.
-		appID, appBotLogin := int64(0), ""
-		if m.project.AppAuthoredPRs && m.agentMode(agent).CanPush() {
-			appID, appBotLogin = m.project.AppID, m.project.AppBotLogin
+		botUserID, appBotLogin := int64(0), ""
+		if m.project.AppAuthoredPRs && m.project.AppBotUserID != nil && m.agentMode(agent).CanPush() {
+			botUserID, appBotLogin = m.project.AppBotUserID(), m.project.AppBotLogin
 		}
-		if name, email, ok := agentGitIdentity(agent.Name, appID, appBotLogin); ok {
+		if name, email, ok := agentGitIdentity(agent.Name, botUserID, appBotLogin); ok {
 			vars = append(vars,
 				agentEnvPair{"GIT_AUTHOR_NAME", name, false},
 				agentEnvPair{"GIT_AUTHOR_EMAIL", email, false},

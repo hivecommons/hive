@@ -510,12 +510,12 @@ it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR
 fix-first kick. On a later head change, forgeable git names/emails never keep
 ownership: the hive follows the head only when GitHub links the commit to the
-App bot or the stage store recorded that exact SHA as hive-pushed; otherwise
-it hands the PR back as a contributor push
+App bot (the stage store only remembers SHAs that already passed that
+check); otherwise it hands the PR back as a contributor push
 (`governor.labels.stage.adoption.strict_attribution`, default on; first deploys
 without any repo evidence log and keep adoption). Push-capable App-authored
-agents use the App bot noreply email for git commits so fixer pushes normally
-carry that GitHub linkage while their commit name/sign-off still names the
+agents use the App bot noreply email (keyed by the bot's GitHub user id, not
+the App id) for git commits so fixer pushes normally carry that GitHub linkage while their commit name/sign-off still names the
 lane. If the hive cannot push in place, it
 pushes `hive/adopt-<n>` at the contributor head, opens a superseding App PR
 that preserves the author's commits, moves the original to 074 and closes it

@@ -71,9 +71,10 @@ type StageLabelPolicy struct {
 	// superseding App PR (governor.labels.stage.adoption.in_place, default on).
 	AdoptInPlace bool
 	// AdoptionStrictAttribution makes in-place adoption yield on a changed head
-	// unless the hive has positive App-linkage or locally recorded push
-	// evidence. It defaults on after the App-linked git identity rollout, with
-	// a first-deploy safety valve in settleInPlaceAdoption.
+	// unless GitHub links the commit to the App bot (the stage store only
+	// caches heads that already passed that check). It defaults on after the
+	// App-linked git identity rollout, with a first-deploy safety valve in
+	// settleInPlaceAdoption.
 	AdoptionStrictAttribution bool
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in

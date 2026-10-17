@@ -50,31 +50,33 @@ func TestAgentIdentityFallsBackFromUnsafeDomain(t *testing.T) {
 }
 
 func TestAppLinkedAgentIdentityUsesBotNoreply(t *testing.T) {
-	name, email, ok := AppLinkedAgentIdentity("scanner", 3568013, "hivecommons-hive[bot]")
+	// 280983584 is the bot USER id GitHub links noreply addresses by; the App
+	// id (3568013) would produce an address GitHub never links.
+	name, email, ok := AppLinkedAgentIdentity("scanner", 280983584, "hivecommons-hive[bot]")
 	if !ok {
 		t.Fatal("AppLinkedAgentIdentity returned ok=false")
 	}
 	if name != "scanner" {
 		t.Fatalf("name = %q, want scanner", name)
 	}
-	if want := "3568013+hivecommons-hive[bot]@users.noreply.github.com"; email != want {
+	if want := "280983584+hivecommons-hive[bot]@users.noreply.github.com"; email != want {
 		t.Fatalf("email = %q, want %q", email, want)
 	}
 }
 
 func TestAppLinkedAgentIdentityRejectsIncompleteInputs(t *testing.T) {
 	for _, tc := range []struct {
-		agent string
-		appID int64
-		bot   string
+		agent     string
+		botUserID int64
+		bot       string
 	}{
-		{agent: "bad/name", appID: 1, bot: "hive[bot]"},
-		{agent: "scanner", appID: 0, bot: "hive[bot]"},
-		{agent: "scanner", appID: 1, bot: ""},
-		{agent: "scanner", appID: 1, bot: "bad bot"},
+		{agent: "bad/name", botUserID: 1, bot: "hive[bot]"},
+		{agent: "scanner", botUserID: 0, bot: "hive[bot]"},
+		{agent: "scanner", botUserID: 1, bot: ""},
+		{agent: "scanner", botUserID: 1, bot: "bad bot"},
 	} {
-		if name, email, ok := AppLinkedAgentIdentity(tc.agent, tc.appID, tc.bot); ok || name != "" || email != "" {
-			t.Fatalf("AppLinkedAgentIdentity(%q,%d,%q) = (%q,%q,%v), want empty false", tc.agent, tc.appID, tc.bot, name, email, ok)
+		if name, email, ok := AppLinkedAgentIdentity(tc.agent, tc.botUserID, tc.bot); ok || name != "" || email != "" {
+			t.Fatalf("AppLinkedAgentIdentity(%q,%d,%q) = (%q,%q,%v), want empty false", tc.agent, tc.botUserID, tc.bot, name, email, ok)
 		}
 	}
 }

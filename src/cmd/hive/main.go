@@ -2080,11 +2080,29 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PRsAllowed:       b.cfg.Project.PRsAllowed(),
 		PolicyDir:        b.policyDirPath,
 		AppAuthoredPRs:   b.cfg.GitHub.AppAuthoredPRsEnabled(),
-		AppID:            b.cfg.GitHub.ResolvedAppID(),
 		AppBotLogin:      b.cfg.GitHub.BotLogin(),
+		AppBotUserID:     b.appBotUserIDResolver(),
 		BobSessionPrefix: b.cfg.Governor.Bob.SessionPrefix,
 	}
 	return true
+}
+
+// appBotUserIDResolver returns the lazy lookup of the App bot's GitHub USER id
+// that push-capable agents' git noreply email is keyed by. GitHub links
+// `<id>+<login>@users.noreply.github.com` by the bot user id, which differs
+// from the App id, so this goes through GET /users/<slug>[bot] (cached on the
+// client after the first success) rather than config. Nil without a client.
+func (b *boot) appBotUserIDResolver() func() int64 {
+	if b.ghClient == nil {
+		return nil
+	}
+	return func() int64 {
+		ctx := b.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return b.ghClient.AppBotUserID(ctx)
+	}
 }
 
 // bootAgents constructs the agent manager and everything that hangs off it

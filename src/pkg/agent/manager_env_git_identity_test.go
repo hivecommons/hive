@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -60,7 +61,9 @@ func TestAgentEnvPairsGitIdentityHonoursEmailDomain(t *testing.T) {
 func TestAgentEnvPairsGitIdentityUsesAppNoreplyWhenAppAuthored(t *testing.T) {
 	m := testManager(2)
 	m.project.AppAuthoredPRs = true
-	m.project.AppID = 3568013
+	// The noreply address is keyed by the bot USER id (what GitHub links),
+	// never the App id (3568013 for this bot).
+	m.project.AppBotUserID = func() int64 { return 280983584 }
 	m.project.AppBotLogin = "hivecommons-hive[bot]"
 	agent := &AgentProcess{
 		Name:   "scanner",
@@ -69,10 +72,31 @@ func TestAgentEnvPairsGitIdentityUsesAppNoreplyWhenAppAuthored(t *testing.T) {
 	}
 
 	got := gitIdentityPairs(m.agentEnvPairs(agent))
-	wantEmail := "3568013+hivecommons-hive[bot]@users.noreply.github.com"
+	wantEmail := "280983584+hivecommons-hive[bot]@users.noreply.github.com"
 	if got["GIT_AUTHOR_NAME"] != "scanner" || got["GIT_COMMITTER_NAME"] != "scanner" ||
 		got["GIT_AUTHOR_EMAIL"] != wantEmail || got["GIT_COMMITTER_EMAIL"] != wantEmail {
 		t.Errorf("git identity = %v, want scanner <%s>", got, wantEmail)
+	}
+}
+
+func TestAgentEnvPairsGitIdentityFallsBackWhenBotUserUnresolved(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	m := testManager(2)
+	m.project.AppAuthoredPRs = true
+	m.project.AppBotUserID = func() int64 { return 0 } // lookup failed
+	m.project.AppBotLogin = "hivecommons-hive[bot]"
+	agent := &AgentProcess{
+		Name:   "scanner",
+		UID:    1001,
+		Config: config.AgentConfig{Backend: "claude", Mode: "ISSUES_AND_PRS"},
+	}
+
+	got := gitIdentityPairs(m.agentEnvPairs(agent))
+	if strings.Contains(got["GIT_AUTHOR_EMAIL"], "users.noreply.github.com") {
+		t.Fatalf("unresolved bot user id must not yield a noreply address: %v", got)
+	}
+	if got["GIT_AUTHOR_NAME"] != "scanner" || !strings.HasPrefix(got["GIT_AUTHOR_EMAIL"], "scanner@") {
+		t.Fatalf("expected lane fallback identity, got %v", got)
 	}
 }
 

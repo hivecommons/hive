@@ -4226,9 +4226,11 @@ type StageAdoptionConfig struct {
 	// opening a superseding App PR. nil = true.
 	InPlace *bool `yaml:"in_place,omitempty"`
 	// StrictAttribution makes in-place adoption fail closed on changed heads:
-	// only GitHub-linked App commits or locally recorded hive-pushed heads keep
-	// ownership. nil = true; first-deploy/old-session safety is handled by the
-	// stage store until any hive push evidence exists for the repo.
+	// only commits GitHub links to the App bot keep ownership (the stage store
+	// remembers those heads so a re-observed SHA is not re-fetched, but it is
+	// not an independent evidence source). nil = true; first-deploy/old-session
+	// safety is handled by the stage store until any App-linked head has been
+	// recorded for the repo.
 	StrictAttribution *bool `yaml:"strict_attribution,omitempty"`
 }
 

@@ -408,12 +408,13 @@ func (c *Engine) canPushToPRBranch(ctx context.Context, obs stageObservation) bo
 
 // settleInPlaceAdoption handles a head change on an in-place-adopted PR with a
 // fail-closed attribution rule. The hive keeps ownership only when the new
-// commit carries GitHub-controlled evidence linking it to the App, or when the
-// stage store already recorded that exact head as pushed by the hive. Forgeable
+// commit carries GitHub-controlled evidence linking it to the App bot; the
+// stage store remembers heads that already passed that check so a re-observed
+// SHA is not re-fetched, but it is not a separate evidence source. Forgeable
 // git author/committer names and emails never count. If the commit lookup
 // fails, the pusher is unknown and the hive keeps adoption to avoid bounce
 // loops. The first deploy after this rule also keeps adoption until this repo
-// has recorded any hive-push evidence; after that, missing hive evidence means
+// has recorded any App-linked head; after that, missing hive evidence means
 // the contributor is back, so the hive yields once and the ordinary 072 flow
 // re-arms.
 // Returns the number of comments posted.
