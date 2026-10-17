@@ -72,11 +72,20 @@ instead of closing.
 
 A parked issue can carry a typed `kind=release` owner-step marker naming a tag
 and immutable commit SHA (see [hive-open-issue.md](hive-open-issue.md#recording-a-release-only-owner-step)).
-This records a proposal only: `/hive approve` still accepts direction and
-un-parks the issue, **not** a release operation. There is no `release_on_approve`
-opt-in yet. Cut the release yourself and reply `/hive done`, or use
-`/hive decision <text>` to change direction. The menu, permission checks and
-agent release-write prohibition are unchanged.
+By default it remains manual: cut the release and reply `/hive done`, or use
+`/hive decision <text>` to change direction.
+
+On a repo with `project.repo_policies[].release_on_approve: true`, an eligible
+`/hive approve` makes the hub App create exactly that tag and GitHub Release.
+Immediately before the write, Hive confirms that the target is still the
+default-branch head or its named ancestor, the tag is absent, and every required
+check is green. When `release_version_source` names a repository-relative text
+file such as `VERSION`, its value (with an optional leading `v`) must also match
+the tag. A refusal names the failed condition and leaves the issue parked; a
+success posts the release URL, records an audit event, and clears only Hive's
+parking labels. Replaying an answered command cannot create another release.
+The App performs this operation; the agent `gh release create` prohibition is
+unchanged.
 
 ## Prose replies on parked issues
 

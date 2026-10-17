@@ -82,6 +82,8 @@ type IssueUnparkEvent struct {
 	Actor      string
 	Decision   string
 	CommentURL string
+	ReleaseTag string
+	ReleaseURL string
 }
 
 // IssueUnparkSweepOptions configures SweepIssueUnparkCommands.
@@ -97,6 +99,12 @@ type IssueUnparkSweepOptions struct {
 	// removes a parking label; `/hive approve` and `/hive decision` get a
 	// one-line reply pointing at the labels instead. nil means no repo opts in.
 	LabelDriven func(repo string) bool
+	// ReleaseOnApprove reports whether a repo opted in to the hub-owned
+	// kind=release executor. nil keeps release owner steps manual.
+	ReleaseOnApprove func(repo string) bool
+	// ReleaseVersionSource returns an optional repository-relative text file
+	// whose value must match the proposed release tag.
+	ReleaseVersionSource func(repo string) string
 	// LabelApproval resolves label-driven approval (hivecommons/hive#11313)
 	// for a repo. It is consulted only for repos LabelDriven reports true,
 	// so a repo that did not opt in never reaches it. nil falls back to the
@@ -187,6 +195,12 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 		}
 		owner, repoName := c.splitRepo(repo)
 		labelDriven := opts.LabelDriven != nil && opts.LabelDriven(repo)
+		releasePolicy := unparkReleasePolicy{
+			enabled: opts.ReleaseOnApprove != nil && opts.ReleaseOnApprove(repo),
+		}
+		if releasePolicy.enabled && opts.ReleaseVersionSource != nil {
+			releasePolicy.versionSource = opts.ReleaseVersionSource(repo)
+		}
 		var policy LabelApprovalPolicy
 		labelApproval := false
 		if labelDriven {
@@ -209,7 +223,7 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 				continue
 			}
 			result.Seen++
-			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, unparkLabelApproval{policy: policy, enabled: labelApproval, audit: opts.LabelApprovalAudit}, result, opts.Audit)
+			acted, err := c.tryUnparkIssue(ctx, repo, owner, repoName, issue, cutoff, labelDriven, unparkLabelApproval{policy: policy, enabled: labelApproval, audit: opts.LabelApprovalAudit}, releasePolicy, result, opts.Audit)
 			if err != nil {
 				if c.logger != nil {
 					c.logger.Warn("unpark sweep skipped issue", "repo", repo, "issue", issue.GetNumber(), "error", err)
@@ -268,7 +282,7 @@ type unparkLabelApproval struct {
 // gets no hint. With label approval (hivecommons/hive#11313) a trusted
 // acceptance label is acted on first, and `/hive approve` / `/hive decision`
 // remove only the park labels the hive added itself.
-func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, labelDriven bool, la unparkLabelApproval, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) (bool, error) {
+func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, cutoff time.Time, labelDriven bool, la unparkLabelApproval, releasePolicy unparkReleasePolicy, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) (bool, error) {
 	number := issue.GetNumber()
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
@@ -346,6 +360,13 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		}
 		result.Replies++
 		return true, nil
+	}
+
+	if releasePolicy.enabled && command.Kind == unparkCommandApprove {
+		menu := c.unparkMenuFor(issue.GetBody(), comments)
+		if menu.releaseStep != nil {
+			return c.approveIssueRelease(ctx, displayRepo, owner, repo, issue, candidate, actor, menu.releaseStep, releasePolicy, result, audit)
+		}
 	}
 
 	removed, err := c.clearIssueParkingLabels(ctx, owner, repo, number, issueLabelNames(issue.Labels))
