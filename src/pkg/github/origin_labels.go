@@ -19,36 +19,36 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// origin/<source> is the provenance axis of the label vocabulary: it records
-// where a hive-authored issue came from. It is deliberately distinct from
-// agent/<lane> (which agent works the item — a routing signal) and from
-// stage/* (where the item is in the pipeline). No code path reads an
-// origin/* label as a gate; the family is informational and shares one
-// neutral colour so operators recognise it at a glance.
+// origin/<source> is the non-lane provenance axis of the label vocabulary: it
+// records where a hive-authored issue came from when no agent lane label
+// exists. Agent-filed issues use agent/<lane> for routing, ownership and
+// provenance. No code path reads an origin/* label as a gate; the family is
+// informational and shares one neutral colour so operators recognise it.
 const (
 	OriginLabelPrefix   = config.OriginLabelPrefix
 	OriginReviewerLabel = config.OriginReviewerLabel
-	// LegacyOriginReviewLabel is the retired first origin/* spelling of
-	// OriginReviewerLabel; its repo definition is deleted once open items
+	// LegacyOriginReviewLabel is the retired first origin/* spelling of the
+	// reviewer lane label; its repo definition is deleted once open items
 	// have been migrated.
 	LegacyOriginReviewLabel = config.LegacyOriginReviewLabel
-	// LegacyFromReviewLabel is the retired pre-origin/* name of
-	// OriginReviewerLabel.
+	// LegacyFromReviewLabel is the retired pre-origin/* name of the reviewer
+	// lane label.
 	LegacyFromReviewLabel = config.LegacyReviewBacklogLabel
 	// OriginLabelColor is the shared colour of every origin/* label; it
 	// matches the purple from-review used before the rename.
 	OriginLabelColor = "8250df"
 
-	// OriginLabelMigrationID names the current migration. v1 moved
-	// from-review → origin/review; v2 moves both retired names →
-	// origin/reviewer; v3 also backfills origin/<lane> on open hive-authored
-	// issues that carry agent/<lane> and no origin label, and
-	// origin/selfreport on open hive/selfreport issues. The marker and
+	// OriginLabelMigrationID names the current migration. Earlier versions
+	// moved from-review → origin/review → origin/reviewer and briefly
+	// backfilled origin/<lane>. v4 retires agent-lane origin labels:
+	// reviewer labels map to agent/reviewer, origin/<lane> is removed from
+	// open hive-authored issues after ensuring agent/<lane>, and only
+	// non-lane origins such as origin/selfreport are backfilled. The marker and
 	// report file names carry the version so a hive that already ran an
 	// earlier version runs this one exactly once; the rename step is
 	// idempotent and re-running it finds nothing.
-	OriginLabelMigrationID       = "origin-provenance-labels-v3"
-	originLabelMigrationFileStem = "origin-label-migration-v3"
+	OriginLabelMigrationID       = "origin-provenance-labels-v4"
+	originLabelMigrationFileStem = "origin-label-migration-v4"
 
 	// OriginSelfReportLabel is the provenance label of fleet runtime
 	// self-reports; it accompanies the deprecated hive/selfreport.
@@ -56,8 +56,8 @@ const (
 	// legacySelfReportLabel is the deprecated selfreport marker the backfill
 	// keys on (fleetreport.LabelSelfReport; spelled out to avoid the import).
 	legacySelfReportLabel = "hive/selfreport"
-	// agentLaneLabelPrefixForOrigin is the routing axis the backfill derives
-	// origin/<lane> from.
+	// agentLaneLabelPrefixForOrigin is the canonical lane/provenance axis for
+	// agent-filed issues.
 	agentLaneLabelPrefixForOrigin = "agent/"
 )
 
@@ -65,7 +65,7 @@ const (
 // label definition the migration deletes after swapping open items. The
 // pre-origin/* from-review is deliberately not listed: it predates the
 // family and is left defined so closed items keep their history.
-var retiredOriginLabelDefinitions = []string{LegacyOriginReviewLabel}
+var retiredOriginLabelDefinitions = []string{LegacyOriginReviewLabel, OriginReviewerLabel}
 
 // IsOriginLabel reports whether name belongs to the origin/* family.
 func IsOriginLabel(name string) bool { return config.IsOriginLabel(name) }
@@ -82,9 +82,10 @@ func originLabelDefinition(name string) (issueLabelDefinition, bool) {
 	if !IsOriginLabel(name) {
 		return issueLabelDefinition{}, false
 	}
-	// The vocabulary (config.KnownOriginSources) has a description per
-	// source; lanes not listed there still get the lane text.
-	desc, _ := config.OriginLabelDescription(name)
+	desc, ok := config.OriginLabelDescription(name)
+	if !ok {
+		return issueLabelDefinition{}, false
+	}
 	return issueLabelDefinition{color: OriginLabelColor, description: desc}, true
 }
 
@@ -103,13 +104,13 @@ func issueLabelDefinitionFor(name string) (issueLabelDefinition, bool) {
 // already has the right colour is left alone, and a create that races
 // another writer (422) is treated as success.
 func (c *Client) ensureOriginLabel(ctx context.Context, owner, repo, name string) error {
-	def, ok := originLabelDefinition(name)
-	if !ok {
-		return fmt.Errorf("%q is not an %s label", name, OriginLabelPrefix)
-	}
 	// Never recreate a retired spelling the migration has deleted.
 	if canonical, renamed := CanonicalOriginLabel(name); renamed {
 		return fmt.Errorf("%q is retired; use %s", name, canonical)
+	}
+	def, ok := originLabelDefinition(name)
+	if !ok {
+		return fmt.Errorf("%q is not an %s label", name, OriginLabelPrefix)
 	}
 	existing, _, err := c.client.Issues.GetLabel(ctx, owner, repo, name)
 	if err == nil {
@@ -137,8 +138,8 @@ func (c *Client) ensureOriginLabel(ctx context.Context, owner, repo, name string
 	return err
 }
 
-// OriginLabelMigrationOptions configures the one-time from-review /
-// origin/review → origin/reviewer swap on open items.
+// OriginLabelMigrationOptions configures the one-time provenance-label
+// migration on open items.
 type OriginLabelMigrationOptions struct {
 	DataDir    string
 	MarkerPath string
@@ -154,8 +155,9 @@ type OriginLabelMigrationReport struct {
 	ReportPath  string                     `json:"report_path"`
 	Renames     map[string]string          `json:"renames"`
 	Migrated    []OriginLabelMigrationItem `json:"migrated"`
-	// Backfilled lists open hive-authored issues that had no origin/* label
-	// and received one derived from agent/<lane> or hive/selfreport.
+	// Backfilled lists open hive-authored issues whose provenance labels were
+	// repaired: redundant lane labels removed, agent/<lane> ensured, or
+	// origin/selfreport added from hive/selfreport.
 	Backfilled []OriginLabelBackfillItem `json:"backfilled,omitempty"`
 	// DefinitionsDeleted lists "<repo>:<label>" for each retired origin/*
 	// label definition removed from a repo after its open items were swapped.
@@ -175,15 +177,14 @@ type OriginLabelMigrationItem struct {
 	AlreadyHadNew bool `json:"already_had_new,omitempty"`
 }
 
-// OriginLabelBackfillItem is one open issue that gained its first origin/*
-// label from an existing marker.
+// OriginLabelBackfillItem is one open issue whose provenance labels were
+// repaired from an existing marker.
 type OriginLabelBackfillItem struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
-	// Added is the origin/* label applied.
+	// Added is the canonical provenance label present after repair.
 	Added string `json:"added"`
-	// DerivedFrom is the label the source was read from (agent/<lane> or
-	// hive/selfreport).
+	// DerivedFrom is the label the source was read from.
 	DerivedFrom string `json:"derived_from"`
 }
 
@@ -256,6 +257,9 @@ func (c *Client) MigrateOriginLabels(ctx context.Context, opts OriginLabelMigrat
 		if !slices.Contains(retiredOriginLabelDefinitions, oldLabel) {
 			continue
 		}
+		if len(report.Errors) > 0 {
+			continue
+		}
 		for _, repo := range c.getRepos() {
 			owner, repoName := c.splitRepo(repo)
 			fullRepo := owner + "/" + repoName
@@ -272,7 +276,9 @@ func (c *Client) MigrateOriginLabels(ctx context.Context, opts OriginLabelMigrat
 			}
 		}
 	}
-	c.backfillOriginLabels(ctx, report, migratedItemKeys(report))
+	if len(report.Errors) == 0 {
+		c.backfillOriginLabels(ctx, report, migratedItemKeys(report))
+	}
 	if err := writeOriginLabelMigrationReport(reportPath, report); err != nil {
 		return report, err
 	}
@@ -303,7 +309,7 @@ func (c *Client) migrateOriginLabelOnItem(ctx context.Context, item HiveHoldMigr
 	out.AlreadyHadNew = hasNew
 	if !hasNew {
 		if !ensuredRepos[item.Repo] {
-			if err := c.ensureOriginLabel(ctx, owner, repoName, newLabel); err != nil {
+			if err := c.ensureCreateIssueLabel(ctx, owner, repoName, newLabel); err != nil {
 				return fmt.Errorf("ensuring %s in %s: %w", newLabel, item.Repo, err)
 			}
 			ensuredRepos[item.Repo] = true
@@ -315,17 +321,32 @@ func (c *Client) migrateOriginLabelOnItem(ctx context.Context, item HiveHoldMigr
 	if err := c.RemoveLabel(ctx, item.Repo, item.Number, oldLabel); err != nil {
 		return fmt.Errorf("removing %s from %s#%d: %w", oldLabel, item.Repo, item.Number, err)
 	}
+	if source := config.OriginSourceOf(newLabel); config.IsKnownOriginLane(source) {
+		for _, l := range item.Labels {
+			label := strings.TrimSpace(l)
+			name := strings.ToLower(label)
+			if name == "" || strings.EqualFold(name, oldLabel) || strings.EqualFold(name, newLabel) {
+				continue
+			}
+			if name != source && !(config.IsAgentLaneLabel(name) && name != strings.ToLower(newLabel)) && !(config.IsOriginLabel(name) && config.IsKnownOriginLane(config.OriginSourceOf(name))) {
+				continue
+			}
+			if err := c.RemoveLabel(ctx, item.Repo, item.Number, label); err != nil {
+				return fmt.Errorf("removing redundant %s from %s#%d: %w", label, item.Repo, item.Number, err)
+			}
+		}
+	}
 	c.recordWriteAudit(AuditActionOriginLabelMigrated, hiveWriteMeta(),
 		WriteTarget{Repo: item.Repo, Number: item.Number},
 		"from", oldLabel, "to", newLabel, "migration", OriginLabelMigrationID)
 	return nil
 }
 
-// originBackfillSource derives the origin/* label an un-labelled open issue
-// should carry from the markers it already has: hive/selfreport →
-// origin/selfreport (the self-report axis is more specific than any lane),
-// else the first agent/<lane> → origin/<lane>. ok is false when the issue
-// already has an origin label or carries no usable marker.
+// originBackfillSource derives the non-lane origin/* label an un-labelled
+// open issue should carry from the markers it already has: hive/selfreport →
+// origin/selfreport. Agent lanes use agent/<lane>, so agent/<lane> never
+// backfills origin/<lane>. ok is false when the issue already has an origin
+// label or carries no usable marker.
 func originBackfillSource(labels []string) (added, derivedFrom string, ok bool) {
 	if _, has := config.FirstOriginLabel(labels); has {
 		return "", "", false
@@ -335,40 +356,59 @@ func originBackfillSource(labels []string) (added, derivedFrom string, ok bool) 
 			return OriginSelfReportLabel, legacySelfReportLabel, true
 		}
 	}
-	for _, l := range labels {
-		l = strings.TrimSpace(l)
-		if lane, has := strings.CutPrefix(strings.ToLower(l), agentLaneLabelPrefixForOrigin); has && lane != "" {
-			return config.OriginLabel(lane), l, true
-		}
-	}
 	return "", "", false
 }
 
-func redundantBareLaneForOrigin(labels []string, origin string) (string, bool) {
-	if origin == "" {
-		if existing, has := config.FirstOriginLabel(labels); has {
-			origin = existing
-		}
-	}
-	lane := config.OriginSourceOf(origin)
-	if !config.IsKnownOriginLane(lane) {
-		return "", false
-	}
+func laneProvenanceLabels(labels []string) (lane string, hasAgent bool, origins, bare []string) {
 	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), lane) {
-			return strings.TrimSpace(label), true
+		name := strings.ToLower(strings.TrimSpace(label))
+		if name == "" {
+			continue
+		}
+		if strings.HasPrefix(name, agentLaneLabelPrefixForOrigin) {
+			source := strings.TrimPrefix(name, agentLaneLabelPrefixForOrigin)
+			if config.IsKnownOriginLane(source) {
+				if lane == "" {
+					lane = source
+				}
+				if source == lane {
+					hasAgent = true
+				}
+			}
+			continue
+		}
+		if config.IsOriginLabel(name) {
+			source := config.OriginSourceOf(name)
+			if config.IsKnownOriginLane(source) {
+				if lane == "" {
+					lane = source
+				}
+				if source == lane {
+					origins = append(origins, strings.TrimSpace(label))
+				}
+			}
+			continue
+		}
+		if config.IsKnownOriginLane(name) {
+			if lane == "" {
+				lane = name
+			}
+			if name == lane {
+				bare = append(bare, strings.TrimSpace(label))
+			}
 		}
 	}
-	return "", false
+	return lane, hasAgent, origins, bare
 }
 
-// backfillOriginLabels adds the first origin/* label to open issues the hive
-// filed before the axis was universal (#12687 follow-up). "Hive-authored" is
-// judged by the App-bot login when one is configured; without a bot identity
-// the agent/<lane> or hive/selfreport marker alone is the evidence, since
-// only the hive writes those. Pull requests are skipped: origin/* is an
-// issue axis. Failures are recorded on the report (and so retried next
-// startup) rather than aborting the rest of the sweep.
+// backfillOriginLabels repairs open issues the hive filed before the current
+// provenance contract: it removes redundant origin/<lane>/bare lane labels,
+// ensures agent/<lane>, and still backfills non-lane origins such as
+// origin/selfreport. "Hive-authored" is judged by the App-bot login when one
+// is configured; without a bot identity the agent/<lane> or hive/selfreport
+// marker alone is the evidence, since only the hive writes those. Pull
+// requests are skipped. Failures are recorded on the report (and so retried
+// next startup) rather than aborting the rest of the sweep.
 func (c *Client) backfillOriginLabels(ctx context.Context, report *OriginLabelMigrationReport, skip map[string]bool) {
 	botLogins := c.hiveBotLogins()
 	ensured := map[string]bool{}
@@ -387,10 +427,25 @@ func (c *Client) backfillOriginLabels(ctx context.Context, report *OriginLabelMi
 			if len(botLogins) > 0 && !isHiveBotLogin(botLogins, item.author) {
 				continue
 			}
-			if redundant, ok := redundantBareLaneForOrigin(item.labels, ""); ok {
-				if err := c.RemoveLabel(ctx, fullRepo, item.number, redundant); err != nil {
-					report.Errors = append(report.Errors, fmt.Sprintf("removing redundant %s from %s#%d: %v", redundant, fullRepo, item.number, err))
-					continue
+			lane, hasAgent, origins, bare := laneProvenanceLabels(item.labels)
+			if lane != "" {
+				agentLabel := config.AgentLaneLabel(lane)
+				if !hasAgent {
+					if err := c.ensureCreateIssueLabel(ctx, owner, repoName, agentLabel); err != nil {
+						report.Errors = append(report.Errors, fmt.Sprintf("ensuring %s in %s: %v", agentLabel, fullRepo, err))
+						continue
+					}
+					if err := c.AddLabels(ctx, fullRepo, item.number, []string{agentLabel}); err != nil {
+						report.Errors = append(report.Errors, fmt.Sprintf("adding %s to %s#%d: %v", agentLabel, fullRepo, item.number, err))
+						continue
+					}
+				}
+				for _, redundant := range append(origins, bare...) {
+					if err := c.RemoveLabel(ctx, fullRepo, item.number, redundant); err != nil {
+						report.Errors = append(report.Errors, fmt.Sprintf("removing redundant %s from %s#%d: %v", redundant, fullRepo, item.number, err))
+						continue
+					}
+					report.Backfilled = append(report.Backfilled, OriginLabelBackfillItem{Repo: fullRepo, Number: item.number, Added: agentLabel, DerivedFrom: redundant})
 				}
 			}
 			added, derivedFrom, ok := originBackfillSource(item.labels)
@@ -407,12 +462,6 @@ func (c *Client) backfillOriginLabels(ctx context.Context, report *OriginLabelMi
 			if err := c.AddLabels(ctx, fullRepo, item.number, []string{added}); err != nil {
 				report.Errors = append(report.Errors, fmt.Sprintf("adding %s to %s#%d: %v", added, fullRepo, item.number, err))
 				continue
-			}
-			if redundant, ok := redundantBareLaneForOrigin(item.labels, added); ok {
-				if err := c.RemoveLabel(ctx, fullRepo, item.number, redundant); err != nil {
-					report.Errors = append(report.Errors, fmt.Sprintf("removing redundant %s from %s#%d after adding %s: %v", redundant, fullRepo, item.number, added, err))
-					continue
-				}
 			}
 			c.recordWriteAudit(AuditActionOriginLabelMigrated, hiveWriteMeta(),
 				WriteTarget{Repo: fullRepo, Number: item.number},

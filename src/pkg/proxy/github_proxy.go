@@ -1991,8 +1991,8 @@ type bodyReadCloser struct {
 	io.Closer
 }
 
-// enforceIssueShape is enforceIssueShapeFor with no agent identity, so no
-// origin/* label is injected.
+// enforceIssueShape is enforceIssueShapeFor with no agent identity, so no lane
+// label is injected.
 func (p *GitHubProxy) enforceIssueShape(req *http.Request) (reason string, deny bool, readErr error) {
 	return p.enforceIssueShapeFor(req, "")
 }
@@ -2002,7 +2002,7 @@ func (p *GitHubProxy) enforceIssueShape(req *http.Request) (reason string, deny 
 // when it passes. It returns deny=true with an actionable reason for a
 // malformed body, and a non-nil error only when the body could not be read
 // (fail closed). A well-formed issue create from an identified agent also
-// gets its origin/<lane> provenance label injected (see injectOriginLabel).
+// gets its agent/<lane> provenance label injected (see injectOriginLabel).
 func (p *GitHubProxy) enforceIssueShapeFor(req *http.Request, agentName string) (reason string, deny bool, readErr error) {
 	if req.Body == nil || !isIssueShapeRESTWrite(req.Method, req.URL.Path) {
 		return "", false, nil
@@ -2042,12 +2042,11 @@ func isIssueCreateRESTWrite(method, path string) bool {
 	return method == http.MethodPost && issueCreateRESTPathRE.MatchString(path)
 }
 
-// injectOriginLabel adds origin/<lane> to an agent's issue-create JSON body
-// when it carries no origin/* label, so an issue filed with `gh issue create`
-// through the proxy records its provenance exactly as one filed through the
-// issue-request watcher does. An origin label the agent chose is kept and
-// never doubled; a redundant bare <lane> issue provenance alias is dropped.
-// The body is returned unchanged (ok=false) for other routes, an unidentified
+// injectOriginLabel ensures an agent's issue-create JSON body carries the
+// canonical agent/<lane> label and no redundant origin/<lane> or bare <lane>
+// label, so an issue filed with `gh issue create` through the proxy records
+// the same provenance as one filed through the issue-request watcher. The
+// body is returned unchanged (ok=false) for other routes, an unidentified
 // caller, a body that is not a JSON object, or a labels field in an unexpected
 // shape (GitHub accepts label objects too; those are forwarded as written
 // rather than guessed at).
@@ -2066,12 +2065,8 @@ func injectOriginLabel(method, path string, body []byte, agentName string) ([]by
 			return body, false
 		}
 	}
-	hadOrigin := false
-	if _, has := config.FirstOriginLabel(labels); has {
-		hadOrigin = true
-	}
 	filtered := config.WithIssueOriginLabel(labels, lane)
-	if hadOrigin && sameLabels(labels, filtered) {
+	if sameLabels(labels, filtered) {
 		return body, false
 	}
 	labels = filtered

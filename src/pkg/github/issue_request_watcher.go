@@ -777,12 +777,10 @@ type CreateIssueResult struct {
 }
 
 // CreateIssueRequest is what every hive issue-create path hands the central
-// helper. Origin is required: it names the origin/<source> provenance label
-// the issue carries (config.OriginSource* or an agent lane), so no hive-filed
-// issue reaches GitHub without exactly one origin/* label. A label already in
-// Labels that belongs to the family wins over Origin, and further origin/*
-// entries are dropped, so an agent that labelled its own filing is honoured
-// without ever double-labelling.
+// helper. Origin is required: it names the provenance label the issue carries:
+// agent/<lane> for an agent lane, origin/<source> for a non-lane source. A
+// label already in Labels that belongs to the non-lane origin family wins over
+// Origin, and further origin/* entries are dropped.
 type CreateIssueRequest struct {
 	// Repo may be "owner/repo" or bare (owner defaults to the hive org).
 	Repo   string
@@ -797,8 +795,9 @@ type CreateIssueRequest struct {
 	ConsolidateOpen bool
 }
 
-// OriginLabel returns the origin/* label this request resolves to: the one
-// already present in Labels, else origin/<Origin>.
+// OriginLabel returns the provenance label this request resolves to: an
+// existing origin/* label, else agent/<lane> for a known lane or
+// origin/<Origin> for a non-lane source.
 func (r CreateIssueRequest) OriginLabel() string {
 	if label, ok := config.FirstOriginLabel(r.Labels); ok {
 		return label
@@ -806,13 +805,13 @@ func (r CreateIssueRequest) OriginLabel() string {
 	return config.OriginLabelForAgent(r.Origin)
 }
 
-// ErrOriginRequired is returned when a create carries no origin/* label and
+// ErrOriginRequired is returned when a create carries no provenance label and
 // names no Origin source.
-var ErrOriginRequired = errors.New("CreateIssue: origin/<source> provenance is required (set Origin or pass an origin/* label)")
+var ErrOriginRequired = errors.New("CreateIssue: provenance is required (set Origin or pass an origin/* label)")
 
 // CreateIssue creates an issue as the hive's App bot, ensuring requested labels
 // exist first and deduping by exact open-issue title. Every issue gets
-// exactly one origin/<source> label (see CreateIssueRequest.Origin).
+// exactly one provenance label (see CreateIssueRequest.Origin).
 func (c *Client) CreateIssue(ctx context.Context, req CreateIssueRequest) (CreateIssueResult, error) {
 	return c.createIssue(ctx, req)
 }
@@ -989,10 +988,10 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	}
 
 	// Ensure labels exist. Retryable failures keep the whole request queued
-	// because routing labels (agent/*) drive hive filtering and duplicate
-	// guards. Terminal label failures still degrade to unlabeled, and so does
-	// any failure on the origin/* label: provenance is never a gate, so a
-	// label-API blip must not block the filing itself.
+	// because routing labels (agent/*) drive hive filtering, author-kind and
+	// duplicate guards. Terminal label failures still degrade to unlabeled,
+	// and so does any failure on a non-lane origin/* label: those origins are
+	// never gates, so a label-API blip must not block the filing itself.
 	var usable []string
 	for _, l := range labels {
 		l = strings.TrimSpace(l)

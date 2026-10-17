@@ -21,13 +21,12 @@ func TestOriginLabelDefinitionsShareOneColour(t *testing.T) {
 	if !IsOriginLabel("origin/review") || !IsOriginLabel(" Origin/Selfreport ") || IsOriginLabel("origin/") || IsOriginLabel("from-review") || IsOriginLabel("agent/reviewer") {
 		t.Fatal("IsOriginLabel prefix check")
 	}
-	known, ok := originLabelDefinition(OriginReviewerLabel)
-	if !ok || known.color != OriginLabelColor || !strings.Contains(known.description, "reviewer") {
-		t.Fatalf("origin/reviewer definition = %+v, %v", known, ok)
+	known, ok := originLabelDefinition("origin/governor")
+	if !ok || known.color != OriginLabelColor || !strings.Contains(known.description, "governor") {
+		t.Fatalf("origin/governor definition = %+v, %v", known, ok)
 	}
-	other, ok := originLabelDefinition("origin/sentinel")
-	if !ok || other.color != OriginLabelColor || other.description == "" {
-		t.Fatalf("unknown origin source should still get the family colour: %+v, %v", other, ok)
+	if _, ok := originLabelDefinition("origin/reviewer"); ok {
+		t.Fatal("reviewer is an agent lane, not an origin label definition")
 	}
 	if _, ok := originLabelDefinition("agent/reviewer"); ok {
 		t.Fatal("agent/* is not a provenance label")
@@ -35,15 +34,15 @@ func TestOriginLabelDefinitionsShareOneColour(t *testing.T) {
 	if def, ok := issueLabelDefinitionFor("meta"); !ok || def.color != "5319e7" {
 		t.Fatalf("escalation definitions still win: %+v %v", def, ok)
 	}
-	if reviewBacklogLabel != "origin/reviewer" || LegacyOriginReviewLabel != "origin/review" || LegacyFromReviewLabel != "from-review" {
+	if reviewBacklogLabel != "agent/reviewer" || LegacyOriginReviewLabel != "origin/review" || LegacyFromReviewLabel != "from-review" {
 		t.Fatalf("backlog label = %q legacy = %q, %q", reviewBacklogLabel, LegacyOriginReviewLabel, LegacyFromReviewLabel)
 	}
-	for _, retired := range []string{"from-review", "origin/review", " Origin/Review "} {
-		if got, ok := CanonicalOriginLabel(retired); !ok || got != OriginReviewerLabel {
+	for _, retired := range []string{"from-review", "origin/review", " Origin/Review ", "origin/reviewer"} {
+		if got, ok := CanonicalOriginLabel(retired); !ok || got != "agent/reviewer" {
 			t.Fatalf("CanonicalOriginLabel(%q) = %q, %v", retired, got, ok)
 		}
 	}
-	if !strings.HasSuffix(originLabelMigrationFileStem, "-v3") || !strings.HasSuffix(OriginLabelMigrationID, "-v3") {
+	if !strings.HasSuffix(originLabelMigrationFileStem, "-v4") || !strings.HasSuffix(OriginLabelMigrationID, "-v4") {
 		t.Fatalf("migration marker/id must be versioned so v1/v2 hives re-run: %q %q", originLabelMigrationFileStem, OriginLabelMigrationID)
 	}
 }
@@ -56,8 +55,8 @@ func TestEnsureOriginLabelRefusesRetiredNames(t *testing.T) {
 	c := newTestClient(t, server, "o", []string{"r"})
 	for _, retired := range []string{"origin/review", "Origin/Review"} {
 		err := c.ensureOriginLabel(context.Background(), "o", "r", retired)
-		if err == nil || !strings.Contains(err.Error(), OriginReviewerLabel) {
-			t.Fatalf("ensureOriginLabel(%q) = %v, want retired error naming %s", retired, err, OriginReviewerLabel)
+		if err == nil || !strings.Contains(err.Error(), "agent/reviewer") {
+			t.Fatalf("ensureOriginLabel(%q) = %v, want retired error naming agent/reviewer", retired, err)
 		}
 	}
 }
@@ -68,7 +67,7 @@ func TestEnsureOriginLabelCreatesThenRecoloursIdempotently(t *testing.T) {
 	var existing map[string]any
 	var creates, edits int
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/"+org+"/"+repo+"/labels/origin/reviewer", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/repos/"+org+"/"+repo+"/labels/origin/governor", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -104,20 +103,20 @@ func TestEnsureOriginLabelCreatesThenRecoloursIdempotently(t *testing.T) {
 	c := newTestClient(t, server, org, []string{repo})
 	ctx := context.Background()
 
-	if err := c.EnsureIssueLabel(ctx, org+"/"+repo, "origin/reviewer", "ff0000", "ignored: origin/* owns its colour"); err != nil {
+	if err := c.EnsureIssueLabel(ctx, org+"/"+repo, "origin/governor", "ff0000", "ignored: origin/* owns its colour"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if creates != 1 || edits != 0 || existing["color"] != OriginLabelColor {
 		t.Fatalf("after create: creates=%d edits=%d label=%v", creates, edits, existing)
 	}
-	if err := c.ensureCreateIssueLabel(ctx, org, repo, "origin/reviewer"); err != nil {
+	if err := c.ensureCreateIssueLabel(ctx, org, repo, "origin/governor"); err != nil {
 		t.Fatalf("second ensure: %v", err)
 	}
 	if creates != 1 || edits != 0 {
 		t.Fatalf("matching colour must be a no-op: creates=%d edits=%d", creates, edits)
 	}
 	existing["color"] = "d93f0b"
-	if err := c.ensureCreateIssueLabel(ctx, org, repo, "origin/reviewer"); err != nil {
+	if err := c.ensureCreateIssueLabel(ctx, org, repo, "origin/governor"); err != nil {
 		t.Fatalf("recolour: %v", err)
 	}
 	if creates != 1 || edits != 1 || existing["color"] != OriginLabelColor {
@@ -221,7 +220,7 @@ func originMigrationOpts(t *testing.T) OriginLabelMigrationOptions {
 func TestMigrateOriginLabelsSwapsBothRetiredNamesOnceWithoutDoubleLabelling(t *testing.T) {
 	org, repo := "testorg", "testrepo"
 	issues := []wireIssue{
-		{Number: 1, Title: "only from-review", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "from-review"}, {Name: "agent/scanner"}}, CreatedAt: hoursAgo(4)},
+		{Number: 1, Title: "only from-review", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "from-review"}, {Name: "reviewer"}, {Name: "agent/scanner"}}, CreatedAt: hoursAgo(4)},
 		{Number: 2, Title: "from-review plus new", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "from-review"}, {Name: "origin/reviewer"}}, CreatedAt: hoursAgo(3)},
 		{Number: 3, Title: "only origin/review (v1 hive)", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "origin/review"}, {Name: "agent/reviewer"}}, CreatedAt: hoursAgo(2)},
 		{Number: 4, Title: "origin/review plus new", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "origin/review"}, {Name: "origin/reviewer"}}, CreatedAt: hoursAgo(1)},
@@ -235,45 +234,52 @@ func TestMigrateOriginLabelsSwapsBothRetiredNamesOnceWithoutDoubleLabelling(t *t
 	if err != nil {
 		t.Fatalf("MigrateOriginLabels: %v", err)
 	}
-	if report == nil || len(report.Migrated) != 4 || len(report.Errors) != 0 {
+	if report == nil || len(report.Migrated) != 6 || len(report.Errors) != 0 {
 		t.Fatalf("report = %+v", report)
 	}
-	// Both retired names in order, then the unfiltered list the origin
+	// Retired names in order, then the unfiltered list the origin
 	// backfill scans.
-	if strings.Join(st.listQueries, ",") != "from-review,origin/review," {
-		t.Fatalf("list filters = %v, want both retired names in order then the backfill scan", st.listQueries)
+	if strings.Join(st.listQueries, ",") != "from-review,origin/review,origin/reviewer," {
+		t.Fatalf("list filters = %v, want retired names in order then the backfill scan", st.listQueries)
 	}
-	for _, n := range []int{1, 3} {
-		if strings.Join(st.added[n], ",") != "origin/reviewer" {
-			t.Fatalf("issue %d added = %v, want origin/reviewer", n, st.added[n])
+	for _, n := range []int{1, 2, 4} {
+		if len(st.added[n]) == 0 || st.added[n][0] != "agent/reviewer" {
+			t.Fatalf("issue %d added = %v, want agent/reviewer", n, st.added[n])
 		}
 	}
-	for _, n := range []int{2, 4} {
-		if _, ok := st.added[n]; ok {
-			t.Fatalf("issue %d already carried origin/reviewer; must not be added again: %v", n, st.added[n])
-		}
+	if _, ok := st.added[3]; ok {
+		t.Fatalf("issue 3 already carried agent/reviewer; must not be added again: %v", st.added[3])
 	}
-	if strings.Join(st.removed[1], ",") != "from-review" || strings.Join(st.removed[2], ",") != "from-review" {
+	if !strings.Contains(strings.Join(st.removed[1], ","), "from-review") || !strings.Contains(strings.Join(st.removed[2], ","), "from-review") {
 		t.Fatalf("removed = %v, want from-review off 1 and 2", st.removed)
 	}
-	if strings.Join(st.removed[3], ",") != "origin/review" || strings.Join(st.removed[4], ",") != "origin/review" {
+	if !strings.Contains(strings.Join(st.removed[1], ","), "reviewer") {
+		t.Fatalf("removed = %v, want bare reviewer stripped from 1", st.removed)
+	}
+	if !strings.Contains(strings.Join(st.removed[1], ","), "agent/scanner") {
+		t.Fatalf("removed = %v, want other agent lane stripped from 1", st.removed)
+	}
+	if !strings.Contains(strings.Join(st.removed[3], ","), "origin/review") || !strings.Contains(strings.Join(st.removed[4], ","), "origin/review") {
 		t.Fatalf("removed = %v, want origin/review off 3 and 4", st.removed)
 	}
-	if st.created["origin/reviewer"] != OriginLabelColor || len(st.created) != 1 {
-		t.Fatalf("created labels = %v, want only origin/reviewer in the family colour", st.created)
+	if !strings.Contains(strings.Join(st.removed[2], ","), "origin/reviewer") || !strings.Contains(strings.Join(st.removed[4], ","), "origin/reviewer") {
+		t.Fatalf("removed = %v, want origin/reviewer removed from 2 and 4", st.removed)
 	}
-	if strings.Join(st.deleted, ",") != "origin/review" {
-		t.Fatalf("deleted definitions = %v, want only origin/review (from-review is kept for closed-item history)", st.deleted)
+	if st.created["agent/reviewer"] != OriginLabelColor || len(st.created) != 1 {
+		t.Fatalf("created labels = %v, want only agent/reviewer", st.created)
 	}
-	if strings.Join(report.DefinitionsDeleted, ",") != org+"/"+repo+":origin/review" {
+	if strings.Join(st.deleted, ",") != "origin/review,origin/reviewer" {
+		t.Fatalf("deleted definitions = %v, want retired origin definitions", st.deleted)
+	}
+	if strings.Join(report.DefinitionsDeleted, ",") != org+"/"+repo+":origin/review,"+org+"/"+repo+":origin/reviewer" {
 		t.Fatalf("report.DefinitionsDeleted = %v", report.DefinitionsDeleted)
 	}
 	for i, want := range []struct {
 		from string
 		had  bool
-	}{{"from-review", false}, {"from-review", true}, {"origin/review", false}, {"origin/review", true}} {
+	}{{"from-review", false}, {"from-review", false}, {"origin/review", true}, {"origin/review", false}} {
 		got := report.Migrated[i]
-		if got.From != want.from || got.To != "origin/reviewer" || got.AlreadyHadNew != want.had {
+		if got.From != want.from || got.To != "agent/reviewer" || got.AlreadyHadNew != want.had {
 			t.Fatalf("migrated[%d] = %+v, want from=%s already_had_new=%v", i, got, want.from, want.had)
 		}
 	}
@@ -296,7 +302,7 @@ func TestMigrateOriginLabelsSwapsBothRetiredNamesOnceWithoutDoubleLabelling(t *t
 
 // A hive that already ran the v1 from-review → origin/review swap has the
 // old marker in /data. The v2 marker lives under a different name, so the
-// v2 migration still runs once and moves origin/review → origin/reviewer.
+// v4 migration still runs once and moves origin/review → agent/reviewer.
 func TestMigrateOriginLabelsRunsOnHiveThatCompletedV1(t *testing.T) {
 	org, repo := "testorg", "testrepo"
 	issues := []wireIssue{
@@ -307,8 +313,8 @@ func TestMigrateOriginLabelsRunsOnHiveThatCompletedV1(t *testing.T) {
 	c := newTestClient(t, server, org, []string{repo})
 
 	dataDir := t.TempDir()
-	// Markers of both earlier versions must not suppress v3.
-	for _, marker := range []string{"origin-label-migration.done", "origin-label-migration-v2.done"} {
+	// Markers of earlier versions must not suppress v4.
+	for _, marker := range []string{"origin-label-migration.done", "origin-label-migration-v2.done", "origin-label-migration-v3.done"} {
 		if err := os.WriteFile(filepath.Join(dataDir, marker), []byte("2026-01-01T00:00:00Z\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -318,20 +324,20 @@ func TestMigrateOriginLabelsRunsOnHiveThatCompletedV1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrateOriginLabels: %v", err)
 	}
-	if report == nil || len(report.Migrated) != 1 || report.Migrated[0].From != "origin/review" || report.Migrated[0].To != "origin/reviewer" {
-		t.Fatalf("v1/v2 markers must not suppress v3: report = %+v", report)
+	if report == nil || len(report.Migrated) != 1 || report.Migrated[0].From != "origin/review" || report.Migrated[0].To != "agent/reviewer" {
+		t.Fatalf("old markers must not suppress v4: report = %+v", report)
 	}
-	if strings.Join(st.added[7], ",") != "origin/reviewer" || strings.Join(st.removed[7], ",") != "origin/review" {
+	if strings.Join(st.added[7], ",") != "agent/reviewer" || strings.Join(st.removed[7], ",") != "origin/review" {
 		t.Fatalf("issue 7 added=%v removed=%v", st.added[7], st.removed[7])
 	}
-	if strings.Join(st.deleted, ",") != "origin/review" {
+	if strings.Join(st.deleted, ",") != "origin/review,origin/reviewer" {
 		t.Fatalf("deleted definitions = %v", st.deleted)
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "origin-label-migration-v3.done")); err != nil {
-		t.Fatalf("v3 marker not written: %v", err)
+	if _, err := os.Stat(filepath.Join(dataDir, "origin-label-migration-v4.done")); err != nil {
+		t.Fatalf("v4 marker not written: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "origin-label-migration-v3.json")); err != nil {
-		t.Fatalf("v3 report not written: %v", err)
+	if _, err := os.Stat(filepath.Join(dataDir, "origin-label-migration-v4.json")); err != nil {
+		t.Fatalf("v4 report not written: %v", err)
 	}
 	if again, err := c.MigrateOriginLabels(context.Background(), opts); err != nil || again != nil {
 		t.Fatalf("second run = %+v, %v; want no-op", again, err)
@@ -372,11 +378,10 @@ func TestMigrateOriginLabelsKeepsRetiredDefinitionWhenAnItemFails(t *testing.T) 
 	}
 }
 
-// The v3 backfill gives open hive-authored issues that predate the universal
-// origin axis their first origin/* label: origin/<lane> from agent/<lane>,
-// origin/selfreport from hive/selfreport (which wins over a lane), no second
-// origin on issues that already carry one (though their redundant bare lane
-// label is removed), and nothing on human-filed issues or PRs.
+// The v4 backfill removes redundant lane origin/bare labels from open
+// hive-authored issues while keeping agent/<lane>, still backfills
+// origin/selfreport from hive/selfreport, and touches nothing on human-filed
+// issues or PRs.
 func TestMigrateOriginLabelsBackfillsLaneAndSelfReportOrigins(t *testing.T) {
 	org, repo := "testorg", "testrepo"
 	issues := []wireIssue{
@@ -399,28 +404,27 @@ func TestMigrateOriginLabelsBackfillsLaneAndSelfReportOrigins(t *testing.T) {
 	if len(report.Errors) != 0 || len(report.Migrated) != 0 {
 		t.Fatalf("report = %+v", report)
 	}
-	if strings.Join(st.added[11], ",") != "origin/scanner" || strings.Join(st.added[12], ",") != "origin/selfreport" {
-		t.Fatalf("added = %v, want origin/scanner on 11 and origin/selfreport on 12", st.added)
+	if _, ok := st.added[11]; ok || strings.Join(st.added[12], ",") != "origin/selfreport" {
+		t.Fatalf("added = %v, want only origin/selfreport on 12", st.added)
 	}
-	for _, n := range []int{13, 14, 15, 16} {
+	for _, n := range []int{14, 15, 16} {
 		if got, ok := st.added[n]; ok {
 			t.Fatalf("issue %d must not be touched, added %v", n, got)
 		}
 	}
-	if strings.Join(st.removed[11], ",") != "scanner" || len(st.removed) != 1 {
-		t.Fatalf("removed = %v, want only redundant bare scanner from 11", st.removed)
+	if strings.Join(st.removed[11], ",") != "scanner" || strings.Join(st.removed[13], ",") != "origin/scanner" || len(st.removed) != 2 {
+		t.Fatalf("removed = %v, want bare scanner from 11 and origin/scanner from 13", st.removed)
 	}
-	if st.created["origin/scanner"] != OriginLabelColor || st.created["origin/selfreport"] != OriginLabelColor {
-		t.Fatalf("created = %v, want both new labels in the family colour", st.created)
+	if st.created["origin/selfreport"] != OriginLabelColor || len(st.created) != 1 {
+		t.Fatalf("created = %v, want only origin/selfreport in the family colour", st.created)
 	}
-	if len(report.Backfilled) != 2 || report.Backfilled[0].DerivedFrom != "agent/scanner" || report.Backfilled[1].DerivedFrom != "hive/selfreport" {
+	if len(report.Backfilled) != 3 || report.Backfilled[0].DerivedFrom != "scanner" || report.Backfilled[1].DerivedFrom != "hive/selfreport" || report.Backfilled[2].DerivedFrom != "origin/scanner" {
 		t.Fatalf("backfilled = %+v", report.Backfilled)
 	}
 }
 
 // Every origin/* label the hive can create resolves to the shared colour and
-// a per-source description, so a label created on demand for a new lane is
-// never a bare default-coloured label.
+// a per-source description.
 func TestOriginLabelDefinitionCoversEverySource(t *testing.T) {
 	for _, source := range config.KnownOriginSources() {
 		def, ok := originLabelDefinition(config.OriginLabel(source))
@@ -428,7 +432,7 @@ func TestOriginLabelDefinitionCoversEverySource(t *testing.T) {
 			t.Fatalf("origin/%s definition = %+v ok=%v", source, def, ok)
 		}
 	}
-	if def, ok := originLabelDefinition("origin/brand-new-lane"); !ok || !strings.Contains(def.description, "brand-new-lane agent lane") {
-		t.Fatalf("unknown lane definition = %+v ok=%v", def, ok)
+	if _, ok := originLabelDefinition("origin/brand-new-lane"); ok {
+		t.Fatal("unknown origin source must not be auto-created")
 	}
 }

@@ -454,7 +454,7 @@ func TestReviewRequestWatcherFilesOutOfScopeBacklogOnce(t *testing.T) {
 			_, _ = io.WriteString(w, `{"message":"not found"}`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/labels":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"name":"origin/reviewer"}`)
+			_, _ = io.WriteString(w, `{"name":"agent/reviewer"}`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues":
 			createdIssues++
 			var payload struct {
@@ -627,7 +627,7 @@ func TestReviewRequestWatcher_PerHeadBackstop(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"message":"not found"}`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/labels":
-			_, _ = io.WriteString(w, `{"name":"origin/reviewer"}`)
+			_, _ = io.WriteString(w, `{"name":"agent/reviewer"}`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues":
 			createdIssues++
 			fmt.Fprintf(w, `{"number":%d,"html_url":"https://x/issues/%d","title":"filed"}`, 100+createdIssues, 100+createdIssues)

@@ -6,13 +6,12 @@ import (
 	"strings"
 )
 
-// origin/<source> is universal: every issue the hive creates carries exactly
-// one label from this family saying where it came from. The source is either
-// an agent lane (origin/<lane>, derived from HIVE_AGENT) or one of the
-// non-agent filers below. Humans filing directly get no origin label — there
-// is deliberately no origin/human — so "no origin label" means "a person
-// filed this". The family is informational: nothing reads it as a gate, and
-// origin/<lane> is the issue provenance axis for agent-filed issues.
+// origin/<source> is the provenance family for hive issue filers that do not
+// have an agent lane label. Agent-filed issues use agent/<lane> as their
+// single lane label: that label carries routing, ownership and provenance.
+// Humans filing directly get no origin label — there is deliberately no
+// origin/human — so "no origin label and no agent label" means "a person
+// filed this".
 const (
 	// OriginSourceSelfReport is the fleet runtime self-report filer
 	// (pkg/fleetreport, pkg/github/fleet_report.go, the hub relay). The
@@ -33,14 +32,15 @@ const (
 	OriginSourceConvergence = "convergence"
 )
 
-// OriginSourceReviewer is the review swarm's source: OriginReviewerLabel
-// without the prefix. It doubles as the reviewer lane's name.
+// OriginSourceReviewer is the reviewer lane's name. It is no longer an origin
+// source; reviewer-filed issues use agent/reviewer.
 const OriginSourceReviewer = "reviewer"
 
+const agentLabelPrefix = "agent/"
+
 // KnownOriginLanes are the agent lanes that file issues through the
-// issue-request watcher or the GitHub proxy; each gets origin/<lane>. A lane
-// not listed here still gets its label (the source is derived, not looked
-// up) with the generic lane description.
+// issue-request watcher or the GitHub proxy; each gets agent/<lane>, not
+// origin/<lane>.
 var KnownOriginLanes = []string{
 	"architect", "ci-maintainer", "dedupe", "guide", "outreach", "quality",
 	"reviewer", "scanner", "sec-check", "strategist", "supervisor", "tester",
@@ -48,7 +48,6 @@ var KnownOriginLanes = []string{
 
 // originSourceDescriptions is the label description per non-lane source.
 var originSourceDescriptions = map[string]string{
-	OriginSourceReviewer:    "Filed by the Hive reviewer swarm from a backlog finding (provenance only, not a routing or hold signal)",
 	OriginSourceSelfReport:  "Filed by Hive from a fleet runtime self-report (provenance only; supersedes hive/selfreport as the origin marker)",
 	OriginSourceGovernor:    "Filed by the Hive governor/automation on its own behalf (provenance only, not a routing or hold signal)",
 	OriginSourceDashboard:   "Filed by an operator action in the Hive dashboard (provenance only, not a routing or hold signal)",
@@ -61,6 +60,9 @@ var originSourceDescriptions = map[string]string{
 func OriginLabel(source string) string {
 	source = strings.ToLower(strings.TrimSpace(source))
 	source = strings.TrimPrefix(source, OriginLabelPrefix)
+	if IsKnownOriginLane(source) {
+		return ""
+	}
 	if source == "" {
 		return ""
 	}
@@ -77,6 +79,9 @@ func IsOriginLabel(name string) bool {
 // canonical spelling of a retired name), or "" for any other label.
 func OriginSourceOf(label string) string {
 	label, _ = CanonicalOriginLabel(label)
+	if IsAgentLaneLabel(label) {
+		return strings.ToLower(strings.TrimSpace(label))[len(agentLabelPrefix):]
+	}
 	if !IsOriginLabel(label) {
 		return ""
 	}
@@ -90,9 +95,9 @@ var (
 	originLaneRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
 )
 
-// OriginLaneFromAgent returns the lane an agent name belongs to for
-// origin/<lane>: the name itself for a declared agent, the base name for a
-// materialised replica (scanner-2 → scanner, mirroring replicaAgentName).
+// OriginLaneFromAgent returns the lane an agent name belongs to: the name
+// itself for a declared agent, the base name for a materialised replica
+// (scanner-2 → scanner, mirroring replicaAgentName).
 // It returns "" for a name that is not a lane slug.
 func OriginLaneFromAgent(agent string) string {
 	agent = replicaSuffixRE.ReplaceAllString(strings.ToLower(strings.TrimSpace(agent)), "")
@@ -102,10 +107,24 @@ func OriginLaneFromAgent(agent string) string {
 	return agent
 }
 
-// OriginLabelForAgent returns origin/<lane> for an agent name, or "" for an
-// empty name.
+// AgentLaneLabel returns agent/<lane> for a lane source.
+func AgentLaneLabel(source string) string {
+	source = strings.ToLower(strings.TrimSpace(source))
+	source = strings.TrimPrefix(source, agentLabelPrefix)
+	if source == "" {
+		return ""
+	}
+	return agentLabelPrefix + source
+}
+
+// OriginLabelForAgent returns the provenance label for an agent name. Agent
+// lanes use agent/<lane>; non-agent sources still use origin/<source>.
 func OriginLabelForAgent(agent string) string {
-	return OriginLabel(OriginLaneFromAgent(agent))
+	lane := OriginLaneFromAgent(agent)
+	if IsKnownOriginLane(lane) {
+		return AgentLaneLabel(lane)
+	}
+	return OriginLabel(lane)
 }
 
 // IsKnownOriginLane reports whether source is one of the documented agent
@@ -120,6 +139,12 @@ func IsKnownOriginLane(source string) bool {
 	return false
 }
 
+// IsAgentLaneLabel reports whether name belongs to the agent/* lane family.
+func IsAgentLaneLabel(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(name, agentLabelPrefix) && len(name) > len(agentLabelPrefix)
+}
+
 // FirstOriginLabel returns the first origin/* label in labels (canonical
 // spelling) and whether one was present.
 func FirstOriginLabel(labels []string) (string, bool) {
@@ -132,69 +157,115 @@ func FirstOriginLabel(labels []string) (string, bool) {
 	return "", false
 }
 
-// WithOriginLabel returns labels with exactly one origin/* label. An origin
-// label already present is kept (canonicalised, with any further origin/*
-// entries dropped so an issue never carries two); otherwise origin/<source>
-// is appended. Blank entries are dropped. An empty source with no origin
-// label present returns labels unchanged, so the caller can refuse.
+// WithOriginLabel returns labels with exactly one non-lane origin/* label. An
+// existing non-lane origin is kept (canonicalised, with further origin/*
+// entries dropped); retired lane-origin spellings are mapped to their agent
+// label and active origin/<lane> labels are dropped. When no non-lane origin is
+// present, origin/<source> is appended. Blank entries are dropped. An empty
+// source with no origin label present returns labels unchanged, so the caller
+// can refuse.
 func WithOriginLabel(labels []string, source string) []string {
 	out := make([]string, 0, len(labels)+1)
 	seen := false
+	seenLabels := map[string]bool{}
+	appendOut := func(label string) {
+		key := strings.ToLower(strings.TrimSpace(label))
+		if key == "" || seenLabels[key] {
+			return
+		}
+		seenLabels[key] = true
+		out = append(out, label)
+	}
 	for _, l := range labels {
 		l = strings.TrimSpace(l)
 		if l == "" {
 			continue
 		}
 		if IsOriginLabel(l) {
+			canonical, renamed := CanonicalOriginLabel(l)
+			if IsKnownOriginLane(OriginSourceOf(canonical)) {
+				if renamed {
+					appendOut(canonical)
+				}
+				continue
+			}
 			if seen {
 				continue
 			}
 			seen = true
-			l, _ = CanonicalOriginLabel(l)
+			l = canonical
 		}
-		out = append(out, l)
+		appendOut(l)
 	}
 	if !seen {
 		if label := OriginLabel(source); label != "" {
-			out = append(out, label)
+			appendOut(label)
 		}
 	}
 	return out
 }
 
-// WithIssueOriginLabel returns an issue label list with exactly one origin/*
-// label and without the redundant bare-lane alias for that same known filing
-// agent lane. A filer asking for its bare lane label (for example "outreach")
-// is recording provenance, not a topic; agent/<lane> and a human's unrelated
-// labels are left to WithOriginLabel because authorkind reads agent/<lane>.
+// WithIssueOriginLabel returns an issue label list with exactly one
+// provenance source for this filer. Known agent lanes get agent/<lane> and any
+// redundant origin/<lane> or bare <lane> alias is removed. Non-lane sources use
+// origin/<source> and leave unrelated labels untouched.
 func WithIssueOriginLabel(labels []string, source string) []string {
-	origin := OriginLabel(source)
+	lane := OriginLaneFromAgent(source)
+	if IsKnownOriginLane(lane) {
+		return WithAgentLaneLabel(labels, lane)
+	}
+	originSource := source
 	if existing, ok := FirstOriginLabel(labels); ok {
-		origin = existing
+		if existingSource := OriginSourceOf(existing); !IsKnownOriginLane(existingSource) {
+			originSource = existingSource
+		}
 	}
-	originSource := OriginSourceOf(origin)
-	filingSource := OriginSourceOf(OriginLabel(source))
-	if !IsKnownOriginLane(filingSource) {
-		return WithOriginLabel(labels, originSource)
-	}
-	return WithOriginLabel(withoutBareIssueLaneLabel(labels, filingSource), originSource)
+	return WithOriginLabel(labels, originSource)
 }
 
-func withoutBareIssueLaneLabel(labels []string, lane string) []string {
-	out := make([]string, 0, len(labels))
+func WithAgentLaneLabel(labels []string, lane string) []string {
+	lane = OriginLaneFromAgent(lane)
+	if !IsKnownOriginLane(lane) {
+		return WithOriginLabel(labels, lane)
+	}
+	want := AgentLaneLabel(lane)
+	out := make([]string, 0, len(labels)+1)
+	seenAgent := false
+	seenOrigin := false
 	for _, label := range labels {
-		name := strings.ToLower(strings.TrimSpace(label))
-		if name != lane {
-			out = append(out, label)
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
 		}
+		name := strings.ToLower(strings.TrimSpace(label))
+		if IsKnownOriginLane(name) {
+			continue
+		}
+		if IsOriginLabel(name) {
+			if IsKnownOriginLane(OriginSourceOf(name)) || seenOrigin {
+				continue
+			}
+			seenOrigin = true
+			label, _ = CanonicalOriginLabel(label)
+		}
+		if IsAgentLaneLabel(name) {
+			if seenAgent {
+				continue
+			}
+			seenAgent = true
+			label = want
+		}
+		out = append(out, label)
+	}
+	if !seenAgent {
+		out = append(out, want)
 	}
 	return out
 }
 
-// OriginLabelDescription returns the repo label description for an origin/*
-// label: a specific text for the known non-lane sources, a lane text for
-// everything else (lane names are open-ended). ok is false for a label
-// outside the family.
+// OriginLabelDescription returns the repo label description for a known
+// non-lane origin/* label. ok is false for lane-origin labels and anything
+// outside the origin family.
 func OriginLabelDescription(label string) (desc string, ok bool) {
 	source := OriginSourceOf(label)
 	if source == "" {
@@ -203,16 +274,13 @@ func OriginLabelDescription(label string) (desc string, ok bool) {
 	if d, known := originSourceDescriptions[source]; known {
 		return d, true
 	}
-	return "Filed by the Hive " + source + " agent lane (provenance only, not a routing or topic label)", true
+	return "", false
 }
 
 // KnownOriginSources lists every origin source the hive documents: the
-// lanes plus the non-agent filers, sorted.
+// non-agent filers, sorted.
 func KnownOriginSources() []string {
 	set := map[string]bool{}
-	for _, lane := range KnownOriginLanes {
-		set[lane] = true
-	}
 	for s := range originSourceDescriptions {
 		set[s] = true
 	}

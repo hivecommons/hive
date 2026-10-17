@@ -657,6 +657,13 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		if l, ok := config.FirstOriginLabel(issue.Labels); ok {
 			it.Origin = config.OriginSourceOf(l)
+		} else {
+			for _, l := range issue.Labels {
+				if config.IsAgentLaneLabel(l) {
+					it.Origin = config.OriginSourceOf(l)
+					break
+				}
+			}
 		}
 		stage := labelStage(issue.Labels)
 		if stage == stagelabels.None && !(ok && rec.Stage != stagelabels.None) {
