@@ -111,14 +111,15 @@ func (c *Engine) contributorPresence(ctx context.Context, login string) (Contrib
 // no profile here (another hive posted the PR) is adopted after
 // AdoptAfterUnregistered. Without presence the nudge-time graces apply.
 func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, now time.Time, presence ContributorPresence, hasPresence bool) (bool, string) {
-	if head == "" || rec.NudgeHead != head || rec.NudgeCount == 0 || rec.FirstNudgeAt.IsZero() {
+	start := rec.NudgeStart()
+	if head == "" || rec.NudgeHead != head || rec.NudgeCount == 0 || start.IsZero() {
 		return false, ""
 	}
 	if rec.Adopted(head) || rec.AdoptedInPlace() {
 		return false, ""
 	}
 	if !hasPresence {
-		return now.Sub(rec.FirstNudgeAt) >= adoptionGrace(rec, policy), AdoptReasonGrace
+		return now.Sub(start) >= adoptionGrace(rec, policy), AdoptReasonGrace
 	}
 	switch {
 	case presence.Registered && presence.Online:
@@ -126,13 +127,13 @@ func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, n
 		if grace <= 0 {
 			grace = 2 * time.Hour
 		}
-		return now.Sub(rec.FirstNudgeAt) >= grace, AdoptReasonGrace
+		return now.Sub(start) >= grace, AdoptReasonGrace
 	case presence.Registered:
 		wait := policy.AdoptAfterOffline
 		if wait <= 0 {
 			wait = 30 * time.Minute
 		}
-		since := rec.FirstNudgeAt
+		since := start
 		if presence.LastSeen.After(since) {
 			since = presence.LastSeen
 		}
@@ -142,7 +143,7 @@ func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, n
 		if wait <= 0 {
 			wait = 2 * time.Hour
 		}
-		return now.Sub(rec.FirstNudgeAt) >= wait, AdoptReasonUnregistered
+		return now.Sub(start) >= wait, AdoptReasonUnregistered
 	}
 }
 

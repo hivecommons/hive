@@ -595,6 +595,19 @@ const (
 	AdoptModeInPlace   = "in-place"
 )
 
+// NudgeStart is when the adoption grace for NudgeHead starts counting:
+// FirstNudgeAt, or LastNudgeAt for records written before FirstNudgeAt
+// existed (a single nudge recorded only its time). Zero when never nudged.
+func (r Record) NudgeStart() time.Time {
+	if !r.FirstNudgeAt.IsZero() {
+		return r.FirstNudgeAt
+	}
+	if r.NudgeCount > 0 {
+		return r.LastNudgeAt
+	}
+	return time.Time{}
+}
+
 // Adopted reports whether head is the head the hive adopted (stage 074).
 func (r Record) Adopted(head string) bool {
 	return head != "" && r.AdoptedHead == head

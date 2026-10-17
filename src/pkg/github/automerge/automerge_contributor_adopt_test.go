@@ -248,6 +248,18 @@ func TestAdoptionGraceSelection(t *testing.T) {
 	if due, reason := adoptionDue(rec, "aaa", p, now.Add(2*time.Hour), unregistered, true); !due || reason != AdoptReasonUnregistered {
 		t.Fatalf("unregistered author: %v %q", due, reason)
 	}
+	// Records nudged before FirstNudgeAt existed carry only LastNudgeAt;
+	// the grace counts from there instead of never becoming due.
+	legacy := stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1, LastNudgeAt: now}
+	if due, _ := adoptionDue(legacy, "aaa", StageLabelPolicy{}, now.Add(29*time.Minute), offline, true); due {
+		t.Fatal("legacy record adopted before the offline wait")
+	}
+	if due, reason := adoptionDue(legacy, "aaa", StageLabelPolicy{}, now.Add(40*time.Minute), offline, true); !due || reason != AdoptReasonOffline {
+		t.Fatalf("legacy record not adopted: %v %q", due, reason)
+	}
+	if due, _ := adoptionDue(stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1}, "aaa", StageLabelPolicy{}, now.Add(24*time.Hour), offline, true); due {
+		t.Fatal("record with no nudge time adopted")
+	}
 	p.AdoptAfterUnregistered = time.Hour
 	if due, _ := adoptionDue(rec, "aaa", p, now.Add(time.Hour), unregistered, true); !due {
 		t.Fatal("after_unregistered knob ignored")
