@@ -325,8 +325,7 @@ func (c *Client) migrateOriginLabelOnItem(ctx context.Context, item HiveHoldMigr
 // should carry from the markers it already has: hive/selfreport →
 // origin/selfreport (the self-report axis is more specific than any lane),
 // else the first agent/<lane> → origin/<lane>. ok is false when the issue
-// already has an origin label or carries no usable marker. The caller removes
-// the redundant agent/<lane> issue stamp after origin/<lane> is applied.
+// already has an origin label or carries no usable marker.
 func originBackfillSource(labels []string) (added, derivedFrom string, ok bool) {
 	if _, has := config.FirstOriginLabel(labels); has {
 		return "", "", false
@@ -345,18 +344,18 @@ func originBackfillSource(labels []string) (added, derivedFrom string, ok bool) 
 	return "", "", false
 }
 
-func redundantAgentLaneForOrigin(labels []string) (string, bool) {
-	origin, has := config.FirstOriginLabel(labels)
-	if !has {
-		return "", false
+func redundantBareLaneForOrigin(labels []string, origin string) (string, bool) {
+	if origin == "" {
+		if existing, has := config.FirstOriginLabel(labels); has {
+			origin = existing
+		}
 	}
 	lane := config.OriginSourceOf(origin)
-	if lane == "" {
+	if !config.IsKnownOriginLane(lane) {
 		return "", false
 	}
-	want := agentLaneLabelPrefixForOrigin + lane
 	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), want) {
+		if strings.EqualFold(strings.TrimSpace(label), lane) {
 			return strings.TrimSpace(label), true
 		}
 	}
@@ -388,7 +387,7 @@ func (c *Client) backfillOriginLabels(ctx context.Context, report *OriginLabelMi
 			if len(botLogins) > 0 && !isHiveBotLogin(botLogins, item.author) {
 				continue
 			}
-			if redundant, ok := redundantAgentLaneForOrigin(item.labels); ok {
+			if redundant, ok := redundantBareLaneForOrigin(item.labels, ""); ok {
 				if err := c.RemoveLabel(ctx, fullRepo, item.number, redundant); err != nil {
 					report.Errors = append(report.Errors, fmt.Sprintf("removing redundant %s from %s#%d: %v", redundant, fullRepo, item.number, err))
 					continue
@@ -409,9 +408,9 @@ func (c *Client) backfillOriginLabels(ctx context.Context, report *OriginLabelMi
 				report.Errors = append(report.Errors, fmt.Sprintf("adding %s to %s#%d: %v", added, fullRepo, item.number, err))
 				continue
 			}
-			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(derivedFrom)), agentLaneLabelPrefixForOrigin) {
-				if err := c.RemoveLabel(ctx, fullRepo, item.number, derivedFrom); err != nil {
-					report.Errors = append(report.Errors, fmt.Sprintf("removing redundant %s from %s#%d after adding %s: %v", derivedFrom, fullRepo, item.number, added, err))
+			if redundant, ok := redundantBareLaneForOrigin(item.labels, added); ok {
+				if err := c.RemoveLabel(ctx, fullRepo, item.number, redundant); err != nil {
+					report.Errors = append(report.Errors, fmt.Sprintf("removing redundant %s from %s#%d after adding %s: %v", redundant, fullRepo, item.number, added, err))
 					continue
 				}
 			}

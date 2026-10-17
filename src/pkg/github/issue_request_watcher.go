@@ -829,7 +829,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	if originLabel == "" {
 		return CreateIssueResult{}, ErrOriginRequired
 	}
-	labels := config.WithIssueOriginLabel(req.Labels, config.OriginSourceOf(originLabel))
+	labels := config.WithIssueOriginLabel(req.Labels, req.Origin)
 	if c == nil || c.client == nil {
 		return CreateIssueResult{}, ErrNoGitHubClient
 	}

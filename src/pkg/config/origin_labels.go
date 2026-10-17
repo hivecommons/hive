@@ -163,10 +163,10 @@ func WithOriginLabel(labels []string, source string) []string {
 }
 
 // WithIssueOriginLabel returns an issue label list with exactly one origin/*
-// label and without redundant lane-provenance aliases for that same known
+// label and without the redundant bare-lane alias for that same known filing
 // agent lane. A filer asking for its bare lane label (for example "outreach")
-// or the old agent/<lane> issue stamp is recording provenance, not a topic; a
-// human's unrelated labels and non-lane sources are left to WithOriginLabel.
+// is recording provenance, not a topic; agent/<lane> and a human's unrelated
+// labels are left to WithOriginLabel because authorkind reads agent/<lane>.
 func WithIssueOriginLabel(labels []string, source string) []string {
 	origin := OriginLabel(source)
 	if existing, ok := FirstOriginLabel(labels); ok {
@@ -174,47 +174,17 @@ func WithIssueOriginLabel(labels []string, source string) []string {
 	}
 	originSource := OriginSourceOf(origin)
 	filingSource := OriginSourceOf(OriginLabel(source))
-	aliases := issueLaneAliasTargets(originSource, filingSource)
-	if len(aliases) == 0 {
+	if !IsKnownOriginLane(filingSource) {
 		return WithOriginLabel(labels, originSource)
 	}
-	return WithOriginLabel(withoutIssueLaneProvenanceAliases(labels, aliases), originSource)
+	return WithOriginLabel(withoutBareIssueLaneLabel(labels, filingSource), originSource)
 }
 
-func originSourceCanBeLane(source string) bool {
-	if source == "" {
-		return false
-	}
-	if IsKnownOriginLane(source) {
-		return true
-	}
-	_, knownNonLane := originSourceDescriptions[source]
-	return !knownNonLane
-}
-
-func issueLaneAliasTargets(sources ...string) map[string]bool {
-	out := map[string]bool{}
-	for _, source := range sources {
-		if !originSourceCanBeLane(source) {
-			continue
-		}
-		out[source] = out[source] || IsKnownOriginLane(source)
-	}
-	return out
-}
-
-func withoutIssueLaneProvenanceAliases(labels []string, lanes map[string]bool) []string {
+func withoutBareIssueLaneLabel(labels []string, lane string) []string {
 	out := make([]string, 0, len(labels))
 	for _, label := range labels {
 		name := strings.ToLower(strings.TrimSpace(label))
-		drop := false
-		for lane, stripBare := range lanes {
-			if name == "agent/"+lane || stripBare && name == lane {
-				drop = true
-				break
-			}
-		}
-		if !drop {
+		if name != lane {
 			out = append(out, label)
 		}
 	}

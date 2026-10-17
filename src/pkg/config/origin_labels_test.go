@@ -49,13 +49,13 @@ func TestWithIssueOriginLabelDropsRedundantAgentLaneAliases(t *testing.T) {
 		source string
 		want   string
 	}{
-		{"drops matching agent and bare lane", []string{"agent/outreach", "outreach", "kind/bug"}, "outreach", "kind/bug,origin/outreach"},
+		{"drops matching bare lane only", []string{"agent/outreach", "outreach", "kind/bug"}, "outreach", "agent/outreach,kind/bug,origin/outreach"},
 		{"keeps human topic words and workflow labels", []string{"community", "help wanted", "stage/020-triage"}, "outreach", "community,help wanted,stage/020-triage,origin/outreach"},
 		{"keeps other lane labels", []string{"agent/scanner", "scanner"}, "outreach", "agent/scanner,scanner,origin/outreach"},
 		{"keeps aliases for non-lane source", []string{"agent/scanner", "scanner"}, OriginSourceDashboard, "agent/scanner,scanner,origin/dashboard"},
-		{"drops agent label for open ended lane only", []string{"agent/new-lane", "new-lane"}, "new-lane", "new-lane,origin/new-lane"},
-		{"caller origin selects lane to dedupe", []string{"origin/scanner", "agent/scanner", "scanner"}, "outreach", "origin/scanner"},
-		{"caller origin keeps provenance but filing lane dedupes", []string{"origin/dashboard", "agent/scanner", "scanner", "kind/bug"}, "scanner", "origin/dashboard,kind/bug"},
+		{"keeps open ended lane labels", []string{"agent/new-lane", "new-lane"}, "new-lane", "agent/new-lane,new-lane,origin/new-lane"},
+		{"caller origin still uses filing lane for bare dedupe", []string{"origin/scanner", "agent/scanner", "scanner"}, "outreach", "origin/scanner,agent/scanner,scanner"},
+		{"caller origin keeps provenance but bare filing lane dedupes", []string{"origin/dashboard", "agent/scanner", "scanner", "kind/bug"}, "scanner", "origin/dashboard,agent/scanner,kind/bug"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

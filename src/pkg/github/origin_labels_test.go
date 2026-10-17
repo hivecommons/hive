@@ -373,15 +373,14 @@ func TestMigrateOriginLabelsKeepsRetiredDefinitionWhenAnItemFails(t *testing.T) 
 }
 
 // The v3 backfill gives open hive-authored issues that predate the universal
-// origin axis their first origin/* label: origin/<lane> from agent/<lane>
-// (removing that redundant issue stamp), origin/selfreport from
-// hive/selfreport (which wins over a lane), no second origin on issues that
-// already carry one (though their redundant agent/<lane> issue stamp is
-// removed), and nothing on human-filed issues or PRs.
+// origin axis their first origin/* label: origin/<lane> from agent/<lane>,
+// origin/selfreport from hive/selfreport (which wins over a lane), no second
+// origin on issues that already carry one (though their redundant bare lane
+// label is removed), and nothing on human-filed issues or PRs.
 func TestMigrateOriginLabelsBackfillsLaneAndSelfReportOrigins(t *testing.T) {
 	org, repo := "testorg", "testrepo"
 	issues := []wireIssue{
-		{Number: 11, Title: "lane only", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/scanner"}, {Name: "kind/bug"}}, CreatedAt: hoursAgo(5)},
+		{Number: 11, Title: "lane only", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/scanner"}, {Name: "scanner"}, {Name: "kind/bug"}}, CreatedAt: hoursAgo(5)},
 		{Number: 12, Title: "selfreport with lane", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/quality"}, {Name: "hive/selfreport"}}, CreatedAt: hoursAgo(4)},
 		{Number: 13, Title: "already has origin", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/scanner"}, {Name: "origin/scanner"}}, CreatedAt: hoursAgo(3)},
 		{Number: 14, Title: "human filed", User: wireUser{"alice"}, Labels: []wireLabel{{Name: "agent/scanner"}}, CreatedAt: hoursAgo(2)},
@@ -408,8 +407,8 @@ func TestMigrateOriginLabelsBackfillsLaneAndSelfReportOrigins(t *testing.T) {
 			t.Fatalf("issue %d must not be touched, added %v", n, got)
 		}
 	}
-	if strings.Join(st.removed[11], ",") != "agent/scanner" || strings.Join(st.removed[13], ",") != "agent/scanner" || len(st.removed) != 2 {
-		t.Fatalf("removed = %v, want redundant agent/scanner from 11 and 13", st.removed)
+	if strings.Join(st.removed[11], ",") != "scanner" || len(st.removed) != 1 {
+		t.Fatalf("removed = %v, want only redundant bare scanner from 11", st.removed)
 	}
 	if st.created["origin/scanner"] != OriginLabelColor || st.created["origin/selfreport"] != OriginLabelColor {
 		t.Fatalf("created = %v, want both new labels in the family colour", st.created)

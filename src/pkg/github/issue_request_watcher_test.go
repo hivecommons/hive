@@ -1135,10 +1135,10 @@ func TestCreateIssue_InjectsExactlyOneOriginLabel(t *testing.T) {
 	if _, err := c.CreateIssue(ctx, CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/scanner", "scanner", "kind/bug"}, Origin: "scanner"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.CreateIssue(ctx, CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"origin/dashboard", "origin/forge"}, Origin: "scanner"}); err != nil {
+	if _, err := c.CreateIssue(ctx, CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"origin/dashboard", "origin/forge", "agent/scanner", "scanner"}, Origin: "scanner"}); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"kind/bug,origin/scanner", "origin/dashboard"}
+	want := []string{"agent/scanner,kind/bug,origin/scanner", "origin/dashboard,agent/scanner"}
 	for i, labels := range createLabels {
 		if strings.Join(labels, ",") != want[i] {
 			t.Fatalf("create %d labels = %v, want %s", i, labels, want[i])
@@ -1183,7 +1183,7 @@ func TestCreateIssue_OriginLabelEnsureBlipDoesNotBlockFiling(t *testing.T) {
 	if err != nil || res.Number != 9 {
 		t.Fatalf("origin label blip must not block filing: res=%+v err=%v", res, err)
 	}
-	if len(createLabels) != 1 || strings.Join(createLabels[0], ",") != "" {
-		t.Fatalf("labels = %v, want no labels after the origin label blip", createLabels)
+	if len(createLabels) != 1 || strings.Join(createLabels[0], ",") != "agent/scanner" {
+		t.Fatalf("labels = %v, want the agent author-kind label only", createLabels)
 	}
 }

@@ -10,8 +10,8 @@ import (
 
 // An agent's `gh issue create` never passes through the issue-request watcher,
 // so the proxy injects origin/<lane> itself. The agent's own origin label
-// wins, a second origin label is never added, and redundant lane provenance
-// aliases are dropped from issue creates.
+// wins, a second origin label is never added, and redundant bare lane
+// provenance aliases are dropped from issue creates.
 func TestInjectOriginLabelAddsLaneOnceAndKeepsAgentChoice(t *testing.T) {
 	const path = "/repos/org/repo/issues"
 	tests := []struct {
@@ -24,9 +24,9 @@ func TestInjectOriginLabelAddsLaneOnceAndKeepsAgentChoice(t *testing.T) {
 		wantLabels []string
 	}{
 		{name: "no labels field", method: http.MethodPost, path: path, body: `{"title":"t","body":"b"}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/scanner"}},
-		{name: "redundant lane labels dropped, replica suffix stripped", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["agent/scanner","scanner","kind/bug"]}`, agent: "scanner-2", wantOK: true, wantLabels: []string{"kind/bug", "origin/scanner"}},
-		{name: "agent-supplied origin kept while filing lane aliases drop", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/dashboard","agent/scanner","scanner"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/dashboard"}},
-		{name: "agent-supplied matching origin drops redundant aliases", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/scanner","agent/scanner","scanner","kind/bug"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/scanner", "kind/bug"}},
+		{name: "bare lane label dropped, replica suffix stripped", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["agent/scanner","scanner","kind/bug"]}`, agent: "scanner-2", wantOK: true, wantLabels: []string{"agent/scanner", "kind/bug", "origin/scanner"}},
+		{name: "agent-supplied origin kept while bare filing lane drops", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/dashboard","agent/scanner","scanner"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/dashboard", "agent/scanner"}},
+		{name: "agent-supplied matching origin drops redundant bare label", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":["origin/scanner","agent/scanner","scanner","kind/bug"]}`, agent: "scanner", wantOK: true, wantLabels: []string{"origin/scanner", "agent/scanner", "kind/bug"}},
 		{name: "null labels", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":null}`, agent: "guide", wantOK: true, wantLabels: []string{"origin/guide"}},
 		{name: "label objects forwarded as written", method: http.MethodPost, path: path, body: `{"title":"t","body":"b","labels":[{"name":"kind/bug"}]}`, agent: "guide", wantOK: false},
 		{name: "comment route untouched", method: http.MethodPost, path: "/repos/org/repo/issues/1/comments", body: `{"body":"b"}`, agent: "guide", wantOK: false},
@@ -86,7 +86,7 @@ func TestEnforceIssueShapeForInjectsOriginAfterShapePasses(t *testing.T) {
 		t.Fatalf("well-formed body denied: reason=%q deny=%v err=%v", reason, deny, err)
 	}
 	forwarded := readAllString(t, req)
-	if !strings.Contains(forwarded, `"origin/tester"`) || strings.Contains(forwarded, `"agent/tester"`) || strings.Contains(forwarded, `"tester"`) || !strings.Contains(forwarded, `"kind/bug"`) {
+	if !strings.Contains(forwarded, `"origin/tester"`) || !strings.Contains(forwarded, `"agent/tester"`) || strings.Contains(forwarded, `"tester"`) || !strings.Contains(forwarded, `"kind/bug"`) {
 		t.Fatalf("forwarded body = %s", forwarded)
 	}
 	if req.ContentLength != int64(len(forwarded)) {

@@ -2046,11 +2046,11 @@ func isIssueCreateRESTWrite(method, path string) bool {
 // when it carries no origin/* label, so an issue filed with `gh issue create`
 // through the proxy records its provenance exactly as one filed through the
 // issue-request watcher does. An origin label the agent chose is kept and
-// never doubled; redundant agent/<lane> and bare <lane> issue provenance
-// aliases are dropped. The body is returned unchanged (ok=false) for other
-// routes, an unidentified caller, a body that is not a JSON object, or a
-// labels field in an unexpected shape (GitHub accepts label objects too;
-// those are forwarded as written rather than guessed at).
+// never doubled; a redundant bare <lane> issue provenance alias is dropped.
+// The body is returned unchanged (ok=false) for other routes, an unidentified
+// caller, a body that is not a JSON object, or a labels field in an unexpected
+// shape (GitHub accepts label objects too; those are forwarded as written
+// rather than guessed at).
 func injectOriginLabel(method, path string, body []byte, agentName string) ([]byte, bool) {
 	lane := config.OriginLaneFromAgent(agentName)
 	if lane == "" || agentName == internalCallerName || !isIssueCreateRESTWrite(method, path) {
