@@ -7164,8 +7164,7 @@ func runEvalCycle(
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
 			sendKick:         agentMgr.SendKick,
 			startStoppedAgent: func(agentName string) error {
-				st, err := agentMgr.GetStatusFast(agentName)
-				if err != nil || st == nil || st.State != agent.StateStopped {
+				if !agentMgr.GovernorMayStart(agentName) {
 					return nil
 				}
 				agentMgr.MarkStartupLaunchQueued([]string{agentName})

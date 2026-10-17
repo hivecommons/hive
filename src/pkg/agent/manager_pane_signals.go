@@ -489,6 +489,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		PausedReason:              a.PausedReason,
 		PausedTrigger:             a.PausedTrigger,
 		PausedBy:                  a.PausedBy,
+		OperatorStopped:           a.OperatorStopped,
 		PinnedCLI:                 a.PinnedCLI,
 		PinnedModel:               a.PinnedModel,
 		ModelOverride:             a.ModelOverride,
