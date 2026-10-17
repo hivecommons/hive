@@ -129,7 +129,7 @@ Each report carries:
 | error class | the classified error, not the raw message |
 | count + window | how many occurrences, over what window |
 | detected periodicity | if the failures look periodic |
-| repos, owners | `runtime-error` only: the `owner/repo` names this hive watches (`project.repos`) and the distinct owners derived from them, as `N: a/b, c/d` — see [Repositories and owners](#repositories-and-owners) |
+| repos, owners | `runtime-error` only: the `owner/repo` names this hive watches (`project.repos`) and the distinct owners derived from them, as `N: a/b, c/d` — see [Repositories and repo owners](#repositories-and-repo-owners) |
 | repo, ref | `runtime-error` only: the item the error was scoped to, when the class carries one (today `advisory_post_failed` → the digest's repo); `—` otherwise |
 | self-recovered | `no` on a report, `yes` on a recovery |
 

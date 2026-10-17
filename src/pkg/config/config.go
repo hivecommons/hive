@@ -6033,6 +6033,30 @@ type DashboardConfig struct {
 	// queue policy decides what agents may work; these labels only decide which
 	// visual band and badges an operator sees on the dashboard.
 	IssueBands DashboardIssueBandsConfig `yaml:"issue_bands,omitempty" json:"issue_bands,omitempty"`
+	// StageTracker tunes the Hive activity monitor's server-side payload cache
+	// (hivecommons/hive#12682).
+	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
+}
+
+// DashboardStageTrackerConfig is dashboard.stage_tracker.
+type DashboardStageTrackerConfig struct {
+	// CacheTTLS is how long, in seconds, GET /api/stage-tracker serves the
+	// payload it last built from the status snapshot before rebuilding. The
+	// endpoint never calls GitHub either way; the TTL only bounds how often
+	// the in-memory snapshot is re-read. 0 means governor.eval_interval_s.
+	CacheTTLS int `yaml:"cache_ttl_s,omitempty" json:"cache_ttl_s,omitempty"`
+}
+
+// StageTrackerCacheTTL is the effective dashboard.stage_tracker.cache_ttl_s:
+// the configured value, else the governor eval interval, else its default.
+func (c *Config) StageTrackerCacheTTL() time.Duration {
+	if c != nil && c.Dashboard.StageTracker.CacheTTLS > 0 {
+		return time.Duration(c.Dashboard.StageTracker.CacheTTLS) * time.Second
+	}
+	if c != nil && c.Governor.EvalIntervalS > 0 {
+		return time.Duration(c.Governor.EvalIntervalS) * time.Second
+	}
+	return time.Duration(defaultEvalIntervalS) * time.Second
 }
 
 type DashboardIssueBandsConfig struct {

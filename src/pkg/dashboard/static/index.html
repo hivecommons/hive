@@ -1301,6 +1301,23 @@
     .ham-chips { display: inline-flex; gap: var(--sp-1); }
     .ham-chip { border: var(--line-width) solid var(--line); background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-4); font-size: var(--fs-xs); cursor: pointer; }
     .ham-chip[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
+    .ham-chip:hover { color: var(--text); border-color: var(--line-strong); }
+    .ham-chip[hidden] { display: none; }
+    .ham-chip .ham-chip-n { color: var(--text-faint); margin-left: var(--sp-1); }
+    .ham-input { flex: 0 1 18em; min-width: 8em; padding: var(--sp-1) var(--sp-3); background: var(--bg); color: var(--text); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); outline: none; }
+    .ham-input:focus { border-color: var(--line-strong); }
+    .ham-dir { padding: var(--sp-1) var(--sp-2); min-width: 2em; }
+    .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
+    .ham-labels:empty { display: none; }
+    .ham-label-chip { font-family: var(--font-mono); }
+    .ham-labels-more { align-self: center; font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-xs); color: var(--text-faint); margin-bottom: var(--sp-3); }
+    .ham-meta-foot { margin: var(--sp-3) 0 0; }
+    .ham-meta:empty { display: none; }
+    .ham-meta .ham-count { color: var(--muted); }
+    .ham-meta .ham-updated.ham-stale { color: var(--amber); }
+    .ham-pager { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .ham-pager .ham-chip:disabled { opacity: 0.4; cursor: default; }
     .ham-cols { padding: 0 var(--sp-2) var(--sp-2); border-bottom: var(--line-width) solid var(--line-subtle); margin-bottom: var(--sp-2); }
     .ham-cols .ham-strip { height: auto; }
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
@@ -6543,9 +6560,18 @@
           <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="issue" aria-pressed="false">Issues</button>
         </span>
         <label class="ham-repo-filter"><span>Repo</span><select id="activity-monitor-repo" class="ham-select" data-change-action="hamFilter" data-arg0="repo" data-arg-types="s,v"><option value="">All repos</option></select></label>
-        
+        <input id="activity-monitor-q" class="ham-input" type="search" placeholder="Search # or title…" autocomplete="off" spellcheck="false" aria-label="Search by number or title" data-input-action="hamFilter" data-arg0="q" data-arg-types="s,w">
+        <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
+        <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
+        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, regressed, held, needs-human, needs-decision, needs-rebase, blocked, or on 072 / 085 / 090">Needs attention</button>
+        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
+        <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
+        <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
       </div>
+      <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
+      <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
+      <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
     </div>
   </div>
 
@@ -12522,7 +12548,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
     var _stageTrackerSig = '';
-    var _stageTrackerFilter = { kind: 'all', repo: '' };
+    var _stageTrackerEtag = '';
+    // Filter / sort / paging state. Everything but the page survives a reload
+    // (localStorage, like the Review window) so a maintainer's view sticks.
+    const STAGE_TRACKER_FILTER_KEY = 'hive-activity-monitor-filter';
+    const STAGE_TRACKER_PAGE_SIZES = [25, 50, 100];
+    const STAGE_TRACKER_DEFAULT_PAGE_SIZE = 50;
+    const STAGE_TRACKER_LABEL_CHIP_LIMIT = 24;
+    const STAGE_TRACKER_CLOCK_MS = 10000;
+    const STAGE_TRACKER_AGE_MS = { '1h': 3600000, '1d': 86400000, '1w': 604800000 };
+    const STAGE_TRACKER_ATTENTION_STAGES = [72, 85, 90];
+    // Label families a chip row is built from, in display order; other
+    // labels follow when at least two items carry them.
+    const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/'];
+    const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number'];
+    function stageTrackerDefaultFilter() {
+      return { kind: 'all', repo: '', q: '', labels: [], age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+    }
+    var _stageTrackerFilter = stageTrackerDefaultFilter();
 
     function stageTrackerHeadline(item) {
       const n = Number(item.stage) || 0;
@@ -12802,27 +12845,221 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNeedsAttention(item) {
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const n = Number(item.stage) || 0;
-      return mods.length > 0 || n === 72 || n === 85 || n === 90;
+      return mods.length > 0 || STAGE_TRACKER_ATTENTION_STAGES.indexOf(n) >= 0;
+    }
+
+    // The instant an item's current wait began: when it entered its step,
+    // else when it was opened (an item with no step yet is waiting since then).
+    function stageTrackerWaitSince(item) {
+      return Date.parse(item.stage_since || '') || Date.parse(item.created_at || '') || 0;
+    }
+
+    // Label family a label belongs to for the chip row: the text before the
+    // first "/" or the "needs-" prefix; '' for everything else. Chips from one
+    // family OR together, families AND together.
+    function stageTrackerLabelFamily(label) {
+      const l = String(label || '').toLowerCase();
+      for (const fam of STAGE_TRACKER_LABEL_FAMILIES) if (l.startsWith(fam)) return fam;
+      return '';
+    }
+
+    // Normalise a filter object: unknown values fall back to the default.
+    function stageTrackerNormalizeFilter(raw) {
+      const d = stageTrackerDefaultFilter();
+      const f = Object.assign(d, raw && typeof raw === 'object' ? raw : {});
+      if (['all', 'pr', 'issue'].indexOf(f.kind) < 0) f.kind = 'all';
+      f.repo = typeof f.repo === 'string' ? f.repo : '';
+      f.q = typeof f.q === 'string' ? f.q : '';
+      f.labels = Array.isArray(f.labels) ? f.labels.filter(l => typeof l === 'string' && l).map(l => l.toLowerCase()) : [];
+      if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
+      if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
+      f.attention = !!f.attention;
+      if (STAGE_TRACKER_SORTS.indexOf(f.sort) < 0) f.sort = 'furthest';
+      f.dir = f.dir === 'asc' ? 'asc' : 'desc';
+      f.size = STAGE_TRACKER_PAGE_SIZES.indexOf(Number(f.size)) >= 0 ? Number(f.size) : STAGE_TRACKER_DEFAULT_PAGE_SIZE;
+      f.page = Math.max(1, Math.floor(Number(f.page)) || 1);
+      return f;
+    }
+
+    // True when any narrowing filter (not sort / paging) is set.
+    function stageTrackerFilterActive(f) {
+      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.age !== 'any' || f.author !== 'any' || f.attention;
+    }
+
+    // Does one item pass the narrowing filters? ctx.nowMs anchors the age
+    // test; ctx.stages supplies the dwell for the "stale" age.
+    function stageTrackerMatches(item, f, ctx) {
+      ctx = ctx || {};
+      if (f.kind !== 'all' && item.kind !== f.kind) return false;
+      if (f.repo && item.repo !== f.repo) return false;
+      if (f.q) {
+        const q = f.q.trim().toLowerCase();
+        const num = q.replace(/^#/, '');
+        const byNumber = /^\d+$/.test(num) && String(item.number) === num;
+        const byTitle = String(item.title || '').toLowerCase().indexOf(q) >= 0;
+        const byLinked = (Array.isArray(item.linked_prs) ? item.linked_prs : []).some(lp => (/^\d+$/.test(num) && String(lp.number) === num) || String(lp.title || '').toLowerCase().indexOf(q) >= 0);
+        if (!byNumber && !byTitle && !byLinked) return false;
+      }
+      if (f.labels.length) {
+        const have = new Set((Array.isArray(item.labels) ? item.labels : []).map(l => String(l).toLowerCase()));
+        const byFamily = {};
+        f.labels.forEach(l => { const fam = stageTrackerLabelFamily(l) || l; (byFamily[fam] = byFamily[fam] || []).push(l); });
+        for (const fam in byFamily) if (!byFamily[fam].some(l => have.has(l))) return false;
+      }
+      if (f.author !== 'any' && (item.author_kind || '') !== f.author) return false;
+      if (f.attention && !stageTrackerNeedsAttention(item)) return false;
+      if (f.age !== 'any') {
+        const nowMs = Number(ctx.nowMs) || Date.now();
+        const since = stageTrackerWaitSince(item);
+        if (f.age === 'stale') {
+          const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+          const st = (ctx.stages || []).find(x => Number(x.number) === (Number(item.stage) || 0)) || {};
+          const dwellMs = (Number(st.dwell_seconds) || 0) * 1000;
+          if (!(mods.indexOf('stalled') >= 0 || (dwellMs > 0 && since > 0 && nowMs - since > dwellMs))) return false;
+        } else if (!(since > 0 && nowMs - since > STAGE_TRACKER_AGE_MS[f.age])) return false;
+      }
+      return true;
     }
 
     // Rows for the current filter. Outside the Pull requests view a PR that
     // is nested under a listed issue is drawn as that issue's sub-row only.
-    function stageTrackerVisible(items, filter) {
-      const f = filter || _stageTrackerFilter;
-      const rows = (items || []).filter(it =>
-        (f.kind === 'all' || it.kind === f.kind) &&
-        (!f.repo || it.repo === f.repo));
+    function stageTrackerVisible(items, filter, ctx) {
+      const f = stageTrackerNormalizeFilter(filter || _stageTrackerFilter);
+      const rows = (items || []).filter(it => stageTrackerMatches(it, f, ctx));
       if (f.kind === 'pr') return rows;
       const issues = new Set(rows.filter(it => it.kind === 'issue').map(it => it.repo + '#' + it.number));
       return rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
     }
 
+    // Order rows. 'furthest' is the strip order (furthest along first, then
+    // longest on step); 'waiting' is longest wait first; 'newest' is most
+    // recently opened first; 'number' is repo then number. dir 'asc' reverses.
+    function stageTrackerSort(rows, stages, f) {
+      f = stageTrackerNormalizeFilter(f);
+      const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
+      let cmp;
+      switch (f.sort) {
+        case 'waiting': cmp = (x, y) => ((stageTrackerWaitSince(x) || Infinity) - (stageTrackerWaitSince(y) || Infinity)) || byRepoNumber(x, y); break;
+        case 'newest': cmp = (x, y) => ((Date.parse(y.created_at || '') || 0) - (Date.parse(x.created_at || '') || 0)) || byRepoNumber(y, x); break;
+        case 'number': cmp = (x, y) => byRepoNumber(y, x); break;
+        default: {
+          const keyOf = it => stageTrackerSortKey(it, stages);
+          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return (b.anchor - a.anchor) || (a.since - b.since) || byRepoNumber(x, y); };
+        }
+      }
+      const out = (rows || []).slice().sort(cmp);
+      return f.dir === 'asc' ? out.reverse() : out;
+    }
+
+    // One page of rows plus the numbers the "showing X–Y of N" line needs.
+    // A page past the end clamps to the last page.
+    function stageTrackerPage(rows, f) {
+      f = stageTrackerNormalizeFilter(f);
+      const total = (rows || []).length;
+      const pages = Math.max(1, Math.ceil(total / f.size));
+      const page = Math.min(f.page, pages);
+      const from = total ? (page - 1) * f.size + 1 : 0;
+      const to = Math.min(total, page * f.size);
+      return { rows: (rows || []).slice(from ? from - 1 : 0, to), page, pages, from, to, total, size: f.size };
+    }
+
+    // Label chips: every label of a known family, then other labels carried
+    // by two or more items, most common first; selected labels always stay.
+    function stageTrackerLabelFacets(items, f) {
+      f = stageTrackerNormalizeFilter(f);
+      const counts = {};
+      (items || []).forEach(it => (Array.isArray(it.labels) ? it.labels : []).forEach(l => { const k = String(l).toLowerCase(); counts[k] = (counts[k] || 0) + 1; }));
+      const famRank = l => { const i = STAGE_TRACKER_LABEL_FAMILIES.indexOf(stageTrackerLabelFamily(l)); return i < 0 ? STAGE_TRACKER_LABEL_FAMILIES.length : i; };
+      const all = Object.keys(counts).filter(l => f.labels.indexOf(l) >= 0 || stageTrackerLabelFamily(l) || counts[l] > 1)
+        .sort((a, b) => (famRank(a) - famRank(b)) || (counts[b] - counts[a]) || a.localeCompare(b));
+      const shown = all.slice(0, STAGE_TRACKER_LABEL_CHIP_LIMIT);
+      f.labels.forEach(l => { if (counts[l] && shown.indexOf(l) < 0) shown.push(l); });
+      return { chips: shown.map(l => ({ label: l, count: counts[l], on: f.labels.indexOf(l) >= 0 })), hidden: Math.max(0, all.length - shown.length) };
+    }
+
+    // "showing X–Y of N (M filtered out)" and the header's "N items · M need attention".
+    function stageTrackerCountsText(page, allCount, attention) {
+      const filteredOut = Math.max(0, allCount - page.total);
+      const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
+      return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attention ? attention + ' need' + (attention === 1 ? 's' : '') + ' attention' : 'nothing needs attention'}` };
+    }
+
+    function stageTrackerLoadFilter() {
+      try { _stageTrackerFilter = stageTrackerNormalizeFilter(JSON.parse(localStorage.getItem(STAGE_TRACKER_FILTER_KEY) || 'null')); } catch { _stageTrackerFilter = stageTrackerDefaultFilter(); }
+      _stageTrackerFilter.page = 1;
+    }
+    function stageTrackerSaveFilter() {
+      try { const f = Object.assign({}, _stageTrackerFilter); delete f.page; localStorage.setItem(STAGE_TRACKER_FILTER_KEY, JSON.stringify(f)); } catch {}
+    }
+
     function hamFilter(key, value) {
-      if (key === 'kind') {
-        _stageTrackerFilter.kind = value || 'all';
-        document.querySelectorAll('#activity-monitor-toolbar .ham-chip').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === _stageTrackerFilter.kind ? 'true' : 'false'));
-      } else if (key === 'repo') _stageTrackerFilter.repo = value || '';
+      const f = _stageTrackerFilter;
+      switch (key) {
+        case 'kind': f.kind = value || 'all'; break;
+        case 'repo': f.repo = value || ''; break;
+        case 'q': f.q = value || ''; break;
+        case 'age': f.age = value || 'any'; break;
+        case 'author': f.author = value || 'any'; break;
+        case 'attention': f.attention = value === 'toggle' ? !f.attention : !!value; break;
+        case 'sort': f.sort = value || 'furthest'; break;
+        case 'dir': f.dir = value === 'toggle' ? (f.dir === 'asc' ? 'desc' : 'asc') : value; break;
+        case 'size': f.size = Number(value) || STAGE_TRACKER_DEFAULT_PAGE_SIZE; break;
+        case 'label': { const l = String(value || '').toLowerCase(); const i = f.labels.indexOf(l); if (i >= 0) f.labels.splice(i, 1); else if (l) f.labels.push(l); break; }
+        case 'page': f.page = value === 'prev' ? f.page - 1 : value === 'next' ? f.page + 1 : Number(value) || 1; break;
+        case 'reset': { const keep = { sort: f.sort, dir: f.dir, size: f.size }; _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), keep); break; }
+      }
+      if (key !== 'page') _stageTrackerFilter.page = 1;
+      _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      stageTrackerSaveFilter();
       renderStageTracker();
+    }
+
+    // Push the filter state into the toolbar controls (they may have been
+    // restored from storage or reset).
+    function stageTrackerSyncToolbar(f) {
+      document.querySelectorAll('#activity-monitor-toolbar .ham-chip[data-arg0="kind"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === f.kind ? 'true' : 'false'));
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el && el.value !== String(v) && document.activeElement !== el) el.value = String(v); };
+      setVal('activity-monitor-q', f.q);
+      setVal('activity-monitor-age', f.age);
+      setVal('activity-monitor-author', f.author);
+      setVal('activity-monitor-sort', f.sort);
+      setVal('activity-monitor-size', f.size);
+      const att = document.getElementById('activity-monitor-attention');
+      if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const dir = document.getElementById('activity-monitor-dir');
+      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'); }
+      const reset = document.getElementById('activity-monitor-reset');
+      if (reset) reset.hidden = !stageTrackerFilterActive(f);
+    }
+
+    function stageTrackerLabelsHtml(facets) {
+      if (!facets.chips.length) return '';
+      return facets.chips.map(c => `<button type="button" class="ham-chip ham-label-chip" data-action="hamFilter" data-arg0="label" data-arg1="${esc(c.label)}" aria-pressed="${c.on ? 'true' : 'false'}" title="${esc((c.on ? 'Remove label filter ' : 'Filter by label ') + c.label)}">${esc(c.label)}<span class="ham-chip-n">${c.count}</span></button>`).join('')
+        + (facets.hidden ? `<span class="ham-labels-more" title="Labels carried by a single item are not offered as chips">+${facets.hidden} more</span>` : '');
+    }
+
+    function stageTrackerPagerHtml(page) {
+      if (page.pages <= 1) return '';
+      return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
+    }
+
+    // "updated 12s ago · cache" — re-stamped every STAGE_TRACKER_CLOCK_MS
+    // without a fetch; amber once the payload is older than two TTLs.
+    function stageTrackerUpdatedHtml(d, nowMs) {
+      const at = Date.parse((d && d.generated_at) || '') || 0;
+      if (!at) return '';
+      const ageMs = Math.max(0, nowMs - at);
+      const ttlMs = (Number(d.cache_ttl_s) || 0) * 1000;
+      const stale = ttlMs > 0 && ageMs > 2 * ttlMs;
+      const src = d.source === 'fresh' ? 'built for this request' : 'from the server cache';
+      return `<span class="ham-updated${stale ? ' ham-stale' : ''}" title="${esc('Payload built ' + agentNowClockTime(at, nowMs) + ' ' + src + (ttlMs ? '; the server rebuilds it at most every ' + Math.round(ttlMs / 1000) + 's and makes no GitHub call per request' : ''))}">updated ${esc(stageTrackerShortAgo(ageMs) === 'now' ? Math.floor(ageMs / 1000) + 's' : stageTrackerShortAgo(ageMs))} ago · ${esc(d.source || 'cache')}</span>`;
+    }
+    function stageTrackerTickClock() {
+      const el = document.querySelector('#activity-monitor-meta .ham-updated');
+      if (!el || !_stageTracker) return;
+      const wrap = document.createElement('span');
+      wrap.innerHTML = stageTrackerUpdatedHtml(_stageTracker, Date.now());
+      if (wrap.firstChild) el.replaceWith(wrap.firstChild);
     }
 
     function renderStageTracker(data) {
@@ -12834,39 +13071,61 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
       }
-      const nowMs = Date.parse(d.generated_at || '') || Date.now();
+      const f = _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      const nowMs = Date.now();
       const stages = d.stages || [];
       const sel = document.getElementById('activity-monitor-repo');
       if (sel) {
         const repos = Array.from(new Set(d.items.map(it => it.repo).filter(Boolean))).sort();
-        const want = '<option value="">All repos</option>' + repos.map(r => `<option value="${esc(r)}"${r === _stageTrackerFilter.repo ? ' selected' : ''}>${esc(r)}</option>`).join('');
+        const want = '<option value="">All repos</option>' + repos.map(r => `<option value="${esc(r)}"${r === f.repo ? ' selected' : ''}>${esc(r)}</option>`).join('');
         if (sel.innerHTML !== want) sel.innerHTML = want;
       }
-      const visible = stageTrackerVisible(d.items);
-      const attention = d.items.filter(stageTrackerNeedsAttention).length;
-      setSectionSummary('activity-monitor-section', `${d.items.length} items · ${attention ? `<span class="text-warn">${attention} need attention</span>` : 'nothing needs attention'}`);
+      stageTrackerSyncToolbar(f);
+      const ctx = { nowMs, stages };
+      const visible = stageTrackerVisible(d.items, f, ctx);
+      const ordered = stageTrackerSort(visible, stages, f);
+      const page = stageTrackerPage(ordered, f);
+      if (page.page !== f.page) f.page = page.page;
+      // Attention is counted over the filtered set, nested PRs included.
+      const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
+      const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
+      // "N filtered out" counts against the unfiltered row list, so nesting
+      // a PR under its issue is not reported as a filter.
+      const allRows = stageTrackerFilterActive(f) ? stageTrackerVisible(d.items, Object.assign(stageTrackerDefaultFilter(), { kind: f.kind === 'pr' ? 'pr' : 'all' }), ctx).length : visible.length;
+      const counts = stageTrackerCountsText(page, allRows, attention);
+      setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
-      if (badge) { badge.textContent = String(attention); if (attention) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
+      if (badge) { badge.textContent = String(attentionAll); if (attentionAll) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      const labelsEl = document.getElementById('activity-monitor-labels');
+      if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
+      const meta = document.getElementById('activity-monitor-meta');
+      if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
+      const foot = document.getElementById('activity-monitor-meta-foot');
+      if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
       if (!visible.length) {
-        setIfChanged(el, `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filter.' : 'Nothing open is being tracked right now.'}</div>`);
+        setIfChanged(el, `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`);
         return;
       }
-      // Furthest along the strip first; within a column the item that has
-      // waited longest comes first, since it is the likeliest to need a human.
-      const keyOf = it => stageTrackerSortKey(it, stages);
-      const ordered = visible.slice().sort((x, y) => { const a = keyOf(x), b = keyOf(y); return (b.anchor - a.anchor) || (a.since - b.since) || ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0)); });
-      const html = stageTrackerHeaderHtml(stages) + ordered.map(it => stageTrackerRowHtml(it, stages, { nowMs })).join('');
+      const html = stageTrackerHeaderHtml(stages) + page.rows.map(it => stageTrackerRowHtml(it, stages, { nowMs })).join('');
       setIfChanged(el, html);
     }
 
+    // The endpoint is served from a server-side cache with an ETag; a poll
+    // that matches it costs one 304 and no re-render. The filter/sort state
+    // is restored from storage on the first fetch.
     async function fetchStageTracker() {
       try {
-        const r = await fetch('/api/stage-tracker');
+        if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadFilter();
+        const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
+        if (r.status === 304) { stageTrackerTickClock(); return; }
         if (!r.ok) return;
+        _stageTrackerEtag = r.headers.get('ETag') || '';
         const text = await r.text();
-        if (text === _stageTrackerSig) return;
+        if (text === _stageTrackerSig) { stageTrackerTickClock(); return; }
         _stageTrackerSig = text;
         renderStageTracker(JSON.parse(text));
+        dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
       } catch (e) { /* keep the previous render */ }
     }
 

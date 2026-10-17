@@ -1245,7 +1245,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		allIssues = append(allIssues, issues...)
 		holdItems = append(holdItems, held...)
 
-		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, err := c.fetchPRs(ctx, repo, clankerRequestedBudget)
+		prs, heldItems, heldPRs, staleDrafts, attributedPRs, prTotal, prBreakdown, sidelinedPRs, err := c.fetchPRsWithDetails(ctx, repo, clankerRequestedBudget)
 		if err != nil {
 			// Issues for this repo were already collected; a PR-only failure
 			// is partial and must not count toward the all-repos-failed guard,
@@ -1261,7 +1261,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 
 		totalByRepo[repo] = RepoCounts{Issues: issueTotal, PRs: prTotal}
 		workBreakdownByRepo[repo] = RepoWorkBreakdown{Issues: issueBreakdown, PRs: prBreakdown}
-		workDetailsByRepo[repo] = RepoWorkDetails{Issues: issueDetails}
+		workDetailsByRepo[repo] = RepoWorkDetails{Issues: issueDetails, PRs: sidelinedPRs}
 	}
 
 	// If every repo failed (e.g. API rate limit exhausted), returning a
@@ -1571,6 +1571,14 @@ func reviewScopeContract(title, body, defaultRepo, runKey, planRef string) strin
 }
 
 func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *reporterTrustWaitBudget) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, err error) {
+	actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, _, err = c.fetchPRsWithDetails(ctx, repo, clankerBudget)
+	return actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, err
+}
+
+// fetchPRsWithDetails is fetchPRs plus the display-only records of the open
+// PRs it sidelined (drafts, exempt labels, held drafts) so the snapshot can
+// account for every open PR of the repo without another list call.
+func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBudget *reporterTrustWaitBudget) (actionable []PullRequest, held []HoldItem, heldPRs []PullRequest, staleDrafts []PullRequest, attributed []PullRequest, totalPRs int, breakdown RepoPRBreakdown, sidelined []RepoWorkPR, err error) {
 	now := time.Now()
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.PullRequestListOptions{
@@ -1582,7 +1590,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 	for {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
-			return nil, nil, nil, nil, nil, 0, RepoPRBreakdown{}, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
+			return nil, nil, nil, nil, nil, 0, RepoPRBreakdown{}, nil, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
 		}
 		allPRs = append(allPRs, prs...)
 		if resp.NextPage == 0 {
@@ -1660,17 +1668,21 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 					RequestedReviewers:  reqLogins,
 					RequestedTeams:      reqTeams,
 				})
+			} else {
+				sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRDraft, "Held draft"))
 			}
 			continue
 		}
 
 		if c.isExempt(labels) {
 			breakdown.Filtered++
+			sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRFiltered, "Exempt label"))
 			continue
 		}
 
 		if pr.GetDraft() {
 			breakdown.Draft++
+			sidelined = append(sidelined, c.repoWorkPR(repo, pr, labels, hasAttr, workBucketPRDraft, "Draft"))
 			author := safeGetLogin(pr.GetUser())
 			if strings.EqualFold(author, c.appBotLogin) && now.Sub(pr.GetCreatedAt().Time) > staleDraftAfter {
 				reqLogins, reqTeams := prRequestedReviews(pr)
@@ -1760,7 +1772,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		breakdown.Other += unclassified
 	}
 
-	return actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, nil
+	return actionable, held, heldPRs, staleDrafts, attributed, totalPRs, breakdown, sidelined, nil
 }
 
 func collectAttributedPRsFromList(repo string, prs []*gh.PullRequest) []PullRequest {
@@ -3694,6 +3706,55 @@ type RepoWorkBreakdown struct {
 // every non-actionable bucket without making those items selectable by agents.
 type RepoWorkDetails struct {
 	Issues []RepoWorkIssue `json:"issues,omitempty"`
+	// PRs are the open pull requests fetchPRs sidelined from the actionable
+	// and held sets — drafts and exempt-labelled PRs — kept so the Hive
+	// activity monitor can list every open PR without a second fetch
+	// (hivecommons/hive#12682). Display-only: nothing may act on them.
+	PRs []RepoWorkPR `json:"prs,omitempty"`
+}
+
+// RepoWorkPR is a display-only record of an open PR outside the actionable
+// and held sets; Bucket is the RepoPRBreakdown bucket it was counted in
+// ("draft" or "filtered") and Reason says why.
+type RepoWorkPR struct {
+	Repo           string    `json:"repo"`
+	Number         int       `json:"number"`
+	Title          string    `json:"title"`
+	Author         string    `json:"author,omitempty"`
+	Labels         []string  `json:"labels,omitempty"`
+	Draft          bool      `json:"draft,omitempty"`
+	AppAuthored    bool      `json:"app_authored,omitempty"`
+	HiveAttributed bool      `json:"hive_attributed,omitempty"`
+	CreatedAt      time.Time `json:"created_at,omitzero"`
+	UpdatedAt      time.Time `json:"updated_at,omitzero"`
+	URL            string    `json:"url,omitempty"`
+	Bucket         string    `json:"bucket"`
+	Reason         string    `json:"reason,omitempty"`
+}
+
+// Work-detail buckets for sidelined PRs (RepoPRBreakdown field names).
+const (
+	workBucketPRDraft    = "draft"
+	workBucketPRFiltered = "filtered"
+)
+
+func (c *Client) repoWorkPR(repo string, pr *gh.PullRequest, labels []string, hiveAttributed bool, bucket, reason string) RepoWorkPR {
+	author := safeGetLogin(pr.GetUser())
+	return RepoWorkPR{
+		Repo:           repo,
+		Number:         pr.GetNumber(),
+		Title:          pr.GetTitle(),
+		Author:         author,
+		Labels:         append([]string(nil), labels...),
+		Draft:          pr.GetDraft(),
+		AppAuthored:    c.appBotLogin != "" && strings.EqualFold(author, c.appBotLogin),
+		HiveAttributed: hiveAttributed,
+		CreatedAt:      pr.GetCreatedAt().Time,
+		UpdatedAt:      pr.GetUpdatedAt().Time,
+		URL:            pr.GetHTMLURL(),
+		Bucket:         bucket,
+		Reason:         reason,
+	}
 }
 
 type RepoWorkIssue struct {

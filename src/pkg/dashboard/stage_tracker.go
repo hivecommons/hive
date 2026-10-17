@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"regexp"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard/webstatic"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -21,14 +25,28 @@ import (
 // health modifiers riding alongside the stage, and the item's recent
 // transition trail from the stage store. It reads only what the hive
 // already has — the status snapshot (titles, authors, labels) and
-// stagelabels.Shared() — so it costs no GitHub call.
+// stagelabels.Shared() — so it costs no GitHub call, and it lists every
+// open item the snapshot knows: the actionable and held sets plus the
+// display-only records of what the enumeration sidelined (claimed,
+// in-progress, covered, parked, filtered issues; draft and exempt PRs),
+// which the first version dropped (hivecommons/hive#12682).
+//
+// The payload is built at most once per dashboard.stage_tracker.cache_ttl_s
+// (default: the governor eval interval) and served from memory with an
+// ETag and Cache-Control: max-age, so a dashboard full of pollers costs the
+// process one JSON encode per TTL and GitHub nothing.
 
 // StageTrackerResponse is the GET /api/stage-tracker payload.
 type StageTrackerResponse struct {
-	GeneratedAt time.Time           `json:"generated_at"`
-	HiveID      string              `json:"hive_id,omitempty"`
-	Stages      []StageTrackerStage `json:"stages"`
-	Items       []StageTrackerItem  `json:"items"`
+	GeneratedAt time.Time `json:"generated_at"`
+	// Source is "fresh" on the request that built the payload and "cache"
+	// on every request served from memory until the TTL lapses.
+	Source string `json:"source"`
+	// CacheTTLSeconds is the effective dashboard.stage_tracker.cache_ttl_s.
+	CacheTTLSeconds int64               `json:"cache_ttl_s"`
+	HiveID          string              `json:"hive_id,omitempty"`
+	Stages          []StageTrackerStage `json:"stages"`
+	Items           []StageTrackerItem  `json:"items"`
 	// AuthorKindLabels is true when at least one item carried an explicit
 	// author/<kind> label, so the UI can say whether kinds are labelled or
 	// inferred from the PR's hive markers.
@@ -69,6 +87,17 @@ type StageTrackerItem struct {
 	Title  string `json:"title"`
 	URL    string `json:"url,omitempty"`
 	Author string `json:"author,omitempty"`
+	// Labels are the item's GitHub labels as the snapshot saw them, so the
+	// dashboard can offer a label filter without a second endpoint.
+	Labels    []string   `json:"labels,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	// Bucket is the enumeration bucket of an item outside the actionable
+	// set (claimed, in_progress, claimed_by_pr, filtered, hive_advisory,
+	// reporter_triage, draft, …) and BucketReason the enumeration's note;
+	// both empty for an actionable or held item.
+	Bucket       string `json:"bucket,omitempty"`
+	BucketReason string `json:"bucket_reason,omitempty"`
 	// AuthorKind is human / clanker / hive ("" = unknown) and
 	// AuthorKindSource says whether it came from an author/<kind> label
 	// ("label") or was inferred from the PR's hive markers ("inferred").
@@ -505,6 +534,34 @@ func stageTrackerHistory(rec stagelabels.Record) []StageTrackerHop {
 	return out
 }
 
+// Enumeration buckets (pkg/github work details) and the stage each implies
+// for an issue that carries no stage label and has no store record yet.
+const (
+	trackerBucketClaimed     = "claimed"
+	trackerBucketInProgress  = "in_progress"
+	trackerBucketClaimedByPR = "claimed_by_pr"
+)
+
+func bucketStage(bucket string) stagelabels.Stage {
+	switch bucket {
+	case trackerBucketClaimed:
+		return stagelabels.Claimed
+	case trackerBucketInProgress:
+		return stagelabels.PRInProgress
+	case trackerBucketClaimedByPR:
+		return stagelabels.CoveredByPR
+	}
+	return stagelabels.None
+}
+
+func timePtr(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	u := t
+	return &u
+}
+
 // stageStoreOrShared returns the injected stage store (tests) or the
 // process-wide one the reconcilers write.
 func (s *Server) stageStoreOrShared() *stagelabels.Store {
@@ -565,50 +622,87 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
 		it.History = stageTrackerHistory(rec)
 	}
+	seen := map[string]bool{}
+	add := func(it StageTrackerItem) {
+		key := it.Repo + "#" + strconv.Itoa(it.Number)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		resp.Items = append(resp.Items, it)
+	}
+	addIssue := func(repoName string, issue github.Issue, bucket, bucketReason string) {
+		issue.Repo = nonEmpty(issue.Repo, repoName)
+		rec, ok := lookup(repoName, issue.Number)
+		it := StageTrackerItem{Repo: repoName, Number: issue.Number, Kind: "issue", Title: issue.Title, Author: issue.Author, Lane: laneIssue,
+			Labels: append([]string(nil), issue.Labels...), CreatedAt: timePtr(issue.CreatedAt), UpdatedAt: timePtr(issue.UpdatedAt),
+			Bucket: bucket, BucketReason: bucketReason,
+			URL: overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL)}
+		if issue.AuthorIsHuman {
+			it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer
+		} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {
+			it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
+		}
+		stage := labelStage(issue.Labels)
+		if stage == stagelabels.None && !(ok && rec.Stage != stagelabels.None) {
+			stage = bucketStage(bucket)
+		}
+		finish(&it, issue.Labels, stage, rec, ok, false)
+		if it.Stage == trackerNumberClaimed {
+			it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
+		}
+		for _, lp := range issue.LinkedPRs {
+			if lp.Number > 0 && !lp.Merged && !strings.EqualFold(lp.State, "closed") {
+				it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
+			}
+		}
+		add(it)
+	}
+	addPR := func(repoName string, pr github.PullRequest, verdict *github.MergeVerdict, bucket, bucketReason string) {
+		pr.Repo = nonEmpty(pr.Repo, repoName)
+		rec, ok := lookup(repoName, pr.Number)
+		it := StageTrackerItem{Repo: repoName, Number: pr.Number, Kind: "pr", Title: pr.Title, Author: pr.Author,
+			Labels: append([]string(nil), pr.Labels...), CreatedAt: timePtr(pr.CreatedAt), UpdatedAt: timePtr(pr.UpdatedAt),
+			Bucket: bucket, BucketReason: bucketReason,
+			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
+		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
+		if it.AuthorKindSource == authorKindSrcLabel {
+			resp.AuthorKindLabels = true
+		}
+		it.Tier = stageTrackerTier(pr.Labels)
+		if verdict != nil && it.Tier == "" {
+			it.Tier = strings.ToLower(strings.TrimSpace(verdict.Tier))
+		}
+		it.Lane = laneContributor
+		if it.AuthorKind == authorKindHive || pr.AppAuthored {
+			it.Lane = laneHive
+		}
+		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
+		add(it)
+	}
 	for _, repo := range status.Repos {
 		repoName := overviewRepoName(repo)
 		for _, held := range []bool{false, true} {
 			for _, issue := range frontendRepoIssues(repo, held) {
-				issue.Repo = nonEmpty(issue.Repo, repoName)
-				rec, ok := lookup(repoName, issue.Number)
-				it := StageTrackerItem{Repo: repoName, Number: issue.Number, Kind: "issue", Title: issue.Title, Author: issue.Author, Lane: laneIssue,
-					URL: overviewItemURL(issue.URL, issue.Repo, issue.Number, "issue", status.GitHubBaseURL)}
-				if issue.AuthorIsHuman {
-					it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer
-				} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {
-					it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
-				}
-				finish(&it, issue.Labels, labelStage(issue.Labels), rec, ok, false)
-				if it.Stage == trackerNumberClaimed {
-					it.ClaimantKind = s.stageTrackerClaimantKind(repoName, issue.Number)
-				}
-				for _, lp := range issue.LinkedPRs {
-					if lp.Number > 0 && !lp.Merged && !strings.EqualFold(lp.State, "closed") {
-						it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
-					}
-				}
-				resp.Items = append(resp.Items, it)
+				addIssue(repoName, issue, "", "")
 			}
 			for _, fp := range frontendRepoPRs(repo, held) {
-				pr := fp.pr
-				pr.Repo = nonEmpty(pr.Repo, repoName)
-				rec, ok := lookup(repoName, pr.Number)
-				it := StageTrackerItem{Repo: repoName, Number: pr.Number, Kind: "pr", Title: pr.Title, Author: pr.Author,
-					URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
-				it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)
-				if it.AuthorKindSource == authorKindSrcLabel {
-					resp.AuthorKindLabels = true
-				}
-				it.Tier = stageTrackerTier(pr.Labels)
-				if fp.verdict != nil && it.Tier == "" {
-					it.Tier = strings.ToLower(strings.TrimSpace(fp.verdict.Tier))
-				}
-				it.Lane = laneContributor
-				if it.AuthorKind == authorKindHive || pr.AppAuthored {
-					it.Lane = laneHive
-				}
-				finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
-				resp.Items = append(resp.Items, it)
+				addPR(repoName, fp.pr, fp.verdict, "", "")
+			}
+		}
+		// The enumeration's sidelined items: issues it parked in a
+		// work-detail bucket and the drafts / exempt PRs it dropped. They
+		// are the open items the first tracker never showed.
+		for _, raw := range repo.NonActionableIssues {
+			if w, ok := repoWorkIssue(raw); ok {
+				addIssue(repoName, github.Issue{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Assignees: w.Assignees,
+					CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL, ClaimKind: w.ClaimKind, ClaimedBy: w.ClaimedBy, LinkedPRs: w.LinkedPRs, ClaimContext: w.ClaimContext}, w.Bucket, w.Reason)
+			}
+		}
+		for _, raw := range repo.NonActionablePrs {
+			if w, ok := repoWorkPR(raw); ok {
+				addPR(repoName, github.PullRequest{Repo: w.Repo, Number: w.Number, Title: w.Title, Author: w.Author, Labels: w.Labels, Draft: w.Draft,
+					AppAuthored: w.AppAuthored, HiveAttributed: w.HiveAttributed, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt, URL: w.URL}, nil, w.Bucket, w.Reason)
 			}
 		}
 	}
@@ -666,7 +760,79 @@ func (s *Server) stageTrackerClaimantKind(repo string, number int) string {
 	return ""
 }
 
-// handleStageTracker serves GET /api/stage-tracker.
+func repoWorkIssue(raw any) (github.RepoWorkIssue, bool) {
+	switch v := raw.(type) {
+	case github.RepoWorkIssue:
+		return v, true
+	case *github.RepoWorkIssue:
+		if v != nil {
+			return *v, true
+		}
+	}
+	return github.RepoWorkIssue{}, false
+}
+
+func repoWorkPR(raw any) (github.RepoWorkPR, bool) {
+	switch v := raw.(type) {
+	case github.RepoWorkPR:
+		return v, true
+	case *github.RepoWorkPR:
+		if v != nil {
+			return *v, true
+		}
+	}
+	return github.RepoWorkPR{}, false
+}
+
+// stageTrackerRESTCaller tags the endpoint's requests in the REST
+// accounting (/api/gh-rate-limits) so an operator can see them listed with
+// Charged 0: the handler never reaches GitHub.
+const stageTrackerRESTCaller = "dashboard:stage-tracker"
+
+// stageTrackerCache is the memoised payload: the encoded body, its ETag and
+// when it was built.
+type stageTrackerCache struct {
+	body        []byte
+	etag        string
+	generatedAt time.Time
+}
+
+func (s *Server) stageTrackerCacheTTL() time.Duration {
+	if s != nil && s.deps != nil && s.deps.Config != nil {
+		return s.deps.Config.StageTrackerCacheTTL()
+	}
+	return (*config.Config)(nil).StageTrackerCacheTTL()
+}
+
+// stageTrackerPayload returns the cached body when it is younger than the
+// TTL, else builds, encodes and caches a new one. fresh reports a rebuild.
+func (s *Server) stageTrackerPayload(status *StatusPayload, now time.Time) (body []byte, etag string, generatedAt time.Time, fresh bool) {
+	ttl := s.stageTrackerCacheTTL()
+	s.stageTrackerCacheMu.Lock()
+	defer s.stageTrackerCacheMu.Unlock()
+	c := &s.stageTrackerCache
+	if len(c.body) > 0 && now.Sub(c.generatedAt) < ttl {
+		return c.body, c.etag, c.generatedAt, false
+	}
+	resp := s.buildStageTracker(status, s.stageStoreOrShared(), now)
+	resp.CacheTTLSeconds = int64(ttl / time.Second)
+	// The encoded body carries source=cache: that is what every later hit
+	// serves verbatim, and what the ETag validates. The building request
+	// alone rewrites the marker to fresh on its way out (handleStageTracker).
+	resp.Source = "cache"
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(resp); err != nil {
+		slogWarnOverviewEncode(err)
+		return nil, "", now, true
+	}
+	c.body, c.etag, c.generatedAt = buf.Bytes(), webstatic.ETagFor(buf.Bytes()), now
+	return c.body, c.etag, c.generatedAt, true
+}
+
+var stageTrackerSourceCache = []byte(`"source":"cache"`)
+var stageTrackerSourceFresh = []byte(`"source":"fresh"`)
+
+// handleStageTracker serves GET /api/stage-tracker from the memoised payload.
 func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 	s.statusMu.RLock()
 	status := s.status
@@ -676,8 +842,29 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "initializing"})
 		return
 	}
-	resp := s.buildStageTracker(status, s.stageStoreOrShared(), time.Now().UTC())
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
+	now := time.Now().UTC()
+	body, etag, generatedAt, fresh := s.stageTrackerPayload(status, now)
+	if body == nil {
+		jsonError(w, "stage tracker unavailable", http.StatusInternalServerError)
+		return
+	}
+	remaining := s.stageTrackerCacheTTL() - now.Sub(generatedAt)
+	if remaining < 0 {
+		remaining = 0
+	}
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, max-age="+strconv.FormatInt(int64(remaining/time.Second), 10))
+	w.Header().Set("X-Hive-Stage-Tracker-Source", map[bool]string{true: "fresh", false: "cache"}[fresh])
+	if match := r.Header.Get("If-None-Match"); match != "" && !fresh && strings.Contains(match, etag) {
+		github.RecordLocalServe(stageTrackerRESTCaller, r.URL.Path, http.StatusNotModified)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	github.RecordLocalServe(stageTrackerRESTCaller, r.URL.Path, http.StatusOK)
+	if fresh {
+		body = bytes.Replace(body, stageTrackerSourceCache, stageTrackerSourceFresh, 1)
+	}
+	if _, err := w.Write(body); err != nil {
 		slogWarnOverviewEncode(err)
 	}
 }
