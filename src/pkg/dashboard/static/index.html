@@ -3907,6 +3907,15 @@
     .nous-conflict-warn { background: color-mix(in srgb, var(--yellow) 12%, transparent); border: 1px solid var(--yellow); border-radius: var(--r); padding: var(--sp-4); font-size: var(--fs-sm); display: grid; gap: var(--sp-2); }
     .nous-conflict-warn strong { color: var(--text); }
     .nous-conflict-warn .nous-new-exp-actions { justify-content: flex-start; }
+    /* Card row actions are icon buttons (edit / pause|resume / archive); the
+       verb lives in aria-label + title. Hit area ≥ 28px, visible focus ring. */
+    .nous-exp-actions { align-items: center; }
+    .nous-exp-icon { min-width: 28px; min-height: 28px; width: 32px; height: 32px; padding: var(--sp-0); display: inline-flex; align-items: center; justify-content: center; font-size: 1rem; line-height: 1; }
+    .nous-exp-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .nous-exp-version { font-size: var(--fs-sm); margin-top: var(--sp-1); }
+    .nous-exp-scope-warn { font-size: var(--fs-sm); margin-top: var(--sp-1); font-style: italic; }
+    .nous-new-exp-title { font-weight: 600; }
+    .nous-data-note { display: grid; gap: var(--sp-2); }
 
     /* Knowledge Panel */
     .public-knowledge-control { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
@@ -6656,6 +6665,16 @@
         <details class="faq-q" id="faq-experiment-lab">
           <summary>What is the Experiment Lab?</summary>
           <p>The Experiment Lab ("Nous" in the API) runs small, approved experiments against your repositories' code — tests, CI config, automation scripts — measures each against a recorded baseline, and keeps a ledger of results. It is <strong>repo-only</strong>: experiments on the hive's own cadences, models or thresholds are out of scope since <a href="https://github.com/hivecommons/hive/pull/12207" target="_blank" rel="noopener noreferrer">#12207</a>. The section appears only at L4+ with <code>dashboard.experiment_lab: true</code>, and you approve or stop every experiment. See the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">Experiment Lab section guide</a>, which links the full guide.</p>
+        </details>
+
+        <details class="faq-q" id="faq-create-experiment">
+          <summary>Where do I create an experiment?</summary>
+          <p>On the Experiment Lab section itself: press <strong>+ New experiment</strong> and fill in the research question, an optional hypothesis and the scope (which repos it may touch; none selected = hive-wide). That inline form is the only place an experiment is defined. The ⚙ <em>Experiment Lab Configuration</em> dialog holds <strong>lab-wide guardrails</strong> only — the Trust Ladder, the Output Mode and safety labels, fast-fail bounds, timing, and <em>Repos experiments may target</em>, the allow-list the scope pills are drawn from (none selected = any repo). If the allow-list changes later, running experiments keep their scope and their card shows a muted note for any repo that is no longer allowed. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/strategy-lab.md#defining-experiments" target="_blank" rel="noopener noreferrer">defining experiments</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-edit-experiment">
+          <summary>Can I change an experiment after it starts?</summary>
+          <p>Yes — the ✎ <em>Edit experiment</em> icon on its card opens the same form pre-filled. Changing only the hypothesis (or tags) is saved in place and keeps the baseline. Changing the <strong>research question or the scope</strong> invalidates the baseline and the hypotheses judged against it, so the lab asks first: <em>"Changing the question or scope restarts this experiment: baseline resets to 0/672 (≈7 days) and hypotheses/proposals so far are archived with the old version."</em> <strong>Restart experiment</strong> archives the current card as version N (it stays readable under <em>Previous experiments</em>) and creates version N+1 with the edited fields and a fresh baseline — after running the same scope-conflict check as a new experiment; <strong>Keep as is</strong> changes nothing. The new card reads <em>v2 · restarted from #1</em>. Paused and concluded experiments follow the same rule. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/strategy-lab.md#editing-an-experiment" target="_blank" rel="noopener noreferrer">editing an experiment</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-multiple-experiments">
@@ -24004,12 +24023,10 @@ function burnAreaChart() {
       return links.length ? `<div class="nous-output-links">${links.join('')}</div>` : '';
     }
 
-    function nousExperimentProgressRows(experiments, openCampaigns) {
-      if (!experiments || !experiments.length) {
-        const open = Array.isArray(openCampaigns) ? openCampaigns.length : 0;
-        if (open > 0) return `<div class="nous-lab-empty">No proposals yet for your ${open} experiment${open === 1 ? '' : 's'} — each card above shows its stage and what happens next.</div>`;
-        return '<div class="nous-lab-empty">Add an experiment: enter a research question and pick the repos it may touch.</div>';
-      }
+    // nousExperimentProgressRows lists proposals / runs attributed to the
+    // cards; with none it renders nothing — the cards carry the empty state.
+    function nousExperimentProgressRows(experiments) {
+      if (!experiments || !experiments.length) return '';
       return `<div class="nous-exp-list">${experiments.map(exp => {
         const title = exp.title || exp.hypothesis || exp.id || 'experiment';
         const phase = exp.phase || exp.status || 'defined';
@@ -24074,6 +24091,21 @@ function burnAreaChart() {
       const since = obs && obs.since ? ` since ${escapeHtml(nousCampaignDate(obs.since))}` : '';
       const prior = camp ? Math.max(0, total - (Number(camp.snapshots) || 0)) : 0;
       return `<div class="nous-observation-note text-muted">Observation history: ${total} snapshots${since}${prior ? ` (${prior} before this experiment)` : ''}.</div>`;
+    }
+
+    // nousDataCollectionNote is the compact muted copy under the cards: the
+    // observation-history total, what is collected, cadence and retention.
+    // It replaces the old global baseline bar and "Experiment Progress" box.
+    function nousDataCollectionNote(s, camp) {
+      const st = s || {};
+      const base = st.baseline || {};
+      const obs = st.observation || { snapshots: st.snapshotCount || 0 };
+      let h = '<div class="nous-data-note">';
+      h += nousObservationLine(obs, camp || null);
+      h += `<div class="nous-progress-copy">Collecting: ${escapeHtml(((base.collecting || ['queue issues','queue PRs','queue on hold','SLA violations','agents kicked','agent states','total tokens']).join(', ')))}. One hive-state snapshot per governor evaluation cycle (4/hour). Retention: ${escapeHtml(base.retention || '24 h raw snapshots, then hourly buckets for 30 days')}.</div>`;
+      h += '<div class="nous-progress-copy">Each experiment card above carries its own baseline bar (snapshots since that experiment started, out of ' + NOUS_BASELINE_TARGET_DEFAULT + '). Observe records data only; experiments wait for Suggest/Evolve and operator approval before repo changes run.</div>';
+      h += '</div>';
+      return h;
     }
 
     function nousArchivedCampaigns(campaigns) {
@@ -24158,7 +24190,35 @@ function burnAreaChart() {
       return `<span class="config-info overview-term-info" tabindex="0" data-action="gh3" data-stop="1" aria-describedby="nous-principles-tip" aria-label="What principles are">ⓘ<span id="nous-principles-tip" class="config-tooltip" role="tooltip">${escapeHtml(explainer || NOUS_PRINCIPLES_EXPLAINER)}</span></span>`;
     }
 
-    function nousExperimentCard(c) {
+    // nousAllowedRepos is the repo allow-list from the ⚙ dialog ("Repos
+    // experiments may target"); an empty allow-list means any project repo.
+    function nousAllowedRepos(s) {
+      const st = s || {};
+      const allow = Array.isArray(st.repoTargets) ? st.repoTargets : [];
+      const all = Array.isArray(st.projectRepos) ? st.projectRepos : (Array.isArray(st.availableRepos) ? st.availableRepos : []);
+      return allow.length ? allow : all;
+    }
+
+    // nousScopeWarning flags, in muted text, scope repos that the allow-list
+    // no longer contains. The experiment keeps its scope; only new ones are
+    // limited to the current allow-list.
+    function nousScopeWarning(c, s) {
+      const allow = Array.isArray(s && s.repoTargets) ? s.repoTargets.map(r => String(r).toLowerCase()) : [];
+      if (!allow.length) return '';
+      const repos = Array.isArray(c && c.scope && c.scope.repos) ? c.scope.repos : [];
+      const gone = repos.filter(r => !allow.includes(String(r).toLowerCase()));
+      if (!gone.length) return '';
+      return `<div class="nous-exp-scope-warn text-muted" role="note">${gone.map(escapeHtml).join(', ')} ${gone.length === 1 ? 'is' : 'are'} no longer in the lab's allow-list (⚙ Repos experiments may target). This experiment keeps its scope; new experiments cannot choose ${gone.length === 1 ? 'it' : 'them'}.</div>`;
+    }
+
+    // Compact icon action for a card row: aria-label + title carry the
+    // verb, the glyph is decorative. Sized by .nous-exp-icon (≥ 28px).
+    function nousExpIconButton(action, id, arg1, label, glyph, extraClass) {
+      const arg = arg1 ? ` data-arg1="${arg1}"` : '';
+      return `<button type="button" class="hv-btn btn-icon btn-sm nous-exp-icon${extraClass ? ' ' + extraClass : ''}" data-action="${action}" data-arg0="${id}"${arg} aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}"><span aria-hidden="true">${glyph}</span></button>`;
+    }
+
+    function nousExperimentCard(c, s) {
       const id = Number(c.id) || 0;
       const status = c.status === 'paused' ? 'paused' : 'active';
       const target = Number(c.target) || NOUS_BASELINE_TARGET_DEFAULT;
@@ -24166,9 +24226,13 @@ function burnAreaChart() {
       const pct = c.percent != null ? Number(c.percent) : (n * 100 / target);
       const q = nousResearchQuestionText(c.question) || '(no research question)';
       const hyp = c.hypothesis ? `<div class="nous-exp-hypothesis">Hypothesis: ${escapeHtml(c.hypothesis)}</div>` : '';
+      const version = Number(c.version) || 1;
+      const lineage = (version > 1 || c.restartedFrom)
+        ? `<div class="nous-exp-version text-muted">v${version}${c.restartedFrom ? ` · restarted from #${Number(c.restartedFrom) || 0}` : ''}</div>`
+        : '';
       const toggle = status === 'paused'
-        ? `<button class="hv-btn btn-primary btn-sm" data-action="nousCampaignAction" data-arg0="${id}" data-arg1="resume" title="Resume observing and proposing for this experiment">Resume</button>`
-        : `<button class="hv-btn btn-secondary btn-sm" data-action="nousCampaignAction" data-arg0="${id}" data-arg1="pause" title="Pause this experiment; its scope is released for others">Pause</button>`;
+        ? nousExpIconButton('nousCampaignAction', id, 'resume', 'Resume experiment', '▶', 'nous-exp-icon-resume')
+        : nousExpIconButton('nousCampaignAction', id, 'pause', 'Pause experiment', '⏸', 'nous-exp-icon-pause');
       // Single primary action when the server says one is needed: the
       // baseline is complete but the lab is still in Observe mode, so the
       // operator never has to discover the mode knob (#12532).
@@ -24178,30 +24242,43 @@ function burnAreaChart() {
       return `<div class="campaign-row nous-exp-row" data-campaign-id="${id}" data-status="${status}">
         <div>
           <div class="campaign-row-title">#${id} · ${escapeHtml(q)}</div>
+          ${lineage}
           ${hyp}
           <div class="campaign-row-meta"><span class="campaign-pill nous-exp-pill" data-status="${status}">${status}</span>${nousScopePills(c.scope)}<span>started ${escapeHtml(nousCampaignDate(c.startedAt))}</span><span>${Number(c.experiments) || 0} hypotheses</span></div>
+          ${nousScopeWarning(c, s)}
           ${nousExperimentStage(c, status, n, target)}
           <div class="nous-exp-baseline">Baseline ${n} / ${target} (${escapeHtml(c.targetExplainer || NOUS_BASELINE_TARGET_EXPLAINER)})${c.complete ? ' · complete' : ''}${nousBaselineInfo(id, target, c.targetExplainer)}${nousProgressBar(pct, `Baseline for experiment #${id}`)}</div>
         </div>
-        <div class="campaign-row-actions">
+        <div class="campaign-row-actions nous-exp-actions">
           ${primary}
+          ${nousExpIconButton('nousEditExperiment', id, '', 'Edit experiment', '✎', 'nous-exp-icon-edit')}
           ${toggle}
-          <button class="hv-btn btn-secondary btn-sm" data-action="nousCampaignAction" data-arg0="${id}" data-arg1="archive" title="End this experiment; its results stay readable under Previous experiments">Archive</button>
+          ${nousExpIconButton('nousCampaignAction', id, 'archive', 'Archive experiment', '🗄', 'nous-exp-icon-archive')}
         </div>
       </div>`;
     }
 
-    // Inline new-experiment form state: kept across status re-renders the
-    // way Inception carries its campaign filters (#11032).
-    let _nousNewExp = { open: false, conflict: null, pending: false };
+    // Inline experiment form state: kept across status re-renders the way
+    // Inception carries its campaign filters (#11032). editId > 0 means the
+    // form edits that experiment; original holds its pre-edit values so a
+    // question/scope change can be told from a hypothesis-only one.
+    let _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
 
-    function nousNewExperimentForm(projectRepos, repoTargets, conflict) {
-      const repos = Array.isArray(projectRepos) ? projectRepos : [];
-      const preset = Array.isArray(repoTargets) ? repoTargets : [];
-      let h = '<div class="nous-new-exp" id="nous-new-exp" role="form" aria-label="New experiment">';
-      h += '<div><label for="nous-ne-question">Research question</label><textarea id="nous-ne-question" rows="2" placeholder="Can we cut CI time by 20% by sharding the slowest test package?"></textarea></div>';
-      h += '<div><label for="nous-ne-hypothesis">Hypothesis <span class="nous-lab-h3-note">(optional)</span></label><input type="text" id="nous-ne-hypothesis" placeholder="What you expect to change, and by how much"></div>';
-      h += '<div><label>Scope <span class="nous-lab-h3-note">(repo targets; none selected = hive-wide)</span></label>';
+    // The one place an experiment is defined (new or edited): question,
+    // hypothesis and scope. The scope pills are the allow-list from the ⚙
+    // dialog (all project repos when it is empty) plus, when editing, any
+    // repo the experiment already targets so it can still be deselected.
+    function nousNewExperimentForm(allowedRepos, presetRepos, conflict, edit) {
+      const repos = Array.isArray(allowedRepos) ? allowedRepos.slice() : [];
+      const preset = Array.isArray(presetRepos) ? presetRepos : [];
+      for (const r of preset) if (!repos.includes(r)) repos.push(r);
+      const editing = !!edit;
+      const editId = editing ? (Number(edit.id) || 0) : 0;
+      let h = `<div class="nous-new-exp" id="nous-new-exp" role="form" aria-label="${editing ? `Edit experiment #${editId}` : 'New experiment'}"${editing ? ` data-edit-id="${editId}"` : ''}>`;
+      if (editing) h += `<div class="nous-new-exp-title">Edit experiment #${editId} <span class="nous-lab-h3-note">changing the question or scope restarts it; the hypothesis may change freely</span></div>`;
+      h += `<div><label for="nous-ne-question">Research question</label><textarea id="nous-ne-question" rows="2" placeholder="Can we cut CI time by 20% by sharding the slowest test package?">${editing ? escapeHtml(nousResearchQuestionText(edit.question)) : ''}</textarea></div>`;
+      h += `<div><label for="nous-ne-hypothesis">Hypothesis <span class="nous-lab-h3-note">(optional)</span></label><input type="text" id="nous-ne-hypothesis" placeholder="What you expect to change, and by how much" value="${editing ? escapeHtml(edit.hypothesis || '') : ''}"></div>`;
+      h += '<div><label>Scope <span class="nous-lab-h3-note">(repos this experiment may touch, from the lab\'s allow-list; none selected = hive-wide)</span></label>';
       if (repos.length === 0) {
         h += '<div class="nous-lab-empty">No project repos available &mdash; the experiment will be hive-wide.</div>';
       } else {
@@ -24217,7 +24294,7 @@ function burnAreaChart() {
       if (conflict) h += nousConflictWarning(conflict);
       h += '<div class="nous-new-exp-actions">';
       h += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="nousCancelNewExperiment">Cancel</button>';
-      h += `<button type="button" class="hv-btn btn-primary btn-sm" data-action="nousSubmitNewExperiment"${_nousNewExp.pending ? ' disabled' : ''}>Start experiment</button>`;
+      h += `<button type="button" class="hv-btn btn-primary btn-sm" data-action="nousSubmitNewExperiment"${_nousNewExp.pending ? ' disabled' : ''}>${editing ? 'Save changes' : 'Start experiment'}</button>`;
       h += '</div></div>';
       return h;
     }
@@ -24241,16 +24318,21 @@ function burnAreaChart() {
 
     // The experiments card list, Inception-style (#12532).
     function nousExperimentCards(campaigns, s) {
+      const st = s || {};
       const open = (campaigns || []).filter(c => c && c.status !== 'archived');
       let h = '<div class="campaigns-card nous-exp-cards">';
       h += '<div class="campaigns-head"><div><div class="campaigns-title">Experiments</div><div class="campaigns-subtitle">Each running experiment has its own research question, scope and baseline. Experiments may run side by side when their scopes do not overlap.</div></div>';
       h += `<button class="hv-btn btn-primary btn-sm" data-action="nousOpenNewExperiment" title="Start another experiment with its own question, scope and baseline"${_nousNewExp.open ? ' disabled' : ''}>+ New experiment</button></div>`;
-      if (_nousNewExp.open) h += nousNewExperimentForm(s.projectRepos || s.availableRepos || [], s.repoTargets || [], _nousNewExp.conflict);
+      if (_nousNewExp.open) {
+        const edit = _nousNewExp.editId ? (campaigns || []).find(c => c && Number(c.id) === _nousNewExp.editId) : null;
+        const preset = edit ? ((edit.scope && edit.scope.repos) || []) : [];
+        h += nousNewExperimentForm(nousAllowedRepos(st), preset, _nousNewExp.conflict, edit);
+      }
       h += '<div class="campaigns-list" id="nous-exp-list">';
       if (open.length === 0) {
         h += '<div class="campaign-empty">Add an experiment: enter a research question and pick the repos it may touch.</div>';
       } else {
-        h += open.map(nousExperimentCard).join('');
+        h += open.map(c => nousExperimentCard(c, st)).join('');
       }
       h += '</div></div>';
       return h;
@@ -24277,14 +24359,26 @@ function burnAreaChart() {
 
     function nousOpenNewExperiment() {
       if (!experimentLabEnabled()) return;
-      _nousNewExp = { open: true, conflict: null, pending: false };
+      _nousNewExp = { open: true, conflict: null, pending: false, editId: 0, original: null };
+      renderNous();
+      const q = document.getElementById('nous-ne-question');
+      if (q) q.focus();
+    }
+
+    // Edit opens the same form pre-filled from the card (#12532 follow-up).
+    function nousEditExperiment(id) {
+      if (!experimentLabEnabled()) return;
+      const s = (_nousCache && _nousCache.status) || {};
+      const c = (s.campaigns || []).find(x => x && Number(x.id) === Number(id));
+      if (!c) { showToast(`Experiment #${id} not found`, 'error'); return; }
+      _nousNewExp = { open: true, conflict: null, pending: false, editId: Number(id), original: { question: nousResearchQuestionText(c.question), repos: ((c.scope && c.scope.repos) || []).slice() } };
       renderNous();
       const q = document.getElementById('nous-ne-question');
       if (q) q.focus();
     }
 
     function nousCancelNewExperiment() {
-      _nousNewExp = { open: false, conflict: null, pending: false };
+      _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
       renderNous();
     }
 
@@ -24302,18 +24396,59 @@ function burnAreaChart() {
       if (q) q.focus();
     }
 
+    // nousEditIsMaterial: a changed question or repo set invalidates the
+    // baseline; a hypothesis-only edit does not.
+    function nousEditIsMaterial(original, v) {
+      const norm = (q) => String(q || '').trim().toLowerCase().split(/\s+/).join(' ');
+      if (norm(original.question) !== norm(v.question)) return true;
+      const a = new Set((original.repos || []).map(r => String(r).toLowerCase()));
+      const b = new Set((v.repos || []).map(r => String(r).toLowerCase()));
+      if (a.size !== b.size) return true;
+      for (const r of a) if (!b.has(r)) return true;
+      return false;
+    }
+
+    const NOUS_RESTART_CONFIRM = {
+      title: 'Restart experiment?',
+      message: `Changing the question or scope restarts this experiment: baseline resets to 0/${NOUS_BASELINE_TARGET_DEFAULT} (≈7 days) and hypotheses/proposals so far are archived with the old version. Continue?`,
+      confirmLabel: 'Restart experiment',
+      cancelLabel: 'Keep as is',
+      danger: false,
+    };
+
     async function nousSubmitNewExperiment() {
       if (!experimentLabEnabled()) return;
       const v = nousNewExperimentValues();
       if (!v) return;
       if (!v.question.trim()) { showToast('Enter a research question first', 'error'); return; }
+      const editId = _nousNewExp.editId || 0;
+      let restart = false;
+      if (editId && _nousNewExp.original && nousEditIsMaterial(_nousNewExp.original, v)) {
+        if (!(await hiveConfirm(NOUS_RESTART_CONFIRM))) { showToast('Experiment kept as is', 'info'); return; }
+        restart = true;
+      }
       _nousNewExp.pending = true;
       try {
-        const r = await fetch('/api/nous/campaigns', {
-          method: 'POST', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ question: v.question, hypothesis: v.hypothesis, scope: { repos: v.repos } }),
-        });
-        const j = await r.json().catch(() => ({}));
+        const body = { question: v.question, hypothesis: v.hypothesis, scope: { repos: v.repos } };
+        let r, j;
+        if (editId) {
+          if (restart) body.restart = true;
+          ({ r, j } = await nousPatchCampaign(editId, body));
+          // The server saw a material change we did not (stale card): ask now.
+          if (r.status === 409 && j.code === 'restart_required') {
+            _nousNewExp.pending = false;
+            if (!(await hiveConfirm(NOUS_RESTART_CONFIRM))) { showToast('Experiment kept as is', 'info'); return; }
+            _nousNewExp.pending = true;
+            body.restart = true;
+            ({ r, j } = await nousPatchCampaign(editId, body));
+          }
+        } else {
+          r = await fetch('/api/nous/campaigns', {
+            method: 'POST', headers: _inceptionAuthHeaders(),
+            body: JSON.stringify(body),
+          });
+          j = await r.json().catch(() => ({}));
+        }
         if (r.status === 409 && j.code === 'scope_conflict') {
           _nousNewExp.conflict = j;
           _nousNewExp.pending = false;
@@ -24322,12 +24457,15 @@ function burnAreaChart() {
           return;
         }
         if (r.ok && j.ok) {
-          showToast(`Experiment #${(j.campaign && j.campaign.id) || ''} started — baseline starts at 0`, 'success');
-          _nousNewExp = { open: false, conflict: null, pending: false };
+          const cid = (j.campaign && j.campaign.id) || '';
+          if (!editId) showToast(`Experiment #${cid} started — baseline starts at 0`, 'success');
+          else if (j.status === 'restarted') showToast(`Experiment #${editId} archived as v${(j.archived && j.archived.version) || 1}; #${cid} restarted at baseline 0`, 'success');
+          else showToast(`Experiment #${editId} updated — baseline kept`, 'success');
+          _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
           fetchNousStatus();
           return;
         }
-        showToast(j.error || 'Failed to start experiment', 'error');
+        showToast(j.error || (editId ? 'Failed to update experiment' : 'Failed to start experiment'), 'error');
       } catch (e) { showToast('Failed: ' + e.message, 'error'); }
       _nousNewExp.pending = false;
       renderNous();
@@ -24472,7 +24610,6 @@ function burnAreaChart() {
       // campaign's baseline, not the whole observation history: a new
       // research question starts a new experiment at 0 / 672.
       const camp = s.campaign || null;
-      const obs = s.observation || null;
       html += '<div class="nous-stat-grid">';
       if (camp) {
         html += `<div class="nous-stat"><div class="val">${Number(camp.snapshots) || 0}</div><div class="lbl">Baseline snapshots · experiment #${Number(camp.id) || 0}</div></div>`;
@@ -24484,7 +24621,6 @@ function burnAreaChart() {
         html += `<div class="nous-stat"><div class="val">${ledger.length}</div><div class="lbl">Experiments</div></div>`;
       }
       html += '</div>';
-      if (camp) html += nousObservationLine(obs, camp);
 
       // Running experiments as Inception-style cards (#12532).
       if (Array.isArray(s.campaigns)) html += nousExperimentCards(s.campaigns, s);
@@ -24535,23 +24671,18 @@ function burnAreaChart() {
         html += '</div>';
       }
 
-      // Data collection progress
+      // Data collection note (no global progress bar: the observation
+      // history is a running total, not progress — each card carries the
+      // real per-experiment baseline).
       html += '<div class="nous-card mt-5">';
-      html += '<h3>Data Collection</h3>';
-      const base = s.baseline || {};
-      const basePct = base.percent != null ? Math.round(Number(base.percent)) : Math.round(Number(s.baseline_pct || 0));
-      const baseCount = Number(base.snapshots != null ? base.snapshots : (s.snapshotCount || 0));
-      const baseTarget = Number(base.target || s.snapshotTarget || 0);
-      html += '<div class="nous-progress-summary">';
-      html += `<div class="nous-progress-label"><strong>Baseline: ${baseCount} / ${baseTarget} snapshots (${basePct}%)</strong><span class="nous-progress-copy">${base.complete ? 'Complete — switch to Suggest when ready.' : `${base.remainingSnapshots || 0} remaining · ETA ${nousFmtDuration(base.etaSeconds)}`}</span></div>`;
-      html += nousProgressBar(basePct, 'Baseline snapshot collection');
-      if (camp) html += `<div class="nous-progress-copy nous-campaign-meta">Experiment #${Number(camp.id) || 0} started ${escapeHtml(nousCampaignDate(camp.startedAt))}. Baseline and hypotheses restart with each research question; earlier observations stay in the history below. Each experiment card above carries its own baseline bar.</div>`;
-      html += `<div class="nous-progress-copy">Collecting: ${escapeHtml(((base.collecting || ['queue issues','queue PRs','queue on hold','SLA violations','agents kicked','agent states','total tokens']).join(', ')))}. Retention: ${escapeHtml(base.retention || '24 h raw snapshots, then hourly buckets for 30 days')}.</div>`;
-      html += '</div>';
-      html += '<div class="nous-pending-params">Observe records the hive-state time series every governor evaluation cycle. Experiments wait for Suggest/Evolve and operator approval before repo changes run.</div>';
-      html += '<h3 class="mt-5">Experiment Progress</h3>';
-      html += nousExperimentProgressRows(s.experiments || [], (s.campaigns || []).filter(c => c && c.status !== 'archived'));
-
+      html += '<h3>Data collection</h3>';
+      html += nousDataCollectionNote(s, camp);
+      // Proposals and runs, only when there are any: the empty state lives
+      // on the cards (stage line + next action).
+      if (Array.isArray(s.experiments) && s.experiments.length) {
+        html += '<h3 class="mt-5">Proposals and runs</h3>';
+        html += nousExperimentProgressRows(s.experiments);
+      }
       // Show experiment proposals from ledger
       const dryRuns = ledger.filter(e => e.type === 'dry_run').slice(-5);
       if (dryRuns.length > 0) {
@@ -24782,7 +24913,6 @@ function burnAreaChart() {
       if (!overlay) return;
 
       const camp = cfg.campaign || {};
-      const repoCamp = cfg.repoCampaign || {};
       const output = cfg.output || {};
       const ff = camp.fast_fail || {};
       const sched = camp.schedule || {};
@@ -24818,20 +24948,8 @@ function burnAreaChart() {
       h += '<div class="nous-lab-trust-note">The issue/PR output trail builds evidence for operators to advance the trust level.</div>';
       h += '</section>';
 
-      // Goal Definition
-      h += '<section class="nous-config-section">';
-      h += nousLabCardHead('Hypothesis', '🎯 Goal Definition', 'What Nous should optimize through repo-scope experiments.');
-      h += '<div class="nous-lab-field">';
-      h += '<label for="nc-repo-goal" title="The hypothesis Nous will test through repo experiments (code changes). These always require approval regardless of trust level. Example: Can we cut CI time by 20% by sharding the slowest test package?">Research Question</label>';
-      const activeCamp = cfg.activeCampaign || null;
-      const currentQuestion = (cfg.goals && cfg.goals.repoGoal) || repoCamp.research_question || (activeCamp && activeCamp.question) || '';
-      h += `<textarea id="nc-repo-goal" rows="2" data-current-question="${escapeHtml(currentQuestion)}" title="Describe what you want Nous to optimize in the repo codebase (tests, CI config, automation scripts)">${escapeHtml(currentQuestion)}</textarea>`;
-      h += '</div>';
-      if (activeCamp) {
-        h += `<div class="nous-lab-trust-note nous-campaign-meta">Experiment #${Number(activeCamp.id) || 0} · started ${escapeHtml(nousCampaignDate(activeCamp.startedAt))} · ${Number(activeCamp.snapshots) || 0} / ${Number(activeCamp.target) || 0} baseline snapshots. Changing the question starts a new experiment: baseline and hypotheses restart and this one is archived.</div>`;
-        h += '<div class="nous-campaign-actions"><button type="button" class="hv-btn btn-secondary nous-config-btn" data-action="nousStartCampaign" title="Archive the current experiment and start a fresh one with the same question">Start a new experiment</button></div>';
-      }
-      h += '</section>';
+      // Lab-wide guardrails only: experiments (question, hypothesis, scope)
+      // are defined via + New experiment on the section, never here.
 
       // Output Mode
       h += '<section class="nous-config-section">';
@@ -24853,13 +24971,13 @@ function burnAreaChart() {
       h += '</div>';
       h += '</section>';
 
-      // Repo Targets
+      // Repo allow-list: which repos an experiment's scope may pick from.
       h += '<section class="nous-config-section">';
-      h += nousLabCardHead('Scope', '📂 Repo Targets', 'Repos Nous may target for code experiments. Click a repo to toggle it; changes apply on Save.', '(for repo-scope experiments)');
+      h += nousLabCardHead('Scope', NOUS_REPO_ALLOWLIST_HEADING, NOUS_REPO_ALLOWLIST_COPY + ' Click a repo to toggle it; changes apply on Save.');
       if (projectRepos.length === 0) {
         h += '<div class="nous-lab-empty">No project repos available &mdash; add repos to the hive before targeting experiments.</div>';
       } else {
-        h += '<div class="nous-lab-chips" role="group" aria-label="Repo targets">';
+        h += '<div class="nous-lab-chips" role="group" aria-label="Repos experiments may target">';
         for (const repo of projectRepos) {
           const isActive = repoTargets.includes(repo);
           const shortName = repo.includes('/') ? repo.split('/')[1] : repo;
@@ -24920,14 +25038,17 @@ function burnAreaChart() {
       // Save / Cancel
       let footer = '';
       footer += '<button class="hv-btn btn-secondary nous-config-btn nous-config-btn-cancel" data-action="closeNousConfig" title="Discard all changes and close this dialog">Cancel</button>';
-      footer += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all configuration changes to the server. Research question, output mode, repo targets, fast-fail bounds, timing, and principle settings will be updated.">Save Configuration</button>';
+      footer += '<button class="hv-btn btn-primary nous-config-btn nous-config-btn-save" data-action="saveNousConfig" title="Save all lab-wide guardrails to the server: output mode, the repo allow-list, fast-fail bounds, timing and principle settings. Experiments themselves are defined with + New experiment.">Save Configuration</button>';
 
       overlay.innerHTML = nousLabShell(h, footer);
     }
 
+    const NOUS_REPO_ALLOWLIST_HEADING = '📂 Repos experiments may target';
+    const NOUS_REPO_ALLOWLIST_COPY = 'Experiments can only choose repos from this list; none selected = any repo.';
+
     function nousRepoSummary(active, total) {
-      if (active === 0) return 'No repos watched yet — click a repo above to add it.';
-      return `${active} of ${total} repo${total === 1 ? '' : 's'} watched.`;
+      if (active === 0) return 'No repos selected — experiments may target any repo.';
+      return `${active} of ${total} repo${total === 1 ? '' : 's'} allowed.`;
     }
 
     function configEnvVal(cfg, key, fallback) {
@@ -24983,52 +25104,11 @@ function burnAreaChart() {
       } catch (e) { showToast('Failed: ' + e.message, 'error'); }
     }
 
-    const NOUS_NEW_EXPERIMENT_CONFIRM = 'Start a new experiment? Baseline and hypotheses restart; previous campaign is archived.';
-
-    function nousQuestionChanged(prev, next) {
-      const norm = (q) => String(q || '').trim().toLowerCase().split(/\s+/).join(' ');
-      const n = norm(next);
-      return n !== '' && n !== norm(prev);
-    }
-
-    async function nousStartCampaign() {
-      if (!experimentLabEnabled()) return;
-      if (!(await hiveConfirm(NOUS_NEW_EXPERIMENT_CONFIRM))) return;
-      const question = document.getElementById('nc-repo-goal')?.value || '';
-      try {
-        const r = await fetch('/api/nous/campaign/start', {
-          method: 'POST', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ question }),
-        });
-        const j = await r.json();
-        if (r.ok && j.ok) {
-          showToast(`Experiment #${(j.campaign && j.campaign.id) || ''} started — baseline restarts at 0`, 'success');
-          openNousConfig();
-          fetchNousStatus();
-        } else {
-          showToast(j.error || 'Failed to start a new experiment', 'error');
-        }
-      } catch (e) { showToast('Failed: ' + e.message, 'error'); }
-    }
-
+    // saveNousConfig writes the lab-wide guardrails. The research question
+    // is not here: experiments are created and edited on their cards.
     async function saveNousConfig() {
       if (!experimentLabEnabled()) return;
       const errors = [];
-
-      // Goals. A materially different research question starts a new
-      // experiment server-side (#12501); confirm before saving it.
-      const goalEl = document.getElementById('nc-repo-goal');
-      const repoGoal = goalEl?.value;
-      if (goalEl && nousQuestionChanged(goalEl.dataset.currentQuestion || '', repoGoal || '')) {
-        if (!(await hiveConfirm(NOUS_NEW_EXPERIMENT_CONFIRM))) { showToast('Research question not changed', 'info'); return; }
-      }
-      try {
-        const r = await fetch('/api/nous/config/goals', {
-          method: 'PUT', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ repoGoal }),
-        });
-        if (!r.ok) errors.push('goals: ' + (await r.json()).error);
-      } catch (e) { errors.push('goals: ' + e.message); }
 
       // Output mode
       const activeOutput = document.querySelector('.nous-config-output-mode.active');
@@ -25043,7 +25123,7 @@ function burnAreaChart() {
         if (!r.ok) errors.push('output: ' + (await r.json()).error);
       } catch (e) { errors.push('output: ' + e.message); }
 
-      // Repo targets
+      // Repo allow-list
       const activeRepoPills = document.querySelectorAll('.nous-config-pill.active');
       const repos = Array.from(activeRepoPills).map(p => p.dataset.repo);
       try {
@@ -31196,8 +31276,8 @@ function burnAreaChart() {
         case 'ocToggleSidebarGroup': ocToggleSidebarGroup(el); break;
         case 'switchConfigTab': switchConfigTab(el.dataset.tab || el.dataset.arg0); break;
         case 'nousSetMode': nousSetMode(el.dataset.mode || el.dataset.arg0); break;
-        case 'nousStartCampaign': nousStartCampaign(); break;
         case 'nousOpenNewExperiment': nousOpenNewExperiment(); break;
+        case 'nousEditExperiment': nousEditExperiment(el.dataset.arg0); break;
         case 'nousGenerateProposals': nousGenerateProposals(el.dataset.arg0); break;
         case 'nousCancelNewExperiment': nousCancelNewExperiment(); break;
         case 'nousSubmitNewExperiment': nousSubmitNewExperiment(); break;
@@ -31370,7 +31450,7 @@ function burnAreaChart() {
           <div id="hive-dialog-title" class="hive-dialog-title">${hiveDialogEscape(heading)}</div>
           <div class="hive-dialog-body">${hiveDialogEscape(body)}</div>
           <div class="hive-dialog-buttons">
-            <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">Cancel</button>
+            <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">${hiveDialogEscape(cfg.cancelLabel || 'Cancel')}</button>
             <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary" data-initial-focus>${hiveDialogEscape(confirmLabel)}</button>
           </div></div>`;
         document.body.appendChild(overlay);

@@ -49,6 +49,11 @@ type nousCampaignView struct {
 	// NousLoopIdleCycles evaluation cycles (#12541), so the UI can point at
 	// the docs instead of promising proposals that will never come.
 	ExperimentLoopIdle bool `json:"experimentLoopIdle,omitempty"`
+	// Version / RestartedFrom: an experiment whose question or scope was
+	// edited after it started is archived and re-created as the next
+	// version; the card shows "v2 · restarted from #1".
+	Version       int `json:"version"`
+	RestartedFrom int `json:"restartedFrom,omitempty"`
 }
 
 // nousCampaignStage fills the lifecycle fields of v from the lab mode and the
@@ -291,6 +296,8 @@ func nousCampaignToView(ns *NousState, c nous.Campaign) nousCampaignView {
 		StartedAt:       c.StartedAt.UTC().Format(time.RFC3339),
 		Target:          NousBaselineTarget,
 		TargetExplainer: NousBaselineTargetExplainer,
+		Version:         c.VersionNumber(),
+		RestartedFrom:   c.RestartedFrom,
 	}
 	if c.Archived() {
 		v.EndedAt = c.EndedAt.UTC().Format(time.RFC3339)
@@ -351,7 +358,9 @@ func (s *Server) handleNousCampaignStart(w http.ResponseWriter, r *http.Request)
 }
 
 // handleNousConfigGoals stores the goals section and, when the research
-// question materially changed, rotates the campaign (#12501).
+// question materially changed, rotates the campaign (#12501). The dashboard
+// no longer calls it (the dialog holds lab-wide guardrails only); it stays
+// for API clients and the experiment loop.
 func (s *Server) handleNousConfigGoals(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -425,6 +434,25 @@ type nousCampaignRequest struct {
 	// Action is pause, resume or archive (PATCH only). Edits in the same
 	// body are applied first.
 	Action string `json:"action,omitempty"`
+	// Restart (PATCH only) acknowledges that the edit changes the research
+	// question or the repo scope: the campaign is archived as version N and
+	// re-created as version N+1 with a fresh baseline. Without it such an
+	// edit is refused with 409 restart_required.
+	Restart bool `json:"restart,omitempty"`
+}
+
+// nousRestartRequired writes the 409 for a question/scope edit sent without
+// restart: true, so a client never silently keeps a baseline that the edit
+// invalidated.
+func nousRestartRequired(w http.ResponseWriter, ns *NousState, c nous.Campaign) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":       false,
+		"error":    "changing the question or scope restarts this experiment: baseline resets to 0/" + strconv.Itoa(NousBaselineTarget) + " and hypotheses so far are archived with the old version. Repeat the request with \"restart\": true to confirm.",
+		"code":     "restart_required",
+		"campaign": nousCampaignToView(ns, c),
+	})
 }
 
 // nousCampaignConflict writes the 409 for a scope collision: the conflicting
@@ -575,20 +603,40 @@ func (s *Server) handleNousCampaignPatch(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "unknown action: "+action, http.StatusBadRequest)
 		return
 	}
-	var c nous.Campaign
+	c, ok := store.Get(id)
+	if !ok {
+		jsonError(w, "campaign not found", http.StatusNotFound)
+		return
+	}
 	if req.Question != nil || req.Hypothesis != nil || req.Scope != nil {
 		patch := nous.Patch{Question: req.Question, Hypothesis: req.Hypothesis}
 		if req.Scope != nil {
 			sc := nousScopeFromView(*req.Scope)
 			patch.Scope = &sc
 		}
+		// A question or repo-scope edit invalidates the baseline: it must be
+		// acknowledged with restart: true and becomes a new version. A
+		// hypothesis / tags edit is saved in place.
+		if !c.Archived() && c.MaterialChange(patch) {
+			if !req.Restart {
+				nousRestartRequired(w, ns, c)
+				return
+			}
+			prev, next, err := store.Restart(id, patch, nousNow(), s.nousCampaignOutcome(c))
+			if err != nil {
+				s.nousCampaignError(w, ns, err)
+				return
+			}
+			s.auditFromRequest(r, "nous_campaign_restart", auditDetail("campaign", strconv.Itoa(prev.ID)), strconv.Itoa(next.ID))
+			s.nousSyncGoalsFromCampaigns(ns)
+			s.refreshAndPersist()
+			jsonResponse(w, map[string]interface{}{"ok": true, "status": "restarted", "campaign": nousCampaignToView(ns, next), "archived": nousCampaignToView(ns, prev)})
+			return
+		}
 		if c, err = store.Update(id, patch); err != nil {
 			s.nousCampaignError(w, ns, err)
 			return
 		}
-	} else if c, ok = store.Get(id); !ok {
-		jsonError(w, "campaign not found", http.StatusNotFound)
-		return
 	}
 	switch action {
 	case "pause":
@@ -609,8 +657,9 @@ func (s *Server) handleNousCampaignPatch(w http.ResponseWriter, r *http.Request)
 }
 
 // nousSyncGoalsFromCampaigns keeps the legacy single-question goals section
-// pointing at the oldest running campaign so the config dialog's Research
-// Question field and the experiment loop keep working.
+// pointing at the oldest running campaign so the experiment loop (which
+// reads goals.repoGoal) keeps working. The config dialog no longer shows
+// the question; experiments are defined only via + New experiment.
 func (s *Server) nousSyncGoalsFromCampaigns(ns *NousState) {
 	active, ok := ns.ActiveCampaign()
 	ns.Mu.Lock()

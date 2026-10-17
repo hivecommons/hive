@@ -51,8 +51,10 @@ func campaignScope(repos ...string) map[string]interface{} {
 // TestNousCampaignsRunConcurrentlyWithScopeGuard covers hivecommons/hive#12532
 // end to end: the migrated history campaign is the first (hive-wide) card,
 // a second experiment is refused with 409 until the first is narrowed or
-// paused, disjoint scopes run side by side with their own 0 / 672
-// baselines, and pause/resume/archive go through PATCH.
+// paused, narrowing the scope is a material edit that must be acknowledged
+// with restart: true (the old version is archived, the new one starts at
+// 0 / 672 as v2), disjoint scopes run side by side with their own baselines,
+// and pause/resume/archive go through PATCH.
 func TestNousCampaignsRunConcurrentlyWithScopeGuard(t *testing.T) {
 	const history = 8
 	s, deps, _ := nousCampaignServer(t, history)
@@ -99,43 +101,73 @@ func TestNousCampaignsRunConcurrentlyWithScopeGuard(t *testing.T) {
 		t.Fatalf("409 body = %v", conflict)
 	}
 
-	// Narrow campaign 1 to acme/web via PATCH edit, then the create works.
+	// Narrowing campaign 1 to acme/web is a scope change: without
+	// restart: true the edit is refused and nothing moves.
 	rec = doPatchOwner(s, "/api/nous/campaigns/1", map[string]interface{}{"scope": campaignScope("acme/web"), "hypothesis": "fewer flakes"})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("narrow = %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("narrow without restart = %d: %s", rec.Code, rec.Body.String())
 	}
-	if c := nousDecodeMap(t, rec)["campaign"].(map[string]interface{}); c["hypothesis"] != "fewer flakes" || c["scope"].(map[string]interface{})["hiveWide"] != false {
-		t.Fatalf("narrowed card = %v", c)
+	if body := nousDecodeMap(t, rec); body["code"] != "restart_required" || !strings.Contains(body["error"].(string), "restarts this experiment") || body["campaign"].(map[string]interface{})["id"] != float64(1) {
+		t.Fatalf("restart_required body = %v", body)
+	}
+	if c, _ := deps.Nous.Campaigns().Get(1); c.Scope.HiveWide() != true || c.Hypothesis != "" {
+		t.Fatalf("refused edit must leave campaign 1 untouched: %+v", c)
+	}
+	// Acknowledged: #1 is archived as v1 with its frozen outcome and #2 is
+	// created as v2 with the edited fields and a fresh baseline.
+	rec = doPatchOwner(s, "/api/nous/campaigns/1", map[string]interface{}{"question": "Fewer flaky tests on web", "scope": campaignScope("acme/web"), "hypothesis": "fewer flakes", "restart": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("narrow with restart = %d: %s", rec.Code, rec.Body.String())
+	}
+	restarted := nousDecodeMap(t, rec)
+	if restarted["status"] != "restarted" {
+		t.Fatalf("restart status = %v", restarted["status"])
+	}
+	if c := restarted["campaign"].(map[string]interface{}); c["id"] != float64(2) || c["version"] != float64(2) || c["restartedFrom"] != float64(1) || c["question"] != "Fewer flaky tests on web" || c["hypothesis"] != "fewer flakes" || c["scope"].(map[string]interface{})["hiveWide"] != false || c["snapshots"] != float64(0) || c["status"] != "active" {
+		t.Fatalf("restarted card = %v", c)
+	}
+	if a := restarted["archived"].(map[string]interface{}); a["id"] != float64(1) || a["status"] != "archived" || a["version"] != float64(1) || a["snapshots"] != float64(history) || a["experiments"] != float64(1) {
+		t.Fatalf("archived v1 = %v", a)
 	}
 	rec = doPost(s, "/api/nous/campaigns", map[string]interface{}{"question": "Cut CI time", "hypothesis": "shard tests", "scope": map[string]interface{}{"repos": []string{"acme/api"}, "intervention": "ci", "tags": []string{"ci"}}})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
 	}
 	created := nousDecodeMap(t, rec)["campaign"].(map[string]interface{})
-	if created["id"] != float64(2) || created["status"] != "active" || created["snapshots"] != float64(0) || created["percent"] != float64(0) || created["scope"].(map[string]interface{})["intervention"] != "ci" {
+	if created["id"] != float64(3) || created["status"] != "active" || created["snapshots"] != float64(0) || created["percent"] != float64(0) || created["scope"].(map[string]interface{})["intervention"] != "ci" || created["version"] != float64(1) {
 		t.Fatalf("created card = %v", created)
 	}
 
-	// Both run at once with independent baselines; status lists both.
+	// Both run at once with independent baselines; status lists all three
+	// (archived v1 keeps the history count).
 	st := nousStatusJSON(t, s)
 	all, _ := st["campaigns"].([]interface{})
-	if len(all) != 2 || all[0].(map[string]interface{})["snapshots"] != float64(history) || all[1].(map[string]interface{})["snapshots"] != float64(0) {
+	if len(all) != 3 || all[0].(map[string]interface{})["snapshots"] != float64(history) || all[1].(map[string]interface{})["snapshots"] != float64(0) || all[2].(map[string]interface{})["snapshots"] != float64(0) {
 		t.Fatalf("status campaigns = %v", st["campaigns"])
 	}
 	if st["baselineTargetExplainer"] != NousBaselineTargetExplainer {
 		t.Fatalf("baselineTargetExplainer = %v", st["baselineTargetExplainer"])
 	}
-	// The legacy single-campaign block is the oldest running campaign and
-	// the old ledger row is attributed to it, not to the new campaign.
-	if camp := nousBlock(t, st, "campaign"); camp["id"] != float64(1) || camp["experiments"] != float64(1) {
+	// The legacy single-campaign block is the oldest running campaign (#2)
+	// and the old ledger row stays with archived v1, not with any new one.
+	if camp := nousBlock(t, st, "campaign"); camp["id"] != float64(2) || camp["experiments"] != float64(0) {
 		t.Fatalf("legacy campaign block = %v", camp)
 	}
-	if all[1].(map[string]interface{})["experiments"] != float64(0) {
-		t.Fatalf("new campaign must not inherit old experiments: %v", all[1])
+	if all[2].(map[string]interface{})["experiments"] != float64(0) {
+		t.Fatalf("new campaign must not inherit old experiments: %v", all[2])
 	}
-	exps, _ := st["experiments"].([]interface{})
-	if len(exps) != 1 || exps[0].(map[string]interface{})["campaignId"] != float64(1) {
+	// The old ledger row predates every open campaign, so it is dropped
+	// from the live experiment rows (it stays in archived v1's count).
+	if exps, _ := st["experiments"].([]interface{}); len(exps) != 0 {
 		t.Fatalf("experiments = %v", st["experiments"])
+	}
+	// A hypothesis-only edit is saved in place: same id, baseline kept.
+	rec = doPatchOwner(s, "/api/nous/campaigns/3", map[string]interface{}{"hypothesis": "shard the slowest package", "scope": map[string]interface{}{"repos": []string{"ACME/API"}, "tags": []string{"ci", "speed"}}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("in-place edit = %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := nousDecodeMap(t, rec); body["status"] != "updated" || body["campaign"].(map[string]interface{})["id"] != float64(3) || body["campaign"].(map[string]interface{})["hypothesis"] != "shard the slowest package" || body["campaign"].(map[string]interface{})["version"] != float64(1) {
+		t.Fatalf("in-place edit body = %v", body)
 	}
 
 	// Overlapping scope is refused; the shared repo is named.
@@ -143,12 +175,21 @@ func TestNousCampaignsRunConcurrentlyWithScopeGuard(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("overlap = %d: %s", rec.Code, rec.Body.String())
 	}
-	if conflict = nousDecodeMap(t, rec); conflict["conflict"].(map[string]interface{})["id"] != float64(2) || conflict["shared"].([]interface{})[0] != "ACME/API" {
+	if conflict = nousDecodeMap(t, rec); conflict["conflict"].(map[string]interface{})["id"] != float64(3) || conflict["shared"].([]interface{})[0] != "ACME/API" {
 		t.Fatalf("overlap 409 = %v", conflict)
 	}
+	// A restart whose new scope collides with a running experiment is
+	// refused with scope_conflict and leaves the store untouched.
+	rec = doPatchOwner(s, "/api/nous/campaigns/2", map[string]interface{}{"scope": campaignScope("acme/api"), "restart": true})
+	if rec.Code != http.StatusConflict || nousDecodeMap(t, rec)["code"] != "scope_conflict" {
+		t.Fatalf("restart into taken scope = %d: %s", rec.Code, rec.Body.String())
+	}
+	if c, ok := deps.Nous.Campaigns().Get(2); !ok || !c.Running() || len(deps.Nous.Campaigns().All()) != 3 {
+		t.Fatalf("refused restart must leave #2 running and create nothing: %+v", c)
+	}
 
-	// Pausing #2 frees acme/api; resuming it then conflicts with #3.
-	rec = doPatchOwner(s, "/api/nous/campaigns/2", map[string]interface{}{"action": "pause"})
+	// Pausing #3 frees acme/api; resuming it then conflicts with #4.
+	rec = doPatchOwner(s, "/api/nous/campaigns/3", map[string]interface{}{"action": "pause"})
 	if rec.Code != http.StatusOK || nousDecodeMap(t, rec)["campaign"].(map[string]interface{})["status"] != "paused" {
 		t.Fatalf("pause = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -156,26 +197,29 @@ func TestNousCampaignsRunConcurrentlyWithScopeGuard(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create after pause = %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec = doPatchOwner(s, "/api/nous/campaigns/2", map[string]interface{}{"action": "resume"}); rec.Code != http.StatusConflict {
+	if rec = doPatchOwner(s, "/api/nous/campaigns/3", map[string]interface{}{"action": "resume"}); rec.Code != http.StatusConflict {
 		t.Fatalf("resume into taken scope = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Archive #3 (frozen outcome), then #2 resumes.
+	// Archive #4 (frozen outcome), then #3 resumes.
 	now = now.Add(2 * time.Hour)
-	rec = doPatchOwner(s, "/api/nous/campaigns/3", map[string]interface{}{"action": "archive"})
+	rec = doPatchOwner(s, "/api/nous/campaigns/4", map[string]interface{}{"action": "archive"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("archive = %d: %s", rec.Code, rec.Body.String())
 	}
 	if c := nousDecodeMap(t, rec)["campaign"].(map[string]interface{}); c["status"] != "archived" || c["endedAt"] != now.Format(time.RFC3339) {
 		t.Fatalf("archived card = %v", c)
 	}
-	if rec = doPatchOwner(s, "/api/nous/campaigns/2", map[string]interface{}{"action": "resume"}); rec.Code != http.StatusOK {
+	if rec = doPatchOwner(s, "/api/nous/campaigns/3", map[string]interface{}{"action": "resume"}); rec.Code != http.StatusOK {
 		t.Fatalf("resume after archive = %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// Error paths.
-	if rec = doPatchOwner(s, "/api/nous/campaigns/3", map[string]interface{}{"action": "pause"}); rec.Code != http.StatusConflict {
+	if rec = doPatchOwner(s, "/api/nous/campaigns/4", map[string]interface{}{"action": "pause"}); rec.Code != http.StatusConflict {
 		t.Fatalf("pause archived = %d", rec.Code)
+	}
+	if rec = doPatchOwner(s, "/api/nous/campaigns/4", map[string]interface{}{"question": "edited after archive", "restart": true}); rec.Code != http.StatusConflict {
+		t.Fatalf("edit archived = %d: %s", rec.Code, rec.Body.String())
 	}
 	if rec = doPatchOwner(s, "/api/nous/campaigns/99", map[string]interface{}{"action": "pause"}); rec.Code != http.StatusNotFound {
 		t.Fatalf("pause unknown = %d", rec.Code)
@@ -183,15 +227,16 @@ func TestNousCampaignsRunConcurrentlyWithScopeGuard(t *testing.T) {
 	if rec = doPatchOwner(s, "/api/nous/campaigns/abc", map[string]interface{}{"action": "pause"}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad id = %d", rec.Code)
 	}
-	if rec = doPatchOwner(s, "/api/nous/campaigns/1", map[string]interface{}{"action": "explode"}); rec.Code != http.StatusBadRequest {
+	if rec = doPatchOwner(s, "/api/nous/campaigns/2", map[string]interface{}{"action": "explode"}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad action = %d", rec.Code)
 	}
-	if rec = doPatchOwner(s, "/api/nous/campaigns/1", map[string]interface{}{}); rec.Code != http.StatusOK {
+	if rec = doPatchOwner(s, "/api/nous/campaigns/2", map[string]interface{}{}); rec.Code != http.StatusOK {
 		t.Fatalf("empty patch = %d: %s", rec.Code, rec.Body.String())
 	}
 
-	// Legacy goals PUT still swaps only the oldest running campaign (#1 →
-	// #4, same scope) and leaves #2 running.
+	// Legacy goals PUT (no longer called by the dashboard) still swaps only
+	// the oldest running campaign (#2 → #5, same scope) and leaves #3
+	// running.
 	rec = doPut(s, "/api/nous/config/goals", map[string]string{"repoGoal": "Brand new question"})
 	if rec.Code != http.StatusOK || nousDecodeMap(t, rec)["newCampaign"] != true {
 		t.Fatalf("goals = %d: %s", rec.Code, rec.Body.String())
@@ -203,7 +248,7 @@ func TestNousCampaignsRunConcurrentlyWithScopeGuard(t *testing.T) {
 		m := c.(map[string]interface{})
 		statuses[m["id"].(float64)] = m["status"].(string)
 	}
-	if statuses[1] != "archived" || statuses[2] != "active" || statuses[3] != "archived" || statuses[4] != "active" {
+	if statuses[1] != "archived" || statuses[2] != "archived" || statuses[3] != "active" || statuses[4] != "archived" || statuses[5] != "active" {
 		t.Fatalf("statuses after goals = %v", statuses)
 	}
 

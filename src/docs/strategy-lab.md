@@ -37,8 +37,8 @@ Nous state lives in three places, none of which is `hive.yaml`:
 | Experiment ledger | `/var/run/nous/governor/ledger.json` | the external [experiment loop](#the-experiment-loop) only, read at boot (the path is historical; it holds repo experiments) |
 | Learned principles | `/var/run/nous/governor/principles.json` | the external [experiment loop](#the-experiment-loop) only, read at boot |
 | Hive state snapshots | `/data/nous/snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` → `pkg/hivestate`; see [Hive state time series](#hive-state-time-series) |
-| Experiment campaigns | `/data/nous/campaigns.json` | `pkg/nous` campaign store (file version 2), written by `POST/PATCH /api/nous/campaigns`, when the research question changes, or `POST /api/nous/campaign/start`; see [Campaigns and the per-campaign baseline](#campaigns-and-the-per-campaign-baseline) |
-| Mode, goals, output mode, repo targets, fast-fail bounds, schedule | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard config dialog or direct API calls |
+| Experiment campaigns | `/data/nous/campaigns.json` | `pkg/nous` campaign store (file version 2), written by `POST/PATCH /api/nous/campaigns` (including restarts) and by the legacy `PUT /api/nous/config/goals` / `POST /api/nous/campaign/start`; see [Campaigns and the per-campaign baseline](#campaigns-and-the-per-campaign-baseline) |
+| Mode, output mode, repo allow-list, fast-fail bounds, schedule | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard ⚙ *Experiment Lab Configuration* dialog (lab-wide guardrails only) or direct API calls |
 
 The in-memory `Config` map (goals/repos/output/fast_fail/schedule/
 principles sections) is **not currently persisted back to disk
@@ -86,35 +86,40 @@ depth, SLA rate, kicks, tokens — and are never discarded, but an experiment's
 another campaign's interventions, and hypotheses and judged results are
 answers to the question that was asked. So:
 
-- **Entering a research question creates an experiment.** The card appears
-  in the Experiment Lab's *Experiments* list immediately, with its own
-  baseline starting at **0 / 672** and a stage line saying what happens next
-  (see [Experiment stages](#experiment-stages)). A lab with no card shows
+- **Experiments are defined only via + New experiment.** Submitting the
+  inline form (see [Defining experiments](#defining-experiments)) creates
+  the card immediately, with its own baseline starting at **0 / 672** and a
+  stage line saying what happens next (see
+  [Experiment stages](#experiment-stages)). A lab with no card shows
   *"Add an experiment: enter a research question and pick the repos it may
   touch."* — never a bare "no experiments yet".
 - **Several experiments can run at once** — see
   [Running several experiments at once](#running-several-experiments-at-once).
-- **Changing the research question in the config dialog rotates the oldest
-  running campaign.** `PUT /api/nous/config/goals` with a materially
-  different `repoGoal` (case and whitespace are ignored; clearing the field is
-  not a change) archives the oldest running campaign and starts a new one in
-  its place, inheriting its scope. The dialog confirms first: *"Start a new
-  experiment? Baseline and hypotheses restart; previous campaign is
-  archived."* Its **Start a new experiment** button
-  (`POST /api/nous/campaign/start`) does the same for a fresh run of the same
-  question. Other running campaigns are untouched.
+- **The ⚙ dialog holds lab-wide guardrails only** — Trust Ladder, Output
+  Mode + labels, the repo allow-list, fast-fail bounds, schedule and
+  principle settings. It no longer shows a research question or a *Start a
+  new experiment* button. The legacy `PUT /api/nous/config/goals` (a
+  materially different `repoGoal` archives the oldest running campaign and
+  starts a new one inheriting its scope) and `POST /api/nous/campaign/start`
+  endpoints are kept for API compatibility but the dashboard no longer calls
+  them; to change a question or scope use **Edit** on the card — see
+  [Editing an experiment](#editing-an-experiment).
 - **Baseline, hypotheses and results are scoped per campaign.** Each card's
   baseline counts snapshot files at or after its `startedAt`, capped at the
   target; ledger rows are attributed to the campaign whose window contains
   their start time and whose scope includes the row's repo (oldest match
-  wins). `status.campaign`, `baseline.snapshots`, `baseline_pct`, the
-  *Baseline snapshots* tile and the Data Collection bar follow the **oldest
-  running** campaign for compatibility. Principles are durable learnings and
-  stay global.
+  wins). `status.campaign`, `baseline.snapshots`, `baseline_pct` and the
+  *Baseline snapshots* tile follow the **oldest running** campaign for
+  compatibility. There is no lab-wide baseline bar any more: the per-card
+  bars are the real baselines. Principles are durable learnings and stay
+  global.
 - **The observation history stays visible.** `snapshots` / `snapshotCount`
   keep reporting every snapshot file, and `GET /api/nous/status` publishes
-  `observation` (`{snapshots, since}`), which the panel shows as the muted
-  line *"Observation history: N snapshots since <date>"*.
+  `observation` (`{snapshots, since}`), which the panel shows once, as the
+  first line of the muted *Data collection* note under the cards:
+  *"Observation history: N snapshots since <date>"*, followed by what each
+  snapshot records, the cadence (one per governor evaluation cycle, 4/hour)
+  and the retention policy.
 - **Archived campaigns are read-only.** They render under *Previous
   experiments* with their frozen outcome (snapshot count, hypotheses, judged
   results).
@@ -130,7 +135,10 @@ answers to the question that was asked. So:
 `status.campaigns` lists **every** campaign in id order as `{id, question,
 hypothesis, scope: {repos, intervention, tags, hiveWide}, status, startedAt,
 endedAt, snapshots, target, targetExplainer, percent, complete, experiments,
-principles, results, stage, stageLabel, stageDetail, nextAction}`.
+principles, results, stage, stageLabel, stageDetail, nextAction, version,
+restartedFrom?}`. `version` starts at 1 and `restartedFrom` names the
+archived campaign this one was restarted from (see
+[Editing an experiment](#editing-an-experiment)).
 `target` is `NousBaselineTarget` = 4 snapshots/hour × 24 h × 7 days = **672**
 and `targetExplainer` says so in words — *"≈ 7 days of observations
 (4/hour)"* — which the cards show next to an ⓘ. Campaigns are only enabled
@@ -143,22 +151,62 @@ Experiments are first-class concurrent entities
 ([#12532](https://github.com/hivecommons/hive/issues/12532)). The lab
 renders them exactly like the dashboard's Inception section renders its
 campaigns — one row per experiment with the question as title, scope pills,
-a status pill, the baseline bar and per-row **Pause / Resume / Archive**
-actions, plus **+ New experiment** which opens an inline form (research
-question, optional hypothesis, and the same Repo Targets pills as the config
-dialog for scope; no repo selected means *hive-wide*).
+a status pill, the baseline bar, a stage line, and a row of compact icon
+actions **✎ Edit · ⏸ Pause / ▶ Resume · 🗄 Archive** (each with an
+`aria-label` and tooltip, ≥ 28 px hit area). **Generate proposals** stays a
+labelled primary button because it is the one call to action. A muted
+*"vN · restarted from #M"* line appears on restarted experiments and a muted
+*"Scope includes repos no longer in the allow-list: …"* warning appears when
+the ⚙ allow-list was narrowed after the experiment was scoped (the
+experiment keeps its scope).
+
+### Defining experiments
+
+**+ New experiment** is the single place to define an experiment. It opens
+an inline form with the research question, an optional hypothesis, and the
+scope pills. The pills offered are the **allow-list** from the ⚙ dialog's
+*Repos experiments may target* section (`repoTargets`; every project repo
+when the allow-list is empty); no pill selected means *hive-wide*. The ⚙
+dialog's copy says so: *"Experiments can only choose repos from this list;
+none selected = any repo."*
+
+### Editing an experiment
+
+**✎ Edit** on a card opens the same form pre-filled. What happens on save
+depends on what changed:
+
+- **Hypothesis or tags only** — saved in place via
+  `PATCH /api/nous/campaigns/{id}`; id, baseline and proposals are kept.
+- **Research question or scope (repo set)** — the baseline and anything
+  proposed so far no longer answer the edited experiment, so the UI shows an
+  in-app confirm (never `window.confirm`): *"Changing the question or scope
+  restarts this experiment: baseline resets to 0/672 (≈7 days) and
+  hypotheses/proposals so far are archived with the old version. Continue?"*
+  with **Restart experiment** / **Keep as is**. Confirming sends the same
+  `PATCH` with `restart: true`: the current campaign is archived as version
+  N with its frozen outcome, and a new campaign is created as version N+1
+  with the edited fields, `restartedFrom` pointing at the old id and a fresh
+  0 / 672 baseline. The scope-conflict guard below runs before anything is
+  written. The same applies to paused experiments; archived ones are
+  read-only.
+
+Without `restart: true` a material edit is refused with **409**
+`{code: "restart_required", campaign: <current>}` so a stale client can never
+silently reset a baseline.
 
 | Call | Effect |
 |---|---|
-| `GET /api/nous/campaigns` | Every campaign with per-campaign baseline, results, scope and stage. |
+| `GET /api/nous/campaigns` | Every campaign with per-campaign baseline, results, scope, stage and version lineage. |
 | `POST /api/nous/campaigns` `{question, hypothesis?, scope?}` | Starts a new experiment **alongside** the running ones (201). |
-| `PATCH /api/nous/campaigns/{id}` `{action: pause\|resume\|archive}` and/or `{question, hypothesis, scope}` | Pauses (releases the scope), resumes, archives (read-only) or edits a campaign. |
+| `PATCH /api/nous/campaigns/{id}` `{action: pause\|resume\|archive}` | Pauses (releases the scope), resumes or archives (read-only) a campaign. |
+| `PATCH /api/nous/campaigns/{id}` `{question?, hypothesis?, scope?}` | Edits in place when nothing material changed (`{status: "updated", campaign}`); otherwise **409** `restart_required`. |
+| `PATCH /api/nous/campaigns/{id}` `{question?, hypothesis?, scope?, restart: true}` | Archives the campaign as version N and starts version N+1 with the edited fields: `{status: "restarted", campaign: <new>, archived: <old>}`. |
 
 **Confound guard.** Two *running* experiments may not share a repo target,
 and two may not both be hive-wide: concurrent interventions on the same scope
 confound each other's outcomes — neither baseline is a clean window any more
 and a judged delta cannot be attributed to either question. `POST` and
-`PATCH` (resume, or widening the scope) return **409** with
+`PATCH` (resume, widening the scope, or a restart) return **409** with
 `{code: "scope_conflict", shared: [repos], conflict: <campaign>}`; the UI
 renders an in-app warning on the form (never a browser `alert`) that names
 the other experiment and offers **Pause #N and start** or **Narrow scope**.
@@ -290,19 +338,24 @@ repository**; anything that honours the file contract above works.
 
 ## Progress and results on the dashboard
 
-The Experiment Lab card now surfaces both collection progress and experiment
-progress from `GET /api/nous/status`:
+The Experiment Lab card surfaces per-experiment progress from
+`GET /api/nous/status`:
 
-- **Baseline progress** shows `Baseline: N / 672 snapshots`, the capped
-  percentage, remaining snapshots, and an ETA derived from the governor
-  evaluation interval. `N` is the active campaign's count (see
-  [Campaigns](#campaigns-and-the-per-campaign-baseline)); the muted
-  *Observation history* line underneath carries the whole-hive count. It also states exactly what each snapshot records:
-  queue issues, queue PRs, queue on hold, SLA violations, agents kicked, agent
-  states, and total tokens. Retention is the hive-state policy described
-  above: 24 h raw snapshots, then hourly buckets for 30 days.
-- **Experiment progress** rows are computed server-side for pending, approved,
-  running, and judged experiments. Each row reports the current phase
+- **Per-card baselines** — each experiment card carries its own
+  `N / 672` bar (see [Campaigns](#campaigns-and-the-per-campaign-baseline)).
+  There is no lab-wide baseline bar: the whole-hive snapshot count is a total
+  of collections regardless of experiment, not progress, so it is reported
+  once in the muted **Data collection** note under the cards — *"Observation
+  history: N snapshots since <date>"*, what each snapshot records (queue
+  issues, queue PRs, queue on hold, SLA violations, agents kicked, agent
+  states, total tokens), the cadence (one snapshot per governor evaluation
+  cycle, 4/hour) and the retention policy (24 h raw snapshots, then hourly
+  buckets for 30 days). `status.baseline` is still published for API
+  compatibility.
+- **Proposals and runs** rows are computed server-side for pending, approved,
+  running, and judged experiments and render under the cards only when there
+  are any — there is no empty "Experiment Progress" box; the cards' stage
+  lines carry the empty state. Each row reports the current phase
   (`baseline`, `experiment`, `cooldown`, or `judging`/`judged`), phase end
   time, elapsed/remaining time, snapshot counts per phase, and the next output
   ETA. The metrics list compares baseline-window values with experiment-window
@@ -347,10 +400,10 @@ endpoint, all requiring owner role and all triggering `refreshAndPersist()`:
 
 | Endpoint | Section | Fields (dashboard defaults shown) |
 |---|---|---|
-| `PUT /api/nous/config/goals` | `goals` | `repoGoal` — the free-text research question (e.g. "Can we cut CI time by 20% by sharding the slowest test package?"). A legacy `governorGoal` field is accepted but ignored. A materially different question archives the active campaign and starts a new one; the response carries `newCampaign` and the active `campaign`. |
-| `POST /api/nous/campaign/start` | — | Explicitly archive the active campaign and start a new experiment (`{"question": "..."}` optional; defaults to the active question). Baseline and hypotheses restart at 0; the previous campaign is kept read-only with its results. Owner role required. |
+| `PUT /api/nous/config/goals` | `goals` | **Legacy — the dashboard no longer exposes this.** `repoGoal` is the free-text research question of the oldest running campaign. A legacy `governorGoal` field is accepted but ignored. A materially different question archives the oldest running campaign and starts a new one; the response carries `newCampaign` and the active `campaign`. Use `PATCH /api/nous/campaigns/{id}` instead. |
+| `POST /api/nous/campaign/start` | — | **Legacy — the dashboard no longer exposes this.** Explicitly archive the active campaign and start a new experiment (`{"question": "..."}` optional; defaults to the active question). Baseline and hypotheses restart at 0; the previous campaign is kept read-only with its results. Owner role required. |
 | `PUT /api/nous/config/output` | `output` | Output mode — `state-only` (files + dashboard only), `issue` (opens a GitHub issue per proposal), or `issue+pr` (issue and PR pair); plus `autoHold` and `autoDoNotMerge` booleans that apply the `hold` / `do-not-merge` labels to anything Nous creates. |
-| `PUT /api/nous/config/repos` | `repos` | Which repos from `projectRepos` are eligible experiment targets. |
+| `PUT /api/nous/config/repos` | `repos` | The **allow-list** — shown in the dialog as *Repos experiments may target*. Experiments can only choose scope repos from this list; an empty list means any project repo. Narrowing it later does not change existing experiments' scope; their cards show a muted warning instead. |
 | `PUT /api/nous/config/fast-fail` | `fast_fail` | `queue_depth_max` (default 30), `mttr_max_minutes` (default 180), `budget_burn_rate_max_pct` (default 110) — see below. |
 | `PUT /api/nous/config/schedule` | `schedule` | `experiment_duration_hours` (default 4), `baseline_hours` (default 4), `cooldown_hours` (default 2). |
 | `PUT /api/nous/config/controllables` | `controllables` | Legacy endpoint, no longer used by the dashboard; it still stores whatever body it receives. |
@@ -420,9 +473,11 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
    pack), so the Experiment Lab section is visible in the dashboard sidebar.
 2. Leave mode at the default `observe` and let the hive run — no action is
    needed here. Snapshots accumulate automatically once per evaluation cycle.
-3. Open the Experiment Lab panel's gear icon to set the research question
-   (`PUT /api/nous/config/goals`) describing what you want Nous to optimize
-   in your repositories.
+3. Optionally open the panel's ⚙ gear to set lab-wide guardrails — output
+   mode and labels, and the repo allow-list (*Repos experiments may
+   target*). Then press **+ New experiment** and enter the research question
+   describing what you want Nous to optimize, an optional hypothesis, and the
+   repos it may touch (`POST /api/nous/campaigns`).
 4. The question appears as an experiment card at 0 / 672. When its baseline
    is complete the card reads *ready — generate proposals*; press **Generate
    proposals** (equivalent to `PUT /api/nous/mode {"mode": "suggest"}`).

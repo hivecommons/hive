@@ -61,6 +61,20 @@ type Campaign struct {
 	// Outcome is frozen when the campaign is archived; it is empty for a
 	// running campaign, whose counts are computed live.
 	Outcome Outcome `json:"outcome"`
+	// Version and RestartedFrom link the lineage of an experiment whose
+	// question or scope was edited after it started: the old campaign is
+	// archived as version N and the edited one is created as version N+1
+	// with RestartedFrom = old ID. Both are zero for a first version.
+	Version       int `json:"version,omitempty"`
+	RestartedFrom int `json:"restarted_from,omitempty"`
+}
+
+// VersionNumber is Version with the implicit 1 of a first-version campaign.
+func (c Campaign) VersionNumber() int {
+	if c.Version <= 0 {
+		return 1
+	}
+	return c.Version
 }
 
 // Scope is the set of things a campaign may change. Two active campaigns
@@ -430,6 +444,89 @@ func (s *Store) Update(id int, p Patch) (Campaign, error) {
 		return Campaign{}, err
 	}
 	return c, nil
+}
+
+// MaterialChange reports whether applying p to c changes the research
+// question or the repo scope — the two edits that invalidate a baseline and
+// the hypotheses judged against it. Hypothesis, intervention and tags are
+// descriptive and may change in place.
+func (c Campaign) MaterialChange(p Patch) bool {
+	if p.Question != nil && normalizeQuestion(*p.Question) != normalizeQuestion(c.Question) {
+		return true
+	}
+	if p.Scope != nil {
+		a := normalizeScope(c.Scope).Repos
+		b := normalizeScope(*p.Scope).Repos
+		if len(a) != len(b) {
+			return true
+		}
+		seen := map[string]bool{}
+		for _, r := range a {
+			seen[strings.ToLower(r)] = true
+		}
+		for _, r := range b {
+			if !seen[strings.ToLower(r)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Restart archives campaign id with outcome and creates its next version
+// with p applied: the question or scope changed after the experiment
+// started, so the baseline restarts at zero and the hypotheses and results
+// so far stay with the archived version. The new scope is checked against
+// the other running campaigns (id itself is excluded because it is being
+// archived) before anything is written, so a *Conflict leaves the store
+// untouched. It returns the archived and the new campaign.
+func (s *Store) Restart(id int, p Patch, now time.Time, outcome Outcome) (Campaign, Campaign, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.load(); err != nil {
+		return Campaign{}, Campaign{}, err
+	}
+	i := s.indexOf(id)
+	if i < 0 {
+		return Campaign{}, Campaign{}, ErrNotFound
+	}
+	prev := s.campaigns[i]
+	if prev.Archived() {
+		return Campaign{}, Campaign{}, ErrArchived
+	}
+	next := Campaign{
+		ID:            s.nextID(),
+		Question:      prev.Question,
+		Hypothesis:    prev.Hypothesis,
+		Scope:         prev.Scope,
+		State:         StatusActive,
+		StartedAt:     now.UTC(),
+		Version:       prev.VersionNumber() + 1,
+		RestartedFrom: prev.ID,
+	}
+	if p.Question != nil {
+		next.Question = strings.TrimSpace(*p.Question)
+	}
+	if p.Hypothesis != nil {
+		next.Hypothesis = strings.TrimSpace(*p.Hypothesis)
+	}
+	if p.Scope != nil {
+		next.Scope = *p.Scope
+	}
+	next.Scope = normalizeScope(next.Scope)
+	if conf := s.conflict(next.Scope, id); conf != nil {
+		return Campaign{}, Campaign{}, conf
+	}
+	ended := now.UTC()
+	prev.EndedAt = &ended
+	prev.State = StatusArchived
+	prev.Outcome = outcome
+	s.campaigns[i] = prev
+	s.campaigns = append(s.campaigns, next)
+	if err := s.save(); err != nil {
+		return Campaign{}, Campaign{}, err
+	}
+	return prev, next, nil
 }
 
 // Pause keeps the campaign but takes it out of the running set, which also

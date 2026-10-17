@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// #12520: the Experiment Lab "Repo Targets" pills toggled a class that no CSS
+// #12520: the Experiment Lab repo allow-list ("Repos experiments may target") pills toggled a class that no CSS
 // rule consumed, so a selected repo looked identical to an excluded one. The
 // two states must each have a distinct rule: selected is a filled amber chip
 // with a leading ✓, excluded is a dimmed outline.
@@ -57,7 +57,7 @@ func TestNousRepoTargetPillsHaveDistinctOnOffStyles(t *testing.T) {
 }
 
 // Runs the real toggle code under node with a minimal DOM double and checks
-// class, aria-pressed, title and the "N of M repos watched" counter all move.
+// class, aria-pressed, title and the "N of M repos allowed" counter all move.
 func TestNousRepoTargetPillToggleUpdatesStateAndCounter(t *testing.T) {
 	html := indexHTML(t)
 	node, err := exec.LookPath("node")
@@ -103,7 +103,7 @@ assert.equal(pills[0].classList.contains('is-off'), true);
 assert.equal(pills[0].classList.contains('active'), false, '.active hook follows the toggle for saveNousConfig');
 assert.equal(pills[0].getAttribute('aria-pressed'), 'false');
 assert.equal(pills[0].title, 'hivecommons/hive — Click to exclude'.replace('exclude', 'include'));
-assert.equal(summary.textContent, '1 of 3 repos watched.');
+assert.equal(summary.textContent, '1 of 3 repos allowed.');
 
 // Include an excluded repo.
 toggleNousRepo(pills[2]);
@@ -112,13 +112,13 @@ assert.equal(pills[2].classList.contains('is-off'), false);
 assert.equal(pills[2].classList.contains('active'), true);
 assert.equal(pills[2].getAttribute('aria-pressed'), 'true');
 assert.equal(pills[2].title, 'hivecommons/pluk — Click to exclude');
-assert.equal(summary.textContent, '2 of 3 repos watched.');
+assert.equal(summary.textContent, '2 of 3 repos allowed.');
 
 // Toggle everything off: the counter falls back to the empty-state hint.
 toggleNousRepo(pills[1]);
 toggleNousRepo(pills[2]);
-assert.equal(summary.textContent, 'No repos watched yet — click a repo above to add it.');
-assert.equal(nousRepoSummary(1, 1), '1 of 1 repo watched.');
+assert.equal(summary.textContent, 'No repos selected — experiments may target any repo.');
+assert.equal(nousRepoSummary(1, 1), '1 of 1 repo allowed.');
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("node repo target pill toggle failed: %v\n%s", err, strings.TrimSpace(string(out)))

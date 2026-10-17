@@ -9,8 +9,9 @@ import (
 // TestNousMultiExperimentCardsUI pins hivecommons/hive#12532 in the
 // dashboard: running experiments render as Inception-style campaign rows
 // (question, scope pills, per-card baseline "N / 672 (≈ 7 days …)" with an ⓘ
-// explainer, status pill, pause/resume/archive), "+ New experiment" opens an
-// inline form reusing the Repo Targets pills, a 409 scope_conflict renders
+// explainer, status pill, edit/pause/resume/archive as icon buttons), "+ New
+// experiment" opens an inline form whose scope pills are the ⚙ allow-list
+// ("Repos experiments may target"), a 409 scope_conflict renders
 // an in-app styled warning (never window.alert/confirm) offering to pause
 // the other experiment or narrow the scope, and the collapsed summary
 // counts open experiments.
@@ -20,14 +21,26 @@ func TestNousMultiExperimentCardsUI(t *testing.T) {
 		`<div class="campaigns-card nous-exp-cards">`,
 		`<div class="campaigns-title">Experiments</div>`,
 		`data-action="nousOpenNewExperiment"`,
-		`data-action="nousCampaignAction" data-arg0="${id}" data-arg1="pause"`,
-		`data-action="nousCampaignAction" data-arg0="${id}" data-arg1="archive"`,
+		"case 'nousEditExperiment': nousEditExperiment(el.dataset.arg0); break;",
+		"const NOUS_REPO_ALLOWLIST_HEADING = '📂 Repos experiments may target';",
+		"const NOUS_REPO_ALLOWLIST_COPY = 'Experiments can only choose repos from this list; none selected = any repo.';",
+		`nousLabCardHead('Scope', NOUS_REPO_ALLOWLIST_HEADING, NOUS_REPO_ALLOWLIST_COPY + ' Click a repo to toggle it; changes apply on Save.')`,
+		`<details class="faq-q" id="faq-create-experiment">`,
+		"<summary>Where do I create an experiment?</summary>",
+		`<details class="faq-q" id="faq-edit-experiment">`,
+		"<summary>Can I change an experiment after it starts?</summary>",
+		"if (r.status === 409 && j.code === 'restart_required') {",
+		".nous-exp-icon { min-width: 28px; min-height: 28px;",
+		".nous-exp-icon:focus-visible { outline: 2px solid var(--accent);",
 		`data-action="nousPauseConflictAndStart"`,
 		`data-action="nousNarrowScope"`,
 		"case 'nousOpenNewExperiment': nousOpenNewExperiment(); break;",
 		"case 'nousGenerateProposals': nousGenerateProposals(el.dataset.arg0); break;",
 		"body: JSON.stringify({ mode: 'suggest' }),",
 		"Add an experiment: enter a research question and pick the repos it may touch.",
+		"Changing the question or scope restarts this experiment: baseline resets to 0/${NOUS_BASELINE_TARGET_DEFAULT} (≈7 days) and hypotheses/proposals so far are archived with the old version. Continue?",
+		"confirmLabel: 'Restart experiment',",
+		"cancelLabel: 'Keep as is',",
 		"case 'nousCampaignAction': nousCampaignAction(el.dataset.arg0, el.dataset.arg1); break;",
 		"case 'nousPauseConflictAndStart': nousPauseConflictAndStart(el.dataset.arg0); break;",
 		"fetch('/api/nous/campaigns', {",
@@ -53,7 +66,7 @@ func TestNousMultiExperimentCardsUI(t *testing.T) {
 	}
 	// The conflict path must be in-app: no native dialogs anywhere in the
 	// experiment-card code.
-	for _, fn := range []string{"nousSubmitNewExperiment", "nousPauseConflictAndStart", "nousCampaignAction", "nousConflictWarning", "nousGenerateProposals"} {
+	for _, fn := range []string{"nousSubmitNewExperiment", "nousPauseConflictAndStart", "nousCampaignAction", "nousConflictWarning", "nousGenerateProposals", "nousEditExperiment"} {
 		body := extractJSFunction(t, html, fn)
 		for _, banned := range []string{"window.alert", "window.confirm", "window.prompt", " alert(", " confirm(", " prompt("} {
 			if strings.Contains(body, banned) {
@@ -79,7 +92,15 @@ function formatDashboardDateTime(ts){return new Date(ts).toISOString().slice(0,1
 		extractJSFunction(t, html, "nousScopePills") + "\n    }\n" +
 		extractJSFunction(t, html, "nousExperimentStage") + "\n    }\n" +
 		extractJSFunction(t, html, "nousPrinciplesInfo") + "\n    }\n" +
+		extractJSFunction(t, html, "nousFmtDuration") + "\n    }\n" +
+		extractJSFunction(t, html, "nousMetricValue") + "\n    }\n" +
+		extractJSFunction(t, html, "nousMetricLine") + "\n    }\n" +
+		extractJSFunction(t, html, "nousOutputLinks") + "\n    }\n" +
 		extractJSFunction(t, html, "nousExperimentProgressRows") + "\n    }\n" +
+		extractJSFunction(t, html, "nousAllowedRepos") + "\n    }\n" +
+		extractJSFunction(t, html, "nousScopeWarning") + "\n    }\n" +
+		extractJSFunction(t, html, "nousExpIconButton") + "\n    }\n" +
+		extractJSFunction(t, html, "nousEditIsMaterial") + "\n    }\n" +
 		extractJSFunction(t, html, "nousExperimentCard") + "\n    }\n" +
 		extractJSFunction(t, html, "nousNewExperimentForm") + "\n    }\n" +
 		extractJSFunction(t, html, "nousConflictWarning") + "\n    }\n" +
@@ -88,7 +109,7 @@ function formatDashboardDateTime(ts){return new Date(ts).toISOString().slice(0,1
 const NOUS_BASELINE_TARGET_DEFAULT = 672;
 const NOUS_BASELINE_TARGET_EXPLAINER = '≈ 7 days of observations (4/hour)';
 const NOUS_PRINCIPLES_EXPLAINER = 'Principles are durable lessons the lab distils from judged experiments (principles.json). A new lab starts at 0 and the count grows as experiments conclude; none are needed to start an experiment.';
-let _nousNewExp = { open: false, conflict: null, pending: false };
+let _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
 
 const campaigns = [
   { id: 1, question: 'research_question: > Cut CI time by 20%?', hypothesis: 'shard the slowest package', status: 'active', startedAt: '2026-10-10T10:00:00Z', snapshots: 96, target: 672, percent: 14.3, targetExplainer: '≈ 7 days of observations (4/hour)', experiments: 2, scope: { repos: ['acme/api'], intervention: 'ci', tags: ['ci'], hiveWide: false }, stage: 'baseline', stageLabel: 'collecting baseline 96 / 672', stageDetail: 'Proposals are designed only once the baseline is complete (≈ 7 days of observations (4/hour)).' },
@@ -104,8 +125,9 @@ assert.equal((list.match(/class="campaign-row nous-exp-row"/g) || []).length, 2,
 assert.match(list, /\+ New experiment/);
 assert.doesNotMatch(list, /nous-new-exp"/, 'form closed by default');
 
-// Card #1: cleaned question, scope pills, baseline with the 672 explainer and ⓘ, pause + archive.
-const c1 = nousExperimentCard(campaigns[0]);
+// Card #1: cleaned question, scope pills, baseline with the 672 explainer and ⓘ,
+// edit / pause / archive as icon buttons with aria-label + title.
+const c1 = nousExperimentCard(campaigns[0], status);
 assert.match(c1, /<div class="campaign-row-title">#1 · Cut CI time by 20%\?<\/div>/);
 assert.doesNotMatch(c1, /research_question/);
 assert.match(c1, /Hypothesis: shard the slowest package/);
@@ -116,9 +138,22 @@ assert.match(c1, /nous-scope-pill">#ci</);
 assert.match(c1, /Baseline 96 \/ 672 \(≈ 7 days of observations \(4\/hour\)\)/);
 assert.match(c1, /ⓘ<span id="nous-baseline-tip-1" class="config-tooltip" role="tooltip">672 baseline snapshots ≈ 7 days of observations \(4\/hour\): one hive-state snapshot per governor evaluation cycle, 4 an hour × 24 hours × 7 days/);
 assert.match(c1, /role="progressbar" aria-label="Baseline for experiment #1"[^>]*aria-valuenow="14"/);
-assert.match(c1, /data-action="nousCampaignAction" data-arg0="1" data-arg1="pause"/);
-assert.match(c1, /data-action="nousCampaignAction" data-arg0="1" data-arg1="archive"/);
+assert.match(c1, /<button type="button" class="hv-btn btn-icon btn-sm nous-exp-icon nous-exp-icon-edit" data-action="nousEditExperiment" data-arg0="1" aria-label="Edit experiment" title="Edit experiment"><span aria-hidden="true">✎<\/span><\/button>/);
+assert.match(c1, /class="hv-btn btn-icon btn-sm nous-exp-icon nous-exp-icon-pause" data-action="nousCampaignAction" data-arg0="1" data-arg1="pause" aria-label="Pause experiment" title="Pause experiment"><span aria-hidden="true">⏸<\/span>/);
+assert.match(c1, /class="hv-btn btn-icon btn-sm nous-exp-icon nous-exp-icon-archive" data-action="nousCampaignAction" data-arg0="1" data-arg1="archive" aria-label="Archive experiment" title="Archive experiment"><span aria-hidden="true">🗄<\/span>/);
 assert.doesNotMatch(c1, /data-arg1="resume"/);
+assert.doesNotMatch(c1, />Pause<|>Archive<|>Edit</, 'row actions are icons, the verb is in aria-label/title');
+assert.doesNotMatch(c1, /nous-exp-version/, 'a first version has no lineage line');
+assert.doesNotMatch(c1, /nous-exp-scope-warn/, 'acme/api is in the allow-list');
+// Scope repo dropped from the allow-list later: muted warning, scope kept.
+const c1gone = nousExperimentCard(campaigns[0], Object.assign({}, status, { repoTargets: ['acme/web'] }));
+assert.match(c1gone, /<div class="nous-exp-scope-warn text-muted" role="note">acme\/api is no longer in the lab's allow-list \(⚙ Repos experiments may target\)\. This experiment keeps its scope; new experiments cannot choose it\.<\/div>/);
+assert.match(c1gone, /nous-scope-pill" title="acme\/api">api</, 'scope pills still show the repo');
+assert.equal(nousScopeWarning(campaigns[0], { repoTargets: [] }), '', 'empty allow-list = any repo, nothing to warn about');
+assert.match(nousScopeWarning({ scope: { repos: ['a/x', 'a/y'] } }, { repoTargets: ['a/z'] }), /a\/x, a\/y are no longer .* cannot choose them\./);
+// Restarted experiment: version line.
+const v2 = nousExperimentCard(Object.assign({}, campaigns[0], { id: 7, version: 2, restartedFrom: 1 }), status);
+assert.match(v2, /<div class="nous-exp-version text-muted">v2 · restarted from #1<\/div>/);
 
 // Stage line: server-derived label + detail; the kellya scenario (question
 // set, baseline 100%, lab in observe) gets ONE primary action.
@@ -127,7 +162,7 @@ assert.doesNotMatch(c1, /Generate proposals/);
 const ready = { id: 4, question: 'Tell me if I remove /clear from the agent prompt the queue drains faster', status: 'active', startedAt: '2026-10-01T10:00:00Z', snapshots: 874, target: 672, percent: 100, complete: true, scope: { repos: [], hiveWide: true }, stage: 'ready', stageLabel: 'ready — generate proposals', stageDetail: 'Baseline complete. The lab is in Observe mode (data collection only); Generate proposals switches it to Suggest so proposals can be designed for your review.', nextAction: 'generate_proposals' };
 const c4 = nousExperimentCard(ready);
 assert.match(c4, /data-stage="ready"><span class="nous-exp-stage-label">ready — generate proposals</);
-assert.match(c4, /<button class="hv-btn btn-primary btn-sm" data-action="nousGenerateProposals" data-arg0="4"[^>]*>Generate proposals</);
+assert.match(c4, /<button class="hv-btn btn-primary btn-sm" data-action="nousGenerateProposals" data-arg0="4"[^>]*>Generate proposals</, 'the one call to action stays a labelled button');
 assert.match(c4, /Baseline 672 \/ 672/);
 // Once in suggest the server drops nextAction: no button, honest waiting copy.
 const waiting = nousExperimentCard(Object.assign({}, ready, { stageLabel: 'ready — generating proposals', stageDetail: 'Baseline complete and the lab is in Suggest mode. Proposals appear here as soon as the experiment loop designs them; nothing more is needed from you.', nextAction: '' }));
@@ -145,24 +180,23 @@ assert.doesNotMatch(idle, /generating proposals|Generate proposals</);
 assert.match(nousExperimentCard({ id: 5, question: 'q', status: 'active', snapshots: 10, target: 672 }), /data-stage="baseline"><span class="nous-exp-stage-label">collecting baseline 10 \/ 672</);
 assert.match(nousExperimentCard({ id: 6, question: 'q', status: 'active', snapshots: 700, target: 672, complete: true }), /data-stage="ready"/);
 
-// Experiment Progress empty state: never "no defined experiments" when
-// cards exist; tells a fresh lab what to do.
-assert.match(nousExperimentProgressRows([], campaigns.filter(c => c.status !== 'archived')), /No proposals yet for your 2 experiments — each card above shows its stage and what happens next\./);
-assert.match(nousExperimentProgressRows([], [ready]), /your 1 experiment —/);
-assert.match(nousExperimentProgressRows([], []), /Add an experiment: enter a research question and pick the repos it may touch\./);
-assert.doesNotMatch(nousExperimentProgressRows([], []), /switch to Suggest/);
+// No "Experiment Progress" empty box: with no proposals the rows render
+// nothing — the cards carry stage and next action.
+assert.equal(nousExperimentProgressRows([]), '');
+assert.equal(nousExperimentProgressRows(null), '');
+assert.match(nousExperimentProgressRows([{ id: 'exp-1', title: 'shard tests', phase: 'experiment', progressPct: 40 }]), /nous-exp-row/);
 
 // Principles ⓘ explains what the tile counts and that 0 is fine.
 const pinfo = nousPrinciplesInfo();
 assert.match(pinfo, /aria-label="What principles are">ⓘ<span id="nous-principles-tip" class="config-tooltip" role="tooltip">Principles are durable lessons the lab distils from judged experiments \(principles\.json\)\. A new lab starts at 0 .* none are needed to start an experiment\.<\/span>/);
 assert.match(nousPrinciplesInfo('server copy'), />server copy</);
 
-// Card #2: paused + hive-wide + complete, count capped at the target, Resume instead of Pause.
+// Card #2: paused + hive-wide + complete, count capped at the target, Resume icon instead of Pause.
 const c2 = nousExperimentCard(campaigns[1]);
 assert.match(c2, /data-status="paused">paused</);
 assert.match(c2, /nous-scope-pill"[^>]*>hive-wide</);
 assert.match(c2, /Baseline 672 \/ 672 \(≈ 7 days of observations \(4\/hour\)\) · complete/);
-assert.match(c2, /data-arg1="resume"/);
+assert.match(c2, /nous-exp-icon-resume" data-action="nousCampaignAction" data-arg0="2" data-arg1="resume" aria-label="Resume experiment" title="Resume experiment"><span aria-hidden="true">▶</);
 assert.doesNotMatch(c2, /data-arg1="pause"/);
 
 // Collapsed summary counts open experiments (not archived, not ledger rows).
@@ -170,17 +204,43 @@ assert.equal(nousSectionSummaryText({ status, ledger: [1, 2, 3, 4, 5] }), 'sugge
 assert.equal(nousSectionSummaryText({ status: { mode: 'observe' }, ledger: [1] }), 'observe · 1 experiment');
 assert.equal(nousSectionSummaryText({ status: { status: 'not_configured' } }), '—');
 
-// "+ New experiment" opens the inline form with the Repo Targets pills
-// preset from repoTargets and the Start button enabled.
-_nousNewExp = { open: true, conflict: null, pending: false };
+// "+ New experiment" opens the inline form; its scope pills are the ⚙
+// allow-list (repoTargets), none preselected (= hive-wide), Start enabled.
+_nousNewExp = { open: true, conflict: null, pending: false, editId: 0, original: null };
 list = nousExperimentCards(campaigns, status);
-assert.match(list, /id="nous-new-exp" role="form"/);
+assert.match(list, /id="nous-new-exp" role="form" aria-label="New experiment"/);
 assert.match(list, /id="nous-ne-question"/);
-assert.match(list, /class="nous-config-pill active is-on nous-ne-pill" aria-pressed="true" data-repo="acme\/api" data-action="toggleNousRepo"/);
-assert.match(list, /class="nous-config-pill is-off nous-ne-pill" aria-pressed="false" data-repo="acme\/web"/);
+assert.match(list, /class="nous-config-pill is-off nous-ne-pill" aria-pressed="false" data-repo="acme\/api" data-action="toggleNousRepo"/);
+assert.doesNotMatch(list, /data-repo="acme\/web"/, 'acme/web is not in the allow-list so it is not offered');
+assert.match(list, /from the lab's allow-list; none selected = hive-wide/);
 assert.match(list, /data-action="nousSubmitNewExperiment">Start experiment</);
 assert.match(list, /data-action="nousOpenNewExperiment"[^>]*disabled/);
-assert.doesNotMatch(list, /nous-conflict-warn/);
+assert.doesNotMatch(list, /nous-conflict-warn|nous-new-exp-title/);
+// Empty allow-list = every project repo is offered.
+assert.deepEqual(nousAllowedRepos({ projectRepos: ['a/x', 'a/y'], repoTargets: [] }), ['a/x', 'a/y']);
+assert.deepEqual(nousAllowedRepos({ projectRepos: ['a/x', 'a/y'], repoTargets: ['a/y'] }), ['a/y']);
+assert.deepEqual(nousAllowedRepos({ availableRepos: ['a/x'] }), ['a/x']);
+const allRepos = nousExperimentCards(campaigns, Object.assign({}, status, { repoTargets: [] }));
+assert.match(allRepos, /data-repo="acme\/api"/);
+assert.match(allRepos, /data-repo="acme\/web"/);
+
+// ✎ Edit: the same form pre-filled (question, hypothesis, scope on) with
+// "Save changes"; a scoped repo outside the allow-list stays toggleable.
+_nousNewExp = { open: true, conflict: null, pending: false, editId: 1, original: { question: 'Cut CI time by 20%?', repos: ['acme/api'] } };
+const editList = nousExperimentCards(campaigns, Object.assign({}, status, { repoTargets: ['acme/web'] }));
+assert.match(editList, /id="nous-new-exp" role="form" aria-label="Edit experiment #1" data-edit-id="1"/);
+assert.match(editList, /<div class="nous-new-exp-title">Edit experiment #1 /);
+assert.match(editList, /<textarea id="nous-ne-question"[^>]*>Cut CI time by 20%\?<\/textarea>/);
+assert.match(editList, /id="nous-ne-hypothesis"[^>]*value="shard the slowest package"/);
+assert.match(editList, /class="nous-config-pill active is-on nous-ne-pill" aria-pressed="true" data-repo="acme\/api"/);
+assert.match(editList, /class="nous-config-pill is-off nous-ne-pill" aria-pressed="false" data-repo="acme\/web"/);
+assert.match(editList, /data-action="nousSubmitNewExperiment">Save changes</);
+// Material vs in-place edits.
+const orig = { question: 'Cut CI time by 20%?', repos: ['acme/api'] };
+assert.equal(nousEditIsMaterial(orig, { question: 'cut  ci time by 20%?', hypothesis: 'new hyp', repos: ['acme/api'] }), false, 'hypothesis-only edit keeps the baseline');
+assert.equal(nousEditIsMaterial(orig, { question: 'Cut CI time by 30%?', repos: ['acme/api'] }), true, 'question change restarts');
+assert.equal(nousEditIsMaterial(orig, { question: 'Cut CI time by 20%?', repos: ['acme/api', 'acme/web'] }), true, 'scope change restarts');
+assert.equal(nousEditIsMaterial(orig, { question: 'Cut CI time by 20%?', repos: [] }), true, 'going hive-wide restarts');
 
 // 409 scope_conflict renders the in-app warning naming the other
 // experiment, the shared repo, the reason, and both remedies.
