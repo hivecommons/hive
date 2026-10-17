@@ -126,6 +126,11 @@ func TestMergeStrategyCountsAsOverride(t *testing.T) {
 	}
 }
 
+func TestReleaseOnApproveCountsAsOverride(t *testing.T) {
+	if repoPolicyHasNoOverrides(RepoPolicy{Repo: "console", ReleaseOnApprove: true}) {
+		t.Fatal("a release_on_approve entry must not be pruned as empty")
+	}
+}
 func TestRepoReleaseOnApprove(t *testing.T) {
 	var cfg Config
 	raw := []byte(`
