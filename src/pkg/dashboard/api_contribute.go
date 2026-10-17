@@ -140,6 +140,9 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("POST /api/contribute/invite", s.handleContributeInvite)
 	s.mux.HandleFunc("POST /api/contribute/reissue-token", s.handleContributeReissueToken)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
+	// Contribution-eligible repositories (hivecommons/hive#12805): the ids a
+	// relay may put in a repo_scope. Public like /status; no counts, no PII.
+	s.mux.HandleFunc("GET /api/contribute/repositories", s.handleContributeRepositories)
 	s.mux.HandleFunc("PUT /api/contribute/announcement", s.handleContributeAnnouncement)
 	s.mux.HandleFunc("POST /api/contribute/announcement/dismiss", s.handleContributeAnnouncementDismiss)
 	s.mux.HandleFunc("PUT /api/contribute/help-links", s.handleContributeHelpLinks)
@@ -631,6 +634,87 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		"served_sha":      versionShort,
 		"announcement":    s.activeContributeAnnouncement(),
 		"help_links":      s.contributeHelpLinks(),
+	})
+}
+
+// contributeRepository is one contribution-eligible repository advertised by
+// GET /api/contribute/repositories (hivecommons/hive#12805). ID is the
+// canonical "{forge}/{host}/{owner}/{name}" a relay names in repo_scope.
+type contributeRepository struct {
+	ID       string `json:"id"`
+	Forge    string `json:"forge"`
+	Host     string `json:"host"`
+	FullName string `json:"full_name"`
+}
+
+// contributeEligibleRepositories lists the repositories contributors may be
+// offered work from: the hub's monitored repositories minus hub.disabled_repos,
+// matched with the same MatchesAny rule selectTask applies. The monitored set
+// is the status snapshot selection reads; before the first snapshot it is the
+// configured project repos, qualified with the org exactly as buildRepos does.
+func (s *Server) contributeEligibleRepositories() []contributeRepository {
+	type monitored struct{ name, full string }
+	var repos []monitored
+	s.statusMu.RLock()
+	if s.status != nil {
+		for _, r := range s.status.Repos {
+			repos = append(repos, monitored{name: r.Name, full: r.Full})
+		}
+	}
+	s.statusMu.RUnlock()
+
+	var cfg *config.Config
+	if s.deps != nil {
+		cfg = s.deps.Config
+	}
+	if repos == nil && cfg != nil {
+		for _, name := range cfg.Project.Repos {
+			full := name
+			if !strings.Contains(name, "/") {
+				full = cfg.Project.Org + "/" + name
+			}
+			repos = append(repos, monitored{name: name, full: full})
+		}
+	}
+
+	host := repoScopeDefaultHost
+	var disabled []string
+	if cfg != nil {
+		host = cfg.GitHub.Forge()
+		disabled = cfg.Hub.DisabledRepos
+	}
+	out := make([]contributeRepository, 0, len(repos))
+	seen := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		full := strings.Trim(strings.TrimSpace(r.full), "/")
+		if full == "" || !strings.Contains(full, "/") {
+			continue
+		}
+		if config.MatchesAny(r.full, disabled) || config.MatchesAny(r.name, disabled) {
+			continue
+		}
+		id := repoScopeID(repoScopeDefaultForge, host, full)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, contributeRepository{
+			ID:       id,
+			Forge:    repoScopeDefaultForge,
+			Host:     strings.ToLower(host),
+			FullName: full,
+		})
+	}
+	return out
+}
+
+// handleContributeRepositories serves GET /api/contribute/repositories
+// (hivecommons/hive#12805): the contribution-eligible repositories a relay can
+// select for its repo_scope. Public and unauthenticated like /status.
+func (s *Server) handleContributeRepositories(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, map[string]any{
+		"repositories": s.contributeEligibleRepositories(),
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

@@ -103,6 +103,13 @@ const (
 	// runs.external.omp. capExtExecVibeKanban is the local board/workspace host
 	// opt-in, gated by runs.external.vibe_kanban. The tokens are independent:
 	// declaring one grants nothing for another engine.
+	//
+	// capRepoScope: the hub accepts a versioned contributor repository scope
+	// (repo_scope → repo_scope_ack) and filters candidates by the acknowledged
+	// scope BEFORE it leases or mints for them (hivecommons/hive#12805, RFC
+	// #12570 §4). Negotiated on this token rather than a protocol-version bump:
+	// a relay that never sends repo_scope is served exactly as before.
+	capRepoScope = "repo_scope_v1"
 )
 
 // serverCapabilities returns the capability set this hub advertises on auth_ok.
@@ -127,6 +134,7 @@ func serverCapabilities() []string {
 		capExtExecOMP,
 		capExtExecVibeKanban,
 		capFixPRInterrupt,
+		capRepoScope,
 	}
 }
 
@@ -135,6 +143,138 @@ func relaySupportsRunStage(c *ContributorConnection) bool {
 		return false
 	}
 	return c.capabilities.DeclaresCapability(capRunStage)
+}
+
+// Contributor repository scope (hivecommons/hive#12805). A relay may narrow the
+// work this hub offers it to a set of repositories it has selected. The scope
+// can only NARROW: every operator admission gate still runs unchanged.
+const (
+	// repoScopeModeAll keeps today's unrestricted behaviour.
+	repoScopeModeAll = "all"
+	// repoScopeModeSelected restricts selection to the listed repository ids.
+	repoScopeModeSelected = "selected"
+	// repoScopeMaxRepositories bounds one repo_scope message.
+	repoScopeMaxRepositories = 1000
+	// repoScopeMaxIDLen bounds one repository id.
+	repoScopeMaxIDLen = 512
+	// repoScopeDefaultForge is the forge segment of every id this hub
+	// advertises: contributor work is minted through the GitHub App.
+	repoScopeDefaultForge = "github"
+	// repoScopeDefaultHost is the host segment when no forge host is configured.
+	repoScopeDefaultHost = "github.com"
+	// taskDeclinedOutOfScope is the task_declined reason a scope-capable relay
+	// sends for an offer outside its selected scope (the reload race). It is
+	// "not this contributor's work", never a failure.
+	taskDeclinedOutOfScope = "out_of_contributor_scope"
+)
+
+// Reasons carried on a repo_scope_ack with accepted:false.
+const (
+	repoScopeReasonInvalidVersion = "invalid_scope_version"
+	repoScopeReasonInvalidMode    = "invalid_mode"
+	repoScopeReasonTooMany        = "too_many_repositories"
+	repoScopeReasonInvalidID      = "invalid_repository_id"
+)
+
+// contributorRepoScope is a connection's ACKNOWLEDGED repository scope. Nil on
+// a connection that never sent repo_scope, which is served exactly as before.
+type contributorRepoScope struct {
+	version int
+	mode    string
+	repos   map[string]struct{}
+}
+
+// restricts reports whether the scope narrows selection at all.
+func (s *contributorRepoScope) restricts() bool {
+	return s != nil && s.mode == repoScopeModeSelected
+}
+
+// allows reports whether the canonical repository id is inside the scope.
+func (s *contributorRepoScope) allows(id string) bool {
+	if !s.restricts() {
+		return true
+	}
+	_, ok := s.repos[id]
+	return ok
+}
+
+// repoScopeID builds the canonical, lower-cased repository id
+// "{forge}/{host}/{owner}/{name}" for a repository the hub monitors. Empty
+// forge/host default to github / github.com.
+func repoScopeID(forge, host, fullName string) string {
+	forge = strings.ToLower(strings.TrimSpace(forge))
+	if forge == "" {
+		forge = repoScopeDefaultForge
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		host = repoScopeDefaultHost
+	}
+	return forge + "/" + host + "/" + strings.ToLower(strings.Trim(strings.TrimSpace(fullName), "/"))
+}
+
+// normalizeRepoScopeID validates a client-supplied repository id and returns
+// its canonical lower-cased form. An id is exactly four non-empty segments
+// forge/host/owner/name with no whitespace, control characters or dot segments.
+func normalizeRepoScopeID(raw string) (string, bool) {
+	id := strings.ToLower(strings.TrimSpace(raw))
+	if id == "" || len(id) > repoScopeMaxIDLen || !utf8.ValidString(id) {
+		return "", false
+	}
+	parts := strings.Split(id, "/")
+	if len(parts) != 4 {
+		return "", false
+	}
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			return "", false
+		}
+		for _, r := range p {
+			if unicode.IsSpace(r) || unicode.IsControl(r) {
+				return "", false
+			}
+		}
+	}
+	return id, true
+}
+
+// parseRepoScope validates a repo_scope message. It returns the scope and the
+// canonical ids in message order, or a non-empty reason when the scope is
+// malformed — in which case the connection must be served nothing until a
+// valid scope arrives (fail closed).
+func parseRepoScope(msg WSMessage) (*contributorRepoScope, []string, string) {
+	if msg.ScopeVersion <= 0 {
+		return nil, nil, repoScopeReasonInvalidVersion
+	}
+	mode := strings.ToLower(strings.TrimSpace(msg.Mode))
+	switch mode {
+	case repoScopeModeAll:
+		return &contributorRepoScope{version: msg.ScopeVersion, mode: mode}, nil, ""
+	case repoScopeModeSelected:
+	default:
+		return nil, nil, repoScopeReasonInvalidMode
+	}
+	if len(msg.Repositories) > repoScopeMaxRepositories {
+		return nil, nil, repoScopeReasonTooMany
+	}
+	scope := &contributorRepoScope{
+		version: msg.ScopeVersion,
+		mode:    mode,
+		repos:   make(map[string]struct{}, len(msg.Repositories)),
+	}
+	ids := make([]string, 0, len(msg.Repositories))
+	for _, raw := range msg.Repositories {
+		id, ok := normalizeRepoScopeID(raw)
+		if !ok {
+			return nil, nil, repoScopeReasonInvalidID
+		}
+		if _, dup := scope.repos[id]; dup {
+			continue
+		}
+		scope.repos[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return scope, ids, ""
 }
 
 // Surface identifiers for the /api/contribute/status response (#2567). Two
