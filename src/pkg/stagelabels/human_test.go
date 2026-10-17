@@ -60,7 +60,7 @@ func TestRouteHumanFixEvidence(t *testing.T) {
 			e := readyEvidence()
 			tc.mutate(&e)
 			r := RouteHuman(e)
-			if r.Stage != ReturnedToContributor || len(r.Reasons) != 1 || r.Reasons[0] != tc.reason || r.LaneReason != tc.lane {
+			if r.Stage != NeedsAuthor || len(r.Reasons) != 1 || r.Reasons[0] != tc.reason || r.LaneReason != tc.lane {
 				t.Fatalf("route = %+v", r)
 			}
 			e.SelfAuthored = true
@@ -74,7 +74,7 @@ func TestRouteHumanFixEvidence(t *testing.T) {
 	e := readyEvidence()
 	e.Sentinel, e.Conflict = true, true
 	e.Holds = []string{"hold"}
-	if r := RouteHuman(e); r.Stage != ReturnedToContributor || r.LaneReason != LaneReasonConflicting {
+	if r := RouteHuman(e); r.Stage != NeedsAuthor || r.LaneReason != LaneReasonConflicting {
 		t.Fatalf("sentinel+conflict route = %+v", r)
 	}
 	// Several reasons are all listed; the first sets the lane reason.
@@ -209,8 +209,8 @@ func TestRenamedLabelStillReads(t *testing.T) {
 	if strings.Join(add, ",") != "stage/090-ready-for-human-merge" || strings.Join(remove, ",") != "stage/090-needs-human" {
 		t.Fatalf("Plan add=%v remove=%v", add, remove)
 	}
-	add, remove = Plan([]string{"stage/090-needs-human"}, Desired{Stage: ReturnedToContributor})
-	if strings.Join(add, ",") != "stage/072-returned-to-contributor" || strings.Join(remove, ",") != "stage/090-needs-human" {
+	add, remove = Plan([]string{"stage/090-needs-human"}, Desired{Stage: NeedsAuthor})
+	if strings.Join(add, ",") != "stage/072-needs-author" || strings.Join(remove, ",") != "stage/090-needs-human" {
 		t.Fatalf("Plan to 072 add=%v remove=%v", add, remove)
 	}
 }

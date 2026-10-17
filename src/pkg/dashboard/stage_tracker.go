@@ -109,9 +109,13 @@ type StageTrackerItem struct {
 	Lane string `json:"lane"`
 	// Stage is the stage number (0 = no stage known); StageSince is when
 	// the item entered it (nil when only the label is known).
-	Stage      int        `json:"stage"`
-	StageSlug  string     `json:"stage_slug,omitempty"`
-	StageLabel string     `json:"stage_label,omitempty"`
+	Stage      int    `json:"stage"`
+	StageSlug  string `json:"stage_slug,omitempty"`
+	StageLabel string `json:"stage_label,omitempty"`
+	// StageShort is the chevron word for this item; it differs from the
+	// stage table's short caption only for 072, where it follows the
+	// author kind (stageTrackerShortFor).
+	StageShort string     `json:"stage_short,omitempty"`
 	StageSince *time.Time `json:"stage_since,omitempty"`
 	// Mirrored is true for an issue whose stage is its covering PR's.
 	Mirrored bool `json:"mirrored,omitempty"`
@@ -162,7 +166,7 @@ const (
 	trackerNumberAwaitingMerge  = 80
 	trackerNumberReviewPending  = 50
 	trackerNumberFixing         = 70
-	trackerNumberReturned       = 72
+	trackerNumberNeedsAuthor    = 72
 	trackerNumberAdopted        = 74
 	trackerNumberNeedsDecision  = 85
 	trackerNumberReadyForHuman  = 90
@@ -210,7 +214,7 @@ const (
 // lights the "Merge admission" chevron.
 func stageTrackerBranchFrom(number int) int {
 	switch number {
-	case trackerNumberFixing, trackerNumberReturned, trackerNumberAdopted:
+	case trackerNumberFixing, trackerNumberNeedsAuthor, trackerNumberAdopted:
 		return trackerNumberReviewPending
 	case trackerNumberNeedsDecision, trackerNumberReadyForHuman:
 		return trackerNumberAwaitingMerge
@@ -235,8 +239,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "Reviewed"
 	case stagelabels.Fixing:
 		return "Fixing"
-	case stagelabels.ReturnedToContributor:
-		return "Returned to contributor"
+	case stagelabels.NeedsAuthor:
+		return stagelabels.NeedsAuthorWordHuman
 	case stagelabels.AdoptedByHive:
 		return "Adopted by hive"
 	case stagelabels.AwaitingMergeAdmission:
@@ -249,6 +253,19 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "Merge queue"
 	}
 	return s.Slug()
+}
+
+// stageTrackerShortFor is the chevron word for one item: the stage's short
+// caption, except stage 072 whose word depends on the author kind (clanker →
+// "Returned to contributor", otherwise "Needs author"); the slug is the same.
+func stageTrackerShortFor(s stagelabels.Stage, authorKind string) string {
+	if s == stagelabels.NeedsAuthor {
+		if authorKind == authorKindClanker {
+			return stagelabels.NeedsAuthorWordClanker
+		}
+		return stagelabels.NeedsAuthorWordHuman
+	}
+	return stageTrackerShort(s)
 }
 
 func stageTrackerStages(overrides map[string]time.Duration) []StageTrackerStage {
@@ -469,7 +486,7 @@ func joinClause(head, clause string) string {
 }
 
 // stageTrackerCaption builds the human sentence and the actor for an item.
-func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int) (caption, actor string) {
+func stageTrackerCaption(stage stagelabels.Stage, reason, author, authorKind string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int) (caption, actor string) {
 	clause := humanizeStageReason(reason)
 	who := strings.TrimSpace(author)
 	if who == "" {
@@ -499,8 +516,12 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("Review swarm approved; a gate is still pending", clause), "CI"
 	case stagelabels.Fixing:
 		return joinClause("Red or changes requested; a hive agent is fixing it", clause), "hive"
-	case stagelabels.ReturnedToContributor:
-		c := joinClause("Returned to "+who, clause) + " — " + who + " must act"
+	case stagelabels.NeedsAuthor:
+		head := "Needs " + who
+		if authorKind == authorKindClanker {
+			head = "Returned to " + who
+		}
+		c := joinClause(head, clause) + " — " + who + " must act"
 		if hasRec && rec.NudgeCount > 0 {
 			c += " (" + plural(rec.NudgeCount, "nudge") + " sent)"
 		}
@@ -609,6 +630,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.Stage = stage.Number()
 		it.StageSlug = stage.Slug()
 		it.StageLabel = stage.Label()
+		if stage != stagelabels.None {
+			it.StageShort = stageTrackerShortFor(stage, it.AuthorKind)
+		}
 		if m := trackerPRNumberRE.FindStringSubmatch(it.Reason); m != nil && it.Kind == "issue" {
 			it.LinkedPR, _ = strconv.Atoi(m[1])
 		}
@@ -619,7 +643,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.NeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
-		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
+		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.AuthorKind, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}

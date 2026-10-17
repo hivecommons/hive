@@ -130,7 +130,7 @@ const stages = [
   { number: 20, label: 'Claimed', short: 'Claimed' }, { number: 30, label: 'PR in progress', short: 'PR in progress' },
   { number: 40, label: 'Covered by PR', short: 'Covered by PR' },
   { number: 50, label: 'Review pending', short: 'CI / Review' }, { number: 60, label: 'Reviewed', short: 'Reviewed' },
-  { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 72, label: 'Returned to contributor', short: 'Returned to contributor', branch_from: 50 },
+  { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 72, label: 'Needs author', short: 'Needs author', branch_from: 50 },
   { number: 74, label: 'Adopted by hive', short: 'Adopted by hive', branch_from: 50 },
   { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' },
   { number: 85, label: 'Needs human decision', short: 'Needs human decision', branch_from: 80 }, { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
@@ -198,10 +198,18 @@ assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Ready for au
 assert.ok(strip(row).includes('title="Merge queue — admitted, merging"'), 'chevron tooltip carries 100: ' + row);
 assert.ok(text(row).includes('#102 Ready for auto merge'), text(row));
 
-// PR returned to contributor: detour badge rides Review; chip cap = author kind + first modifier (+N).
-row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{stage:50},{stage:60},{stage:72}] }, stages, ctx);
+// PR at 072 (clanker): detour badge rides Review with the server's per-item
+// word; chip cap = author kind + first modifier (+N).
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', title: 'Fix flaky', stage: 72, stage_short: 'Returned to contributor', lane: 'contributor', tier: 'trusted', author: 'karibhou', author_kind: 'clanker', author_kind_source: 'inferred', modifiers: ['needs-rebase', 'needs-human'], caption: 'Returned to @karibhou', history: [{stage:50},{stage:60},{stage:72}] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, 'active detoured', T, 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Returned to contributor</span>'));
+// One slug, two words: the 072 detour word is the item's stage_short (set
+// by author kind on the server); without it the stage table's word is used.
+for (const [kind, word] of [['human', 'Needs author'], ['clanker', 'Returned to contributor']]) {
+  const r = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', stage: 72, stage_short: word, author_kind: kind }, stages, ctx);
+  assert.ok(r.includes('<span class="ham-detour">' + word + '</span>'), kind + ': ' + r);
+}
+assert.ok(stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', stage: 72, author_kind: 'human' }, stages, ctx).includes('<span class="ham-detour">Needs author</span>'), 'no stage_short falls back to the table word');
 assert.deepStrictEqual(prCol(row).length, 1, 'a PR row lists itself in the PR column');
 assert.ok(prCol(row)[0].includes('ham-author-ico ham-author-clanker') && prCol(row)[0].includes('<span class="ham-pr-num">#102</span><span class="ham-pr-title">Fix flaky</span>'), 'PR row lists icon + id + full title: ' + prCol(row)[0]);
 assert.ok(prCol(row)[0].includes('<title>clanker · @karibhou</title>'));
@@ -242,7 +250,7 @@ assert.ok(row.includes('ham-mod-needs-decision">needs human decision</span>') &&
 // PR in progress = the PR author, Claimed = the claimant; Open/Actionable carry none.
 assert.ok(row.includes('<svg class="ham-ico ham-actor-ico" viewBox="0 0 16 16"') && row.includes('<title>Next move: hive</title>') && row.includes('<span class="ham-seg-t">CI / Review</span><svg class="ham-ico ham-actor-ico"'), row);
 assert.ok(!row.includes('ham-author-ico ham-actor') && !row.includes('ham-actor-ico ham-author-'), 'actor icon must not carry the author colour classes: ' + row);
-row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 72, author_kind: 'clanker' }, stages, ctx);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 72, stage_short: 'Returned to contributor', author_kind: 'clanker' }, stages, ctx);
 assert.ok(row.includes('<title>Next move: clanker</title>') && row.includes('<span class="ham-detour">Returned to contributor</span><svg class="ham-ico ham-actor-ico"'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }] }, stages, ctx);
 assert.ok(subs(row).length === 0 && strip(row).includes('<title>Next move: clanker</title>') && strip(row).includes('<span class="ham-seg-t">PR in progress</span><svg class="ham-ico ham-actor-ico"'), 'single covering PR: the issue strip lights PR in progress with the PR author as the mover: ' + row);
@@ -312,7 +320,7 @@ assert.deepStrictEqual(segStates(row), ['active', T, T, T, T, T, 'todo cap']);
 // Every PR stage has an active word and an actor on its segment; the word
 // is what the chevron says, the actor is whose move it is.
 const prWords = {};
-for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Ready for auto merge', 'hive'], [70, 'Fixing', 'author'], [72, 'Returned to contributor', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Ready for auto merge', 'hive']]) {
+for (const [st, word, actor] of [[50, 'CI / Review', 'hive'], [60, 'Ready for auto merge', 'hive'], [70, 'Fixing', 'author'], [72, 'Needs author', 'author'], [74, 'Adopted by hive', 'hive'], [80, 'Ready for auto merge', 'hive'], [85, 'Needs human decision', 'human'], [90, 'Ready for human merge', 'human'], [100, 'Ready for auto merge', 'hive']]) {
   const r = stageTrackerRowHtml({ repo: 'acme/console', number: 500 + st, kind: 'pr', stage: st, author_kind: 'clanker' }, stages, ctx);
   const m = /aria-current="step"><span class="ham-(?:seg-t|detour)">([^<]*)<\/span><svg class="ham-ico ham-actor-ico"[^>]*><title>Next move: ([a-z]+)<\/title>/.exec(r);
   assert.ok(m, 'stage ' + st + ' has no active word + actor: ' + r);

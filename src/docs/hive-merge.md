@@ -446,7 +446,7 @@ no-verdict → `stage/085-needs-decision` with reason
 `contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
-contributor PR → `stage/072-returned-to-contributor`, hold / sentinel alert →
+contributor PR → `stage/072-needs-author`, hold / sentinel alert →
 `stage/085-needs-decision`, untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
@@ -476,7 +476,7 @@ writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same
 ([#12436](https://github.com/hivecommons/hive/issues/12436)).
 
-A PR entering `stage/072-returned-to-contributor` also triggers the
+A PR entering `stage/072-needs-author` also triggers the
 contributor nudge: the sweep posts one `<!-- hive:contributor-nudge head=…
 -->` comment per head naming the failing checks / review asks (re-nudged
 once at the stall threshold, cap 2) and hands the diagnosis to the contribute

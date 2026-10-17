@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 		stagelabels.Actionable: trackerNumberActionable, stagelabels.Claimed: trackerNumberClaimed,
 		stagelabels.PRInProgress: trackerNumberPRInProgress, stagelabels.CoveredByPR: trackerNumberCoveredByPR,
 		stagelabels.ReviewPending: trackerNumberReviewPending, stagelabels.Reviewed: trackerNumberReviewed,
-		stagelabels.Fixing: trackerNumberFixing, stagelabels.ReturnedToContributor: trackerNumberReturned,
+		stagelabels.Fixing: trackerNumberFixing, stagelabels.NeedsAuthor: trackerNumberNeedsAuthor,
 		stagelabels.AdoptedByHive: trackerNumberAdopted, stagelabels.AwaitingMergeAdmission: trackerNumberAwaitingMerge,
 		stagelabels.NeedsDecision: trackerNumberNeedsDecision, stagelabels.ReadyForHumanMerge: trackerNumberReadyForHuman,
 	}
@@ -88,7 +89,7 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 	clock = now.Add(-29 * time.Hour)
 	store.Observe(key101, stagelabels.Reviewed, "required-check-pending:build")
 	clock = now.Add(-25 * time.Hour)
-	store.Observe(key101, stagelabels.ReturnedToContributor, "reviewer-verdict:changes_requested")
+	store.Observe(key101, stagelabels.NeedsAuthor, "reviewer-verdict:changes_requested")
 	store.MarkNudged(key101, "abc123", 1, true, clock)
 	// PR 102: hive PR in the merge queue, fresh.
 	clock = now.Add(-40 * time.Minute)
@@ -113,7 +114,7 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 			github.Issue{Number: 8, Title: "Flaky test", Author: "hive-app[bot]", Labels: []string{"stage/010-actionable"}},
 		},
 		OpenPrs: []any{
-			FrontendPR{PullRequest: github.PullRequest{Number: 101, Title: "Fix redirect", Author: "karibhou", Labels: []string{"stage/072-returned-to-contributor", "author/contributor", "needs-rebase"}}},
+			FrontendPR{PullRequest: github.PullRequest{Number: 101, Title: "Fix redirect", Author: "karibhou", Labels: []string{"stage/072-needs-author", "author/contributor", "needs-rebase"}}},
 			FrontendPR{PullRequest: github.PullRequest{Number: 102, Title: "Stabilise test", Author: "hive-app[bot]", AppAuthored: true, Labels: []string{"stage/100-merge-queue", "author/trusted", "author/hive"}}, MergeVerdict: &github.MergeVerdict{Tier: "trusted"}},
 			FrontendPR{PullRequest: github.PullRequest{Number: 103, Title: "Relay PR", Author: "zoe", HiveAttributed: true, Labels: []string{"stage/050-review-pending"}}},
 			// Label only: the store never saw it.
@@ -199,14 +200,17 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		}
 	}
 	pr101 := trackerItem(t, resp, "pr", 101)
-	if pr101.Stage != 72 || pr101.StageLabel != "stage/072-returned-to-contributor" || pr101.Lane != laneContributor {
+	if pr101.Stage != 72 || pr101.StageLabel != "stage/072-needs-author" || pr101.Lane != laneContributor {
 		t.Fatalf("pr101 stage: %+v", pr101)
 	}
 	if pr101.StageSince == nil || !pr101.StageSince.Equal(now.Add(-25*time.Hour)) {
 		t.Fatalf("pr101 since = %v", pr101.StageSince)
 	}
-	if pr101.Actor != "karibhou" || pr101.Caption != "Returned to @karibhou — review swarm requested changes — @karibhou must act (1 nudge sent)" {
+	if pr101.Actor != "karibhou" || pr101.Caption != "Needs @karibhou — review swarm requested changes — @karibhou must act (1 nudge sent)" {
 		t.Fatalf("pr101 caption=%q actor=%q", pr101.Caption, pr101.Actor)
+	}
+	if pr101.StageShort != "Needs author" {
+		t.Fatalf("pr101 stage_short = %q (human author)", pr101.StageShort)
 	}
 	if !hasMod(pr101, modStalled) || !hasMod(pr101, modNeedsRebase) || hasMod(pr101, modRegressed) {
 		t.Fatalf("pr101 modifiers = %v", pr101.Modifiers)
@@ -328,6 +332,38 @@ func TestStageTrackerClaimantKind(t *testing.T) {
 	for issue, kind := range want {
 		if got := s.stageTrackerClaimantKind("acme/console", issue); got != kind {
 			t.Errorf("issue %d: got %q, want %q", issue, got, kind)
+		}
+	}
+}
+
+// One slug, two words: the tracker's per-item 072 word and caption follow
+// the author kind (clanker → "Returned to contributor", anything else →
+// "Needs author"); every other stage keeps the table's short caption.
+func TestStageTrackerNeedsAuthorWordByAuthorKind(t *testing.T) {
+	for _, tc := range []struct {
+		kind, word, captionHead string
+	}{
+		{authorKindHuman, "Needs author", "Needs @sam"},
+		{authorKindClanker, "Returned to contributor", "Returned to @sam"},
+		{authorKindHive, "Needs author", "Needs @sam"},
+		{"", "Needs author", "Needs @sam"},
+	} {
+		if got := stageTrackerShortFor(stagelabels.NeedsAuthor, tc.kind); got != tc.word {
+			t.Errorf("kind %q: short = %q, want %q", tc.kind, got, tc.word)
+		}
+		caption, actor := stageTrackerCaption(stagelabels.NeedsAuthor, "check-failing:unit", "sam", tc.kind, "pr", false, stagelabels.Record{}, false, 0)
+		if !strings.HasPrefix(caption, tc.captionHead+" — ") || !strings.HasSuffix(caption, "— @sam must act") || actor != "sam" {
+			t.Errorf("kind %q: caption = %q actor = %q", tc.kind, caption, actor)
+		}
+	}
+	if got := stageTrackerShortFor(stagelabels.Fixing, authorKindClanker); got != "Fixing" {
+		t.Errorf("non-072 stage must keep the table word: %q", got)
+	}
+	for _, d := range stagelabels.Table {
+		if d.Stage == stagelabels.NeedsAuthor {
+			if stageTrackerShort(d.Stage) != "Needs author" {
+				t.Errorf("table short for 072 = %q", stageTrackerShort(d.Stage))
+			}
 		}
 	}
 }

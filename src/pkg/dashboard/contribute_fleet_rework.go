@@ -26,7 +26,7 @@ const (
 	FleetWorkKindNew = "new"
 	// FleetWorkKindRework marks an in-flight item that repairs one of the
 	// contributor's own PRs: a `fix-pr` task, or a task whose target the stage
-	// store has in a repair stage (fixing / returned-to-contributor /
+	// store has in a repair stage (fixing / needs-author /
 	// adopted-by-hive).
 	FleetWorkKindRework = "rework"
 )
@@ -43,7 +43,7 @@ type FleetInFlightItem struct {
 	Title    string `json:"title,omitempty"`
 	URL      string `json:"url,omitempty"`
 	// Stage is the item's stage label as the store last observed it (e.g.
-	// "stage/072-returned-to-contributor"); empty when unknown.
+	// "stage/072-needs-author"); empty when unknown.
 	Stage string `json:"stage,omitempty"`
 	// Mode is the fix-pr dispatch mode (spawn / preempt / boundary); empty
 	// for a primary task.
@@ -91,7 +91,7 @@ type FleetRework struct {
 	// FixQueueDepth is how many red PRs wait in the contributor's fix queue.
 	FixQueueDepth int `json:"fix_queue_depth"`
 	// PendingRework counts the contributor's PRs in
-	// stage/072-returned-to-contributor that have NOT been dispatched to them
+	// stage/072-needs-author that have NOT been dispatched to them
 	// (fix queue ∪ stage store, minus in-flight). Non-zero while the relay is
 	// idle is the operator's tell that rework is not reaching the agent.
 	PendingRework    int             `json:"pending_rework"`
@@ -109,7 +109,7 @@ func (h *ContributeWSHub) stageStoreOrShared() *stagelabels.Store {
 // isReworkStage reports whether a stage means "this PR is being repaired".
 func isReworkStage(st stagelabels.Stage) bool {
 	switch st {
-	case stagelabels.Fixing, stagelabels.ReturnedToContributor, stagelabels.AdoptedByHive:
+	case stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.AdoptedByHive:
 		return true
 	}
 	return false
@@ -129,7 +129,7 @@ func workKindFor(store *stagelabels.Store, taskKind, repo string, number int) (k
 	if taskKind == taskKindFixPR {
 		kind = FleetWorkKindRework
 		if stage == "" {
-			stage = stagelabels.ReturnedToContributor.Label()
+			stage = stagelabels.NeedsAuthor.Label()
 		}
 	}
 	if kind == "" {
@@ -219,13 +219,13 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool) F
 		if cause == "" {
 			cause = it.Summary
 		}
-		pr := FleetReworkPR{Repo: it.Repo, Number: it.Number, Title: it.Title, URL: it.URL, Stage: stagelabels.ReturnedToContributor.Label(), Cause: cause}
+		pr := FleetReworkPR{Repo: it.Repo, Number: it.Number, Title: it.Title, URL: it.URL, Stage: stagelabels.NeedsAuthor.Label(), Cause: cause}
 		if !it.OpenedAt.IsZero() {
 			pr.Since = it.OpenedAt.UTC().Format(time.RFC3339)
 		}
 		pending[it.Key()] = pr
 	}
-	for _, ai := range store.ByAuthor(user, stagelabels.ReturnedToContributor) {
+	for _, ai := range store.ByAuthor(user, stagelabels.NeedsAuthor) {
 		if inFlightKeys[ai.Key] {
 			continue
 		}

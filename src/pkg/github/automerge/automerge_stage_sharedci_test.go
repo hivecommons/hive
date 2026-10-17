@@ -31,9 +31,9 @@ func TestClassifyStageSharedCIIncidentKeepsRedOutOfRepairStages(t *testing.T) {
 		{name: "red optional while soaking", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: contributorLaneReasonSoaking + "(1h)", Detail: redOptional, SharedCIIncident: 4242}, want: stagelabels.Reviewed, reason: incident},
 		{name: "lane error with red optional", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "review-state-check", Err: true, Detail: redOptional, SharedCIIncident: 4242}, want: stagelabels.Reviewed, reason: incident},
 		{name: "pending CI is unchanged", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-pending:build", SharedCIIncident: 4242}, want: stagelabels.ReviewPending},
-		{name: "conflicting stays author-facing", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "conflicting", SharedCIIncident: 4242}, want: stagelabels.ReturnedToContributor},
-		{name: "changes requested stays author-facing", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build", Detail: reject, SharedCIIncident: 4242}, want: stagelabels.ReturnedToContributor, reason: "reviewer-verdict:changes_requested"},
-		{name: "no incident is red CI", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build"}, want: stagelabels.ReturnedToContributor},
+		{name: "conflicting stays author-facing", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "conflicting", SharedCIIncident: 4242}, want: stagelabels.NeedsAuthor},
+		{name: "changes requested stays author-facing", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build", Detail: reject, SharedCIIncident: 4242}, want: stagelabels.NeedsAuthor, reason: "reviewer-verdict:changes_requested"},
+		{name: "no incident is red CI", obs: stageObservation{Lane: stageLaneContributor, HeadSHA: "sha", Reason: "required-check-failing:build"}, want: stagelabels.NeedsAuthor},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,7 +51,7 @@ func TestStageActivitySharedCIAndBudgetWaitOnHive(t *testing.T) {
 			t.Fatalf("%q does not wait on the hive", reason)
 		}
 	}
-	if a := stageActivity(stageObservation{HeadSHA: "sha", Reason: "conflicting"}, stagelabels.ReturnedToContributor); a.WaitingOnHive {
+	if a := stageActivity(stageObservation{HeadSHA: "sha", Reason: "conflicting"}, stagelabels.NeedsAuthor); a.WaitingOnHive {
 		t.Fatal("conflicting waits on the hive")
 	}
 }
@@ -91,7 +91,7 @@ func TestApplyStageLabelsSharedCIIncidentStableWithoutNudge(t *testing.T) {
 	if len(asked) == 0 || asked[0] != "acme/widget|aaa" {
 		t.Fatalf("SharedCIIncident asked %v, want acme/widget|aaa", asked)
 	}
-	if !hasAdded(api, "stage/050-review-pending") || hasAdded(api, "stage/072-returned-to-contributor") {
+	if !hasAdded(api, "stage/050-review-pending") || hasAdded(api, "stage/072-needs-author") {
 		t.Fatalf("first sweep added=%v, want 050 and no 072", api.added)
 	}
 	if len(nudgeComments(api)) != 0 || len(sink.nudges) != 0 {
@@ -115,7 +115,7 @@ func TestApplyStageLabelsSharedCIIncidentStableWithoutNudge(t *testing.T) {
 	open = 0
 	clock.at = clock.at.Add(time.Minute)
 	observe(nudgePR(7, "aaa", labels...))
-	if !hasAdded(api, "stage/072-returned-to-contributor") || len(nudgeComments(api)) != 1 || len(sink.nudges) != 1 {
+	if !hasAdded(api, "stage/072-needs-author") || len(nudgeComments(api)) != 1 || len(sink.nudges) != 1 {
 		t.Fatalf("after recovery: added=%v comments=%v sink=%v", api.added, api.comments, sink.nudges)
 	}
 }
