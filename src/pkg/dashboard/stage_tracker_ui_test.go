@@ -23,8 +23,19 @@ func TestStageTrackerSectionWiring(t *testing.T) {
 		`'activity-monitor-section': { title: '📍 Hive activity monitor'`,
 		`'activity-monitor-section': { heading: 'Hive activity monitor'`,
 		`'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'`,
-		`fetch('/api/stage-tracker')`,
+		`fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined)`,
+		`if (r.status === 304) { stageTrackerTickClock(); return; }`,
 		`dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS)`,
+		`dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS)`,
+		`id="activity-monitor-q" class="ham-input" type="search"`,
+		`data-input-action="hamFilter" data-arg0="q" data-arg-types="s,w"`,
+		`id="activity-monitor-age"`, `id="activity-monitor-author"`, `id="activity-monitor-sort"`, `id="activity-monitor-size"`,
+		`id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle"`,
+		`id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle"`,
+		`id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden`,
+		`<div class="ham-labels" id="activity-monitor-labels"`,
+		`<div class="ham-meta" id="activity-monitor-meta" aria-live="polite">`,
+		`localStorage.setItem(STAGE_TRACKER_FILTER_KEY, JSON.stringify(f))`,
 		`function stageTrackerRowHtml(item, stages, ctx)`,
 		`function stageTrackerHeaderHtml(stages)`,
 		`const STAGE_TRACKER_ICONS = {`,
@@ -71,7 +82,24 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIL_HOPS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
 		jsConstBlock(t, html, "STAGE_TRACKER_ICONS"),
-		"var _stageTrackerFilter = { kind: 'all', repo: '' };",
+		jsConstLine(t, html, "STAGE_TRACKER_PAGE_SIZES"),
+		jsConstLine(t, html, "STAGE_TRACKER_DEFAULT_PAGE_SIZE"),
+		jsConstLine(t, html, "STAGE_TRACKER_LABEL_CHIP_LIMIT"),
+		jsConstLine(t, html, "STAGE_TRACKER_AGE_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ATTENTION_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_LABEL_FAMILIES"),
+		jsConstLine(t, html, "STAGE_TRACKER_SORTS"),
+		jsFunc(t, html, "stageTrackerDefaultFilter"),
+		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
+		jsFunc(t, html, "stageTrackerWaitSince"),
+		jsFunc(t, html, "stageTrackerLabelFamily"),
+		jsFunc(t, html, "stageTrackerNormalizeFilter"),
+		jsFunc(t, html, "stageTrackerFilterActive"),
+		jsFunc(t, html, "stageTrackerMatches"),
+		jsFunc(t, html, "stageTrackerSort"),
+		jsFunc(t, html, "stageTrackerPage"),
+		jsFunc(t, html, "stageTrackerLabelFacets"),
+		jsFunc(t, html, "stageTrackerCountsText"),
 		jsFunc(t, html, "stageTrackerIcon"),
 		jsFunc(t, html, "stageTrackerPRRef"),
 		jsFunc(t, html, "stageTrackerActorKind"),
@@ -306,6 +334,152 @@ assert.strictEqual(stageTrackerVisible(items).length, 4, 'defaults to the live f
 _stageTrackerFilter.kind = 'pr'; assert.strictEqual(stageTrackerVisible(items).length, 4);
 _stageTrackerFilter.repo = 'a/c'; assert.strictEqual(stageTrackerVisible(items).length, 2);
 assert.strictEqual(items.filter(stageTrackerNeedsAttention).length, 2);
+`
+	cmd := exec.Command(node, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("node Hive activity monitor fixture failed: %v\n%s", err, out)
+	}
+}
+
+// TestStageTrackerFilterSortPage executes the pure filter / sort / paging
+// helpers under node: free text, label families (OR within, AND across),
+// age thresholds incl. "stale" (past the stage dwell), author kind, needs
+// attention, the four sort orders with direction, page clamping and the
+// "showing X–Y of N (M filtered out)" text.
+func TestStageTrackerFilterSortPage(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — Hive activity monitor filters were NOT executed by this run")
+	}
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		"const window = {};",
+		jsConstLine(t, html, "STAGE_TRACKER_PAGE_SIZES"),
+		jsConstLine(t, html, "STAGE_TRACKER_DEFAULT_PAGE_SIZE"),
+		jsConstLine(t, html, "STAGE_TRACKER_LABEL_CHIP_LIMIT"),
+		jsConstLine(t, html, "STAGE_TRACKER_AGE_MS"),
+		jsConstLine(t, html, "STAGE_TRACKER_ATTENTION_STAGES"),
+		jsConstLine(t, html, "STAGE_TRACKER_LABEL_FAMILIES"),
+		jsConstLine(t, html, "STAGE_TRACKER_SORTS"),
+		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
+		jsConstLine(t, html, "STAGE_TRACKER_PATH"),
+		jsFunc(t, html, "stageTrackerDefaultFilter"),
+		"var _stageTrackerFilter = stageTrackerDefaultFilter();",
+		jsFunc(t, html, "stageTrackerAnchor"),
+		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		jsFunc(t, html, "stageTrackerSortKey"),
+		jsFunc(t, html, "stageTrackerNeedsAttention"),
+		jsFunc(t, html, "stageTrackerWaitSince"),
+		jsFunc(t, html, "stageTrackerLabelFamily"),
+		jsFunc(t, html, "stageTrackerNormalizeFilter"),
+		jsFunc(t, html, "stageTrackerFilterActive"),
+		jsFunc(t, html, "stageTrackerMatches"),
+		jsFunc(t, html, "stageTrackerVisible"),
+		jsFunc(t, html, "stageTrackerSort"),
+		jsFunc(t, html, "stageTrackerPage"),
+		jsFunc(t, html, "stageTrackerLabelFacets"),
+		jsFunc(t, html, "stageTrackerCountsText"),
+	}, "\n") + `
+const assert = require('assert');
+const now = Date.parse('2026-01-01T12:00:00Z');
+const H = 3600000, D = 24 * H;
+const ago = (ms) => new Date(now - ms).toISOString();
+const stages = [
+  { number: 10, label: 'Actionable', dwell_seconds: 7 * 86400 }, { number: 20, label: 'Claimed', dwell_seconds: 4 * 3600 },
+  { number: 50, label: 'Review pending', dwell_seconds: 86400 }, { number: 80, label: 'Merge gate' }, { number: 110, label: 'Merged' },
+];
+const items = [
+  // #1: unlabelled human issue opened 2 days ago, no step yet (the "Open" step).
+  { kind: 'issue', repo: 'a/b', number: 1, title: 'Login page crashes', stage: 0, created_at: ago(2 * D), author_kind: 'human', labels: ['bug'], modifiers: [] },
+  // #2: clanker issue claimed 5h ago (past the 4h dwell), stage/020 + author/clanker.
+  { kind: 'issue', repo: 'a/b', number: 2, title: 'Refactor scanner', stage: 20, stage_since: ago(5 * H), created_at: ago(3 * D), author_kind: 'clanker', labels: ['stage/020-claimed', 'author/clanker', 'bug'], modifiers: [] },
+  // #3: hive PR in review for 30 min, needs-rebase.
+  { kind: 'pr', repo: 'a/b', number: 3, title: 'Fix login crash', stage: 50, stage_since: ago(30 * 60000), created_at: ago(H), author_kind: 'hive', labels: ['stage/050-review', 'author/hive', 'needs-rebase'], modifiers: ['needs-rebase'] },
+  // #4: human PR at the merge gate for 9 days in another repo.
+  { kind: 'pr', repo: 'a/c', number: 4, title: 'Docs sweep', stage: 80, stage_since: ago(9 * D), created_at: ago(10 * D), author_kind: 'human', labels: ['stage/080-merge-gate', 'author/human', 'role/docs'], modifiers: [] },
+  // #5: clanker issue actionable for 2 days, under its dwell; stalled modifier.
+  { kind: 'issue', repo: 'a/c', number: 5, title: 'Add paging', stage: 10, stage_since: ago(2 * D), created_at: ago(2 * D), author_kind: 'clanker', labels: ['stage/010-actionable', 'author/clanker', 'role/docs'], modifiers: ['stalled'] },
+];
+const ctx = { nowMs: now, stages };
+const nums = (rows) => rows.map(it => it.number);
+const F = (over) => Object.assign(stageTrackerDefaultFilter(), over);
+
+// Defaults: everything, nothing active.
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F(), ctx)).sort(), [1, 2, 3, 4, 5]);
+assert.strictEqual(stageTrackerFilterActive(F()), false);
+assert.strictEqual(stageTrackerFilterActive(F({ sort: 'number', dir: 'asc', size: 25 })), false, 'sort and paging are not narrowing filters');
+assert.strictEqual(stageTrackerFilterActive(F({ q: 'x' })), true);
+
+// Free text: number (with or without #), title substring, case-insensitive, linked PR number.
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ q: '#4' }), ctx)), [4]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ q: '4' }), ctx)), [4]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ q: 'LOGIN' }), ctx)), [1, 3]);
+assert.deepStrictEqual(nums(stageTrackerVisible([{ kind: 'issue', repo: 'a/b', number: 9, title: 'x', linked_prs: [{ number: 77, title: 'y' }] }], F({ q: '77' }), ctx)), [9], 'an issue matches the number of a PR it is covered by');
+
+// Labels: OR within a family, AND across families; case-insensitive.
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ labels: ['author/clanker'] }), ctx)), [2, 5]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ labels: ['author/clanker', 'author/human'] }), ctx)), [1, 2, 4, 5].filter(n => n !== 1), 'two author chips OR together; #1 has no author label');
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ labels: ['author/clanker', 'role/docs'] }), ctx)), [5], 'author and role chips AND together');
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ labels: ['BUG'] }), ctx)), [1, 2]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ labels: ['needs-rebase'] }), ctx)), [3]);
+
+// Age: on-step time, falling back to opened time for the "Open" step.
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ age: '1h' }), ctx)), [1, 2, 4, 5], '#3 has been on its step for 30m');
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ age: '1d' }), ctx)), [1, 4, 5]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ age: '1w' }), ctx)), [4]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ age: 'stale' }), ctx)), [2, 5], 'stale = past the stage dwell (#2) or stalled (#5); 080 has no dwell');
+
+// Author kind, attention, repo, kind.
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ author: 'hive' }), ctx)), [3]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ author: 'human' }), ctx)), [1, 4]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ attention: true }), ctx)), [3, 5]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ repo: 'a/c', kind: 'pr' }), ctx)), [4]);
+assert.deepStrictEqual(nums(stageTrackerVisible(items, F({ attention: true, author: 'human' }), ctx)), [], 'filters compose');
+
+// Normalisation tolerates junk and partial objects (older stored state).
+const n = stageTrackerNormalizeFilter({ kind: 'bogus', labels: 'nope', age: '2h', sort: 'x', dir: 'sideways', size: 7, page: -3 });
+assert.deepStrictEqual([n.kind, n.labels, n.age, n.sort, n.dir, n.size, n.page], ['all', [], 'any', 'furthest', 'desc', STAGE_TRACKER_DEFAULT_PAGE_SIZE, 1]);
+assert.deepStrictEqual(stageTrackerNormalizeFilter({ kind: 'pr', repo: 'a/b' }).labels, [], 'the pre-filter shape still works');
+assert.deepStrictEqual(stageTrackerNormalizeFilter({ labels: ['Author/Human'] }).labels, ['author/human']);
+
+// Sorting: furthest along first (then longest on step); waiting; newest; number; direction flips.
+assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'furthest' }))), [4, 3, 2, 5, 1]);
+assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'furthest', dir: 'asc' }))), [1, 5, 2, 3, 4]);
+assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'waiting' }))), [4, 1, 5, 2, 3], 'longest wait first; an unstaged item waits since it was opened');
+assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'newest' }))), [3, 5, 1, 2, 4], 'newest first; equal ages fall back to the higher number');
+assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'number' }))), [5, 4, 3, 2, 1], 'number sort descends by repo then number');
+assert.deepStrictEqual(nums(stageTrackerSort(items, stages, F({ sort: 'number', dir: 'asc' }))), [1, 2, 3, 4, 5]);
+assert.deepStrictEqual(nums(items), [1, 2, 3, 4, 5], 'sorting does not mutate the payload');
+
+// Paging: sizes, clamping past the end, the counts text.
+const many = Array.from({ length: 120 }, (_, i) => ({ kind: 'issue', repo: 'a/b', number: i + 1 }));
+let pg = stageTrackerPage(many, F({ size: 50 }));
+assert.deepStrictEqual([pg.page, pg.pages, pg.from, pg.to, pg.total, pg.rows.length], [1, 3, 1, 50, 120, 50]);
+pg = stageTrackerPage(many, F({ size: 50, page: 3 }));
+assert.deepStrictEqual([pg.from, pg.to, pg.rows.length, pg.rows[0].number], [101, 120, 20, 101]);
+pg = stageTrackerPage(many, F({ size: 25, page: 99 }));
+assert.deepStrictEqual([pg.page, pg.pages, pg.from, pg.to], [5, 5, 101, 120], 'a page past the end clamps to the last page');
+pg = stageTrackerPage(many, F({ size: 100 }));
+assert.strictEqual(pg.pages, 2);
+pg = stageTrackerPage([], F());
+assert.deepStrictEqual([pg.page, pg.pages, pg.from, pg.to, pg.total], [1, 1, 0, 0, 0]);
+let c = stageTrackerCountsText(stageTrackerPage(many, F({ size: 50, page: 2 })), 150, 7);
+assert.strictEqual(c.showing, 'showing 51–100 of 120 (30 filtered out)');
+assert.strictEqual(c.header, '120 of 150 items · 7 need attention');
+c = stageTrackerCountsText(stageTrackerPage(many.slice(0, 1), F()), 1, 1);
+assert.strictEqual(c.showing, 'showing 1–1 of 1');
+assert.strictEqual(c.header, '1 item · 1 needs attention');
+c = stageTrackerCountsText(stageTrackerPage([], F()), 5, 0);
+assert.strictEqual(c.showing, 'showing 0 of 0 (5 filtered out)');
+assert.strictEqual(c.header, '0 of 5 items · nothing needs attention');
+
+// Label facets: family labels always offered, others only when shared; selected chips stay.
+let fac = stageTrackerLabelFacets(items, F());
+assert.deepStrictEqual(fac.chips.map(x => x.label), ['stage/010-actionable', 'stage/020-claimed', 'stage/050-review', 'stage/080-merge-gate', 'needs-rebase', 'author/clanker', 'author/hive', 'author/human', 'role/docs', 'bug']);
+assert.deepStrictEqual(fac.chips.find(x => x.label === 'author/clanker').count, 2);
+fac = stageTrackerLabelFacets(items.concat([{ kind: 'issue', repo: 'a/b', number: 6, labels: ['lonely'] }]), F({ labels: ['lonely'] }));
+assert.ok(fac.chips.some(x => x.label === 'lonely' && x.on), 'a selected single-item label is still offered so it can be cleared');
+assert.strictEqual(stageTrackerLabelFacets(items.concat([{ kind: 'issue', repo: 'a/b', number: 7, labels: ['solo'] }]), F()).chips.some(x => x.label === 'solo'), false);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
