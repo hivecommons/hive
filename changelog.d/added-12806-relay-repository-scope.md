@@ -1,0 +1,1 @@
+- Contributor relays enforce per-Hive repository selections before accepting assignments, negotiate versioned scopes, visibly skip unsupported Hives, and idle on empty selections.

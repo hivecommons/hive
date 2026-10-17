@@ -624,3 +624,22 @@ func assertAligned(t *testing.T, env map[string]string) {
 		t.Fatalf("positional lists misaligned: %d hub(s), %d token(s), %d id(s)", len(hubs), len(tokens), len(ids))
 	}
 }
+
+func TestLoadScopeAwareHubObservations(t *testing.T) {
+	store := NewProfileStore(t.TempDir())
+	body := `{"wss://a.example/contribute":{"last_seen":"2026-10-17T19:00:00Z","subscriptions":{"c1":"unsupported","c2":"selected"}},"wss://b.example/contribute":"2026-10-17T18:00:00Z"}`
+	if err := os.WriteFile(store.HubsSeenPath(), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	observations, err := store.LoadHubObservations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := observations["wss://a.example/contribute"].Subscriptions["c1"]; got != "unsupported" {
+		t.Fatalf("scope status = %q", got)
+	}
+	seen, err := store.LoadHubsSeen()
+	if err != nil || len(seen) != 2 {
+		t.Fatalf("legacy view = %v, %v", seen, err)
+	}
+}

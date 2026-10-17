@@ -283,6 +283,8 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   // and takes the whole run down before its first assertion. A test that wants
   // several hubs passes them through `env` (MULTI_HUB_ENV).
   process.env.HIVE_HUB = '';
+  delete process.env.HIVE_REPO_SCOPE;
+  delete process.env.HIVE_REPO_SCOPE_VERSION;
   process.env.AGENT_BACKEND = backend;
   process.env.AGENT_MODEL = model;
   process.env.AGENT_REASONING_EFFORT = reasoningEffort;
@@ -3463,6 +3465,171 @@ function withImmediateTimers(fn) {
   global.setTimeout = (cb) => { cb(); return 0; };
   try { fn(); } finally { global.setTimeout = origSetTimeout; }
 }
+
+// Scope negotiation and assignment checks exercise the real message handler:
+// no rejected offer may reach credentials, task accounting or fix interrupts.
+const SCOPE_ENV = { ...MULTI_HUB_ENV, HIVE_REPO_SCOPE: '*,github/github.com/org/a;github/github.com/org/b', HIVE_REPO_SCOPE_VERSION: '7' };
+function scopeAuth(relay, hub, capabilities = ['repo_scope_v1']) {
+  relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: hub.contributorId || 'c1', server_capabilities: capabilities }), hub);
+}
+function scopeAck(relay, hub, version = hub.scopeVersion, accepted = true) {
+  relay.handleMessage(JSON.stringify({ type: 'repo_scope_ack', scope_version: version, accepted }), hub);
+}
+
+test('scope projection preserves legacy, empty and per-hub selections', () => {
+  const relay = loadRelay();
+  try {
+    assert.deepStrictEqual(relay.hubListFromEnv(MULTI_HUB_ENV).map(h => h.repoScope), [null, null]);
+    assert.deepStrictEqual(relay.hubListFromEnv({ ...SCOPE_ENV, HIVE_REPO_SCOPE: ',*' }).map(h => h.repoScope), [[], null]);
+    assert.deepStrictEqual(relay.hubListFromEnv(SCOPE_ENV)[1].repoScope, ['github/github.com/org/a', 'github/github.com/org/b']);
+    for (const scope of ['*', '*,bad', '*,github/github.com/../a']) {
+      assert.throws(() => relay.hubListFromEnv({ ...SCOPE_ENV, HIVE_REPO_SCOPE: scope }), /HIVE_REPO_SCOPE/);
+    }
+    assert.throws(() => relay.hubListFromEnv({ ...SCOPE_ENV, HIVE_REPO_SCOPE_VERSION: '' }), /HIVE_REPO_SCOPE_VERSION/);
+  } finally { teardown(relay); }
+});
+
+test('scoped ready waits for matching accepted acknowledgement, including direct sends', () => {
+  const relay = loadRelay({ env: SCOPE_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    scopeAuth(relay, hubs[0]); scopeAuth(relay, hubs[1]);
+    assert.ok(sentA.some(m => m.type === 'ready' && m.scope_version === undefined));
+    assert.deepStrictEqual(sentB.find(m => m.type === 'repo_scope').repositories, hubs[1].repoScope);
+    for (const [version, accepted] of [[6, true], [7, false]]) {
+      scopeAck(relay, hubs[1], version, accepted);
+      relay.sendTo(hubs[1], { type: 'ready' });
+      assert.ok(!sentB.some(m => m.type === 'ready'));
+    }
+    scopeAck(relay, hubs[1]);
+    relay.sendTo(hubs[1], { type: 'ready' });
+    assert.ok(sentB.some(m => m.type === 'ready' && m.scope_version === 7));
+    assert.ok(relay.assignmentInScope(hubs[1], { forge: 'GitHub', host: 'GitHub.com', repo: 'Org/A' }));
+    assert.ok(relay.assignmentInScope(hubs[1], { repo: 'org/b', url: 'https://github.com/org/b/issues/2' }));
+  } finally { teardown(relay); }
+});
+
+for (const strategy of ['ranked', 'spread', 'neediest']) {
+  test(`${strategy} skips unsupported and empty scoped hubs without fallback`, () => {
+    const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,', HIVE_COMMONS_STRATEGY: strategy, HIVE_COMMONS_NEEDIEST_REFRESH_MS: '0' } });
+    try {
+      const { hubs, sentA, sentB } = attachHubSinks(relay);
+      relay.setCliReady(true);
+      scopeAuth(relay, hubs[0], []); scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+      assert.strictEqual(hubs[0].scopeUnsupported, true);
+      for (const reason of ['task_complete', 'unavailable']) relay.sendReadyForNextTask(reason);
+      for (const hub of hubs) relay.sendTo(hub, { type: 'ready' });
+      assert.ok(![...sentA, ...sentB].some(m => m.type === 'ready'));
+    } finally { teardown(relay); }
+  });
+}
+
+test('scope declines unknown, unselected and interrupt offers before any task side effects', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,*' } });
+  try {
+    const { hubs, sentA } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[0]); scopeAck(relay, hubs[0]);
+    for (const offer of [{ repo: 'org/a' }, { forge: 'github', host: 'evil.example', repo: 'org/a' },
+      { forge: 'github', host: 'github.com', repo: 'org/no' }, { kind: 'fix-pr', repo: 'org/no' }]) {
+      const before = relay.getTasksCompletedCount();
+      relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'declined', task_gen: 3, number: 1, github_token: 'must-not-be-delivered', ...offer }), hubs[0]);
+      assert.strictEqual(relay.getCurrentTask(), null);
+      assert.strictEqual(relay.getTasksCompletedCount(), before);
+      assert.deepStrictEqual(relay.getAuthorizedRepos(), []);
+      assert.strictEqual(relay.__execFileCalls.length, 0);
+      assert.ok(sentA.some(m => m.type === 'task_declined' && m.reason === 'out_of_contributor_scope' && m.task_gen === 3));
+      assert.ok(!sentA.some(m => m.type === 'task_failed' || m.type === 'task_accepted'));
+    }
+  } finally { teardown(relay); }
+});
+
+test('one session accepts legacy Hive A and both selected repositories on Hive B', () => {
+  const relay = loadRelay({ env: SCOPE_ENV });
+  try {
+    const { hubs, sentA, sentB } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[0]); scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 'a', repo: 'anything/repo', number: 1 }), hubs[0]);
+    assert.ok(sentA.some(m => m.type === 'task_accepted' && m.task_id === 'a'));
+    relay.setCurrentTask(null);
+    relay.sendReadyForNextTask('unavailable');
+    for (const repo of ['org/a', 'org/b']) {
+      relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: repo, repo, forge: 'github', host: 'github.com', number: 1 }), hubs[1]);
+      assert.ok(sentB.some(m => m.type === 'task_accepted' && m.task_id === repo));
+      relay.setCurrentTask(null);
+    }
+  } finally { relay.setCurrentTask(null); teardown(relay); }
+});
+
+test('clearing a live scope waits for all-mode ack and reconnect renegotiates selected scope', () => {
+  const envFile = path.join(__dirname, '..', '.relay-test-tmp', 'scope-all.env');
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_CONTRIBUTOR_ENV: envFile } });
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    // A fresh auth requires a fresh ack even at the same selection version.
+    scopeAuth(relay, hubs[1]);
+    relay.sendTo(hubs[1], { type: 'ready' });
+    assert.ok(!sentB.some(m => m.type === 'ready'));
+    scopeAck(relay, hubs[1]);
+    fs.writeFileSync(envFile, Object.entries({ ...SCOPE_ENV, HIVE_REPO_SCOPE: '*,*', HIVE_REPO_SCOPE_VERSION: '8' }).map(([k,v]) => `${k}=${v}`).join('\n'));
+    relay.reloadHubsFromProjection();
+    assert.ok(sentB.some(m => m.type === 'repo_scope' && m.mode === 'all' && m.scope_version === 8));
+    relay.sendTo(hubs[1], { type: 'ready' });
+    assert.ok(!sentB.some(m => m.type === 'ready'));
+    scopeAck(relay, hubs[1]);
+    relay.sendTo(hubs[1], { type: 'ready' });
+    assert.ok(sentB.some(m => m.type === 'ready' && m.scope_version === 8));
+  } finally { teardown(relay); fs.rmSync(envFile, { force: true }); }
+});
+
+test('unsupported active hub advances to a scoped hub that acknowledged first', () => {
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_REPO_SCOPE: 'github/github.com/org/a,github/github.com/org/b' } });
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+    relay.setCliReady(true);
+    scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    assert.ok(!sentB.some(m => m.type === 'ready'));
+    scopeAuth(relay, hubs[0], []);
+    assert.ok(sentB.some(m => m.type === 'ready' && m.scope_version === 7));
+  } finally { teardown(relay); }
+});
+
+test('unsupported scope is persisted per contributor alongside last-seen time', () => {
+  const seenFile = path.join(__dirname, '..', '.relay-test-tmp', 'scope-seen.json');
+  const relay = loadRelay({ env: { ...SCOPE_ENV, CONTRIBUTOR_ID: 'c1,c2', HIVE_HUBS_SEEN_FILE: seenFile } });
+  try {
+    const { hubs } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[1], []);
+    relay.writeHubsSeenNow();
+    const seen = JSON.parse(fs.readFileSync(seenFile, 'utf8'));
+    assert.strictEqual(seen[hubs[1].sourceURL].subscriptions.c2, 'unsupported');
+    assert.ok(seen[hubs[1].sourceURL].last_seen);
+  } finally { teardown(relay); fs.rmSync(seenFile, { force: true }); }
+});
+
+test('reload tightens scope before stale offers and preserves an executing lease', () => {
+  const envFile = path.join(__dirname, '..', '.relay-test-tmp', 'scope-reload.env');
+  const relay = loadRelay({ env: { ...SCOPE_ENV, HIVE_CONTRIBUTOR_ENV: envFile } });
+  try {
+    const { hubs, sentB } = attachHubSinks(relay);
+    scopeAuth(relay, hubs[1]); scopeAck(relay, hubs[1]);
+    const running = { task_id: 'running', repo: 'org/b', _hub: hubs[1] };
+    relay.setCurrentTask(running);
+    fs.writeFileSync(envFile, Object.entries({ ...SCOPE_ENV, HIVE_REPO_SCOPE: '*,github/github.com/org/a', HIVE_REPO_SCOPE_VERSION: '8' }).map(([k,v]) => `${k}=${v}`).join('\n'));
+    relay.reloadHubsFromProjection();
+    assert.strictEqual(relay.getCurrentTask(), running);
+    assert.strictEqual(hubs[1].scopeVersion, 8);
+    scopeAck(relay, hubs[1], 7);
+    assert.strictEqual(hubs[1].scopeAckVersion, null);
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', kind: 'fix-pr', task_id: 'late', repo: 'org/b', forge: 'github', host: 'github.com' }), hubs[1]);
+    assert.ok(sentB.some(m => m.type === 'task_declined' && m.task_id === 'late'));
+    assert.strictEqual(relay.getCurrentTask(), running);
+    fs.writeFileSync(envFile, 'HIVE_HUB=broken');
+    relay.handleProfileSwitchSignal();
+    assert.ok(hubs.every(h => Array.isArray(h.repoScope) && h.repoScope.length === 0));
+  } finally { relay.setCurrentTask(null); teardown(relay); fs.rmSync(envFile, { force: true }); }
+});
 
 test('SIGUSR1 reload switches the active hub from contributor.env without dropping an in-flight task', () => {
   const scratchRoot = path.join(__dirname, '..', '.relay-test-tmp');

@@ -141,27 +141,51 @@ func (s *ProfileStore) RelayPIDPath() string { return filepath.Join(s.dir, relay
 // authenticated or heartbeated successfully.
 func (s *ProfileStore) HubsSeenPath() string { return filepath.Join(s.dir, hubsSeenFileName) }
 
-// LoadHubsSeen reads hubs-seen.json. A missing file is not an error: it simply
-// means no relay has recorded reachability yet.
-func (s *ProfileStore) LoadHubsSeen() (map[string]time.Time, error) {
+// HubObservation is relay reachability plus per-contributor scope status.
+// Old relays write a bare timestamp instead of this object.
+type HubObservation struct {
+	LastSeen      time.Time         `json:"last_seen"`
+	Subscriptions map[string]string `json:"subscriptions,omitempty"`
+}
+
+func (s *ProfileStore) LoadHubObservations() (map[string]HubObservation, error) {
 	data, err := os.ReadFile(s.HubsSeenPath())
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string]time.Time{}, nil
+		return map[string]HubObservation{}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read hive last-seen file %s: %w", s.HubsSeenPath(), err)
 	}
-	var raw map[string]string
+	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse hive last-seen file %s: %w", s.HubsSeenPath(), err)
 	}
-	seen := make(map[string]time.Time, len(raw))
-	for hub, stamp := range raw {
-		t, err := time.Parse(time.RFC3339, stamp)
-		if err != nil {
-			return nil, fmt.Errorf("parse last-seen timestamp for %s in %s: %w", hub, s.HubsSeenPath(), err)
+	seen := make(map[string]HubObservation, len(raw))
+	for hub, value := range raw {
+		var observation HubObservation
+		var stamp string
+		if err := json.Unmarshal(value, &stamp); err == nil {
+			observation.LastSeen, err = time.Parse(time.RFC3339, stamp)
+			if err != nil {
+				return nil, fmt.Errorf("parse last-seen timestamp for %s in %s: %w", hub, s.HubsSeenPath(), err)
+			}
+		} else if err := json.Unmarshal(value, &observation); err != nil {
+			return nil, fmt.Errorf("parse hive last-seen file %s: %w", s.HubsSeenPath(), err)
 		}
-		seen[hub] = t
+		seen[hub] = observation
+	}
+	return seen, nil
+}
+
+// LoadHubsSeen reads both legacy timestamps and scope-aware observations.
+func (s *ProfileStore) LoadHubsSeen() (map[string]time.Time, error) {
+	observations, err := s.LoadHubObservations()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]time.Time, len(observations))
+	for hub, observation := range observations {
+		seen[hub] = observation.LastSeen
 	}
 	return seen, nil
 }

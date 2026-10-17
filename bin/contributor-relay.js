@@ -1340,10 +1340,107 @@ function disabledHubFlags(env, count) {
   return flags.map(s => s === 'true');
 }
 
-function makeHub(url, token, disabled = false, contributorId = '') {
+// null is legacy/unrestricted; [] is deliberately no work. Preserve empty
+// comma slots: dropping one would attach another Hive's scope to this token.
+function repoScopesFromEnv(env, count) {
+  if (env.HIVE_REPO_SCOPE === undefined) return Array(count).fill(null);
+  const entries = String(env.HIVE_REPO_SCOPE).split(',');
+  if (entries.length !== count) throw new Error('HIVE_REPO_SCOPE must contain one entry per HIVE_HUB');
+  return entries.map(entry => {
+    if (entry.trim() === '*') return null;
+    return [...new Set(entry.split(';').map(s => s.trim()).filter(Boolean).map(id => {
+      const normalized = canonicalRepositoryID(id);
+      if (!normalized) throw new Error(`Invalid HIVE_REPO_SCOPE repository: ${id}`);
+      return normalized;
+    }))];
+  });
+}
+
+function canonicalRepositoryID(id) {
+  if (typeof id !== 'string') return null;
+  const parts = id.toLowerCase().split('/');
+  if (parts.length !== 4 || !['github', 'gitlab', 'gitea'].includes(parts[0])) return null;
+  if (!/^[a-z0-9.-]+(?::[0-9]+)?$/.test(parts[1]) || parts.slice(1).some(p => p === '.' || p === '..')) return null;
+  if (parts.slice(2).some(p => !/^[a-z0-9_.-]+$/.test(p))) return null;
+  return parts.join('/');
+}
+
+function repoScopeVersionFromEnv(env, scopes) {
+  const raw = env.HIVE_REPO_SCOPE_VERSION;
+  if (raw === undefined && scopes.every(scope => scope === null)) return 0;
+  if (!/^[0-9]+$/.test(String(raw)) || !Number.isSafeInteger(Number(raw))) {
+    throw new Error('HIVE_REPO_SCOPE_VERSION must be a nonnegative safe integer');
+  }
+  return Number(raw);
+}
+
+function hubHasSelectedWork(hub) {
+  return !!hub && !hub.disabled && !hub.authFailed && !hub.scopeUnsupported &&
+    (hub.repoScope == null || hub.repoScope.length > 0);
+}
+
+function hubScopeReady(hub) {
+  return hubHasSelectedWork(hub) && !hub.scopePending &&
+    (hub.repoScope == null || hub.scopeAckVersion === hub.scopeVersion);
+}
+
+function assignmentInScope(hub, msg) {
+  if (!hubs.includes(hub)) return false;
+  if (hub.repoScope == null) return true;
+  // Never infer an unknown forge/host from a bare owner/name. New hubs can
+  // supply explicit identity; the existing GitHub task URL also identifies it.
+  let forge = msg.forge, host = msg.host;
+  if (!forge && !host && typeof msg.url === 'string') {
+    try {
+      const url = new URL(msg.url);
+      if (url.protocol === 'https:' && url.host === 'github.com' &&
+          url.pathname.toLowerCase().startsWith(`/${String(msg.repo).toLowerCase()}/`)) {
+        forge = 'github'; host = 'github.com';
+      }
+    } catch (_) {}
+  }
+  const id = canonicalRepositoryID(`${forge}/${host}/${msg.repo}`);
+  return hubScopeReady(hub) && !!id && hub.repoScope.includes(id);
+}
+
+function refuseOutOfScopeAssignment(hub, msg) {
+  if (assignmentInScope(hub, msg)) return false;
+  console.log(`Declining ${taskKey(msg)} — out of contributor repository scope`);
+  sendTo(hub, { type: 'task_declined', seq: nextSeq(), task_id: msg.task_id,
+    task_gen: msg.task_gen, reason: 'out_of_contributor_scope' });
+  return true;
+}
+
+function negotiateRepoScope(hub) {
+  hub.scopeAckVersion = null;
+  hub.scopePending = hub.repoScope !== null || !!hub.scopeSent;
+  hub.scopeUnsupported = hub.scopePending && !hub.serverCapabilities.includes('repo_scope_v1');
+  if (hub.scopeUnsupported) {
+    if (!hub.scopeUnsupportedReported) console.log(`hive ${hub.sourceURL} cannot enforce your repository selection — not taking work from it`);
+    hub.scopeUnsupportedReported = true;
+  } else if (hub.scopePending) {
+    hub.scopeSent = true;
+    sendTo(hub, { type: 'repo_scope', scope_version: hub.scopeVersion,
+      mode: hub.repoScope === null ? 'all' : 'selected', repositories: hub.repoScope || [] });
+  }
+  recordHubSeen(hub);
+}
+
+function logRepoScopeIdle() {
+  if (hubs.every(h => h.disabled || (h.repoScope !== null && h.repoScope.length === 0))) {
+    console.log('no repositories selected on any hive — idle');
+  }
+}
+
+function makeHub(url, token, disabled = false, contributorId = '', repoScope = null, scopeVersion = 0) {
   return {
     disabled,
     contributorId,
+    repoScope,
+    scopeVersion,
+    scopeAckVersion: null,
+    scopePending: repoScope !== null,
+    scopeUnsupported: false,
     url: hubWsURL(url),
     sourceURL: hubPublicURL(url),
     regToken: token,
@@ -1390,15 +1487,18 @@ function makeHub(url, token, disabled = false, contributorId = '') {
 
 const initialContributorIds = String(process.env.CONTRIBUTOR_ID || '').split(',').map(s => s.trim());
 const initiallyDisabledHubs = disabledHubFlags(process.env, rawHubList.length);
-const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawTokenList[0], initiallyDisabledHubs[i], initialContributorIds[i] || ''));
+const initialRepoScopes = repoScopesFromEnv(process.env, rawHubList.length);
+const initialScopeVersion = repoScopeVersionFromEnv(process.env, initialRepoScopes);
+const hubs = rawHubList.map((url, i) => makeHub(url, rawTokenList[i] || rawTokenList[0], initiallyDisabledHubs[i], initialContributorIds[i] || '', initialRepoScopes[i], initialScopeVersion));
 // Index into hubs[] of the hub we are currently soliciting work from (sent it
 // the last 'ready'), or that owns currentTask. Round-robins forward on an
 // explicit task_unavailable from the active hub; sticks with the same hub
 // across a completed/failed/revoked task rather than switching eagerly, since
 // task_unavailable is the only signal (kubestellar/hive#2436/#2546 — the hub
 // always sends it, never stays silent) that a hub genuinely has no work.
-let activeHubIndex = hubs.findIndex(h => !h.disabled);
-if (activeHubIndex < 0) console.log('All hive profiles are disabled — idle until a hive is enabled.');
+let activeHubIndex = hubs.findIndex(hubHasSelectedWork);
+logRepoScopeIdle();
+if (hubs.every(h => h.disabled)) console.log('All hive profiles are disabled — idle until a hive is enabled.');
 let commonsCompletedTasks = 0;
 let commonsSpreadCursor = 0;
 
@@ -1875,7 +1975,7 @@ function invalidateAllReadyRetries(reason) {
 }
 
 function requestWork(hub, trigger, expectedConnectGeneration = null) {
-  if (!hub || hub.disabled) return false;
+  if (!hubScopeReady(hub)) return false;
   const conn = readyConnLabel(hub);
   if (expectedConnectGeneration !== null && hub.connectGeneration !== expectedConnectGeneration) {
     logSkippedWorkRequest(hub, trigger, `stale connection generation (expected ${expectedConnectGeneration}, current ${hub.connectGeneration})`);
@@ -1948,7 +2048,10 @@ function sendTo(hub, msg) {
   // failure being fixed is a `ready` that should not have been sent. Only
   // `ready` is withheld: progress, completion and failure frames for work
   // already in flight must still reach the hub.
-  if (msg && msg.type === 'ready' && hub && hub.disabled) return;
+  if (msg && msg.type === 'ready') {
+    if (!hubScopeReady(hub)) return;
+    if (hub.repoScope !== null || hub.scopeSent) msg = { ...msg, scope_version: hub.scopeVersion };
+  }
   if (msg && msg.type === 'ready' && quotaHoldActive()) return;
   // #7996: same choke point for an expired CLI login — see enterLoginHold.
   if (msg && msg.type === 'ready' && loginHoldActive()) return;
@@ -2054,7 +2157,7 @@ function chooseSpreadHub() {
   if (hubs.length === 0) return null;
   const cycle = [];
   for (let i = 0; i < hubs.length; i++) {
-    if (hubs[i].authFailed || hubs[i].disabled) continue;
+    if (!hubHasSelectedWork(hubs[i])) continue;
     for (let n = 0; n < commonsRankWeight(i); n++) cycle.push(i);
   }
   if (cycle.length === 0) return null;
@@ -2073,7 +2176,7 @@ function chooseNeediestHub() {
   let bestScore = -1;
   for (let i = 0; i < hubs.length; i++) {
     const hub = hubs[i];
-    if (!hub || hub.authFailed || hub.disabled) continue;
+    if (!hubHasSelectedWork(hub)) continue;
     const score = Number.isFinite(hub.lastNeediestScore)
       ? hub.lastNeediestScore
       : (Number.isFinite(hub.lastActionableItems) ? hub.lastActionableItems : -1);
@@ -2086,7 +2189,7 @@ function chooseNeediestHub() {
     activeHubIndex = best;
     return hubs[best];
   }
-  activeHubIndex = hubs.findIndex(h => !h.authFailed && !h.disabled);
+  activeHubIndex = hubs.findIndex(hubHasSelectedWork);
   return hubs[activeHubIndex] || null;
 }
 
@@ -2101,7 +2204,7 @@ function chooseHubForNextTask(reason) {
     default:
       if (reason === 'unavailable') return advanceActiveHub(hubs[activeHubIndex]);
       for (let i = 0; i < hubs.length; i++) {
-        if (!hubs[i].authFailed && !hubs[i].disabled) {
+        if (hubHasSelectedWork(hubs[i])) {
           activeHubIndex = i;
           return hubs[i];
         }
@@ -2169,7 +2272,7 @@ function advanceActiveHub(fromHub) {
   const start = fromIndex >= 0 ? fromIndex : activeHubIndex;
   for (let offset = 1; offset <= hubs.length; offset++) {
     const idx = (start + offset) % hubs.length;
-    if (!hubs[idx].authFailed && !hubs[idx].disabled) {
+    if (hubHasSelectedWork(hubs[idx])) {
       activeHubIndex = idx;
       return hubs[idx];
     }
@@ -2200,7 +2303,9 @@ function hubListFromEnv(env) {
   }
   const contributorIds = String(env.CONTRIBUTOR_ID || '').split(',').map(s => s.trim());
   const disabled = disabledHubFlags(env, hubList.length);
-  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0], disabled: disabled[i], contributorId: contributorIds[i] || '' }));
+  const scopes = repoScopesFromEnv(env, hubList.length);
+  const scopeVersion = repoScopeVersionFromEnv(env, scopes);
+  return hubList.map((url, i) => ({ url, token: tokenList[i] || tokenList[0], disabled: disabled[i], contributorId: contributorIds[i] || '', repoScope: scopes[i], scopeVersion }));
 }
 
 function stopHub(hub, reason) {
@@ -2258,6 +2363,16 @@ function reloadHubsFromProjection() {
       existing.contributorId = entry.contributorId || existing.contributorId;
       existing.disabled = entry.disabled;
       if (existing.disabled) invalidateReadyRetry(existing, 'hive disabled');
+      const scopeChanged = JSON.stringify(existing.repoScope) !== JSON.stringify(entry.repoScope) || existing.scopeVersion !== entry.scopeVersion;
+      existing.repoScope = entry.repoScope;
+      // Even a hand-edited projection cannot reuse a version for a new scope.
+      existing.scopeVersion = scopeChanged ? Math.max(entry.scopeVersion, existing.scopeVersion + 1) : existing.scopeVersion;
+      if (scopeChanged) {
+        existing.scopeAckVersion = null;
+        existing.readyOutstanding = false;
+        invalidateReadyRetry(existing, 'repository selection changed');
+        if (existing.authenticated && !tokenChanged) negotiateRepoScope(existing);
+      }
       remaining.delete(existing);
       if (tokenChanged) {
         stopHub(existing, 'registration token changed');
@@ -2268,14 +2383,15 @@ function reloadHubsFromProjection() {
       }
       return existing;
     }
-    const hub = makeHub(entry.url, entry.token, entry.disabled, entry.contributorId);
+    const hub = makeHub(entry.url, entry.token, entry.disabled, entry.contributorId, entry.repoScope, entry.scopeVersion);
     connectHub(hub);
     return hub;
   });
   for (const removed of remaining) stopHub(removed, 'removed from contributor.env');
   hubs.splice(0, hubs.length, ...next);
-  activeHubIndex = hubs.findIndex(h => !h.disabled && !h.authFailed);
+  activeHubIndex = hubs.findIndex(hubHasSelectedWork);
   if (hubs.every(h => h.disabled)) console.log('All hive profiles are disabled — idle until a hive is enabled.');
+  logRepoScopeIdle();
   hubs.forEach(refreshHubStatus);
   console.log(`Reloaded ${hubs.length} hive profile(s) from ${CONTRIBUTOR_ENV_FILE}; active hive is ${hubs[activeHubIndex] ? hubs[activeHubIndex].sourceURL : '(none)'}`);
   maybeAskActiveHubForWork();
@@ -2286,6 +2402,13 @@ function handleProfileSwitchSignal() {
   try {
     reloadHubsFromProjection();
   } catch (e) {
+    // A broken latest projection must not leave the old, wider scope live.
+    for (const hub of hubs) {
+      hub.repoScope = [];
+      hub.scopeAckVersion = null;
+      invalidateReadyRetry(hub, 'invalid repository projection');
+    }
+    logRepoScopeIdle();
     console.error(`Failed to reload hive profiles from ${CONTRIBUTOR_ENV_FILE}: ${e.message}`);
   }
 }
@@ -2315,7 +2438,17 @@ function writeHubsSeenNow() {
   if (!hubsSeenDirty) return;
   const seen = {};
   for (const hub of hubs) {
-    if (hub.lastSeenAt) seen[hub.sourceURL || hubPublicURL(hub.url)] = hub.lastSeenAt;
+    if (hub.lastSeenAt) {
+      const key = hub.sourceURL || hubPublicURL(hub.url);
+      // Keep legacy timestamps byte-compatible; scoped subscriptions carry
+      // per-profile status so shared URLs do not hide an unsupported profile.
+      if (hub.repoScope !== null || hub.scopeSent) {
+        const previous = seen[key];
+        const subscriptions = previous && typeof previous === 'object' ? previous.subscriptions : {};
+        subscriptions[hub.contributorId || ''] = hub.scopeUnsupported ? 'unsupported' : (hub.scopePending ? 'pending' : (hub.repoScope === null ? 'all' : (hub.repoScope.length ? 'selected' : 'empty')));
+        seen[key] = { last_seen: hub.lastSeenAt, subscriptions };
+      } else if (!seen[key] || typeof seen[key] === 'string') seen[key] = hub.lastSeenAt;
+    }
   }
   try {
     fs.mkdirSync(path.dirname(HUBS_SEEN_FILE), { recursive: true, mode: 0o700 });
@@ -3795,8 +3928,12 @@ function settlePreemptingFix(ok, reason) {
   }
   console.log(`fix-pr ${fixPRLabel(fix)}: preempting fix ${ok ? 'completed' : 'failed: ' + reason}`);
   if (deferredFixes.length && currentTask && CONTRIBUTOR_MODE !== MODE_HEADLESS) {
-    const next = deferredFixes.shift();
-    preemptInteractiveSession(next.task, next.hub);
+    while (deferredFixes.length) {
+      const next = deferredFixes.shift();
+      if (refuseOutOfScopeAssignment(next.hub, next.task)) continue;
+      preemptInteractiveSession(next.task, next.hub);
+      break;
+    }
   }
 }
 
@@ -8264,6 +8401,9 @@ function handleMessage(data, hub) {
       hub.authFailed = false;
       hub.connectionId = msg.connection_id || '';
       hub.serverCapabilities = Array.isArray(msg.server_capabilities) ? msg.server_capabilities.slice() : [];
+      hub.scopeSent = false;
+      negotiateRepoScope(hub);
+      if (!currentTask && !hubHasSelectedWork(hubs[activeHubIndex])) chooseHubForNextTask('auth_scope');
       refreshHubStatus(hub);
       // #7924: the permission set the hub mints task credentials with, per
       // trust tier. Read by markIssueBlocked to decide whether a label call
@@ -8314,6 +8454,25 @@ function handleMessage(data, hub) {
           console.log('Authenticated, but CLI is not ready yet — withholding ready until the CLI reaches its prompt');
         }
       }
+      if (!currentTask && !hubHasSelectedWork(hub)) maybeAskActiveHubForWork();
+      break;
+
+    case 'repo_scope_ack':
+      if (!hub.authenticated || !hub.scopePending || msg.scope_version !== hub.scopeVersion) break;
+      if (msg.accepted !== true) {
+        console.log(`Hive ${hub.sourceURL} rejected repository selection — withholding work`);
+        hub.scopeUnsupported = true;
+        recordHubSeen(hub);
+        if (!currentTask && hub === hubs[activeHubIndex]) chooseHubForNextTask('scope_rejected');
+        maybeAskActiveHubForWork();
+        break;
+      }
+      hub.scopeUnsupported = false;
+      hub.scopeAckVersion = msg.scope_version;
+      hub.scopePending = false;
+      recordHubSeen(hub);
+      if (!currentTask && !hubHasSelectedWork(hubs[activeHubIndex])) chooseHubForNextTask('scope_ack');
+      maybeAskActiveHubForWork();
       break;
 
     case 'auth_failed':
@@ -8344,6 +8503,9 @@ function handleMessage(data, hub) {
       // #7732: an assignment answers the `ready` it was sent for, whatever
       // this relay does with it below.
       hub.readyOutstanding = false;
+      // Runs before interrupts, credentials, authorized-repo recording and
+      // quota/continue-once accounting, using THIS hub's latest saved scope.
+      if (refuseOutOfScopeAssignment(hub, msg)) break;
       if (hub.disabled) {
         sendTo(hub, { type: 'task_failed', seq: nextSeq(), task_id: msg.task_id, reason: 'Hive disabled by contributor', failure_kind: 'environment' });
         break;
@@ -9236,6 +9398,8 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     GIVE_UP_MEMORY_MS,
     parseContributorEnvFile,
     hubListFromEnv,
+    canonicalRepositoryID,
+    assignmentInScope,
     reloadHubsFromProjection,
     recordHubSeen,
     writeHubsSeenNow,
