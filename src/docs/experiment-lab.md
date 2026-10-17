@@ -167,6 +167,31 @@ general hive-state time series ([#12339](https://github.com/hivecommons/hive/iss
   [Fleet self-reporting](fleet-report.md)) and on the hub heartbeat's
   `evidence.hive_state` (see [Evidence summary heartbeat](fleet-health.md#evidence-summary-heartbeat-12114)).
 
+### Observation detectors
+
+`hivestate.Observe` runs pure detectors over the snapshot series and returns
+`Observation` values (kind, title, evidence, suspected cause, next step, a
+daily series, and the fingerprint `<hive id>:<kind>`) ([#12652](https://github.com/hivecommons/hive/issues/12652)).
+It writes nothing. Every detector returns nothing on an empty series or when
+the last 7 d window covers under 5 days; week-over-week detectors also need
+5 days of coverage in the prior 7 d.
+
+- **`queue-growth`.** p90 queue depth (issues + PRs) over the last 7 d is at
+  least 50 % above the prior 7 d.
+- **`hold-growth`.** The daily median `queue_hold` rose on each of the last 3
+  days, with samples on all four days involved.
+- **`sla-violations`.** `sla_violation_rate` over 7 d is above 0.25, or at
+  least 1.5× and 0.05 above the prior 7 d.
+- **`agent-idle` / `agent-thrashing`.** `agent_idle_ratio` over 7 d is above
+  0.90; if `kicks_per_day` is also at least 500 the finding is
+  `agent-thrashing` instead.
+- **`token-efficiency`.** `tokens_per_day` is at least 50 % above the prior
+  7 d while median queue depth (issues + PRs) stays within 20 % (at least one
+  item); queue depth stands in for throughput because buckets carry no
+  merged-PR counts.
+
+There is no mode-stuck detector yet: buckets do not record the Nous mode.
+
 Because compaction turns many raw files into one bucket, the dashboard's
 `snapshots` / `baseline_pct` count is a file count, not a sample count.
 
