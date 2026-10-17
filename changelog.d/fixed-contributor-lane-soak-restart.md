@@ -1,0 +1,1 @@
+- Contributor-lane auto-merge soak now measures from when the head went green on GitHub (latest check-run `completed_at`), seeded once per head, so hive pod restarts and candidate rolls no longer reset an in-progress soak back to zero.

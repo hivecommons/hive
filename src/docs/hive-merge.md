@@ -386,8 +386,10 @@ A PR merges through this tier only when all of the following hold:
 - No excluded label (`hold`, `do-not-merge*`, `needs-human`, `blocked`,
   `needs-rebase` by default), not draft, mergeable, no human-merge path.
 - The head SHA has stayed green for `soak_minutes` (`0`/unset = default 30;
-  the shortest real soak is `1`). The first
-  green sighting per (repo, PR, head) is tracked in process; a new push restarts
+  the shortest real soak is `1`). The soak is measured from when the head
+  went green — the latest `completed_at` over its check runs, read once per
+  (repo, PR, head) and then pinned in process — so a pod restart or upgrade
+  does not restart it; a new push restarts
   the soak and the skip reason reports the time left
   (`contributor-lane:soaking(remaining=25m0s)`).
 
