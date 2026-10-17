@@ -504,7 +504,7 @@ func (s *Store) CountOwnComments(key string, n int) {
 
 // IsRegression reports whether moving from → to is a backward transition
 // worth flagging. A lower number is backward, except leaving a repair stage
-// (fixing, returned-to-contributor, adopted-by-hive) for review of the new
+// (fixing, needs-author, returned-to-contributor, adopted-by-hive) for review of the new
 // head, which is the repair route itself, not a second regression, and
 // leaving the two human stages: 085 and 090 are parking stages ("the hive
 // cannot act"), not progress, so moving out of them means the picture
@@ -520,11 +520,11 @@ func IsRegression(from, to Stage) bool {
 	case AdoptedByHive:
 		// 074 → 072 is an adoption that was declined (superseder closed
 		// unmerged): the PR is handed back, not knocked back.
-		if to == ReturnedToContributor {
+		if to == ReturnedToContributor || to == NeedsAuthor {
 			return false
 		}
 		return to != ReviewPending && to != Reviewed
-	case Fixing, ReturnedToContributor:
+	case Fixing, NeedsAuthor, ReturnedToContributor:
 		return to != ReviewPending && to != Reviewed
 	case ReadyForHumanMerge, NeedsDecision:
 		return false

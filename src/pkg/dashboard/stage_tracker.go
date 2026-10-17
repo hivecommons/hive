@@ -162,6 +162,7 @@ const (
 	trackerNumberAwaitingMerge  = 80
 	trackerNumberReviewPending  = 50
 	trackerNumberFixing         = 70
+	trackerNumberNeedsAuthor    = 71
 	trackerNumberReturned       = 72
 	trackerNumberAdopted        = 74
 	trackerNumberNeedsDecision  = 85
@@ -210,7 +211,7 @@ const (
 // lights the "Merge admission" chevron.
 func stageTrackerBranchFrom(number int) int {
 	switch number {
-	case trackerNumberFixing, trackerNumberReturned, trackerNumberAdopted:
+	case trackerNumberFixing, trackerNumberNeedsAuthor, trackerNumberReturned, trackerNumberAdopted:
 		return trackerNumberReviewPending
 	case trackerNumberNeedsDecision, trackerNumberReadyForHuman:
 		return trackerNumberAwaitingMerge
@@ -235,6 +236,8 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "Reviewed"
 	case stagelabels.Fixing:
 		return "Fixing"
+	case stagelabels.NeedsAuthor:
+		return "Needs author"
 	case stagelabels.ReturnedToContributor:
 		return "Returned to contributor"
 	case stagelabels.AdoptedByHive:
@@ -499,6 +502,8 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("Review swarm approved; a gate is still pending", clause), "CI"
 	case stagelabels.Fixing:
 		return joinClause("Red or changes requested; a hive agent is fixing it", clause), "hive"
+	case stagelabels.NeedsAuthor:
+		return joinClause("Needs "+who, clause) + " — " + who + " must act", strings.TrimPrefix(who, "@")
 	case stagelabels.ReturnedToContributor:
 		c := joinClause("Returned to "+who, clause) + " — " + who + " must act"
 		if hasRec && rec.NudgeCount > 0 {

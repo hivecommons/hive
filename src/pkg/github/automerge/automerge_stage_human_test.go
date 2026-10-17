@@ -108,45 +108,45 @@ func TestHumanHandoffRoutesByEvidence(t *testing.T) {
 		t.Fatalf("090 → 050 regressed: %+v", rec)
 	}
 
-	// Changes requested → 072 with the verdict as the lane reason.
+	// Changes requested → 071 (human author) with the verdict as the lane reason.
 	*verdict = ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}
 	sweep("role/contributor", "author/human", "stage/050-review-pending")
-	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != stagelabels.LaneReasonChangesRequested {
+	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.NeedsAuthor || rec.Reason != stagelabels.LaneReasonChangesRequested {
 		t.Fatalf("changes requested: %+v", rec)
 	}
 
-	// Back to approve but a red check → 072 naming the check; DCO missing →
-	// 072; conflicts → 072 (#12471: sentinel + conflicts is the author's
+	// Back to approve but a red check → 071 naming the check; DCO missing →
+	// 071; conflicts → 071 (#12471: sentinel + conflicts is the author's
 	// problem first).
 	*verdict = ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
 	e.checkSummary = func(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
 		return hgithub.CommitChecksSummary{Total: 3, Green: 2, Red: []string{"lint"}, DCO: 1}, nil
 	}
 	clock.at = clock.at.Add(humanChecksTTL) // past the per-head check cache
-	sweep("role/contributor", "author/human", "stage/072-returned-to-contributor")
-	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != "check-failing:lint" {
+	sweep("role/contributor", "author/human", "stage/071-needs-author")
+	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.NeedsAuthor || rec.Reason != "check-failing:lint" {
 		t.Fatalf("red check: %+v", rec)
 	}
 	e.checkSummary = func(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
 		return hgithub.CommitChecksSummary{Total: 3, Green: 3, DCO: -1}, nil
 	}
 	clock.at = clock.at.Add(humanChecksTTL)
-	sweep("role/contributor", "author/human", "stage/072-returned-to-contributor")
-	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.ReturnedToContributor || rec.Reason != stagelabels.LaneReasonDCOMissing {
+	sweep("role/contributor", "author/human", "stage/071-needs-author")
+	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.NeedsAuthor || rec.Reason != stagelabels.LaneReasonDCOMissing {
 		t.Fatalf("dco: %+v", rec)
 	}
 	e.checkSummary = greenChecks
 	clock.at = clock.at.Add(humanChecksTTL)
 	// needs-rebase is intercepted by classifyStage before routing; the
-	// stage is 072 either way and the sentinel alert does not outrank it.
-	sweep("role/contributor", "author/human", "stage/072-returned-to-contributor", "needs-rebase", "sentinel-alert")
-	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.ReturnedToContributor {
+	// stage is 071 either way and the sentinel alert does not outrank it.
+	sweep("role/contributor", "author/human", "stage/071-needs-author", "needs-rebase", "sentinel-alert")
+	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.NeedsAuthor {
 		t.Fatalf("conflict: %+v", rec)
 	}
 
 	// Sentinel alone (head otherwise mergeable) → 085, decision comment.
 	clock.at = clock.at.Add(time.Hour)
-	sweep("role/contributor", "author/human", "stage/072-returned-to-contributor", "sentinel-alert")
+	sweep("role/contributor", "author/human", "stage/071-needs-author", "sentinel-alert")
 	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
 		t.Fatalf("sentinel: stage=%v", got)
 	}

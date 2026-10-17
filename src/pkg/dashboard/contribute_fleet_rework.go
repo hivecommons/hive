@@ -26,7 +26,7 @@ const (
 	FleetWorkKindNew = "new"
 	// FleetWorkKindRework marks an in-flight item that repairs one of the
 	// contributor's own PRs: a `fix-pr` task, or a task whose target the stage
-	// store has in a repair stage (fixing / returned-to-contributor /
+	// store has in a repair stage (fixing / needs-author / returned-to-contributor /
 	// adopted-by-hive).
 	FleetWorkKindRework = "rework"
 )
@@ -109,7 +109,7 @@ func (h *ContributeWSHub) stageStoreOrShared() *stagelabels.Store {
 // isReworkStage reports whether a stage means "this PR is being repaired".
 func isReworkStage(st stagelabels.Stage) bool {
 	switch st {
-	case stagelabels.Fixing, stagelabels.ReturnedToContributor, stagelabels.AdoptedByHive:
+	case stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor, stagelabels.AdoptedByHive:
 		return true
 	}
 	return false
