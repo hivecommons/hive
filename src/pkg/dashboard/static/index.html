@@ -45069,7 +45069,7 @@ function burnAreaChart() {
       const amContributorLaneOn = amContributorLane.enabled !== false; // nil/undefined = enabled
       const amContributorLaneVerdict = amContributorLane.require_reviewer_verdict !== false;
       const amContributorLaneRegistry = amContributorLane.registry_tiers_sufficient !== false;
-      const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 120;
+      const amContributorLaneSoak = Number.isFinite(Number(amContributorLane.soak_minutes)) ? Number(amContributorLane.soak_minutes) : 30;
       const amContributorLaneLabels = Array.isArray(amContributorLane.exclude_labels) ? amContributorLane.exclude_labels : ['hold','do-not-merge','needs-human','blocked','needs-rebase'];
       const amContributorLaneTiers = Array.isArray(amContributorLane.require_tiers) && amContributorLane.require_tiers.length ? amContributorLane.require_tiers : ['merger','trusted'];
       const amContributorLaneGrantable = Array.isArray(amContributorLane.grantable_tiers) ? amContributorLane.grantable_tiers : ['trusted','merger','advisor'];
@@ -45223,8 +45223,9 @@ function burnAreaChart() {
             </div>
             <div class="config-field-row mt-4">
               <div class="config-field">
-                <label for="am-contributor-lane-soak-minutes">Soak minutes ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Soak minutes', `How long the current head must stay green before the tier merges it (default 120). A new push restarts the soak.`)}</label>
+                <label for="am-contributor-lane-soak-minutes">Soak minutes ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Soak minutes', `How long the current head must stay green before the tier merges it. 0 (or unset) means the built-in default of 30 minutes, not an instant merge; the smallest real soak is 1 minute. A new push restarts the soak.`)}</label>
                 <input id="am-contributor-lane-soak-minutes" type="number" min="0" step="1" value="${amContributorLaneSoak}" data-change-action="gh104">
+                <p class="config-help">0 = default (30 min). Use 1 or more for a shorter soak; there is no zero-wait setting.</p>
               </div>
               <div class="config-field">
                 <label>Reviewer verdict ${settingHelpMark('hive-merge', 'contributor-lane-auto-merge', 'Reviewer verdict', `When on (the default), a configured reviewer agent must have recorded an approving verdict for the current head. Hives with no reviewer agent never merge through this tier.`)}</label>
@@ -47479,10 +47480,10 @@ function burnAreaChart() {
       const labels = document.getElementById('am-contributor-lane-exclude-labels');
       const repos = document.getElementById('am-contributor-lane-repos');
       const tiers = document.getElementById('am-contributor-lane-require-tiers');
-      const soakMinutes = soak ? parseInt(soak.value, 10) : 120;
+      const soakMinutes = soak ? parseInt(soak.value, 10) : 30;
       markDirty('auto-merge', 'contributor_lane', {
         enabled: !!(enabled && enabled.classList.contains('on')),
-        soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 120,
+        soak_minutes: Number.isFinite(soakMinutes) && soakMinutes >= 0 ? soakMinutes : 30,
         require_reviewer_verdict: !!(verdict && verdict.classList.contains('on')),
         registry_tiers_sufficient: !!(registry && registry.classList.contains('on')),
         exclude_labels: labels ? labels.value.split(',').map(s => s.trim()).filter(Boolean) : [],

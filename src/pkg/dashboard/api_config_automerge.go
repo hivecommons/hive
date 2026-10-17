@@ -217,7 +217,7 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	var contributorLaneTiers []string
 	if body.ContributorLane != nil {
 		if body.ContributorLane.SoakMinutes != nil && *body.ContributorLane.SoakMinutes < 0 {
-			jsonError(w, "contributor_lane.soak_minutes must be 0 or greater", http.StatusBadRequest)
+			jsonError(w, "contributor_lane.soak_minutes must be 0 (default 30) or greater", http.StatusBadRequest)
 			return
 		}
 		if body.ContributorLane.Repos != nil {
