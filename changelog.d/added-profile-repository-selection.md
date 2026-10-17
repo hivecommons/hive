@@ -1,0 +1,1 @@
+- Add optional repository selection and preset review history to contributor profiles, canonical Hive/repository identity helpers, and aligned versioned repository-scope projection for the upcoming scoped contribution protocol (#12804).

@@ -17,6 +17,52 @@ func writeEnv(t *testing.T, dir, contents string) string {
 	return path
 }
 
+func TestScopeGenerationSurvivesProjectionFailure(t *testing.T) {
+	store := NewProfileStore(t.TempDir())
+	set := &ProfileSet{Version: ProfilesVersion, Profiles: []Profile{{Name: "a", Hub: "https://a.example", Selection: &RepositorySelection{Mode: SelectionSelected}}}}
+	// A directory at the env path forces projection to fail after YAML saves.
+	if err := os.Mkdir(store.EnvPath(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(set); err == nil {
+		t.Fatal("expected projection failure")
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.RepoScopeVersion != 1 || loaded.Profiles[0].Selection == nil {
+		t.Fatal("failed projection lost persisted consent/generation")
+	}
+	if err := os.Remove(store.EnvPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(loaded); err != nil {
+		t.Fatal(err)
+	}
+	env, err := readEnvFile(store.EnvPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.value("HIVE_REPO_SCOPE") != "''" || env.value("HIVE_REPO_SCOPE_VERSION") != "2" {
+		t.Fatal("retry broadened empty selection or reused generation")
+	}
+}
+
+func TestScopeGenerationRefusesOverflow(t *testing.T) {
+	store := NewProfileStore(t.TempDir())
+	set := &ProfileSet{Version: ProfilesVersion, RepoScopeVersion: ^uint64(0)}
+	if err := store.Commit(set); err == nil {
+		t.Fatal("expected generation exhaustion error")
+	}
+	if set.RepoScopeVersion != ^uint64(0) {
+		t.Fatal("generation wrapped around")
+	}
+	if _, err := os.Stat(store.Path()); !os.IsNotExist(err) {
+		t.Fatal("overflow wrote profiles")
+	}
+}
+
 func TestProfileStoreRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store := NewProfileStore(dir)
