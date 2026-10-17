@@ -575,6 +575,7 @@ type Issue struct {
 	Repo   string `json:"repo"`
 	Number int    `json:"number"`
 	Title  string `json:"title"`
+	Body   string `json:"body,omitempty"`
 	// OwnerStep is trusted typed owner-step metadata resolved from a
 	// Hive-authored issue body or comment.
 	OwnerStep         *IssueOwnerStep `json:"owner_step,omitempty"`
