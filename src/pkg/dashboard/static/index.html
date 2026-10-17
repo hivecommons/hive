@@ -23773,9 +23773,9 @@ function burnAreaChart() {
       const x = (month) => left + (last > first ? (ordinal(month) - first) / (last - first) : 0.5) * (w - left - right);
       const tools = [...new Set(rows.flatMap((r) => r.months.flatMap((m) => Object.keys(m.static_warnings_by_tool || {}))))].sort();
       const metrics = [
-        { label: 'Median cyclomatic (Go)', keys: ['median_cyclomatic'], value: (m, k) => m[k] },
-        { label: 'Functions over threshold', keys: ['functions_over_threshold'], value: (m, k) => m[k] },
-        { label: 'Warnings by tool', keys: tools, value: (m, k) => (m.static_warnings_by_tool || {})[k] }
+        { label: 'Median cyclomatic (Go)', keys: ['median_cyclomatic'], value: (m, k) => m[k], tipSuffix: () => '' },
+        { label: 'Functions over threshold', keys: ['functions_over_threshold'], value: (m, k) => m[k], tipSuffix: (m) => ' (threshold ' + m.threshold + ')' },
+        { label: 'Warnings by tool', keys: tools, value: (m, k) => (m.static_warnings_by_tool || {})[k], dashed: true, labelByKey: true, tipSuffix: () => '' }
       ];
       const valid = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
       const body = metrics.map((metric, mi) => {
@@ -23790,7 +23790,7 @@ function burnAreaChart() {
           metric.keys.forEach((key, ki) => {
             let points = [], marks = '';
             const flush = () => {
-              if (points.length > 1) marks += `<polyline class="ev-line" stroke-dasharray="${mi === 2 ? (ki + 1) * 3 + ' 3' : 'none'}" points="${points.join(' ')}"/>`;
+              if (points.length > 1) marks += `<polyline class="ev-line" stroke-dasharray="${metric.dashed ? (ki + 1) * 3 + ' 3' : 'none'}" points="${points.join(' ')}"/>`;
               points = [];
             };
             // Include missing calendar months so lines do not imply measurements.
@@ -23800,7 +23800,7 @@ function burnAreaChart() {
               if (!valid(v)) { flush(); continue; }
               const xx = x(name).toFixed(1), yy = y(v).toFixed(1);
               points.push(`${xx},${yy}`);
-              const tip = `${row.repo} · ${name} · ${mi === 2 ? key : metric.label}: ${v}${mi === 1 ? ' (threshold ' + m.threshold + ')' : ''}`;
+              const tip = `${row.repo} · ${name} · ${metric.labelByKey ? key : metric.label}: ${v}${metric.tipSuffix(m)}`;
               marks += `<circle class="ev-pt" cx="${xx}" cy="${yy}" r="2.5"><title>${escapeHtml(tip)}</title></circle>`;
             }
             flush();
@@ -23813,7 +23813,7 @@ function burnAreaChart() {
         });
         return svg;
       }).join('');
-      const h = laneH * 3 + 12;
+      const h = laneH * metrics.length + 12;
       const labels = months.filter((m, i) => i === 0 || i === months.length - 1 || (months.length <= 4)).map((m) => `<text x="${x(m).toFixed(1)}" y="${h - 4}" text-anchor="${m === months[0] ? 'start' : m === months[months.length - 1] ? 'end' : 'middle'}">${m}</text>`).join('');
       const legend = rows.map((r, i) => `<span class="ev-c${i % EV_PALETTE_SIZE}"><i class="dot"></i>${escapeHtml(r.repo)} (${r.months.length} months)</span>`).join('');
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Maintainability trend: median cyclomatic, over-threshold functions and warnings by tool; vertical ACMM first-observed markers">${body}${labels}</svg><div class="ev-legend">${legend}<span>Dashed: ${escapeHtml(tools.join(', ') || 'no warning tools')} · vertical dotted: ACMM level first observed</span></div>`;
