@@ -249,6 +249,38 @@ func TestCollectKeepsBodyDigestsSeparate(t *testing.T) {
 	}
 }
 
+// Perspective reports that omit body_digest must join the digest-keyed
+// aggregate for the same head; apart, a full approval reads as two
+// "incomplete" items (hivecommons/hive#12332 @19b51e2).
+func TestCollectFoldsDigestlessReportsIntoHeadGroup(t *testing.T) {
+	dir := t.TempDir()
+	body := PullRequestBodyDigest("fix links", "Refs #12397")
+	for _, p := range []Perspective{PerspectiveCorrectness, PerspectiveSecurity, PerspectiveIntentAlignment, PerspectiveStyle, PerspectiveDocsCurrency} {
+		r := baseReport(p, VerdictApprove)
+		if p != PerspectiveStyle && p != PerspectiveCorrectness {
+			r.BodyDigest = body
+		}
+		raw, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ReviewReportFilePrefix+string(p)+ReviewReportFileSuffix), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	artifact, err := Collect(dir, AggregateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Items) != 1 {
+		t.Fatalf("items = %+v, want one aggregate for the head", artifact.Items)
+	}
+	agg := artifact.Items[0]
+	if agg.BodyDigest != body || len(agg.Perspectives) != 5 || agg.Verdict != VerdictApprove || !agg.MergeEligible {
+		t.Fatalf("aggregate = %+v, want 5/5 approve with digest %s", agg, body)
+	}
+}
+
 func TestHasAggregateApprovalUsesNewestHeadAggregate(t *testing.T) {
 	old := time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC)
 	artifact := Artifact{Items: []Aggregate{

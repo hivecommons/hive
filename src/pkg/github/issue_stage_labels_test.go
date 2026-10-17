@@ -29,6 +29,9 @@ type issueStageServer struct {
 	// set it to a different label set to simulate another writer.
 	truth map[int][]string
 	gets  map[int]int
+	// deletedDefs records repo label definitions deleted via
+	// DELETE /repos/acme/widgets/labels/<name> (hivecommons/hive#12683).
+	deletedDefs []string
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -47,6 +50,23 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {
+		case r.Method == http.MethodGet && rest == "issues":
+			// List-by-label used by the legacy decision-label retirement:
+			// answer from truth so carriers block definition deletion.
+			want := strings.ToLower(r.URL.Query().Get("labels"))
+			out := []map[string]any{}
+			for n, labels := range s.truth {
+				for _, l := range labels {
+					if strings.ToLower(l) == want {
+						out = append(out, map[string]any{"number": n})
+						break
+					}
+				}
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodDelete && strings.HasPrefix(rest, "labels/"):
+			s.deletedDefs = append(s.deletedDefs, strings.TrimPrefix(rest, "labels/"))
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && rest == "labels":
 			s.lists++
 			var out []map[string]string
@@ -73,7 +93,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 		case r.Method == http.MethodDelete && strings.Contains(rest, "/labels/"):
 			var n int
 			tail, _ := sscanIssue(rest, &n)
-			s.removed[n] = append(s.removed[n], strings.TrimPrefix(tail, "labels/"))
+			name := strings.TrimPrefix(tail, "labels/")
+			s.removed[n] = append(s.removed[n], name)
+			kept := s.truth[n][:0:0]
+			for _, l := range s.truth[n] {
+				if !strings.EqualFold(l, name) {
+					kept = append(kept, l)
+				}
+			}
+			s.truth[n] = kept
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && strings.HasSuffix(rest, "/comments"):
 			var n int
@@ -444,5 +472,15 @@ func TestSyncIssueStageLabels_HealsDuplicateStageLabels(t *testing.T) {
 	defer fake.mu.Unlock()
 	if fake.gets[13] != 0 || len(fake.removed[13]) != 0 {
 		t.Fatalf("unchanged payload must not read or write (gets=%d removed=%v); the next cycle's payload carries the duplicate", fake.gets[13], fake.removed[13])
+	}
+}
+
+func TestIssueStageFor_LegacyNeedsDirectionStillParks(t *testing.T) {
+	in := IssueStageInput{Labels: []string{"needs-direction"}}
+	if got, _, _ := IssueStageFor(in, nil); got != stagelabels.NeedsDecision {
+		t.Fatalf("stage = %s, want 085", got)
+	}
+	if !hasHardSuppressIssueLabel(in.Labels) {
+		t.Fatal("needs-direction must still hard-suppress")
 	}
 }

@@ -91,6 +91,9 @@ type Config struct {
 	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
 	// at pack apply and by PUT /api/config/agent/{name}/models.
 	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// Providers configures the read-only per-provider auth/availability
+	// status (ADR-0024). See ProvidersConfig.
+	Providers ProvidersConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
 	// Issues tunes issue lifecycle automation. Zero value keeps the safe
 	// defaults: close issues after their fix PR merges, and backfill hourly.
 	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
@@ -2325,6 +2328,51 @@ type GovernorConfig struct {
 	Claims ClaimsConfig `yaml:"claims,omitempty" json:"claims,omitempty"`
 	// QuestionAutoclose closes answered question issues (#9584). Default off.
 	QuestionAutoclose QuestionAutocloseConfig `yaml:"question_autoclose,omitempty" json:"question_autoclose,omitempty"`
+	// ReviewGate configures the swarm-review gate the self-merge lane
+	// evaluates on the App's own PRs before merging (hivecommons/hive#12592).
+	// Zero value = shadow: record what the gate would have held, merge as
+	// before. See ReviewGateConfig.
+	ReviewGate ReviewGateConfig `yaml:"review_gate,omitempty" json:"review_gate,omitempty"`
+}
+
+// Review gate modes (GovernorConfig.ReviewGate.Mode, hivecommons/hive#12592).
+const (
+	// ReviewGateModeOff does not evaluate the gate on the self-merge lane
+	// (review.require_approval / review.shadow still apply).
+	ReviewGateModeOff = "off"
+	// ReviewGateModeShadow evaluates the gate and records
+	// shadow.review_gate.would_have_held on the evidence bundle, never
+	// withholding a merge. The default.
+	ReviewGateModeShadow = "shadow"
+	// ReviewGateModeEnforce withholds the self-merge until the swarm has
+	// approved the head (aggregate approve in review-verdicts.json).
+	ReviewGateModeEnforce = "enforce"
+)
+
+// ReviewGateConfig is governor.review_gate. The effective mode on the
+// self-merge lane is the strictest of Mode, review.require_approval
+// (enforce) and review.shadow (shadow); no knob weakens another.
+type ReviewGateConfig struct {
+	// Mode is off | shadow | enforce; "" means shadow.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+}
+
+// ValidReviewGateModes are the accepted governor.review_gate.mode values.
+var ValidReviewGateModes = map[string]bool{
+	"":                    true,
+	ReviewGateModeOff:     true,
+	ReviewGateModeShadow:  true,
+	ReviewGateModeEnforce: true,
+}
+
+// ModeOrDefault returns the configured mode with the shadow default applied.
+func (r ReviewGateConfig) ModeOrDefault() string {
+	switch r.Mode {
+	case ReviewGateModeOff, ReviewGateModeEnforce:
+		return r.Mode
+	default:
+		return ReviewGateModeShadow
+	}
 }
 
 // FleetReportConfig controls upstream fleet self-reporting
@@ -2351,11 +2399,42 @@ type FleetReportConfig struct {
 	// record repo visibility, so operators whose project.repos include
 	// private repositories set this to false; the fields then render as "—".
 	IncludeRepos *bool `yaml:"include_repos,omitempty" json:"include_repos,omitempty"`
+	// IncludeOwners controls whether a self-report names the GitHub
+	// login(s) of this hive's owner(s) (authorized users with the owner
+	// role, the device-flow operator) so maintainers can see WHO is
+	// affected. nil = true. false renders "(anonymous)" instead.
+	IncludeOwners *bool `yaml:"include_owners,omitempty" json:"include_owners,omitempty"`
 }
 
 // IncludesRepos resolves include_repos: nil defaults to true.
 func (f FleetReportConfig) IncludesRepos() bool {
 	return f.IncludeRepos == nil || *f.IncludeRepos
+}
+
+// IncludesOwners resolves include_owners: nil defaults to true.
+func (f FleetReportConfig) IncludesOwners() bool {
+	return f.IncludeOwners == nil || *f.IncludeOwners
+}
+
+// OwnerLogins returns the AuthorizedUsers entries that hold the owner role
+// (the first entry without an explicit role, plus any ":owner" entry), in
+// their raw identity form ("alice", "github:alice"); non-GitHub identities
+// are included as-is and filtered by the caller.
+func (d DashboardConfig) OwnerLogins() []string {
+	var out []string
+	for i, entry := range d.AuthorizedUsers {
+		name, role := splitAuthorizedEntry(entry)
+		if name == "" {
+			continue
+		}
+		if role == "" && i == 0 {
+			role = RoleOwner
+		}
+		if role == RoleOwner {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // DefaultFleetReportRepo is where self-reports land unless overridden.
@@ -4064,7 +4143,8 @@ type StageLabelsConfig struct {
 	// head before the hive adopts the PR (default 2h).
 	ContributorGraceOnline string `yaml:"contributor_grace_online,omitempty"`
 	// ContributorGraceOffline is the same grace for an offline or external
-	// author who only got the GitHub comment (default 1h).
+	// author who only got the GitHub comment (default 15m): an online
+	// clanker keeps its claim; an offline one gets fifteen minutes.
 	ContributorGraceOffline string `yaml:"contributor_grace_offline,omitempty"`
 	// Adoption configures stage/074-adopted-by-hive: the hive supersedes a
 	// contributor PR that is still red after the grace with an App PR that
@@ -4072,6 +4152,44 @@ type StageLabelsConfig struct {
 	Adoption StageAdoptionConfig `yaml:"adoption"`
 	// Stalled configures the stage/stalled health marker.
 	Stalled StageStalledConfig `yaml:"stalled"`
+	// DCO configures the hive-owned `dco` / `no-dco` labels and the
+	// "missing sign-off returns the PR to its author" rule
+	// (hivecommons/hive#12542).
+	DCO StageDCOConfig `yaml:"dco"`
+}
+
+// StageDCOConfig is governor.labels.stage.dco.
+type StageDCOConfig struct {
+	// Required says, per repo, whether a missing Signed-off-by sends the PR
+	// to stage/071 (human) / 072 (clanker), 070 when self-authored, at once. Keys are "owner/repo", a
+	// bare repo name, or "*"; values true/false override detection. A repo
+	// not listed is required only when the hive DETECTS a DCO gate on it: a
+	// `dco`/`DCO` context in the branch's required checks or reported on the
+	// PR head (the DCO App or Prow's plugin). The labels themselves are
+	// written on every managed repo regardless; only the stage routing and
+	// the nudge ask are gated.
+	Required map[string]bool `yaml:"required,omitempty"`
+}
+
+// RequiredFor resolves the per-repo override for display ("owner/repo"):
+// exact key, then bare repo, then "*". ok is false when no key matches.
+func (c StageDCOConfig) RequiredFor(display string) (required, ok bool) {
+	if len(c.Required) == 0 {
+		return false, false
+	}
+	display = strings.ToLower(strings.TrimSpace(display))
+	bare := display
+	if i := strings.LastIndex(display, "/"); i >= 0 {
+		bare = display[i+1:]
+	}
+	for _, key := range []string{display, bare, "*"} {
+		for k, v := range c.Required {
+			if strings.ToLower(strings.TrimSpace(k)) == key {
+				return v, true
+			}
+		}
+	}
+	return false, false
 }
 
 // StageStalledConfig is governor.labels.stage.stalled.
@@ -4095,12 +4213,13 @@ type StageAdoptionConfig struct {
 	Enabled *bool `yaml:"enabled"`
 	// AfterOffline is how long the author's relay must have been offline
 	// (no heartbeat within presence_window) after the 072 nudge before the
-	// hive adopts a clanker PR (default 30m). Applies to authors with a
+	// hive adopts a clanker PR (default 15m). Applies to authors with a
 	// contributor profile on this hive.
 	AfterOffline string `yaml:"after_offline,omitempty"`
 	// AfterUnregistered is the wait after the 072 nudge, with no new head,
 	// before the hive adopts a clanker PR whose author has NO contributor
-	// profile on this hive (another hive posted it; default 2h).
+	// profile on this hive (another hive posted it; default 15m — no
+	// presence reads as offline).
 	AfterUnregistered string `yaml:"after_unregistered,omitempty"`
 	// InPlace lets the hive adopt by pushing to the PR's own branch when
 	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
@@ -4116,16 +4235,16 @@ func (c StageAdoptionConfig) InPlaceEnabled() bool { return c.InPlace == nil || 
 
 // Defaults for the offline-adoption waits (stage 074, hivecommons/hive#12436).
 const (
-	DefaultAdoptAfterOffline      = 30 * time.Minute
-	DefaultAdoptAfterUnregistered = 2 * time.Hour
+	DefaultAdoptAfterOffline      = 15 * time.Minute
+	DefaultAdoptAfterUnregistered = 15 * time.Minute
 )
 
-// EffectiveAfterOffline parses AfterOffline (default 30m).
+// EffectiveAfterOffline parses AfterOffline (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
 	return parseDurationOr(c.AfterOffline, DefaultAdoptAfterOffline)
 }
 
-// EffectiveAfterUnregistered parses AfterUnregistered (default 2h).
+// EffectiveAfterUnregistered parses AfterUnregistered (default 15m).
 func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
 	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
 }
@@ -4133,7 +4252,7 @@ func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
 // Default graces before a red contributor PR is adopted (stage 074).
 const (
 	DefaultContributorGraceOnline  = 2 * time.Hour
-	DefaultContributorGraceOffline = time.Hour
+	DefaultContributorGraceOffline = 15 * time.Minute
 )
 
 // EffectiveContributorGraceOnline parses ContributorGraceOnline (default 2h).
@@ -4141,7 +4260,7 @@ func (s StageLabelsConfig) EffectiveContributorGraceOnline() time.Duration {
 	return parseDurationOr(s.ContributorGraceOnline, DefaultContributorGraceOnline)
 }
 
-// EffectiveContributorGraceOffline parses ContributorGraceOffline (default 1h).
+// EffectiveContributorGraceOffline parses ContributorGraceOffline (default 15m).
 func (s StageLabelsConfig) EffectiveContributorGraceOffline() time.Duration {
 	return parseDurationOr(s.ContributorGraceOffline, DefaultContributorGraceOffline)
 }
@@ -5659,7 +5778,8 @@ var defaultContributeSkipLabels = []string{
 	"epic",
 	"discussion",
 	"question",
-	"needs-decision",
+	DefaultNeedsDecisionLabel,
+	LegacyNeedsDecisionLabel,
 	"needs-triage",
 }
 
@@ -5710,7 +5830,7 @@ func normalizeContributeSkipLabels(labels []string, needsDecisionLabel string) [
 
 const (
 	blockedWorkflowSkipLabel  = "blocked"
-	defaultNeedsDecisionLabel = "needs-decision"
+	defaultNeedsDecisionLabel = DefaultNeedsDecisionLabel
 )
 
 // ContributeNeedsDecisionLabelOrDefault resolves the label relays should apply
@@ -5914,6 +6034,30 @@ type DashboardConfig struct {
 	// queue policy decides what agents may work; these labels only decide which
 	// visual band and badges an operator sees on the dashboard.
 	IssueBands DashboardIssueBandsConfig `yaml:"issue_bands,omitempty" json:"issue_bands,omitempty"`
+	// StageTracker tunes the Hive activity monitor's server-side payload cache
+	// (hivecommons/hive#12682).
+	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
+}
+
+// DashboardStageTrackerConfig is dashboard.stage_tracker.
+type DashboardStageTrackerConfig struct {
+	// CacheTTLS is how long, in seconds, GET /api/stage-tracker serves the
+	// payload it last built from the status snapshot before rebuilding. The
+	// endpoint never calls GitHub either way; the TTL only bounds how often
+	// the in-memory snapshot is re-read. 0 means governor.eval_interval_s.
+	CacheTTLS int `yaml:"cache_ttl_s,omitempty" json:"cache_ttl_s,omitempty"`
+}
+
+// StageTrackerCacheTTL is the effective dashboard.stage_tracker.cache_ttl_s:
+// the configured value, else the governor eval interval, else its default.
+func (c *Config) StageTrackerCacheTTL() time.Duration {
+	if c != nil && c.Dashboard.StageTracker.CacheTTLS > 0 {
+		return time.Duration(c.Dashboard.StageTracker.CacheTTLS) * time.Second
+	}
+	if c != nil && c.Governor.EvalIntervalS > 0 {
+		return time.Duration(c.Governor.EvalIntervalS) * time.Second
+	}
+	return time.Duration(defaultEvalIntervalS) * time.Second
 }
 
 type DashboardIssueBandsConfig struct {

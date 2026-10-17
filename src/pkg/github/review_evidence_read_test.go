@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/evidence"
 )
 
@@ -149,6 +150,8 @@ func TestReviewEvidenceComment(t *testing.T) {
 
 type evidenceMergeFixture struct {
 	head      string
+	base      string
+	author    string
 	mergedBy  string
 	prStatus  int
 	listFail  bool
@@ -174,6 +177,12 @@ func newEvidenceMergeServer(t *testing.T, f *evidenceMergeFixture) *httptest.Ser
 			pr := map[string]any{"number": 7, "head": map[string]any{"sha": f.head}}
 			if f.mergedBy != "" {
 				pr["merged_by"] = map[string]any{"login": f.mergedBy}
+			}
+			if f.base != "" {
+				pr["base"] = map[string]any{"sha": f.base}
+			}
+			if f.author != "" {
+				pr["user"] = map[string]any{"login": f.author, "type": "Bot"}
 			}
 			_ = json.NewEncoder(w).Encode(pr)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/7/comments":
@@ -273,6 +282,13 @@ func TestRecordReviewEvidenceMergeBranches(t *testing.T) {
 		{name: "disabled", settings: &ReviewEvidenceSettings{}, fixture: evidenceMergeFixture{head: "h1"}, seed: []string{"h1"}},
 		{name: "no bundle, no comment", settings: &ReviewEvidenceSettings{Enabled: true}, fixture: evidenceMergeFixture{head: "h1"}, wantPRFetch: true},
 		{
+			// hivecommons/hive#12592: the merge outran the swarm; the bundle
+			// is started at merge time so the merge is never lost.
+			name: "no bundle starts one for the merged head", settings: &ReviewEvidenceSettings{Enabled: true},
+			fixture: evidenceMergeFixture{head: "h1", base: "base1", author: "hive-app[bot]"}, sha: "m1",
+			wantPosts: 1, wantMergeOn: "h1", wantActor: "hive:sweep", wantMergeSHA: "m1", wantPRFetch: true,
+		},
+		{
 			name: "head without bundle falls back to newest", settings: &ReviewEvidenceSettings{Enabled: true},
 			fixture: evidenceMergeFixture{head: "h9"}, seed: []string{"h1", "h2"}, sha: "m1",
 			wantPosts: 1, wantMergeOn: "h2", wantActor: "hive:sweep", wantMergeSHA: "m1", wantPRFetch: true,
@@ -368,17 +384,17 @@ func TestCompleteReviewEvidenceMergeKeepsRecordedMerge(t *testing.T) {
 	root := withEvidenceRoot(t)
 	b := writeTestEvidence(t, root, "h1", "", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
 	c := evidenceMergeClient(t, &evidenceMergeFixture{head: "h1"}, &ReviewEvidenceSettings{Enabled: true})
-	first := c.completeReviewEvidenceMerge("o/r", 7, "h1", evidence.MergeEvent{Actor: "a", Method: "merge", SHA: "m1", At: time.Now().UTC()}, ReviewEvidenceSettings{}, nil)
+	first := c.completeReviewEvidenceMerge("o/r", 7, "h1", evidence.MergeEvent{Actor: "a", Method: "merge", SHA: "m1", At: time.Now().UTC()}, ReviewEvidenceSettings{}, nil, nil)
 	if first == nil || first.Hash == b.Hash {
 		t.Fatalf("first merge not recorded: %+v", first)
 	}
-	second := c.completeReviewEvidenceMerge("o/r", 7, "h1", evidence.MergeEvent{Actor: "b", Method: "squash", SHA: "m2", At: time.Now().UTC()}, ReviewEvidenceSettings{}, nil)
+	second := c.completeReviewEvidenceMerge("o/r", 7, "h1", evidence.MergeEvent{Actor: "b", Method: "squash", SHA: "m2", At: time.Now().UTC()}, ReviewEvidenceSettings{}, nil, nil)
 	if second == nil || second.Hash != first.Hash || second.Merge.Actor != "a" {
 		t.Fatalf("replayed merge changed the bundle: %+v", second)
 	}
 	// An invalid merge event (no actor) is refused rather than written.
 	writeTestEvidence(t, root, "h2", "", time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC))
-	if got := c.completeReviewEvidenceMerge("o/r", 7, "h2", evidence.MergeEvent{Method: "merge", SHA: "m"}, ReviewEvidenceSettings{}, nil); got != nil {
+	if got := c.completeReviewEvidenceMerge("o/r", 7, "h2", evidence.MergeEvent{Method: "merge", SHA: "m"}, ReviewEvidenceSettings{}, nil, nil); got != nil {
 		t.Fatalf("invalid merge written: %+v", got.Merge)
 	}
 	if mustLoadBundle(t, root, "h2").Merge != nil {
@@ -417,5 +433,59 @@ func TestReviewEvidencePublicKey(t *testing.T) {
 	}
 	if _, err := ReviewEvidencePublicKey(bad); err == nil {
 		t.Fatal("want error for a malformed key")
+	}
+}
+
+// StartReviewEvidence (hivecommons/hive#12592) starts a missing bundle from
+// the PR snapshot so the self-merge lane's shadow observation, CI and merge
+// have somewhere to land, and never rewrites an existing one.
+func TestStartReviewEvidence(t *testing.T) {
+	pr := &gh.PullRequest{
+		Number: gh.Ptr(7),
+		User:   &gh.User{Login: gh.Ptr("hive-app[bot]"), Type: gh.Ptr("Bot")},
+		Base:   &gh.PullRequestBranch{SHA: gh.Ptr("base1")},
+		Head:   &gh.PullRequestBranch{SHA: gh.Ptr("h1")},
+	}
+	t0 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		settings  *ReviewEvidenceSettings
+		seed      bool
+		pr        *gh.PullRequest
+		wantNew   bool
+		wantExist bool
+	}{
+		{name: "not wired", pr: pr},
+		{name: "disabled", settings: &ReviewEvidenceSettings{}, pr: pr},
+		{name: "no PR snapshot", settings: &ReviewEvidenceSettings{Enabled: true}},
+		{name: "starts a missing bundle", settings: &ReviewEvidenceSettings{Enabled: true, Policy: evidence.Policy{RequireApproval: true}}, pr: pr, wantNew: true, wantExist: true},
+		{name: "existing bundle untouched", settings: &ReviewEvidenceSettings{Enabled: true}, seed: true, pr: pr, wantExist: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := withEvidenceRoot(t)
+			var seeded *evidence.Bundle
+			if tt.seed {
+				seeded = writeTestEvidence(t, root, "h1", "", t0)
+			}
+			c := evidenceMergeClient(t, &evidenceMergeFixture{head: "h1"}, tt.settings)
+			c.StartReviewEvidence("o/r", 7, "h1", tt.pr)
+			_, err := os.Stat(ReviewEvidencePath(root, "o/r", 7, "h1"))
+			if exists := err == nil; exists != tt.wantExist {
+				t.Fatalf("bundle exists = %v, want %v", exists, tt.wantExist)
+			}
+			if !tt.wantExist {
+				return
+			}
+			b := mustLoadBundle(t, root, "h1")
+			if seeded != nil && b.Hash != seeded.Hash {
+				t.Fatalf("existing bundle rewritten: %s vs %s", b.Hash, seeded.Hash)
+			}
+			if tt.wantNew {
+				if b.Author.Login != "hive-app[bot]" || b.BaseSHA != "base1" || !b.Policy.RequireApproval || b.Merge != nil {
+					t.Fatalf("started bundle = %+v", b)
+				}
+			}
+		})
 	}
 }

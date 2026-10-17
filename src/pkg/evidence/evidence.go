@@ -174,12 +174,16 @@ type Shadow struct {
 // and Intent sets WouldHaveBlocked; a false value is kept (the gate ran and
 // would not have acted), which is why they are pointers.
 type ShadowGate struct {
-	WouldHaveHeld    *bool     `json:"would_have_held,omitempty"`
-	WouldHaveBlocked *bool     `json:"would_have_blocked,omitempty"`
-	Reason           string    `json:"reason,omitempty"`
-	Tier             string    `json:"tier,omitempty"`
-	Confidence       float64   `json:"confidence"`
-	EvaluatedAt      time.Time `json:"evaluated_at"`
+	WouldHaveHeld    *bool  `json:"would_have_held,omitempty"`
+	WouldHaveBlocked *bool  `json:"would_have_blocked,omitempty"`
+	Reason           string `json:"reason,omitempty"`
+	Tier             string `json:"tier,omitempty"`
+	// Lane is the merge lane that evaluated the gate: "self-merge" for the
+	// self-authored sweep's ReviewGate (#12592); empty means the
+	// merge-eligible lane.
+	Lane        string    `json:"lane,omitempty"`
+	Confidence  float64   `json:"confidence"`
+	EvaluatedAt time.Time `json:"evaluated_at"`
 }
 
 // Backfill states, as reconstructed from forge history.

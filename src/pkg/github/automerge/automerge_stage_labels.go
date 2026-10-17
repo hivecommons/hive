@@ -70,6 +70,10 @@ type StageLabelPolicy struct {
 	// GitHub permits (same-repo head or maintainer_can_modify) instead of a
 	// superseding App PR (governor.labels.stage.adoption.in_place, default on).
 	AdoptInPlace bool
+	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
+	// override for "owner/repo"; ok false means "detect" (a DCO context in
+	// the branch's required checks or on the head). nil = always detect.
+	DCORequired func(display string) (required, ok bool)
 	// HiveID is this hive's id; hive/<HiveID> on a PR the App did not author
 	// is a stray the reconciler removes (hivecommons/hive#12545), and the
 	// `<!-- hive:origin hive=<id> -->` marker naming it marks a PR as
@@ -181,6 +185,18 @@ type stageDetail struct {
 	// was seen this cycle.
 	Reviews      int
 	ReviewsKnown bool
+	// DCO, DCOTotal and DCOUnsigned are the stage pass's own commit check
+	// for the head (hivecommons/hive#12542); filled by ApplyStageLabels,
+	// not by the lanes.
+	DCO         stagelabels.DCOState
+	DCOTotal    int
+	DCOUnsigned int
+	// DCOGate / DCOGateHead record whether the CI gate saw a DCO context
+	// on the head (required-check set or reported status/check run): the
+	// detected "this repo enforces DCO" signal the 072 override needs when
+	// no per-repo override is configured.
+	DCOGate     bool
+	DCOGateHead string
 }
 
 // redCheck returns the first red non-required check on head, or "".
@@ -322,6 +338,9 @@ func (t *StageTracker) drain() [][]stageObservation {
 			}
 			if detail.ReviewsKnown {
 				o.Detail.Reviews, o.Detail.ReviewsKnown = detail.Reviews, true
+			}
+			if detail.DCOGateHead != "" && (o.HeadSHA == "" || detail.DCOGateHead == o.HeadSHA) {
+				o.Detail.DCOGate, o.Detail.DCOGateHead = detail.DCOGate, detail.DCOGateHead
 			}
 			list = append(list, o)
 		}
@@ -510,6 +529,39 @@ func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Ac
 	return a
 }
 
+// noteStageDCOGate records whether the CI gate saw a DCO context for head
+// (hivecommons/hive#12542): in the required-check set or reported on the
+// head by the DCO App / Prow's plugin. It is the detected "this repo
+// enforces DCO" signal; a head without one is not routed to 072 for a
+// missing sign-off unless config says the repo requires it.
+func (c *Engine) noteStageDCOGate(owner, repo string, number int, head string, required map[string]bool, observed map[string]bool) {
+	if !c.stagePolicy().Enabled || number <= 0 {
+		return
+	}
+	gate := false
+	for _, set := range []map[string]bool{required, observed} {
+		for name := range set {
+			if hgithub.IsDCOContext(name) {
+				gate = true
+			}
+		}
+	}
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
+		d.DCOGate, d.DCOGateHead = gate, head
+	})
+}
+
+// dcoRequired reports whether a missing sign-off may route obs to 072: the
+// per-repo override when configured, else the detected gate for this head.
+func dcoRequired(policy StageLabelPolicy, obs stageObservation) bool {
+	if policy.DCORequired != nil {
+		if required, ok := policy.DCORequired(obs.Display); ok {
+			return required
+		}
+	}
+	return obs.Detail.DCOGate && (obs.Detail.DCOGateHead == "" || obs.HeadSHA == "" || obs.Detail.DCOGateHead == obs.HeadSHA)
+}
+
 // stageVerdict is a lane's opinion about a PR's stage.
 type stageVerdict struct {
 	Stage stagelabels.Stage
@@ -680,13 +732,13 @@ var stageFixingReasons = map[string]bool{
 }
 
 // fixingStage is the rework stage for the lane: a hive agent reworks its
-// own (self-authored lane) PR, while a contributor's PR (trusted-author or
-// contributor lane) is handed back to its author with the diagnosis.
+// own (self-authored lane) PR at 070, while a contributor's PR (trusted-
+// author or contributor lane) is handed back to its author with the
+// diagnosis — 072 for a clanker, 071 for a human. Before the author kind
+// is known (resolveStage runs on raw observations) a non-self PR reads as
+// 071; the apply pass re-derives once stageAuthorKind has run.
 func fixingStage(o stageObservation) stagelabels.Stage {
-	if o.Lane == stageLaneSelf {
-		return stagelabels.Fixing
-	}
-	return stagelabels.ReturnedToContributor
+	return stagelabels.FixingStageFor(o.Lane == stageLaneSelf, o.AuthorKind)
 }
 
 // classifyStage maps one lane observation to a stage opinion. Reason
@@ -955,6 +1007,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 		}
 		obs.AuthorKind = c.stageAuthorKind(obs, policy, false)
+		if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
+			// classifyStage ran before the author kind was known: split
+			// the author-blocked outcome by kind now (human 071 / clanker 072).
+			verdict.Stage = fixingStage(obs)
+		}
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
@@ -970,6 +1027,37 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
 		prevRec, hadPrev := store.Get(key)
+		// dcoRead is true once the commit check for this head was read (or
+		// served from the cache) without error; it is what gates caching, not
+		// the label state, which is reset below for informational no-dco and
+		// is unknown for heads with nothing to sign.
+		dcoRead := false
+		if !verdict.Terminal && verdict.Stage != stagelabels.None {
+			// The commit check is the one author-side gate decided here,
+			// before CI or a verdict: an unsigned head goes straight back
+			// to its author (hivecommons/hive#12542).
+			total, unsigned, err := c.stageDCO(ctx, store, key, obs)
+			if err != nil {
+				c.warn("stage labels: dco commit check failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+				if firstErr == nil {
+					firstErr = err
+				}
+			}
+			dcoRead = err == nil
+			obs.Detail.DCO, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned = dcoState(total, unsigned), total, unsigned
+			want.DCO = obs.Detail.DCO
+			// The label is written everywhere; the 072 override only where
+			// the repo actually enforces DCO (config, else detected gate).
+			if want.DCO == stagelabels.DCONo && dcoRequired(policy, obs) {
+				verdict.Stage = fixingStage(obs)
+				verdict.Rank = stageRankOwned
+				obs.Reason = stagelabels.LaneReasonDCOMissing
+			} else if want.DCO == stagelabels.DCONo {
+				// Not enforced here: keep the lane's stage and do not ask
+				// the author to rebase in the nudge.
+				obs.Detail.DCO = stagelabels.DCOUnknown
+			}
+		}
 		if verdict.Terminal {
 			store.Forget(key)
 			c.resolveNudge(ctx, prevRec, hadPrev, obs)
@@ -993,7 +1081,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// hivecommons/hive#12502: remember the author so the dashboard can
 			// list "PRs returned to this contributor" from the store alone.
 			store.NoteAuthor(key, obs.Author)
-			if verdict.Stage != stagelabels.ReturnedToContributor {
+			if dcoRead {
+				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned)
+			}
+			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
 			}
 			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
@@ -1004,6 +1095,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				Kind:       obs.AuthorKind,
 				KindLabels: policy.AuthorKindLabels,
 				Stalled:    stagelabels.StalledWith(rec, policy.Dwell, now, policy.StalledRequireQuiet),
+				DCO:        want.DCO,
 			}
 			if stagelabels.HiveHeld(rec, policy.Dwell, now) {
 				result.HiveHeld++
@@ -1075,11 +1167,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
-		if want.Stage == stagelabels.ReturnedToContributor && (policy.ContributorNudge || policy.Adoption) {
+		if (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
 			// The 072 interrupt machinery (nudge + adoption) is for
 			// author/clanker only: there is a hive on the other end to
-			// interrupt or stand in for. Human and hive-authored PRs
-			// simply wait at 072 (docs: "Stage 072 by author kind").
+			// interrupt or stand in for. A human-authored PR simply waits
+			// at 071 (docs: "Stage 07x by author kind").
 			presence, hasPresence := c.contributorPresence(ctx, obs.Author)
 			kind := obs.AuthorKind
 			if kind != authorkind.Clanker && hasPresence && presence.Registered {
@@ -1103,7 +1195,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					}
 				}
 			} else if rec, ok := store.Get(key); ok && rec.NudgeHead != obs.HeadSHA {
-				c.info("stage labels: 072 without interrupt (author kind)", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", string(kind))
+				c.info("stage labels: 07x without interrupt (author kind)", "stage", want.Stage.String(), "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", string(kind))
 			}
 		}
 		if want.Stage == stagelabels.AdoptedByHive {
@@ -1144,7 +1236,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 
 // ensureStageLabels provisions (or recolours) the family's labels in a repo
 // once per process: one list call, then a create or patch per label that is
-// missing or whose colour drifted from the table.
+// missing or whose colour drifted from the table. A PATCH keeps the label on
+// every PR wearing it, so a pre-existing `dco` label is recoloured in place
+// rather than re-added.
 func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, tracker *StageTracker, kinds authorkind.Names) error {
 	full := strings.ToLower(owner + "/" + repo)
 	tracker.mu.Lock()

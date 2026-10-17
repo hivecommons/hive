@@ -18,14 +18,25 @@ const (
 	goodFirstIssueLabel = "good first issue"
 )
 
+// needsDecisionLabel is the park signal (hivecommons/hive#12683): the stage
+// label itself. The retired `needs-decision` spelling stays recognised in
+// the band and signal checks until the reconciler has migrated it.
+const needsDecisionLabel = github.NeedsDecisionStageLabel
+
+// labelsNeedDecision reports whether a lower-cased label set says a human
+// decision is owed.
+func labelsNeedDecision(labels map[string]bool) bool {
+	return labels[needsDecisionLabel] || labels["needs-decision"] || labels["2-discussing"]
+}
+
 var (
-	defaultIssueWaitingLabels = []string{"blocked", "needs-decision", "2-discussing", "Epic", "needs-human", "needs-triage"}
+	defaultIssueWaitingLabels = []string{"blocked", needsDecisionLabel, "needs-decision", "2-discussing", "Epic", "needs-human", "needs-triage"}
 	// The retired `🐝 covered by PR` / `hive/covered-by-pr` spellings stay
 	// here for one migration cycle (hivecommons/hive#12436); their stage
 	// successor, stage/040-covered-by-pr and every PR stage past it, is
 	// matched structurally by issueStageCovered.
 	defaultIssueDoneLabels = []string{"hive/already-done", "🐝 covered by PR", "hive/covered-by-pr", "hive/likely-done"}
-	prHumanGateLabels      = []string{"needs-human", "needs-decision", "2-discussing"}
+	prHumanGateLabels      = []string{"needs-human", needsDecisionLabel, "needs-decision", "2-discussing"}
 	issueBandOrder         = []string{"ready", "in-progress", "agent-filed", "waiting", "done"}
 	prBandOrder            = []string{"waiting", "eligible", "blocked", "in-review", "open", "draft"}
 	holdLabelSpellings     = []string{"hold", "on-hold", "hold/review"}
@@ -135,7 +146,7 @@ func IssueBand(issue github.Issue, held bool, cfg config.DashboardIssueBandsConf
 	if labels["blocked"] {
 		signals = append(signals, Signal{Glyph: "⛔", Label: "blocked"})
 	}
-	if labels["needs-decision"] || labels["2-discussing"] {
+	if labelsNeedDecision(labels) {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
 	}
 	if labels["needs-human"] {
@@ -220,7 +231,7 @@ func prBand(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg 
 		}
 		signals = append(signals, Signal{Glyph: "⚠", Label: reason})
 	}
-	if labels["needs-decision"] || labels["2-discussing"] {
+	if labelsNeedDecision(labels) {
 		signals = append(signals, Signal{Glyph: "❓", Label: "needs decision"})
 	}
 	if held || len(holdLabels(pr.Labels, hiveID)) > 0 {

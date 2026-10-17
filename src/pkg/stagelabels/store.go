@@ -60,7 +60,7 @@ type Record struct {
 	NudgeCount  int       `json:"nudge_count,omitempty"`
 	LastNudgeAt time.Time `json:"last_nudge_at,omitempty"`
 	// FirstNudgeAt is when the first nudge for NudgeHead went out: the
-	// adoption grace (online 2h / offline 1h) counts from here.
+	// adoption grace (online 2h / offline 15m) counts from here.
 	FirstNudgeAt time.Time `json:"first_nudge_at,omitempty"`
 	// NudgeOnline records whether the author's relay was online at the first
 	// nudge for NudgeHead (selects the online vs offline grace).
@@ -74,6 +74,13 @@ type Record struct {
 	AdoptedAt   time.Time `json:"adopted_at,omitempty"`
 	// AdoptCheckedAt is the last time the superseding PR's state was polled.
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
+	// DCOHead, DCOTotal and DCOUnsigned cache the commit check for one head
+	// (hivecommons/hive#12542): how many non-merge commits the PR carried
+	// and how many lacked a Signed-off-by trailer. One commits GET per head,
+	// never per cycle.
+	DCOHead     string `json:"dco_head,omitempty"`
+	DCOTotal    int    `json:"dco_total,omitempty"`
+	DCOUnsigned int    `json:"dco_unsigned,omitempty"`
 	// EntryCommented records that the stage's entry comment (085 "needs a
 	// decision", 090 "ready for a human merge") was posted for the current
 	// stage visit; reset on every stage change so each transition explains
@@ -204,6 +211,27 @@ func appendHop(history []Hop, h Hop) []Hop {
 		out = out[len(out)-HistoryLimit:]
 	}
 	return out
+}
+
+// DCOFor returns the cached commit check for head: total non-merge commits,
+// how many are unsigned, and whether the cache is for this head at all.
+func (r Record) DCOFor(head string) (total, unsigned int, ok bool) {
+	if head == "" || r.DCOHead != head {
+		return 0, 0, false
+	}
+	return r.DCOTotal, r.DCOUnsigned, true
+}
+
+// DCO is the cached verdict for head (DCOUnknown when not cached).
+func (r Record) DCO(head string) DCOState {
+	total, unsigned, ok := r.DCOFor(head)
+	switch {
+	case !ok || total == 0:
+		return DCOUnknown
+	case unsigned > 0:
+		return DCONo
+	}
+	return DCOYes
 }
 
 // Regressed reports whether the item carries an unresolved regression.
@@ -476,7 +504,7 @@ func (s *Store) CountOwnComments(key string, n int) {
 
 // IsRegression reports whether moving from → to is a backward transition
 // worth flagging. A lower number is backward, except leaving a repair stage
-// (fixing, returned-to-contributor, adopted-by-hive) for review of the new
+// (fixing, needs-author, returned-to-contributor, adopted-by-hive) for review of the new
 // head, which is the repair route itself, not a second regression, and
 // leaving the two human stages: 085 and 090 are parking stages ("the hive
 // cannot act"), not progress, so moving out of them means the picture
@@ -492,11 +520,11 @@ func IsRegression(from, to Stage) bool {
 	case AdoptedByHive:
 		// 074 → 072 is an adoption that was declined (superseder closed
 		// unmerged): the PR is handed back, not knocked back.
-		if to == ReturnedToContributor {
+		if to == ReturnedToContributor || to == NeedsAuthor {
 			return false
 		}
 		return to != ReviewPending && to != Reviewed
-	case Fixing, ReturnedToContributor:
+	case Fixing, NeedsAuthor, ReturnedToContributor:
 		return to != ReviewPending && to != Reviewed
 	case ReadyForHumanMerge, NeedsDecision:
 		return false
@@ -762,6 +790,22 @@ func (s *Store) NoteAuthor(key, login string) {
 		return
 	}
 	r.Author = login
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteDCO caches the commit check for head on an existing record.
+func (s *Store) NoteDCO(key, head string, total, unsigned int) {
+	if head == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.DCOHead == head && r.DCOTotal == total && r.DCOUnsigned == unsigned) {
+		return
+	}
+	r.DCOHead, r.DCOTotal, r.DCOUnsigned = head, total, unsigned
 	s.items[key] = r
 	s.dirty = true
 }

@@ -90,6 +90,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/campaigns/{id}/resume", s.handleCampaignResume)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/release", s.handleCampaignRelease)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/revise", s.handleCampaignRevise)
+	s.mux.HandleFunc("DELETE /api/campaigns/{id}", s.handleCampaignDelete)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/recheck", s.handleCampaignRecheck)
 	s.mux.HandleFunc("GET /api/campaigns/{id}/jam", s.handleCampaignJamGet)
 	s.mux.HandleFunc("POST /api/campaigns/{id}/jam", s.handleCampaignJamPost)

@@ -255,18 +255,7 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 				slog.String("repo", repo), slog.Int("number", number), slog.String("head", head))
 			return
 		}
-		b = &evidence.Bundle{
-			SchemaVersion:    evidence.SchemaVersion,
-			ID:               evidence.BundleID(repo, number, head),
-			Repo:             repo,
-			Number:           number,
-			Author:           evidenceAuthor(repo, number, pr.GetUser()),
-			BaseSHA:          pr.GetBase().GetSHA(),
-			HeadSHA:          head,
-			PreviousBundleID: previousReviewEvidenceID(filepath.Dir(path), head),
-			Policy:           c.reviewEvidencePolicy(policy),
-			CreatedAt:        now,
-		}
+		b = c.newReviewEvidenceBundle(repo, number, head, pr, policy, now)
 		// A bundle started after the PR already merged (the merge path ran
 		// before the first review wrote one, or someone else merged) would
 		// otherwise never gain a merge record and read as "outcome unknown".
@@ -329,6 +318,50 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 		slog.Int("posted_reviews", len(b.PostedReviews)), slog.Int("sentinel", len(b.Sentinel)),
 		slog.Bool("signed", b.Signed),
 		slog.String("path", path))
+}
+
+// newReviewEvidenceBundle starts the (unsealed) bundle for repo#number@head
+// from the PR snapshot: author, base and the policy in force.
+func (c *Client) newReviewEvidenceBundle(repo string, number int, head string, pr *gh.PullRequest, policy evidence.Policy, now time.Time) *evidence.Bundle {
+	path := ReviewEvidencePath("", repo, number, head)
+	return &evidence.Bundle{
+		SchemaVersion:    evidence.SchemaVersion,
+		ID:               evidence.BundleID(repo, number, head),
+		Repo:             repo,
+		Number:           number,
+		Author:           evidenceAuthor(repo, number, pr.GetUser()),
+		BaseSHA:          pr.GetBase().GetSHA(),
+		HeadSHA:          head,
+		PreviousBundleID: previousReviewEvidenceID(filepath.Dir(path), head),
+		Policy:           c.reviewEvidencePolicy(policy),
+		CreatedAt:        now,
+	}
+}
+
+// StartReviewEvidence starts the evidence bundle for repo#number@head from pr
+// when none exists yet, so a shadow observation, the CI snapshot and the merge
+// recorded on the self-merge lane always have a bundle to land on even when
+// the swarm has not written one (hivecommons/hive#12592). An existing bundle
+// is left untouched. Record-only; failures are logged and swallowed.
+func (c *Client) StartReviewEvidence(repo string, number int, head string, pr *gh.PullRequest) {
+	if c == nil || pr == nil || head == "" || number <= 0 {
+		return
+	}
+	settings, ok := c.reviewEvidenceSettings(repo)
+	if !ok {
+		return
+	}
+	if _, err := os.Stat(ReviewEvidencePath("", repo, number, head)); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
+	if err != nil {
+		c.logger.Warn("review evidence: signing key unusable, starting bundle unsigned",
+			slog.String("error", err.Error()))
+		key = nil
+	}
+	c.upsertReviewEvidence(repo, number, head, reviewEvidenceUpdate{}, settings.Policy, key,
+		func() *gh.PullRequest { return pr }, time.Now().UTC())
 }
 
 // reviewEvidenceMergeObservedMethod marks a merge event taken from the PR

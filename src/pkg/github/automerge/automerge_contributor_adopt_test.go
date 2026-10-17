@@ -70,7 +70,7 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "html_url": "https://github.com/acme/widget/pull/90"})
 		return true
-	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/"):
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/repos/acme/widget/pulls/") && !strings.HasSuffix(path, "/commits"):
 		var n int
 		_, _ = sscanInt(strings.TrimPrefix(path, "/repos/acme/widget/pulls/"), &n)
 		payload, ok := a.superseders[n]
@@ -231,10 +231,10 @@ func TestAdoptionGraceSelection(t *testing.T) {
 		t.Fatalf("online relay at grace: %v %q", due, reason)
 	}
 	offline := ContributorPresence{Registered: true, LastSeen: now.Add(10 * time.Minute)}
-	if due, _ := adoptionDue(rec, "aaa", p, now.Add(39*time.Minute), offline, true); due {
-		t.Fatal("offline relay adopted before 30m since its last heartbeat")
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(24*time.Minute), offline, true); due {
+		t.Fatal("offline relay adopted before 15m since its last heartbeat")
 	}
-	if due, reason := adoptionDue(rec, "aaa", p, now.Add(40*time.Minute), offline, true); !due || reason != AdoptReasonOffline {
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(25*time.Minute), offline, true); !due || reason != AdoptReasonOffline {
 		t.Fatalf("offline relay: %v %q", due, reason)
 	}
 	p.AdoptAfterOffline = 5 * time.Minute
@@ -242,16 +242,16 @@ func TestAdoptionGraceSelection(t *testing.T) {
 		t.Fatal("after_offline knob ignored")
 	}
 	unregistered := ContributorPresence{}
-	if due, _ := adoptionDue(rec, "aaa", p, now.Add(119*time.Minute), unregistered, true); due {
-		t.Fatal("unregistered author adopted before 2h")
+	if due, _ := adoptionDue(rec, "aaa", p, now.Add(14*time.Minute), unregistered, true); due {
+		t.Fatal("unregistered author adopted before 15m")
 	}
-	if due, reason := adoptionDue(rec, "aaa", p, now.Add(2*time.Hour), unregistered, true); !due || reason != AdoptReasonUnregistered {
+	if due, reason := adoptionDue(rec, "aaa", p, now.Add(15*time.Minute), unregistered, true); !due || reason != AdoptReasonUnregistered {
 		t.Fatalf("unregistered author: %v %q", due, reason)
 	}
 	// Records nudged before FirstNudgeAt existed carry only LastNudgeAt;
 	// the grace counts from there instead of never becoming due.
 	legacy := stagelabels.Record{NudgeHead: "aaa", NudgeCount: 1, LastNudgeAt: now}
-	if due, _ := adoptionDue(legacy, "aaa", StageLabelPolicy{}, now.Add(29*time.Minute), offline, true); due {
+	if due, _ := adoptionDue(legacy, "aaa", StageLabelPolicy{}, now.Add(24*time.Minute), offline, true); due {
 		t.Fatal("legacy record adopted before the offline wait")
 	}
 	if due, reason := adoptionDue(legacy, "aaa", StageLabelPolicy{}, now.Add(40*time.Minute), offline, true); !due || reason != AdoptReasonOffline {
@@ -503,8 +503,8 @@ func TestAdoptionSkipsSelfAuthored(t *testing.T) {
 }
 
 // hivecommons/hive#12527: the contributor's relay registered here, answered
-// nothing and dropped off. Adoption follows AdoptAfterOffline (30m default)
-// counted from its last heartbeat — not the 1h/2h nudge-time graces.
+// nothing and dropped off. Adoption follows AdoptAfterOffline (15m default)
+// counted from its last heartbeat — not the nudge-time graces.
 func TestAdoptionRelayOfflineAdoptsAfterOfflineWindow(t *testing.T) {
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "comment"}, adoptPolicy())
 	defer done()
@@ -519,10 +519,10 @@ func TestAdoptionRelayOfflineAdoptsAfterOfflineWindow(t *testing.T) {
 	// Relay went away 20m after the nudge.
 	h.sink.presence = &ContributorPresence{Registered: true, LastSeen: start.Add(20 * time.Minute)}
 	h.api.reset()
-	h.clock.advance(49 * time.Minute)
+	h.clock.advance(34 * time.Minute)
 	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
 	if h.api.writes() != 0 || len(h.adopt.pulls) != 0 {
-		t.Fatalf("adopted before 30m offline: added=%v comments=%v", h.api.added, h.api.comments)
+		t.Fatalf("adopted before 15m offline: added=%v comments=%v", h.api.added, h.api.comments)
 	}
 	h.clock.advance(time.Minute)
 	h.observe(adoptPR(7, "aaa", labels...), "check-failing:unit")
@@ -675,15 +675,16 @@ func TestAdoptionBlockedByHold(t *testing.T) {
 }
 
 // The 072 interrupt is for author/clanker only: a human's PR (no hive
-// trailer, no profile) and a hive-authored PR (the App's own login) wait at
-// 072 with neither nudge nor adoption.
+// trailer, no profile) sits at 071 needs-author and a hive-authored PR (the
+// App's own login) at 070 fixing, with neither nudge nor adoption.
 func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		stage  string
 		mutate func(pr *gh.PullRequest)
 	}{
-		{"human", func(pr *gh.PullRequest) { pr.Body = gh.Ptr("Fixes the widget.\n") }},
-		{"hive", func(pr *gh.PullRequest) {
+		{"human", "stage/071-needs-author", func(pr *gh.PullRequest) { pr.Body = gh.Ptr("Fixes the widget.\n") }},
+		{"hive", "stage/070-fixing", func(pr *gh.PullRequest) {
 			// The App's own PR; an agent/<lane> stamp on a PR the App did
 			// not author is a stray (#12545) and is not hive evidence.
 			pr.User.Login = gh.Ptr(testHiveAppBotLogin)
@@ -697,8 +698,8 @@ func TestAdoptionAndNudgeOnlyForClankers(t *testing.T) {
 			pr := adoptPR(7, "aaa")
 			tc.mutate(pr)
 			h.observe(pr, "check-failing:unit")
-			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, "stage/072-returned-to-contributor") {
-				t.Fatalf("072: %v", h.api.added)
+			if added := strings.Join(h.addedLabels(), " "); !strings.Contains(added, tc.stage) || strings.Contains(added, "stage/072-returned-to-contributor") {
+				t.Fatalf("%s: %v", tc.stage, h.api.added)
 			}
 			if len(h.api.comments) != 0 || len(h.sink.nudges) != 0 {
 				t.Fatalf("interrupt fired for %s author: comments=%v nudges=%d", tc.name, h.api.comments, len(h.sink.nudges))

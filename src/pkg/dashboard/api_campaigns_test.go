@@ -325,3 +325,175 @@ func TestCampaignFromCompletedRunUsesStableSpecID(t *testing.T) {
 		t.Fatalf("resume command = %q, want stable spec id", spektacularResumeCommand(campaign))
 	}
 }
+
+func doOwnerDeleteAsUser(s *Server, path, user string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, path, nil)
+	req.Header.Set("X-Hive-User", user)
+	markOwnerRequest(req)
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestCampaignDeleteRemovesArchiveOnly pins hivecommons/hive#12698: DELETE
+// drops the campaign archive (state + wiki snapshot) and the row vanishes,
+// while the other revisions in the chain and the Jam state are untouched.
+func TestCampaignDeleteRemovesArchiveOnly(t *testing.T) {
+	s := newMinimalServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	state, err := s.deps.Inception.StartBrownfield("https://github.com/hivecommons/hive")
+	if err != nil {
+		t.Fatalf("start brownfield: %v", err)
+	}
+	if reset := doOwnerPost(s, "/api/inception/reset", map[string]interface{}{}); reset.Code != http.StatusOK {
+		t.Fatalf("reset = %d body=%s", reset.Code, reset.Body.String())
+	}
+	revise := doOwnerPostAsUser(s, "/api/campaigns/"+state.IdeaSlug+"/revise", "alice", map[string]string{})
+	if revise.Code != http.StatusOK {
+		t.Fatalf("revise = %d body=%s", revise.Code, revise.Body.String())
+	}
+	var revised struct {
+		Campaign Campaign `json:"campaign"`
+	}
+	if err := json.Unmarshal(revise.Body.Bytes(), &revised); err != nil {
+		t.Fatalf("decode revise: %v", err)
+	}
+
+	list := doOwnerGet(s, "/api/campaigns")
+	campaigns := decodeCampaignList(t, list.Body.Bytes())
+	if len(campaigns) != 2 {
+		t.Fatalf("campaigns before delete = %d, want 2: %+v", len(campaigns), campaigns)
+	}
+	for _, c := range campaigns {
+		if c.ID == state.IdeaSlug && c.SupersededBy != revised.Campaign.ID {
+			t.Fatalf("root superseded_by = %q, want %q", c.SupersededBy, revised.Campaign.ID)
+		}
+		if c.ID == revised.Campaign.ID && c.SupersededBy != "" {
+			t.Fatalf("revision superseded_by = %q, want empty", c.SupersededBy)
+		}
+	}
+
+	del := doOwnerDeleteAsUser(s, "/api/campaigns/"+revised.Campaign.ID, "alice")
+	if del.Code != http.StatusOK {
+		t.Fatalf("delete = %d body=%s", del.Code, del.Body.String())
+	}
+	var resp campaignDeleteResponse
+	if err := json.Unmarshal(del.Body.Bytes(), &resp); err != nil || !resp.OK || resp.ID != revised.Campaign.ID {
+		t.Fatalf("delete response = %+v err=%v body=%s", resp, err, del.Body.String())
+	}
+	if !strings.Contains(resp.Message, "kept") {
+		t.Fatalf("delete message should say what is kept: %q", resp.Message)
+	}
+	if _, err := s.deps.Inception.LoadCampaignArchive(revised.Campaign.ID); err == nil {
+		t.Fatalf("revision archive still present after delete")
+	}
+	if _, err := s.deps.Inception.LoadCampaignArchive(state.IdeaSlug); err != nil {
+		t.Fatalf("root archive removed with the revision: %v", err)
+	}
+
+	campaigns = decodeCampaignList(t, doOwnerGet(s, "/api/campaigns").Body.Bytes())
+	if len(campaigns) != 1 || campaigns[0].ID != state.IdeaSlug || campaigns[0].SupersededBy != "" {
+		t.Fatalf("campaigns after delete = %+v, want only root with no superseded_by", campaigns)
+	}
+
+	again := doOwnerDeleteAsUser(s, "/api/campaigns/"+revised.Campaign.ID, "alice")
+	if again.Code != http.StatusNotFound {
+		t.Fatalf("second delete = %d body=%s, want 404", again.Code, again.Body.String())
+	}
+	missing := doOwnerDeleteAsUser(s, "/api/campaigns/does-not-exist", "alice")
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("unknown delete = %d body=%s, want 404", missing.Code, missing.Body.String())
+	}
+}
+
+func TestCampaignDeleteRequiresOwnerRole(t *testing.T) {
+	s := newMinimalServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	state, err := s.deps.Inception.Start("Delete needs owner role")
+	if err != nil {
+		t.Fatalf("start inception: %v", err)
+	}
+	if reset := doOwnerPost(s, "/api/inception/reset", map[string]interface{}{}); reset.Code != http.StatusOK {
+		t.Fatalf("reset = %d body=%s", reset.Code, reset.Body.String())
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/campaigns/"+state.IdeaSlug, nil)
+	req.Header.Set("X-Hive-User", "mallory")
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-owner delete = %d body=%s, want 403", rec.Code, rec.Body.String())
+	}
+	if _, err := s.deps.Inception.LoadCampaignArchive(state.IdeaSlug); err != nil {
+		t.Fatalf("archive removed by forbidden request: %v", err)
+	}
+}
+
+// Deleting the campaign that is also the live L1 session clears that session
+// so the dashboard does not resurrect the row on the next state poll.
+func TestCampaignDeleteClearsActiveInceptionState(t *testing.T) {
+	s := newMinimalServer(t)
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	state, err := s.deps.Inception.StartBrownfield("https://github.com/hivecommons/hive")
+	if err != nil {
+		t.Fatalf("start brownfield: %v", err)
+	}
+	campaigns := decodeCampaignList(t, doOwnerGet(s, "/api/campaigns").Body.Bytes())
+	if len(campaigns) != 1 || campaigns[0].ID != state.IdeaSlug {
+		t.Fatalf("active campaign not listed: %+v", campaigns)
+	}
+	del := doOwnerDeleteAsUser(s, "/api/campaigns/"+state.IdeaSlug, "alice")
+	if del.Code != http.StatusOK {
+		t.Fatalf("delete active = %d body=%s", del.Code, del.Body.String())
+	}
+	if active := s.deps.Inception.GetState(); active != nil {
+		t.Fatalf("active state after delete = %+v, want nil", active)
+	}
+	if campaigns := decodeCampaignList(t, doOwnerGet(s, "/api/campaigns").Body.Bytes()); len(campaigns) != 0 {
+		t.Fatalf("campaigns after deleting active = %+v, want none", campaigns)
+	}
+}
+
+func TestCampaignDeleteRejectsRunBackedSpektacular(t *testing.T) {
+	s, _ := runsTestServer(t)
+	now := time.Now()
+	if err := s.contributeHub.recordLeaseForKeyStage("alice", "task-12698", "myorg/repo1", 12698, "myorg/repo1!stable-spec-12698:implement", "contributor", StageImplement, 3, now); err != nil {
+		t.Fatalf("record lease: %v", err)
+	}
+	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
+	del := doOwnerDeleteAsUser(s, "/api/campaigns/stable-spec-12698", "alice")
+	if del.Code != http.StatusConflict {
+		t.Fatalf("run-backed delete = %d body=%s, want 409", del.Code, del.Body.String())
+	}
+}
+
+// TestCampaignDeleteUI pins the dashboard side of hivecommons/hive#12698: an
+// icon-only 🗑 button in the nous-exp-icon style with aria-label/title
+// "Delete campaign", an in-app hiveConfirm (never window.confirm) that spells
+// out what is removed and what is kept, and Revise chains folded to one row.
+func TestCampaignDeleteUI(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`nousExpIconButton('deleteCampaign', escapeHtml(c.id), '', 'Delete campaign', '🗑', 'nous-exp-icon-delete campaign-delete')`,
+		"async function deleteCampaign(id) {",
+		"const CAMPAIGN_DELETE_CONFIRM_TITLE = 'Delete this campaign?';",
+		"await hiveConfirm({ title: CAMPAIGN_DELETE_CONFIRM_TITLE, message: campaignDeleteConfirmMessage(c), confirmLabel: 'Delete campaign', cancelLabel: 'Keep', danger: true });",
+		"Kept: knowledge-base facts, Jam threads, and anything already scaffolded or pushed to the repo.",
+		"fetch('/api/campaigns/' + encodeURIComponent(id), { method: 'DELETE', headers: _inceptionAuthHeaders() })",
+		"function campaignRevisionChains(campaigns) {",
+		`<details class="campaign-row-meta campaign-history"><summary>${hist.length} earlier ${hist.length === 1 ? 'revision' : 'revisions'}</summary>`,
+		`class="campaign-pill campaign-revision-pill"`,
+		".nous-exp-icon-delete:hover, .nous-exp-icon-delete:focus-visible { color: var(--red); }",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+	start := strings.Index(html, "async function deleteCampaign(id) {")
+	end := strings.Index(html[start:], "let _campaignJamSocket = null;")
+	if start < 0 || end < 0 {
+		t.Fatalf("could not isolate deleteCampaign block")
+	}
+	if body := html[start : start+end]; strings.Contains(body, "window.confirm(") || strings.Contains(body, " confirm(") || strings.Contains(body, "alert(") {
+		t.Fatalf("deleteCampaign must use the in-app dialog, not native confirm/alert")
+	}
+}

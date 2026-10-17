@@ -57,6 +57,9 @@ type Options struct {
 	// IntentGate is the intent-tier policy trySweepSelfAuthoredPR enforces
 	// (#6258). nil installs no policy; see IntentGate for the semantics.
 	IntentGate *IntentGate
+	// ReviewGate is the swarm-review policy trySweepSelfAuthoredPR evaluates
+	// on the App's own PRs (#12592). nil installs no policy; see ReviewGate.
+	ReviewGate *ReviewGate
 	// HumanMergePaths returns the live auto_merge.human_merge_paths patterns
 	// for an owner/repo. Every sweep lane refuses a PR touching one (#11038).
 	// nil means no repo has any.
@@ -142,6 +145,8 @@ type Engine struct {
 
 	intentGateMu sync.RWMutex
 	intentGate   *IntentGate
+	reviewGateMu sync.RWMutex
+	reviewGate   *ReviewGate
 
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
@@ -196,6 +201,7 @@ func New(transport Transport, opts Options) *Engine {
 		approvalDesk:                      opts.ApprovalDesk,
 		mutation:                          opts.MutationBoundary,
 		intentGate:                        opts.IntentGate,
+		reviewGate:                        opts.ReviewGate,
 		humanMergePaths:                   opts.HumanMergePaths,
 		selfAuthorizationHoldEnabled:      opts.SelfAuthorizationHoldEnabled,
 		selfAuthorizationHoldReleaseLimit: opts.SelfAuthorizationHoldReleaseLimit,
@@ -1451,6 +1457,12 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if currentHeadSHA == "" || currentHeadSHA != evaluatedHeadSHA {
 		return AutoMergeSweepEvent{}, "head-changed-since-eval", nil
 	}
+	// Review gate (#12592), on the re-verified head immediately before the
+	// merge call: the swarm verdict for exactly the SHA about to merge.
+	// Shadow (the default) records and merges; enforce holds.
+	if reviewReason := c.selfMergeReviewGate(displayRepo, owner, repo, lane, number, current, evaluatedHeadSHA); reviewReason != "" {
+		return AutoMergeSweepEvent{}, reviewReason, nil
+	}
 
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, func(ctx context.Context) (effects.Result, error) {
@@ -2279,6 +2291,7 @@ func (c *Engine) commitGreenForPRSkipping(ctx context.Context, owner, repo, bran
 	}
 	if prNumber > 0 {
 		c.noteStageRedChecks(owner, repo, prNumber, sha, st.FailingNonRequired)
+		c.noteStageDCOGate(owner, repo, prNumber, sha, required, st.Observed)
 	}
 	if configKnown && actualKnown {
 		c.warnRequiredChecksMismatch(owner, repo, configRequired, actualRequired, st.Observed)

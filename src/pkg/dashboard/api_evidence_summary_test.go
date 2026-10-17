@@ -616,7 +616,7 @@ func TestBuildEvidenceSummaryUnknownOutcome(t *testing.T) {
 		t.Fatalf("models = %+v", got.ReviewerModels)
 	}
 	st := got.ReviewerModels[0].ByAuthor["agent"]
-	want := EvidenceModelStat{N: 4, Approvals: 3, Blocks: 1, ApprovedNotMerged: 1, ApprovedUnknown: 1, BlockedUnknown: 1}
+	want := EvidenceModelStat{N: 4, Approvals: 3, Blocks: 1, ApprovedNotMerged: 1, ApprovedUnknown: 1, BlockedUnknown: 1, AdvisoryBlocks: 1, AdvisoryBlockedUnknown: 1}
 	if st != want {
 		t.Errorf("model stat = %+v, want %+v", st, want)
 	}
@@ -639,5 +639,112 @@ func TestBuildEvidenceSummaryUnknownOutcome(t *testing.T) {
 
 	if h := got.ShadowGate.ReviewGate.Held; h.N != 1 || h.Open != 0 || h.Unknown != 1 {
 		t.Errorf("shadow held outcome must be unknown, not open: %+v", h)
+	}
+}
+
+// Blocks split by the bundle's policy.require_approval (#12595): only a block
+// an enforcing gate read can be a false block; an advisory block on a merged
+// PR is dissent before merge. No model row is dropped.
+func TestBuildEvidenceSummarySplitsEnforcedAndAdvisoryBlocks(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-2 * time.Hour)
+	block := func(model string) []evidence.Verdict {
+		return []evidence.Verdict{{Perspective: "style", Model: model, Verdict: "changes_requested", Confidence: 0.8}}
+	}
+	withPolicy := func(b *evidence.Bundle, enforced bool) *evidence.Bundle {
+		b.Policy.RequireApproval = enforced
+		return b
+	}
+	bundles := []*evidence.Bundle{
+		withPolicy(evSummaryBundle("a/b", 1, evidence.AuthorAgent, recent, true, block("m1"), 0, true), true),
+		withPolicy(evSummaryBundle("a/b", 2, evidence.AuthorAgent, recent, false, block("m1"), 0, true), true),
+		withPolicy(evSummaryBundle("a/b", 3, evidence.AuthorAgent, recent, true, block("m1"), 0, true), false),
+		withPolicy(evSummaryBundle("a/b", 4, evidence.AuthorAgent, recent, true, block("m1"), 0, true), false),
+		withPolicy(evSummaryBundle("a/b", 5, evidence.AuthorAgent, recent, false, block("m1"), 0, true), false),
+		withPolicy(evSummaryBundle("a/b", 6, evidence.AuthorAgent, recent, true, block("m2"), 0, true), false),
+	}
+	tests := []struct {
+		name  string
+		model string
+		want  EvidenceModelStat
+	}{
+		{
+			name: "mixed enforced and advisory", model: "m1",
+			want: EvidenceModelStat{
+				N: 5, Blocks: 5, MergedAfterBlock: 3, BlockedUnknown: 2,
+				EnforcedBlocks: 2, MergedAfterEnforcedBlock: 1, EnforcedBlockedUnknown: 1,
+				AdvisoryBlocks: 3, DissentBeforeMerge: 2, AdvisoryBlockedUnknown: 1,
+			},
+		},
+		{
+			name: "all advisory keeps its row", model: "m2",
+			want: EvidenceModelStat{N: 1, Blocks: 1, MergedAfterBlock: 1, AdvisoryBlocks: 1, DissentBeforeMerge: 1},
+		},
+	}
+	got := buildEvidenceSummary(bundles, now, 24, "", "")
+	if len(got.ReviewerModels) != 2 {
+		t.Fatalf("models = %+v, want both rows", got.ReviewerModels)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var st EvidenceModelStat
+			for _, m := range got.ReviewerModels {
+				if m.Model == tt.model {
+					st = m.ByAuthor[evidence.AuthorAgent]
+				}
+			}
+			if st != tt.want {
+				t.Fatalf("stat = %+v, want %+v", st, tt.want)
+			}
+			if st.EnforcedBlocks+st.AdvisoryBlocks != st.Blocks {
+				t.Fatalf("enforced + advisory != blocks: %+v", st)
+			}
+		})
+	}
+	data, err := json.Marshal(got.ReviewerModels[0].ByAuthor[evidence.AuthorAgent])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"advisory_blocks":3`, `"enforced_blocks":2`, `"dissent_before_merge":2`, `"merged_after_enforced_block":1`} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("JSON %s missing %s", data, key)
+		}
+	}
+}
+
+// The review gate's shadow observations are split by the lane that recorded
+// them (#12592): the merge-eligible lane or the self-merge ReviewGate.
+func TestBuildEvidenceSummaryShadowReviewGateByLane(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	recent := now.Add(-2 * time.Hour)
+	held, passed := true, false
+	shadow := func(n int, merged bool, lane string, flag *bool) *evidence.Bundle {
+		b := evSummaryBundle("a/b", n, evidence.AuthorAgent, recent, merged, nil, 0, true)
+		b.Shadow = &evidence.Shadow{ReviewGate: &evidence.ShadowGate{WouldHaveHeld: flag, Lane: lane, Reason: "no-review-bundle", Confidence: 1, EvaluatedAt: recent}}
+		return b
+	}
+	got := buildEvidenceSummary([]*evidence.Bundle{
+		shadow(1, true, "self-merge", &held),
+		shadow(2, true, "self-merge", &passed),
+		shadow(3, false, "", &held),
+	}, now, 24, "", "").ShadowGate
+	tests := []struct {
+		name string
+		got  EvidenceShadowGateSide
+		want EvidenceShadowGateSide
+	}{
+		{name: "self-merge", got: got.ReviewGateByLane.SelfMerge, want: EvidenceShadowGateSide{N: 2, Held: EvidenceShadowOutcome{N: 1, Merged: 1}, Passed: EvidenceShadowOutcome{N: 1, Merged: 1}}},
+		{name: "merge-eligible", got: got.ReviewGateByLane.MergeEligible, want: EvidenceShadowGateSide{N: 1, Held: EvidenceShadowOutcome{N: 1, Unknown: 1}}},
+		{name: "total", got: got.ReviewGate, want: EvidenceShadowGateSide{N: 3, Held: EvidenceShadowOutcome{N: 2, Merged: 1, Unknown: 1}, Passed: EvidenceShadowOutcome{N: 1, Merged: 1}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("%s = %+v, want %+v", tt.name, tt.got, tt.want)
+			}
+		})
+	}
+	if got.WouldHaveHeld != 2 || got.N != 3 {
+		t.Fatalf("shadow gate = %+v", got)
 	}
 }

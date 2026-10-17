@@ -31355,6 +31355,55 @@
             "description": "Campaign not found"
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "Campaigns"
+        ],
+        "summary": "Delete a campaign record",
+        "description": "Owner only. Removes the archived Inception state and wiki snapshot for the stable campaign id and audit-logs campaign_delete. Knowledge-base facts, Jam threads, scaffolded repo files and other revisions in the same chain are kept; deleting the live L1 session clears it. Run-backed Spektacular campaigns return 409.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Campaign record deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Campaign not found"
+          },
+          "409": {
+            "description": "Run-backed campaign cannot be deleted here"
+          }
+        }
       }
     },
     "/api/campaigns/{id}/resume": {

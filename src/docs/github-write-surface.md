@@ -82,8 +82,9 @@ as fact (`issue_request_label.go`):
   (use `claim`), `hive/in-progress`, `🐝 covered by PR`, `hive/likely-done`
   and `hive/verified-open`;
 - the labels that record a person's decision or an escalation:
-  `approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
-  `blocked`.
+  `approved-direction`, `design-approved`, `needs-human`, `blocked`, the
+  retired `needs-decision` / `needs-direction`, and `stage/*` (an agent may
+  only *add* `stage/085-needs-decision`, the park-for-a-ruling signal).
 
 One reserved label refuses the whole request — nothing in it is applied — so a
 batch can never partially land. The refusal is a policy denial like any other:
@@ -131,7 +132,7 @@ writes no entry.
 | Shared-CI rerun (`rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment) | `shared_ci_rerun.go` | yes (`shared-ci-rerun`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
-| Origin-label migration (one-time, `from-review` → `origin/review`) | `origin_labels.go` | yes (`origin_label_migrated`, one per item swapped, with `from`, `to`; report file `/data/origin-label-migration.json`) | yes |
+| Origin-label migration (one-time, `from-review` / `origin/review` → `origin/reviewer`; also deletes the retired `origin/review` label definition from each repo once its open items are swapped) | `origin_labels.go` | yes (`origin_label_migrated`, one per item swapped, with `from`, `to`; report file `/data/origin-label-migration-v2.json`) | yes |
 | `hive/<hive-id>` label retire sweep (every boot until clean, #12539) | `hive_id_label_retire.go` | yes (`hive_id_label_retired`, one per open item stripped, with `label`, `origin_source`; report file `/data/hive-id-label-retire-<hive-id>.json`) | yes |
 | Signed-commit reconcile: branch rewrite | `pr_signed_reconcile.go` | yes (`signed_commit_reauthored`, with `branch`, `base`, `commit`, `replaced_commits`) | yes / PR number |
 | Signed-commit reconcile: "cannot sign" comment | `pr_signed_reconcile.go` | yes (`signed_commit_skip_noted`, with `reason`) | yes / PR number |
@@ -146,7 +147,7 @@ writes no entry.
 
 The open-time signed rewrite in `pr_request_signed.go` is part of `open_pr`
 and is covered by that operation's `agent_pr_created` entry. Creating a
-missing label on a repository (the hold label, `origin/review`) is a side
+missing label on a repository (the hold label, `origin/reviewer`) is a side
 effect of the labeled write and is not audited on its own.
 
 ## Lane allowlist

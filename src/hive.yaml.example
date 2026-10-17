@@ -404,6 +404,16 @@ governor:
   #   enabled: true           # default; false opts out
   #   template_path: ""       # optional text/template file over firsttimer.Vars; must contain {{ .Marker }}
 
+  # Self-merge review gate (#12592). Immediately before the hive merges its
+  # own (App-authored) PR, read the swarm review verdict for the head SHA:
+  # no-review-bundle / awaiting-review-approval / changes-requested:<perspectives>
+  # hold the merge in enforce mode; shadow (default) only records what the gate
+  # would have held in the evidence bundle and merges as today. The effective
+  # mode is the strictest of this knob, review.require_approval (enforce) and
+  # review.shadow (shadow); all three are re-read on every evaluation.
+  # review_gate:
+  #   mode: shadow            # off | shadow | enforce
+
   # Kick prompt list caps (#7368). Every issue list and every PR list in a
   # kick is cut at these counts, with an explicit "… and N more" line, so a
   # large backlog cannot balloon the prompt (302 open PRs once produced a
@@ -471,7 +481,8 @@ governor:
       #   require_quiet: true           # measure dwell from the last outside activity (push/comment/review/CI); false = from stage entry
       # dwell:                          # Per-stage "stalled" thresholds by slug; 0 = never
       #   review-pending: 1h
-      #   returned-to-contributor: 24h
+      #   needs-author: 24h            # stage/071: human-authored red PR, the author must act
+      #   returned-to-contributor: 24h  # stage/072: clanker red PR handed back to its hive
       #   awaiting-merge-admission: 30m  # a stall here = the lane, not the author; the hive comments the last skip reason
       # contributor_nudge:              # stage/072: one @-mention comment per head + relay fix-pr interrupt (#12436)
       #   enabled: true
@@ -884,6 +895,8 @@ dashboard:
   # authorized_users: [owner, reviewer:read, maintainer:read-write]
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
+  # stage_tracker:
+  #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom
   # theme_overrides:
   #   tokens: { "--accent": "#e0a33a" } # CSS variables from the dashboard :root allow-list

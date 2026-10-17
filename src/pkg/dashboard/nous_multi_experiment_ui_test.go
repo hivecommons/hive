@@ -10,8 +10,9 @@ import (
 // dashboard: running experiments render as Inception-style campaign rows
 // (question, scope pills, per-card baseline "N / 672 (≈ 7 days …)" with an ⓘ
 // explainer, status pill, edit/pause/resume/archive as icon buttons), "+ New
-// experiment" opens an inline form whose scope pills are the ⚙ allow-list
-// ("Repos experiments may target"), a 409 scope_conflict renders
+// experiment" opens a modal dialog whose scope pills are the ⚙ allow-list
+// ("Repos experiments may target") — ✎ Edit opens the same dialog prefilled
+// and is blocked while a draft is open (#12697) — a 409 scope_conflict renders
 // an in-app styled warning (never window.alert/confirm) offering to pause
 // the other experiment or narrow the scope, and the collapsed summary
 // counts open experiments.
@@ -51,6 +52,19 @@ func TestNousMultiExperimentCardsUI(t *testing.T) {
 		"<summary>Can I run more than one experiment at once?</summary>",
 		".nous-conflict-warn {",
 		".nous-exp-row .campaign-row-title {",
+		// #12697: add/edit is a body-level modal on the shared Esc handler,
+		// focus returns to the trigger, and the panel/cards get breathing room.
+		"overlay.className = 'hive-dialog-overlay nous-exp-overlay';",
+		"overlay.hiveDialogClose = nousCancelNewExperiment;",
+		"overlay.addEventListener('click', (e) => { if (e.target === overlay) nousCancelNewExperiment(); });",
+		"overlay.addEventListener('keydown', nousExperimentDialogTrapTab);",
+		"const NOUS_EXP_DIALOG_BUSY = 'Finish or cancel the open experiment form first';",
+		"returnFocus: document.activeElement",
+		"if (target && typeof target.focus === 'function') target.focus();",
+		".nous-stat-grid + .nous-exp-cards { margin-top: var(--sp-4); }",
+		".nous-exp-row .campaign-row-meta { margin-top: var(--sp-3); }",
+		".nous-exp-row .nous-exp-stage, .nous-exp-row .nous-exp-baseline { margin-top: var(--sp-3); }",
+		".nous-new-exp label { display: block; font-size: var(--fs-sm); font-weight: 600; margin-bottom: var(--sp-3); }",
 		`.nous-exp-stage[data-loop-idle="1"] .nous-exp-stage-label { color: var(--yellow); }`,
 	} {
 		if !strings.Contains(html, want) {
@@ -64,9 +78,16 @@ func TestNousMultiExperimentCardsUI(t *testing.T) {
 	if strings.Contains(html, "No defined experiments yet") || strings.Contains(html, "switch to Suggest after baseline completes") {
 		t.Error("index.html still tells the user to go find the mode knob; cards carry the stage and a Generate proposals action instead")
 	}
+	// The inline form slot (dashed placeholder) is gone: cards start right
+	// under the Experiments header.
+	for _, gone := range []string{".nous-new-exp { border: 1px dashed", "nous-new-exp-title", "${_nousNewExp.open ? ' disabled' : ''}>+ New experiment"} {
+		if strings.Contains(html, gone) {
+			t.Errorf("index.html still has the inline experiment form slot: %q", gone)
+		}
+	}
 	// The conflict path must be in-app: no native dialogs anywhere in the
 	// experiment-card code.
-	for _, fn := range []string{"nousSubmitNewExperiment", "nousPauseConflictAndStart", "nousCampaignAction", "nousConflictWarning", "nousGenerateProposals", "nousEditExperiment"} {
+	for _, fn := range []string{"nousSubmitNewExperiment", "nousPauseConflictAndStart", "nousCampaignAction", "nousConflictWarning", "nousGenerateProposals", "nousEditExperiment", "nousOpenNewExperiment", "nousExperimentDialogBusy"} {
 		body := extractJSFunction(t, html, fn)
 		for _, banned := range []string{"window.alert", "window.confirm", "window.prompt", " alert(", " confirm(", " prompt("} {
 			if strings.Contains(body, banned) {
@@ -109,7 +130,9 @@ function formatDashboardDateTime(ts){return new Date(ts).toISOString().slice(0,1
 const NOUS_BASELINE_TARGET_DEFAULT = 672;
 const NOUS_BASELINE_TARGET_EXPLAINER = '≈ 7 days of observations (4/hour)';
 const NOUS_PRINCIPLES_EXPLAINER = 'Principles are durable lessons the lab distils from judged experiments (principles.json). A new lab starts at 0 and the count grows as experiments conclude; none are needed to start an experiment.';
-let _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
+let _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null, returnFocus: null };
+const NOUS_EXP_EDIT_HELP = 'Changing the question or scope restarts it; the hypothesis may change freely.';
+const NOUS_EXP_NEW_HELP = 'Enter the research question and pick the repos it may touch; the baseline starts at 0 immediately.';
 
 const campaigns = [
   { id: 1, question: 'research_question: > Cut CI time by 20%?', hypothesis: 'shard the slowest package', status: 'active', startedAt: '2026-10-10T10:00:00Z', snapshots: 96, target: 672, percent: 14.3, targetExplainer: '≈ 7 days of observations (4/hour)', experiments: 2, scope: { repos: ['acme/api'], intervention: 'ci', tags: ['ci'], hiveWide: false }, stage: 'baseline', stageLabel: 'collecting baseline 96 / 672', stageDetail: 'Proposals are designed only once the baseline is complete (≈ 7 days of observations (4/hour)).' },
@@ -123,7 +146,7 @@ let list = nousExperimentCards(campaigns, status);
 assert.match(list, /class="campaigns-card nous-exp-cards"/);
 assert.equal((list.match(/class="campaign-row nous-exp-row"/g) || []).length, 2, 'archived campaigns are not cards');
 assert.match(list, /\+ New experiment/);
-assert.doesNotMatch(list, /nous-new-exp"/, 'form closed by default');
+assert.doesNotMatch(list, /nous-new-exp"|disabled/, 'no inline form slot; the dialog is body-level');
 
 // Card #1: cleaned question, scope pills, baseline with the 672 explainer and ⓘ,
 // edit / pause / archive as icon buttons with aria-label + title.
@@ -204,32 +227,45 @@ assert.equal(nousSectionSummaryText({ status, ledger: [1, 2, 3, 4, 5] }), 'sugge
 assert.equal(nousSectionSummaryText({ status: { mode: 'observe' }, ledger: [1] }), 'observe · 1 experiment');
 assert.equal(nousSectionSummaryText({ status: { status: 'not_configured' } }), '—');
 
-// "+ New experiment" opens the inline form; its scope pills are the ⚙
-// allow-list (repoTargets), none preselected (= hive-wide), Start enabled.
-_nousNewExp = { open: true, conflict: null, pending: false, editId: 0, original: null };
+// "+ New experiment" opens the modal dialog (role=dialog, aria-modal,
+// labelled by its title); its scope pills are the ⚙ allow-list
+// (repoTargets), none preselected (= hive-wide), Start enabled. The card
+// list itself never embeds the form.
+_nousNewExp = { open: true, conflict: null, pending: false, editId: 0, original: null, returnFocus: null };
 list = nousExperimentCards(campaigns, status);
-assert.match(list, /id="nous-new-exp" role="form" aria-label="New experiment"/);
-assert.match(list, /id="nous-ne-question"/);
-assert.match(list, /class="nous-config-pill is-off nous-ne-pill" aria-pressed="false" data-repo="acme\/api" data-action="toggleNousRepo"/);
-assert.doesNotMatch(list, /data-repo="acme\/web"/, 'acme/web is not in the allow-list so it is not offered');
-assert.match(list, /from the lab's allow-list; none selected = hive-wide/);
-assert.match(list, /data-action="nousSubmitNewExperiment">Start experiment</);
-assert.match(list, /data-action="nousOpenNewExperiment"[^>]*disabled/);
-assert.doesNotMatch(list, /nous-conflict-warn|nous-new-exp-title/);
+assert.doesNotMatch(list, /nous-new-exp"|nous-exp-dialog/, 'open state does not render into the card list');
+let dlg = nousNewExperimentForm(nousAllowedRepos(status), [], null, null);
+assert.match(dlg, /^<div class="hive-dialog nous-exp-dialog" role="dialog" aria-modal="true" aria-labelledby="nous-exp-dialog-title" aria-describedby="nous-exp-dialog-help">/);
+assert.match(dlg, /<div id="nous-exp-dialog-title" class="hive-dialog-title">New experiment<\/div>/);
+assert.match(dlg, /<div id="nous-exp-dialog-help" class="nous-exp-dialog-help">Enter the research question/);
+assert.match(dlg, /id="nous-new-exp" role="form" aria-label="New experiment"/);
+assert.match(dlg, /<label for="nous-ne-question">Research question<\/label><textarea id="nous-ne-question"/);
+assert.match(dlg, /class="nous-config-pill is-off nous-ne-pill" aria-pressed="false" data-repo="acme\/api" data-action="toggleNousRepo"/);
+assert.doesNotMatch(dlg, /data-repo="acme\/web"/, 'acme/web is not in the allow-list so it is not offered');
+assert.match(dlg, /from the lab's allow-list; none selected = hive-wide/);
+assert.match(dlg, /data-action="nousCancelNewExperiment">Cancel</);
+assert.match(dlg, /data-action="nousSubmitNewExperiment">Start experiment</);
+assert.doesNotMatch(dlg, /nous-conflict-warn|data-edit-id/);
+_nousNewExp.pending = true;
+assert.match(nousNewExperimentForm([], [], null, null), /data-action="nousSubmitNewExperiment" disabled>Start experiment</);
+_nousNewExp.pending = false;
 // Empty allow-list = every project repo is offered.
 assert.deepEqual(nousAllowedRepos({ projectRepos: ['a/x', 'a/y'], repoTargets: [] }), ['a/x', 'a/y']);
 assert.deepEqual(nousAllowedRepos({ projectRepos: ['a/x', 'a/y'], repoTargets: ['a/y'] }), ['a/y']);
 assert.deepEqual(nousAllowedRepos({ availableRepos: ['a/x'] }), ['a/x']);
-const allRepos = nousExperimentCards(campaigns, Object.assign({}, status, { repoTargets: [] }));
+const allRepos = nousNewExperimentForm(nousAllowedRepos(Object.assign({}, status, { repoTargets: [] })), [], null, null);
 assert.match(allRepos, /data-repo="acme\/api"/);
 assert.match(allRepos, /data-repo="acme\/web"/);
 
-// ✎ Edit: the same form pre-filled (question, hypothesis, scope on) with
+// ✎ Edit: the same dialog pre-filled (question, hypothesis, scope on),
+// titled "Edit experiment #1" with the restart help text under it and
 // "Save changes"; a scoped repo outside the allow-list stays toggleable.
-_nousNewExp = { open: true, conflict: null, pending: false, editId: 1, original: { question: 'Cut CI time by 20%?', repos: ['acme/api'] } };
-const editList = nousExperimentCards(campaigns, Object.assign({}, status, { repoTargets: ['acme/web'] }));
-assert.match(editList, /id="nous-new-exp" role="form" aria-label="Edit experiment #1" data-edit-id="1"/);
-assert.match(editList, /<div class="nous-new-exp-title">Edit experiment #1 /);
+_nousNewExp = { open: true, conflict: null, pending: false, editId: 1, original: { question: 'Cut CI time by 20%?', repos: ['acme/api'] }, returnFocus: null };
+const editList = nousNewExperimentForm(nousAllowedRepos(Object.assign({}, status, { repoTargets: ['acme/web'] })), campaigns[0].scope.repos, null, campaigns[0]);
+assert.match(editList, /^<div class="hive-dialog nous-exp-dialog" role="dialog" aria-modal="true" aria-labelledby="nous-exp-dialog-title" aria-describedby="nous-exp-dialog-help" data-edit-id="1">/);
+assert.match(editList, /<div id="nous-exp-dialog-title" class="hive-dialog-title">Edit experiment #1<\/div>/);
+assert.match(editList, /class="nous-exp-dialog-help">Changing the question or scope restarts it; the hypothesis may change freely\.<\/div>/);
+assert.match(editList, /id="nous-new-exp" role="form" aria-label="Edit experiment #1"/);
 assert.match(editList, /<textarea id="nous-ne-question"[^>]*>Cut CI time by 20%\?<\/textarea>/);
 assert.match(editList, /id="nous-ne-hypothesis"[^>]*value="shard the slowest package"/);
 assert.match(editList, /class="nous-config-pill active is-on nous-ne-pill" aria-pressed="true" data-repo="acme\/api"/);
@@ -246,9 +282,9 @@ assert.equal(nousEditIsMaterial(orig, { question: 'Cut CI time by 20%?', repos: 
 // experiment, the shared repo, the reason, and both remedies.
 const conflict = { ok: false, code: 'scope_conflict', shared: ['acme/api'], conflict: campaigns[0] };
 _nousNewExp = { open: true, conflict, pending: false };
-list = nousExperimentCards(campaigns, status);
+dlg = nousNewExperimentForm(nousAllowedRepos(status), [], conflict, null);
 const warn = nousConflictWarning(conflict);
-assert.ok(list.includes(warn), 'form embeds the warning');
+assert.ok(dlg.includes(warn), 'dialog embeds the warning');
 assert.match(warn, /class="nous-conflict-warn" role="alert" data-conflict-id="1"/);
 assert.match(warn, /Scope conflict with experiment #1/);
 assert.match(warn, /Both would intervene on <strong>acme\/api<\/strong>/);

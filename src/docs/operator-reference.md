@@ -173,7 +173,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `review.severity.block_at` | Unset; owner-only. | Lowest finding priority that blocks merge: `P1` (ship fast, P0–P1 block), `P2` (strict, P0–P2 block) or `P3` (everything blocks). Also drives `classification.review_bots.min_priority` when that key is not set in `hive.yaml` or `hive-project.yaml`. Any other value fails load naming the field. Features -> Review gate -> Severity & backlog. See [review-swarm.md](review-swarm.md#blocking-line-reviewseverity-reviewbacklog). |
 | `review.severity.comment_below` / `backlog_below` | `true` / `true`; owner-only. | Whether findings below the blocking line are posted as non-blocking comments and filed to `review.backlog`. |
 | `review.backlog.destination` | `github_issue`; owner-only. | `github_issue`, `github_project`, `linear` or `jira`. The last three need the matching `governor.work_source.type` (`github_projects`, `linear`, `jira`); on a mismatch the hive falls back to `github_issue`. Destination fields: `project_column_id` (required for `github_project`), `linear_state`, `jira_status`. |
-| `review.backlog.labels` / `max_per_pr_per_day` | `[origin/review]` / `10`; owner-only. `from-review` is accepted and mapped to `origin/review`. | Labels on every backlog item and the per-PR-per-day cap (negative fails load; 0 = default). |
+| `review.backlog.labels` / `max_per_pr_per_day` | `[origin/reviewer]` / `10`; owner-only. `from-review` and `origin/review` are accepted and mapped to `origin/reviewer`. | Labels on every backlog item and the per-PR-per-day cap (negative fails load; 0 = default). |
 | `review.contributor_prs.base_sync` | Off by default; owner-only. | Lets PR follow-up use GitHub's update-branch API on hive-authored lane PRs whose head is in a contributor fork, whose `mergeable_state` is `behind`/`dirty`, and whose author enabled "allow edits by maintainers". `behind` PRs get a GitHub-authored merge commit; `dirty`/422 falls back to the `hive-base-moved` repair note and kick. This requires an agent/proxy mode with `ISSUES_PRS_MERGE` because `PUT /pulls/{n}/update-branch` is merge-scoped. It does not rewrite history and does not add a human/bot-authored DCO commit; the repository's "Sign-off survives the squash" check examines the PR's own commits, not GitHub's update-branch merge commit. |
 | `governor.advisory.post_retry_backoff_s` | `3600` seconds. `HIVE_ADVISORY_POST_RETRY_BACKOFF_S` overrides the default when the key is unset; a negative value disables the pause. | How long the advisory digest write is paused after GitHub refuses it with `403 Resource not accessible by integration`. That refusal is structural (foreign-authored comment, repo dropped from the installation, or repo transferred to another owner), so per-cycle retries only burn API quota. The failed edit first falls back to creating a fresh App-authored comment; if the create is refused too, the error is recorded for the hub health row — naming the new `owner/repo` when the repository has moved — and attempts pause for this window. See [advisory.md](advisory.md#when-the-write-is-refused). |
 | `governor.trajectory.enabled` | Defaults to enabled. | The lane no-ops until a reviewer endpoint and model resolve from `governor.trajectory` or `governor.litellm`. |
@@ -487,7 +487,7 @@ transition history (the `stage/regressed` label is retired, #12534). Default
 on; `governor.labels.stage.enabled: false` stops the reconciler,
 `governor.labels.stage.dwell.<slug>` re-times a stage's stalled threshold,
 `governor.labels.stage.stalled.require_quiet: false` measures the dwell from
-stage entry instead of last activity (Settings → Labels). When a contributor
+stage entry instead of last activity (Settings → Labels). When a clanker
 PR enters
 `stage/072-returned-to-contributor` the hive posts one nudge comment per head
 (re-nudged once after `governor.labels.stage.contributor_nudge.renudge_interval`,
@@ -500,10 +500,10 @@ the relay task off. The nudge and the adoption below apply to `author/clanker`
 PRs only; human- and hive-authored PRs just wait at 072. A red PR whose author
 is unavailable is adopted (`governor.labels.stage.adoption.enabled`, default
 on) — judged against live hub presence each sweep: relay offline for
-`governor.labels.stage.adoption.after_offline` (default 30m) since its last
+`governor.labels.stage.adoption.after_offline` (default 15m) since its last
 heartbeat, no contributor profile here for `adoption.after_unregistered`
 (default 2h) since the first nudge, or online but silent for
-`contributor_grace_online` (default 2h; `contributor_grace_offline`, 1h, when
+`contributor_grace_online` (default 2h; `contributor_grace_offline`, 15m, when
 the hub reports no presence). `hold`/`do-not-merge` blocks adoption. When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
@@ -836,10 +836,14 @@ auth failures or advisory post failures — it files an issue on
 itself to an open issue that already describes the problem (fingerprint
 match, `hive/selfreport` + class match, or keyword match on a human-filed
 issue). Joining posts one "Also seen on **<hive>**" comment per 24h and
-bumps the `Affected hives (N)` block in the body.
-Each report also names the repositories the hive watches (`project.repos`)
-and their owners, and the body block keeps an `Affected repos (N)` /
-`Affected owners (N)` union across reporting hives (hivecommons/hive#12338).
+bumps the `Affected hives (N)` block in the body, where each hive has its own
+line — `- <hive> (instance <id>) — owner(s): @login — seen N, last <time>` —
+naming the GitHub login(s) of the hive owner (`dashboard.authorized_users`
+owner-role entries plus the device-flow operator) so a maintainer can see who
+is affected. Each report also names the repositories the hive watches
+(`project.repos`) and their owners, and the body block keeps an
+`Affected repos (N)` / `Affected repo owners (N)` union across reporting
+hives (hivecommons/hive#12338).
 
 ```yaml
 governor:
@@ -847,7 +851,8 @@ governor:
     enabled: true            # unset = on for hub-managed hives, off (dry-run) for self-hosted
     repo: hivecommons/hive
     max_per_day: 5
-    include_repos: true      # false: never name project.repos / owners (set this if any watched repo is private)
+    include_repos: true      # false: never name project.repos / repo owners (set this if any watched repo is private)
+    include_owners: true     # false: render "(anonymous)" instead of the hive owner's GitHub login(s)
 ```
 
 Rate limits: `max_per_day` new issues per hive per 24h, at least 1h between

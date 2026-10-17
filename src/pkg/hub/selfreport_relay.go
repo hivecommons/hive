@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 // Self-report relay (hivecommons/hive#11868). Spokes whose GitHub credential
@@ -37,20 +38,27 @@ const (
 var selfReportRate feedbackRateLimiter
 
 // selfReportRelayRequest mirrors cmd/hive's wire struct; Evidence is kept
-// opaque so pkg/hub does not import pkg/fleetreport.
+// opaque. Owners / OwnersHidden / InstanceID / Repos feed the affected block
+// the hub edits in place when it joins or files the issue.
 type selfReportRelayRequest struct {
-	Action      string          `json:"action,omitempty"`
-	HiveID      string          `json:"hive_id"`
-	Fingerprint string          `json:"fingerprint"`
-	Class       string          `json:"class,omitempty"`
-	Title       string          `json:"title,omitempty"`
-	Body        string          `json:"body"`
-	Labels      []string        `json:"labels,omitempty"`
-	Version     string          `json:"version,omitempty"`
-	Repo        string          `json:"repo,omitempty"`
-	Evidence    json.RawMessage `json:"evidence,omitempty"`
-	Observation json.RawMessage `json:"observation,omitempty"`
-	HiveState   json.RawMessage `json:"hive_state,omitempty"`
+	Action      string   `json:"action,omitempty"`
+	HiveID      string   `json:"hive_id"`
+	Fingerprint string   `json:"fingerprint"`
+	Class       string   `json:"class,omitempty"`
+	Title       string   `json:"title,omitempty"`
+	Body        string   `json:"body"`
+	Labels      []string `json:"labels,omitempty"`
+	Version     string   `json:"version,omitempty"`
+	Repo        string   `json:"repo,omitempty"`
+	InstanceID  string   `json:"instance_id,omitempty"`
+	Repos       []string `json:"repos,omitempty"`
+	Owners      []string `json:"owners,omitempty"`
+	// OwnersHidden is the spoke's include_owners opt-out; the hub then never
+	// substitutes its own owner record.
+	OwnersHidden bool            `json:"owners_hidden,omitempty"`
+	Evidence     json.RawMessage `json:"evidence,omitempty"`
+	Observation  json.RawMessage `json:"observation,omitempty"`
+	HiveState    json.RawMessage `json:"hive_state,omitempty"`
 }
 
 type selfReportRelayResponse struct {
@@ -106,7 +114,27 @@ func validateSelfReportRelayRequest(req *selfReportRelayRequest) error {
 		labels = append(labels, l)
 	}
 	req.Labels = labels
+	req.InstanceID = strings.TrimSpace(req.InstanceID)
+	req.Repos = fleetreport.NormalizeRepos(req.Repos)
+	req.Owners = fleetreport.NormalizeLogins(req.Owners)
+	if req.OwnersHidden {
+		req.Owners = nil
+	}
 	return nil
+}
+
+// selfReportAffectedEntry is the affected-block line the hub writes for the
+// relaying hive. Owners are the spoke's, falling back to the hub's own
+// record of the hive owner for spokes that predate the owners field, unless
+// the spoke opted out.
+func selfReportAffectedEntry(req selfReportRelayRequest, now time.Time) fleetreport.AffectedHive {
+	owners := req.Owners
+	if len(owners) == 0 && !req.OwnersHidden {
+		if hive := loadSaaSHive(req.HiveID); hive != nil {
+			owners = fleetreport.NormalizeLogins([]string{hive.Owner})
+		}
+	}
+	return fleetreport.AffectedHive{Hive: req.HiveID, Instance: req.InstanceID, Owners: owners, OwnersHidden: req.OwnersHidden, Last: now}
 }
 
 func splitHubRepo(full string) (string, string, error) {
@@ -223,6 +251,15 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		// hive/selfreport only: the hive/<id> provenance label is retired
 		// (hivecommons/hive#12539); the seen marker above names the hive.
 		_ = postHubGitHubIssueLabels(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, []string{selfReportRelayLabel})
+		// Only hive-filed runtime-error issues carry the block; the hub never
+		// appends one to an observation or ACMM report.
+		if strings.Contains(existing.Body, fleetreport.AffectedBlockStart) {
+			if newBody, changed := fleetreport.UpdateAffected(existing.Body, selfReportAffectedEntry(req, time.Now()), req.Repos, true); changed {
+				if err := patchHubGitHubIssueBody(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, newBody); err != nil && s.logger != nil {
+					s.logger.Warn("selfreport relay: could not update affected-hives block", "hive", req.HiveID, "issue", existing.Number, "error", err)
+				}
+			}
+		}
 		if s.logger != nil {
 			s.logger.Info("selfreport relay: joined existing issue", "hive", req.HiveID, "issue", existing.Number, "class", req.Class)
 		}
@@ -246,6 +283,13 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 	}
 	if !containsString(labels, selfReportRelayLabel) {
 		labels = append(labels, selfReportRelayLabel)
+	}
+	if strings.Contains(req.Body, fleetreport.AffectedBlockStart) {
+		// A spoke that predates the owners field sends a block with only the
+		// hive name; fill the hive's line from what the hub knows.
+		if newBody, changed := fleetreport.UpdateAffected(req.Body, selfReportAffectedEntry(req, time.Now()), req.Repos, false); changed {
+			req.Body = newBody
+		}
 	}
 	res, status, err := postHubGitHubIssue(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, req.Title, req.Body, labels)
 	if err != nil && status == http.StatusUnprocessableEntity {
@@ -321,7 +365,7 @@ func findSelfReportIssueByFingerprint(ctx context.Context, client *http.Client, 
 	}
 	for _, it := range out.Items {
 		if strings.Contains(it.Body, "hive-fleet-fingerprint:"+fingerprint) {
-			return feedbackIssueResult{Number: it.Number, URL: it.HTMLURL}, nil
+			return feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body}, nil
 		}
 	}
 	return feedbackIssueResult{}, nil
@@ -348,6 +392,29 @@ func postHubGitHubIssueComment(ctx context.Context, client *http.Client, apiBase
 		return resp.StatusCode, fmt.Errorf("github create comment: %d", resp.StatusCode)
 	}
 	return resp.StatusCode, nil
+}
+
+func patchHubGitHubIssueBody(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, body string) error {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_affected")
+	data, _ := json.Marshal(map[string]string{"body": body})
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/%d", strings.TrimRight(apiBase, "/"), owner, repo, number)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("github edit issue: %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func closeHubGitHubIssue(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int) error {

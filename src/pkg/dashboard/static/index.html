@@ -1293,10 +1293,31 @@
        their own words, so every strip is the same width. */
     .ham-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
     .ham-toolbar label { display: inline-flex; align-items: center; gap: var(--sp-2); }
-    .ham-toolbar .hv-select, .ham-toolbar select { font-size: var(--fs-sm); }
+    .ham-repo-filter { position: static; flex: 0 1 auto; gap: 0; min-width: 0; white-space: nowrap; }
+    .ham-select { appearance: auto; box-sizing: border-box; height: auto; min-height: 0; min-width: 0; max-width: 16em; margin: 0 0 0 var(--sp-2); border: var(--line-width) solid var(--line); outline: none; box-shadow: none; background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font: inherit; font-size: var(--fs-xs); line-height: inherit; cursor: pointer; }
+    .ham-select:hover { color: var(--text); border-color: var(--line-strong); }
+    .ham-select:focus-visible { outline: var(--line-width) solid var(--line-strong); outline-offset: 1px; }
+    .ham-select option { color: var(--text); background: var(--panel); }
     .ham-chips { display: inline-flex; gap: var(--sp-1); }
     .ham-chip { border: var(--line-width) solid var(--line); background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-4); font-size: var(--fs-xs); cursor: pointer; }
     .ham-chip[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
+    .ham-chip:hover { color: var(--text); border-color: var(--line-strong); }
+    .ham-chip[hidden] { display: none; }
+    .ham-chip .ham-chip-n { color: var(--text-faint); margin-left: var(--sp-1); }
+    .ham-input { flex: 0 1 18em; min-width: 8em; padding: var(--sp-1) var(--sp-3); background: var(--bg); color: var(--text); border: var(--line-width) solid var(--line); border-radius: var(--r-pill); font-size: var(--fs-sm); outline: none; }
+    .ham-input:focus { border-color: var(--line-strong); }
+    .ham-dir { padding: var(--sp-1) var(--sp-2); min-width: 2em; }
+    .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
+    .ham-labels:empty { display: none; }
+    .ham-label-chip { font-family: var(--font-mono); }
+    .ham-labels-more { align-self: center; font-size: var(--fs-xs); color: var(--text-faint); }
+    .ham-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-xs); color: var(--text-faint); margin-bottom: var(--sp-3); }
+    .ham-meta-foot { margin: var(--sp-3) 0 0; }
+    .ham-meta:empty { display: none; }
+    .ham-meta .ham-count { color: var(--muted); }
+    .ham-meta .ham-updated.ham-stale { color: var(--amber); }
+    .ham-pager { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .ham-pager .ham-chip:disabled { opacity: 0.4; cursor: default; }
     .ham-cols { padding: 0 var(--sp-2) var(--sp-2); border-bottom: var(--line-width) solid var(--line-subtle); margin-bottom: var(--sp-2); }
     .ham-cols .ham-strip { height: auto; }
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
@@ -3895,6 +3916,11 @@
     /* Experiment cards (#12532) reuse the Inception campaign list look:
        .campaigns-card / .campaign-row / .campaign-pill / .campaign-row-actions. */
     .nous-exp-row .campaign-row-title { white-space: normal; overflow-wrap: anywhere; }
+    /* Breathing room on the card: title → meta row → stage / baseline (#12697). */
+    .nous-exp-row .campaign-row-meta { margin-top: var(--sp-3); }
+    .nous-exp-row .nous-exp-stage, .nous-exp-row .nous-exp-baseline { margin-top: var(--sp-3); }
+    /* The stat tiles used to touch the Experiments card below them. */
+    .nous-stat-grid + .nous-exp-cards { margin-top: var(--sp-4); }
     .nous-exp-row[data-status="paused"] { opacity: 0.75; }
     .nous-exp-pill[data-status="active"] { border-color: var(--green); color: var(--green); }
     .nous-exp-pill[data-status="paused"] { border-color: var(--yellow); color: var(--yellow); }
@@ -3912,11 +3938,18 @@
     .nous-exp-stage[data-stage="running"] .nous-exp-stage-label { color: var(--accent); }
     .nous-exp-stage-detail { color: var(--muted); }
     .nous-stat .lbl .config-info { margin-left: var(--sp-1); }
-    .nous-new-exp { border: 1px dashed var(--border); border-radius: var(--r); padding: var(--sp-4); margin-bottom: var(--sp-4); display: grid; gap: var(--sp-3); }
-    .nous-new-exp label { font-size: var(--fs-sm); font-weight: 600; }
+    /* Add / edit experiment is a modal (hive-dialog recipe), never an inline
+       slot under the Experiments header: New and Edit used to share that
+       slot and ✎ silently morphed an open New form into Edit (#12697). */
+    .nous-exp-dialog { width: 560px; }
+    .nous-exp-dialog .hive-dialog-title { margin-bottom: var(--sp-2); }
+    .nous-exp-dialog-help { font-size: var(--fs-sm); color: var(--muted); line-height: 1.45; margin-bottom: var(--sp-5); }
+    .nous-new-exp { display: grid; gap: var(--sp-4); margin-bottom: var(--sp-5); }
+    .nous-new-exp label { display: block; font-size: var(--fs-sm); font-weight: 600; margin-bottom: var(--sp-3); }
     .nous-new-exp textarea, .nous-new-exp input[type="text"] { width: 100%; box-sizing: border-box; }
     .nous-new-exp .nous-lab-chips { margin-top: var(--sp-1); }
     .nous-new-exp-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; flex-wrap: wrap; }
+    .nous-exp-dialog .nous-conflict-warn { margin-bottom: var(--sp-5); }
     /* In-app scope-conflict warning: never window.alert/confirm. */
     .nous-conflict-warn { background: color-mix(in srgb, var(--yellow) 12%, transparent); border: 1px solid var(--yellow); border-radius: var(--r); padding: var(--sp-4); font-size: var(--fs-sm); display: grid; gap: var(--sp-2); }
     .nous-conflict-warn strong { color: var(--text); }
@@ -3928,7 +3961,6 @@
     .nous-exp-icon:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     .nous-exp-version { font-size: var(--fs-sm); margin-top: var(--sp-1); }
     .nous-exp-scope-warn { font-size: var(--fs-sm); margin-top: var(--sp-1); font-style: italic; }
-    .nous-new-exp-title { font-weight: 600; }
     .nous-data-note { display: grid; gap: var(--sp-2); }
 
     /* Knowledge Panel */
@@ -5541,6 +5573,14 @@
     .campaign-row-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
+    .campaign-revision-pill { border-color: var(--accent); color: var(--accent); }
+    /* Revise chains fold into one row; earlier revisions live in a
+       disclosure with their own Continue / Delete icon buttons (#12698). */
+    .campaign-history-list { display: grid; gap: var(--sp-2); margin-top: var(--sp-2); width: 100%; }
+    .campaign-history-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; border-top: 1px dashed var(--border); padding-top: var(--sp-2); }
+    .campaign-history-row .campaign-row-actions { margin-left: auto; }
+    .campaign-row-actions .nous-exp-icon { align-self: center; }
+    .nous-exp-icon-delete:hover, .nous-exp-icon-delete:focus-visible { color: var(--red); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
     .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
     .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
@@ -6131,6 +6171,7 @@
       <span id="dashboard-custom-style-note" class="nav-chip nav-chip--status nav-chip--neutral dashboard-custom-style-note" style="display:none" role="status"></span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
       <button type="button" id="oc-navbar-upgrade" class="nav-chip nav-chip--status nav-chip--warn oc-navbar-upgrade" data-action="focusVersionBlock" title="Upgrade progress — jump to Version details" aria-label="Upgrade progress" hidden></button>
+      <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" hidden></span>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
@@ -6518,10 +6559,19 @@
           <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="pr" aria-pressed="false">Pull requests</button>
           <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="issue" aria-pressed="false">Issues</button>
         </span>
-        <label><span>Repo</span> <select id="activity-monitor-repo" class="hv-btn btn-secondary btn" data-change-action="hamFilter" data-arg0="repo" data-arg-types="s,v"><option value="">All repos</option></select></label>
-        
+        <label class="ham-repo-filter"><span>Repo</span><select id="activity-monitor-repo" class="ham-select" data-change-action="hamFilter" data-arg0="repo" data-arg-types="s,v"><option value="">All repos</option></select></label>
+        <input id="activity-monitor-q" class="ham-input" type="search" placeholder="Search # or title…" autocomplete="off" spellcheck="false" aria-label="Search by number or title" data-input-action="hamFilter" data-arg0="q" data-arg-types="s,w">
+        <label class="ham-repo-filter"><span>Since</span><select id="activity-monitor-age" class="ham-select" data-change-action="hamFilter" data-arg0="age" data-arg-types="s,v" title="Time on the current step (or open, when no step is known)"><option value="any">Any age</option><option value="1h">Over 1 hour</option><option value="1d">Over 1 day</option><option value="1w">Over 1 week</option><option value="stale">Past the stage dwell</option></select></label>
+        <label class="ham-repo-filter"><span>Author</span><select id="activity-monitor-author" class="ham-select" data-change-action="hamFilter" data-arg0="author" data-arg-types="s,v"><option value="any">Any author</option><option value="human">Human</option><option value="clanker">Clanker</option><option value="hive">Hive</option></select></label>
+        <button type="button" class="ham-chip" id="activity-monitor-attention" data-action="hamFilter" data-arg0="attention" data-arg1="toggle" aria-pressed="false" title="Stalled, regressed, held, needs-human, needs-decision, needs-rebase, blocked, or on 072 / 085 / 090">Needs attention</button>
+        <label class="ham-repo-filter"><span>Sort</span><select id="activity-monitor-sort" class="ham-select" data-change-action="hamFilter" data-arg0="sort" data-arg-types="s,v"><option value="furthest">Furthest along</option><option value="waiting">Longest waiting</option><option value="newest">Newest</option><option value="number">Number</option></select> <button type="button" class="ham-chip ham-dir" id="activity-monitor-dir" data-action="hamFilter" data-arg0="dir" data-arg1="toggle" aria-label="Reverse sort direction" title="Reverse sort direction">↓</button></label>
+        <label class="ham-repo-filter"><span>Per page</span><select id="activity-monitor-size" class="ham-select" data-change-action="hamFilter" data-arg0="size" data-arg-types="s,v"><option value="25">25</option><option value="50" selected>50</option><option value="100">100</option></select></label>
+        <button type="button" class="ham-chip ham-reset" id="activity-monitor-reset" data-action="hamFilter" data-arg0="reset" hidden>Clear filters</button>
       </div>
+      <div class="ham-labels" id="activity-monitor-labels" role="group" aria-label="Filter by label"></div>
+      <div class="ham-meta" id="activity-monitor-meta" aria-live="polite"></div>
       <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
+      <div class="ham-meta ham-meta-foot" id="activity-monitor-meta-foot"></div>
     </div>
   </div>
 
@@ -6683,12 +6733,12 @@
 
         <details class="faq-q" id="faq-create-experiment">
           <summary>Where do I create an experiment?</summary>
-          <p>On the Experiment Lab section itself: press <strong>+ New experiment</strong> and fill in the research question, an optional hypothesis and the scope (which repos it may touch; none selected = hive-wide). That inline form is the only place an experiment is defined. The ⚙ <em>Experiment Lab Configuration</em> dialog holds <strong>lab-wide guardrails</strong> only — the Trust Ladder, the Output Mode and safety labels, fast-fail bounds, timing, and <em>Repos experiments may target</em>, the allow-list the scope pills are drawn from (none selected = any repo). If the allow-list changes later, running experiments keep their scope and their card shows a muted note for any repo that is no longer allowed. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">defining experiments</a>.</p>
+          <p>On the Experiment Lab section itself: press <strong>+ New experiment</strong> and fill in the research question, an optional hypothesis and the scope (which repos it may touch; none selected = hive-wide) in the <em>New experiment</em> dialog. That dialog is the only place an experiment is defined. The ⚙ <em>Experiment Lab Configuration</em> dialog holds <strong>lab-wide guardrails</strong> only — the Trust Ladder, the Output Mode and safety labels, fast-fail bounds, timing, and <em>Repos experiments may target</em>, the allow-list the scope pills are drawn from (none selected = any repo). If the allow-list changes later, running experiments keep their scope and their card shows a muted note for any repo that is no longer allowed. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">defining experiments</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-edit-experiment">
           <summary>Can I change an experiment after it starts?</summary>
-          <p>Yes — the ✎ <em>Edit experiment</em> icon on its card opens the same form pre-filled. Changing only the hypothesis (or tags) is saved in place and keeps the baseline. Changing the <strong>research question or the scope</strong> invalidates the baseline and the hypotheses judged against it, so the lab asks first: <em>"Changing the question or scope restarts this experiment: baseline resets to 0/672 (≈7 days) and hypotheses/proposals so far are archived with the old version."</em> <strong>Restart experiment</strong> archives the current card as version N (it stays readable under <em>Previous experiments</em>) and creates version N+1 with the edited fields and a fresh baseline — after running the same scope-conflict check as a new experiment; <strong>Keep as is</strong> changes nothing. The new card reads <em>v2 · restarted from #1</em>. Paused and concluded experiments follow the same rule. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">editing an experiment</a>.</p>
+          <p>Yes — the ✎ <em>Edit experiment</em> icon on its card opens the same dialog pre-filled (titled <em>Edit experiment #N</em>; finish or cancel an open form before opening another). Changing only the hypothesis (or tags) is saved in place and keeps the baseline. Changing the <strong>research question or the scope</strong> invalidates the baseline and the hypotheses judged against it, so the lab asks first: <em>"Changing the question or scope restarts this experiment: baseline resets to 0/672 (≈7 days) and hypotheses/proposals so far are archived with the old version."</em> <strong>Restart experiment</strong> archives the current card as version N (it stays readable under <em>Previous experiments</em>) and creates version N+1 with the edited fields and a fresh baseline — after running the same scope-conflict check as a new experiment; <strong>Keep as is</strong> changes nothing. The new card reads <em>v2 · restarted from #1</em>. Paused and concluded experiments follow the same rule. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">editing an experiment</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-multiple-experiments">
@@ -12493,12 +12543,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 50: 'hive', 60: 'hive', 70: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 50: 'hive', 60: 'hive', 70: 'author', 71: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
     var _stageTrackerSig = '';
-    var _stageTrackerFilter = { kind: 'all', repo: '' };
+    var _stageTrackerEtag = '';
+    // Filter / sort / paging state. Everything but the page survives a reload
+    // (localStorage, like the Review window) so a maintainer's view sticks.
+    const STAGE_TRACKER_FILTER_KEY = 'hive-activity-monitor-filter';
+    const STAGE_TRACKER_PAGE_SIZES = [25, 50, 100];
+    const STAGE_TRACKER_DEFAULT_PAGE_SIZE = 50;
+    const STAGE_TRACKER_LABEL_CHIP_LIMIT = 24;
+    const STAGE_TRACKER_CLOCK_MS = 10000;
+    const STAGE_TRACKER_AGE_MS = { '1h': 3600000, '1d': 86400000, '1w': 604800000 };
+    const STAGE_TRACKER_ATTENTION_STAGES = [71, 72, 85, 90];
+    // Label families a chip row is built from, in display order; other
+    // labels follow when at least two items carry them.
+    const STAGE_TRACKER_LABEL_FAMILIES = ['stage/', 'needs-', 'author/', 'role/'];
+    const STAGE_TRACKER_SORTS = ['furthest', 'waiting', 'newest', 'number'];
+    function stageTrackerDefaultFilter() {
+      return { kind: 'all', repo: '', q: '', labels: [], age: 'any', author: 'any', attention: false, sort: 'furthest', dir: 'desc', size: STAGE_TRACKER_DEFAULT_PAGE_SIZE, page: 1 };
+    }
+    var _stageTrackerFilter = stageTrackerDefaultFilter();
 
     function stageTrackerHeadline(item) {
       const n = Number(item.stage) || 0;
@@ -12515,6 +12582,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 50: return 'Waiting for review' + viaPR;
         case 60: return 'Reviewed' + viaPR;
         case 70: return 'Fixing review findings' + viaPR;
+        case 71: return 'Waiting on the author' + viaPR;
         case 72: return 'Back with the contributor' + viaPR;
         case 74: return 'Hive took it over' + viaPR;
         case 80: return 'Not yet admitted to auto merge' + viaPR;
@@ -12778,27 +12846,221 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerNeedsAttention(item) {
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const n = Number(item.stage) || 0;
-      return mods.length > 0 || n === 72 || n === 85 || n === 90;
+      return mods.length > 0 || STAGE_TRACKER_ATTENTION_STAGES.indexOf(n) >= 0;
+    }
+
+    // The instant an item's current wait began: when it entered its step,
+    // else when it was opened (an item with no step yet is waiting since then).
+    function stageTrackerWaitSince(item) {
+      return Date.parse(item.stage_since || '') || Date.parse(item.created_at || '') || 0;
+    }
+
+    // Label family a label belongs to for the chip row: the text before the
+    // first "/" or the "needs-" prefix; '' for everything else. Chips from one
+    // family OR together, families AND together.
+    function stageTrackerLabelFamily(label) {
+      const l = String(label || '').toLowerCase();
+      for (const fam of STAGE_TRACKER_LABEL_FAMILIES) if (l.startsWith(fam)) return fam;
+      return '';
+    }
+
+    // Normalise a filter object: unknown values fall back to the default.
+    function stageTrackerNormalizeFilter(raw) {
+      const d = stageTrackerDefaultFilter();
+      const f = Object.assign(d, raw && typeof raw === 'object' ? raw : {});
+      if (['all', 'pr', 'issue'].indexOf(f.kind) < 0) f.kind = 'all';
+      f.repo = typeof f.repo === 'string' ? f.repo : '';
+      f.q = typeof f.q === 'string' ? f.q : '';
+      f.labels = Array.isArray(f.labels) ? f.labels.filter(l => typeof l === 'string' && l).map(l => l.toLowerCase()) : [];
+      if (!(f.age in STAGE_TRACKER_AGE_MS) && f.age !== 'stale') f.age = 'any';
+      if (['human', 'clanker', 'hive'].indexOf(f.author) < 0) f.author = 'any';
+      f.attention = !!f.attention;
+      if (STAGE_TRACKER_SORTS.indexOf(f.sort) < 0) f.sort = 'furthest';
+      f.dir = f.dir === 'asc' ? 'asc' : 'desc';
+      f.size = STAGE_TRACKER_PAGE_SIZES.indexOf(Number(f.size)) >= 0 ? Number(f.size) : STAGE_TRACKER_DEFAULT_PAGE_SIZE;
+      f.page = Math.max(1, Math.floor(Number(f.page)) || 1);
+      return f;
+    }
+
+    // True when any narrowing filter (not sort / paging) is set.
+    function stageTrackerFilterActive(f) {
+      return f.kind !== 'all' || !!f.repo || !!f.q || f.labels.length > 0 || f.age !== 'any' || f.author !== 'any' || f.attention;
+    }
+
+    // Does one item pass the narrowing filters? ctx.nowMs anchors the age
+    // test; ctx.stages supplies the dwell for the "stale" age.
+    function stageTrackerMatches(item, f, ctx) {
+      ctx = ctx || {};
+      if (f.kind !== 'all' && item.kind !== f.kind) return false;
+      if (f.repo && item.repo !== f.repo) return false;
+      if (f.q) {
+        const q = f.q.trim().toLowerCase();
+        const num = q.replace(/^#/, '');
+        const byNumber = /^\d+$/.test(num) && String(item.number) === num;
+        const byTitle = String(item.title || '').toLowerCase().indexOf(q) >= 0;
+        const byLinked = (Array.isArray(item.linked_prs) ? item.linked_prs : []).some(lp => (/^\d+$/.test(num) && String(lp.number) === num) || String(lp.title || '').toLowerCase().indexOf(q) >= 0);
+        if (!byNumber && !byTitle && !byLinked) return false;
+      }
+      if (f.labels.length) {
+        const have = new Set((Array.isArray(item.labels) ? item.labels : []).map(l => String(l).toLowerCase()));
+        const byFamily = {};
+        f.labels.forEach(l => { const fam = stageTrackerLabelFamily(l) || l; (byFamily[fam] = byFamily[fam] || []).push(l); });
+        for (const fam in byFamily) if (!byFamily[fam].some(l => have.has(l))) return false;
+      }
+      if (f.author !== 'any' && (item.author_kind || '') !== f.author) return false;
+      if (f.attention && !stageTrackerNeedsAttention(item)) return false;
+      if (f.age !== 'any') {
+        const nowMs = Number(ctx.nowMs) || Date.now();
+        const since = stageTrackerWaitSince(item);
+        if (f.age === 'stale') {
+          const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+          const st = (ctx.stages || []).find(x => Number(x.number) === (Number(item.stage) || 0)) || {};
+          const dwellMs = (Number(st.dwell_seconds) || 0) * 1000;
+          if (!(mods.indexOf('stalled') >= 0 || (dwellMs > 0 && since > 0 && nowMs - since > dwellMs))) return false;
+        } else if (!(since > 0 && nowMs - since > STAGE_TRACKER_AGE_MS[f.age])) return false;
+      }
+      return true;
     }
 
     // Rows for the current filter. Outside the Pull requests view a PR that
     // is nested under a listed issue is drawn as that issue's sub-row only.
-    function stageTrackerVisible(items, filter) {
-      const f = filter || _stageTrackerFilter;
-      const rows = (items || []).filter(it =>
-        (f.kind === 'all' || it.kind === f.kind) &&
-        (!f.repo || it.repo === f.repo));
+    function stageTrackerVisible(items, filter, ctx) {
+      const f = stageTrackerNormalizeFilter(filter || _stageTrackerFilter);
+      const rows = (items || []).filter(it => stageTrackerMatches(it, f, ctx));
       if (f.kind === 'pr') return rows;
       const issues = new Set(rows.filter(it => it.kind === 'issue').map(it => it.repo + '#' + it.number));
       return rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
     }
 
+    // Order rows. 'furthest' is the strip order (furthest along first, then
+    // longest on step); 'waiting' is longest wait first; 'newest' is most
+    // recently opened first; 'number' is repo then number. dir 'asc' reverses.
+    function stageTrackerSort(rows, stages, f) {
+      f = stageTrackerNormalizeFilter(f);
+      const byRepoNumber = (x, y) => ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0));
+      let cmp;
+      switch (f.sort) {
+        case 'waiting': cmp = (x, y) => ((stageTrackerWaitSince(x) || Infinity) - (stageTrackerWaitSince(y) || Infinity)) || byRepoNumber(x, y); break;
+        case 'newest': cmp = (x, y) => ((Date.parse(y.created_at || '') || 0) - (Date.parse(x.created_at || '') || 0)) || byRepoNumber(y, x); break;
+        case 'number': cmp = (x, y) => byRepoNumber(y, x); break;
+        default: {
+          const keyOf = it => stageTrackerSortKey(it, stages);
+          cmp = (x, y) => { const a = keyOf(x), b = keyOf(y); return (b.anchor - a.anchor) || (a.since - b.since) || byRepoNumber(x, y); };
+        }
+      }
+      const out = (rows || []).slice().sort(cmp);
+      return f.dir === 'asc' ? out.reverse() : out;
+    }
+
+    // One page of rows plus the numbers the "showing X–Y of N" line needs.
+    // A page past the end clamps to the last page.
+    function stageTrackerPage(rows, f) {
+      f = stageTrackerNormalizeFilter(f);
+      const total = (rows || []).length;
+      const pages = Math.max(1, Math.ceil(total / f.size));
+      const page = Math.min(f.page, pages);
+      const from = total ? (page - 1) * f.size + 1 : 0;
+      const to = Math.min(total, page * f.size);
+      return { rows: (rows || []).slice(from ? from - 1 : 0, to), page, pages, from, to, total, size: f.size };
+    }
+
+    // Label chips: every label of a known family, then other labels carried
+    // by two or more items, most common first; selected labels always stay.
+    function stageTrackerLabelFacets(items, f) {
+      f = stageTrackerNormalizeFilter(f);
+      const counts = {};
+      (items || []).forEach(it => (Array.isArray(it.labels) ? it.labels : []).forEach(l => { const k = String(l).toLowerCase(); counts[k] = (counts[k] || 0) + 1; }));
+      const famRank = l => { const i = STAGE_TRACKER_LABEL_FAMILIES.indexOf(stageTrackerLabelFamily(l)); return i < 0 ? STAGE_TRACKER_LABEL_FAMILIES.length : i; };
+      const all = Object.keys(counts).filter(l => f.labels.indexOf(l) >= 0 || stageTrackerLabelFamily(l) || counts[l] > 1)
+        .sort((a, b) => (famRank(a) - famRank(b)) || (counts[b] - counts[a]) || a.localeCompare(b));
+      const shown = all.slice(0, STAGE_TRACKER_LABEL_CHIP_LIMIT);
+      f.labels.forEach(l => { if (counts[l] && shown.indexOf(l) < 0) shown.push(l); });
+      return { chips: shown.map(l => ({ label: l, count: counts[l], on: f.labels.indexOf(l) >= 0 })), hidden: Math.max(0, all.length - shown.length) };
+    }
+
+    // "showing X–Y of N (M filtered out)" and the header's "N items · M need attention".
+    function stageTrackerCountsText(page, allCount, attention) {
+      const filteredOut = Math.max(0, allCount - page.total);
+      const showing = page.total ? `showing ${page.from}–${page.to} of ${page.total}` : 'showing 0 of 0';
+      return { showing: showing + (filteredOut ? ` (${filteredOut} filtered out)` : ''), header: `${page.total}${filteredOut ? ' of ' + allCount : ''} ${page.total === 1 ? 'item' : 'items'} · ${attention ? attention + ' need' + (attention === 1 ? 's' : '') + ' attention' : 'nothing needs attention'}` };
+    }
+
+    function stageTrackerLoadFilter() {
+      try { _stageTrackerFilter = stageTrackerNormalizeFilter(JSON.parse(localStorage.getItem(STAGE_TRACKER_FILTER_KEY) || 'null')); } catch { _stageTrackerFilter = stageTrackerDefaultFilter(); }
+      _stageTrackerFilter.page = 1;
+    }
+    function stageTrackerSaveFilter() {
+      try { const f = Object.assign({}, _stageTrackerFilter); delete f.page; localStorage.setItem(STAGE_TRACKER_FILTER_KEY, JSON.stringify(f)); } catch {}
+    }
+
     function hamFilter(key, value) {
-      if (key === 'kind') {
-        _stageTrackerFilter.kind = value || 'all';
-        document.querySelectorAll('#activity-monitor-toolbar .ham-chip').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === _stageTrackerFilter.kind ? 'true' : 'false'));
-      } else if (key === 'repo') _stageTrackerFilter.repo = value || '';
+      const f = _stageTrackerFilter;
+      switch (key) {
+        case 'kind': f.kind = value || 'all'; break;
+        case 'repo': f.repo = value || ''; break;
+        case 'q': f.q = value || ''; break;
+        case 'age': f.age = value || 'any'; break;
+        case 'author': f.author = value || 'any'; break;
+        case 'attention': f.attention = value === 'toggle' ? !f.attention : !!value; break;
+        case 'sort': f.sort = value || 'furthest'; break;
+        case 'dir': f.dir = value === 'toggle' ? (f.dir === 'asc' ? 'desc' : 'asc') : value; break;
+        case 'size': f.size = Number(value) || STAGE_TRACKER_DEFAULT_PAGE_SIZE; break;
+        case 'label': { const l = String(value || '').toLowerCase(); const i = f.labels.indexOf(l); if (i >= 0) f.labels.splice(i, 1); else if (l) f.labels.push(l); break; }
+        case 'page': f.page = value === 'prev' ? f.page - 1 : value === 'next' ? f.page + 1 : Number(value) || 1; break;
+        case 'reset': { const keep = { sort: f.sort, dir: f.dir, size: f.size }; _stageTrackerFilter = Object.assign(stageTrackerDefaultFilter(), keep); break; }
+      }
+      if (key !== 'page') _stageTrackerFilter.page = 1;
+      _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      stageTrackerSaveFilter();
       renderStageTracker();
+    }
+
+    // Push the filter state into the toolbar controls (they may have been
+    // restored from storage or reset).
+    function stageTrackerSyncToolbar(f) {
+      document.querySelectorAll('#activity-monitor-toolbar .ham-chip[data-arg0="kind"]').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === f.kind ? 'true' : 'false'));
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el && el.value !== String(v) && document.activeElement !== el) el.value = String(v); };
+      setVal('activity-monitor-q', f.q);
+      setVal('activity-monitor-age', f.age);
+      setVal('activity-monitor-author', f.author);
+      setVal('activity-monitor-sort', f.sort);
+      setVal('activity-monitor-size', f.size);
+      const att = document.getElementById('activity-monitor-attention');
+      if (att) att.setAttribute('aria-pressed', f.attention ? 'true' : 'false');
+      const dir = document.getElementById('activity-monitor-dir');
+      if (dir) { dir.textContent = f.dir === 'asc' ? '↑' : '↓'; dir.setAttribute('title', f.dir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'); }
+      const reset = document.getElementById('activity-monitor-reset');
+      if (reset) reset.hidden = !stageTrackerFilterActive(f);
+    }
+
+    function stageTrackerLabelsHtml(facets) {
+      if (!facets.chips.length) return '';
+      return facets.chips.map(c => `<button type="button" class="ham-chip ham-label-chip" data-action="hamFilter" data-arg0="label" data-arg1="${esc(c.label)}" aria-pressed="${c.on ? 'true' : 'false'}" title="${esc((c.on ? 'Remove label filter ' : 'Filter by label ') + c.label)}">${esc(c.label)}<span class="ham-chip-n">${c.count}</span></button>`).join('')
+        + (facets.hidden ? `<span class="ham-labels-more" title="Labels carried by a single item are not offered as chips">+${facets.hidden} more</span>` : '');
+    }
+
+    function stageTrackerPagerHtml(page) {
+      if (page.pages <= 1) return '';
+      return `<nav class="ham-pager" aria-label="Tracker pages"><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="prev"${page.page <= 1 ? ' disabled' : ''} aria-label="Previous page">‹ Prev</button><span>page ${page.page} of ${page.pages}</span><button type="button" class="ham-chip" data-action="hamFilter" data-arg0="page" data-arg1="next"${page.page >= page.pages ? ' disabled' : ''} aria-label="Next page">Next ›</button></nav>`;
+    }
+
+    // "updated 12s ago · cache" — re-stamped every STAGE_TRACKER_CLOCK_MS
+    // without a fetch; amber once the payload is older than two TTLs.
+    function stageTrackerUpdatedHtml(d, nowMs) {
+      const at = Date.parse((d && d.generated_at) || '') || 0;
+      if (!at) return '';
+      const ageMs = Math.max(0, nowMs - at);
+      const ttlMs = (Number(d.cache_ttl_s) || 0) * 1000;
+      const stale = ttlMs > 0 && ageMs > 2 * ttlMs;
+      const src = d.source === 'fresh' ? 'built for this request' : 'from the server cache';
+      return `<span class="ham-updated${stale ? ' ham-stale' : ''}" title="${esc('Payload built ' + agentNowClockTime(at, nowMs) + ' ' + src + (ttlMs ? '; the server rebuilds it at most every ' + Math.round(ttlMs / 1000) + 's and makes no GitHub call per request' : ''))}">updated ${esc(stageTrackerShortAgo(ageMs) === 'now' ? Math.floor(ageMs / 1000) + 's' : stageTrackerShortAgo(ageMs))} ago · ${esc(d.source || 'cache')}</span>`;
+    }
+    function stageTrackerTickClock() {
+      const el = document.querySelector('#activity-monitor-meta .ham-updated');
+      if (!el || !_stageTracker) return;
+      const wrap = document.createElement('span');
+      wrap.innerHTML = stageTrackerUpdatedHtml(_stageTracker, Date.now());
+      if (wrap.firstChild) el.replaceWith(wrap.firstChild);
     }
 
     function renderStageTracker(data) {
@@ -12810,39 +13072,61 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
         return;
       }
-      const nowMs = Date.parse(d.generated_at || '') || Date.now();
+      const f = _stageTrackerFilter = stageTrackerNormalizeFilter(_stageTrackerFilter);
+      const nowMs = Date.now();
       const stages = d.stages || [];
       const sel = document.getElementById('activity-monitor-repo');
       if (sel) {
         const repos = Array.from(new Set(d.items.map(it => it.repo).filter(Boolean))).sort();
-        const want = '<option value="">All repos</option>' + repos.map(r => `<option value="${esc(r)}"${r === _stageTrackerFilter.repo ? ' selected' : ''}>${esc(r)}</option>`).join('');
+        const want = '<option value="">All repos</option>' + repos.map(r => `<option value="${esc(r)}"${r === f.repo ? ' selected' : ''}>${esc(r)}</option>`).join('');
         if (sel.innerHTML !== want) sel.innerHTML = want;
       }
-      const visible = stageTrackerVisible(d.items);
-      const attention = d.items.filter(stageTrackerNeedsAttention).length;
-      setSectionSummary('activity-monitor-section', `${d.items.length} items · ${attention ? `<span class="text-warn">${attention} need attention</span>` : 'nothing needs attention'}`);
+      stageTrackerSyncToolbar(f);
+      const ctx = { nowMs, stages };
+      const visible = stageTrackerVisible(d.items, f, ctx);
+      const ordered = stageTrackerSort(visible, stages, f);
+      const page = stageTrackerPage(ordered, f);
+      if (page.page !== f.page) f.page = page.page;
+      // Attention is counted over the filtered set, nested PRs included.
+      const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
+      const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
+      // "N filtered out" counts against the unfiltered row list, so nesting
+      // a PR under its issue is not reported as a filter.
+      const allRows = stageTrackerFilterActive(f) ? stageTrackerVisible(d.items, Object.assign(stageTrackerDefaultFilter(), { kind: f.kind === 'pr' ? 'pr' : 'all' }), ctx).length : visible.length;
+      const counts = stageTrackerCountsText(page, allRows, attention);
+      setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
-      if (badge) { badge.textContent = String(attention); if (attention) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
+      if (badge) { badge.textContent = String(attentionAll); if (attentionAll) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      const labelsEl = document.getElementById('activity-monitor-labels');
+      if (labelsEl) setIfChanged(labelsEl, stageTrackerLabelsHtml(stageTrackerLabelFacets(d.items, f)));
+      const meta = document.getElementById('activity-monitor-meta');
+      if (meta) setIfChanged(meta, `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerUpdatedHtml(d, nowMs)}${stageTrackerPagerHtml(page)}`);
+      const foot = document.getElementById('activity-monitor-meta-foot');
+      if (foot) setIfChanged(foot, page.pages > 1 ? `<span class="ham-count">${esc(counts.showing)}</span>${stageTrackerPagerHtml(page)}` : '');
       if (!visible.length) {
-        setIfChanged(el, `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filter.' : 'Nothing open is being tracked right now.'}</div>`);
+        setIfChanged(el, `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filters.' : 'Nothing open is being tracked right now.'}</div>`);
         return;
       }
-      // Furthest along the strip first; within a column the item that has
-      // waited longest comes first, since it is the likeliest to need a human.
-      const keyOf = it => stageTrackerSortKey(it, stages);
-      const ordered = visible.slice().sort((x, y) => { const a = keyOf(x), b = keyOf(y); return (b.anchor - a.anchor) || (a.since - b.since) || ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0)); });
-      const html = stageTrackerHeaderHtml(stages) + ordered.map(it => stageTrackerRowHtml(it, stages, { nowMs })).join('');
+      const html = stageTrackerHeaderHtml(stages) + page.rows.map(it => stageTrackerRowHtml(it, stages, { nowMs })).join('');
       setIfChanged(el, html);
     }
 
+    // The endpoint is served from a server-side cache with an ETag; a poll
+    // that matches it costs one 304 and no re-render. The filter/sort state
+    // is restored from storage on the first fetch.
     async function fetchStageTracker() {
       try {
-        const r = await fetch('/api/stage-tracker');
+        if (!_stageTrackerSig && !_stageTrackerEtag) stageTrackerLoadFilter();
+        const r = await fetch('/api/stage-tracker', _stageTrackerEtag ? { headers: { 'If-None-Match': _stageTrackerEtag } } : undefined);
+        if (r.status === 304) { stageTrackerTickClock(); return; }
         if (!r.ok) return;
+        _stageTrackerEtag = r.headers.get('ETag') || '';
         const text = await r.text();
-        if (text === _stageTrackerSig) return;
+        if (text === _stageTrackerSig) { stageTrackerTickClock(); return; }
         _stageTrackerSig = text;
         renderStageTracker(JSON.parse(text));
+        dashboardSetInterval('stage-tracker-clock', stageTrackerTickClock, STAGE_TRACKER_CLOCK_MS);
       } catch (e) { /* keep the previous render */ }
     }
 
@@ -15539,7 +15823,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     const REPO_ISSUE_BAND_DEFAULTS = {
-      waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
+      waitingLabels: ['blocked', 'stage/085-needs-decision', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
       doneLabels: ['hive/already-done', 'stage/040-covered-by-pr', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
       staleDays: 14
     };
@@ -15684,7 +15968,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (held) kinds.push('issue:held');
       if (labels.has('needs-human')) kinds.push('needs-human', 'issue:needs-human');
       if (labels.has('blocked')) kinds.push('issue:blocked');
-      if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('issue:needs-decision');
+      if (labels.has('stage/085-needs-decision') || labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('issue:needs-decision');
       if (labels.has('epic')) kinds.push('issue:epic');
       if (issueLabels.some(l => l === 'claimed' || l === 'hive/in-progress' || l === 'stage/020-claimed' || l === 'stage/030-pr-in-progress' || l.startsWith('hive/claimed-by-')) || ((issue && issue.assignees) || []).length) kinds.push('issue:claimed');
       if (info && info.role) kinds.push('issue:role');
@@ -15701,7 +15985,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (labels.has('needs-human')) kinds.push('needs-human', 'pr:needs-human');
       if (prSentinelFlagged(pr || {})) kinds.push('pr:sentinel');
       if (held || holdLabels((pr && pr.labels) || []).length) kinds.push('pr:held');
-      if (labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('pr:needs-decision');
+      if (labels.has('stage/085-needs-decision') || labels.has('needs-decision') || labels.has('2-discussing')) kinds.push('pr:needs-decision');
       if ((pr && pr.review_class) === 'fix') kinds.push('pr:fix');
       const review = prGitHubReview(pr || {});
       if (review) {
@@ -17379,8 +17663,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     const OVERVIEW_ISSUE_BREAKDOWN_LABELS = {
       needs_human: 'needs-human',
-      needs_direction: 'needs-direction',
-      needs_decision: 'needs-decision',
+      needs_decision: 'needs human decision',
       needs_spec: 'needs-spec',
       reporter_confirmation: 'waiting on reporter',
       exempt: 'exempt',
@@ -17424,7 +17707,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         Object.keys(OVERVIEW_ISSUE_BREAKDOWN_LABELS).forEach(key => {
           let v = Number(ib[key] || 0);
           if (key === 'filtered') {
-            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_direction', 'needs_decision', 'needs_spec', 'reporter_confirmation', 'exempt']));
+            v = Math.max(0, Number(ib.filtered || 0) - overviewBreakdownTotal(ib, ['needs_human', 'needs_decision', 'needs_spec', 'reporter_confirmation', 'exempt']));
           }
           if (v > 0) totals.issues.breakdown[key] = (totals.issues.breakdown[key] || 0) + v;
         });
@@ -17498,7 +17781,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewPartitionGloss(row) {
       switch (row?.key) {
-        case 'needs-direction': return 'needs direction';
         case 'needs-decision': return 'needs decision';
         case 'needs-spec': return 'needs spec';
         case 'waiting-on-reporter': return 'waiting on reporter';
@@ -18046,7 +18328,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       { key: 'human', label: 'Human', tip: 'Filed by a person' },
       { key: 'bot', label: 'Bot', tip: 'Filed by another bot (renovate, dependabot, …)' }
     ]);
-    const HF_LABEL_TONE = Object.freeze({ 'needs-direction': 'direction', 'needs-decision': 'decision', 'needs-spec': 'spec', 'needs-signal': 'signal', 'needs-human': 'human' });
+    const HF_LABEL_TONE = Object.freeze({ 'stage/085-needs-decision': 'decision', 'needs-decision': 'decision', 'needs-spec': 'spec', 'needs-signal': 'signal', 'needs-human': 'human' });
     const HF_TEXT_DEBOUNCE_MS = 250;
     const HF_MAX_ROW_LABELS = 3;
 
@@ -23110,7 +23392,7 @@ function burnAreaChart() {
       },
       'accuracy-by-model': (dto) => {
         const models = Array.isArray(dto.reviewer_accuracy_by_model) ? dto.reviewer_accuracy_by_model : [];
-        let approvals = 0, fa = 0, blocks = 0, fb = 0, unknown = 0;
+        let approvals = 0, fa = 0, blocks = 0, fb = 0, unknown = 0, advisory = 0, dissent = 0, enforcedAll = 0;
         const perModel = [];
         models.forEach((m) => {
           if (!m) return;
@@ -23118,22 +23400,32 @@ function burnAreaChart() {
           Object.values(m.by_author_kind || {}).forEach((st) => {
             // Denominators are verdicts on PRs with a known outcome; the rest is reported as unknown.
             a += (Number(st.approvals) || 0) - (Number(st.approved_unknown) || 0); f += Number(st.approved_not_merged) || 0;
-            bl += (Number(st.blocks) || 0) - (Number(st.blocked_unknown) || 0); mb += Number(st.merged_after_block) || 0;
+            // Only blocks an enforcing gate read (policy.require_approval) can be false blocks (#12595);
+            // advisory blocks on merged PRs are dissent before merge, never an error rate.
+            bl += (Number(st.enforced_blocks) || 0) - (Number(st.enforced_blocked_unknown) || 0); mb += Number(st.merged_after_enforced_block) || 0;
+            enforcedAll += Number(st.enforced_blocks) || 0;
+            advisory += Number(st.advisory_blocks) || 0; dissent += Number(st.dissent_before_merge) || 0;
             unknown += (Number(st.approved_unknown) || 0) + (Number(st.blocked_unknown) || 0);
           });
           approvals += a; fa += f; blocks += bl; fb += mb;
           perModel.push({ model: String(m.model || 'unknown'), fa: evRate(f, a), a });
         });
         const faRate = evRate(fa, approvals), fbRate = evRate(fb, blocks);
+        const allAdvisory = advisory > 0 && enforcedAll === 0;
+        const dissentLine = advisory > 0
+          ? (allAdvisory
+            ? ` Perspective verdicts were advisory on this hive (review.require_approval off); ${dissent} blocks preceded a merge (dissent before merge, ${evPct(evRate(dissent, advisory))} of ${advisory} advisory blocks) — not counted as false blocks.`
+            : ` ${advisory} block(s) were advisory (review.require_approval off when cast); ${dissent} of them preceded a merge (dissent before merge, ${evPct(evRate(dissent, advisory))}) — not counted as false blocks.`)
+          : '';
         const worst = Math.max(faRate == null ? -1 : faRate, fbRate == null ? -1 : fbRate);
         const grade = evGrade(worst < 0 ? null : worst, approvals + blocks, EV_ERR_STRONG, EV_ERR_FAIR, false);
         const best = perModel.filter((m) => m.fa != null && m.a >= EV_GRADE_MIN_N).sort((x, y) => x.fa - y.fa)[0];
         return {
           matters: 'A reviewer that approves things that never merge wastes human time; one that blocks things that merge anyway teaches people to ignore it. This shows which models earn trust, and whether they treat agent and human authors alike.',
-          measured: 'How often each AI reviewer model gets it wrong, split by who wrote the PR. A "false approve" is an approval on a PR whose record says it closed without merging (or was still open when backfilled). A "false block" is a block (changes requested or reject) on a PR that merged anyway.',
-          how: 'For each reviewer model and author kind we count approvals and blocks, then compare each verdict with the PR\u2019s recorded outcome: false-approve rate = approvals on PRs known not to have merged ÷ approvals on PRs with a known outcome; false-block rate = blocks on merged PRs ÷ blocks on PRs with a known outcome. Verdicts on PRs with no recorded outcome are counted and shown as unknown, not as errors. On a live-only hive a known outcome is almost always a merge, so until a backfill covers the window the false-approve rate is a lower bound and the false-block rate an upper bound; read them next to the unknown count.',
+          measured: 'How often each AI reviewer model gets it wrong, split by who wrote the PR. A "false approve" is an approval on a PR whose record says it closed without merging (or was still open when backfilled). A "false block" is a block (changes requested or reject) that an enforcing gate (review.require_approval on) read, on a PR that merged anyway after a human override. A block cast while verdicts were advisory is "dissent before merge": a count and a share of advisory blocks, never an error rate.',
+          how: 'For each reviewer model and author kind we count approvals and blocks, then compare each verdict with the PR\u2019s recorded outcome: false-approve rate = approvals on PRs known not to have merged ÷ approvals on PRs with a known outcome; false-block rate = enforced blocks on merged PRs ÷ enforced blocks on PRs with a known outcome, where a block is enforced when the PR\u2019s evidence bundle records policy.require_approval on. Advisory blocks on merged PRs are reported as dissent before merge (count and % of advisory blocks) and never enter the grade. Verdicts on PRs with no recorded outcome are counted and shown as unknown, not as errors. On a live-only hive a known outcome is almost always a merge, so until a backfill covers the window the false-approve rate is a lower bound and the false-block rate an upper bound; read them next to the unknown count.',
           good: `Both bars short. ${Math.round(EV_ERR_STRONG * 100)}% or less on the worse of the two rates is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. Models should also look alike for human and agent authors; a model that only blocks agents is a bias, not accuracy.`,
-          ours: `Across all models: false-approve ${evPct(faRate)} of ${approvals} approvals with a known outcome, false-block ${evPct(fbRate)} of ${blocks} blocks with a known outcome.${unknown ? ` ${unknown} verdict(s) are on PRs with no recorded outcome (unknown).` : ''}${best ? ` Lowest false-approve rate: ${best.model} at ${evPct(best.fa)}.` : ''} ${evLimitsSentence()}`,
+          ours: `Across all models: false-approve ${evPct(faRate)} of ${approvals} approvals with a known outcome, false-block ${evPct(fbRate)} of ${blocks} enforced blocks with a known outcome.${dissentLine}${unknown ? ` ${unknown} verdict(s) are on PRs with no recorded outcome (unknown).` : ''}${best ? ` Lowest false-approve rate: ${best.model} at ${evPct(best.fa)}.` : ''} ${evLimitsSentence()}`,
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} known-outcome verdicts${evWindowHint(dto)}` : `worse rate ${evPct(worst)}`,
         };
       },
@@ -23150,7 +23442,7 @@ function burnAreaChart() {
         const grade = evGrade(falseAlarm, heldMerged, EV_SHADOW_FALSE_ALARM_STRONG, EV_SHADOW_FALSE_ALARM_FAIR, false);
         return {
           matters: 'Before a gate is allowed to hold real PRs, we want proof it would have caught problems without stopping good work. Shadow mode gives that proof without touching merges.',
-          measured: 'What would have happened if two safety gates were switched on. In "shadow mode" the review gate and intent verification only write down whether they would have stopped a PR; nothing is actually held or blocked.',
+          measured: 'What would have happened if two safety gates were switched on. In "shadow mode" the review gate and intent verification only write down whether they would have stopped a PR; nothing is actually held or blocked. The review gate is recorded on the merge-eligible lane (review.shadow) and, by default, on the self-merge lane just before the hive merges its own PR (no swarm review, review awaiting approval, or changes requested on the head); the panel splits the two lanes.',
           how: 'For each gate, PRs are split into "would have stopped" and "would have passed". Each bar shows how those PRs really turned out: merged, merged then reverted, or still open. A gate is useful when the PRs it would have stopped are the ones that later caused trouble.',
           good: `Reverts sitting mostly in the "would have stopped" bar and few in "would have passed". Of the stopped PRs that merged, ${Math.round(EV_SHADOW_FALSE_ALARM_STRONG * 100)}% or fewer merging cleanly (a false alarm) is Strong, ${Math.round(EV_SHADOW_FALSE_ALARM_FAIR * 100)}% or fewer is Fair, above that Weak.`,
           ours: `${Number(sg.n) || 0} PRs have a shadow observation. Would have stopped: ${heldN} (${heldMerged} merged, ${heldReverted} later reverted). Would have passed: ${passedN} (${passedReverted} later reverted).${shadowUnknown ? ` ${shadowUnknown} of these PRs have no recorded outcome.` : ''} ${evLimitsSentence()}`,
@@ -23370,25 +23662,29 @@ function burnAreaChart() {
         Object.keys(by).sort().forEach((kind) => {
           const s = by[kind] || {};
           const approvalsKnown = (Number(s.approvals) || 0) - (Number(s.approved_unknown) || 0);
-          const blocksKnown = (Number(s.blocks) || 0) - (Number(s.blocked_unknown) || 0);
-          rows.push({ model, kind, n: Number(s.n) || 0, approvals: approvalsKnown, blocks: blocksKnown,
+          const blocksKnown = (Number(s.enforced_blocks) || 0) - (Number(s.enforced_blocked_unknown) || 0);
+          const advisory = Number(s.advisory_blocks) || 0, dissent = Number(s.dissent_before_merge) || 0;
+          rows.push({ model, kind, n: Number(s.n) || 0, approvals: approvalsKnown, blocks: blocksKnown, advisory, dissent,
             unknown: (Number(s.approved_unknown) || 0) + (Number(s.blocked_unknown) || 0),
-            fa: evRate(s.approved_not_merged, approvalsKnown), fb: evRate(s.merged_after_block, blocksKnown) });
+            fa: evRate(s.approved_not_merged, approvalsKnown), fb: evRate(s.merged_after_enforced_block, blocksKnown) });
         });
       });
       if (!rows.length) return '<div class="ev-empty">— no reviewer verdicts in this window</div>';
       const unknownRows = rows.reduce((sum, r) => sum + r.unknown, 0);
+      const advisoryRows = rows.reduce((sum, r) => sum + r.advisory, 0);
+      const dissentRows = rows.reduce((sum, r) => sum + r.dissent, 0);
+      const enforcedRows = rows.reduce((sum, r) => sum + r.enforced, 0);
       const w = EV_SVG_W, label = 140, valW = 34, rowH = 24, t = 4;
       const barW = w - label - valW;
       const h = t + rows.length * rowH;
       const pct = (v) => (v == null ? '—' : Math.round(v * 100) + '%');
       const body = rows.map((row, i) => {
         const y0 = t + i * rowH;
-        const tip = escapeHtml(`${row.model} · ${row.kind} authors: false-approve ${pct(row.fa)} of ${row.approvals} approvals with a known outcome · false-block ${pct(row.fb)} of ${row.blocks} blocks with a known outcome · outcome unknown ${row.unknown} (not in either rate) · n=${row.n}`);
+        const tip = escapeHtml(`${row.model} · ${row.kind} authors: false-approve ${pct(row.fa)} of ${row.approvals} approvals with a known outcome · false-block ${pct(row.fb)} of ${row.blocks} enforced blocks with a known outcome · dissent before merge ${row.dissent} of ${row.advisory} advisory blocks (not an error rate) · outcome unknown ${row.unknown} (not in either rate) · n=${row.n}`);
         const bar = (cls, v, yy) => `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${v == null ? 0 : (v * barW).toFixed(1)}" height="8"><title>${tip}</title></rect><text class="ev-val" x="${w - 2}" y="${yy + 7}" text-anchor="end">${pct(v)}</text>`;
         return `<g class="${row.model === 'unknown' ? 'ev-unknown' : ''}"><text class="ev-lbl" x="0" y="${y0 + 13}">${escapeHtml(`${row.model} · ${row.kind}`.slice(0, 24))}<title>${tip}</title></text>${bar('fa', row.fa, y0 + 2)}${bar('fb', row.fb, y0 + 12)}</g>`;
       }).join('');
-      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer accuracy by reviewer model and author kind: false-approve and false-block rates">${body}</svg><div class="ev-legend"><span><i class="fa"></i>false-approve (approved, closed without merge)</span><span><i class="fb"></i>false-block (blocked, merged anyway)</span><span><i class="unknown"></i>model unknown</span><span>rates are over verdicts with a known PR outcome${unknownRows ? ` · ${unknownRows} verdict(s) on PRs with unknown outcome` : ''}</span></div>`;
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer accuracy by reviewer model and author kind: false-approve and false-block rates">${body}</svg><div class="ev-legend"><span><i class="fa"></i>false-approve (approved, closed without merge)</span><span><i class="fb"></i>false-block (enforced block, merged anyway)</span><span><i class="unknown"></i>model unknown</span><span>rates are over verdicts with a known PR outcome${unknownRows ? ` · ${unknownRows} verdict(s) on PRs with unknown outcome` : ''}</span>${advisoryRows ? `<span>${!enforcedRows ? 'Perspective verdicts were advisory on this hive (review.require_approval off); ' : `${advisoryRows} advisory block(s); `}${dissentRows} blocks preceded a merge (dissent before merge, ${pct(dissentRows / advisoryRows)} of advisory blocks; not an error rate)</span>` : ''}</div>`;
     }
 
     // Panel 8 (#12068): what the shadow review gate / intent verification
@@ -23396,10 +23692,16 @@ function burnAreaChart() {
     // a "would stop" and a "would pass" bar split into merged / reverted / open.
     function evShadowGateSvg(sg) {
       sg = sg || {};
-      const gates = [['review_gate', 'Review gate', 'held'], ['intent', 'Intent verification', 'blocked']];
+      // The review gate is split by the lane that recorded it (#12592): the
+      // merge-eligible lane (review.shadow) and the self-merge ReviewGate.
+      const lanes = sg.review_gate_by_lane || {};
+      const byLane = Number((lanes.self_merge || {}).n) > 0;
+      const gates = byLane
+        ? [[lanes.merge_eligible, 'Review · eligible', 'held'], [lanes.self_merge, 'Review · self-merge', 'held'], [sg.intent, 'Intent verification', 'blocked']]
+        : [[sg.review_gate, 'Review gate', 'held'], [sg.intent, 'Intent verification', 'blocked']];
       const rows = [];
-      gates.forEach(([key, label, verb]) => {
-        const g = sg[key] || {};
+      gates.forEach(([gate, label, verb]) => {
+        const g = gate || {};
         if (!(Number(g.n) > 0)) return;
         [['held', `would have ${verb}`], ['passed', 'would have passed']].forEach(([side, sideLabel]) => {
           const o = g[side] || {};
@@ -23408,7 +23710,7 @@ function burnAreaChart() {
           rows.push({ label: `${label} · ${sideLabel}`, gate: label, side: sideLabel, n, merged: Math.max(0, (Number(o.merged) || 0) - reverted), reverted, open: Number(o.open) || 0, unknown: Number(o.unknown) || 0 });
         });
       });
-      if (!rows.length) return '<div class="ev-empty">— no shadow-gate observations in this window (review.shadow / intent shadow mode is off, or no PR was evaluated)</div>';
+      if (!rows.length) return '<div class="ev-empty">— no shadow-gate observations in this window (review.shadow / intent shadow mode is off, the self-merge review gate is off, or no PR was evaluated)</div>';
       const w = EV_SVG_W, label = 110, valW = 30, rowH = 26, t = 4;
       const barW = w - label - valW;
       const h = t + rows.length * rowH;
@@ -23723,7 +24025,7 @@ function burnAreaChart() {
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
           `Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
-          `Outcome is recorded merge vs recorded close, not ground truth: a block that was later fixed and merged counts as a false block, and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here, merged elsewhere or by hand, or still open) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
+          `Outcome is recorded merge vs recorded close, not ground truth: an enforced block that was later fixed and merged counts as a false block (an advisory block is dissent before merge, never a false block), and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here, merged elsewhere or by hand, or still open) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
         + evPanel('boundary-enforcement', 'Boundary enforcement', writesN, evWriteActivitySvg(activity) + evSentinelSparkline(sentinel),
           `The denominator is every agent GitHub write the hive can see in the window: hive-mediated writes from the audit log plus direct writes through the proxy (weekly counters kept under /data). Blocked is what the proxy refused; would-block counts from intent verification are shown separately in the explainer and never counted as blocked.${directCoverage} Writes that bypass both the hive and the proxy are invisible here. Sentinel hits come from evidence bundles in the window. Blocked is not the same as harmful.`)
         + evPanel('claim-vs-verdict', 'CI gate — integrity + convergence', claimN, evCIGateHtml(rec) + evConvergenceSvg(rec.convergence) + evCIRecoveryHtml(rec) + evClaimVsVerdictSvg(claims),
@@ -24362,24 +24664,32 @@ function burnAreaChart() {
       </div>`;
     }
 
-    // Inline experiment form state: kept across status re-renders the way
-    // Inception carries its campaign filters (#11032). editId > 0 means the
-    // form edits that experiment; original holds its pre-edit values so a
-    // question/scope change can be told from a hypothesis-only one.
-    let _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
+    // Add / edit experiment dialog state. editId > 0 means the dialog edits
+    // that experiment; original holds its pre-edit values so a question /
+    // scope change can be told from a hypothesis-only one; returnFocus is
+    // the button that opened it, re-focused on close (#12697).
+    let _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null, returnFocus: null };
+    const NOUS_EXP_DIALOG_ID = 'nous-exp-overlay';
+    const NOUS_EXP_EDIT_HELP = 'Changing the question or scope restarts it; the hypothesis may change freely.';
+    const NOUS_EXP_NEW_HELP = 'Enter the research question and pick the repos it may touch; the baseline starts at 0 immediately.';
+    const NOUS_EXP_DIALOG_BUSY = 'Finish or cancel the open experiment form first';
 
     // The one place an experiment is defined (new or edited): question,
-    // hypothesis and scope. The scope pills are the allow-list from the ⚙
-    // dialog (all project repos when it is empty) plus, when editing, any
-    // repo the experiment already targets so it can still be deselected.
+    // hypothesis and scope, rendered as the panel of a modal dialog. The
+    // scope pills are the allow-list from the ⚙ dialog (all project repos
+    // when it is empty) plus, when editing, any repo the experiment already
+    // targets so it can still be deselected.
     function nousNewExperimentForm(allowedRepos, presetRepos, conflict, edit) {
       const repos = Array.isArray(allowedRepos) ? allowedRepos.slice() : [];
       const preset = Array.isArray(presetRepos) ? presetRepos : [];
       for (const r of preset) if (!repos.includes(r)) repos.push(r);
       const editing = !!edit;
       const editId = editing ? (Number(edit.id) || 0) : 0;
-      let h = `<div class="nous-new-exp" id="nous-new-exp" role="form" aria-label="${editing ? `Edit experiment #${editId}` : 'New experiment'}"${editing ? ` data-edit-id="${editId}"` : ''}>`;
-      if (editing) h += `<div class="nous-new-exp-title">Edit experiment #${editId} <span class="nous-lab-h3-note">changing the question or scope restarts it; the hypothesis may change freely</span></div>`;
+      const title = editing ? `Edit experiment #${editId}` : 'New experiment';
+      let h = `<div class="hive-dialog nous-exp-dialog" role="dialog" aria-modal="true" aria-labelledby="nous-exp-dialog-title" aria-describedby="nous-exp-dialog-help"${editing ? ` data-edit-id="${editId}"` : ''}>`;
+      h += `<div id="nous-exp-dialog-title" class="hive-dialog-title">${escapeHtml(title)}</div>`;
+      h += `<div id="nous-exp-dialog-help" class="nous-exp-dialog-help">${escapeHtml(editing ? NOUS_EXP_EDIT_HELP : NOUS_EXP_NEW_HELP)}</div>`;
+      h += `<div class="nous-new-exp" id="nous-new-exp" role="form" aria-label="${escapeHtml(title)}">`;
       h += `<div><label for="nous-ne-question">Research question</label><textarea id="nous-ne-question" rows="2" placeholder="Can we cut CI time by 20% by sharding the slowest test package?">${editing ? escapeHtml(nousResearchQuestionText(edit.question)) : ''}</textarea></div>`;
       h += `<div><label for="nous-ne-hypothesis">Hypothesis <span class="nous-lab-h3-note">(optional)</span></label><input type="text" id="nous-ne-hypothesis" placeholder="What you expect to change, and by how much" value="${editing ? escapeHtml(edit.hypothesis || '') : ''}"></div>`;
       h += '<div><label>Scope <span class="nous-lab-h3-note">(repos this experiment may touch, from the lab\'s allow-list; none selected = hive-wide)</span></label>';
@@ -24394,7 +24704,7 @@ function burnAreaChart() {
         }
         h += '</div>';
       }
-      h += '</div>';
+      h += '</div></div>';
       if (conflict) h += nousConflictWarning(conflict);
       h += '<div class="nous-new-exp-actions">';
       h += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="nousCancelNewExperiment">Cancel</button>';
@@ -24426,12 +24736,7 @@ function burnAreaChart() {
       const open = (campaigns || []).filter(c => c && c.status !== 'archived');
       let h = '<div class="campaigns-card nous-exp-cards">';
       h += '<div class="campaigns-head"><div><div class="campaigns-title">Experiments</div><div class="campaigns-subtitle">Each running experiment has its own research question, scope and baseline. Experiments may run side by side when their scopes do not overlap.</div></div>';
-      h += `<button class="hv-btn btn-primary btn-sm" data-action="nousOpenNewExperiment" title="Start another experiment with its own question, scope and baseline"${_nousNewExp.open ? ' disabled' : ''}>+ New experiment</button></div>`;
-      if (_nousNewExp.open) {
-        const edit = _nousNewExp.editId ? (campaigns || []).find(c => c && Number(c.id) === _nousNewExp.editId) : null;
-        const preset = edit ? ((edit.scope && edit.scope.repos) || []) : [];
-        h += nousNewExperimentForm(nousAllowedRepos(st), preset, _nousNewExp.conflict, edit);
-      }
+      h += '<button class="hv-btn btn-primary btn-sm" data-action="nousOpenNewExperiment" title="Start another experiment with its own question, scope and baseline">+ New experiment</button></div>';
       h += '<div class="campaigns-list" id="nous-exp-list">';
       if (open.length === 0) {
         h += '<div class="campaign-empty">Add an experiment: enter a research question and pick the repos it may touch.</div>';
@@ -24461,29 +24766,94 @@ function burnAreaChart() {
       document.querySelectorAll('#nous-new-exp .nous-ne-pill').forEach(p => nousRepoPillSetState(p, v.repos.includes(p.dataset.repo)));
     }
 
-    function nousOpenNewExperiment() {
-      if (!experimentLabEnabled()) return;
-      _nousNewExp = { open: true, conflict: null, pending: false, editId: 0, original: null };
-      renderNous();
+    // Render (or re-render) the add/edit dialog into its body-level overlay.
+    // It lives outside #nous-panel so status re-renders never touch it; the
+    // hive-dialog-overlay class puts it on the shared Esc handler
+    // (hiveDismissTopOverlay → hiveDialogClose) under any hiveConfirm on top.
+    function nousRenderExperimentDialog() {
+      const s = (_nousCache && _nousCache.status) || {};
+      const edit = _nousNewExp.editId ? (s.campaigns || []).find(c => c && Number(c.id) === _nousNewExp.editId) : null;
+      const preset = edit ? ((edit.scope && edit.scope.repos) || []) : [];
+      let overlay = document.getElementById(NOUS_EXP_DIALOG_ID);
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = NOUS_EXP_DIALOG_ID;
+        overlay.className = 'hive-dialog-overlay nous-exp-overlay';
+        hiveRememberModalOpen(overlay);
+        overlay.hiveDialogClose = nousCancelNewExperiment;
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) nousCancelNewExperiment(); });
+        overlay.addEventListener('keydown', nousExperimentDialogTrapTab);
+        document.body.appendChild(overlay);
+      }
+      overlay.innerHTML = nousNewExperimentForm(nousAllowedRepos(s), preset, _nousNewExp.conflict, edit);
+      return overlay;
+    }
+
+    // Keep Tab inside the dialog while it is open (same loop as hiveWireDialog).
+    function nousExperimentDialogTrapTab(e) {
+      if (e.key !== 'Tab') return;
+      const overlay = e.currentTarget;
+      const nodes = Array.from(overlay.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter(el => !el.disabled && el.offsetParent !== null);
+      if (!nodes.length) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+
+    function nousFocusExperimentQuestion() {
       const q = document.getElementById('nous-ne-question');
       if (q) q.focus();
     }
 
-    // Edit opens the same form pre-filled from the card (#12532 follow-up).
+    // Only one add/edit dialog at a time: a second trigger while one is open
+    // (e.g. ✎ while a New draft is being typed) is blocked, the open dialog
+    // is re-focused and a toast says why, so no draft is ever silently
+    // replaced (#12697).
+    function nousExperimentDialogBusy() {
+      if (!_nousNewExp.open) return false;
+      showToast(NOUS_EXP_DIALOG_BUSY, 'info');
+      nousFocusExperimentQuestion();
+      return true;
+    }
+
+    function nousOpenNewExperiment() {
+      if (!experimentLabEnabled()) return;
+      if (nousExperimentDialogBusy()) return;
+      _nousNewExp = { open: true, conflict: null, pending: false, editId: 0, original: null, returnFocus: document.activeElement };
+      nousRenderExperimentDialog();
+      nousFocusExperimentQuestion();
+    }
+
+    // Edit opens the same dialog pre-filled from the card (#12532 follow-up).
     function nousEditExperiment(id) {
       if (!experimentLabEnabled()) return;
       const s = (_nousCache && _nousCache.status) || {};
       const c = (s.campaigns || []).find(x => x && Number(x.id) === Number(id));
       if (!c) { showToast(`Experiment #${id} not found`, 'error'); return; }
-      _nousNewExp = { open: true, conflict: null, pending: false, editId: Number(id), original: { question: nousResearchQuestionText(c.question), repos: ((c.scope && c.scope.repos) || []).slice() } };
-      renderNous();
-      const q = document.getElementById('nous-ne-question');
-      if (q) q.focus();
+      if (nousExperimentDialogBusy()) return;
+      _nousNewExp = { open: true, conflict: null, pending: false, editId: Number(id), original: { question: nousResearchQuestionText(c.question), repos: ((c.scope && c.scope.repos) || []).slice() }, returnFocus: document.activeElement };
+      nousRenderExperimentDialog();
+      nousFocusExperimentQuestion();
     }
 
+    // Close + reset, then return focus to the button that opened the dialog.
+    // The panel may have re-rendered meanwhile, so fall back to the matching
+    // trigger by selector when the remembered element is gone.
     function nousCancelNewExperiment() {
-      _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
-      renderNous();
+      const { editId, returnFocus } = _nousNewExp;
+      _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null, returnFocus: null };
+      const overlay = document.getElementById(NOUS_EXP_DIALOG_ID);
+      if (overlay) overlay.remove();
+      let target = returnFocus && returnFocus.isConnected ? returnFocus : null;
+      if (!target) target = editId ? document.querySelector(`.nous-exp-icon-edit[data-arg0="${editId}"]`) : document.querySelector('[data-action="nousOpenNewExperiment"]');
+      if (target && typeof target.focus === 'function') target.focus();
+    }
+
+    function nousSetExperimentDialogPending(pending) {
+      _nousNewExp.pending = !!pending;
+      const btn = document.querySelector(`#${NOUS_EXP_DIALOG_ID} [data-action="nousSubmitNewExperiment"]`);
+      if (btn) btn.disabled = !!pending;
     }
 
     function nousNarrowScope() {
@@ -24493,11 +24863,10 @@ function burnAreaChart() {
         const repo = String(p.dataset.repo || '').toLowerCase();
         if (shared.size === 0 || shared.has(repo)) nousRepoPillSetState(p, false);
       });
-      const warn = document.querySelector('#nous-new-exp .nous-conflict-warn');
+      const warn = document.querySelector(`#${NOUS_EXP_DIALOG_ID} .nous-conflict-warn`);
       if (warn) warn.remove();
       _nousNewExp.conflict = null;
-      const q = document.getElementById('nous-ne-question');
-      if (q) q.focus();
+      nousFocusExperimentQuestion();
     }
 
     // nousEditIsMaterial: a changed question or repo set invalidates the
@@ -24531,7 +24900,7 @@ function burnAreaChart() {
         if (!(await hiveConfirm(NOUS_RESTART_CONFIRM))) { showToast('Experiment kept as is', 'info'); return; }
         restart = true;
       }
-      _nousNewExp.pending = true;
+      nousSetExperimentDialogPending(true);
       try {
         const body = { question: v.question, hypothesis: v.hypothesis, scope: { repos: v.repos } };
         let r, j;
@@ -24540,9 +24909,9 @@ function burnAreaChart() {
           ({ r, j } = await nousPatchCampaign(editId, body));
           // The server saw a material change we did not (stale card): ask now.
           if (r.status === 409 && j.code === 'restart_required') {
-            _nousNewExp.pending = false;
+            nousSetExperimentDialogPending(false);
             if (!(await hiveConfirm(NOUS_RESTART_CONFIRM))) { showToast('Experiment kept as is', 'info'); return; }
-            _nousNewExp.pending = true;
+            nousSetExperimentDialogPending(true);
             body.restart = true;
             ({ r, j } = await nousPatchCampaign(editId, body));
           }
@@ -24556,7 +24925,7 @@ function burnAreaChart() {
         if (r.status === 409 && j.code === 'scope_conflict') {
           _nousNewExp.conflict = j;
           _nousNewExp.pending = false;
-          renderNous();
+          nousRenderExperimentDialog();
           nousRestoreNewExperimentValues(v);
           return;
         }
@@ -24565,15 +24934,13 @@ function burnAreaChart() {
           if (!editId) showToast(`Experiment #${cid} started — baseline starts at 0`, 'success');
           else if (j.status === 'restarted') showToast(`Experiment #${editId} archived as v${(j.archived && j.archived.version) || 1}; #${cid} restarted at baseline 0`, 'success');
           else showToast(`Experiment #${editId} updated — baseline kept`, 'success');
-          _nousNewExp = { open: false, conflict: null, pending: false, editId: 0, original: null };
+          nousCancelNewExperiment();
           fetchNousStatus();
           return;
         }
         showToast(j.error || (editId ? 'Failed to update experiment' : 'Failed to start experiment'), 'error');
       } catch (e) { showToast('Failed: ' + e.message, 'error'); }
-      _nousNewExp.pending = false;
-      renderNous();
-      nousRestoreNewExperimentValues(v);
+      nousSetExperimentDialogPending(false);
     }
 
     async function nousPatchCampaign(id, body) {
@@ -24592,7 +24959,7 @@ function burnAreaChart() {
         showToast(`Experiment #${id} paused`, 'info');
       } catch (e) { showToast('Failed: ' + e.message, 'error'); return; }
       _nousNewExp.conflict = null;
-      renderNous();
+      nousRenderExperimentDialog();
       nousRestoreNewExperimentValues(v);
       await nousSubmitNewExperiment();
     }
@@ -24900,10 +25267,9 @@ function burnAreaChart() {
         html += '</div>';
       }
 
-      // Carry the inline new-experiment draft across a re-render.
-      const draft = _nousNewExp.open ? nousNewExperimentValues() : null;
+      // The add/edit dialog lives outside the panel, so a re-render never
+      // disturbs a draft (#12697).
       setIfChanged(panel, html);
-      if (draft) nousRestoreNewExperimentValues(draft);
     }
 
     async function nousSetMode(mode) {
@@ -29414,6 +29780,7 @@ function burnAreaChart() {
       if (ocHiveId) ocHiveId.textContent = hiveId;
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
+      renderProviderStrip(document.getElementById('oc-providers'), data.providers);
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
@@ -29592,6 +29959,73 @@ function burnAreaChart() {
         </div>`;
     }
 
+    // Revise chains (#12698): every Revise mints a linked `<root>-rev-N`
+    // archive with the same title, so the API marks the older ones with
+    // `superseded_by`. Show one row per chain (the newest revision) and fold
+    // the earlier ones into a history disclosure under it.
+    function campaignRevisionChains(campaigns) {
+      const byId = {};
+      (campaigns || []).forEach(function(c) { byId[c.id] = c; });
+      const latest = (campaigns || []).filter(function(c) { return !c.superseded_by || !byId[c.superseded_by]; });
+      return latest.map(function(head) {
+        const earlier = [];
+        const seen = {};
+        let cur = head;
+        while (cur && cur.revision_of && byId[cur.revision_of] && !seen[cur.revision_of]) {
+          seen[cur.revision_of] = true;
+          cur = byId[cur.revision_of];
+          earlier.push(cur);
+        }
+        return { head: head, history: earlier };
+      });
+    }
+
+    function campaignDeleteButton(c) {
+      return nousExpIconButton('deleteCampaign', escapeHtml(c.id), '', 'Delete campaign', '🗑', 'nous-exp-icon-delete campaign-delete');
+    }
+
+    function renderCampaignRow(c, history) {
+      const repo = (c.repos || []).join(', ') || 'no repo';
+      const activity = c.last_activity || 'no activity';
+      const engine = c.engine || 'unknown engine';
+      const rc = c.recheck || {};
+      const recheckText = rc.enabled ? `Rechecks every ${escapeHtml(rc.interval || 'default')} · next ${escapeHtml(rc.next_at ? relativeAge(rc.next_at) : 'not scheduled')} · last delta ${Number(rc.last_delta_count || 0)}` : 'Rechecks off';
+      const drift = c.drift || {};
+      const external = Array.isArray(drift.external) ? drift.external : [];
+      const failed = Array.isArray(rc.sources_failed) ? rc.sources_failed : (Array.isArray(drift.sources_failed) ? drift.sources_failed : []);
+      const recheckExternal = external.length ? `<details class="campaign-row-meta"><summary>${Number(drift.external_count || external.length)} external signals</summary><div class="campaign-jam-list">${external.map(ev => `<div><strong>${escapeHtml(ev.source || '')}</strong> · ${escapeHtml(ev.kind || '')}: ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ev.title || ev.url)}</a>` : escapeHtml(ev.title || '')}${ev.summary ? `<br>${escapeHtml(ev.summary)}` : ''}</div>`).join('')}${failed.length ? `<div>Failed sources: ${failed.map(f => `${escapeHtml(f.name || '')} (${escapeHtml(f.reason || '')})`).join(', ')}</div>` : ''}</div></details>` : (Number(rc.external_count || 0) ? `<div class="campaign-row-meta"><span>${Number(rc.external_count || 0)} external signals</span></div>` : '');
+      const recheckDisabled = rc.in_flight ? ' disabled' : '';
+      const revisionPill = c.revision ? `<span class="campaign-pill campaign-revision-pill" title="Revision ${Number(c.revision)}${c.revision_of ? ' of ' + escapeHtml(c.revision_of) : ''}">rev ${Number(c.revision)}</span>` : '';
+      const hist = Array.isArray(history) ? history : [];
+      const historyBlock = hist.length ? `<details class="campaign-row-meta campaign-history"><summary>${hist.length} earlier ${hist.length === 1 ? 'revision' : 'revisions'}</summary><div class="campaign-history-list">${hist.map(function(h) {
+        return `<div class="campaign-history-row" data-campaign-id="${escapeHtml(h.id)}"><span class="campaign-pill">${h.revision ? 'rev ' + Number(h.revision) : 'original'}</span><span>${escapeHtml(h.id)}</span><span>${escapeHtml(h.status || 'parked')}</span><span>${escapeHtml(h.last_activity || '')}</span><span class="campaign-row-actions">${nousExpIconButton('resumeCampaign', escapeHtml(h.id), '', 'Continue this revision', '▶', 'nous-exp-icon-resume')}${campaignDeleteButton(h)}</span></div>`;
+      }).join('')}</div></details>` : '';
+      return `<div class="campaign-row" data-campaign-id="${escapeHtml(c.id)}">
+          <div>
+            <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
+            <div class="campaign-row-meta">
+              <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
+              ${revisionPill}
+              <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
+              <span>${escapeHtml(repo)}</span>
+              <span>${escapeHtml(engine)}</span>
+              <span>${escapeHtml(activity)}</span>
+            </div>
+            <div class="campaign-row-meta"><span>${recheckText}</span></div>
+            ${recheckExternal}
+            ${historyBlock}
+          </div>
+          <div class="campaign-row-actions">
+            <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="recheckCampaign" data-arg0="${escapeHtml(c.id)}"${recheckDisabled}>Recheck</button>
+            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
+            ${campaignDeleteButton(c)}
+          </div>
+        </div>`;
+    }
+
     function renderCampaignsList() {
       const list = document.getElementById('campaigns-list');
       setSectionSummary('inception-section', inceptionSectionSummary());
@@ -29600,39 +30034,33 @@ function burnAreaChart() {
         list.innerHTML = '<div class="campaign-empty">No campaigns yet. New Inception archives completed sessions here.</div>';
         return;
       }
-      list.innerHTML = _campaigns.map(function(c) {
-        const repo = (c.repos || []).join(', ') || 'no repo';
-        const activity = c.last_activity || 'no activity';
-        const engine = c.engine || 'unknown engine';
-        const rc = c.recheck || {};
-        const recheckText = rc.enabled ? `Rechecks every ${escapeHtml(rc.interval || 'default')} · next ${escapeHtml(rc.next_at ? relativeAge(rc.next_at) : 'not scheduled')} · last delta ${Number(rc.last_delta_count || 0)}` : 'Rechecks off';
-        const drift = c.drift || {};
-        const external = Array.isArray(drift.external) ? drift.external : [];
-        const failed = Array.isArray(rc.sources_failed) ? rc.sources_failed : (Array.isArray(drift.sources_failed) ? drift.sources_failed : []);
-        const recheckExternal = external.length ? `<details class="campaign-row-meta"><summary>${Number(drift.external_count || external.length)} external signals</summary><div class="campaign-jam-list">${external.map(ev => `<div><strong>${escapeHtml(ev.source || '')}</strong> · ${escapeHtml(ev.kind || '')}: ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ev.title || ev.url)}</a>` : escapeHtml(ev.title || '')}${ev.summary ? `<br>${escapeHtml(ev.summary)}` : ''}</div>`).join('')}${failed.length ? `<div>Failed sources: ${failed.map(f => `${escapeHtml(f.name || '')} (${escapeHtml(f.reason || '')})`).join(', ')}</div>` : ''}</div></details>` : (Number(rc.external_count || 0) ? `<div class="campaign-row-meta"><span>${Number(rc.external_count || 0)} external signals</span></div>` : '');
-        const recheckDisabled = rc.in_flight ? ' disabled' : '';
-        return `<div class="campaign-row">
-          <div>
-            <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
-            <div class="campaign-row-meta">
-              <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
-              <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
-              <span>${escapeHtml(repo)}</span>
-              <span>${escapeHtml(engine)}</span>
-              <span>${escapeHtml(activity)}</span>
-            </div>
-            <div class="campaign-row-meta"><span>${recheckText}</span></div>
-            ${recheckExternal}
-          </div>
-          <div class="campaign-row-actions">
-            <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="recheckCampaign" data-arg0="${escapeHtml(c.id)}"${recheckDisabled}>Recheck</button>
-            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
-          </div>
-        </div>`;
-      }).join('');
+      list.innerHTML = campaignRevisionChains(_campaigns).map(function(chain) { return renderCampaignRow(chain.head, chain.history); }).join('');
+    }
+
+    // Delete only removes the campaign record (saved inception state + wiki
+    // snapshot). KB facts, Jam threads and scaffolded repo files are kept.
+    // In-app hiveConfirm dialog; native browser dialogs are forbidden (#12698).
+    const CAMPAIGN_DELETE_CONFIRM_TITLE = 'Delete this campaign?';
+    function campaignDeleteConfirmMessage(c) {
+      const label = (c && (c.title || c.id)) || 'this campaign';
+      const rev = c && c.revision ? ` (revision ${Number(c.revision)})` : '';
+      return `Removes the campaign record for "${label}"${rev}: its saved Inception state and the archived wiki snapshot. It disappears from this list and cannot be continued or revised.\n\nKept: knowledge-base facts, Jam threads, and anything already scaffolded or pushed to the repo. Other revisions in the same chain are not affected.`;
+    }
+
+    async function deleteCampaign(id) {
+      if (!id) return;
+      const c = (_campaigns || []).find(function(x) { return x.id === id; }) || { id: id };
+      const ok = await hiveConfirm({ title: CAMPAIGN_DELETE_CONFIRM_TITLE, message: campaignDeleteConfirmMessage(c), confirmLabel: 'Delete campaign', cancelLabel: 'Keep', danger: true });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id), { method: 'DELETE', headers: _inceptionAuthHeaders() });
+        const data = await r.json().catch(function() { return {}; });
+        if (!r.ok || !data.ok) { showToast(data.error || 'Failed to delete campaign', 'error'); return; }
+        _campaigns = (_campaigns || []).filter(function(x) { return x.id !== id; });
+        renderCampaignsList();
+        showToast('Campaign deleted — knowledge-base facts and Jam threads kept', 'info');
+        await loadCampaigns();
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     let _campaignJamSocket = null;
@@ -30573,6 +31001,28 @@ function burnAreaChart() {
       ocHealth.style.color = '';
       ocHealth.style.background = '';
       ocHealth.style.borderColor = '';
+    }
+
+    // Providers strip (ADR-0024): per-provider auth vs availability, two
+    // separate dimensions so "needs login" never reads as "provider down".
+    // Hidden while every provider is usable and available.
+    function renderProviderStrip(el, providers) {
+      if (!el) return;
+      const bad = (providers || []).filter(p => p && (p.auth_state !== 'usable' || p.availability_state !== 'available'));
+      if (!bad.length) {
+        el.hidden = true;
+        el.textContent = '';
+        el.title = '';
+        return;
+      }
+      const severe = bad.some(p => p.auth_state === 'needs-login' || p.auth_state === 'store-inaccessible' ||
+        p.availability_state === 'unavailable' || p.availability_state === 'quota-exhausted');
+      el.dataset.status = severe ? 'error' : 'warn';
+      el.innerHTML = '<span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Providers: ' +
+        escapeHtml(bad.map(p => p.provider).join(', ')) + '</span>';
+      el.title = bad.map(p => p.provider + ': auth ' + p.auth_state + ', availability ' + p.availability_state +
+        (p.next_action ? ' — ' + p.next_action : '')).join('\n');
+      el.hidden = false;
     }
 
     function qualityDiagnosticsAgent(agents) {
@@ -42044,8 +42494,8 @@ function burnAreaChart() {
     }
 
     const OUTSIDE_BUCKET_DEFS = [
-      { key: 'needsDirection', saveKey: 'needs_direction', label: 'needs-direction', setting: 'project.issue_filter.hard_suppress_labels.needs_direction', fixed: false, definition: 'Issues waiting for maintainer direction before an agent may work them.' },
-      { key: 'needsDecision', saveKey: 'needs_decision', label: 'needs-decision', setting: 'project.issue_filter.hard_suppress_labels.needs_decision', fixed: false, definition: 'Issues waiting for a maintainer decision.' },
+      { key: 'needsDirection', saveKey: 'needs_direction', label: 'needs-direction (legacy)', setting: 'project.issue_filter.hard_suppress_labels.needs_direction', fixed: false, definition: 'Legacy spelling of the decision park; the hive migrates these onto stage/085-needs-decision and no longer writes them.' },
+      { key: 'needsDecision', saveKey: 'needs_decision', label: 'needs human decision', setting: 'project.issue_filter.hard_suppress_labels.needs_decision', fixed: false, definition: 'Issues parked for a maintainer ruling. stage/085-needs-decision is always recognised; add extra spellings here.' },
       { key: 'needsSpec', saveKey: 'needs_spec', label: 'needs-spec', setting: 'project.issue_filter.hard_suppress_labels.needs_spec', fixed: false, definition: 'Issues waiting for specification or acceptance criteria.' },
       { key: 'labels', saveKey: 'labels', label: 'exempt labels', setting: 'governor.labels.exempt', fixed: false, definition: 'Issues or PRs that must never be agent work; permanent do-not-merge and hold labels also apply.' },
       { key: 'reporterTrust', saveKey: 'reporter_trust', label: 'reporter triage', setting: 'project.issue_filter.reporter_trust', fixed: false, definition: 'When enabled, issues from untrusted reporters wait for a maintainer triage label.' },
@@ -42060,7 +42510,7 @@ function burnAreaChart() {
       return {
         needsHuman: Array.isArray(hs.needsHuman) ? hs.needsHuman : ['needs-human'],
         needsDirection: Array.isArray(hs.needsDirection) ? hs.needsDirection : ['needs-direction'],
-        needsDecision: Array.isArray(hs.needsDecision) ? hs.needsDecision : ['needs-decision'],
+        needsDecision: Array.isArray(hs.needsDecision) ? hs.needsDecision : ['stage/085-needs-decision'],
         needsSpec: Array.isArray(hs.needsSpec) ? hs.needsSpec : ['needs-spec']
       };
     }
@@ -42196,7 +42646,7 @@ function burnAreaChart() {
         <div class="config-toggle"><div class="config-toggle-switch ${stageStalledQuietOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_stalled_require_quiet"></div><span class="config-toggle-label">stage/stalled means no activity ${yamlHint('governor.labels.stage.stalled.require_quiet')} ${settingHelpMark('settings', 'labels', 'Stalled requires quiet', `On (default): stage/stalled is applied only when nobody but the hive has touched the item (head push, comment, review, CI state, label) for the stage's dwell, and never while required checks are running or the reviewer verdict for the current head is pending — those waits are on the hive. Any activity clears it at once. Off: the dwell is measured from entering the stage. See docs/labels-and-control-signals.md.`)}</span></div>
         <div class="config-field">
           <label for="cfg-stage-dwell">Dwell overrides ${yamlHint('governor.labels.stage.dwell.<key>')}</label>
-          <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">
+          <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, needs-author=24h, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">
           <div class="config-help">How long an item may sit in a stage before it gets <code>stage/stalled</code>; comma-separated <code>slug=duration</code>, <code>0</code> = never. Unset stages use the built-in table.</div>
         </div>
         <div class="config-toggle"><div class="config-toggle-switch ${stageNudgeOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_nudge_enabled"></div><span class="config-toggle-label">Contributor nudge on returned-to-contributor ${yamlHint('governor.labels.stage.contributor_nudge.enabled')} ${settingHelpMark('settings', 'labels', 'Contributor nudge', `When a contributor's PR enters stage/072-returned-to-contributor (red CI, changes requested, conflicts) the hive posts ONE @-mention comment per head with the failing checks / review asks and, for relay contributors, pushes a fix-pr task to their relay session (parallel sub-session when the relay advertises parallel_sessions, otherwise preempting the current task). Re-nudged once at the stall threshold; cap 2 per head. See docs/labels-and-control-signals.md.`)}</span></div>
@@ -45568,6 +46018,8 @@ function burnAreaChart() {
       fr = fr || {};
       const on = fr.enabled === true;
       const reposOn = fr.include_repos !== false;
+      const ownersOn = fr.include_owners !== false;
+      const ownerNote = ownersOn && Array.isArray(fr.owners) && fr.owners.length ? ` Currently: ${fr.owners.map(o => '@' + o).join(', ')}.` : '';
       const sourceNote = fr.explicit ? 'set in hive.yaml' : (fr.hub_managed ? 'default for hub-managed hives: on' : 'default for self-hosted hives: off (dry-run preview only)');
       const openReports = Array.isArray(fr.open_reports) ? fr.open_reports : [];
       const openHtml = openReports.length === 0
@@ -45587,6 +46039,10 @@ function burnAreaChart() {
           <div class="config-toggle">
             <div class="config-toggle-switch ${reposOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="fleet-report" data-key="include_repos"></div>
             <span class="config-toggle-label">Name the watched repositories in self-reports ${yamlHint('governor.fleet_report.include_repos')} ${settingHelpMark('settings', 'features', 'Name the watched repositories in self-reports', `When on (default), a self-report lists the owner/repo names this hive watches and the owners derived from them, and the fleet issue merges them into its Affected repos / Affected owners lines, so a maintainer can see which projects an error touches. The report repo is public: turn this off if the watched repos include private repositories — the fields then render as "—" and nothing about the repos leaves the hive.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${ownersOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="fleet-report" data-key="include_owners"></div>
+            <span class="config-toggle-label">Name the hive owner(s) in self-reports ${yamlHint('governor.fleet_report.include_owners')} ${settingHelpMark('settings', 'features', 'Name the hive owner(s) in self-reports', `When on (default), a self-report names the GitHub login(s) of this hive's owner — the authorized users holding the owner role and the operator signed in via the device flow — on the hive's line of the fleet issue's Affected hives block, so a maintainer can see who is affected and ping them. Turn this off to render "(anonymous)" instead; no login then leaves the hive.${esc(ownerNote)}`)}</span>
           </div>
           <div class="qa-schedule">${fr.hive_slug ? `<span class="qa-note">Identified upstream as <code>${esc(fr.hive_slug)}</code>. </span>` : ''}${openHtml}</div>
         </div>`;
@@ -46906,7 +47362,7 @@ function burnAreaChart() {
       const backlogBelow = sev.backlog_below !== false;
       const dests = reviewBacklogDestinationsFor(ws);
       const dest = dests.some(o => o.value === bl.destination) ? bl.destination : 'github_issue';
-      const labels = Array.isArray(bl.labels) ? bl.labels : ['from-review'];
+      const labels = Array.isArray(bl.labels) ? bl.labels : ['origin/reviewer'];
       const presetBtns = REVIEW_SEVERITY_PRESETS.map(p => `<button type="button" class="hv-btn ${blockAt === p.blockAt ? 'btn-primary' : 'btn-secondary'} btn-sm btn-small" data-action="applyReviewSeverityPreset" data-arg0="${p.blockAt}" aria-pressed="${blockAt === p.blockAt ? 'true' : 'false'}"${dis}>${esc(p.label)}</button>`).join(' ');
       const toggle = (key, on, label, tip) => `<div class="config-toggle mt-3">
               <div class="config-toggle-switch ${on ? 'on' : ''}${canEdit ? '' : ' disabled'}" data-action="toggleReviewSeverityFlag" data-arg0="${key}" data-arg-types="s" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
@@ -46942,8 +47398,8 @@ function burnAreaChart() {
           </div>
           ${destFields}
           <div class="config-field mt-3">
-            <label>Backlog labels ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Backlog labels', `review.backlog.labels: comma-separated labels on every backlog item. Default from-review.`)}</label>
-            <input type="text" id="review-backlog-labels" value="${esc(labels.join(', '))}" placeholder="from-review" data-change-action="markDirtyReviewBacklogLabels" data-arg-types="v"${dis}>
+            <label>Backlog labels ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Backlog labels', `review.backlog.labels: comma-separated labels on every backlog item. Default origin/reviewer (the retired from-review and origin/review are accepted and mapped to it).`)}</label>
+            <input type="text" id="review-backlog-labels" value="${esc(labels.join(', '))}" placeholder="origin/reviewer" data-change-action="markDirtyReviewBacklogLabels" data-arg-types="v"${dis}>
           </div>
           <div class="config-field mt-3">
             <label>Max backlog items per PR per day ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Max backlog items per PR per day', `review.backlog.max_per_pr_per_day: cap on items filed from one PR in a day. 0 or blank uses the default of 10.`)}</label>
