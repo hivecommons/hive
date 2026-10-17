@@ -72,8 +72,8 @@ func TestApplyClaimedByLabel_AgentAndBackendHolder(t *testing.T) {
 	if got := strings.Join(fake.added[1], ","); got != "hive/claimed-by-scanner" {
 		t.Fatalf("agent label = %q", got)
 	}
-	if strings.Join(fake.removed[1], ",") != "hive/claimed-by-ann" {
-		t.Fatalf("stale holder label must be replaced, removed %v", fake.removed[1])
+	if len(fake.removed[1]) != 0 {
+		t.Fatalf("another party's live label must be kept, removed %v", fake.removed[1])
 	}
 	for _, l := range append(fake.added[1], fake.added[2]...) {
 		if claims.ClaimedByLabelIsBackend(l) {
@@ -82,6 +82,29 @@ func TestApplyClaimedByLabel_AgentAndBackendHolder(t *testing.T) {
 	}
 	if len(fake.added[2]) != 0 {
 		t.Fatalf("no label expected for a backend-named holder, added %v", fake.added[2])
+	}
+}
+
+// A contributor claim on an issue carrying a human's live label adds its own
+// and keeps the human's (one label per party).
+func TestApplyClaimedByLabel_KeepsCoPartyLabel(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	fake.mu.Lock()
+	fake.truth[4] = []string{"hive/claimed-by-clubanderson"}
+	fake.mu.Unlock()
+
+	removed, added, err := c.ApplyClaimedByLabel(context.Background(), "acme/widgets", 4, claims.Claim{Holder: "Karibhou", Kind: claims.KindContributor})
+	if err != nil || !added || len(removed) != 0 {
+		t.Fatalf("removed %v added %v err %v, want only an add", removed, added, err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if got := strings.Join(fake.added[4], ","); got != "hive/claimed-by-Karibhou" {
+		t.Fatalf("added %q", got)
+	}
+	if len(fake.removed[4]) != 0 {
+		t.Fatalf("co-party label removed: %v", fake.removed[4])
 	}
 }
 

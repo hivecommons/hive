@@ -136,6 +136,9 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 						return gh.AddLabels(ctx, now.Repo, now.Issue, []string{claims.PreemptedLabel(previous.Holder)})
 					})
 					run("claimed-by label", now, func(ctx context.Context, gh *github.Client) error {
+						if err := gh.RemoveClaimedByLabel(ctx, previous.Repo, previous.Issue, previous); err != nil {
+							return err
+						}
 						_, _, err := gh.ApplyClaimedByLabel(ctx, now.Repo, now.Issue, now)
 						return err
 					})

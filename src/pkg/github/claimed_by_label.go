@@ -14,12 +14,14 @@ import (
 // a backend name. The writers here enforce it; the issue reconciler heals the
 // malformed backend-named form a hand-applied label can introduce.
 
-// ApplyClaimedByLabel puts exactly one claimed-by label for claim on the
-// issue: any other `hive/claimed-by-*` label is removed first (a stale
-// holder, or a backend-named suffix) and the derived one is added when
-// absent. A claim with no usable holder (claims.ClaimedByLabel == "") only
-// strips backend-named labels. Returns the labels it removed and whether it
-// added one.
+// ApplyClaimedByLabel puts the claim's own claimed-by label on the issue (one
+// label per party): backend-named `hive/claimed-by-*` labels are removed and
+// the derived one is added when absent. Other parties' principal-named labels
+// are left alone — a person's label survives a contributor's claim, matching
+// healBackendClaimedByLabels and RemoveClaimedByLabel; a stale holder's label
+// is removed on release or takeover. A claim with no usable holder
+// (claims.ClaimedByLabel == "") only strips backend-named labels. Returns the
+// labels it removed and whether it added one.
 func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number int, claim claims.Claim) (removed []string, added bool, err error) {
 	if c == nil {
 		return nil, false, ErrNoGitHubClient
@@ -40,7 +42,7 @@ func (c *Client) ApplyClaimedByLabel(ctx context.Context, repo string, number in
 			have = true
 			continue
 		}
-		if want == "" && !claims.ClaimedByLabelIsBackend(l) {
+		if !claims.ClaimedByLabelIsBackend(l) {
 			continue
 		}
 		if rerr := labeler.RemoveLabel(ctx, owner, name, number, l); rerr != nil {

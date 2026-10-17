@@ -488,8 +488,9 @@ no label. The suffix keeps the login's case and is reduced to
 `[A-Za-z0-9_-]`; `session=` / `hive=` are not inputs. The writers all go
 through the helper — the claim relay (`hive-open-issue claim`,
 `src/pkg/github/issue_inprogress.go`) and the claim-ledger hooks
-(`src/cmd/hive/claimswire.go`, `Client.ApplyClaimedByLabel`), which replace
-any other `hive/claimed-by-*` on the issue when a claim lands, and remove
+(`src/cmd/hive/claimswire.go`, `Client.ApplyClaimedByLabel`), which add the
+claim's own label and strip only backend-named `hive/claimed-by-*` labels
+when a claim lands (another party's principal label is kept), and remove
 the holder's label — only the holder's — when the ledger releases or hands
 the claim over. The issue reconciler heals the one malformed form a
 hand-applied label can introduce: a backend-named suffix is swapped for the
