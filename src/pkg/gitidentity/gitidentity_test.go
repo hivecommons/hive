@@ -48,3 +48,33 @@ func TestAgentIdentityFallsBackFromUnsafeDomain(t *testing.T) {
 		t.Fatalf("email = %q, want default domain", email)
 	}
 }
+
+func TestAppLinkedAgentIdentityUsesBotNoreply(t *testing.T) {
+	name, email, ok := AppLinkedAgentIdentity("scanner", 3568013, "hivecommons-hive[bot]")
+	if !ok {
+		t.Fatal("AppLinkedAgentIdentity returned ok=false")
+	}
+	if name != "scanner" {
+		t.Fatalf("name = %q, want scanner", name)
+	}
+	if want := "3568013+hivecommons-hive[bot]@users.noreply.github.com"; email != want {
+		t.Fatalf("email = %q, want %q", email, want)
+	}
+}
+
+func TestAppLinkedAgentIdentityRejectsIncompleteInputs(t *testing.T) {
+	for _, tc := range []struct {
+		agent string
+		appID int64
+		bot   string
+	}{
+		{agent: "bad/name", appID: 1, bot: "hive[bot]"},
+		{agent: "scanner", appID: 0, bot: "hive[bot]"},
+		{agent: "scanner", appID: 1, bot: ""},
+		{agent: "scanner", appID: 1, bot: "bad bot"},
+	} {
+		if name, email, ok := AppLinkedAgentIdentity(tc.agent, tc.appID, tc.bot); ok || name != "" || email != "" {
+			t.Fatalf("AppLinkedAgentIdentity(%q,%d,%q) = (%q,%q,%v), want empty false", tc.agent, tc.appID, tc.bot, name, email, ok)
+		}
+	}
+}

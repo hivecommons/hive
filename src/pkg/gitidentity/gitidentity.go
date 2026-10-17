@@ -2,7 +2,9 @@
 package gitidentity
 
 import (
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +26,21 @@ func AgentIdentity(agentName string) (name, email string, ok bool) {
 		domain = DefaultBotEmailDomain
 	}
 	return agentName, agentName + "@" + domain, true
+}
+
+// AppLinkedAgentIdentity returns the lane name with the App bot's GitHub
+// noreply address. GitHub links commits carrying that address to the App bot
+// account, while the human-readable name and `git commit -s` trailer still
+// identify the lane that did the work.
+func AppLinkedAgentIdentity(agentName string, appID int64, botLogin string) (name, email string, ok bool) {
+	if !isIdentToken(agentName, true) || appID <= 0 {
+		return "", "", false
+	}
+	botLogin = strings.TrimSpace(botLogin)
+	if botLogin == "" || strings.ContainsAny(botLogin, " <>\n\r\t") {
+		return "", "", false
+	}
+	return agentName, fmt.Sprintf("%s+%s@users.noreply.github.com", strconv.FormatInt(appID, 10), botLogin), true
 }
 
 func isIdentToken(s string, allowUnderscore bool) bool {

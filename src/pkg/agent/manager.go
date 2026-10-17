@@ -506,6 +506,12 @@ type ProjectContext struct {
 	// MCP server authors PRs/commits as the App bot. Default false → no token is
 	// injected and behavior is unchanged (opt-in per hive).
 	AppAuthoredPRs bool
+	// AppID and AppBotLogin identify the installed GitHub App. When
+	// AppAuthoredPRs is on, push-capable agents use this bot's noreply address
+	// for git author/committer email so GitHub links their fixer commits to the
+	// App while the commit name and sign-off still name the lane.
+	AppID       int64
+	AppBotLogin string
 	// BobSessionPrefix mirrors governor.bob.session_prefix. Empty is
 	// default-off; bob launch commands remain byte-identical unless it or a
 	// per-agent bob.session_label is configured.

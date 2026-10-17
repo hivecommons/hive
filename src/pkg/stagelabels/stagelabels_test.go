@@ -833,8 +833,9 @@ func TestLabelDefsForUsesConfiguredKindNames(t *testing.T) {
 }
 
 // Stage-074 in-place adoption bookkeeping: MarkAdoptedInPlace / MarkAdoptedHead
-// keep the hive's ownership across its own pushes; MarkYielded releases it and
-// remembers the contributor's head so the yield note is posted once.
+// keep the hive's ownership across its own pushes; MarkHivePushedHead records
+// local push evidence; MarkYielded releases it and remembers the contributor's
+// head so the yield note is posted once.
 func TestStoreAdoptInPlaceAndYield(t *testing.T) {
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	s := NewStore("", func() time.Time { return now })
@@ -857,6 +858,11 @@ func TestStoreAdoptInPlaceAndYield(t *testing.T) {
 	r, _ = s.Get(key)
 	if !r.AdoptedInPlace() || r.AdoptedHead != "b" {
 		t.Fatalf("head moved: %+v", r)
+	}
+	s.MarkHivePushedHead(key, "c")
+	r, _ = s.Get(key)
+	if !r.HivePushedHead("c") || r.HivePushedHead("d") || !s.HasHivePushEvidence("acme/widget") || s.HasHivePushEvidence("other/repo") {
+		t.Fatalf("hive pushed head not recorded: %+v", r)
 	}
 	s.MarkYielded(key, "c")
 	r, _ = s.Get(key)
