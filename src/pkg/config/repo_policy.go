@@ -345,7 +345,7 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && rp.MergeStrategy == "" && len(rp.LabelDrivenApprovalLabels) == 0
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && rp.MergeStrategy == "" && len(rp.LabelDrivenApprovalLabels) == 0 && !rp.ReleaseOnApprove
 }
 
 // ValidateRepoMergeStrategy accepts "" (unset, meaning direct), "direct" and
