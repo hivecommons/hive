@@ -38,12 +38,12 @@ The same settings are exposed in the dashboard under Settings → Governor →
 "Self-Reported Issues" (owner role) and over
 `GET`/`PUT /api/config/governor/fleet-report`.
 
-## The three triggers
+## The four triggers
 
 A report is only ever built from evidence marked **attributable** — evidence
 the hive believes points at hive's own behaviour rather than at your repos,
 your prompts, or your infrastructure. Non-attributable evidence never produces
-a report under either trigger.
+the report under a trigger.
 
 ### `acmm-shortfall`
 
@@ -99,6 +99,20 @@ and a redacted diagnostics excerpt inside `<details>`. Secrets are never
 collected; the diagnostics go through the same scrubber as the other
 triggers.
 
+
+### `observation`
+
+Nous detector findings use the `observation` self-report class and the
+`hive-observation` label. The body contains only hive metadata (hive id/slug,
+project organization, ACMM level, hive version, and `cluster_id`) plus
+aggregate evidence and a JSON daily series suitable for a sparkline. Watched
+repository names, issue numbers, and file paths are not part of this report.
+
+Observation reports never use the spoke's GitHub client. A hub-managed spoke
+posts them to `POST /api/selfreport/ingest`; the hub forces the destination to
+`hivecommons/hive`, adds the configured needs-decision label, and searches the
+open issue body for the detector fingerprint before creating or commenting.
+
 ## Exactly what leaves the hive
 
 Each report carries:
@@ -131,13 +145,16 @@ report look changed. It is omitted when the hive has no snapshot in the last
 
 The same fields appear as issue labels (`fleet-report`, `component:…`,
 `severity:…`, `version:…`, `instance:…`, `trigger:…`, and `criterion:…` for
-shortfalls).
+shortfalls). Observation issues additionally carry `hive-observation` and
+`observation:<kind>`.
 
 ### What it does not send
 
-- **Your raw hive ID never leaves the hive.** Only the truncated SHA-256
-  digest is sent. The digest is stable, so upstream can tell "the same hive
-  again" from "a second hive" without learning which hive either is.
+- Legacy ACMM, hive-code-defect, and runtime reports send only an anonymous
+  instance digest; the raw hive id never leaves the hive for those triggers.
+- Observation reports use the hub-provided hive id/slug and project
+  organization metadata required for maintainer triage, but never send watched
+  repository names, issue numbers, or file paths.
 - **No raw log lines, error messages, or repository content.** Evidence is
   reduced to a classified error *class*, a component, and counts.
 - Titles and bodies are passed through `logscrub` before leaving the hive,

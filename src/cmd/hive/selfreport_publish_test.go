@@ -229,6 +229,36 @@ func TestPublishFleetReportsRelaysToHubOnForbidden(t *testing.T) {
 	}
 }
 
+func TestPublishObservationAlwaysUsesHubRelay(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	w := &fakeSelfReportWriter{ensure: func(fleetreport.Report, github.FleetReportOptions) (github.FleetReportResult, error) {
+		t.Fatal("observation used the spoke GitHub writer")
+		return github.FleetReportResult{}, nil
+	}}
+	var relayed selfReportRelayRequest
+	deps := selfReportDeps(w, &now)
+	deps.budgetOK = func() bool { return false }
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relayed = req
+		return selfReportRelayResponse{OK: true, Number: 88, URL: "u88"}, nil
+	}
+	report := fleetreport.BuildObservationReport(fleetreport.ObservationFinding{
+		Kind:        "queue-growth",
+		Title:       "Queue growth",
+		Evidence:    "p90 rose",
+		Fingerprint: "hosted-x:queue-growth",
+		Series:      []float64{1, 2, 3},
+	}, fleetreport.ObservationMetadata{HiveID: "hosted-x", HiveSlug: "hosted-x", Now: now})
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Reports: []fleetreport.Report{report}}, deps)
+	if relayed.Class != fleetreport.TriggerObservation || relayed.Repo != "hivecommons/hive" || relayed.Observation == nil {
+		t.Fatalf("relayed observation = %#v", relayed)
+	}
+	if got := srv.FleetReportState().Open[report.Fingerprint]; got.Number != 88 || !got.OpenedByHive {
+		t.Fatalf("relay result not recorded: %#v", got)
+	}
+}
+
 func TestSelfReportShouldRelay(t *testing.T) {
 	cases := map[error]bool{
 		&gh.ErrorResponse{Response: &http.Response{StatusCode: 403}}: true,

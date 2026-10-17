@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Self-report relay (hivecommons/hive#11868). Spokes whose GitHub credential
@@ -20,10 +22,12 @@ import (
 // spoke would: one search for the marker, comment if found, create if not.
 
 const (
-	selfReportIngestPath      = "/api/selfreport/ingest"
-	selfReportMaxRequestBytes = 256 << 10
-	selfReportDefaultRepo     = "hivecommons/hive"
-	selfReportRelayLabel      = "hive/selfreport"
+	selfReportIngestPath       = "/api/selfreport/ingest"
+	selfReportMaxRequestBytes  = 256 << 10
+	selfReportDefaultRepo      = "hivecommons/hive"
+	selfReportRelayLabel       = "hive/selfreport"
+	selfReportObservationClass = "observation"
+	selfReportObservationLabel = "hive-observation"
 )
 
 // selfReportRate reuses the feedback limiter shape (per-hive, 24h window,
@@ -43,6 +47,8 @@ type selfReportRelayRequest struct {
 	Version     string          `json:"version,omitempty"`
 	Repo        string          `json:"repo,omitempty"`
 	Evidence    json.RawMessage `json:"evidence,omitempty"`
+	Observation json.RawMessage `json:"observation,omitempty"`
+	HiveState   json.RawMessage `json:"hive_state,omitempty"`
 }
 
 type selfReportRelayResponse struct {
@@ -55,6 +61,7 @@ type selfReportRelayResponse struct {
 func validateSelfReportRelayRequest(req *selfReportRelayRequest) error {
 	req.HiveID = sanitizeHeartbeatField(req.HiveID)
 	req.Fingerprint = strings.TrimSpace(req.Fingerprint)
+	req.Class = strings.TrimSpace(req.Class)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Repo = strings.TrimSpace(req.Repo)
 	if req.Fingerprint == "" || len(req.Fingerprint) > 128 || strings.ContainsAny(req.Fingerprint, " \t\n\"'<>") {
@@ -67,6 +74,11 @@ func validateSelfReportRelayRequest(req *selfReportRelayRequest) error {
 		return fmt.Errorf("body is required")
 	}
 	if req.Repo == "" {
+		req.Repo = selfReportDefaultRepo
+	}
+	// Observation issues are always hub-owned. Do not trust a spoke-supplied
+	// project repo, even if an older spoke sends one by mistake.
+	if req.Class == selfReportObservationClass {
 		req.Repo = selfReportDefaultRepo
 	}
 	if _, _, err := splitHubRepo(req.Repo); err != nil {
@@ -90,6 +102,13 @@ func splitHubRepo(full string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid repo %q", full)
 	}
 	return owner, repo, nil
+}
+
+func selfReportNeedsDecisionLabel(hiveID string) string {
+	if hive := loadSaaSHive(hiveID); hive != nil && hive.IssueFilter != nil {
+		return strings.TrimSpace(hive.IssueFilter.NeedsDecisionLabel())
+	}
+	return config.DefaultNeedsDecisionLabel
 }
 
 func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +191,14 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	labels := append([]string(nil), req.Labels...)
+	if req.Class == selfReportObservationClass {
+		if !containsString(labels, selfReportObservationLabel) {
+			labels = append(labels, selfReportObservationLabel)
+		}
+		if decision := selfReportNeedsDecisionLabel(req.HiveID); decision != "" && !containsString(labels, decision) {
+			labels = append(labels, decision)
+		}
+	}
 	if !containsString(labels, selfReportRelayLabel) {
 		labels = append(labels, selfReportRelayLabel)
 	}

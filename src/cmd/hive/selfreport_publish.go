@@ -27,7 +27,8 @@ import (
 // per report, whether to write upstream:
 //
 //   - dry-run → nothing (preview stays on the dashboard);
-//   - the API budget is not normal → defer (the report re-emits next cycle);
+//   - Nous observations → the hub relay only; the spoke GitHub client is never used;
+//   - the API budget is not normal → defer ordinary reports (the report re-emits next cycle);
 //   - fingerprint already written by this hive → at most one "also seen"
 //     comment per 24h, otherwise skip;
 //   - fingerprint closed upstream inside the 7-day cooldown → record and skip
@@ -61,15 +62,16 @@ type selfReportRelay func(ctx context.Context, req selfReportRelayRequest) (self
 
 // selfReportRelayRequest is the wire shape shared with pkg/hub.
 type selfReportRelayRequest struct {
-	HiveID      string               `json:"hive_id"`
-	Fingerprint string               `json:"fingerprint"`
-	Class       string               `json:"class,omitempty"`
-	Title       string               `json:"title"`
-	Body        string               `json:"body"`
-	Labels      []string             `json:"labels,omitempty"`
-	Version     string               `json:"version,omitempty"`
-	Repo        string               `json:"repo,omitempty"`
-	Evidence    fleetreport.Evidence `json:"evidence"`
+	HiveID      string                          `json:"hive_id"`
+	Fingerprint string                          `json:"fingerprint"`
+	Class       string                          `json:"class,omitempty"`
+	Title       string                          `json:"title"`
+	Body        string                          `json:"body"`
+	Labels      []string                        `json:"labels,omitempty"`
+	Version     string                          `json:"version,omitempty"`
+	Repo        string                          `json:"repo,omitempty"`
+	Evidence    fleetreport.Evidence            `json:"evidence"`
+	Observation *fleetreport.ObservationFinding `json:"observation,omitempty"`
 	// HiveState is the reporting hive's 24 h / 7 d state trends (#12339).
 	HiveState *hivestate.Trends `json:"hive_state,omitempty"`
 }
@@ -139,13 +141,28 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 	if deps.now == nil {
 		deps.now = time.Now
 	}
-	if deps.budgetOK != nil && !deps.budgetOK() {
+	budgetNormal := true
+	if deps.budgetOK != nil {
+		budgetNormal = deps.budgetOK()
+	}
+	hasObservation := false
+	for _, report := range res.Reports {
+		if isObservationReport(report) {
+			hasObservation = true
+			break
+		}
+	}
+	if !budgetNormal && !hasObservation {
 		logger.Info("fleet report: API budget not normal; deferring self-reports", "reports", len(res.Reports))
 		return
 	}
 	now := deps.now()
 	state := dashSrv.FleetReportState()
 	for _, report := range res.Reports {
+		if !isObservationReport(report) && !budgetNormal {
+			logger.Info("fleet report: API budget not normal; deferring non-observation self-report", "fingerprint", report.Fingerprint)
+			continue
+		}
 		open := state.Open[report.Fingerprint]
 		if fleetreport.ClosedRecently(open.ClosedAt, now, deps.limits) {
 			continue
@@ -154,39 +171,63 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 		if open.Number > 0 && !open.PostedAt.IsZero() && !seenAllowed {
 			continue
 		}
-		opts := github.FleetReportOptions{
-			Repo: deps.repo, HiveSlug: deps.hiveSlug, Version: deps.version, Cluster: deps.cluster,
-			Now: deps.now, JoinExisting: report.Trigger == fleetreport.TriggerRuntimeError, SeenCommentAllowed: seenAllowed,
-		}
-		// The cap and gap apply to NEW issues only; joining never counts.
-		// We cannot know before the search whether this will be a create, so
-		// gate the create path with a pre-check and record afterwards.
-		allowNew, reason := fleetreport.AllowNewFiling(state, now, deps.limits)
+
 		var write github.FleetReportResult
 		var err error
-		if deps.gh != nil {
-			write, err = deps.gh.EnsureFleetReportWithOptions(ctx, report, withCreateGate(opts, allowNew))
+		if isObservationReport(report) {
+			// Observations are hub-owned reports. Never fall back to the
+			// spoke's GitHub client, even when it can write another repo.
+			if deps.relay == nil {
+				err = errSelfReportObservationNoRelay
+			} else {
+				logger.Info("fleet report: relaying Nous observation to hub", "fingerprint", report.Fingerprint, "kind", report.Class)
+				var relayed selfReportRelayResponse
+				relayed, err = deps.relay(ctx, selfReportRelayRequest{
+					HiveID: deps.hiveSlug, Fingerprint: report.Fingerprint, Class: fleetreport.TriggerObservation,
+					Title: report.Title, Body: report.Body, Labels: report.Labels, Version: deps.version,
+					Repo: config.DefaultFleetReportRepo, Evidence: firstEvidence(report),
+					Observation: report.Observation, HiveState: report.HiveState,
+				})
+				if err == nil {
+					write = github.FleetReportResult{
+						Number: relayed.Number, URL: relayed.URL, Created: !relayed.Joined,
+						Joined: relayed.Joined, Commented: relayed.Joined,
+					}
+				}
+			}
 		} else {
-			err = errSelfReportNoDirectWriter
-		}
-		if err != nil && errors.Is(err, errSelfReportCreateDeferred) {
-			logger.Info("fleet report: new filing deferred", "fingerprint", report.Fingerprint, "class", report.Class, "reason", reason)
-			dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
-				o := st.Open[report.Fingerprint]
-				o.Deferred = reason
-				st.Open[report.Fingerprint] = o
-			})
-			continue
-		}
-		if err != nil && deps.relay != nil && selfReportShouldRelay(err) {
-			logger.Info("fleet report: no write access to report repo; relaying to hub", "fingerprint", report.Fingerprint, "error", err)
-			var relayed selfReportRelayResponse
-			relayed, err = deps.relay(ctx, selfReportRelayRequest{
-				HiveID: deps.hiveSlug, Fingerprint: report.Fingerprint, Class: report.Class, Title: report.Title, Body: report.Body,
-				Labels: report.Labels, Version: deps.version, Repo: deps.repo, Evidence: firstEvidence(report), HiveState: report.HiveState,
-			})
-			if err == nil {
-				write = github.FleetReportResult{Number: relayed.Number, URL: relayed.URL, Created: !relayed.Joined, Joined: relayed.Joined, Commented: relayed.Joined}
+			opts := github.FleetReportOptions{
+				Repo: deps.repo, HiveSlug: deps.hiveSlug, Version: deps.version, Cluster: deps.cluster,
+				Now: deps.now, JoinExisting: report.Trigger == fleetreport.TriggerRuntimeError, SeenCommentAllowed: seenAllowed,
+			}
+			// The cap and gap apply to NEW issues only; joining never counts.
+			// We cannot know before the search whether this will be a create, so
+			// gate the create path with a pre-check and record afterwards.
+			allowNew, reason := fleetreport.AllowNewFiling(state, now, deps.limits)
+			if deps.gh != nil {
+				write, err = deps.gh.EnsureFleetReportWithOptions(ctx, report, withCreateGate(opts, allowNew))
+			} else {
+				err = errSelfReportNoDirectWriter
+			}
+			if err != nil && errors.Is(err, errSelfReportCreateDeferred) {
+				logger.Info("fleet report: new filing deferred", "fingerprint", report.Fingerprint, "class", report.Class, "reason", reason)
+				dashSrv.UpdateFleetReportState(func(st *fleetreport.State) {
+					o := st.Open[report.Fingerprint]
+					o.Deferred = reason
+					st.Open[report.Fingerprint] = o
+				})
+				continue
+			}
+			if err != nil && deps.relay != nil && selfReportShouldRelay(err) {
+				logger.Info("fleet report: no write access to report repo; relaying to hub", "fingerprint", report.Fingerprint, "error", err)
+				var relayed selfReportRelayResponse
+				relayed, err = deps.relay(ctx, selfReportRelayRequest{
+					HiveID: deps.hiveSlug, Fingerprint: report.Fingerprint, Class: report.Class, Title: report.Title, Body: report.Body,
+					Labels: report.Labels, Version: deps.version, Repo: deps.repo, Evidence: firstEvidence(report), HiveState: report.HiveState,
+				})
+				if err == nil {
+					write = github.FleetReportResult{Number: relayed.Number, URL: relayed.URL, Created: !relayed.Joined, Joined: relayed.Joined, Commented: relayed.Joined}
+				}
 			}
 		}
 		if err != nil {
@@ -278,9 +319,14 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 	}
 }
 
+func isObservationReport(report fleetreport.Report) bool {
+	return report.Trigger == fleetreport.TriggerObservation || report.Class == fleetreport.TriggerObservation
+}
+
 var (
-	errSelfReportCreateDeferred = errors.New("self-report: new filing deferred by rate limit")
-	errSelfReportNoDirectWriter = errors.New("self-report: no GitHub client")
+	errSelfReportCreateDeferred     = errors.New("self-report: new filing deferred by rate limit")
+	errSelfReportNoDirectWriter     = errors.New("self-report: no GitHub client")
+	errSelfReportObservationNoRelay = errors.New("self-report: observation relay unavailable")
 )
 
 // withCreateGate returns opts; when allowNew is false the writer is asked to

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func resetSelfReportRate(t *testing.T) {
@@ -127,6 +129,101 @@ func TestHubSelfReportIngestCreatesUnderAppIdentity(t *testing.T) {
 	_ = json.Unmarshal(gh.bodies[1], &payload)
 	if !strings.Contains(strings.Join(payload.Labels, ","), selfReportRelayLabel) || !strings.Contains(payload.Body, "hive-fleet-fingerprint:abc123") {
 		t.Fatalf("issue payload = %+v", payload)
+	}
+}
+
+func TestHubSelfReportObservationCreatesThenJoins(t *testing.T) {
+	resetSelfReportRate(t)
+	oldSaaSHivesDir := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldSaaSHivesDir })
+	decisionLabel := "owner-call"
+	if err := saveSaaSHive(&SaaSHive{
+		ID: "h1",
+		IssueFilter: &config.IssueFilterConfig{
+			HardSuppressLabels: config.HardSuppressLabelsConfig{NeedsDecision: []string{decisionLabel}},
+		},
+	}); err != nil {
+		t.Fatalf("save hive config: %v", err)
+	}
+
+	var mu sync.Mutex
+	searches := 0
+	creates := 0
+	comments := 0
+	var createdBody struct {
+		Labels []string `json:"labels"`
+		Body   string   `json:"body"`
+	}
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/search/issues":
+			mu.Lock()
+			searches++
+			hit := searches > 1
+			mu.Unlock()
+			items := []map[string]any{}
+			if hit {
+				items = append(items, map[string]any{
+					"number":   42,
+					"html_url": "https://github.com/hivecommons/hive/issues/42",
+					"body":     "<!-- hive-fleet-fingerprint:h1:queue-growth -->",
+				})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
+			mu.Lock()
+			creates++
+			mu.Unlock()
+			if err := json.NewDecoder(r.Body).Decode(&createdBody); err != nil {
+				t.Fatalf("decode create payload: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 42, "html_url": "https://github.com/hivecommons/hive/issues/42"})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+			mu.Lock()
+			comments++
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
+			_ = json.NewEncoder(w).Encode([]any{})
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusTeapot)
+		}
+	}
+	interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	body := `{"hive_id":"h1","fingerprint":"h1:queue-growth","class":"observation","title":"Queue depth is growing","body":"<!-- hive-fleet-fingerprint:h1:queue-growth -->\nproject organization: acme\nseries: [15,18,30]","labels":["fleet-report"],"version":"v5.1.0","repo":"acme/widgets","observation":{"kind":"queue-growth","series":[15,18,30]}}`
+
+	first := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first status=%d body=%s", first.Code, first.Body.String())
+	}
+	var firstOut selfReportRelayResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &firstOut); err != nil || !firstOut.OK || firstOut.Joined {
+		t.Fatalf("first response=%s (%v)", first.Body.String(), err)
+	}
+
+	second := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status=%d body=%s", second.Code, second.Body.String())
+	}
+	var secondOut selfReportRelayResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &secondOut); err != nil || !secondOut.OK || !secondOut.Joined {
+		t.Fatalf("second response=%s (%v)", second.Body.String(), err)
+	}
+	if creates != 1 || comments != 1 {
+		t.Fatalf("creates=%d comments=%d, want one create and one join comment", creates, comments)
+	}
+	if strings.Contains(createdBody.Body, "acme/widgets") || strings.Contains(createdBody.Body, "foo.go") {
+		t.Fatalf("observation body leaked project repo identity: %q", createdBody.Body)
+	}
+	labels := strings.Join(createdBody.Labels, ",")
+	for _, want := range []string{selfReportObservationLabel, selfReportRelayLabel, decisionLabel} {
+		if !strings.Contains(labels, want) {
+			t.Fatalf("create labels=%v missing %q", createdBody.Labels, want)
+		}
 	}
 }
 
