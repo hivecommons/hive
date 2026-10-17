@@ -245,6 +245,54 @@ func TestCadenceHandlerResponseCarriesMinStatusSeq(t *testing.T) {
 	}
 }
 
+// TestCadenceTemplateHandlerResponseCarriesMinStatusSeq asserts the server half
+// of the cadence-templates contract (#12300).
+func TestCadenceTemplateHandlerResponseCarriesMinStatusSeq(t *testing.T) {
+	src := readSourceFile(t, "api_governor.go")
+
+	idx := strings.Index(src, "func (s *Server) handleGovernorCadenceTemplates(")
+	if idx < 0 {
+		t.Fatal("api_governor.go: handleGovernorCadenceTemplates not found")
+	}
+	end := strings.Index(src[idx:], "\nfunc (s *Server) handleGovernorThresholdScalingGet(")
+	if end < 0 {
+		t.Fatal("api_governor.go: could not bound handleGovernorCadenceTemplates")
+	}
+	body := src[idx : idx+end]
+
+	if !strings.Contains(body, "floor := s.refreshAndPersistSeq()") {
+		t.Error("handleGovernorCadenceTemplates does not capture the status-seq floor, so a " +
+			"pre-mutation /api/status can repaint the old cadences (#5492)")
+	}
+	if !strings.Contains(body, `"minStatusSeq": floor`) {
+		t.Error("handleGovernorCadenceTemplates response does not carry minStatusSeq (#5492)")
+	}
+	if strings.Contains(body, "okResponse(w, map[string]any{") {
+		t.Error("handleGovernorCadenceTemplates uses okResponse for a payload containing a " +
+			"numeric floor — that does not compile; use jsonResponse (#5492)")
+	}
+}
+
+// TestCadenceTemplateWriteReturnsStatusSeqFloor asserts applyCadenceTemplate in
+// index.html raises the stale-snapshot floor from the write response (#12300).
+func TestCadenceTemplateWriteReturnsStatusSeqFloor(t *testing.T) {
+	html := indexHTML(t)
+
+	fnIdx := strings.Index(html, "async function applyCadenceTemplate(templateKey) {")
+	if fnIdx < 0 {
+		t.Fatal("index.html: applyCadenceTemplate not found (#12300)")
+	}
+	endIdx := strings.Index(html[fnIdx:], "\n    function switchToPerModeCadences(")
+	if endIdx < 0 {
+		t.Fatal("index.html: could not bound applyCadenceTemplate")
+	}
+	body := html[fnIdx : fnIdx+endIdx]
+
+	if !strings.Contains(body, "noteStatusMutation(data.minStatusSeq);") {
+		t.Error("applyCadenceTemplate does not raise the stale-snapshot floor from its write response (#5492)")
+	}
+}
+
 // TestCadenceWriteStillSurfacesFailure is the second anti-lie guard: a failed
 // cadence write must not raise the floor and must not repaint. The floor is
 // only raised inside the success branch.

@@ -553,6 +553,99 @@ func (s *Server) handleGovernorCadenceScope(w http.ResponseWriter, r *http.Reque
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// handleGovernorCadenceTemplates applies a preset global cadence template to
+// all configured and active agents across governor modes (#12300).
+func (s *Server) handleGovernorCadenceTemplates(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	var body struct {
+		Template string `json:"template"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	var cadences map[string]config.Cadence
+	switch body.Template {
+	case "testing", "new-level-testing":
+		cadences = map[string]config.Cadence{
+			"surge": "pause",
+			"busy":  "2h",
+			"quiet": "4h",
+			"idle":  "8h",
+		}
+	case "weekly", "weekly-sprint":
+		cadences = map[string]config.Cadence{
+			"surge": "1h",
+			"busy":  "2h",
+			"quiet": "4h",
+			"idle":  "8h",
+		}
+	case "biweekly", "biweekly-sprint":
+		cadences = map[string]config.Cadence{
+			"surge": "2h",
+			"busy":  "4h",
+			"quiet": "8h",
+			"idle":  "16h",
+		}
+	case "daily", "daily-cadence":
+		cadences = map[string]config.Cadence{
+			"surge": "30m",
+			"busy":  "1h",
+			"quiet": "2h",
+			"idle":  "4h",
+		}
+	default:
+		jsonError(w, "invalid template: must be one of testing (new-level-testing), weekly (weekly-sprint), biweekly (biweekly-sprint), daily (daily-cadence)", http.StatusBadRequest)
+		return
+	}
+
+	agentSet := make(map[string]bool)
+	updatedAgents := make(map[string]bool)
+	if s.deps != nil && s.deps.Config != nil {
+		for agentName := range s.deps.Config.Agents {
+			agentSet[agentName] = true
+		}
+	}
+
+	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Governor.Modes != nil {
+		for modeName, cadVal := range cadences {
+			mode, ok := s.deps.Config.Governor.Modes[modeName]
+			if !ok {
+				continue
+			}
+			if mode.Cadences == nil {
+				mode.Cadences = make(map[string]config.Cadence)
+			}
+			for agentName := range agentSet {
+				// Keep explicit per-mode continuous opt-ins.
+				if mode.Cadences[agentName].IsContinuous() {
+					continue
+				}
+				mode.Cadences[agentName] = cadVal
+				updatedAgents[agentName] = true
+				s.deps.Config.Governor.ClaimCadenceOwnership(modeName, agentName)
+			}
+			s.deps.Config.Governor.Modes[modeName] = mode
+		}
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after cadence template update", "template", body.Template, "error", err)
+	}
+
+	if s.deps != nil && s.deps.EnumerateFunc != nil {
+		go s.deps.EnumerateFunc()
+	}
+
+	s.auditFromRequest(r, "config_governor_cadence_template", auditDetail("template", body.Template), "")
+	floor := s.refreshAndPersistSeq()
+	jsonResponse(w, map[string]any{"ok": true, "status": "updated", "template": body.Template, "agentsUpdated": len(updatedAgents), "minStatusSeq": floor})
+}
+
 // handleGovernorThresholdScalingGet returns the configured threshold-scaling
 // curve (with its default applied) so the Thresholds tab can prefill its
 // select without loading the whole governor config payload. OWNER-ONLY,

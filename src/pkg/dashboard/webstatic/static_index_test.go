@@ -554,6 +554,12 @@ func TestStaticCadenceMatrixNameOpensAgentCard(t *testing.T) {
 		`data-action="ocSelectAgent" data-agent="${esc(aname)}" title="Open ${esc(displayLabel)}'s agent card"`,
 		`data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(aname)}" data-tab="Cadences"`,
 		`.gov-matrix td[data-tab="Cadences"], .gov-matrix .gov-agent-name-link { cursor: pointer; }`,
+		`data-action="applyCadenceTemplate" data-arg0="testing"`,
+		`data-action="applyCadenceTemplate" data-arg0="weekly"`,
+		`data-action="applyCadenceTemplate" data-arg0="biweekly"`,
+		`data-action="applyCadenceTemplate" data-arg0="daily"`,
+		`async function applyCadenceTemplate(templateKey)`,
+		`case 'applyCadenceTemplate': applyCadenceTemplate(`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("cadence matrix name/cadence wiring missing %q", want)
