@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
@@ -410,6 +411,16 @@ type AgentSummary struct {
 	// last fields explain the newest restart. The hub may add ResetAt/ResetBy
 	// when rendering fleet rows after an operator reset.
 	Restarts AgentRestartTelemetry `json:"restarts,omitempty"`
+	// BackendAuth* is the agent's backend-auth canary (#6558), the same fields
+	// /api/status shows per agent; empty status means ok. The hub's
+	// auth_health roll-up reads them. BackendAuthRefreshable is
+	// claude.HasUsableToken over the agent's own credential (ADR-0024): nil
+	// for backends with no verified refresh semantics, so absent never reads
+	// as "needs login".
+	BackendAuthStatus      string `json:"backendAuthStatus,omitempty"`
+	BackendAuthSince       string `json:"backendAuthSince,omitempty"`
+	BackendAuthLastError   string `json:"backendAuthLastError,omitempty"`
+	BackendAuthRefreshable *bool  `json:"backendAuthRefreshable,omitempty"`
 }
 
 type AgentRestartTelemetry struct {
@@ -455,6 +466,11 @@ type AgentActivity struct {
 	StartFailureExitCode *int
 	StartFailureSignal   string
 	Restarts             AgentRestartTelemetry
+	// BackendAuth* — see the matching AgentSummary fields.
+	BackendAuthStatus      string
+	BackendAuthSince       time.Time
+	BackendAuthLastError   string
+	BackendAuthRefreshable *bool
 }
 
 // NewAgentSummary builds one AgentSummary from an agent's name, state, mode and
@@ -486,6 +502,13 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		StartBlocked:         act.StartBlocked,
 		StartFailureExitCode: act.StartFailureExitCode,
 		StartFailureSignal:   act.StartFailureSignal,
+
+		BackendAuthStatus:      act.BackendAuthStatus,
+		BackendAuthLastError:   act.BackendAuthLastError,
+		BackendAuthRefreshable: act.BackendAuthRefreshable,
+	}
+	if !act.BackendAuthSince.IsZero() {
+		as.BackendAuthSince = act.BackendAuthSince.UTC().Format(time.RFC3339)
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
@@ -756,6 +779,11 @@ type HeartbeatPayload struct {
 	ProviderLimitAgents   []string       `json:"provider_limit_agents,omitempty"`
 	Health                map[string]any `json:"health"`
 	DashboardURL          string         `json:"dashboard_url"`
+	// Providers is the per-provider auth/availability roll-up of Agents
+	// (ADR-0024, #12611): redacted, no credential material. Omitted when the
+	// spoke disables provider status or has no enabled agent naming a
+	// backend; an old hub ignores it.
+	Providers []agent.ProviderStatus `json:"providers,omitempty"`
 	// Output-freshness telemetry is optional and backward compatible: older
 	// spokes omit it, and the hub keeps the pre-existing no-write verdict.
 	LastWriteCapableKickAt string `json:"last_write_capable_kick_at,omitempty"`
@@ -1610,6 +1638,7 @@ func overlayFreshStatsAfterCollectTimeout(ctx context.Context, payload *Heartbea
 	payload.ProviderLimitRebuffs = fresh.ProviderLimitRebuffs
 	payload.ProviderLimitHiveWide = fresh.ProviderLimitHiveWide
 	payload.ProviderLimitAgents = fresh.ProviderLimitAgents
+	payload.Providers = fresh.Providers
 	payload.LastWriteCapableKickAt = fresh.LastWriteCapableKickAt
 	payload.LastKickDisposition = fresh.LastKickDisposition
 	payload.LastKickSkipReason = fresh.LastKickSkipReason

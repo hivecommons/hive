@@ -109,7 +109,7 @@ another campaign's interventions, and hypotheses and judged results are
 answers to the question that was asked. So:
 
 - **Experiments are defined only via + New experiment.** Submitting the
-  inline form (see [Defining experiments](#defining-experiments)) creates
+  dialog (see [Defining experiments](#defining-experiments)) creates
   the card immediately, with its own baseline starting at **0 / 672** and a
   stage line saying what happens next (see
   [Experiment stages](#experiment-stages)). A lab with no card shows
@@ -185,8 +185,13 @@ experiment keeps its scope).
 ### Defining experiments
 
 **+ New experiment** is the single place to define an experiment. It opens
-an inline form with the research question, an optional hypothesis, and the
-scope pills. The pills offered are the **allow-list** from the ⚙ dialog's
+a modal dialog titled *New experiment* with the research question, an
+optional hypothesis, and the scope pills; Esc, Cancel or a click on the
+backdrop closes it and focus returns to the button that opened it. Only one
+add/edit dialog is open at a time: pressing **+ New experiment** or ✎ while
+a draft is open is blocked (the open dialog is re-focused and a toast says
+*"Finish or cancel the open experiment form first"*), so a draft is never
+silently replaced. The pills offered are the **allow-list** from the ⚙ dialog's
 *Repos experiments may target* section (`repoTargets`; every project repo
 when the allow-list is empty); no pill selected means *hive-wide*. The ⚙
 dialog's copy says so: *"Experiments can only choose repos from this list;
@@ -194,8 +199,10 @@ none selected = any repo."*
 
 ### Editing an experiment
 
-**✎ Edit** on a card opens the same form pre-filled. What happens on save
-depends on what changed:
+**✎ Edit** on a card opens the same dialog pre-filled, titled *Edit
+experiment #N*, with the help text *"Changing the question or scope restarts
+it; the hypothesis may change freely."* under the title. What happens on
+save depends on what changed:
 
 - **Hypothesis or tags only** — saved in place via
   `PATCH /api/nous/campaigns/{id}`; id, baseline and proposals are kept.

@@ -189,6 +189,15 @@ func defaultPersistPaths() persistPaths {
 	}
 }
 
+// heartbeatProviders is the ADR-0024 per-provider auth/availability roll-up
+// sent in the hub heartbeat; nil when the provider-status knob is off.
+func heartbeatProviders(cfg *config.Config, agents []spoke.AgentSummary) []agent.ProviderStatus {
+	if cfg == nil || !cfg.Providers.StatusEnabled() {
+		return nil
+	}
+	return spoke.ProviderStatusForHeartbeat(agents)
+}
+
 func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) hub.AgentActivity {
 	act := hub.AgentActivity{
 		Paused:         proc.Paused,
@@ -205,6 +214,9 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 		act.BackendAuthStatus = status
 		act.BackendAuthSince = proc.BackendAuth.Since
 		act.BackendAuthLastError = proc.BackendAuth.LastError
+	}
+	if refreshable, known := mgr.AgentCredentialRefreshable(name); known {
+		act.BackendAuthRefreshable = &refreshable
 	}
 	if proc.StartedAt != nil {
 		act.StartedAt = *proc.StartedAt
@@ -1301,6 +1313,7 @@ func (b *boot) wireBootClosures() {
 			if proc.BackendOverride != "" {
 				act.Backend = proc.BackendOverride
 			}
+			spoke.ApplyBackendAuth(&act, b.agentMgr, name, proc)
 			if proc.StartedAt != nil {
 				act.StartedAt = *proc.StartedAt
 			}
@@ -2385,6 +2398,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// config, same bead evidence, same BlocksMerge predicate) and asks
 	// intent.EvaluateForAppSelfMerge before every self-merge.
 	autoMergeOpts.IntentGate = selfMergeIntentGate(b.cfg, b.beadStores)
+	// Review gate (#12592): the same review-verdicts.json the human lane
+	// reads, on the re-verified head immediately before every self-merge.
+	// governor.review_gate.mode (default shadow), review.require_approval
+	// and review.shadow are read through b.cfg on every evaluation. The
+	// audit sink resolves b.dashSrv lazily: bootDashboard has not run yet.
+	autoMergeOpts.ReviewGate = selfMergeReviewGate(b.cfg, b.logger, func(e automerge.ReviewGateEvaluation) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLogRecord("system", reviewEvaluatedAuditAction, reviewEvaluatedAuditDetail(e), "", e.Repo, e.Number)
+		}
+	})
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
@@ -4039,6 +4062,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// layout each agent has its own HOME, so the shared credential path is empty
 	// even for authenticated agents (see pkg/agent/authprobe.go).
 	dashboard.SetAgentAuthProvider(b.agentMgr.AgentAuthAvailable)
+	dashboard.SetAgentRefreshableProvider(b.agentMgr.AgentCredentialRefreshable)
 
 	// PR follow-up resume counters on /metrics (#9583).
 	dashboard.SetPRFollowUpCountersProvider(prFollowUpMetricsCounters)
@@ -4684,6 +4708,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				ProviderLimitRebuffs:    providerLimitRebuffs,
 				ProviderLimitHiveWide:   providerLimitHiveWide,
 				ProviderLimitAgents:     providerLimitAgents,
+				Providers:               heartbeatProviders(b.cfg, agents),
 				LastWriteCapableKickAt:  lastWriteKickAt,
 				LastKickDisposition:     kickDisposition,
 				LastKickSkipReason:      kickSkipReason,
@@ -5053,6 +5078,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						ProviderLimitRebuffs:    providerLimitRebuffs,
 						ProviderLimitHiveWide:   providerLimitHiveWide,
 						ProviderLimitAgents:     providerLimitAgents,
+						Providers:               heartbeatProviders(b.cfg, agents),
 						LastWriteCapableKickAt:  lastWriteKickAt,
 						LastKickDisposition:     kickDisposition,
 						LastKickSkipReason:      kickSkipReason,
@@ -5656,6 +5682,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					ProviderLimitRebuffs:    providerLimitRebuffs,
 					ProviderLimitHiveWide:   providerLimitHiveWide,
 					ProviderLimitAgents:     providerLimitAgents,
+					Providers:               heartbeatProviders(b.cfg, agents),
 					LastWriteCapableKickAt:  lastWriteKickAt,
 					LastKickDisposition:     kickDisposition,
 					LastKickSkipReason:      kickSkipReason,

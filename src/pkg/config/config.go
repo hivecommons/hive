@@ -91,6 +91,9 @@ type Config struct {
 	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
 	// at pack apply and by PUT /api/config/agent/{name}/models.
 	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// Providers configures the read-only per-provider auth/availability
+	// status (ADR-0024). See ProvidersConfig.
+	Providers ProvidersConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
 	// Issues tunes issue lifecycle automation. Zero value keeps the safe
 	// defaults: close issues after their fix PR merges, and backfill hourly.
 	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
@@ -2325,6 +2328,51 @@ type GovernorConfig struct {
 	Claims ClaimsConfig `yaml:"claims,omitempty" json:"claims,omitempty"`
 	// QuestionAutoclose closes answered question issues (#9584). Default off.
 	QuestionAutoclose QuestionAutocloseConfig `yaml:"question_autoclose,omitempty" json:"question_autoclose,omitempty"`
+	// ReviewGate configures the swarm-review gate the self-merge lane
+	// evaluates on the App's own PRs before merging (hivecommons/hive#12592).
+	// Zero value = shadow: record what the gate would have held, merge as
+	// before. See ReviewGateConfig.
+	ReviewGate ReviewGateConfig `yaml:"review_gate,omitempty" json:"review_gate,omitempty"`
+}
+
+// Review gate modes (GovernorConfig.ReviewGate.Mode, hivecommons/hive#12592).
+const (
+	// ReviewGateModeOff does not evaluate the gate on the self-merge lane
+	// (review.require_approval / review.shadow still apply).
+	ReviewGateModeOff = "off"
+	// ReviewGateModeShadow evaluates the gate and records
+	// shadow.review_gate.would_have_held on the evidence bundle, never
+	// withholding a merge. The default.
+	ReviewGateModeShadow = "shadow"
+	// ReviewGateModeEnforce withholds the self-merge until the swarm has
+	// approved the head (aggregate approve in review-verdicts.json).
+	ReviewGateModeEnforce = "enforce"
+)
+
+// ReviewGateConfig is governor.review_gate. The effective mode on the
+// self-merge lane is the strictest of Mode, review.require_approval
+// (enforce) and review.shadow (shadow); no knob weakens another.
+type ReviewGateConfig struct {
+	// Mode is off | shadow | enforce; "" means shadow.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+}
+
+// ValidReviewGateModes are the accepted governor.review_gate.mode values.
+var ValidReviewGateModes = map[string]bool{
+	"":                    true,
+	ReviewGateModeOff:     true,
+	ReviewGateModeShadow:  true,
+	ReviewGateModeEnforce: true,
+}
+
+// ModeOrDefault returns the configured mode with the shadow default applied.
+func (r ReviewGateConfig) ModeOrDefault() string {
+	switch r.Mode {
+	case ReviewGateModeOff, ReviewGateModeEnforce:
+		return r.Mode
+	default:
+		return ReviewGateModeShadow
+	}
 }
 
 // FleetReportConfig controls upstream fleet self-reporting

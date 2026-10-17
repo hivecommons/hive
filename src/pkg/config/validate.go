@@ -206,6 +206,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if !ValidateCadenceScope(c.Governor.CadenceScope) {
 		return fmt.Errorf("governor: invalid cadence_scope %q (must be aggregate or per_repo)", c.Governor.CadenceScope)
 	}
+	if !ValidReviewGateModes[c.Governor.ReviewGate.Mode] {
+		return fmt.Errorf("governor: invalid review_gate.mode %q (must be off, shadow or enforce)", c.Governor.ReviewGate.Mode)
+	}
 	if err := ValidateBobSessionLabel("governor.bob.session_prefix", strings.TrimSpace(c.Governor.Bob.SessionPrefix)); err != nil {
 		return err
 	}

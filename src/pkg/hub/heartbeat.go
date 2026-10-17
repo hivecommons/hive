@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -42,6 +43,9 @@ type AgentSummary struct {
 	BackendAuthStatus    string                `json:"backendAuthStatus,omitempty"`
 	BackendAuthSince     string                `json:"backendAuthSince,omitempty"`
 	BackendAuthLastError string                `json:"backendAuthLastError,omitempty"`
+	// BackendAuthRefreshable is claude.HasUsableToken over the agent's own
+	// credential (ADR-0024); nil = unknown (non-Claude backend or old spoke).
+	BackendAuthRefreshable *bool `json:"backendAuthRefreshable,omitempty"`
 }
 
 type AgentRestartTelemetry struct {
@@ -83,6 +87,8 @@ type AgentActivity struct {
 	BackendAuthStatus    string
 	BackendAuthSince     time.Time
 	BackendAuthLastError string
+	// BackendAuthRefreshable — see the matching AgentSummary field.
+	BackendAuthRefreshable *bool
 }
 
 func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
@@ -112,6 +118,8 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		StartFailureSignal:   act.StartFailureSignal,
 		BackendAuthStatus:    act.BackendAuthStatus,
 		BackendAuthLastError: act.BackendAuthLastError,
+
+		BackendAuthRefreshable: act.BackendAuthRefreshable,
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
@@ -249,6 +257,7 @@ type HeartbeatPayload struct {
 	ProviderLimitRebuffs         int                             `json:"provider_limit_rebuffs,omitempty"`
 	ProviderLimitHiveWide        bool                            `json:"provider_limit_hive_wide,omitempty"`
 	ProviderLimitAgents          []string                        `json:"provider_limit_agents,omitempty"`
+	Providers                    []agent.ProviderStatus          `json:"providers,omitempty"`
 	Health                       map[string]any                  `json:"health"`
 	DashboardURL                 string                          `json:"dashboard_url"`
 	LastWriteCapableKickAt       string                          `json:"last_write_capable_kick_at,omitempty"`

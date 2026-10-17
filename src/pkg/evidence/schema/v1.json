@@ -161,6 +161,7 @@
         "would_have_held": {"type": "boolean"},
         "reason": {"type": "string"},
         "tier": {"type": "string"},
+        "lane": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "evaluated_at": {"type": "string", "format": "date-time"}
       }

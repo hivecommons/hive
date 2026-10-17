@@ -254,8 +254,8 @@ PRs`, and the operator glyphs between cards make the full strip read like
 BLOCKED / NEEDS-HUMAN + 22 OUTSIDE`. The `outside` tile is server-side and is
 broken down in `/api/status` as `actionableNow.outside.breakdown[]`, with each
 row naming the count, rule, current setting, and how to change it for this
-hive. The rows cover hard-suppress labels (`needs-direction`,
-`needs-decision`, `needs-spec`; `needs-human` is counted under
+hive. The rows cover hard-suppress labels (`needs-decision`, the
+deprecated legacy `needs-direction`, `needs-spec`; `needs-human` is counted under
 blocked/needs-human), exempt labels from `governor.labels.exempt` plus permanent
 exempt labels, reporter-trust triage from
 `project.issue_filter.reporter_trust`, require-label filtering from
@@ -284,7 +284,7 @@ and exposes the editable rows.
 
 | Bucket | Definition | Rule/config source | How to change |
 | --- | --- | --- | --- |
-| `needs-direction` | Issue is waiting for maintainer direction before agents may work it. | Labels in `project.issue_filter.hard_suppress_labels.needs_direction`; default `needs-direction`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
+| `needs-direction` (deprecated) | Legacy alias of `needs-decision`, retired in hivecommons/hive#12683: the hive migrates the label to `needs-decision`, so this bucket drains toward zero. Issue is waiting for maintainer direction before agents may work it. | Labels in `project.issue_filter.hard_suppress_labels.needs_direction`; default `needs-direction`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
 | `needs-decision` | Issue is waiting for a maintainer decision. | Labels in `project.issue_filter.hard_suppress_labels.needs_decision`; default `needs-decision`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
 | `needs-spec` | Issue needs specification or acceptance criteria. | Labels in `project.issue_filter.hard_suppress_labels.needs_spec`; default `needs-spec`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
 | Exempt labels | Issue or PR carries a deny-list label and is never agent work. | `governor.labels.exempt` plus permanent labels such as `do-not-merge`. | Settings → Labels → Exempt labels, or edit `hive.yaml`. |

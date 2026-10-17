@@ -12,10 +12,28 @@ component.
 
 ```bash
 curl -s http://<dashboard>/api/status \
-  | jq '.agents[] | select(.backendAuthStatus) | {name, backendAuthStatus, backendAuthSince, backendAuthLastError}'
+  | jq '.agents[] | select(.backendAuthStatus) | {name, backendAuthStatus, backendAuthSince, backendAuthLastError, backendAuthRefreshable}'
 ```
 
-Agents that are `ok` are omitted from those fields. Then size it:
+Agents that are `ok` are omitted from those fields. `backendAuthRefreshable`
+is present only for Claude agents: `true` means the credential on disk still
+has a live access token or refresh grant (`claude.HasUsableToken`), so a CLI
+restart heals it; `false` means a human must log in.
+
+For the per-provider view, read the `providers` block (the same block the hub
+heartbeat carries, see
+[provider auth vs availability](fleet-health.md#provider-auth-vs-availability-12611)):
+
+```bash
+curl -s http://<dashboard>/api/status | jq '.providers'
+```
+
+`auth_state` tells you whether to log in; `availability_state` tells you
+whether the provider is serving. A provider that is `needs-login` with
+availability `unknown` is an auth problem; one that is `usable` but
+`unavailable` or `quota-exhausted` is not, and a login will not fix it.
+
+Then size it:
 
 | What you see | Impact | Urgency |
 |---|---|---|
@@ -33,7 +51,7 @@ recovered and no action is needed.
 | `backendAuthStatus` | First action |
 |---|---|
 | `unlicensed` | Check the seat at <https://github.com/settings/copilot>. If it is active, the hive is presenting a token the account no longer owns: follow the `/login` recovery in [troubleshooting.md](troubleshooting.md). |
-| `token-expired` | Run `/login` in any agent's Terminal with a licensed identity and wait about 30 seconds for the reconciler; affected agents relaunch onto the new token. |
+| `token-expired` | If `backendAuthRefreshable` is `true` (provider `auth_state: refreshable`), restart the affected agents: Claude Code redeems the refresh grant on start and no login is needed. Otherwise run `/login` in any agent's Terminal with a licensed identity and wait about 30 seconds for the reconciler; affected agents relaunch onto the new token. |
 | `forbidden` | Cause is undetermined (bare 403). Read which credential was refused (dashboard model dropdown hover, or the `copilot model discovery rejected by upstream` log line's `credential` field) before re-logging in; an org policy denial is not fixed by a new login. |
 | `unreachable` | The inference backend is down or unroutable. Check the backend's own health and network path from the pod; re-login will not help. |
 | `quota` | The provider is refusing calls on quota. Wait for the window to reset, add quota, or switch the agents to another backend. Do not restart agents in a loop. |
@@ -56,6 +74,9 @@ If the status is still failing after two ticks, do not keep re-running
   is deliberately checked before every other verdict signal.
 - Do not paste tokens into issues, fleet reports or chat. `backendAuthLastError`
   is a truncated pane line; review it before sharing.
+- Do not script keepalive calls or copy credential files between agents to
+  keep a provider "warm". Hive is not a credential refresh authority for any
+  provider ([ADR-0024](adr/0024-provider-credential-lifecycle.md)).
 
 After an outage lasting more than one tick, record it with the incident
 write-up your team uses.

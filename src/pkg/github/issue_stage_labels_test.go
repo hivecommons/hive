@@ -446,3 +446,50 @@ func TestSyncIssueStageLabels_HealsDuplicateStageLabels(t *testing.T) {
 		t.Fatalf("unchanged payload must not read or write (gets=%d removed=%v); the next cycle's payload carries the duplicate", fake.gets[13], fake.removed[13])
 	}
 }
+
+// hivecommons/hive#12683: needs-direction is retired in favour of
+// needs-decision. The reconciler migrates it once; until then (and for the
+// issue that carries only the legacy label) it still parks at 085.
+func TestSyncIssueStageLabels_MigratesNeedsDirection(t *testing.T) {
+	cases := []struct {
+		name       string
+		labels     []string
+		wantAdded  []string
+		wantRemove []string
+	}{
+		{"legacy only", []string{"needs-direction", stagelabels.NeedsDecision.Label()}, []string{"needs-decision"}, []string{"needs-direction"}},
+		{"legacy only, stage not yet derived", []string{"needs-direction"}, []string{"needs-decision", stagelabels.NeedsDecision.Label()}, []string{"needs-direction"}},
+		{"both present is idempotent", []string{"needs-direction", "needs-decision", stagelabels.NeedsDecision.Label()}, nil, []string{"needs-direction"}},
+		{"already migrated", []string{"needs-decision", stagelabels.NeedsDecision.Label()}, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newIssueStageServer(t)
+			c := issueStageTestClient(t, fake.srv, true)
+			result := &ActionableResult{}
+			appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 7, Labels: tc.labels}, "filtered", "needs-decision")
+			res := syncSeeded(fake, c, result, stagelabels.NewStore("", stageNow), stageNow())
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if got := strings.Join(fake.added[7], ","); got != strings.Join(tc.wantAdded, ",") {
+				t.Errorf("added %q, want %v", got, tc.wantAdded)
+			}
+			if got := strings.Join(fake.removed[7], ","); got != strings.Join(tc.wantRemove, ",") {
+				t.Errorf("removed %q, want %v", got, tc.wantRemove)
+			}
+			if migrated := len(tc.wantRemove) > 0; (res.DirectionMigrated == 1) != migrated {
+				t.Errorf("DirectionMigrated = %d, want migrated=%v", res.DirectionMigrated, migrated)
+			}
+		})
+	}
+}
+
+func TestIssueStageFor_LegacyNeedsDirectionStillParks(t *testing.T) {
+	in := IssueStageInput{Labels: []string{"needs-direction"}}
+	if got, _, _ := IssueStageFor(in, nil); got != stagelabels.NeedsDecision {
+		t.Fatalf("stage = %s, want 085", got)
+	}
+	if !hasHardSuppressIssueLabel(in.Labels) {
+		t.Fatal("needs-direction must still hard-suppress")
+	}
+}
