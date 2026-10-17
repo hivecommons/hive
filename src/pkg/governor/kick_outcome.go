@@ -138,6 +138,7 @@ func (g *Governor) scheduleContinuousLocked(agentName string, endedAt time.Time)
 	cooldown := ac.EffectiveContinuousCooldown()
 	st := g.state.Continuous[agentName]
 	st.NextKick = endedAt.Add(cooldown)
+	st.LastKickEnd = endedAt
 	st.BackoffUntil = time.Time{}
 	st.Backoff = 0
 	st.Failures = 0
@@ -244,4 +245,44 @@ func (g *Governor) seedKickOutcomesFromHistoryLocked() {
 			At: rec.Timestamp, KickAt: rec.Timestamp, Rekicked: true,
 		}
 	}
+}
+
+// NextContinuousKickAt returns the earliest pending continuous re-kick across
+// agents that are continuous in the current mode, and the agent it belongs to.
+// A zero time means nothing is scheduled. The run loop arms a wake timer on
+// it so a continuous agent is re-kicked when its cooldown elapses instead of
+// at the next cadence eval tick — on a spoke with eval_interval_webhook_s=900
+// the reviewer otherwise sat idle at its prompt for 7–15 minutes after every
+// "kick turn ended", which an operator read as "continuous mode is broken".
+// Backed-off agents are included: their NextKick already equals BackoffUntil.
+func (g *Governor) NextContinuousKickAt() (time.Time, string) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	var earliest time.Time
+	var who string
+	for name, st := range g.state.Continuous {
+		if st.NextKick.IsZero() || st.Blocked != "" {
+			continue
+		}
+		if _, ok := g.agents[name]; !ok || !g.agentContinuousInCurrentModeLocked(name) {
+			continue
+		}
+		if earliest.IsZero() || st.NextKick.Before(earliest) {
+			earliest, who = st.NextKick, name
+		}
+	}
+	return earliest, who
+}
+
+// SeedContinuousNextKickForTest overrides a continuous agent's NextKick so a
+// test can make its re-kick due without a sleeping clock.
+func (g *Governor) SeedContinuousNextKickForTest(agentName string, at time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state.Continuous == nil {
+		g.state.Continuous = make(map[string]ContinuousState)
+	}
+	st := g.state.Continuous[agentName]
+	st.NextKick = at
+	g.state.Continuous[agentName] = st
 }

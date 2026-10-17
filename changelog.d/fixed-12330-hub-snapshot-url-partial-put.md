@@ -1,1 +1,0 @@
-- Partial `PUT /api/config/governor/hub` requests that omit `snapshot_url` no longer clear `hub.snapshot_url`; an explicit empty string still clears it (#12330).

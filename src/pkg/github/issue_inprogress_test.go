@@ -45,7 +45,10 @@ func newInProgressRelayServer(t *testing.T) *inProgressRelayServer {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/42":
-			_, _ = io.WriteString(w, `{"number":42,"labels":[]}`)
+			_, _ = io.WriteString(w, `{"number":42,"labels":[],"updated_at":"2026-10-14T14:00:00Z"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/43":
+			// 43 already carries a claim's labels and the retired mark.
+			_, _ = io.WriteString(w, `{"number":43,"labels":[{"name":"stage/030-pr-in-progress"},{"name":"hive/in-progress"},{"name":"bug"}],"updated_at":"2026-10-14T14:00:00Z"}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/o/r/labels/"):
 			_, _ = io.WriteString(w, `{"name":"x"}`)
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
@@ -148,7 +151,7 @@ func TestIssueRequestWatcher_ClaimAppliesInProgressLabelAndStartMark(t *testing.
 	if len(labels) != 1 {
 		t.Fatalf("expected one label call, got %d: %v", len(labels), labels)
 	}
-	if strings.Join(labels[0], ",") != "hive/claimed-by-scanner,"+InProgressLabel {
+	if strings.Join(labels[0], ",") != InProgressLabel+",hive/claimed-by-scanner" {
 		t.Fatalf("labels = %v", labels[0])
 	}
 	if len(comments) != 1 {
@@ -194,13 +197,14 @@ func TestClearInProgressForPR(t *testing.T) {
 	enableInProgress(c, "hive-a", time.Hour)
 	c.clearInProgressForPR(context.Background(), "o/r", []int{42, 0, 43})
 	added, _, removed := fake.snapshot()
-	// Every claim-side label comes off blind (a 404 is a no-op) and the
-	// issue moves to stage/040-covered-by-pr: three removals + one add each.
-	if len(removed) != 2*len(inProgressTriggerLabels) {
-		t.Fatalf("removed = %v, want %d removals", removed, 2*len(inProgressTriggerLabels))
+	// Each issue is re-read and only the claim-side labels it carries come
+	// off (#42 has none, #43 has the stage and the retired mark), journaled
+	// against that read; both move to stage/040-covered-by-pr.
+	if len(removed) != 2 {
+		t.Fatalf("removed = %v, want the two labels #43 carried", removed)
 	}
 	for _, p := range removed {
-		if !strings.Contains(p, "/labels/stage/0") && !strings.HasSuffix(p, "/labels/hive/in-progress") && !strings.HasSuffix(p, "/labels/hive%2Fin-progress") {
+		if !strings.Contains(p, "/issues/43/labels/") || (!strings.Contains(p, "stage/030") && !strings.Contains(p, "in-progress")) {
 			t.Errorf("unexpected removal path %q", p)
 		}
 	}

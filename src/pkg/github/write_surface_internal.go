@@ -49,8 +49,12 @@ const (
 	AuditActionHoldMigrationLabelAdded = "hold_migration_label_added"
 	// AuditActionOriginLabelMigrated is recorded for each open item the
 	// one-time provenance-label reconciler moves from a retired name
-	// (from-review) to its origin/* replacement (origin_labels.go).
+	// (from-review, origin/review) to origin/reviewer (origin_labels.go).
 	AuditActionOriginLabelMigrated = "origin_label_migrated"
+	// AuditActionHiveIDLabelRetired is recorded for each open item the
+	// boot-time self-heal sweep strips the retired hive/<hive-id> provenance
+	// label from (hive_id_label_retire.go, hivecommons/hive#12539).
+	AuditActionHiveIDLabelRetired = "hive_id_label_retired"
 	// AuditActionReporterTrustWaitNoticed is recorded when the core poller
 	// posts the one-shot reporter-trust wait explanation comment.
 	AuditActionReporterTrustWaitNoticed = "reporter_trust_wait_noticed"
@@ -87,6 +91,7 @@ func InternalWriteAuditActions() []string {
 		AuditActionFleetReportRecovered,
 		AuditActionHoldMigrationLabelAdded,
 		AuditActionOriginLabelMigrated,
+		AuditActionHiveIDLabelRetired,
 		AuditActionReporterTrustWaitNoticed,
 		AuditActionReporterTrustWaitCleared,
 	}

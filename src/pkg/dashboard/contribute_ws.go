@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fixqueue"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -118,6 +119,9 @@ type ContributorConnection struct {
 	// task id (hivecommons/hive#12436). They never replace currentTask: a
 	// spawned fix runs beside the primary task and a preempting one parks it.
 	fixTasks map[string]*WSTaskAssign
+	// fixTasksAt is when each fixTasks entry was dispatched, for the fleet
+	// view's started_at (hivecommons/hive#12502).
+	fixTasksAt map[string]time.Time
 	// currentTaskGen is the assignment GENERATION stamped on currentTask (kubestellar/
 	// hive#2568, the Gate). It is a monotonically increasing token minted per
 	// assignment (task_assign, and the task_progress RESUME path that adopts a task).
@@ -838,6 +842,10 @@ type ContributeWSHub struct {
 	fixSched      *fixqueue.Scheduler
 	fixOwners     map[string]map[string]bool
 	fixDispatched func(*ContributorConnection, WSMessage)
+	// stageStore is the stage-label memory the fleet view reads "PRs returned
+	// to this contributor" from (hivecommons/hive#12502). Nil means the
+	// process-wide stagelabels.Shared(); tests inject an in-memory store.
+	stageStore *stagelabels.Store
 	// claimCommenter is the forge seam issue claims are posted through
 	// (hivecommons/hive#8380). Nil means "use the wired GitHub client"; tests
 	// inject a recorder. See contribute_claims.go.

@@ -39,12 +39,20 @@ func (s *coveredByPRLabelState) mark(key string) {
 var legacyCoveredByPRLabels = []string{stagelabels.LegacyCoveredByPR, stagelabels.LegacyCoveredByPRASCII}
 
 // HasCoveredByPRLabel reports whether labels say an open PR covers the
-// issue: the `stage/040-covered-by-pr` label, any mirrored PR stage past it
-// (the issue carries its covering PR's stage, hivecommons/hive#12436), or
-// one of the retired spellings still awaiting migration.
+// issue: the `stage/040-covered-by-pr` label, a PR stage past it that an
+// older build mirrored onto the issue (hivecommons/hive#12451; the
+// reconciler clamps it back to 040), or one of the retired spellings still
+// awaiting migration. stage/085 is ambiguous: an older build mirrored a
+// covering PR's 085 onto the issue (PR evidence), while the reconciler
+// writes 085 to an issue parked on a person by an escalation label with no
+// PR at all. The parking label tells them apart: 085 alongside
+// needs-human/needs-direction/needs-decision/needs-spec is not covered; 085
+// on its own is a covering PR's stage awaiting the clamp to 040.
 func HasCoveredByPRLabel(labels []string) bool {
-	if stagelabels.CarriesStageAtLeast(labels, stagelabels.CoveredByPR) {
-		return true
+	if cur := stagelabels.Current(labels); cur != stagelabels.None && !cur.Before(stagelabels.CoveredByPR) {
+		if cur != stagelabels.NeedsDecision || !hasHardSuppressIssueLabel(labels) {
+			return true
+		}
 	}
 	for _, legacy := range legacyCoveredByPRLabels {
 		if issueHasLabel(labels, legacy) {

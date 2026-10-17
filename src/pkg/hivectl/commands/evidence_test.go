@@ -250,18 +250,20 @@ func TestEvidenceExportFilters(t *testing.T) {
 		}
 		return strings.Join(keys, " ")
 	}
-	// Duration: only the newest head of #7 was created in the last day.
-	if got := prs("--since", "24h"); got != "o/r#7@bbbb222" {
+	// Duration: only #7's newer head was written in the last day, but the PR
+	// opened with its older head at t0, so it is outside the window.
+	if got := prs("--since", "24h"); got != "" {
 		t.Fatalf("--since 24h = %q", got)
 	}
-	// RFC3339 at t0 keeps everything created at or after it. The older head of
-	// #7 is in range too but loses to the newer one.
+	// RFC3339 at t0 keeps the PRs opened at or after it; #7 shows its newer
+	// head.
 	if got := prs("--since", "2026-10-01T12:00:00Z"); got != "a/z#1@ffff666 o/r#7@bbbb222" {
 		t.Fatalf("--since rfc3339 = %q", got)
 	}
-	// --since applies before latest-per-PR selection, as the summary API does:
-	// a cutoff just after t0 drops a/z#1, #3 and the older head of #7.
-	if got := prs("--since", "2026-10-01T12:00:01Z"); got != "o/r#7@bbbb222" {
+	// --since windows on PR open time after the per-PR fold, as the summary
+	// API does: a cutoff just after t0 drops #7 too, though its newer head
+	// was created after the cutoff.
+	if got := prs("--since", "2026-10-01T12:00:01Z"); got != "" {
 		t.Fatalf("--since after t0 = %q", got)
 	}
 	if got := prs("--repo", "O/R"); got != "o/r#3@eeee555 o/r#7@bbbb222" {
@@ -302,6 +304,104 @@ func TestEvidenceExportUsageErrors(t *testing.T) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestEvidenceExportFoldsLiveAndBackfilled pins that the export folds a PR's
+// live and backfilled bundles into one row exactly as GET
+// /api/evidence/summary does (#12516): verdicts and identity from the newest
+// (live) bundle, outcome, merged_at, links and opened_at from the backfilled
+// one, and --since on PR open time. The old newest-bundle rule exported both
+// PRs below as open and kept them in an October window.
+func TestEvidenceExportFoldsLiveAndBackfilled(t *testing.T) {
+	root := t.TempDir()
+	opened := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
+	reviewed := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	yes := true
+	bundle := func(n int, head string, created time.Time) *evidence.Bundle {
+		return &evidence.Bundle{
+			SchemaVersion: evidence.SchemaVersion, ID: evidence.BundleID("o/r", n, head), Repo: "o/r", Number: n,
+			Author: evidence.Author{Login: "bee", Kind: evidence.AuthorAgent}, BaseSHA: "base", HeadSHA: head,
+			CreatedAt: created, UpdatedAt: created,
+		}
+	}
+	backfilled := func(b *evidence.Bundle, state string) *evidence.Bundle {
+		b.Backfilled = true
+		b.Backfill = &evidence.Backfill{Source: "github-api", At: reviewed.Add(time.Hour), State: state}
+		return b
+	}
+	bf5 := backfilled(bundle(5, "1111aaa", opened), evidence.BackfillStateMerged)
+	bf5.Merge = &evidence.MergeEvent{Actor: "maintainer", Method: "squash", At: opened.Add(48 * time.Hour), SHA: "m5", OpenedAt: opened}
+	bf5.RevertedBy = []string{evidence.BundleID("o/r", 9, "9999fff")}
+	live5 := bundle(5, "2222bbb", reviewed)
+	live5.Verdicts = []evidence.Verdict{{Perspective: "security", Verdict: "approve", Model: "m-sec", Backend: "openai", Confidence: 0.9, RecordedAt: reviewed}}
+	live5.Shadow = &evidence.Shadow{ReviewGate: &evidence.ShadowGate{WouldHaveHeld: &yes, EvaluatedAt: reviewed}}
+	bf6 := backfilled(bundle(6, "3333ccc", opened.Add(24*time.Hour)), evidence.BackfillStateClosed)
+	live6 := bundle(6, "4444ddd", reviewed)
+	for _, b := range []*evidence.Bundle{bf5, live5, bf6, live6} {
+		if err := evidence.Seal(b, nil); err != nil {
+			t.Fatal(err)
+		}
+		path := ghpkg.ReviewEvidencePath(root, b.Repo, b.Number, b.HeadSHA)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, mustJSON(t, b), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := httptest.NewServer(nil)
+	defer server.Close()
+
+	stdout, _, err := execute(t, server, "", "evidence", "export", "--root", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []evidenceExportRow
+	for _, l := range strings.Split(strings.TrimRight(stdout, "\n"), "\n") {
+		var r evidenceExportRow
+		if err := json.Unmarshal([]byte(l), &r); err != nil {
+			t.Fatalf("bad jsonl %q: %v", l, err)
+		}
+		rows = append(rows, r)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("want one row per PR, got %d:\n%s", len(rows), stdout)
+	}
+	r5, r6 := rows[0], rows[1]
+	if r5.HeadSHA != "2222bbb" || len(r5.Verdicts) != 1 || r5.ShadowReviewWouldHaveHeld == nil || !r5.CreatedAt.Equal(reviewed) {
+		t.Errorf("PR 5 must carry the live bundle's head, verdicts and shadow: %+v", r5)
+	}
+	if r5.Outcome != "merged" || r5.MergedAt == nil || !r5.MergedAt.Equal(bf5.Merge.At) || len(r5.RevertedBy) != 1 || !r5.OpenedAt.Equal(opened) {
+		t.Errorf("PR 5 must carry the backfilled merge, revert link and open time: %+v", r5)
+	}
+	if r6.HeadSHA != "4444ddd" || r6.Outcome != "closed" || r6.MergedAt != nil || !r6.OpenedAt.Equal(opened.Add(24*time.Hour)) {
+		t.Errorf("PR 6 must be closed with the backfilled open time: %+v", r6)
+	}
+
+	// Both PRs opened in September; their October reviews do not pull them
+	// into an October window.
+	if out, _, err := execute(t, server, "", "evidence", "export", "--root", root, "--since", "2026-10-01T00:00:00Z"); err != nil || out != "" {
+		t.Fatalf("--since October = %q (err %v), want no rows", out, err)
+	}
+
+	csvOut, _, err := execute(t, server, "", "evidence", "export", "--root", root, "--format", "csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recs, err := csv.NewReader(strings.NewReader(csvOut)).ReadAll()
+	if err != nil || len(recs) != 3 {
+		t.Fatalf("csv = %q (err %v)", csvOut, err)
+	}
+	col := map[string]int{}
+	for i, c := range recs[0] {
+		col[c] = i
+	}
+	if got := recs[1][col["opened_at"]]; got != "2026-09-20T09:00:00Z" {
+		t.Errorf("csv opened_at = %q", got)
+	}
+	if got := recs[2][col["outcome"]]; got != "closed" {
+		t.Errorf("csv outcome = %q", got)
 	}
 }
 

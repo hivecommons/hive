@@ -218,6 +218,67 @@ func TestPlanDispatchRevisitsFrozenPRWithReviseKick(t *testing.T) {
 	}
 }
 
+func TestPlanDispatchRevisitsNonApproveAfterBodyDigestChanges(t *testing.T) {
+	now := time.Date(2026, 10, 17, 2, 30, 0, 0, time.UTC)
+	pr := PullRequest{
+		Repo:       "hivecommons/hive",
+		Number:     12417,
+		Title:      "fix claim wording",
+		Author:     "clubanderson",
+		HeadSHA:    "bd776a6",
+		UpdatedAt:  now,
+		BodyDigest: PullRequestBodyDigest("fix claim wording", "Refs #12397"),
+	}
+	oldDigest := PullRequestBodyDigest(pr.Title, "Closes #12397")
+	artifact := Artifact{Items: []Aggregate{{
+		Repo:       pr.Repo,
+		Number:     pr.Number,
+		HeadSHA:    pr.HeadSHA,
+		BodyDigest: oldDigest,
+		Verdict:    VerdictChangesRequested,
+		RecordedAt: now.Add(-30 * time.Minute),
+		Perspectives: map[Perspective]Verdict{
+			PerspectiveIntentAlignment: VerdictChangesRequested,
+		},
+	}}}
+	state := DispatchState{Pending: []PendingReview{{
+		Repo:        pr.Repo,
+		Number:      pr.Number,
+		HeadSHA:     pr.HeadSHA,
+		BodyDigest:  oldDigest,
+		Perspective: PerspectiveIntentAlignment,
+		Agent:       "reviewer",
+		Dispatched:  now.Add(-time.Hour),
+	}}}
+
+	set, err := NewPerspectiveSet([]string{"intent-alignment"}, nil)
+	if err != nil {
+		t.Fatalf("NewPerspectiveSet: %v", err)
+	}
+	plan := PlanDispatch([]PullRequest{pr}, artifact, state, DispatchOptions{
+		RequireApproval:      true,
+		FanOut:               true,
+		MaxParallelReviews:   1,
+		MaxPerspectivesPerPR: 1,
+		ReviewerAgents:       []string{"reviewer"},
+		PostComments:         true,
+		AllAuthors:           true,
+		Perspectives:         set,
+		Now:                  now,
+		Agents:               []AgentCapability{{Name: "reviewer", Enabled: true, UsesKick: true}},
+	})
+
+	if len(plan.ReviewKicks) != 1 {
+		t.Fatalf("body-only remediation should re-arm review, got %d kicks", len(plan.ReviewKicks))
+	}
+	if got := plan.State.Pending[0].BodyDigest; got != pr.BodyDigest {
+		t.Fatalf("pending body digest = %q, want %q", got, pr.BodyDigest)
+	}
+	if !strings.Contains(plan.ReviewKicks[0].Message, "--revise") {
+		t.Fatalf("body revisit should revise the existing review:\n%s", plan.ReviewKicks[0].Message)
+	}
+}
+
 // A first review is not a revision: an ordinary dispatch must never carry
 // --revise, or the relay would look for a prior review that does not exist.
 func TestOrdinaryKickDoesNotRevise(t *testing.T) {

@@ -301,6 +301,31 @@ func Load(dir string, since time.Time) ([]Bucket, error) {
 	return out, nil
 }
 
+// Count reports how many snapshot files (raw or hourly bucket) in dir start
+// at or after since, and the start time of the earliest file in dir
+// regardless of since (zero when there are none). It is the file count the
+// dashboard's baseline progress uses (hivecommons/hive#12339), scoped to a
+// window; a missing directory counts as empty.
+func Count(dir string, since time.Time) (n int, first time.Time) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, time.Time{}
+	}
+	for _, e := range entries {
+		at, _, ok := fileKind(e.Name())
+		if !ok || e.IsDir() {
+			continue
+		}
+		if first.IsZero() || at.Before(first) {
+			first = at
+		}
+		if !at.Before(since) {
+			n++
+		}
+	}
+	return n, first
+}
+
 // Store is the hive state time series in one directory. Its methods are safe
 // for concurrent use; a nil *Store is a no-op.
 type Store struct {

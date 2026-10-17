@@ -447,6 +447,9 @@ type kickDispatchDeps struct {
 	backoffRemaining func(agent string) (time.Duration, string, string, bool)
 	// sendKick delivers the kick. A non-nil error means nothing was sent.
 	sendKick func(agent, message string) error
+	// startStoppedAgent starts an agent that is stopped but selected for a
+	// governor kick. A non-nil error means the kick cannot be delivered.
+	startStoppedAgent func(agent string) error
 	// startKickSpan opens the agent.kick tracing span and returns its closer;
 	// the closer takes the SendKick error (nil on success) so a failed kick is
 	// recorded on the span before it ends.
@@ -503,6 +506,14 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 		}
 		endSpan := deps.startKickSpan(msg.Agent)
 		logger.Info("audit: governor kicking agent", "agent", msg.Agent, "trigger", "governor-eval")
+		if err := deps.startStoppedAgent(msg.Agent); err != nil {
+			endSpan(err)
+			logger.Warn("failed to start stopped agent before kick", "agent", msg.Agent, "error", err)
+			if deps.onFailed != nil {
+				deps.onFailed(msg, err)
+			}
+			continue
+		}
 		if err := deps.sendKick(msg.Agent, msg.Message); err != nil {
 			endSpan(err)
 			logger.Warn("failed to send kick", "agent", msg.Agent, "error", err)
@@ -521,6 +532,14 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 		delivered = append(delivered, msg.Agent)
 	}
 	return delivered
+}
+
+func stoppedAgentStartErrorIsBenign(err error) bool {
+	if err == nil {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "already running") || strings.Contains(msg, "launch already in progress")
 }
 
 // advisoryIngestDeps are the side effects of recording an ioscan canary leak

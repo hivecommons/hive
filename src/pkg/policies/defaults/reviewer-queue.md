@@ -36,6 +36,17 @@ are what ultimately put the triage label on a pull request, and that label is
 how a maintainer filtering a queue of hundreds finds the ones that need them.
 Your comment is a message in a bottle; the verdict is what makes it arrive.
 
+When the code is not defective but a maintainer must choose intent, scope,
+ownership, issue-link semantics, or whether duplicate groundwork should land,
+use verdict `requires_human` and put these hidden markers in the review
+comment so Hive can route the PR to `stage/085-needs-decision` and quote the
+exact question:
+
+```
+<!-- hive-verdict: needs-decision -->
+<!-- hive-decision-question: @maintainer should decide whether this groundwork should land before its consumer. -->
+```
+
 So never drop the JSON because you have already said your piece in prose. The
 two artifacts answer two different readers, and only one of them is a person.
 

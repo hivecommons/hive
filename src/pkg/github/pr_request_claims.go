@@ -165,7 +165,8 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 			}
 			base = resolved
 		}
-		comparison, _, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, strings.TrimSpace(req.Head), nil)
+		comparison, resp, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, strings.TrimSpace(req.Head),
+			&gh.ListOptions{PerPage: githubCompareFileLimit})
 		if err != nil {
 			// #5343: same diagnosis as the content gate — an unpushed branch
 			// must be reported as a push-auth failure, not as a bad title.
@@ -175,9 +176,24 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 		if comparison == nil {
 			return "", "", fmt.Errorf("validating PR title against %s/%s diff %s...%s: GitHub returned an empty comparison", owner, repo, base, req.Head)
 		}
+		// The compare endpoint pages its files array; scan every page so an
+		// artifact beyond the first 300 files is still seen.
+		files := comparison.Files
+		for resp != nil && resp.NextPage != 0 && len(files) < prRequestMaxScanFiles {
+			next, r, err := c.client.Repositories.CompareCommits(ctx, owner, repo, base, strings.TrimSpace(req.Head),
+				&gh.ListOptions{PerPage: githubCompareFileLimit, Page: resp.NextPage})
+			if err != nil {
+				return "", "", fmt.Errorf("validating PR title artifacts: %w", err)
+			}
+			if next == nil || len(next.Files) == 0 {
+				break
+			}
+			files = append(files, next.Files...)
+			resp = r
+		}
 		for _, rule := range claimedArtifacts {
 			matched := false
-			for _, file := range comparison.Files {
+			for _, file := range files {
 				if file != nil && rule.fileMatch(file.GetFilename()) {
 					matched = true
 					break

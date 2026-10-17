@@ -1,1 +1,0 @@
-- Hand trusted-bot PRs from the trusted-author tier to the self-authored lane (logged as `trusted-bot-lane`) only while that lane is active, so their real skip reason surfaces without dropping them at lower ACMM levels.

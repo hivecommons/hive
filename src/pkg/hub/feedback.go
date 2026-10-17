@@ -117,6 +117,9 @@ type feedbackIssueResult struct {
 	Number int
 	URL    string
 	ID     int64
+	// Body is populated by the self-report fingerprint search so the relay
+	// can edit the affected block in place.
+	Body string
 }
 type feedbackIssueStatus struct {
 	Owner     string `json:"owner"`

@@ -296,3 +296,68 @@ func TestBuildHeartbeatEvidenceWindows(t *testing.T) {
 		t.Errorf("window keys = %v", spoke.HeartbeatEvidenceWindowKeys)
 	}
 }
+
+// TestHeartbeatEvidenceMatchesSummaryFold pins that the heartbeat evidence
+// block folds a spoke's live + backfilled bundles per PR exactly as
+// GET /api/evidence/summary does (#12516): the same PRs land in the same
+// window by PR open time, with the live verdicts and the forge outcome.
+// Before the shared fold the heartbeat took the newest (live) bundle only,
+// so all three PRs below counted as open in the 24h window.
+func TestHeartbeatEvidenceMatchesSummaryFold(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	backfilled := func(b *evidence.Bundle, state string) *evidence.Bundle {
+		b.Backfilled = true
+		b.Backfill = &evidence.Backfill{Source: "github-api", At: now.Add(-30 * time.Minute), State: state}
+		return b
+	}
+	approve := []evidence.Verdict{{Perspective: "security", Model: "claude-sonnet-5", Verdict: "approve", Confidence: 0.95}}
+
+	// PR 1 (agent): opened 6 days ago, merged by a human on the forge;
+	// reviewed live 2h ago.
+	opened1 := now.Add(-6 * 24 * time.Hour)
+	bf1 := backfilled(evSummaryBundle("a/b", 1, evidence.AuthorAgent, opened1, true, nil, 0, false), evidence.BackfillStateMerged)
+	bf1.Merge.At, bf1.Merge.OpenedAt = opened1.Add(48*time.Hour), opened1
+	live1 := evSummaryBundle("a/b", 1, evidence.AuthorAgent, now.Add(-2*time.Hour), false, approve, 0, true)
+	// PR 2 (human): opened 20 days ago, closed without merge; reviewed 1h ago.
+	bf2 := backfilled(evSummaryBundle("a/b", 2, evidence.AuthorHuman, now.Add(-20*24*time.Hour), false, nil, 0, false), evidence.BackfillStateClosed)
+	live2 := evSummaryBundle("a/b", 2, evidence.AuthorHuman, now.Add(-time.Hour), false, []evidence.Verdict{
+		{Perspective: "quality", Model: "gpt-5.5", Verdict: "changes_requested", Confidence: 0.4},
+	}, 0, true)
+	// PR 3 (bot): opened 60 days ago, merged and reverted; reviewed 3h ago.
+	bf3 := backfilled(evSummaryBundle("a/b", 3, evidence.AuthorBot, now.Add(-60*24*time.Hour), true, nil, 0, false), evidence.BackfillStateMerged)
+	bf3.RevertedBy = []string{"a/b#9@x"}
+	live3 := evSummaryBundle("a/b", 3, evidence.AuthorBot, now.Add(-3*time.Hour), false, approve, 0, true)
+	bundles := []*evidence.Bundle{live1, bf1, live2, bf2, live3, bf3}
+
+	got := buildHeartbeatEvidence(bundles, now, nil)
+	windows := map[string]*spoke.HeartbeatEvidence{"90d": got}
+	hours := map[string]int{"90d": int(evidenceHeartbeatWindow / time.Hour)}
+	for key, h := range spoke.HeartbeatEvidenceWindowKeys {
+		windows[key], hours[key] = got.Windows[key], h
+	}
+	wantN := map[string]int{"24h": 0, "7d": 1, "30d": 2, "90d": 3}
+	for key, hb := range windows {
+		sum := buildEvidenceSummary(bundles, now, hours[key], "", "")
+		if sum.N != wantN[key] {
+			t.Fatalf("%s: summary n = %d, want %d", key, sum.N, wantN[key])
+		}
+		n := 0
+		for _, kind := range []string{evidence.AuthorHuman, evidence.AuthorAgent, evidence.AuthorBot} {
+			h, s := hb.OutcomesByAuthorKind[kind], sum.Outcomes[kind]
+			if h.N != s.N || h.Merged != s.Merged {
+				t.Errorf("%s %s: heartbeat n/merged = %d/%d, summary = %d/%d", key, kind, h.N, h.Merged, s.N, s.Merged)
+			}
+			n += h.N
+		}
+		if n != sum.N {
+			t.Errorf("%s: heartbeat counts %d PRs, summary %d", key, n, sum.N)
+		}
+	}
+	// 90 days: PR 1 merged (approval is not a false approve), PR 2 closed
+	// (changes requested is not a false block), PR 3 merged and reverted
+	// (its live approval is a false approve).
+	if got.Verdicts90d != 3 || got.Merged90d != 2 || got.Reverted14d90d != 1 || got.FalseApprove90d != 1 || got.FalseBlock90d != 0 {
+		t.Errorf("90d = verdicts %d merged %d reverted %d false approve %d false block %d, want 3/2/1/1/0",
+			got.Verdicts90d, got.Merged90d, got.Reverted14d90d, got.FalseApprove90d, got.FalseBlock90d)
+	}
+}

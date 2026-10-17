@@ -55,11 +55,38 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes),",
 		"const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];",
 		"reverted: Number(o.reverted_14d) || 0",
-		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}",
+		"${bar('om', row.merged, 0)}${bar('oc', row.closed, 1)}${bar('or', row.reverted, 2)}${bar('ou', row.unknown, 3)}",
 		"no PRs with an evidence bundle in this window",
-		"Schema v1 bundles record a merge but not a close-without-merge, so closed may read 0.",
+		"A live bundle records a merge only when this hive merged, and never a close-without-merge, so a PR reviewed here and then merged by someone else, closed by hand or still open has no recorded outcome",
+		"it is shown as unknown and excluded from every rate, not counted as open or as not merged.",
 		"Reverted means a reverted_by link to a revert PR within 14 d of merge",
-		"Open PRs are excluded from the merged and reverted rates.",
+		// Unknown-outcome policy (#12514 follow-up): never a denominator, always a count.
+		"prs_outcome_unknown",
+		"unknown: Number(o.unknown) || 0",
+		"outcome unknown ${row.unknown} (not in any rate)",
+		".ev-svg .ev-bar.ou",
+		"const EV_CALIB_MIN_BUCKET_N = 5;",
+		"thin: known < EV_CALIB_MIN_BUCKET_N, merge: evRate(k && k.merged, known), block: evRate(k && k.blocks, n)",
+		"const solid = pts.filter((q) => !q.thin && q.merge != null);",
+		".ev-svg .ev-pt.ev-thin",
+		"fa: evRate(s.approved_not_merged, approvalsKnown), fb: evRate(s.merged_after_enforced_block, blocksKnown)",
+		// #12595: only enforced blocks are false blocks; advisory blocks are
+		// dissent before merge, a count and a share, never an error rate.
+		"const blocksKnown = (Number(s.enforced_blocks) || 0) - (Number(s.enforced_blocked_unknown) || 0);",
+		"advisory += Number(st.advisory_blocks) || 0; dissent += Number(st.dissent_before_merge) || 0;",
+		"Perspective verdicts were advisory on this hive (review.require_approval off); ${dissent} blocks preceded a merge",
+		"Perspective verdicts were advisory on this hive (review.require_approval off); ",
+		"false-block (enforced block, merged anyway)",
+		// #12592: the review gate's shadow observations split by lane.
+		"const lanes = sg.review_gate_by_lane || {};",
+		"[lanes.merge_eligible, 'Review · eligible', 'held'], [lanes.self_merge, 'Review · self-merge', 'held']",
+		"approved_unknown",
+		"blocked_unknown",
+		"false-approve (approved, closed without merge)",
+		"records_ci_pending",
+		"CI still running when captured ${Number(row.ci_pending) || 0}",
+		"CI not green at claim",
+		"${seg('sm', row.merged)}${seg('sr', row.reverted)}${seg('so', row.open)}${seg('su', row.unknown)}",
 		".ev-svg .ev-bar.or",
 		".ev-legend i.om",
 		"dto.complexity_by_repo",
@@ -68,11 +95,39 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"Report-only; Go-only cyclomatic complexity. No causal claim",
 		"evMaintainabilitySvg(complexity, dto.acmm_changes)",
 		"dto.claim_vs_verdict",
-		"evPanel('claim-vs-verdict', 'Claim vs verdict', claimN, evClaimVsVerdictSvg(claims),",
+		"evPanel('claim-vs-verdict', 'CI gate — integrity + convergence', claimN, evCIGateHtml(rec) + evConvergenceSvg(rec.convergence) + evCIRecoveryHtml(rec) + evClaimVsVerdictSvg(claims),",
+		// CI gate: grade A integrity over merged PRs with a known merge-time
+		// state (unknown outside the rate), grade B convergence over settled
+		// agent PRs; red-at-claim is disclosed, not graded.
+		"dto.ci_recovery",
+		"const integrity = evRate(withChecks - breaches, withChecks);",
+		"const abandon = evRate(never, settled);",
+		"const firstPass = evRate(passes['1'], settled - never);",
+		"const grade = evLowerGrade(gradeA, gradeB);",
+		"with no state on the merged head; all outside the rate",
+		"never a breach until GitHub confirms it",
+		"Breach = a REQUIRED check GitHub reports red on the merged head, as the hive’s own merge gate judges it",
+		"a breach is a bypass by the merger, not a fault of the author",
+		"breach = a required check red on the merged head per GitHub, as the merge gate judges",
+		"in flight, ${Number(conv.unknown) || 0} unknown, outside the rates",
+		"['1', 'cp-1', 'green on pass 1'], ['2', 'cp-2', 'pass 2'], ['3', 'cp-3', 'pass 3'], ['4+', 'cp-4', 'pass 4+'], ['never', 'cp-never', 'never (closed unmerged)']",
+		"share green by pass 1 (right axis)",
+		"const EV_GATE_BREACH_GOOD = 0.01;",
+		"const EV_GATE_BREACH_FAIR = 0.03;",
+		"const EV_CONV_PASSES_EXCELLENT = 1.5, EV_CONV_ABANDON_EXCELLENT = 0.05;",
+		"const EV_CONV_PASSES_GOOD = 2.5, EV_CONV_ABANDON_GOOD = 0.10;",
+		"const EV_CONV_PASSES_FAIR = 4, EV_CONV_ABANDON_FAIR = 0.20;",
+		"Number(breaches) === 0 ? 'excellent'",
+		"Disclosed, not graded: at claim",
+		"CI red at claim is by design and is disclosed, not graded",
+		".ev-svg .ev-bar.cp-never",
+		"['recovered_merged', 'cr-rec', 'recovered and merged'], ['green_open', 'cr-green', 'green, still open'], ['abandoned', 'cr-aband', 'abandoned (closed unmerged)'], ['pending', 'cr-pend', 'still red or pending'], ['outcome_unknown', 'cr-unk', 'outcome unknown']",
+		"pol.self_authored_automerge === false",
+		".ev-svg .ev-bar.cr-unk",
 		"no agent-authored PRs with evidence in this window",
-		"['ci_not_green', 'cv-ci', 'CI not green'], ['verdict_not_approve', 'cv-swarm', 'swarm not approve'], ['both', 'cv-both', 'both']",
+		"['ci_not_green', 'cv-ci', 'CI not green at claim'], ['verdict_not_approve', 'cv-swarm', 'swarm not approve'], ['both', 'cv-both', 'both']",
 		"records_empty_ci",
-		"Only agent-authored PRs",
+		"Convergence covers agent-authored PRs only",
 		".ev-svg .ev-bar.cv-both",
 		// Typography / sizing (#evidence-card font bug): the chart is pinned to
 		// its viewBox width so SVG text renders 1:1 at the dashboard's font
@@ -84,32 +139,54 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		".evidence-card { margin-top: var(--sp-4); display:grid; grid-template-columns:repeat(auto-fit, minmax(min(380px, 100%), 1fr));",
 		".evidence-card > .prt-head { grid-column:1 / -1;",
 		"dto.work_balance",
-		"evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance),",
-		"no audited issue opens or closes in this window",
+		"evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance, balanceSrc),",
+		"no issue or PR opens, closes or merges in this window",
+		// Work balance reads "is the queue keeping up?": GitHub-truth issue
+		// opens/closes, PR opens/merges from bundles, week-end queue depth,
+		// throughput ratio graded per series with the lower winning.
+		"dto.work_balance_sources",
+		"Queue at end of ${escapeHtml(String(last.week || ''))}",
+		"open at week end (right axis)",
+		"closed without merge",
+		"issues_github_since",
+		"audit_only_weeks",
+		"Issue opens and closes are GitHub-truth (all authors) from",
+		"audit-log only",
+		"const EV_THROUGHPUT_EXCELLENT = 0.95;",
+		"const EV_THROUGHPUT_GOOD = 0.85;",
+		"const EV_THROUGHPUT_FAIR = 0.70;",
+		"const EV_QUEUE_GROWTH_MAX = 0.10;",
+		"evThroughputGrade(issueRatio, openedTotal, issueGrowth)",
+		"evThroughputGrade(prRatio, prsTotal, prGrowth)",
+		"evLowerGrade(issueGrade, prGrade)",
+		".ev-grade.good",
+		".ev-svg .wb-queue, .ev-legend .wb-queue",
 		"[['human', 'wb-human', 'opened by humans'], ['agent', 'wb-agent', 'opened by agents'], ['bot', 'wb-bot', 'opened by bots']]",
 		"row.throttled ?",
 		"throttle_windows_unavailable",
 		"Throttle windows not reported by this hive",
-		"Issues only, from this hive's audit log",
+		"PR opens, merges and closes come from evidence bundles",
 		".ev-svg .ev-bar.wb-throttle",
 		"'work-balance': (dto) => {",
-		"const EV_BALANCE_STRONG = 0.8;",
-		"const EV_BALANCE_FAIR = 0.5;",
-		"evGrade(ratio, openedTotal, EV_BALANCE_STRONG, EV_BALANCE_FAIR, true)",
-		// Panel 4 (#12368): boundary enforcement.
-		"const counters = dto.write_counters && typeof dto.write_counters === 'object' ? dto.write_counters : null;",
+		// Panel 4 (#12368): boundary enforcement. Headline denominator is every
+		// agent write (hive-mediated + direct), not just proxied ones.
+		"const activity = dto.write_activity && typeof dto.write_activity === 'object' ? dto.write_activity : null;",
 		"const sentinel = dto.sentinel_hits_per_week || {};",
-		"evPanel('boundary-enforcement', 'Boundary enforcement', attemptedN, evWriteCountersSvg(counters) + evSentinelSparkline(sentinel),",
+		"evPanel('boundary-enforcement', 'Boundary enforcement', writesN, evWriteActivitySvg(activity) + evSentinelSparkline(sentinel),",
 		"const EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];",
-		"Object.entries(c.blocked_by_reason || {})",
-		"row.reasons.slice(0, EV_TOP_REASONS)",
-		"no write counters yet (the proxy has not recorded an agent write, or the counter file is absent)",
+		"Object.entries(direct.blocked_by_reason || {})",
+		"reasons.slice(0, EV_TOP_REASONS)",
+		"no agent writes recorded in this window",
 		"no sentinel hits recorded in this window",
-		"${bar('wa', row.attempted, 0, row.attempted)}${bar('wb', row.blocked, 1,",
+		"agent writes blocked</b>",
+		"${bar(row.kind === 'direct' ? 'wa' : 'wm', row.writes, 0, formatNumber(row.writes))}${bar('wb', row.blocked, 1,",
 		`aria-label="Sentinel hits per ISO week"`,
-		"Write counters are proxy-side observations",
-		"Would-block counts from intent verification are not included in these bars",
-		"direct writes that bypass the proxy are invisible here",
+		"direct-write counters recorded since",
+		"would-block counts from intent verification are shown separately in the explainer and never counted as blocked",
+		"Writes that bypass both the hive and the proxy are invisible here",
+		"const EV_BLOCKED_STRONG = 0.01;",
+		"const EV_BLOCKED_FAIR = 0.05;",
+		".ev-legend i.wm",
 		".ev-svg .ev-bar.wb",
 		".ev-legend i.wa",
 	} {
@@ -231,7 +308,12 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evOutcomesSvg",
 		"evCalibrationSvg",
 		"evAccuracySvg",
-		"evWriteCountersSvg",
+		"evWriteActivitySvg",
+		"evCIRecoveryHtml",
+		"evFlowSvg",
+		"evThroughputGrade",
+		"evLowerGrade",
+		"evQueueGrowth",
 		"evSentinelSparkline",
 		"evShadowGateSvg",
 		"evMaintainabilityRows",
@@ -262,7 +344,7 @@ func TestEvidenceCardWindowSelector(t *testing.T) {
 	for _, snippet := range []string{
 		"const EV_WINDOWS = [[24, '24h'], [168, '7d'], [720, '30d']];",
 		"const EV_WINDOW_STORAGE_KEY = 'hive.evidence.window';",
-		"const EV_CUSTOM_MAX_DAYS = 366;",
+		"const EV_CUSTOM_MAX_DAYS = 3 * 366;",
 		"localStorage.setItem(EV_WINDOW_STORAGE_KEY, JSON.stringify(evWindow))",
 		"return evWindow.from ? `from=${encodeURIComponent(evWindow.from)}&to=${encodeURIComponent(evWindow.to)}` : `hours=${encodeURIComponent(evWindow.hours)}`;",
 		`data-action="setEvidenceWindow" data-arg0="${h}" data-stop="1"`,
@@ -305,11 +387,11 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"const EV_REVERT_FAIR = 0.15;",
 		"const EV_SHADOW_FALSE_ALARM_STRONG = 0.25;",
 		"const EV_SHADOW_FALSE_ALARM_FAIR = 0.5;",
-		"const EV_BLOCKED_STRONG = 0.05;",
-		"const EV_BLOCKED_FAIR = 0.15;",
+		"const EV_BLOCKED_STRONG = 0.01;",
+		"const EV_BLOCKED_FAIR = 0.05;",
 		"const EV_DATA_SINCE = '2026-10-08';",
 		"const EV_REVERTS_SINCE = '2026-10-15';",
-		"const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };",
+		"const EV_GRADES = { excellent: 'Excellent', good: 'Good', strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };",
 		"const label = grade === 'ungraded' ? EV_GRADES.ungraded : `Rated: ${EV_GRADES[grade]}`;",
 		"grade: 'ungraded', reason: 'report-only; no threshold to grade against',",
 		"'outcome-by-author': (dto) => {",
@@ -326,7 +408,14 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"section('What ours shows', x.ours)",
 		"evGradeLine(x.grade, x.reason)",
 		"if (e.key !== 'Escape' || !evExplainOpen.size) return;",
-		"Merged is not the same as correct, and a PR that is still open counts as not merged. Evidence has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}.",
+		"is reported as unknown and left out of every rate, never counted as \"not merged\". Live evidence (verdicts, CI, sentinel) has only been recorded since ${EV_DATA_SINCE} and reverts only since ${EV_REVERTS_SINCE}; backfilled records reach further back but carry only author, outcome and dates.",
+		"false-approve rate = approvals on PRs known not to have merged ÷ approvals on PRs with a known outcome",
+		"merged ÷ verdicts on PRs with a known outcome",
+		"Gate integrity = (with_checks − breaches) ÷ with_checks",
+		"Abandoned share = never ÷ settled",
+		"First-pass share = green on pass 1 ÷ PRs that went green: a neutral line (the RFC’s C1 number), not graded",
+		"Denominator = hive-mediated writes",
+		"Ratios: issues closed ÷ issues opened and PRs merged ÷ PRs opened over the whole window",
 		"A well-calibrated reviewer would be near 90–100% in the top bucket.",
 		".ev-explainer[hidden] { display:none; }",
 		".ev-grade.weak",
@@ -340,6 +429,43 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		key := m[1]
 		if !strings.Contains(html, "'"+key+"': (dto) => {") && !strings.Contains(html, "\n      "+key+": (dto) => {") {
 			t.Errorf("panel %q has no EV_EXPLAINERS entry", key)
+		}
+	}
+}
+
+// TestEvidenceCardWindowTooShortHint pins that a panel with too few samples
+// for a grade points at a longer preset window when the summary's
+// available_windows says one would hold more PRs, instead of a bare "Not
+// enough data"; and that the custom range accepts backfilled history.
+func TestEvidenceCardWindowTooShortHint(t *testing.T) {
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		"const EV_AVAILABLE_KEYS = [['all', 'all time'], ['720', '30d'], ['168', '7d']];",
+		"function evWindowHint(dto) {",
+		"dto.available_windows",
+		"return ` — window too short: ${counts} PRs; switch to ${presets.length ? presets.join(' or ') : 'a custom range'}`;",
+		"`needs at least ${EV_GRADE_MIN_N} merged PRs${evWindowHint(dto)}`",
+		"`needs at least ${EV_GRADE_MIN_N} known-outcome verdicts in the top bucket${evWindowHint(dto)}`",
+		"`needs at least ${EV_GRADE_MIN_N} known-outcome verdicts${evWindowHint(dto)}`",
+		"`needs at least ${EV_GRADE_MIN_N} stopped-and-merged PRs${evWindowHint(dto)}`",
+		"`needs at least ${EV_GRADE_MIN_N} merged PRs with a known merge-time check state and ${EV_GRADE_MIN_N} settled agent PRs${evWindowHint(dto)}`",
+		`<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>`,
+		"by the PR\\u2019s open time, not when its record was written",
+		"PRs are placed in the window by their open time, never by when a record was written.",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("Evidence window hint missing snippet %q", snippet)
+		}
+	}
+	for _, stale := range []string{
+		"Closed-without-merge is not recorded yet, so a closed PR still shows as open.",
+		"so closed may read 0",
+		"a PR that is still open counts as not merged",
+		"an approval on a still-open PR counts as a false approve",
+		"reads as open",
+	} {
+		if strings.Contains(html, stale) {
+			t.Errorf("stale closed-state copy still present: %q", stale)
 		}
 	}
 }

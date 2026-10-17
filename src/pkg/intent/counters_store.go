@@ -12,8 +12,32 @@ import (
 
 // CountersPath is the durable evaluated-vs-would-block intent counter file
 // the dashboard reads (#12362). It lives beside the proxy's
-// write-counters.json.
-const CountersPath = "/var/run/hive-metrics/intent-counters.json"
+// write-counters.json under /data, the PVC, so it survives a restart;
+// LegacyCountersPath is the container-local location it had before
+// (#12368), folded in by MigrateCounters on startup.
+const (
+	CountersPath       = "/data/hive-metrics/intent-counters.json"
+	LegacyCountersPath = "/var/run/hive-metrics/intent-counters.json"
+)
+
+// MigrateCounters folds a counter file left at legacy into path and removes
+// it. A missing legacy file is a no-op.
+func MigrateCounters(legacy, path string, now time.Time) error {
+	if legacy == "" || legacy == path {
+		return nil
+	}
+	old, err := LoadDurableCounts(legacy)
+	if err != nil {
+		return err
+	}
+	if old.empty() {
+		return nil
+	}
+	if err := mergeIntoFile(path, old, now); err != nil {
+		return err
+	}
+	return os.Remove(legacy)
+}
 
 // countersFlushInterval is how often pending counts are merged into the
 // file; shutdown flushes the remainder.

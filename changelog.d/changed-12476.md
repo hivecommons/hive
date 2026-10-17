@@ -1,1 +1,0 @@
-- labels: fix docs citation drift + changelog fragment location from #12468 (#12476)

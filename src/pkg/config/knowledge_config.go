@@ -57,16 +57,46 @@ type PublicKnowledgeConfig struct {
 // BeadSynthesizerConfig controls automatic synthesis of completed beads into wiki facts.
 // Enabled defaults to true when knowledge is enabled; set to false to opt out.
 type BeadSynthesizerConfig struct {
-	Enabled          *bool            `yaml:"enabled,omitempty"`
-	Schedule         string           `yaml:"schedule"`
-	MinConfidence    float64          `yaml:"min_confidence"`
-	TargetLayer      string           `yaml:"target_layer"`
-	MaxFactsPerCycle int              `yaml:"max_facts_per_cycle"`
-	VaultPath        string           `yaml:"vault_path"`
-	RetentionPolicy  *RetentionPolicy `yaml:"retention_policy"`
+	Enabled          *bool                  `yaml:"enabled,omitempty"`
+	Schedule         string                 `yaml:"schedule"`
+	MinConfidence    float64                `yaml:"min_confidence"`
+	TargetLayer      string                 `yaml:"target_layer"`
+	MaxFactsPerCycle int                    `yaml:"max_facts_per_cycle"`
+	VaultPath        string                 `yaml:"vault_path"`
+	RetentionPolicy  *RetentionPolicy       `yaml:"retention_policy"`
+	Publish          BeadSynthPublishConfig `yaml:"publish,omitempty"`
 	// MaxAPICallsPerCycle caps charged GitHub PR GETs per synthesis cycle.
 	// 0/unset defaults to 40; HIVE_BEAD_SYNTH_MAX_API_CALLS still overrides.
 	MaxAPICallsPerCycle int `yaml:"max_api_calls_per_cycle"`
+}
+
+// BeadSynthPublishConfig stores the owner's intended repository publication
+// settings. It is separate from connector publishing (KnowledgeConfig.Publish).
+// This block alone does not enable publishing; policy and sensitivity gates
+// must be enforced by a future publisher, including for mode=commit.
+// Empty Repo selects the hive's primary repository; empty BaseBranch selects
+// that repository's default branch.
+type BeadSynthPublishConfig struct {
+	Enabled    bool   `yaml:"enabled" json:"enabled"`
+	Repo       string `yaml:"repo" json:"repo"`
+	Path       string `yaml:"path" json:"path"`
+	BaseBranch string `yaml:"base_branch" json:"base_branch"`
+	Mode       string `yaml:"mode" json:"mode"`
+	Cadence    string `yaml:"cadence" json:"cadence"`
+}
+
+// WithDefaults returns settings with cleared fields restored to safe defaults.
+func (p BeadSynthPublishConfig) WithDefaults() BeadSynthPublishConfig {
+	if p.Path == "" {
+		p.Path = DefaultBeadSynthPublishPath
+	}
+	if p.Mode == "" {
+		p.Mode = DefaultBeadSynthPublishMode
+	}
+	if p.Cadence == "" {
+		p.Cadence = DefaultBeadSynthPublishCadence
+	}
+	return p
 }
 
 // DefaultBeadSynthMaxAPICallsPerCycle is the default per-cycle PR GET cap.
@@ -75,6 +105,9 @@ const DefaultBeadSynthMaxAPICallsPerCycle = 40
 // Knowledge pipeline defaults that applyDefaults sets at Load; runtime editors
 // substitute the same values so a cleared field restores the default.
 const (
+	DefaultBeadSynthPublishPath         = "docs/knowledge/"
+	DefaultBeadSynthPublishMode         = "pr"
+	DefaultBeadSynthPublishCadence      = "per_run"
 	DefaultBeadSynthSchedule            = "hourly"
 	DefaultBeadSynthMinConfidence       = 0.5
 	DefaultBeadSynthTargetLayer         = "project"
@@ -96,8 +129,27 @@ var KnowledgeSchedules = []string{"hourly", "daily"}
 // daily (empty uses the default), layers must be personal, project, org or
 // community, confidences lie in [0, 1], counts and byte caps are not
 // negative, and scheduled promotion may not promote a layer into itself.
+// Bead-synth publish paths must be relative without parent components; modes
+// are pr or commit and cadences are per_run or daily.
 // Unset (zero) fields pass, so callers can validate just the keys they edit.
 func ValidateKnowledgePipeline(k KnowledgeConfig) error {
+	p := k.BeadSynthesizer.Publish
+	if p.Mode != "" && p.Mode != "pr" && p.Mode != "commit" {
+		return fmt.Errorf("knowledge.bead_synthesizer.publish.mode must be pr or commit")
+	}
+	if p.Cadence != "" && p.Cadence != "per_run" && p.Cadence != "daily" {
+		return fmt.Errorf("knowledge.bead_synthesizer.publish.cadence must be per_run or daily")
+	}
+	// Repository paths use forward slashes. Reject Windows separators and
+	// drive paths too, so validation is independent of the host platform.
+	if strings.HasPrefix(p.Path, "/") || strings.ContainsAny(p.Path, "\\:\x00") {
+		return fmt.Errorf("knowledge.bead_synthesizer.publish.path must be relative with no .. components")
+	}
+	for _, part := range strings.Split(p.Path, "/") {
+		if part == ".." {
+			return fmt.Errorf("knowledge.bead_synthesizer.publish.path must be relative with no .. components")
+		}
+	}
 	for _, s := range []struct{ field, v string }{
 		{"knowledge.bead_synthesizer.schedule", k.BeadSynthesizer.Schedule},
 		{"knowledge.curator.schedule", k.Curator.Schedule},

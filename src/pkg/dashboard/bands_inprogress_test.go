@@ -48,7 +48,7 @@ func TestIssueStageCoveredAndOrdinalsMatchTable(t *testing.T) {
 			t.Errorf("issueStageCovered(%s) = %v, want %v", d.Stage.Label(), !want, want)
 		}
 	}
-	for _, l := range []string{stagelabels.StalledLabel, stagelabels.RegressedLabel, "stage/", "stage/x-y", "author/trusted", "bug"} {
+	for _, l := range []string{stagelabels.StalledLabel, stagelabels.RegressedLabel, "stage/", "stage/x-y", "role/trusted", "bug"} {
 		if stageNumber(l) != 0 || issueStageCovered([]string{l}) {
 			t.Errorf("%q must not parse as a stage ordinal", l)
 		}

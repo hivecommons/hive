@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/nous"
 )
 
 // fakeSelfReportWriter scripts the GitHub seam the publisher drives.
@@ -210,10 +212,21 @@ func TestPublishFleetReportsRelaysToHubOnForbidden(t *testing.T) {
 		relayed = append(relayed, req)
 		return selfReportRelayResponse{OK: true, Number: 77, URL: "u77"}, nil
 	}
-	res := &fleetreport.Result{Reports: []fleetreport.Report{runtimeReport("fp-relay", fleetreport.ClassInferenceAuthFailed)}}
+	report := runtimeReport("fp-relay", fleetreport.ClassInferenceAuthFailed)
+	report.InstanceID, report.Repos, report.Owners = "inst-x", []string{"acme/widgets"}, []string{"alice", "bob"}
+	res := &fleetreport.Result{Reports: []fleetreport.Report{report}}
 	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
 	if len(relayed) != 1 || relayed[0].HiveID != "hosted-x" || relayed[0].Fingerprint != "fp-relay" || relayed[0].Repo != "hivecommons/hive" || relayed[0].Class != fleetreport.ClassInferenceAuthFailed {
 		t.Fatalf("relayed = %#v", relayed)
+	}
+	// The hive's identity rides on the wire so the hub can name WHO is
+	// affected (#12529): instance, repos and owner logins as explicit fields.
+	if relayed[0].InstanceID != "inst-x" || strings.Join(relayed[0].Repos, ",") != "acme/widgets" || strings.Join(relayed[0].Owners, ",") != "alice,bob" || relayed[0].OwnersHidden {
+		t.Fatalf("relayed identity = %#v", relayed[0])
+	}
+	wire, _ := json.Marshal(relayed[0])
+	if !strings.Contains(string(wire), `"owners":["alice","bob"]`) {
+		t.Fatalf("wire payload lacks owners: %s", wire)
 	}
 	o := srv.FleetReportState().Open["fp-relay"]
 	if o.Number != 77 || !o.OpenedByHive || o.PostedAt.IsZero() {
@@ -229,6 +242,36 @@ func TestPublishFleetReportsRelaysToHubOnForbidden(t *testing.T) {
 	}
 }
 
+func TestPublishObservationAlwaysUsesHubRelay(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	w := &fakeSelfReportWriter{ensure: func(fleetreport.Report, github.FleetReportOptions) (github.FleetReportResult, error) {
+		t.Fatal("observation used the spoke GitHub writer")
+		return github.FleetReportResult{}, nil
+	}}
+	var relayed selfReportRelayRequest
+	deps := selfReportDeps(w, &now)
+	deps.budgetOK = func() bool { return false }
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relayed = req
+		return selfReportRelayResponse{OK: true, Number: 88, URL: "u88"}, nil
+	}
+	report := fleetreport.BuildObservationReport(fleetreport.ObservationFinding{
+		Kind:        "queue-growth",
+		Title:       "Queue growth",
+		Evidence:    "p90 rose",
+		Fingerprint: "hosted-x:queue-growth",
+		Series:      []float64{1, 2, 3},
+	}, fleetreport.ObservationMetadata{HiveID: "hosted-x", HiveSlug: "hosted-x", Now: now})
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Reports: []fleetreport.Report{report}}, deps)
+	if relayed.Class != fleetreport.TriggerObservation || relayed.Repo != "hivecommons/hive" || relayed.Observation == nil {
+		t.Fatalf("relayed observation = %#v", relayed)
+	}
+	if got := srv.FleetReportState().Open[report.Fingerprint]; got.Number != 88 || !got.OpenedByHive {
+		t.Fatalf("relay result not recorded: %#v", got)
+	}
+}
+
 func TestSelfReportShouldRelay(t *testing.T) {
 	cases := map[error]bool{
 		&gh.ErrorResponse{Response: &http.Response{StatusCode: 403}}: true,
@@ -241,5 +284,100 @@ func TestSelfReportShouldRelay(t *testing.T) {
 		if got := selfReportShouldRelay(err); got != want {
 			t.Fatalf("selfReportShouldRelay(%v) = %v want %v", err, got, want)
 		}
+	}
+}
+
+func TestPublishObservationRecoveryUnknownHubIssueIsNoop(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	fp := "observation-recovery"
+	ledger := nous.NewObservationLedger(filepath.Join(t.TempDir(), "observations.json"))
+	if _, err := ledger.Reconcile([]nous.ActiveObservation{{
+		Fingerprint: fp,
+		IssueNumber: 42,
+		URL:         "https://github.com/hivecommons/hive/issues/42",
+		Before:      "p90=900ms",
+		After:       "p90=100ms",
+		Evidence:    "last sample",
+	}}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.RecordIssue(fp, 42, "https://github.com/hivecommons/hive/issues/42", now); err != nil {
+		t.Fatal(err)
+	}
+	srv.UpdateFleetReportState(func(st *fleetreport.State) {
+		st.Open[fp] = fleetreport.OpenIssue{
+			Number: 42, URL: "https://github.com/hivecommons/hive/issues/42",
+			Trigger: selfReportObservationClass, Class: selfReportObservationClass, PostedAt: now,
+		}
+	})
+	w := &fakeSelfReportWriter{}
+	var relayed []selfReportRelayRequest
+	deps := selfReportDeps(w, &now)
+	deps.observations = ledger
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relayed = append(relayed, req)
+		return selfReportRelayResponse{Reason: "unknown_fingerprint"}, nil
+	}
+	// The first cycle without the finding starts the seven-day window; the
+	// recovery request is produced only by a later cycle past that window.
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{}, deps)
+	if len(relayed) != 0 {
+		t.Fatalf("recovery relayed before the seven-day window: %#v", relayed)
+	}
+	now = now.Add(8 * 24 * time.Hour)
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{}, deps)
+	if len(relayed) != 1 {
+		t.Fatalf("recovery relays = %d, want 1", len(relayed))
+	}
+	if relayed[0].Action != "recover" || relayed[0].Class != selfReportObservationClass || !strings.Contains(relayed[0].Body, "p90=900ms") || !strings.Contains(relayed[0].Body, "p90=100ms") {
+		t.Fatalf("recovery relay = %#v", relayed[0])
+	}
+	records, err := ledger.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[fp].ClosedAt.IsZero() {
+		t.Fatalf("unknown hub fingerprint was not acknowledged locally: %#v", records[fp])
+	}
+	if !srv.FleetReportState().Open[fp].Recovered {
+		t.Fatal("dashboard state did not record observation recovery")
+	}
+}
+
+func TestPublishObservationReportsRelayThroughHubOnly(t *testing.T) {
+	srv := selfReportTestServer(t)
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	fp := "h1:queue-growth"
+	ledger := nous.NewObservationLedger(filepath.Join(t.TempDir(), "observations.json"))
+	w := &fakeSelfReportWriter{ensure: func(fleetreport.Report, github.FleetReportOptions) (github.FleetReportResult, error) {
+		t.Fatal("observation used the spoke GitHub writer")
+		return github.FleetReportResult{}, nil
+	}}
+	var relayed []selfReportRelayRequest
+	deps := selfReportDeps(w, &now)
+	deps.observations = ledger
+	deps.budgetOK = func() bool { return false }
+	deps.relay = func(_ context.Context, req selfReportRelayRequest) (selfReportRelayResponse, error) {
+		relayed = append(relayed, req)
+		return selfReportRelayResponse{OK: true, Number: 7, URL: "https://github.com/hivecommons/hive/issues/7"}, nil
+	}
+	report := fleetreport.Report{
+		Fingerprint: fp,
+		Trigger:     selfReportObservationClass,
+		Class:       selfReportObservationClass,
+		Title:       "Queue depth is growing",
+		Body:        "<!-- hive-fleet-fingerprint:h1:queue-growth -->\n| series | `[10,20]` |",
+	}
+	publishFleetReportsWith(context.Background(), slog.Default(), srv, &fleetreport.Result{Reports: []fleetreport.Report{report}}, deps)
+	if len(relayed) != 1 || relayed[0].Repo != "hivecommons/hive" || relayed[0].Action != "" || relayed[0].Class != selfReportObservationClass {
+		t.Fatalf("observation relay = %#v", relayed)
+	}
+	records, err := ledger.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records[fp].IssueNumber != 7 || records[fp].Before != "10" || records[fp].After != "20" {
+		t.Fatalf("observation ledger = %#v", records[fp])
 	}
 }

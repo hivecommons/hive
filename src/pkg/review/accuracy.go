@@ -76,7 +76,7 @@ func SummarizeReviewerAccuracy(now time.Time, window time.Duration, artifact Art
 		if item.RecordedAt.IsZero() || item.RecordedAt.Before(since) {
 			continue
 		}
-		key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+		key := reviewKey(item.Repo, item.Number, item.HeadSHA, "")
 		if !seenRecorded[key] {
 			seenRecorded[key] = true
 			sum.RecordedVerdicts++

@@ -14,6 +14,7 @@ import (
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/review/pipeline"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // reviewPipelineResponse is one page of review pipeline cards.
@@ -80,11 +81,14 @@ func (s *Server) handleReviewPipeline(w http.ResponseWriter, r *http.Request) {
 		Verdicts:     artifact,
 		Dispatch:     dispatch,
 		ChangedPaths: ghpkg.CachedPRChangedPaths,
+		StageStore:   stagelabels.Shared(),
 		Now:          time.Now(),
 	}
 	if s != nil && s.deps != nil && s.deps.Config != nil {
 		opts.Org = s.deps.Config.Project.Org
 		opts.AIAuthor = s.deps.Config.EffectiveAIAuthor()
+		opts.StageDwell = s.deps.Config.Governor.Labels.Stage.DwellOverrides()
+		opts.StageStalledRequireQuiet = s.deps.Config.Governor.Labels.Stage.Stalled.RequireQuiet
 	}
 	actionable := s.lastActionableForPRModels()
 	queue := ghpkg.ReviewQueueFromActionable(actionable, opts)
