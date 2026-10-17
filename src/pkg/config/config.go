@@ -4024,7 +4024,23 @@ type StageLabelsConfig struct {
 	// contributor PR that is still red after the grace with an App PR that
 	// preserves the author's commits, and the scanner finishes it.
 	Adoption StageAdoptionConfig `yaml:"adoption"`
+	// Stalled configures the stage/stalled health marker.
+	Stalled StageStalledConfig `yaml:"stalled"`
 }
+
+// StageStalledConfig is governor.labels.stage.stalled.
+type StageStalledConfig struct {
+	// RequireQuiet (nil = true) measures the stage dwell from the last
+	// outside activity (head push, comment, review, CI change, label change
+	// by anyone but the hive) so stage/stalled means "nobody is working
+	// this". false measures from entering the stage. Either way the marker
+	// is never applied while the item waits on the hive (checks running,
+	// reviewer verdict pending) — hivecommons/hive#12534.
+	RequireQuiet *bool `yaml:"require_quiet"`
+}
+
+// IsRequireQuiet reports whether stalled requires a quiet dwell (default on).
+func (c StageStalledConfig) IsRequireQuiet() bool { return c.RequireQuiet == nil || *c.RequireQuiet }
 
 // StageAdoptionConfig is governor.labels.stage.adoption.
 type StageAdoptionConfig struct {

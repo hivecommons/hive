@@ -84,10 +84,7 @@ func EnforceStage(ctx context.Context, l Labeler, owner, repo string, number int
 	out.Healed = len(StageLabels(fresh)) > 1
 	want := Desired{Stage: stage, Author: AuthorOf(fresh)}
 	for _, lab := range fresh {
-		switch lab {
-		case RegressedLabel:
-			want.Regressed = true
-		case StalledLabel:
+		if lab == StalledLabel {
 			want.Stalled = true
 		}
 	}

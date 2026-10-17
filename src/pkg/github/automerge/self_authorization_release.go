@@ -59,6 +59,7 @@ func (c *Engine) releaseSelfAuthorizationHoldIfEligible(ctx context.Context, dis
 	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, comment); err != nil {
 		return false, fmt.Errorf("posting release comment: %w", err)
 	}
+	c.noteOwnStageComment(owner, repo, number)
 	c.info("self-authorization hold released because it is disabled by config", "repo", displayRepo, "pr", number)
 	return true, nil
 }

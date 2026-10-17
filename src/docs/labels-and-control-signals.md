@@ -108,10 +108,14 @@ Operator request ([#12429](https://github.com/hivecommons/hive/issues/12429)):
 in … the labels must be clear and reflect the state machine … this needs to be
 dead simple." The hive therefore owns ONE ordered, mutually exclusive
 `stage/NNN-slug` family shared by issues and PRs, an orthogonal `author/*`
-family that answers "would the hive auto-merge this?", and two red health
-markers (`stage/stalled`, `stage/regressed`) that say the progression was
-disrupted. Exactly one `stage/*` stage label per open item; closed, merged or
-superseded items carry none (terminal = no stage).
+family that answers "would the hive auto-merge this?", and one red health
+marker (`stage/stalled`) that says nobody is working the item. Exactly one
+`stage/*` stage label per open item; closed, merged or superseded items carry
+none (terminal = no stage). (`stage/regressed` was retired in
+[#12534](https://github.com/hivecommons/hive/issues/12534): the review loop
+050 → 060 → 072 → 070 → 050 is the intended cycle, so a backward move is
+recorded as a one-line stage comment and in the dashboard's transition
+history, not as a label.)
 
 The engine lives in `src/pkg/stagelabels` (the table, the reconciler plan, the
 persisted stage timing) and `src/pkg/github/automerge/automerge_stage_labels.go`
@@ -151,8 +155,9 @@ the label (hivecommons/hive#12443).
   item on the next cycle; the old labels can then be deleted from the repo.
 - **Colours**: every `stage/NNN-*` label is the same hive amber `#f5a623`
   (the colour the retired `🐝 covered by PR` used) so the eye tracks the family
-  across lists; `stage/stalled` `#d73a4a` and `stage/regressed` `#b60205` are
-  red; `author/*` is neutral grey `#6e7781` except `author/trusted` `#0e8a16`.
+  across lists; `stage/stalled` `#d73a4a` is red; `author/*` is neutral grey
+  `#6e7781` except `author/trusted` `#0e8a16`. The retired `stage/regressed`
+  is stripped from any item the sweep sees and is no longer provisioned.
   The ensure-label step creates missing labels and PATCHes the colour of an
   existing one only when it differs from the table, once per repo per
   process.
@@ -208,8 +213,8 @@ stateDiagram-v2
     s050 --> s072: contributor PR red / changes requested
     s050 --> s085: swarm requires_human (reason reviewer-verdict:requires_human)
     s060 --> s070: new head red
-    s100 --> s070: new head red (regressed)
-    s100 --> s072: contributor head red (regressed)
+    s100 --> s070: new head red (backward hop, commented)
+    s100 --> s072: contributor head red (backward hop, commented)
     s070 --> s050: fixed head pushed
     s072 --> s050: author pushes a new head
     s072 --> s074: grace expired, superseding App PR opened
@@ -247,10 +252,15 @@ final, and maps each row ([#12436](https://github.com/hivecommons/hive/issues/12
 
 Labels come from the issue list payload the cycle already fetched — no
 per-issue GETs — and are written only when the planned set differs from the
-current one. When the stage is mirrored from a PR, `stage/stalled` and
-`stage/regressed` belong to the PR and are not written on the issue; when the
-issue falls back between its *own* stages (a claim or kick lapsed with no PR:
-030 → 010) it gets `stage/regressed` and one explanatory comment. The claim
+current one. When the stage is mirrored from a PR, `stage/stalled` belongs to
+the PR and is not written on the issue; for the issue's *own* stages
+(010–030) the dwell is still measured from stage entry, because the list
+payload carries no comment count or activity timestamp the hive did not
+bump itself (`updated_at` moves on every hive write, #12491) — the PR
+engine's no-activity clock and `stalled.require_quiet` below do not apply
+to issues. When the issue falls back between its
+own stages (a claim or kick lapsed with no PR: 030 → 010) it gets one
+explanatory comment and a history hop in the store. The claim
 relay (`hive-open-issue claim`) writes `stage/020-claimed` /
 `stage/030-pr-in-progress` directly alongside `hive/claimed-by-<who>` so the
 label is right as soon as the claim lands; `hive-open-pr --issues` swaps 030
@@ -290,7 +300,7 @@ against one process-wide tracker (the engine's own ticker and the main loop's
 queued sweep), so one pass can drain a maintainer PR's trusted-author
 observation and the next hold only the contributor lane's `no-claim`; an
 incomplete pass is treated as no opinion rather than written as 090 and
-flipped back (with `stage/regressed`) a minute later.
+flipped back a minute later.
 
 A maintainer's own PR is therefore not a 090 case at all: with
 `auto_merge.trusted_authors` on (the hive's default spoke config —
@@ -341,24 +351,66 @@ stage but written only on change:
 | `author/newcomer` | registry/claim tier `newcomer` |
 | `author/untrusted` | no claim and no registry profile (external PR), `revoked`, or not a trusted author |
 
-### `stage/stalled` and `stage/regressed`
+### `stage/stalled` — "nobody is working this"
 
-- **`stage/stalled`** — the item sat in its current stage longer than the
-  table's dwell. "Entered stage at" is tracked in the hive's persisted state
-  (`/data/stage-labels.json`), not GitHub's timeline, so no extra API calls.
-  Cleared automatically when the stage changes. Only a stall in
-  `080-awaiting-merge-admission` is explained in a comment (the lane's last
-  skip reason), because that stall is the hive's fault, not the author's.
-- **`stage/regressed`** — the stage number went DOWN (e.g. `100 → 070`
-  because a new head went red). On every backward transition the hive posts
-  one short idempotent comment carrying `<!-- hive:stage-regressed -->`:
-  `stage 100-merge-queue → 070-fixing: check-failing:unit`. The label stays
-  until the stage reaches the point it regressed from (or the item closes).
+On a PR, `stage/stalled` means **no activity by anyone but the hive for the
+stage's dwell**: no head push, no comment, no review or reviewer verdict, no
+CI status change and no label change for the time in the table
+(`governor.labels.stage.dwell.<slug>` overrides it; `0` = never). On an
+issue in its own stages (010–030) it still means "sat in the stage past the
+dwell" (see above): the issue list payload has no activity signal the hive
+does not bump itself.
+
+- **Never while the item is waiting on the hive.** Required checks still
+  running, or `050-review-pending` with no reviewer verdict for the current
+  head, are waits on the hive's own lanes, not on a person — so they cannot
+  stall whatever the elapsed time (specimen:
+  [#12417](https://github.com/hivecommons/hive/pull/12417), 6h at 050 with CI
+  green and no verdict, wrongly marked stalled). At 050 the label is possible
+  only once the verdict exists and nobody acted on it for the dwell.
+- **Cleared at once on any activity.** The next cycle that sees a new head,
+  a new comment, a new review submission (an Approve / Request changes with
+  only a body counts: the comment counters miss it) or a changed
+  verdict/CI/label set removes it. The automerge engine's own comments
+  (stage notes, nudges, regression lines, rebase requests, stale-approval
+  and hold-release notes) and the hive app's own reviews do not count,
+  whether posted before or after the cycle's reconcile; a comment from
+  another hive process (the reviewer swarm's review comment, a merge note)
+  is indistinguishable from a person's in the comment counter and does —
+  so a stall can only come later than the rule says, never earlier.
+- **No `updated_at`.** "Last activity" is derived from the head SHA, the
+  PR's comment counters, the review submissions the lanes list (not every
+  lane path lists them; a review seen by none is caught by the next cycle
+  that does) and the verdict/CI/label digest the lanes already
+  fetched — never `updated_at`, which GitHub bumps for the hive's own writes
+  ([#12491](https://github.com/hivecommons/hive/issues/12491)). A change is
+  dated by the cycle that first observes it (at most one sweep interval
+  late; the list payload carries no commit or comment timestamps). State
+  lives in `/data/stage-labels.json`; no extra API calls.
+- `governor.labels.stage.stalled.require_quiet: false` restores the older
+  rule (dwell measured from entering the stage); waiting on the hive still
+  never stalls. The review queue's `stage.stalled` / `stage.past_dwell` and
+  the `hive_held` count follow the same dwell overrides and `require_quiet`
+  setting as the label.
+- Only a stall in `080-awaiting-merge-admission` is explained in a comment
+  (`<!-- hive:stage-stalled -->`, `stage 080-…: no activity for 30m0s: <lane
+  reason>`), because that stall is the hive's fault, not the author's.
+- **When the hive is the holder** — an item past its dwell *while* waiting
+  on the hive — the PR gets no label. The engine logs one warning per item
+  (`stage labels: PR waits on the hive past the stage dwell — reviewer lane
+  needs attention`), counts it in `/api/review/queue` as `hive_held`, and the
+  review-queue entry carries `stage.waiting_on_hive` + `stage.past_dwell`
+  (rendered as a red "waiting on hive Xh" pill). That is the signal to look
+  at reviewer capacity/cadence, not at the author.
+- **Backward moves** (e.g. `100 → 070` because a new head went red) are not
+  labels. The hive posts one short idempotent comment carrying
+  `<!-- hive:stage-regressed -->` — `stage 100-merge-queue → 070-fixing:
+  check-failing:unit` — and records the hop in the item's history
+  (`stage.history[]` on the review-queue entry, newest last, capped at 12).
   Leaving a repair stage (`070`/`072`/`074`) for `050`/`060` is the repair
-  route itself and is not counted as a second regression.
-- At most one health label at a time; `regressed` wins over `stalled`.
-- **Filter `label:stage/stalled` or `label:stage/regressed` across repos =
-  everything off the happy path.**
+  route itself and is not commented.
+- **Filter `label:stage/stalled` across repos = every PR a person has
+  walked away from, plus every issue that sat in 010–030 past its dwell.**
 
 ### Off the happy path: 072 → nudge → 074 → takeover
 

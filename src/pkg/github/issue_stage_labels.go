@@ -21,9 +21,13 @@ package github
 // issue so exactly one stage label survives (hivecommons/hive#12512). It
 // also strips the retired `claimed`, `hive/in-progress` and `🐝 covered by
 // PR` labels: one cycle after upgrade every open issue carries its stage
-// label instead. Health (`stage/stalled`, `stage/regressed`) is tracked for
+// label instead. Health (`stage/stalled`) is tracked for
 // the issue's own stages (010–030); an issue mirroring its PR's stage
-// leaves health to the PR, where the reason is legible.
+// leaves health to the PR, where the reason is legible. For those issue
+// stages the dwell is still measured from stage entry: the issue list
+// payload carries no comment count or activity timestamp the hive did not
+// bump itself (hivecommons/hive#12491), so the PR engine's no-activity
+// clock (Store.NoteActivity, require_quiet) does not apply here.
 
 import (
 	"context"
@@ -199,7 +203,6 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 			want = stagelabels.Desired{Stage: stage}
 			if !mirrored {
 				want.Stalled = stagelabels.Stalled(rec, policy.Dwell, now)
-				want.Regressed = rec.Regressed()
 			}
 		}
 		add, remove := stagelabels.Plan(in.Labels, want)

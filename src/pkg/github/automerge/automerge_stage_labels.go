@@ -35,6 +35,13 @@ type StageLabelPolicy struct {
 	Enabled bool
 	// Dwell overrides the stage table's expected dwell per stage slug.
 	Dwell map[string]time.Duration
+	// StalledRequireQuiet (governor.labels.stage.stalled.require_quiet,
+	// default true) measures the dwell from the last outside activity
+	// (head push, comment, review, CI change, label change) rather than
+	// from entering the stage, so stage/stalled means "nobody is working
+	// this" (hivecommons/hive#12534). Either way it is never applied while
+	// the item waits on the hive (checks running, verdict pending).
+	StalledRequireQuiet bool
 	// ContributorNudge turns the stage-072 nudge comment + relay interrupt
 	// on (governor.labels.stage.contributor_nudge.enabled, default true).
 	ContributorNudge bool
@@ -136,6 +143,18 @@ type stageDetail struct {
 	// (hivecommons/hive#12538, seen on #12457).
 	RedChecks     []string
 	RedChecksHead string
+	// Comments is the PR's issue + review comment count from the deep
+	// fetch (the list payload has none); CommentsKnown says it was seen.
+	// OwnComments counts the comments this engine posted after that fetch
+	// (creditOwnComment); a later fetch resets it.
+	Comments      int
+	CommentsKnown bool
+	OwnComments   int
+	// Reviews is the number of review submissions by people (the hive
+	// app's excluded) from a lane's ListReviews walk; ReviewsKnown says it
+	// was seen this cycle.
+	Reviews      int
+	ReviewsKnown bool
 }
 
 // redCheck returns the first red non-required check on head, or "".
@@ -210,6 +229,23 @@ func (t *StageTracker) note(key string, fn func(*stageDetail)) {
 	t.details[key] = d
 }
 
+// creditOwnComment records one hive comment posted after the comment count
+// a lane fetched for key this cycle, and reports whether there was such a
+// fetch. The fetch preceded the comment, so without the credit
+// ApplyStageLabels would store the pre-comment count and the next cycle's
+// fetch would read the hive's own comment as a person acting.
+func (t *StageTracker) creditOwnComment(key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	d, ok := t.details[key]
+	if !ok || !d.CommentsKnown {
+		return false
+	}
+	d.OwnComments++
+	t.details[key] = d
+	return true
+}
+
 func (t *StageTracker) record(obs stageObservation) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -247,6 +283,12 @@ func (t *StageTracker) drain() [][]stageObservation {
 			}
 			if detail.RedChecksHead == "" || o.HeadSHA == "" || detail.RedChecksHead == o.HeadSHA {
 				o.Detail.RedChecks, o.Detail.RedChecksHead = detail.RedChecks, detail.RedChecksHead
+			}
+			if detail.CommentsKnown {
+				o.Detail.Comments, o.Detail.CommentsKnown, o.Detail.OwnComments = detail.Comments, true, detail.OwnComments
+			}
+			if detail.ReviewsKnown {
+				o.Detail.Reviews, o.Detail.ReviewsKnown = detail.Reviews, true
 			}
 			list = append(list, o)
 		}
@@ -349,6 +391,90 @@ func (c *Engine) noteStageRedChecks(owner, repo string, number int, head string,
 	})
 }
 
+// noteStagePR records what a lane's deep PullRequests.Get learned that the
+// list payload lacks: the comment count, which feeds the quiet clock behind
+// stage/stalled. Neither payload carries a commit or comment timestamp, so
+// activity is dated by the cycle that first observes it (Activity.At zero).
+func (c *Engine) noteStagePR(owner, repo string, number int, pr *gh.PullRequest) {
+	if !c.stagePolicy().Enabled || pr == nil {
+		return
+	}
+	comments := pr.GetComments() + pr.GetReviewComments()
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
+		// A fresh fetch already includes any comment credited before it.
+		d.Comments, d.CommentsKnown, d.OwnComments = comments, true, 0
+	})
+}
+
+// noteStageReviews records the review submissions a lane's ListReviews walk
+// saw on the PR, minus the hive app's own (queue approvals, reviewer
+// verdicts). A body-only Approve or Request-changes from a maintainer adds
+// nothing to the comment counts, so this is how it reaches the quiet clock.
+func (c *Engine) noteStageReviews(owner, repo string, number int, reviews []*gh.PullRequestReview) {
+	if !c.stagePolicy().Enabled {
+		return
+	}
+	n := 0
+	for _, r := range reviews {
+		if r != nil && !c.isHiveAppReviewAuthor(r) {
+			n++
+		}
+	}
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) {
+		d.Reviews, d.ReviewsKnown = n, true
+	})
+}
+
+// noteOwnStageComment records that this engine posted a comment on the PR
+// outside ApplyStageLabels (takeover notice, rebase request, stale-approval
+// or hold-release note), so the next observed comment count does not read
+// as outside activity and restart the quiet clock. When a lane already
+// fetched the PR this cycle the credit goes on that observation (the fetch
+// preceded the comment, and ApplyStageLabels stores the observed count as
+// is); otherwise it goes on the store's last count. Comments from other
+// hive processes (the reviewer swarm's review comments) are not visible
+// here and still count as activity: the stall is then later, never earlier.
+func (c *Engine) noteOwnStageComment(owner, repo string, number int) {
+	if !c.stagePolicy().Enabled {
+		return
+	}
+	key := stageKey(owner, repo, number)
+	if c.stageTrackerOrShared().creditOwnComment(key) {
+		return
+	}
+	c.stageStoreOrShared().CountOwnComments(key, 1)
+}
+
+// stageActivity derives this cycle's outside-activity view of a PR.
+func stageActivity(obs stageObservation, stage stagelabels.Stage) stagelabels.Activity {
+	a := stagelabels.Activity{Head: obs.HeadSHA, Comments: -1, Reviews: -1}
+	if obs.Detail.CommentsKnown {
+		a.Comments, a.OwnComments = obs.Detail.Comments, obs.Detail.OwnComments
+	}
+	if obs.Detail.ReviewsKnown {
+		a.Reviews = obs.Detail.Reviews
+	}
+	verdict := "verdict:?"
+	if obs.Detail.VerdictKnown {
+		verdict = "verdict:" + obs.Detail.Verdict.Verdict
+	}
+	ci := classifyCIReason(obs.Reason)
+	labels := make([]string, 0, len(obs.Labels))
+	for _, l := range obs.Labels {
+		if stagelabels.Owned(l) || strings.HasPrefix(strings.ToLower(l), "hive/") || strings.HasPrefix(strings.ToLower(l), hgithub.ReviewPriorityLabelPrefix) {
+			continue
+		}
+		labels = append(labels, strings.ToLower(l))
+	}
+	sort.Strings(labels)
+	a.Digest = verdict + "|ci:" + ci.String() + "|" + strings.Join(labels, ",")
+	// Checks still running, or a review-pending head with no reviewer
+	// verdict yet, is waiting on the hive, not on a person.
+	a.WaitingOnHive = ci == ciReasonPending ||
+		(stage == stagelabels.ReviewPending && !(obs.Detail.VerdictKnown && obs.Detail.Verdict.Verdict != ""))
+	return a
+}
+
 // stageVerdict is a lane's opinion about a PR's stage.
 type stageVerdict struct {
 	Stage stagelabels.Stage
@@ -388,6 +514,20 @@ const (
 	ciReasonPending
 	ciReasonRed
 )
+
+// String is the stable name persisted in Record.ActivityDigest
+// (/data/stage-labels.json); it must not follow the iota, or an upgrade
+// that renumbers the enum would read every PR as active and reset its
+// quiet clock.
+func (k ciReasonKind) String() string {
+	switch k {
+	case ciReasonPending:
+		return "pending"
+	case ciReasonRed:
+		return "red"
+	}
+	return "none"
+}
 
 func classifyCIReason(reason string) ciReasonKind {
 	switch {
@@ -665,7 +805,7 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Author, st
 // are split across two drains, and the second drain holds only the
 // contributor lane's `no-claim` for a maintainer the trusted-author lane
 // admitted a minute earlier: the PR was written to 090 and flipped back
-// (with `stage/regressed`) on the next pass. Seen on the hive spoke for
+// on the next pass. Seen on the hive spoke for
 // every maintainer PR; the fix is to treat an incomplete drain as no
 // opinion rather than to trust the weak one.
 func (c *Engine) missingStageLanes(displayRepo string, list []stageObservation) []string {
@@ -694,6 +834,12 @@ type StageLabelResult struct {
 	Skipped  int
 	// Healed counts PRs found carrying more than one stage label.
 	Healed int
+	// HiveHeld counts PRs past their stage's dwell while waiting on the
+	// hive (checks running, reviewer verdict pending). They never get
+	// stage/stalled — the author is not the holder — so the signal is this
+	// count and a warn log per PR, for the reviewer lane to act on
+	// (hivecommons/hive#12534, specimen #12417).
+	HiveHeld int
 }
 
 // ApplyStageLabels reconciles the stage/author/health labels for every PR
@@ -763,12 +909,19 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if verdict.Stage != stagelabels.ReturnedToContributor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
 			}
+			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{
-				Stage:     verdict.Stage,
-				Author:    author,
-				Stalled:   stagelabels.Stalled(rec, policy.Dwell, now),
-				Regressed: rec.Regressed(),
+				Stage:   verdict.Stage,
+				Author:  author,
+				Stalled: stagelabels.StalledWith(rec, policy.Dwell, now, policy.StalledRequireQuiet),
+			}
+			if stagelabels.HiveHeld(rec, policy.Dwell, now) {
+				result.HiveHeld++
+				if !rec.HiveHeldWarned {
+					c.warn("stage labels: PR waits on the hive past the stage dwell — reviewer lane needs attention", "repo", obs.Display, "pr", obs.Number, "stage", verdict.Stage.String(), "quiet_for", rec.QuietFor(now).Truncate(time.Minute).String(), "reason", obs.Reason, "lane", obs.Lane)
+					store.MarkHiveHeldWarned(key)
+				}
 			}
 		}
 		if !verdict.Terminal {
@@ -778,6 +931,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
+		commentsBefore := result.Comments
 		add, remove := stagelabels.Plan(obs.Labels, want)
 		if len(add)+len(remove) > 0 {
 			if err := c.ensureStageLabels(ctx, obs.Owner, obs.Repo, tracker); err != nil {
@@ -869,6 +1023,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 			}
 		}
+		// The hive's own comments are not outside activity.
+		store.CountOwnComments(key, result.Comments-commentsBefore)
 	}
 	store.Prune(stageStorePruneAge)
 	if err := store.Save(); err != nil {

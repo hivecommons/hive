@@ -15,13 +15,18 @@
 //   - `author/<tier>`: the PR author's admission tier as the contributor lane
 //     actually computed it, so a reader can tell whether the hive would
 //     auto-merge the PR. At most one per PR.
-//   - `stage/stalled` / `stage/regressed`: health markers. stalled means the
-//     item sat in its stage longer than the stage's expected dwell;
-//     regressed means the stage number went down (new head went red, PR
-//     closed unmerged) — except out of a repair stage into review of the
-//     new head, or out of 090-needs-human at all: 090 is a parking stage,
-//     so leaving it is the blocker clearing. At most one per item; both
-//     clear automatically.
+//   - `stage/stalled`: the one health marker. It means NOBODY IS WORKING
+//     THE ITEM: no new head, comment, review/verdict, CI state change or
+//     non-hive label change for the stage's expected dwell — and never while
+//     the item is waiting on the hive itself (required checks running, the
+//     reviewer verdict pending for the current head). Any activity clears
+//     it at once (hivecommons/hive#12534).
+//
+// A backward stage move (050 → 060 → 072 → 070 → 050 is the review loop
+// working as designed) is NOT a health problem: it is narrated once in the
+// stage comment and kept in the store's transition history, but carries no
+// label. The former `stage/regressed` label is retired; the reconciler
+// strips it from any item still wearing it.
 //
 // `hold`, `needs-human`, `needs-decision`, `needs-rebase`, `blocked` and
 // `author/*` are stage MODIFIERS, not stages: they stay whatever the stage
@@ -75,20 +80,21 @@ const Prefix = "stage/"
 // AuthorPrefix is the author-tier family prefix (same ownership rule).
 const AuthorPrefix = "author/"
 
-// Health labels. They coexist with the stage label; at most one applies.
-const (
-	StalledLabel   = Prefix + "stalled"
-	RegressedLabel = Prefix + "regressed"
-)
+// StalledLabel is the health label; it coexists with the stage label.
+const StalledLabel = Prefix + "stalled"
+
+// RegressedLabel is the RETIRED backward-move marker (hivecommons/hive#12534).
+// It is no longer provisioned or emitted; being under Prefix it is Owned, so
+// Plan removes it from every item the reconciler touches.
+const RegressedLabel = Prefix + "regressed"
 
 // Family colours. Every stage/NN label shares StageColor (the hive-amber the
 // retired `🐝 covered by PR` label used) so the eye tracks the family across
-// lists; health markers are red; author/* is neutral grey except the one
+// lists; the health marker is red; author/* is neutral grey except the one
 // tier that means "the hive will merge this".
 const (
 	StageColor         = "f5a623"
 	StalledColor       = "d73a4a"
-	RegressedColor     = "b60205"
 	AuthorColor        = "6e7781"
 	AuthorTrustedColor = "0e8a16"
 )
@@ -102,8 +108,8 @@ type Definition struct {
 	Slug string
 	// Description is the GitHub label description.
 	Description string
-	// Dwell is how long an item is expected to sit in this stage before it
-	// is marked stalled. 0 means never (the stage is open-ended).
+	// Dwell is how long an item may go without activity in this stage
+	// before it is marked stalled. 0 means never (the stage is open-ended).
 	Dwell time.Duration
 	// StallNote asks the reconciler to post a one-line comment (with the
 	// lane's last skip reason) when the item stalls here: a stall in such a
@@ -141,8 +147,7 @@ const MergeQueueNumber = 100
 const NumberWidth = 3
 
 var healthDefs = []LabelDef{
-	{Name: StalledLabel, Color: StalledColor, Description: "In its current stage longer than expected"},
-	{Name: RegressedLabel, Color: RegressedColor, Description: "Stage moved backwards (see the hive's stage comment)"},
+	{Name: StalledLabel, Color: StalledColor, Description: "No activity (head, comment, review, CI, label) for longer than the stage expects; nobody is working it"},
 }
 
 func definition(s Stage) (Definition, bool) {
@@ -328,10 +333,9 @@ func AllLabelDefs() []LabelDef {
 
 // Desired is the full hive-owned label set wanted on one item.
 type Desired struct {
-	Stage     Stage
-	Author    Author
-	Stalled   bool
-	Regressed bool
+	Stage   Stage
+	Author  Author
+	Stalled bool
 }
 
 // Plan returns the labels to add and remove so current carries exactly the
@@ -347,11 +351,7 @@ func Plan(current []string, want Desired) (add, remove []string) {
 	if l := want.Author.Label(); l != "" {
 		wanted[l] = true
 	}
-	// Both health flags true is a caller bug; regressed is the louder signal.
-	switch {
-	case want.Regressed:
-		wanted[RegressedLabel] = true
-	case want.Stalled:
+	if want.Stalled {
 		wanted[StalledLabel] = true
 	}
 	have := map[string]bool{}

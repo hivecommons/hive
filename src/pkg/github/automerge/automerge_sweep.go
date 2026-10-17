@@ -1307,6 +1307,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if !strings.EqualFold(pr.GetState(), "open") {
 		return AutoMergeSweepEvent{}, "closed", nil
 	}
@@ -1695,6 +1696,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.prefilterTrustedAuthorPR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
@@ -1906,11 +1908,13 @@ func (c *Engine) executeUpdateBranchEffect(ctx context.Context, owner, repo stri
 func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo string, number int) (bool, error) {
 	opts := &gh.ListOptions{PerPage: 100}
 	latest := map[string]string{}
+	var seen []*gh.PullRequestReview
 	for {
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
 			return false, err
 		}
+		seen = append(seen, reviews...)
 		for _, review := range reviews {
 			login := strings.ToLower(strings.TrimSpace(hgithub.SafeGetLogin(review.GetUser())))
 			if login == "" {
@@ -1926,6 +1930,7 @@ func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo
 		}
 		opts.Page = resp.NextPage
 	}
+	c.noteStageReviews(owner, repo, number, seen)
 	for _, state := range latest {
 		if state == "CHANGES_REQUESTED" {
 			return true, nil
@@ -1948,6 +1953,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if !strings.EqualFold(pr.GetState(), "open") {
 		return AutoMergeSweepEvent{}, "closed", nil
 	}
@@ -2118,11 +2124,13 @@ func (c *Engine) latestHiveQueueApproval(ctx context.Context, owner, repo string
 	opts := &gh.ListOptions{PerPage: 100}
 	latest := hiveQueueApproval{}
 	untrusted := false
+	var seen []*gh.PullRequestReview
 	for {
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
 			return hiveQueueApproval{}, false, "", err
 		}
+		seen = append(seen, reviews...)
 		for _, review := range reviews {
 			if !strings.EqualFold(review.GetState(), "APPROVED") {
 				continue
@@ -2143,6 +2151,7 @@ func (c *Engine) latestHiveQueueApproval(ctx context.Context, owner, repo string
 		}
 		opts.Page = resp.NextPage
 	}
+	c.noteStageReviews(owner, repo, number, seen)
 	if latest.QueuedBy != "" {
 		return latest, true, "", nil
 	}
@@ -2166,6 +2175,7 @@ func (c *Engine) invalidateQueuedAutoMerge(ctx context.Context, owner, repo stri
 	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		return fmt.Errorf("commenting on stale auto-merge approval: %w", err)
 	}
+	c.noteOwnStageComment(owner, repo, number)
 	return nil
 }
 

@@ -18174,7 +18174,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const key = String(label || '').toLowerCase();
       if (HF_LABEL_TONE[key]) return 'hf-label-' + HF_LABEL_TONE[key];
       if (/^hold(\/|$)|^on-hold$|hold\//.test(key)) return 'hf-label-hold';
-      if (key === 'stage/stalled' || key === 'stage/regressed') return 'hf-label-hold';
+      if (key === 'stage/stalled') return 'hf-label-hold';
       return '';
     }
     function hfDefaultStore() {
@@ -27770,6 +27770,23 @@ function burnAreaChart() {
       return { key: 'normal', label: 'review-priority/normal' };
     }
 
+    function reviewQueueDurationLabel(d) {
+      // Go duration string ("5h30m0s") → "5h30m"; falls back to the input.
+      var m = /^(?:(\d+)h)?(?:(\d+)m)?(?:[\d.]+s)?$/.exec(String(d || ''));
+      if (!m || (!m[1] && !m[2])) return String(d || '');
+      var out = '';
+      if (m[1]) out += m[1] + 'h';
+      if (m[2] && (!m[1] || Number(m[2]) > 0)) out += m[2] + 'm';
+      return out || '<1m';
+    }
+    function reviewQueueStageShort(stage) {
+      // "050-review-pending" → "050"; non-numbered values pass through.
+      var m = /^(\d{3})-/.exec(String(stage || ''));
+      return m ? m[1] : String(stage || '');
+    }
+    function reviewQueueHopTime(at) {
+      return formatDashboardDateTime(at, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }, String(at || ''));
+    }
     function reviewQueueAgeLabel(hours) {
       var h = Number(hours) || 0;
       if (h < 24) return h + 'h';
@@ -27793,10 +27810,29 @@ function burnAreaChart() {
       if (e.held) metaBits.push('held');
       // Hive-owned stage/author labels (#12429) tell at a glance where the
       // PR sits in the pipeline; other labels stay out of the meta line.
+      // stage/stalled means "no activity by anyone but the hive for the
+      // stage's dwell" (#12534): its tooltip says for how long. The retired
+      // stage/regressed label is replaced by the transition history pill.
+      var st = e.stage && typeof e.stage === 'object' ? e.stage : null;
       (Array.isArray(e.labels) ? e.labels : []).map(function(l) { return String(l || ''); })
-        .filter(function(l) { return /^(stage|author)\//.test(l.toLowerCase()); })
+        .filter(function(l) { return /^(stage|author)\//.test(l.toLowerCase()) && l.toLowerCase() !== 'stage/regressed'; })
         .sort()
-        .forEach(function(l) { metaBits.push('<span class="hf-label ' + hfLabelToneClass(l) + '" title="' + esc(l) + '">' + esc(l) + '</span>'); });
+        .forEach(function(l) {
+          var tip = l;
+          if (l.toLowerCase() === 'stage/stalled') tip = 'no activity for ' + (st && st.quiet_for ? reviewQueueDurationLabel(st.quiet_for) : 'the stage dwell') + ' — nobody is working this PR';
+          metaBits.push('<span class="hf-label ' + hfLabelToneClass(l) + '" title="' + esc(tip) + '">' + esc(l) + '</span>');
+        });
+      if (st && st.waiting_on_hive && st.past_dwell) {
+        metaBits.push('<span class="hf-label hf-label-hold" title="past the stage dwell while waiting on the hive (checks running or reviewer verdict pending) — the reviewer lane needs attention, not the author">waiting on hive ' + esc(reviewQueueDurationLabel(st.quiet_for)) + '</span>');
+      }
+      var hops = st && Array.isArray(st.history) ? st.history.filter(function(h) { return h && h.from && h.from !== 'none'; }) : [];
+      if (hops.length) {
+        var hopText = hops.map(function(h) {
+          return reviewQueueStageShort(h.from) + ' → ' + reviewQueueStageShort(h.to) + (h.regressed ? ' ↩' : '') + ' @ ' + reviewQueueHopTime(h.at) + (h.reason ? ' (' + String(h.reason) + ')' : '');
+        }).join('\n');
+        var back = hops.filter(function(h) { return h.regressed; }).length;
+        metaBits.push('<span class="hf-label" title="' + esc('stage history\n' + hopText) + '">' + hops.length + ' hop' + (hops.length === 1 ? '' : 's') + (back ? ', ' + back + ' back' : '') + '</span>');
+      }
       var reasons = Array.isArray(e.reasons) ? e.reasons : [];
       var reasonsHtml = reasons.length
         ? '<ul class="review-queue-reasons">' + reasons.map(function(r) { return '<li>' + esc(String(r)) + '</li>'; }).join('') + '</ul>'
@@ -35198,7 +35234,8 @@ function burnAreaChart() {
       { tab: 'General', section: 'Governor', label: 'Maturity Level', key: 'acmm_level', text: 'ACMM maturity level agent packs advisory fully autonomous' },
       { tab: 'General', section: 'Governor', label: 'Eval loop pacing', key: 'governor.eval_interval_max_s', text: 'eval interval max cap webhook conserve multiplier optional sweep every n cycles provider spend limit budget probe threshold ownership pack governor.eval_interval_s governor.eval_interval_max_s governor.eval_interval_webhook_s governor.conserve_interval_multiplier governor.optional_sweep_every_n_cycles governor.provider_budget.probe_interval_s governor.thresholds_source governor.explain_mode' },
       { tab: 'Labels', section: 'Labels', label: 'Auto-merge queue label', key: 'governor.labels.automerge', text: 'auto merge queue label lgtm merger governor.labels.automerge' },
-      { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled regressed author tier governor.labels.stage.enabled' },
+      { tab: 'Labels', section: 'Labels', label: 'Stage labels', key: 'governor.labels.stage.enabled', text: 'stage labels pipeline state review-pending merge-queue stalled author tier governor.labels.stage.enabled' },
+      { tab: 'Labels', section: 'Labels', label: 'Stalled requires quiet', key: 'governor.labels.stage.stalled.require_quiet', text: 'stalled no activity quiet dwell head push comment review ci label governor.labels.stage.stalled.require_quiet governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Stage dwell overrides', key: 'governor.labels.stage.dwell', text: 'stage dwell stalled threshold governor.labels.stage.dwell' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline' },
@@ -41932,6 +41969,9 @@ function burnAreaChart() {
       const stageAdoptionOn = (_configState.dirty.labels && _configState.dirty.labels.stage_adoption_enabled !== undefined)
         ? _configState.dirty.labels.stage_adoption_enabled
         : (_configState.data.stageAdoptionEnabled !== false);
+      const stageStalledQuietOn = (_configState.dirty.labels && _configState.dirty.labels.stage_stalled_require_quiet !== undefined)
+        ? _configState.dirty.labels.stage_stalled_require_quiet
+        : (_configState.data.stageStalledRequireQuiet !== false);
       const stageGraceOnline = (_configState.dirty.labels && _configState.dirty.labels.stage_grace_online !== undefined)
         ? _configState.dirty.labels.stage_grace_online
         : (_configState.data.stageGraceOnline || '');
@@ -41968,7 +42008,8 @@ function burnAreaChart() {
           <div class="config-help">Label applied by the merger queue; default is ${esc(_configState.data.automergeLabelDefault || 'lgtm')}. Requires restart.</div>
         </div>
         <h4 class="mt-6 mb-3">Stage labels</h4>
-        <div class="config-toggle"><div class="config-toggle-switch ${stageLabelsOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_enabled"></div><span class="config-toggle-label">Hive-owned stage/NN labels ${yamlHint('governor.labels.stage.enabled')} ${settingHelpMark('settings', 'labels', 'Stage labels', `Each eval cycle the hive writes exactly one stage/NN-* label per open issue/PR (review-pending, reviewed, fixing, returned-to-contributor, adopted-by-hive, awaiting-merge-admission, needs-human, merge-queue), an author/* admission-tier label, and stage/stalled or stage/regressed when progress is disrupted. Writes happen only on change. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageLabelsOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_enabled"></div><span class="config-toggle-label">Hive-owned stage/NN labels ${yamlHint('governor.labels.stage.enabled')} ${settingHelpMark('settings', 'labels', 'Stage labels', `Each eval cycle the hive writes exactly one stage/NN-* label per open issue/PR (review-pending, reviewed, fixing, returned-to-contributor, adopted-by-hive, awaiting-merge-admission, needs-human, merge-queue), an author/* admission-tier label, and stage/stalled when nobody has touched the item for the stage's dwell. Backward moves are a one-line stage comment and the dashboard's transition history, not a label. Writes happen only on change. See docs/labels-and-control-signals.md.`)}</span></div>
+        <div class="config-toggle"><div class="config-toggle-switch ${stageStalledQuietOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="labels" data-key="stage_stalled_require_quiet"></div><span class="config-toggle-label">stage/stalled means no activity ${yamlHint('governor.labels.stage.stalled.require_quiet')} ${settingHelpMark('settings', 'labels', 'Stalled requires quiet', `On (default): stage/stalled is applied only when nobody but the hive has touched the item (head push, comment, review, CI state, label) for the stage's dwell, and never while required checks are running or the reviewer verdict for the current head is pending — those waits are on the hive. Any activity clears it at once. Off: the dwell is measured from entering the stage. See docs/labels-and-control-signals.md.`)}</span></div>
         <div class="config-field">
           <label for="cfg-stage-dwell">Dwell overrides ${yamlHint('governor.labels.stage.dwell.<key>')}</label>
           <input type="text" id="cfg-stage-dwell" value="${esc(stageDwell)}" placeholder="review-pending=1h, awaiting-merge-admission=30m, returned-to-contributor=24h" data-change-action="markDirty" data-arg0="labels" data-arg1="stage_dwell" data-arg-types="s,s,w">

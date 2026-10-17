@@ -56,7 +56,7 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 	if ReadyForHumanMerge.Dwell() != 0 || NeedsDecision.Dwell() != 0 {
 		t.Fatal("human stages are open-ended")
 	}
-	if got := StallComment(AwaitingMergeAdmission, 30*time.Minute, "review-state-check"); got != StallCommentMarker+"\nstage 080-awaiting-merge-admission stalled after 30m0s: review-state-check" {
+	if got := StallComment(AwaitingMergeAdmission, 30*time.Minute, "review-state-check"); got != StallCommentMarker+"\nstage 080-awaiting-merge-admission: no activity for 30m0s: review-state-check" {
 		t.Fatalf("StallComment = %q", got)
 	}
 }
@@ -73,9 +73,7 @@ func TestAllLabelDefsColours(t *testing.T) {
 				t.Errorf("stalled colour %s", d.Color)
 			}
 		case d.Name == RegressedLabel:
-			if d.Color != RegressedColor {
-				t.Errorf("regressed colour %s", d.Color)
-			}
+			t.Errorf("%s is retired and must not be provisioned (hivecommons/hive#12534)", d.Name)
 		case d.Name == AuthorTrusted.Label():
 			if d.Color != AuthorTrustedColor {
 				t.Errorf("author/trusted colour %s", d.Color)
@@ -139,9 +137,9 @@ func TestPlanIdempotentExclusiveAndStaleRemoval(t *testing.T) {
 	if len(add) != 0 || !reflect.DeepEqual(remove, []string{"author/trusted", "stage/100-merge-queue", "stage/stalled"}) {
 		t.Fatalf("terminal plan add=%v remove=%v", add, remove)
 	}
-	add, _ = Plan(nil, Desired{Stage: Fixing, Stalled: true, Regressed: true})
-	if !reflect.DeepEqual(add, []string{"stage/070-fixing", "stage/regressed"}) {
-		t.Fatalf("regressed must beat stalled: %v", add)
+	add, remove = Plan([]string{"stage/070-fixing", "stage/regressed"}, Desired{Stage: Fixing, Stalled: true})
+	if !reflect.DeepEqual(add, []string{"stage/stalled"}) || !reflect.DeepEqual(remove, []string{"stage/regressed"}) {
+		t.Fatalf("retired stage/regressed must be stripped by the sweep: add=%v remove=%v", add, remove)
 	}
 }
 
@@ -495,6 +493,113 @@ func TestStoreNoteAuthorAndByAuthor(t *testing.T) {
 	}
 	if got := st2.ByAuthor("alice", ReturnedToContributor); len(got) != 1 || got[0].Key != "acme/w#2" {
 		t.Fatalf("after recovery ByAuthor(072) = %+v", got)
+	}
+}
+
+// hivecommons/hive#12534: stage/stalled means "nobody is working this".
+// hivecommons/hive#12417 is the specimen: review-pending with no reviewer
+// verdict for the head is waiting on the hive and must never stall.
+func TestStoreStalledRequiresQuiet(t *testing.T) {
+	now := time.Date(2026, 10, 16, 13, 33, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), clock)
+	key := Key("hivecommons/hive", 12417)
+	st.Observe(key, ReviewPending, "contributor-lane:no-verdict")
+	st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 0, Digest: "verdict:?|ci:0|", WaitingOnHive: true})
+	rec, _ := st.Get(key)
+	if rec.LastActivityAt.IsZero() || !rec.WaitingOnHive {
+		t.Fatalf("activity not recorded: %+v", rec)
+	}
+	for _, quiet := range []bool{true, false} {
+		if StalledWith(rec, nil, now.Add(6*time.Hour), quiet) {
+			t.Fatalf("050 with no verdict stalled after 6h (require_quiet=%v): the wait is on the reviewer, not a person", quiet)
+		}
+	}
+	// Checks running is likewise waiting on the hive.
+	now = now.Add(2 * time.Hour)
+	st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 0, Digest: "verdict:approve|ci:2|", WaitingOnHive: true})
+	rec, _ = st.Get(key)
+	if StalledWith(rec, nil, now.Add(3*time.Hour), true) {
+		t.Fatal("stalled while checks pending")
+	}
+	// Verdict landed, checks green, and then nothing happens for the dwell.
+	now = now.Add(time.Minute)
+	if !st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 0, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("digest change must count as activity")
+	}
+	rec, _ = st.Get(key)
+	if !rec.QuietSince().Equal(now) {
+		t.Fatalf("quiet since %v want %v", rec.QuietSince(), now)
+	}
+	if StalledWith(rec, nil, now.Add(59*time.Minute), true) {
+		t.Fatal("stalled before the dwell elapsed quietly")
+	}
+	if !StalledWith(rec, nil, now.Add(time.Hour), true) {
+		t.Fatal("not stalled after a quiet dwell with the verdict in hand")
+	}
+	if rec.QuietFor(now.Add(90*time.Minute)) != 90*time.Minute {
+		t.Fatalf("QuietFor = %v", rec.QuietFor(now.Add(90*time.Minute)))
+	}
+	// Any outside activity clears it: a comment …
+	now = now.Add(2 * time.Hour)
+	if !st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 1, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("new comment must count as activity")
+	}
+	rec, _ = st.Get(key)
+	if StalledWith(rec, nil, now.Add(30*time.Minute), true) || !StalledWith(rec, nil, now.Add(time.Hour), true) {
+		t.Fatal("comment did not restart the quiet clock")
+	}
+	// … but not the hive's own comment …
+	st.CountOwnComments(key, 1)
+	if st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 2, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("hive's own comment counted as outside activity")
+	}
+	// … a body-only review submission counts (Reviews -1 = not listed) …
+	if st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 2, Reviews: -1, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("unknown review count must not read as activity")
+	}
+	if !st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 2, Reviews: 1, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("new review submission must count as activity")
+	}
+	if st.NoteActivity(key, Activity{Head: "d2f1572", Comments: 2, Reviews: 1, Digest: "verdict:approve|ci:1|"}) {
+		t.Fatal("re-observed review counted again")
+	}
+	// … and a head push, dated by the commit, not by observation.
+	pushed := now.Add(45 * time.Minute)
+	now = now.Add(time.Hour)
+	if !st.NoteActivity(key, Activity{Head: "e000001", Comments: 2, Digest: "verdict:?|ci:0|", At: pushed, WaitingOnHive: true}) {
+		t.Fatal("head push must count as activity")
+	}
+	rec, _ = st.Get(key)
+	if !rec.LastActivityAt.Equal(pushed) {
+		t.Fatalf("activity at %v want commit date %v", rec.LastActivityAt, pushed)
+	}
+	// Without require_quiet the dwell is measured from entering the stage.
+	rec.WaitingOnHive = false
+	if !StalledWith(rec, nil, now, false) || StalledWith(rec, nil, now, true) {
+		t.Fatal("require_quiet=false must fall back to the entered-at clock")
+	}
+}
+
+func TestStoreHistoryRecordsTransitions(t *testing.T) {
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	st := NewStore(filepath.Join(t.TempDir(), "s.json"), func() time.Time { return now })
+	key := Key("o/r", 1)
+	for _, s := range []Stage{ReviewPending, Reviewed, MergeQueue, Reviewed} {
+		now = now.Add(time.Hour)
+		st.Observe(key, s, "r")
+	}
+	rec, _ := st.Get(key)
+	if len(rec.History) != 4 || rec.History[3].From != MergeQueue || rec.History[3].Stage != Reviewed || !rec.History[3].Regressed {
+		t.Fatalf("history = %+v", rec.History)
+	}
+	for i := 0; i < HistoryLimit+3; i++ {
+		now = now.Add(time.Hour)
+		st.Observe(key, []Stage{ReviewPending, Reviewed}[i%2], "r")
+	}
+	rec, _ = st.Get(key)
+	if len(rec.History) != HistoryLimit {
+		t.Fatalf("history not capped: %d", len(rec.History))
 	}
 }
 

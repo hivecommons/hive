@@ -653,6 +653,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
