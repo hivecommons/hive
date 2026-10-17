@@ -357,7 +357,9 @@ func (r Result) validate(createdAt time.Time, cohorts map[string]bool, metrics m
 		if !missing && (v.Samples == 0 || nonempty(v.MissingReason)) {
 			return fmt.Errorf("measurement for %q: numerical evidence requires samples and no missing reason", v.MetricID)
 		}
-		if !missing {
+		// A guardrail fast-fail is judged against absolute bounds, so an observed
+		// treatment value is evidence even when the baseline window is empty.
+		if !missing || (r.Verdict == VerdictFastFailed && v.Observed != nil && v.Samples > 0) {
 			complete = true
 		}
 		if definitions[m.DefinitionID].UnavailableReason != "" && (v.Baseline != nil || v.Observed != nil) {

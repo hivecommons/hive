@@ -222,3 +222,53 @@ func TestNousSelfTickFastFailLatchesThroughExecutor(t *testing.T) {
 		t.Fatal("restore did not keep the fast-failed treatment off")
 	}
 }
+
+// TestNousSelfTickFastFailWithoutBaselinePersists covers a guardrail breach
+// when the baseline window has no snapshot: the fast-fail must still be
+// recorded in the store so Restore can rebuild the revert after a restart.
+func TestNousSelfTickFastFailWithoutBaselinePersists(t *testing.T) {
+	e := nousSelfExperiment("exp-1")
+	upper := 4.0
+	e.Guardrails = []nous.Guardrail{{MetricID: "queue", Upper: &upper}}
+	store := nous.NewExperimentStore(filepath.Join(t.TempDir(), nousSelfLedgerFile))
+	if err := store.Save([]nous.Experiment{e}); err != nil {
+		t.Fatal(err)
+	}
+	gate := &nous.SelfFlagGate{}
+	assignment := &nous.SelfFlagAssignment{ExperimentID: "exp-1", Flag: "review-v2", Enabled: true}
+	gate.Apply(true, assignment)
+	now := nousSelfCreated.Add(2 * time.Hour)
+	executor := &nousscheduler.Executor{Store: store, Gate: gate, Now: func() time.Time { return now }}
+
+	cfg := &config.Config{HiveID: "h2"}
+	cfg.SelfExperiments.Scheduler = config.SelfExperimentSchedulerConfig{Enabled: true, Mode: "background"}
+	tick := newNousSelfTick(cfg, executor, store, t.TempDir(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tick.now = func() time.Time { return now }
+	tick.series = func(time.Time) ([]nousscheduler.HiveSeries, error) {
+		return []nousscheduler.HiveSeries{{HiveID: "h2", Buckets: []hivestate.Bucket{
+			hivestate.FromSnapshot(nousSelfCreated.Add(90*time.Minute), hivestate.Snapshot{QueueIssues: 9}),
+		}}}, nil
+	}
+	tick.run()
+
+	ledger, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := ledger[0].Result
+	if res == nil || res.Verdict != nous.VerdictFastFailed {
+		t.Fatalf("fast-fail without baseline not persisted: %+v", res)
+	}
+	if len(res.Measurements) != 1 || res.Measurements[0].Baseline != nil || res.Measurements[0].Observed == nil || res.Measurements[0].MissingReason == "" {
+		t.Fatalf("baseline must stay missing with a reason, observed kept: %+v", res.Measurements)
+	}
+
+	restarted := &nous.SelfFlagGate{}
+	if err := (&nousscheduler.Executor{Store: store, Gate: restarted}).Restore(); err != nil {
+		t.Fatal(err)
+	}
+	restarted.Apply(true, assignment)
+	if restarted.Enabled("review-v2") {
+		t.Fatal("restore did not keep the fast-failed treatment off")
+	}
+}

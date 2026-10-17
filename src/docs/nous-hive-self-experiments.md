@@ -3,7 +3,7 @@
 This guide documents the **Hive-self background experiment mode** within the Nous experiment framework: what it is, the outcome questions it answers, how it differs fundamentally from repository-scoped experiments run in the Experiment Lab, its opt-in background-only boundary, and its guardrails and auto-revert mechanisms.
 
 > [!IMPORTANT]
-> **Delivery status:** This guide describes the Hive-self design, not a fully delivered runner. The opt-in and heartbeat feature-flag delivery seam is tracked in [PR #12421](https://github.com/hivecommons/hive/pull/12421) and is not yet available on `v5`. Cohort scheduling and fast-fail evaluation are separate work; image-channel switching is not implemented by this seam.
+> **Delivery status:** This guide describes the Hive-self design, not a fully delivered runner. The opt-in and heartbeat feature-flag delivery seam is tracked in [PR #12421](https://github.com/hivecommons/hive/pull/12421) and is not yet available on `v5`. A background-only scheduler tick that evaluates cohorts and latches guardrail fast-fails is available behind the default-off `self_experiments.scheduler` block (`enabled: true`, `mode: background`); it reads the local ledger at `/data/nous/self-experiments.json`, which stays empty until hub/relay registration is wired; image-channel switching is not implemented by this seam.
 
 ---
 

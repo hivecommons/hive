@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"math"
 	"path/filepath"
 	"time"
 
@@ -30,6 +31,10 @@ func nousSelfLedgerPath() string {
 
 // nousSelfMissingReason explains a measurement with no snapshot evidence.
 const nousSelfMissingReason = "no snapshot evidence in the baseline or treatment window"
+
+// nousSelfMissingBaselineReason explains a measurement whose treatment window
+// was observed but whose baseline window has no snapshot evidence.
+const nousSelfMissingBaselineReason = "no snapshot evidence in the baseline window"
 
 // nousSelfTick is one scheduler pass; every effect is a seam so tests run it
 // hermetically.
@@ -106,7 +111,9 @@ func (t *nousSelfTick) run() {
 // nousSelfMeasurements builds the evidence stored with a result: one
 // measurement per treatment cohort and metric, comparing the baseline window
 // mean with the treatment window mean. A metric without samples in either
-// window is recorded as missing with a reason, never as zero.
+// window is recorded as missing with a reason, never as zero. When only the
+// baseline is missing the observed treatment mean is still kept, so a
+// guardrail fast-fail (judged against absolute bounds) has durable evidence.
 func nousSelfMeasurements(e nous.Experiment, series []nousscheduler.HiveSeries, now time.Time) []nous.Measurement {
 	baselineEnd := e.CreatedAt.Add(time.Duration(e.Window.BaselineHours) * time.Hour)
 	experimentEnd := baselineEnd.Add(time.Duration(e.Window.ExperimentDurationHours) * time.Hour)
@@ -122,9 +129,13 @@ func nousSelfMeasurements(e nous.Experiment, series []nousscheduler.HiveSeries, 
 			ms := nous.Measurement{MetricID: m.ID, CohortID: c.ID}
 			baseline, _ := nousSelfWindowMean(samples, m.ID, e.CreatedAt, baselineEnd, now)
 			observed, n := nousSelfWindowMean(samples, m.ID, baselineEnd, experimentEnd, now)
-			if baseline == nil || observed == nil {
+			switch {
+			case observed == nil:
 				ms.MissingReason = nousSelfMissingReason
-			} else {
+			case baseline == nil:
+				ms.Observed, ms.Samples = observed, n
+				ms.MissingReason = nousSelfMissingBaselineReason
+			default:
 				ms.Baseline, ms.Observed, ms.Samples = baseline, observed, n
 			}
 			out = append(out, ms)
@@ -141,7 +152,7 @@ func nousSelfWindowMean(samples []nousscheduler.Sample, metric string, start, en
 		if s.At.Before(start) || !s.At.Before(end) || s.At.After(now) {
 			continue
 		}
-		if v, ok := s.Values[metric]; ok {
+		if v, ok := s.Values[metric]; ok && !math.IsNaN(v) && !math.IsInf(v, 0) {
 			sum += v
 			n++
 		}
@@ -185,6 +196,11 @@ func startNousSelfScheduler(ctx context.Context, cfg *config.Config, logger *slo
 		return
 	}
 	store := nous.NewExperimentStore(nousSelfLedgerPath())
+	// No release-channel revert hook exists yet, so RevertChannel stays nil.
+	// A channel subject's result is recorded before its revert is attempted and
+	// run() skips resolved experiments, so the failed revert (ErrNoChannelRevert)
+	// is only re-attempted by Restore() at the next boot. Flag subjects revert
+	// locally.
 	executor := &nousscheduler.Executor{Store: store, Gate: &nous.SelfExperiments}
 	if err := executor.Restore(); err != nil {
 		logger.Warn("nous self scheduler: restore reverts failed", "error", err)

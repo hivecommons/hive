@@ -971,6 +971,8 @@ dashboard:
 # governor config). Default off. The tick runs only with enabled: true AND
 # mode: background; it judges each unresolved experiment in the local ledger
 # and durably reverts fast-failed or finished treatments.
+# Experiments are registered by the hub/relay, which is not yet wired, so the
+# ledger (/data/nous/self-experiments.json) stays empty until then.
 # self_experiments:
 #   scheduler:
 #     enabled: false

@@ -207,3 +207,26 @@ func TestCatalog(t *testing.T) {
 		t.Fatal("shared catalog mutation")
 	}
 }
+
+func TestFastFailedAcceptsObservedWithoutBaseline(t *testing.T) {
+	e := exampleExperiment()
+	addResult(&e)
+	v := &e.Result.Measurements[0]
+	v.Baseline = nil
+	v.MissingReason = "no snapshot evidence in the baseline window"
+	v.Samples = 1
+	e.Result.Verdict = VerdictFastFailed
+	if err := e.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	e.Result.Verdict = VerdictImproved
+	if err := e.Validate(); err == nil {
+		t.Fatal("conclusive verdict without baseline evidence")
+	}
+	e.Result.Verdict = VerdictFastFailed
+	v.Observed = nil
+	v.Samples = 0
+	if err := e.Validate(); err == nil {
+		t.Fatal("fast_failed without any observed evidence")
+	}
+}
