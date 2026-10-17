@@ -8,7 +8,8 @@ import (
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
-// TestBuildEvidenceCIRecovery pins panel 5's recovery read: the claim
+// TestBuildEvidenceCIRecovery pins the CI gate panel: gate integrity over
+// merged PRs, convergence passes over agent PRs, and the recovery read: the claim
 // snapshot is the first live record that captured CI; red-at-claim PRs are
 // bucketed by what happened next (merged = recovered, green but open,
 // abandoned, still pending, outcome unknown); medians come only from PRs
@@ -43,8 +44,24 @@ func TestBuildEvidenceCIRecovery(t *testing.T) {
 	// 8: red at claim, later live record green, not merged, no trail → green open
 	b8 := live(8, "h1", t0, red)
 	b8b := live(8, "h2", t0.Add(time.Hour), green)
-	bundles := []*evidence.Bundle{b1, b1m, b2, b3, b3c, b4, b5a, b5b, b6, b7, b8, b8b}
-	claims := evidenceCIClaims(bundles, evidence.FoldPRs(bundles, "", ""))
+	// 9: human PR merged while red → gate breach
+	b9 := live(9, "i1", t0, red)
+	b9.Author.Kind = evidence.AuthorHuman
+	b9.Merge = &evidence.MergeEvent{At: t0.Add(time.Hour)}
+	// 10: human PR merged with no bundle snapshot; the GitHub trail's last
+	// head is green 3h before the merge → green at merge, gate cost 3h
+	b10 := live(10, "j1", t0, nil)
+	b10.Author.Kind = evidence.AuthorHuman
+	b10.Merge = &evidence.MergeEvent{At: t0.Add(4 * time.Hour)}
+	// 11: agent PR red at claim, merged on a new head nobody snapshotted →
+	// gate unknown, convergence unknown (never counted as a breach)
+	b11 := live(11, "k1", t0, red)
+	b11m := live(11, "k2", t0.Add(2*time.Hour), nil)
+	b11m.Merge = &evidence.MergeEvent{At: t0.Add(2 * time.Hour)}
+	bundles := []*evidence.Bundle{b1, b1m, b2, b3, b3c, b4, b5a, b5b, b6, b7, b8, b8b, b9, b10, b11, b11m}
+	prs := evidence.FoldPRs(bundles, "", "")
+	claims := evidenceCIClaims(bundles, prs)
+	merges := evidenceGateMerges(bundles, prs)
 	if c := claims["o/r#5"]; c == nil || c.state != evidenceCIGreen || c.claimHead != "e2" {
 		t.Fatalf("claim 5 = %+v (first CAPTURED snapshot is the claim)", c)
 	}
@@ -52,21 +69,64 @@ func TestBuildEvidenceCIRecovery(t *testing.T) {
 		t.Fatal("human PR must not be a claim")
 	}
 	rollup := CIRecoveryRollup{PRs: map[string]CIRecoveryTrail{
-		"o/r#1": {Trail: ghpkg.PRCITrail{State: "merged", MergedAt: t0.Add(3 * time.Hour), Heads: []ghpkg.PRCIHead{{SHA: "a1", At: t0, State: "red"}, {SHA: "a2", At: t0.Add(2 * time.Hour), State: "green"}}}},
-		"o/r#2": {Trail: ghpkg.PRCITrail{State: "merged", MergedAt: t0.Add(time.Hour), Heads: []ghpkg.PRCIHead{{SHA: "b1", At: t0, State: "green"}}}},
-		"o/r#7": {Trail: ghpkg.PRCITrail{State: "open", Heads: []ghpkg.PRCIHead{{SHA: "g1", At: t0, State: "red"}}}},
+		"o/r#1":  {Trail: ghpkg.PRCITrail{State: "merged", MergedAt: t0.Add(3 * time.Hour), Evaluated: 2, PassesToGreen: 2, Heads: []ghpkg.PRCIHead{{SHA: "a1", At: t0, State: "red"}, {SHA: "a2", At: t0.Add(2 * time.Hour), State: "green"}}}},
+		"o/r#2":  {Trail: ghpkg.PRCITrail{State: "merged", MergedAt: t0.Add(time.Hour), Evaluated: 1, PassesToGreen: 1, Heads: []ghpkg.PRCIHead{{SHA: "b1", At: t0, State: "green"}}}},
+		"o/r#7":  {Trail: ghpkg.PRCITrail{State: "open", Evaluated: 1, Heads: []ghpkg.PRCIHead{{SHA: "g1", At: t0, State: "red"}}}},
+		"o/r#10": {Trail: ghpkg.PRCITrail{State: "merged", MergedAt: t0.Add(4 * time.Hour), Heads: []ghpkg.PRCIHead{{SHA: "j1", At: t0, State: "red"}, {SHA: "j2", At: t0.Add(time.Hour), State: "green"}}}},
 	}}
 	win := evidenceWindow{Hours: 168, From: now.Add(-168 * time.Hour), To: now}
-	got := buildEvidenceCIRecovery(claims, rollup, win, "", EvidenceCIPolicy{SelfAuthoredAutoMerge: true})
-	if got.N != 7 || got.AtClaim["red"] != 6 || got.AtClaim["green"] != 1 || got.AtClaim["none"] != 0 {
+	got := buildEvidenceCIRecovery(claims, merges, rollup, win, "", EvidenceCIPolicy{SelfAuthoredAutoMerge: true})
+	if got.N != 8 || got.AtClaim["red"] != 7 || got.AtClaim["green"] != 1 || got.AtClaim["none"] != 0 {
 		t.Errorf("n/at_claim = %d %+v", got.N, got.AtClaim)
 	}
 	r := got.Red
-	if r.N != 6 || r.RecoveredMerged != 2 || r.GreenOpen != 1 || r.Abandoned != 1 || r.Pending != 1 || r.OutcomeUnknown != 1 {
+	if r.N != 7 || r.RecoveredMerged != 3 || r.GreenOpen != 1 || r.Abandoned != 1 || r.Pending != 1 || r.OutcomeUnknown != 1 {
 		t.Errorf("red = %+v", r)
 	}
-	if r.Enriched != 3 || r.NotEnriched != 3 || r.SameHeadRecovered != 1 {
+	if r.Enriched != 3 || r.NotEnriched != 4 || r.SameHeadRecovered != 1 {
 		t.Errorf("enrichment = %+v", r)
+	}
+	// Grade A, gate integrity: every merged PR (any author) by merge-time
+	// check state; unknown is outside the denominator, never a breach.
+	g := got.Gate
+	if g.MergedN != 4 || g.WithChecks != 3 || g.Green != 2 || g.Breaches != 1 || g.Pending != 0 || g.Unknown != 1 {
+		t.Errorf("gate = %+v", g)
+	}
+	if len(g.BreachPRs) != 1 || g.BreachPRs[0].Number != 9 || g.BreachPRs[0].State != "red" || g.BreachPRs[0].Author != "human" || g.BreachPRs[0].Source != "bundle" {
+		t.Errorf("breach list = %+v", g.BreachPRs)
+	}
+	if g.GreenToMergeN != 1 || g.MedianGreenToMergeHours == nil || *g.MedianGreenToMergeHours != 3 {
+		t.Errorf("gate cost = %d %v, want 1 PR at 3h (trail green → merge)", g.GreenToMergeN, g.MedianGreenToMergeHours)
+	}
+	// A required check the snapshot never saw green is a missing_required
+	// breach; a trail-sourced state has no check names, so it is not judged.
+	strict := buildEvidenceCIRecovery(claims, merges, rollup, win, "", EvidenceCIPolicy{RequiredChecks: []string{"build", "lint"}})
+	if strict.Gate.Breaches != 2 || strict.Gate.Green != 1 || len(strict.Gate.BreachPRs) != 2 || strict.Gate.BreachPRs[0].State != "missing_required" || strict.Gate.BreachPRs[0].Missing[0] != "lint" {
+		t.Errorf("strict gate = %+v", strict.Gate)
+	}
+	// Grade B, convergence: passes until the first green head, per agent PR;
+	// in-flight and unknown PRs are counts, not failures; "never" is closed
+	// unmerged without a green.
+	c := got.Convergence
+	if c.N != 8 || c.Settled != 5 || c.InFlight != 2 || c.Unknown != 1 {
+		t.Errorf("convergence = %+v", c)
+	}
+	if c.Passes["1"] != 2 || c.Passes["2"] != 2 || c.Passes["3"] != 0 || c.Passes["4+"] != 0 || c.Passes["never"] != 1 {
+		t.Errorf("passes = %v", c.Passes)
+	}
+	if c.FromGitHub != 2 || c.FromBundles != 3 {
+		t.Errorf("sources = github %d bundles %d", c.FromGitHub, c.FromBundles)
+	}
+	if c.MedianPasses == nil || *c.MedianPasses != 1.5 {
+		t.Errorf("median passes = %v, want 1.5 over 1,1,2,2", c.MedianPasses)
+	}
+	if len(c.ByWeek) != 1 || c.ByWeek[0].Week != evidenceWeekKey(t0) || c.ByWeek[0].Passes["2"] != 2 || c.ByWeek[0].InFlight != 2 {
+		t.Errorf("by_week = %+v", c.ByWeek)
+	}
+	// A trail that scanned past the cap without a green is "4+".
+	capped := CIRecoveryRollup{PRs: map[string]CIRecoveryTrail{"o/r#4": {Trail: ghpkg.PRCITrail{State: "open", Evaluated: 4, ScanCapped: true}}}}
+	if x := buildEvidenceCIRecovery(claims, merges, capped, win, "", EvidenceCIPolicy{}); x.Convergence.Passes["4+"] != 1 {
+		t.Errorf("capped scan = %v", x.Convergence.Passes)
 	}
 	if r.MedianPushesToGreen == nil || *r.MedianPushesToGreen != 0.5 || r.MedianHoursToGreen == nil || *r.MedianHoursToGreen != 1.5 {
 		t.Errorf("medians = %v %v, want pushes 0.5 (0 and 1) hours 1.5 (1h and 2h)", r.MedianPushesToGreen, r.MedianHoursToGreen)
@@ -75,10 +135,10 @@ func TestBuildEvidenceCIRecovery(t *testing.T) {
 		t.Error("policy must be echoed")
 	}
 	// repo filter and window
-	if x := buildEvidenceCIRecovery(claims, rollup, win, "x/y", EvidenceCIPolicy{}); x.N != 0 || x.Red.N != 0 {
+	if x := buildEvidenceCIRecovery(claims, merges, rollup, win, "x/y", EvidenceCIPolicy{}); x.N != 0 || x.Red.N != 0 || x.Gate.MergedN != 0 {
 		t.Errorf("other repo = %+v", x)
 	}
-	if x := buildEvidenceCIRecovery(claims, rollup, evidenceWindow{Hours: 1, From: now.Add(-time.Hour), To: now}, "", EvidenceCIPolicy{}); x.N != 0 {
+	if x := buildEvidenceCIRecovery(claims, merges, rollup, evidenceWindow{Hours: 1, From: now.Add(-time.Hour), To: now}, "", EvidenceCIPolicy{}); x.N != 0 || x.Gate.MergedN != 0 {
 		t.Errorf("window by open time = %+v", x)
 	}
 }

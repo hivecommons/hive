@@ -347,7 +347,7 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 		"<li>Outcome by author kind — hives report this once upgraded to the Oct 16 build or later. <button",
 		"<li>Boundary enforcement (agent writes the guardrail proxy blocked) — hives report this once upgraded to the Oct 16 build or later. <button",
 		"<li>Shadow gates — shadow mode is off on every selected hive, or none has reported it yet (hives report this once upgraded to the Oct 16 build or later). <button",
-		"<li>Claim-vs-verdict totals — not reported by any hive build yet.</li>",
+		"<li>CI gate (claim vs verdict) totals — not reported by any hive build yet.</li>",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("evidence panel is missing %q", want)

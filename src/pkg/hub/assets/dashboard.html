@@ -2229,7 +2229,7 @@
       if (!Array.isArray(v.write_counters)) out.push('Boundary enforcement (agent writes the guardrail proxy blocked) \u2014 ' + upgrade + '.');
       if (!(v.shadow_gate && typeof v.shadow_gate === 'object')) out.push('Shadow gates \u2014 shadow mode is off on every selected hive, or none has reported it yet (' + upgrade + ').');
       out.push('Per-axis criteria table \u2014 not reported by any hive build yet.');
-      out.push('Claim-vs-verdict totals \u2014 not reported by any hive build yet.');
+      out.push('CI gate (claim vs verdict) totals \u2014 not reported by any hive build yet.');
       var ttm = (Array.isArray(v.by_acmm_level) ? v.by_acmm_level : []).some(function(a) { return a && a.time_to_merge; });
       if (!ttm) out.push('Median time-to-merge per autonomy level \u2014 no selected hive reports it yet (it needs a build that records when each merged PR was opened).');
       out.push('Revert rate by author kind per hive \u2014 not reported by any hive build yet.');
