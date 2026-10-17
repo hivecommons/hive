@@ -61,6 +61,40 @@ func TestFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestModeSamples(t *testing.T) {
+	if b := FromSnapshot(t0, Snapshot{}); b.ModeSamples != nil {
+		t.Fatalf("mode counted without a mode: %+v", b)
+	}
+	first := FromSnapshot(t0, Snapshot{Mode: "surge"})
+	var agg Bucket
+	agg.merge(first)
+	agg.merge(FromSnapshot(t0.Add(time.Minute), Snapshot{Mode: "surge"}))
+	agg.merge(FromSnapshot(t0.Add(2*time.Minute), Snapshot{Mode: "idle"}))
+	agg.merge(FromSnapshot(t0.Add(3*time.Minute), Snapshot{}))
+	if agg.ModeSamples["surge"] != 2 || agg.ModeSamples["idle"] != 1 || agg.Samples != 4 {
+		t.Fatalf("agg = %+v", agg)
+	}
+	if first.ModeSamples["surge"] != 1 {
+		t.Fatalf("merge aliased the source map: %+v", first)
+	}
+
+	// Buckets written before mode_samples existed still decode and merge.
+	var old Bucket
+	if err := json.Unmarshal([]byte(`{"start":"2026-10-01T12:00:00Z","last":"2026-10-01T12:30:00Z","samples":2}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.ModeSamples != nil {
+		t.Fatalf("old bucket = %+v", old)
+	}
+	var mixed Bucket
+	mixed.merge(old)
+	mixed.merge(first)
+	old.merge(first)
+	if mixed.Samples != 3 || mixed.ModeSamples["surge"] != 1 || old.ModeSamples["surge"] != 1 {
+		t.Fatalf("mixed = %+v old = %+v", mixed, old)
+	}
+}
+
 func TestMergeTokensIgnoresDrops(t *testing.T) {
 	var agg Bucket
 	agg.merge(Bucket{})

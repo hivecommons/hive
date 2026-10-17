@@ -189,8 +189,10 @@ the last 7 d window covers under 5 days; week-over-week detectors also need
   7 d while median queue depth (issues + PRs) stays within 20 % (at least one
   item); queue depth stands in for throughput because buckets carry no
   merged-PR counts.
-
-There is no mode-stuck detector yet: buckets do not record the Nous mode.
+- **`mode-stuck`.** One governor mode, `surge` or `idle`, accounts for at least
+  95 % of the mode-bearing samples over 7 d and is the majority mode on every
+  day with samples. Buckets written before `mode_samples` existed carry no mode
+  info and never fire it.
 
 ### Filing observations
 

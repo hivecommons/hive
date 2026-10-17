@@ -14,6 +14,7 @@ const (
 	KindAgentIdle   = "agent-idle"
 	KindThrashing   = "agent-thrashing"
 	KindTokens      = "token-efficiency"
+	KindModeStuck   = "mode-stuck"
 )
 
 // Detector thresholds. Every detector fails closed below its minimum coverage.
@@ -30,7 +31,8 @@ const (
 	idleRatioThreshold = 0.90
 	thrashKicksPerDay  = 500.0 // about one kick per 120 s cycle is 720/day
 	tokenGrowthRatio   = 1.5
-	queueFlatTolerance = 0.2 // relative; at least 1 item of slack
+	queueFlatTolerance = 0.2  // relative; at least 1 item of slack
+	modeStuckShare     = 0.95 // fraction of mode-bearing samples in one mode
 )
 
 // Observation is one hive-wide finding derived from the snapshot series.
@@ -50,8 +52,6 @@ type Observation struct {
 // observations that fire, in a fixed order. It needs buckets going back 14
 // days for the week-over-week checks, and returns nothing for an empty series
 // or when a detector's windows are too thinly covered.
-//
-// There is no mode detector: Bucket does not carry Snapshot.Mode.
 func Observe(buckets []Bucket, now time.Time, hiveID string) []Observation {
 	sorted := append([]Bucket(nil), buckets...)
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Start.Before(sorted[j].Start) })
@@ -75,6 +75,7 @@ func Observe(buckets []Bucket, now time.Time, hiveID string) []Observation {
 	add(idle)
 	add(thrash)
 	add(detectTokens(sorted, now, cur, prev))
+	add(detectModeStuck(sorted, now, cur))
 	return out
 }
 
@@ -245,6 +246,63 @@ func detectTokens(sorted []Bucket, now time.Time, cur, prev Window) *Observation
 		NextStep:       "Compare per-agent token use across the two weeks.",
 		Series: dailySeries(sorted, now, 14, func(b Bucket) float64 {
 			return float64(b.Tokens)
+		}),
+	}
+}
+
+// detectModeStuck fires when one governor mode, surge or idle, holds at least
+// modeStuckShare of the mode-bearing samples over 7 d and is also the majority
+// mode of every day that has samples. Buckets without mode info never fire it.
+func detectModeStuck(sorted []Bucket, now time.Time, cur Window) *Observation {
+	if cur.CoverageHours < minWeekCoverageHours {
+		return nil
+	}
+	daily := dailyBuckets(sorted, now, 7)
+	var agg Bucket
+	for _, d := range daily {
+		agg.merge(d)
+	}
+	total, mode, top := 0, "", 0
+	for m, n := range agg.ModeSamples {
+		total += n
+		if n > top || (n == top && m < mode) {
+			mode, top = m, n
+		}
+	}
+	if total == 0 || (mode != "surge" && mode != "idle") || float64(top) < modeStuckShare*float64(total) {
+		return nil
+	}
+	for _, d := range daily {
+		if d.Samples == 0 {
+			continue
+		}
+		dayTotal := 0
+		for _, n := range d.ModeSamples {
+			dayTotal += n
+		}
+		if dayTotal == 0 || d.ModeSamples[mode]*2 <= dayTotal {
+			return nil
+		}
+	}
+	cause, step := "Thresholds are too low or the backlog never drains, so the governor never leaves surge.", "Review the governor thresholds and agent capacity."
+	if mode == "idle" {
+		cause, step = "Thresholds are too high or intake has dried up, so the governor never leaves idle.", "Review the governor thresholds, or whether the hive is still needed at this size."
+	}
+	return &Observation{
+		Kind:           KindModeStuck,
+		Title:          fmt.Sprintf("Governor mode has been stuck in %s for 7 days", mode),
+		Evidence:       fmt.Sprintf("%.0f%% of %d mode samples over the last 7 d were %s, and %s was the dominant mode on every day.", float64(top)/float64(total)*100, total, mode, mode),
+		SuspectedCause: cause,
+		NextStep:       step,
+		Series: dailySeries(sorted, now, 14, func(b Bucket) float64 {
+			n := 0
+			for _, c := range b.ModeSamples {
+				n += c
+			}
+			if n == 0 {
+				return 0
+			}
+			return float64(b.ModeSamples[mode]) / float64(n)
 		}),
 	}
 }

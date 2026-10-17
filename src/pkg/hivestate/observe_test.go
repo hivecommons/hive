@@ -13,6 +13,7 @@ type hourSpec struct {
 	idle, running     int     // agent-samples across the bucket
 	kicks             int
 	tokens            int64
+	mode              string
 }
 
 // synth builds hourly buckets from now-days to now, calling f with days-ago.
@@ -29,6 +30,9 @@ func synth(now time.Time, days int, f func(ago float64) hourSpec) []Bucket {
 			Kicks:       s.kicks, AgentSamples: s.idle + s.running, IdleAgentSamples: s.idle,
 			Tokens:             s.tokens,
 			SLAViolatedSamples: int(s.slaFrac * 4),
+		}
+		if s.mode != "" {
+			b.ModeSamples = map[string]int{s.mode: 4}
 		}
 		out = append(out, b)
 	}
@@ -155,6 +159,38 @@ func TestObserve(t *testing.T) {
 			}
 			return s
 		}, ""},
+		{"mode stuck surge", 7, func(float64) hourSpec {
+			s := base
+			s.mode = "surge"
+			return s
+		}, KindModeStuck},
+		{"mode stuck idle", 14, func(float64) hourSpec {
+			s := base
+			s.mode = "idle"
+			return s
+		}, KindModeStuck},
+		{"mode alternating", 7, func(a float64) hourSpec {
+			s := base
+			s.mode = "surge"
+			if int(a*24)%2 == 0 {
+				s.mode = "quiet"
+			}
+			return s
+		}, ""},
+		{"mode stuck busy", 7, func(float64) hourSpec {
+			s := base
+			s.mode = "busy"
+			return s
+		}, ""},
+		{"mode recovered", 7, func(a float64) hourSpec {
+			s := base
+			s.mode = "surge"
+			if a < 1 {
+				s.mode = "quiet"
+			}
+			return s
+		}, ""},
+		{"mode absent", 7, func(float64) hourSpec { return base }, ""},
 		{"insufficient coverage", 3, func(float64) hourSpec {
 			s := base
 			s.slaFrac, s.idle, s.running, s.kicks = 1, 19, 1, 30
@@ -227,5 +263,22 @@ func TestDailyBucketsSkipsOutOfRange(t *testing.T) {
 	}, now, 2)
 	if got[0].Samples != 0 || got[1].Samples != 1 {
 		t.Fatalf("daily = %+v", got)
+	}
+}
+
+func TestObserveModeStuckShape(t *testing.T) {
+	now := time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
+	got := Observe(synth(now, 14, func(float64) hourSpec {
+		return hourSpec{issues: 10, prs: 5, idle: 1, running: 3, tokens: 1000, mode: "surge"}
+	}), now, "h1")
+	if len(got) != 1 {
+		t.Fatalf("observations = %v", kinds(got))
+	}
+	o := got[0]
+	if o.Fingerprint != "h1:"+KindModeStuck || o.Title != "Governor mode has been stuck in surge for 7 days" || o.Evidence == "" {
+		t.Fatalf("observation = %+v", o)
+	}
+	if len(o.Series) != 14 || o.Series[0] != 1 || o.Series[13] != 1 {
+		t.Fatalf("series = %v", o.Series)
 	}
 }

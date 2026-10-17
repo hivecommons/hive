@@ -59,19 +59,20 @@ type Snapshot struct {
 // TotalTokens deltas between consecutive samples (the token collector's total
 // can drop when session files are pruned; drops are ignored).
 type Bucket struct {
-	Start              time.Time `json:"start"`
-	Last               time.Time `json:"last"`
-	Samples            int       `json:"samples"`
-	QueueIssues        []int     `json:"queue_issues"`
-	QueuePRs           []int     `json:"queue_prs"`
-	QueueHold          []int     `json:"queue_hold"`
-	SLAViolatedSamples int       `json:"sla_violated_samples"`
-	Kicks              int       `json:"kicks"`
-	AgentSamples       int       `json:"agent_samples"`
-	IdleAgentSamples   int       `json:"idle_agent_samples"`
-	Tokens             int64     `json:"tokens"`
-	FirstTokens        int64     `json:"first_tokens"`
-	LastTokens         int64     `json:"last_tokens"`
+	Start              time.Time      `json:"start"`
+	Last               time.Time      `json:"last"`
+	Samples            int            `json:"samples"`
+	QueueIssues        []int          `json:"queue_issues"`
+	QueuePRs           []int          `json:"queue_prs"`
+	QueueHold          []int          `json:"queue_hold"`
+	SLAViolatedSamples int            `json:"sla_violated_samples"`
+	Kicks              int            `json:"kicks"`
+	AgentSamples       int            `json:"agent_samples"`
+	IdleAgentSamples   int            `json:"idle_agent_samples"`
+	Tokens             int64          `json:"tokens"`
+	FirstTokens        int64          `json:"first_tokens"`
+	LastTokens         int64          `json:"last_tokens"`
+	ModeSamples        map[string]int `json:"mode_samples,omitempty"`
 }
 
 // Quantiles is the nearest-rank median and p90 of a sample set.
@@ -121,6 +122,9 @@ func FromSnapshot(at time.Time, s Snapshot) Bucket {
 	if s.SLAViolations > 0 {
 		b.SLAViolatedSamples = 1
 	}
+	if s.Mode != "" {
+		b.ModeSamples = map[string]int{s.Mode: 1}
+	}
 	for _, st := range s.AgentStates {
 		switch st {
 		case agentStateIdle:
@@ -143,6 +147,13 @@ func (b *Bucket) merge(next Bucket) {
 		b.QueueIssues = append([]int(nil), next.QueueIssues...)
 		b.QueuePRs = append([]int(nil), next.QueuePRs...)
 		b.QueueHold = append([]int(nil), next.QueueHold...)
+		b.ModeSamples = nil
+		if next.ModeSamples != nil {
+			b.ModeSamples = make(map[string]int, len(next.ModeSamples))
+			for m, n := range next.ModeSamples {
+				b.ModeSamples[m] = n
+			}
+		}
 		return
 	}
 	b.Tokens += next.Tokens
@@ -159,6 +170,12 @@ func (b *Bucket) merge(next Bucket) {
 	b.Kicks += next.Kicks
 	b.AgentSamples += next.AgentSamples
 	b.IdleAgentSamples += next.IdleAgentSamples
+	if len(next.ModeSamples) > 0 && b.ModeSamples == nil {
+		b.ModeSamples = make(map[string]int, len(next.ModeSamples))
+	}
+	for m, n := range next.ModeSamples {
+		b.ModeSamples[m] += n
+	}
 }
 
 // Summarize computes the 24 h and 7 d trends from buckets as of now. It
