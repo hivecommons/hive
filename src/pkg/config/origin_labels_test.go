@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// Exactly one origin/* label per issue: a caller's label is kept and
-// canonicalised, extras are dropped, and the source is only appended when no
-// origin label is present. Other axes are never touched.
+// Exactly one origin/* label: a caller's label is kept and canonicalised,
+// extras are dropped, and the source is only appended when no origin label is
+// present. Other axes are never touched by the generic helper.
 func TestWithOriginLabelKeepsExactlyOne(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -37,6 +37,30 @@ func TestWithOriginLabelKeepsExactlyOne(t *testing.T) {
 			}
 			if origins > 1 {
 				t.Fatalf("more than one origin label: %v", got)
+			}
+		})
+	}
+}
+
+func TestWithIssueOriginLabelDropsRedundantAgentLaneAliases(t *testing.T) {
+	tests := []struct {
+		name   string
+		in     []string
+		source string
+		want   string
+	}{
+		{"drops matching agent and bare lane", []string{"agent/outreach", "outreach", "kind/bug"}, "outreach", "kind/bug,origin/outreach"},
+		{"keeps human topic words and workflow labels", []string{"community", "help wanted", "stage/020-triage"}, "outreach", "community,help wanted,stage/020-triage,origin/outreach"},
+		{"keeps other lane labels", []string{"agent/scanner", "scanner"}, "outreach", "agent/scanner,scanner,origin/outreach"},
+		{"keeps aliases for non-lane source", []string{"agent/scanner", "scanner"}, OriginSourceDashboard, "agent/scanner,scanner,origin/dashboard"},
+		{"drops agent label for open ended lane only", []string{"agent/new-lane", "new-lane"}, "new-lane", "new-lane,origin/new-lane"},
+		{"caller origin selects lane to dedupe", []string{"origin/scanner", "agent/scanner", "scanner"}, "outreach", "origin/scanner"},
+		{"caller origin keeps provenance but filing lane dedupes", []string{"origin/dashboard", "agent/scanner", "scanner", "kind/bug"}, "scanner", "origin/dashboard,kind/bug"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := WithIssueOriginLabel(tc.in, tc.source); strings.Join(got, ",") != tc.want {
+				t.Fatalf("WithIssueOriginLabel(%v, %q) = %v, want %s", tc.in, tc.source, got, tc.want)
 			}
 		})
 	}
