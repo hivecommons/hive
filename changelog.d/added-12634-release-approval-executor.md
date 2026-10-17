@@ -1,0 +1,1 @@
+- Opted-in repositories can have the hub create a typed release exactly once after an eligible maintainer replies `/hive approve`, with live target, tag, CI, and optional version-source checks ([#12634](https://github.com/hivecommons/hive/issues/12634)).

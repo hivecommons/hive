@@ -125,3 +125,40 @@ func TestMergeStrategyCountsAsOverride(t *testing.T) {
 		t.Fatal("a merge_strategy entry must not be pruned as empty")
 	}
 }
+
+func TestRepoReleaseOnApprove(t *testing.T) {
+	var cfg Config
+	raw := []byte(`
+project:
+  org: acme
+  repos: [a, b, c]
+  repo_policies:
+    - repo: a
+      release_on_approve: true
+      release_version_source: VERSION
+    - repo: b
+      auto_merge: false
+`)
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cases := map[string]bool{"a": true, "acme/a": true, "b": false, "c": false}
+	for repo, want := range cases {
+		if got := cfg.RepoReleaseOnApprove(repo); got != want {
+			t.Errorf("RepoReleaseOnApprove(%q) = %v, want %v", repo, got, want)
+		}
+	}
+	if got := cfg.RepoReleaseVersionSource("acme/a"); got != "VERSION" {
+		t.Errorf("RepoReleaseVersionSource(acme/a) = %q, want VERSION", got)
+	}
+	var nilCfg *Config
+	if nilCfg.RepoReleaseOnApprove("a") {
+		t.Error("nil config must default to false")
+	}
+	if got := nilCfg.RepoReleaseVersionSource("a"); got != "" {
+		t.Errorf("nil config version source = %q, want empty", got)
+	}
+	if repoPolicyHasNoOverrides(RepoPolicy{Repo: "a", ReleaseVersionSource: "VERSION"}) {
+		t.Error("release_version_source must keep its repo-policy row")
+	}
+}

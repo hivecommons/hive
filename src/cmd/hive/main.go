@@ -9545,6 +9545,21 @@ func issueUnparkLabelDriven(cfg *config.Config) func(repo string) bool {
 	return func(repo string) bool { return cfg.RepoLabelDriven(repo) }
 }
 
+func issueReleaseOnApprove(cfg *config.Config) func(repo string) bool {
+	return func(repo string) bool {
+		return cfg != nil && cfg.RepoReleaseOnApprove(repo)
+	}
+}
+
+func issueReleaseVersionSource(cfg *config.Config) func(repo string) string {
+	return func(repo string) string {
+		if cfg == nil {
+			return ""
+		}
+		return cfg.RepoReleaseVersionSource(repo)
+	}
+}
+
 // issueUnparkSweepWebhookInterval is the minimum spacing when an `issues`
 // webhook has marked a label change (hivecommons/hive#11313): a maintainer who
 // just added `triage/accepted` should not wait out the polling interval, but a
@@ -9577,9 +9592,11 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 		*lastRun = now
 	}
 	result, err := ghClient.SweepIssueUnparkCommands(ctx, github.IssueUnparkSweepOptions{
-		MaxActions:    github.DefaultIssueUnparkSweepMaxActions,
-		LabelDriven:   issueUnparkLabelDriven(cfg),
-		LabelApproval: labelApprovalPolicyResolver(cfg),
+		MaxActions:           github.DefaultIssueUnparkSweepMaxActions,
+		LabelDriven:          issueUnparkLabelDriven(cfg),
+		LabelApproval:        labelApprovalPolicyResolver(cfg),
+		ReleaseOnApprove:     issueReleaseOnApprove(cfg),
+		ReleaseVersionSource: issueReleaseVersionSource(cfg),
 		LabelApprovalAudit: func(event github.IssueLabelApprovalEvent) {
 			if dashSrv == nil {
 				return

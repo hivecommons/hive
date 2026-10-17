@@ -195,15 +195,21 @@ owner-step comment (or the initial issue body) supplies the proposal; a marker
 in another commenter's text is ignored. Lettered choices remain choices, not
 release actions.
 
-**This is descriptive metadata, not release authorization.** Hive still parks
-the issue and offers `/hive done` and `/hive decision` as before. `/hive approve`
-retains its existing meaning; it does **not** publish a release. No
-`release_on_approve` policy or dashboard release action is implemented yet.
-The owner must still cut the release themselves. The agent `gh release create`
-gate is unchanged. A future hub executor must independently validate live repo
-policy, human approval, tag/target provenance, required checks and replay safety
-before writing a tag or release; a syntactically valid marker proves none of
-those conditions.
+**This metadata is a proposal, not authorization by itself.** Hive parks the
+issue and offers `/hive done` and `/hive decision` as before. With the default
+`project.repo_policies[].release_on_approve: false`, `/hive approve` retains its
+existing direction-only behavior and publishes nothing.
+
+When that per-repo opt-in is `true`, an eligible maintainer's `/hive approve`
+authorizes the hub App—not an agent—to create the exact proposed tag and GitHub
+Release. The hub re-reads the default branch, tag, and required checks first. It
+accepts only a target that is still the branch head or an ancestor of it. If
+`release_version_source` names a repository-relative text file, the proposed tag
+must match that file's value at the target commit (an optional leading `v` is
+ignored). Success posts the release URL, records an audit event, and clears the
+park. A failed precondition posts a specific refusal and leaves the issue
+parked. Answer markers and the absent-tag precondition prevent duplicate
+release creation. The agent `gh release create` gate remains unchanged.
 
 Every lane that can comment or file issues carries this rule in its policy (ci-maintainer, sec-check, quality, architect, outreach, strategist, guide and scanner), including the ADR-0019 `needs-direction` escalation and workflow-file hand-offs. Lanes that only record beads (advisory) note the owner-only step in the bead instead.
 

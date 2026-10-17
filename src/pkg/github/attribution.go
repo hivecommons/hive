@@ -45,6 +45,9 @@ const (
 	// the dashboard audit log: issue created → PR created → PR merged. Detail
 	// carries path= naming which hive path merged it (see PRAuditPath*).
 	AuditActionPRMerged = "pr_merged"
+	// AuditActionReleaseCreated is the audit action recorded when an eligible
+	// owner approval makes the hub create a GitHub release.
+	AuditActionReleaseCreated = "release_created"
 	// AuditActionPRClosed is the audit action recorded when the hive closes a
 	// PR WITHOUT merging it: the issue-request watcher's close relay targeting
 	// a pull request number. It is the "closed without merging" half of the
