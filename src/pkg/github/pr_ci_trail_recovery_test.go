@@ -67,6 +67,10 @@ func (f *trailFixture) hitCount(key string) int {
 
 func (f *trailFixture) serve(t *testing.T) *httptest.Server {
 	t.Helper()
+	// GetPRState reads the process-wide PR detail cache keyed by repo#number;
+	// every fixture serves o/r#7, so each test needs a fresh cache or an
+	// earlier fixture's PR is served instead of this one.
+	t.Cleanup(resetPRDetailCacheForTest(nil, 0))
 	pageSize := f.pageSize
 	if pageSize <= 0 {
 		pageSize = prCITrailPerPage
