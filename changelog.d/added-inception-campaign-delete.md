@@ -1,1 +1,0 @@
-- Inception Campaigns: a 🗑 icon button (in-app confirm) and `DELETE /api/campaigns/{id}` remove a stale campaign record while keeping knowledge-base facts and Jam threads; Revise chains now fold into one row with a `rev N` pill and an earlier-revisions disclosure instead of one identical row per click (#12698).

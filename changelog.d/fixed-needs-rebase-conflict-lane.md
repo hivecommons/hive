@@ -1,1 +1,0 @@
-- The merge-eligibility sweep now routes PRs carrying prow's `needs-rebase` label to the conflict fix lane (`ci-failing.json`) instead of skipping them; conflicting hive-authored and adopted contributor PRs were never rebased once prow labelled them.

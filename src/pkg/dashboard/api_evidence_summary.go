@@ -53,6 +53,12 @@ type EvidenceSummary struct {
 	// WriteCounters is the proxy's attempted-vs-blocked agent write totals per
 	// intent tier (#12069); omitted when the counter file is absent or unreadable.
 	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
+	// ACMMChanges is the month each policy.acmm_level was first observed per
+	// repo (#12369), computed over all stored bundles for the repo rather than
+	// the latest bundle per PR, the author kind or the window (policy maturity
+	// is a repo property; see evidenceACMMChanges). Omitted when no bundle
+	// carries a valid level. Report-only; it never feeds back into eligibility.
+	ACMMChanges []EvidenceACMMChange `json:"acmm_changes,omitempty"`
 	// WriteActivity is every agent GitHub write observed in the window —
 	// direct writes through the proxy (from the durable counter file's weekly
 	// buckets) plus hive-mediated writes from the audit log — with the
@@ -421,9 +427,11 @@ type EvidenceMissing struct {
 	PRsOutcomeUnknown int  `json:"prs_outcome_unknown"`
 	RecordsUnreadable int  `json:"records_unreadable"`
 	ReviewerAccuracy  bool `json:"reviewer_accuracy_unavailable"`
-	// IssuesHumanOpensUnobserved is always true today: the audit log only
-	// records hive-mediated issue writes, so issues humans or third-party bots
-	// open directly on GitHub never reach work_balance.
+	// IssuesHumanOpensUnobserved is true while some work_balance row relies on
+	// the audit log for issues: the audit log only records hive-mediated issue
+	// writes, so issues humans or third-party bots open directly on GitHub
+	// never reach those rows. It clears once the GitHub rollup exists, or when
+	// the historical issue series covers every row and none fell back to audit.
 	IssuesHumanOpensUnobserved bool `json:"issues_human_opens_unobserved"`
 	// ThrottleWindows is always true today: this hive reports no governor
 	// issue-creation throttle windows, so work_balance carries no shading.
@@ -551,10 +559,11 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	resp.WorkBalance, resp.WorkBalanceSources = buildEvidenceWorkBalance(evidenceWorkBalanceInputs{
 		Entries: evidenceWorkBalanceEntries(s.audit),
 		Rollup:  loadIssueActivityRollup(issueActivityPath),
+		Series:  evidence.LoadIssueSeries(ghpkg.ReviewEvidenceRoot),
 		PRs:     evidence.FoldPRs(bundles, repo, ""),
 		Buckets: s.evidenceWorkBalanceBuckets(win),
 	}, win, repo)
-	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == ""
+	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == "" && (resp.WorkBalanceSources.IssueSeriesWeeks == 0 || resp.WorkBalanceSources.AuditOnlyWeeks > 0)
 	resp.WriteActivity = buildEvidenceWriteActivity(writeCountersPath, evidenceWriteActivityEntries(s.audit), win, repo, now)
 	allPRs := evidence.FoldPRs(bundles, "", "")
 	resp.CIRecovery = buildEvidenceCIRecovery(evidenceCIClaims(bundles, allPRs), evidenceGateMerges(bundles, allPRs), loadCIRecoveryRollup(ciRecoveryPath), win, repo, evidenceCIPolicy(s))
@@ -593,9 +602,10 @@ func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 			return err
 		}
 		if d.IsDir() {
-			// Monthly complexity snapshots (#12363) share the root but are
-			// not review bundles.
-			if d.Name() == complexity.DirName && path != root {
+			// Reporting series share the root but are not review bundles.
+			rel, _ := filepath.Rel(root, path)
+			issueSeries := d.Name() == evidence.IssueSeriesDirName && len(strings.Split(rel, string(filepath.Separator))) == 3
+			if (d.Name() == complexity.DirName || issueSeries) && path != root {
 				return filepath.SkipDir
 			}
 			return nil
@@ -682,6 +692,7 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 	hours := win.Hours
 	resp := EvidenceSummary{
 		Hours: hours, AllTime: hours == 0 && !win.Custom, Repo: repo, AuthorKind: kind,
+		ACMMChanges:     evidenceACMMChanges(bundles, repo),
 		Outcomes:        map[string]EvidenceOutcomes{},
 		Calibration:     []EvidencePerspectiveCalib{},
 		ReviewerModels:  []EvidenceModelAccuracy{},

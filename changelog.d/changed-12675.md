@@ -1,1 +1,0 @@
-- changelog: move misplaced fragments from src/changelog.d to changelog.d (#12675)

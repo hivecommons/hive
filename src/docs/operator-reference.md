@@ -508,7 +508,10 @@ the hub reports no presence). `hold`/`do-not-merge` blocks adoption. When the
 PR allows maintainer edits (`adoption.in_place`, default on) the hive adopts
 it in place: `stage/074-adopted-by-hive`, the PR's own branch filed in
 `ci-failing.json` as the hive's (`adopted: true`) for the scanner's red-PR
-fix-first kick, handed back if the contributor pushes. Otherwise the hive
+fix-first kick. On a later head change, forgeable git names/emails never keep
+ownership: the hive follows the head only when GitHub links the commit to the
+App bot or the stage store recorded that exact SHA as hive-pushed; otherwise
+it hands the PR back as a contributor push. If the hive cannot push in place, it
 pushes `hive/adopt-<n>` at the contributor head, opens a superseding App PR
 that preserves the author's commits, moves the original to 074 and closes it
 once the superseder merges. Whether that rework reaches each agent is visible per row

@@ -12,7 +12,7 @@ import (
 // non-agent filers below. Humans filing directly get no origin label — there
 // is deliberately no origin/human — so "no origin label" means "a person
 // filed this". The family is informational: nothing reads it as a gate, and
-// agent/<lane> remains the routing/ownership axis.
+// origin/<lane> is the issue provenance axis for agent-filed issues.
 const (
 	// OriginSourceSelfReport is the fleet runtime self-report filer
 	// (pkg/fleetreport, pkg/github/fleet_report.go, the hub relay). The
@@ -108,6 +108,18 @@ func OriginLabelForAgent(agent string) string {
 	return OriginLabel(OriginLaneFromAgent(agent))
 }
 
+// IsKnownOriginLane reports whether source is one of the documented agent
+// lanes that file issues.
+func IsKnownOriginLane(source string) bool {
+	source = strings.ToLower(strings.TrimSpace(source))
+	for _, lane := range KnownOriginLanes {
+		if source == lane {
+			return true
+		}
+	}
+	return false
+}
+
 // FirstOriginLabel returns the first origin/* label in labels (canonical
 // spelling) and whether one was present.
 func FirstOriginLabel(labels []string) (string, bool) {
@@ -150,6 +162,65 @@ func WithOriginLabel(labels []string, source string) []string {
 	return out
 }
 
+// WithIssueOriginLabel returns an issue label list with exactly one origin/*
+// label and without redundant lane-provenance aliases for that same known
+// agent lane. A filer asking for its bare lane label (for example "outreach")
+// or the old agent/<lane> issue stamp is recording provenance, not a topic; a
+// human's unrelated labels and non-lane sources are left to WithOriginLabel.
+func WithIssueOriginLabel(labels []string, source string) []string {
+	origin := OriginLabel(source)
+	if existing, ok := FirstOriginLabel(labels); ok {
+		origin = existing
+	}
+	originSource := OriginSourceOf(origin)
+	filingSource := OriginSourceOf(OriginLabel(source))
+	aliases := issueLaneAliasTargets(originSource, filingSource)
+	if len(aliases) == 0 {
+		return WithOriginLabel(labels, originSource)
+	}
+	return WithOriginLabel(withoutIssueLaneProvenanceAliases(labels, aliases), originSource)
+}
+
+func originSourceCanBeLane(source string) bool {
+	if source == "" {
+		return false
+	}
+	if IsKnownOriginLane(source) {
+		return true
+	}
+	_, knownNonLane := originSourceDescriptions[source]
+	return !knownNonLane
+}
+
+func issueLaneAliasTargets(sources ...string) map[string]bool {
+	out := map[string]bool{}
+	for _, source := range sources {
+		if !originSourceCanBeLane(source) {
+			continue
+		}
+		out[source] = out[source] || IsKnownOriginLane(source)
+	}
+	return out
+}
+
+func withoutIssueLaneProvenanceAliases(labels []string, lanes map[string]bool) []string {
+	out := make([]string, 0, len(labels))
+	for _, label := range labels {
+		name := strings.ToLower(strings.TrimSpace(label))
+		drop := false
+		for lane, stripBare := range lanes {
+			if name == "agent/"+lane || stripBare && name == lane {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, label)
+		}
+	}
+	return out
+}
+
 // OriginLabelDescription returns the repo label description for an origin/*
 // label: a specific text for the known non-lane sources, a lane text for
 // everything else (lane names are open-ended). ok is false for a label
@@ -162,7 +233,7 @@ func OriginLabelDescription(label string) (desc string, ok bool) {
 	if d, known := originSourceDescriptions[source]; known {
 		return d, true
 	}
-	return "Filed by the Hive " + source + " agent lane (provenance only; agent/" + source + " is the routing label)", true
+	return "Filed by the Hive " + source + " agent lane (provenance only, not a routing or topic label)", true
 }
 
 // KnownOriginSources lists every origin source the hive documents: the

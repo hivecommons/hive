@@ -335,6 +335,16 @@ func (s Stage) Before(other Stage) bool {
 	return s.Number() < other.Number()
 }
 
+// YieldsToAdoption reports whether a live adoption (Record.AdoptionLive)
+// replaces s with AdoptedByHive. Adoption is who owns the PR, not what CI
+// says, so it outranks every review-side stage — 050 review-pending, 060
+// reviewed and the 07x repair stages alike — and gives way only at the
+// merge gate (080 and later), where the PR is leaving the hive's hands.
+// None (draft, out of the pipeline) is never replaced.
+func (s Stage) YieldsToAdoption() bool {
+	return s != None && s.Before(AwaitingMergeAdmission)
+}
+
 // StageBySlug resolves a slug (as used in config dwell overrides) to a stage.
 func StageBySlug(slug string) (Stage, bool) {
 	slug = strings.ToLower(strings.TrimSpace(slug))

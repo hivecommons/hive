@@ -313,8 +313,12 @@ contains pull requests; these are excluded. The command scans older issues too,
 so a close in the range is counted even if the issue opened earlier. Each file
 includes zero-count weeks, event times for exact custom summary windows, and
 coverage bounds. Re-run it to refresh recent weeks. The files are reporting data
-for operators and downstream readers; the dashboard work-balance card now uses
-its collector-maintained rollup, and neither path affects merge eligibility.
+for operators and downstream readers. The dashboard work-balance card reads the
+series for weeks before collector coverage and keeps the collector-maintained
+rollup authoritative from its first covered Monday. For a collector starting
+midweek, set the exclusive `--until` to the following Monday to cover the whole
+boundary week; a shorter backfill retains audit fallback there. Neither path
+affects merge eligibility.
 
 ### observe — read-only metrics
 

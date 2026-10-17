@@ -1,1 +1,0 @@
-- `hivectl evidence backfill --refresh-fields merge.opened_at` fills `merge.opened_at` on bundles an earlier backfill already wrote, only where absent and from the list page alone (no per-PR requests), so pre-#12465 backfills gain a measurable time to merge without a delete-and-rewrite.

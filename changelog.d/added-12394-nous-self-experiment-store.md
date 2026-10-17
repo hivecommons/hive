@@ -1,1 +1,0 @@
-- Add a separate Hive-self experiment model and validated persistent ledger in `pkg/nous`, with opt-in cohorts, pre-registered metrics and fast-fail bounds, and explicit missing-evidence results.

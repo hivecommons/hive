@@ -1,0 +1,1 @@
+- Make Git source URL validation unit tests independent of external DNS, preventing transient resolver failures from causing CI flakes (#12732).

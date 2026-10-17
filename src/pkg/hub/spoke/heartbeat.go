@@ -27,6 +27,7 @@ import (
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/nous"
 	spokesig "github.com/hivecommons/hive/pkg/spoke"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
@@ -1123,6 +1124,8 @@ type HeartbeatPayload struct {
 	// That lets the hub keep liveness/staleness visible without overwriting
 	// agents and health with an old cached copy.
 	FreshAgentStats bool `json:"fresh_agent_stats,omitempty"`
+	// SelfExperimentsOptIn is local consent; absent or false means opted out.
+	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
 }
 
 const (
@@ -1188,6 +1191,8 @@ const HeartbeatEvidenceCalibrationBuckets = 6
 // spoke's hive state time series (#12339), nil when it has no recent sample.
 // The JSON shape matches hub.HeartbeatEvidence.
 type HeartbeatEvidence struct {
+	// Nil means an older spoke did not report author-kind counts.
+	ByAuthorKind          map[string]HeartbeatEvidenceBucket                           `json:"by_author_kind,omitempty"`
 	Verdicts90d           int                                                          `json:"verdicts_90d"`
 	FalseApprove90d       int                                                          `json:"false_approve_90d"`
 	FalseBlock90d         int                                                          `json:"false_block_90d"`
@@ -1366,6 +1371,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		if resp == nil {
 			return
 		}
+		// Missing assignments are authoritative withdrawal, including old hubs.
+		// Only verified, decoded heartbeat responses reach this dispatch.
+		nous.SelfExperiments.Apply(selfExperimentsOptedIn(), resp.SelfExperimentFlag)
 		if resp.SwitchToTag != "" && onSwitchBranch != nil {
 			// Branch switch takes precedence over a plain SHA upgrade — it
 			// changes the image tag, which a same-tag re-pull can't do.
@@ -1684,7 +1692,9 @@ func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollec
 }
 
 // postHeartbeat marshals and POSTs a beat to the hub, records success on
-// acceptance, and decodes the hub's response.
+// acceptance, and decodes the hub's response. It also overlays current local
+// experiment consent and revokes assignments on opt-out before any network I/O;
+// verified response assignments are applied separately by processHeartbeatResponse.
 //
 // Named ...ToHub to avoid colliding with the pkg-local test helper postHeartbeat.
 // Extracted from sendHeartbeat so the MINIMAL liveness beat (no cached payload,
@@ -1693,7 +1703,16 @@ func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollec
 // handling — including hub-instructed upgrades. A separate ad-hoc POST would
 // drift from this one over time and silently lose those behaviours.
 func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPayload, logger *slog.Logger) *HeartbeatResponse {
-	payload = redactHeartbeat(payload)
+	// Collector/cache ownership stays with the caller. Overlay consent on a
+	// private copy, including when no redaction classes are configured.
+	owned := *payload
+	payload = redactHeartbeat(&owned)
+	// Read local consent even for cached/minimal/upgrading heartbeats; never
+	// trust an old collector's value. This does not modify governor config.
+	payload.SelfExperimentsOptIn = selfExperimentsOptedIn()
+	if !payload.SelfExperimentsOptIn {
+		nous.SelfExperiments.Apply(false, nil)
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
@@ -2690,6 +2709,8 @@ type HeartbeatResponse struct {
 	SigSeq      int64  `json:"sig_seq,omitempty"`
 	SigSignedAt int64  `json:"sig_ts,omitempty"`
 	SigVersion  int    `json:"sig_v,omitempty"`
+	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
+	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

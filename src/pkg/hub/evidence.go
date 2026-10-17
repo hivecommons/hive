@@ -47,6 +47,9 @@ type EvidenceBucket struct {
 // the beat carried none (old spoke) and the stored summary is kept. HiveState
 // is the spoke's 24 h / 7 d hive state trends (#12339).
 type HeartbeatEvidence struct {
+	// ByAuthorKind counts merged PRs (N) and linked reverts (Bad), not follow-ups.
+	// Nil means the spoke predates this dataset.
+	ByAuthorKind          map[string]EvidenceBucket                  `json:"by_author_kind,omitempty"`
 	Verdicts90d           int                                        `json:"verdicts_90d"`
 	FalseApprove90d       int                                        `json:"false_approve_90d"`
 	FalseBlock90d         int                                        `json:"false_block_90d"`
@@ -283,6 +286,17 @@ func sanitizeEvidence(in *HeartbeatEvidence) *HeartbeatEvidence {
 		ReviewerFamilies:      sanitizeEvidenceFamilies(in.ReviewerFamilies),
 		AuthorFamilies:        sanitizeEvidenceFamilies(in.AuthorFamilies),
 	}
+	if in.ByAuthorKind != nil {
+		out.ByAuthorKind = map[string]EvidenceBucket{}
+		remaining := out.Merged90d
+		for _, kind := range []string{"human", "agent", "bot"} {
+			if b, ok := in.ByAuthorKind[kind]; ok {
+				n := clampInt(b.N, 0, remaining)
+				out.ByAuthorKind[kind] = EvidenceBucket{N: n, Bad: clampInt(b.Bad, 0, n)}
+				remaining -= n
+			}
+		}
+	}
 	// A subset can never exceed its total.
 	out.FalseApprove90d = clampInt(in.FalseApprove90d, 0, out.Verdicts90d)
 	out.FalseBlock90d = clampInt(in.FalseBlock90d, 0, out.Verdicts90d)
@@ -340,6 +354,7 @@ func sanitizeHiveStateWindow(w hivestate.Window, hours float64) hivestate.Window
 		QueuePRs:         q(w.QueuePRs),
 		QueueHold:        q(w.QueueHold),
 		SLAViolationRate: clampEvidenceFloat(w.SLAViolationRate, 1),
+		AgentSamples:     c(w.AgentSamples),
 		AgentIdleRatio:   clampEvidenceFloat(w.AgentIdleRatio, 1),
 		KicksPerDay:      clampEvidenceFloat(w.KicksPerDay, maxHiveStatePerDay),
 		TokensPerDay:     clampEvidenceFloat(w.TokensPerDay, maxHiveStatePerDay),
@@ -660,6 +675,7 @@ type EvidenceACMMLevel struct {
 
 // EvidenceView is the GET /api/hub/evidence body.
 type EvidenceView struct {
+	RevertRateByAuthorKind map[string]EvidenceRate `json:"revert_rate_by_author_kind"`
 	// Window is the trailing window the counts cover (RFC #12062).
 	Window    EvidenceWindow `json:"window"`
 	Spokes    int            `json:"spokes"`
@@ -793,6 +809,7 @@ func buildEvidenceView(hives []RegistryEntry) EvidenceView {
 func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) EvidenceView {
 	out := EvidenceView{Window: win, Hives: []EvidenceHive{}}
 	var pooled [EvidenceCalibrationBuckets]EvidenceBucket
+	authorKinds := map[string]EvidenceBucket{}
 	family := map[string]*EvidenceBucket{
 		evidenceFamilySame: {}, evidenceFamilyCross: {}, evidenceFamilyMixed: {},
 	}
@@ -817,6 +834,14 @@ func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) Evidence
 		}
 		if e != nil {
 			out.Reporting++
+			for _, kind := range []string{"human", "agent", "bot"} {
+				if b, ok := e.ByAuthorKind[kind]; ok {
+					p := authorKinds[kind]
+					p.N += b.N
+					p.Bad += b.Bad
+					authorKinds[kind] = p
+				}
+			}
 			row.Reported = true
 			counts := &EvidenceHiveCounts{Verdicts90d: e.Verdicts90d, FalseApprove90d: e.FalseApprove90d,
 				FalseBlock90d: e.FalseBlock90d, Merged90d: e.Merged90d, Reverted14d90d: e.Reverted14d90d,
@@ -883,6 +908,10 @@ func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) Evidence
 		Same:  newEvidenceRate(family[evidenceFamilySame].Bad, family[evidenceFamilySame].N),
 		Cross: newEvidenceRate(family[evidenceFamilyCross].Bad, family[evidenceFamilyCross].N),
 		Mixed: newEvidenceRate(family[evidenceFamilyMixed].Bad, family[evidenceFamilyMixed].N),
+	}
+	out.RevertRateByAuthorKind = map[string]EvidenceRate{}
+	for kind, b := range authorKinds {
+		out.RevertRateByAuthorKind[kind] = newEvidenceRate(b.Bad, b.N)
 	}
 	out.RecordCoverage = newEvidenceRate(covered, mergedTotal)
 	sort.Slice(out.Hives, func(i, j int) bool { return out.Hives[i].ID < out.Hives[j].ID })

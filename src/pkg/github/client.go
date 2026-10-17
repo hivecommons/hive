@@ -37,6 +37,8 @@ type Client struct {
 	client *gh.Client
 	// foldedTrackers records issues that finding folds landed on (#11587).
 	foldedTrackers foldedTrackerSet
+	// commentBudget caps automated comments per issue per day (#12733).
+	commentBudget issueCommentBudget
 	// rateLimits clamps rate-limit readings to be monotone within a window
 	// (kubestellar/hive#5733). Per-client because the artifact it corrects is a
 	// property of THIS client's token minting. Zero value is ready to use.

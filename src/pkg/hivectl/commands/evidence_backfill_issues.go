@@ -70,12 +70,12 @@ func issueWeeks(issues []backfillIssue, since, until time.Time, agents []string)
 			author, _ := backfillAuthor(pr, agents)
 			week := weeks[issueWeekKey(issue.CreatedAt)]
 			week.Opened[author.Kind]++
-			week.Events = append(week.Events, evidence.IssueEvent{At: issue.CreatedAt, Action: "opened", Kind: author.Kind})
+			week.Events = append(week.Events, evidence.IssueEvent{At: issue.CreatedAt, Action: evidence.IssueActionOpened, Kind: author.Kind})
 		}
 		if issue.ClosedAt != nil && !issue.ClosedAt.Before(since) && issue.ClosedAt.Before(until) {
 			week := weeks[issueWeekKey(*issue.ClosedAt)]
 			week.Closed++
-			week.Events = append(week.Events, evidence.IssueEvent{At: *issue.ClosedAt, Action: "closed"})
+			week.Events = append(week.Events, evidence.IssueEvent{At: *issue.ClosedAt, Action: evidence.IssueActionClosed})
 		}
 	}
 	out := make([]evidence.IssueWeek, 0, len(weeks))

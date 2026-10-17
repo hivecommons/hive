@@ -2046,11 +2046,11 @@ func isIssueCreateRESTWrite(method, path string) bool {
 // when it carries no origin/* label, so an issue filed with `gh issue create`
 // through the proxy records its provenance exactly as one filed through the
 // issue-request watcher does. An origin label the agent chose is kept and
-// never doubled; agent/<lane> (the routing axis) is untouched. The body is
-// returned unchanged (ok=false) for other routes, an unidentified caller, a
-// body that is not a JSON object, or a labels field in an unexpected shape
-// (GitHub accepts label objects too; those are forwarded as written rather
-// than guessed at).
+// never doubled; redundant agent/<lane> and bare <lane> issue provenance
+// aliases are dropped. The body is returned unchanged (ok=false) for other
+// routes, an unidentified caller, a body that is not a JSON object, or a
+// labels field in an unexpected shape (GitHub accepts label objects too;
+// those are forwarded as written rather than guessed at).
 func injectOriginLabel(method, path string, body []byte, agentName string) ([]byte, bool) {
 	lane := config.OriginLaneFromAgent(agentName)
 	if lane == "" || agentName == internalCallerName || !isIssueCreateRESTWrite(method, path) {
@@ -2066,10 +2066,15 @@ func injectOriginLabel(method, path string, body []byte, agentName string) ([]by
 			return body, false
 		}
 	}
+	hadOrigin := false
 	if _, has := config.FirstOriginLabel(labels); has {
+		hadOrigin = true
+	}
+	filtered := config.WithIssueOriginLabel(labels, lane)
+	if hadOrigin && sameLabels(labels, filtered) {
 		return body, false
 	}
-	labels = config.WithOriginLabel(labels, lane)
+	labels = filtered
 	encoded, err := json.Marshal(labels)
 	if err != nil {
 		return body, false
@@ -2080,6 +2085,18 @@ func injectOriginLabel(method, path string, body []byte, agentName string) ([]by
 		return body, false
 	}
 	return rewritten, true
+}
+
+func sameLabels(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // internalCallerName attributes a connection that originated from the hive's

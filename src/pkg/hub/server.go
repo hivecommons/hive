@@ -978,6 +978,7 @@ type HeartbeatHealthEntry struct {
 }
 
 type HubServer struct {
+	selfExperimentFlags  sync.Map // hive ID -> nous.SelfFlagAssignment; restart fails closed
 	mux                  *http.ServeMux
 	registry             Registry
 	mu                   sync.RWMutex
@@ -2755,6 +2756,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		HubGitHash: s.hubGitHash,
 		LatestSHA:  latestSHA,
 	}
+	resp.SelfExperimentFlag = s.selfExperimentFlagForHeartbeat(payload.HiveID, payload.SelfExperimentsOptIn)
 
 	if entry.IsPublic != payload.IsPublic {
 		resp.IsPublic = &entry.IsPublic

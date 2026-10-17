@@ -1,0 +1,6 @@
+2026-10-17T13:32:29.0676165Z ##[group]Run set -o pipefail
+2026-10-17T13:32:29.0677751Z go test ./pkg/dashboard -short -list '.*'
+2026-10-17T13:32:29.0707680Z ##[endgroup]
+2026-10-17T13:32:29.4532124Z # github.com/hivecommons/hive/pkg/dashboard
+2026-10-17T13:32:29.4552707Z ##[error]/mnt/gomod-local/github.com/google/cel-go@v0.31.0/checker/cost.go:24:2: open /mnt/gomod-local/github.com/google/cel-go@v0.31.0/parser/macro_test.go: no such file or directory
+2026-10-17T13:32:29.4591315Z ##[error]Process completed with exit code 1.

@@ -255,6 +255,7 @@ func TestFleetQuadrantFallbackLinkWhenNothingScored(t *testing.T) {
 
 const evidenceFixtureJS = `{
   spokes: 3, reporting: 2,
+  revert_rate_by_author_kind: {human: {n: 0, rate: null}, agent: {n: 20, rate: 0.05, lo: 0.0089, hi: 0.236}, bot: {n: 2, rate: null}},
   calibration: [
     {bucket: 0, n: 40, rate: 0.1, lo: 0.04, hi: 0.23},
     {bucket: 1, n: 4, rate: null},
@@ -321,6 +322,9 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 		`<tr><td>Not confident (0.0–0.5)</td><td>44</td><td class="evidence-rate"><span class="evidence-rate-main">9.1% of 44</span>`,
 		// All-selected-hives coverage row.
 		`<tr><td>All selected hives</td><td>50</td><td class="evidence-rate"><span class="evidence-rate-main">80.0% of 50</span>`,
+		"Revert rate by author kind",
+		`<tr><td>agent</td><td class="evidence-rate"><span class="evidence-rate-main">5.0% of 20</span>`,
+		`<tr><td>bot</td><td class="evidence-rate"><span class="evidence-rate-main">— (2, below the minimum of 10)</span>`,
 		// A below-minimum sample shows its n but a dash, never 0%.
 		`<span class="evidence-rate-main">— (3, below the minimum of 10)</span>`,
 		`<tr><td>different families</td><td>3</td><td class="evidence-rate"><span class="evidence-rate-main">— (3, below the minimum of 10)</span></td></tr>`,

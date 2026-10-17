@@ -2456,6 +2456,13 @@
         }).join(''),
         'Each hive on its own: false approve = approved but never merged or reverted; false block = blocked but merged anyway after a human override. Verdict counts are the \u201Cof N\u201D in each cell.', 'perhive', view, true);
 
+      var authorReverts = view.revert_rate_by_author_kind || {};
+      out += evidenceTable('Revert rate by author kind', '<th>Author kind</th>' + evidenceRateHeads('Revert rate'),
+        ['human', 'agent', 'bot'].map(function(k) {
+          return '<tr><td>' + esc(k) + '</td>' + evidenceRateCells(authorReverts[k]) + '</tr>';
+        }).join(''),
+        'Linked reverts within 14 days of merge / merged PRs in the selected evidence window. Follow-ups excluded; only spokes reporting author-kind counts contribute.');
+
       out += evidenceShadowPanel(view);
       out += evidenceWaitingHTML(view);
       return out;

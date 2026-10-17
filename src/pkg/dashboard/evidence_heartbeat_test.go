@@ -71,6 +71,12 @@ func TestBuildHeartbeatEvidence(t *testing.T) {
 	if got.Verdicts90d != 5 || got.Merged90d != 3 || got.Reverted14d90d != 2 {
 		t.Errorf("counts = verdicts %d merged %d reverted %d, want 5/3/2", got.Verdicts90d, got.Merged90d, got.Reverted14d90d)
 	}
+	for kind, want := range map[string][2]int{"human": {1, 0}, "agent": {1, 1}, "bot": {1, 0}} {
+		b := got.ByAuthorKind[kind]
+		if b.N != want[0] || b.Bad != want[1] {
+			t.Errorf("author kind %s = %+v, want %v (follow-ups excluded)", kind, b, want)
+		}
+	}
 	if got.FalseApprove90d != 1 || got.FalseBlock90d != 2 {
 		t.Errorf("false approve/block = %d/%d, want 1/2", got.FalseApprove90d, got.FalseBlock90d)
 	}

@@ -1,1 +1,0 @@
-- Review aggregation now folds perspective reports that omit `body_digest` into the digest-keyed aggregate for the same head; keyed apart they produced two `incomplete` ledger items and a 5/5 approval never became merge-eligible (hivecommons/hive#12332, #12421, #12674).

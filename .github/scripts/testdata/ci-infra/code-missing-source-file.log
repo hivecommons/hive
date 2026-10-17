@@ -1,0 +1,4 @@
+2026-10-17T13:32:29.0676165Z ##[group]Run go test ./pkg/dashboard -short -list '.*'
+2026-10-17T13:32:29.0707680Z ##[endgroup]
+2026-10-17T13:32:29.4552707Z ##[error]pkg/dashboard/assets.go:24:2: open /home/runner/hive/hive/src/pkg/dashboard/missing.go: no such file or directory
+2026-10-17T13:32:29.4591315Z ##[error]Process completed with exit code 1.

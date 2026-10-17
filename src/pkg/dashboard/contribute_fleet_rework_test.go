@@ -306,7 +306,7 @@ renderClankers([{github_username: 'bob', trust_tier: 'contributor', parallel_cap
     {task_id: 'f2', kind: 'rework', task_kind: 'fix-pr', repo: 'org/r', number: 8, url: 'https://x/8', stage: 'stage/072-returned-to-contributor', mode: 'spawn'}
   ], fix_queue_depth: 0, pending_rework: 0}]);
 let html = fleet.html;
-assert.match(html, /clanker-capacity[^>]*>capacity 3 &middot; spawn</, 'capacity line');
+assert.match(html, /clanker-capacity[^>]*>max parallel 3 &middot; spawn</, 'capacity line');
 assert.equal((html.match(/class="clanker-sub clanker-inflight"/g) || []).length, 3, 'one line per in-flight item');
 assert.equal((html.match(/class="work-kind new"/g) || []).length, 1, 'one NEW badge');
 assert.equal((html.match(/class="work-kind rework"/g) || []).length, 2, 'two REWORK badges');
@@ -321,7 +321,7 @@ renderClankers([{github_username: 'alice', parallel_capacity: 0, fix_mode: 'pree
   fix_queue_depth: 1, pending_rework: 2,
   pending_rework_prs: [{repo: 'org/r', number: 2, cause: 'build', url: 'https://x/2'}, {repo: 'org/r', number: 3, stage: 'stage/072-returned-to-contributor'}]}]);
 html = fleet.html;
-assert.match(html, /clanker-capacity[^>]*>capacity: not advertised</, 'not advertised');
+assert.match(html, /clanker-capacity[^>]*>max parallel: not advertised</, 'not advertised');
 assert.match(html, /class="clanker-sub clanker-idle-rework">idle &middot; 2 PRs awaiting rework</, 'idle line names the rework');
 assert.doesNotMatch(html, /idle: no matching work/, 'idle reason replaced while rework waits');
 assert.match(html, /class="clanker-sub clanker-rework-pending" title="org\/r#2 \(build\), org\/r#3">2 PRs awaiting rework \(not yet dispatched\) &middot; fix queue 1: <a class="cc-issue-link work-ref" href="https:\/\/x\/2">org\/r#2<\/a>, <a class="cc-issue-link work-ref" href="https:\/\/github.com\/org\/r\/issues\/3">org\/r#3<\/a></, 'awaiting-rework line');

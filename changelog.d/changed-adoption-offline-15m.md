@@ -1,1 +1,0 @@
-- Stage-074 adoption now sees live relay presence (the late-bound nudge sink did not expose it, so every clanker PR waited the nudge-time grace) and adopts an offline or unregistered clanker's PR 15 minutes after its last heartbeat/nudge (`after_offline`, `after_unregistered`, `contributor_grace_offline` defaults were 30m/2h/1h). An online clanker keeps its 2h grace.

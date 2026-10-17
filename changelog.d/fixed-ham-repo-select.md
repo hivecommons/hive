@@ -1,1 +1,0 @@
-- Fixed the **Hive activity monitor** repo filter: the `<select>` no longer inherits the dashboard button chrome, so it is chip-sized (same height, font and pill radius as the All / Pull requests / Issues chips, single token border) and never overlaps its "Repo" label.

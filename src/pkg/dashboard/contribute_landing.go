@@ -614,7 +614,8 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
 .custom-css-pop{width:min(320px,calc(100vw - 32px));z-index:10002}
 .custom-css-example{box-sizing:border-box;width:100%%;margin:var(--sp-3) var(--sp-0) var(--sp-2);background:var(--surface-2);border:1px solid var(--line-strong);border-radius:var(--r);color:var(--text);font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:var(--sp-3)}
 /* Compact tier badge inline next to a connected clanker's identity. */
-.tier-badge.tier-inline{padding:1px 6px 1px 4px;font-size:var(--fs-2xs);margin-left:var(--sp-3);vertical-align:middle}
+/* Same metrics as .clanker-status so the status and tier pills on a clanker row sit at one height. */
+.tier-badge.tier-inline{padding:3px 7px 3px 5px;font-size:var(--fs-xs);margin-left:var(--sp-3);vertical-align:middle}
 .tier-badge.tier-inline::before{width:6px;height:6px}
 /* Larger tier-badge variant used as the hero medallion on the personal Me-card
    (see below) — same canonical tier colors/dot, just sized up for a hero slot. */
@@ -978,7 +979,7 @@ select.admin-act{min-width:0;max-width:100%%}
 /* A clanker actively receiving a travelling task pulses its border briefly */
 @keyframes cc-landing{0%%{box-shadow:0 0 0 0 rgba(88,166,255,.5)}100%%{box-shadow:0 0 0 6px rgba(88,166,255,0)}}
 .clanker-row.cc-landing{animation:cc-landing .8s ease}
-.clanker-status{font-size:var(--fs-xs);font-weight:600;padding:1px 7px;border-radius:var(--r-pill);margin-left:var(--sp-3);border:1px solid transparent}
+.clanker-status{display:inline-flex;align-items:center;font-size:var(--fs-xs);font-weight:600;line-height:1;padding:3px 7px;border-radius:var(--r-pill);margin-left:var(--sp-3);border:1px solid transparent;vertical-align:middle}
 .clanker-status.working{background:color-mix(in srgb,var(--status-info) var(--component-tint),transparent);color:var(--status-info);border-color:color-mix(in srgb,var(--status-info) var(--component-border),transparent)}
 .clanker-status.reviewing{background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border-color:color-mix(in srgb,var(--status-attention) var(--component-border),transparent)}
 .clanker-status.idle{background:rgba(139,148,158,.12);color:var(--text-muted);border-color:rgba(139,148,158,.3)}
@@ -5367,8 +5368,8 @@ function renderClankers(list){
 // returns '' when there is nothing to show.
 function clankerCapacityLine(c){
   var n=c.parallel_capacity|0;
-  var txt=n>0?('capacity '+n+(c.fix_mode?(' &middot; '+esc(c.fix_mode)):'')):'capacity: not advertised';
-  var tip=n>0?('The relay advertised parallel_sessions: up to '+n+' sessions (primary + '+(n-1)+' fix sub-session'+(n===2?'':'s')+'), clamped by contribute.max_parallel_fixes.'):'The relay did not advertise parallel_sessions; a returned PR preempts its primary task (capacity 1).';
+  var txt=n>0?('max parallel '+n+(c.fix_mode?(' &middot; '+esc(c.fix_mode)):'')):'max parallel: not advertised';
+  var tip=n>0?('The contributor\'s relay advertised parallel_sessions: up to '+n+' sessions (primary + '+(n-1)+' fix sub-session'+(n===2?'':'s')+'), clamped by contribute.max_parallel_fixes.'):'The relay did not advertise parallel_sessions; a returned PR preempts its primary task (max parallel 1).';
   return '<div class="clanker-sub clanker-capacity" title="'+tip+'">'+txt+'</div>';
 }
 function clankerWorkRef(it){

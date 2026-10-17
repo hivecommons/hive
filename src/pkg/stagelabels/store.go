@@ -104,6 +104,10 @@ type Record struct {
 	// adoption on (the author pushed again); the yield note is posted once
 	// per head.
 	YieldedHead string `json:"yielded_head,omitempty"`
+	// HivePushedHeads are heads the hive recorded pushing to this adopted PR.
+	// They are trusted local evidence for in-place adoption attribution when
+	// the later GitHub commit object cannot link the commit to the App.
+	HivePushedHeads []string `json:"hive_pushed_heads,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
@@ -648,6 +652,30 @@ func (r Record) AdoptedInPlace() bool {
 	return r.AdoptedHead != "" && r.AdoptMode == AdoptModeInPlace
 }
 
+// HivePushedHead reports whether the hive recorded that it pushed head.
+func (r Record) HivePushedHead(head string) bool {
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return false
+	}
+	for _, h := range r.HivePushedHeads {
+		if h == head {
+			return true
+		}
+	}
+	return false
+}
+
+// AdoptionLive reports whether the hive currently owns this PR (stage 074):
+// an in-place adoption that was not yielded, or a superseding adoption of
+// exactly this head. Adoption is an ownership state, not a CI state — it
+// holds across CI going green or a verdict arriving, until the adoption is
+// released (ClearAdoption / MarkYielded) or the PR reaches the merge gate
+// (Stage.YieldsToAdoption; hivecommons/hive#12736).
+func (r Record) AdoptionLive(head string) bool {
+	return r.AdoptedInPlace() || r.Adopted(head)
+}
+
 // MarkAdoptedInPlace records an in-place adoption of head for reason.
 func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 	s.mu.Lock()
@@ -672,6 +700,30 @@ func (s *Store) MarkAdoptedHead(key, head string) {
 		return
 	}
 	r.AdoptedHead = head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkHivePushedHead records a head that the hive itself pushed to an
+// in-place-adopted PR. It is a no-op unless the record is a live in-place
+// adoption, so stray push-site calls cannot create ownership.
+func (s *Store) MarkHivePushedHead(key, head string) {
+	head = strings.TrimSpace(head)
+	if head == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || !r.AdoptedInPlace() {
+		return
+	}
+	for _, h := range r.HivePushedHeads {
+		if h == head {
+			return
+		}
+	}
+	r.HivePushedHeads = append(r.HivePushedHeads, head)
 	s.items[key] = r
 	s.dirty = true
 }

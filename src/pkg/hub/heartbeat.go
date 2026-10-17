@@ -8,6 +8,7 @@ import (
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
+	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/tracing"
 )
 
@@ -330,6 +331,8 @@ type HeartbeatPayload struct {
 	FreshAgentStats              bool                            `json:"fresh_agent_stats,omitempty"`
 	Compliance                   *HeartbeatCompliance            `json:"compliance,omitempty"`
 	Evidence                     *HeartbeatEvidence              `json:"evidence,omitempty"`
+	// SelfExperimentsOptIn is local consent; absent or false means opted out.
+	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
 }
 
 const (
@@ -431,6 +434,8 @@ type HeartbeatResponse struct {
 	SigSeq              int64                     `json:"sig_seq,omitempty"`
 	SigSignedAt         int64                     `json:"sig_ts,omitempty"`
 	SigVersion          int                       `json:"sig_v,omitempty"`
+	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
+	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

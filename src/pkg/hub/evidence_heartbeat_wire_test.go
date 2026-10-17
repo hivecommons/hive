@@ -22,6 +22,7 @@ func TestSpokeEvidenceWireCompat(t *testing.T) {
 		AutomergeSelfAuthored: &yes,
 		ReviewerFamilies:      []string{"claude", "gpt"},
 		AuthorFamilies:        []string{"gpt"},
+		ByAuthorKind:          map[string]spoke.HeartbeatEvidenceBucket{"agent": {N: 12, Bad: 1}},
 		HiveState: &hivestate.Trends{
 			Last24h: hivestate.Window{Samples: 720, CoverageHours: 23.9, QueueIssues: hivestate.Quantiles{Median: 4, P90: 9}, SLAViolationRate: 0.1, AgentIdleRatio: 0.4, KicksPerDay: 30, TokensPerDay: 1e6},
 			Last7d:  hivestate.Window{Samples: 1000, QueuePRs: hivestate.Quantiles{Median: 2, P90: 3}},
@@ -43,6 +44,9 @@ func TestSpokeEvidenceWireCompat(t *testing.T) {
 	if got == nil || got.Verdicts90d != 30 || got.FalseApprove90d != 2 || got.FalseBlock90d != 3 ||
 		got.Merged90d != 12 || got.Reverted14d90d != 1 || got.Calibration[5] != (EvidenceBucket{N: 9, Bad: 1}) {
 		t.Fatalf("decoded = %+v", got)
+	}
+	if got.ByAuthorKind["agent"] != (EvidenceBucket{N: 12, Bad: 1}) {
+		t.Fatalf("author kinds lost on wire: %+v", got.ByAuthorKind)
 	}
 	if got.AutomergeSelfAuthored == nil || !*got.AutomergeSelfAuthored {
 		t.Errorf("automerge_self_authored = %v", got.AutomergeSelfAuthored)

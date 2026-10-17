@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -9,7 +10,28 @@ import (
 	"testing"
 )
 
+// stubPublicGitSourceDNS keeps validation unit tests independent of external DNS.
+// Like the existing SSRF resolver tests, callers must remain non-parallel because
+// gitSourceResolver is package-global; cleanup restores it before the next test.
+func stubPublicGitSourceDNS(t *testing.T, publicHosts ...string) {
+	t.Helper()
+	t.Setenv("HIVE_ALLOW_PRIVATE_GIT_SOURCE", "")
+	allowed := make(map[string]struct{}, len(publicHosts))
+	for _, host := range publicHosts {
+		allowed[strings.ToLower(host)] = struct{}{}
+	}
+	orig := gitSourceResolver
+	gitSourceResolver = func(_ context.Context, host string) ([]string, error) {
+		if _, ok := allowed[strings.ToLower(host)]; ok {
+			return []string{"203.0.113.10"}, nil
+		}
+		return nil, fmt.Errorf("stubPublicGitSourceDNS: host %q not registered as public in this test", host)
+	}
+	t.Cleanup(func() { gitSourceResolver = orig })
+}
+
 func TestValidateGitSourceURL(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
 	tests := []struct {
 		name    string
 		raw     string
@@ -135,6 +157,7 @@ func TestGitSourceInitRejectsInvalidURL(t *testing.T) {
 }
 
 func TestGitSourceInitRejectsFlagLikeBranch(t *testing.T) {
+	stubPublicGitSourceDNS(t, "github.com")
 	cloneDir := t.TempDir()
 	initGitRepo(t, cloneDir)
 	gs := NewGitSource(GitSourceConfig{
@@ -363,4 +386,21 @@ func initGitRepo(t *testing.T, dir string) {
 	if err := os.MkdirAll(gitDir, 0o755); err != nil {
 		t.Fatalf("creating .git dir: %v", err)
 	}
+}
+
+func TestStubPublicGitSourceDNSFailsClosed(t *testing.T) {
+	stubPublicGitSourceDNS(t, "registered.example")
+	t.Run("registered host", func(t *testing.T) {
+		if err := ValidateGitSourceURL("https://registered.example/repo.git"); err != nil {
+			t.Fatalf("registered host rejected: %v", err)
+		}
+	})
+	t.Run("unregistered host", func(t *testing.T) {
+		if _, err := gitSourceResolver(context.Background(), "unregistered.example"); err == nil || !strings.Contains(err.Error(), "unregistered.example") {
+			t.Fatalf("unexpected lookup must return a descriptive error: %v", err)
+		}
+		if err := ValidateGitSourceURL("https://unregistered.example/repo.git"); err == nil {
+			t.Fatal("unregistered host must fail closed")
+		}
+	})
 }

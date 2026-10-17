@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -88,6 +89,11 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"${seg('sm', row.merged)}${seg('sr', row.reverted)}${seg('so', row.open)}${seg('su', row.unknown)}",
 		".ev-svg .ev-bar.or",
 		".ev-legend i.om",
+		"dto.complexity_by_repo",
+		"evPanel('maintainability', 'Maintainability trend', complexityN",
+		"complexity.filter((r) => r.months.length >= 2).length",
+		"Report-only; Go-only cyclomatic complexity. No causal claim",
+		"evMaintainabilitySvg(complexity, dto.acmm_changes)",
 		"dto.claim_vs_verdict",
 		"evPanel('claim-vs-verdict', 'CI gate — integrity + convergence', claimN, evCIGateHtml(rec) + evConvergenceSvg(rec.convergence) + evCIRecoveryHtml(rec) + evClaimVsVerdictSvg(claims),",
 		// CI gate: grade A integrity over merged PRs with a known merge-time
@@ -208,6 +214,88 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 	}
 }
 
+func TestEvidenceMaintainabilityRendering(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: maintainability rendering not executed")
+	}
+	html := indexHTML(t)
+	var source strings.Builder
+	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\n")
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evOutcomesSvg", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "renderEvidenceSummary"} {
+		source.WriteString(jsFunc(t, html, name))
+		source.WriteByte('\n')
+	}
+	source.WriteString(`
+const assert = require('node:assert/strict');
+const snap = (month, median, over, tools) => ({month, median_cyclomatic: median, functions_over_threshold: over, threshold: 10, static_warnings_by_tool: tools});
+const dto = {hours: 0, complexity_by_repo: [
+  {repo: 'o/z', months: [snap('2020-03', 3, 4, {'go vet': 0}), snap('2020-01', 2, 1, {'go vet': 7})]},
+  {repo: 'o/<b>', months: [snap('2020-02', 9, 2, {'<tool>': 5})]},
+  {repo: 'o/empty', months: []}
+]};
+const rows = evMaintainabilityRows(dto);
+assert.equal(rows.length, 2);
+assert.equal(rows[0].repo, 'o/<b>');
+assert.deepEqual(rows[1].months.map(m => m.month), ['2020-01', '2020-03']);
+assert.equal(rows.filter(r => r.months.length >= 2).length, 1);
+assert.equal(evMaintainabilityRows({...dto, repo: 'O/Z'}).length, 1);
+assert.equal(evMaintainabilityRows({...dto, hours: 24}).length, 0);
+// Custom range: from/to win over hours; To is exclusive so 2020-03 is out.
+const custom = evMaintainabilityRows({...dto, hours: 1440, from: '2020-01-15T00:00:00Z', to: '2020-03-01T00:00:00Z'});
+assert.deepEqual(custom.map(r => r.repo), ['o/<b>', 'o/z']);
+assert.deepEqual(custom[1].months.map(m => m.month), ['2020-01']);
+assert.deepEqual(evMaintainabilityRows({...dto, hours: 1440, from: '2019-01-01T00:00:00Z', to: '2019-12-31T00:00:00Z'}), []);
+assert.equal(evMaintainabilityRows({...dto, from: 'garbage', to: ''}).length, 2);
+assert.deepEqual(evMaintainabilityRows({}), []);
+assert.match(evMaintainabilitySvg([], []), /no monthly complexity snapshots/);
+const svg = evMaintainabilitySvg(rows, [
+  {repo: 'O/Z', month: '2020-02', level: 3},
+  {repo: 'o/z', month: '2019-12', level: 2},
+  {repo: 'o/other', month: '2020-02', level: 6}
+]);
+assert.match(svg, /o\/z · 2020-02: ACMM L3 first observed/);
+assert.doesNotMatch(svg, /ACMM L2|ACMM L6/);
+assert.match(svg, /Median cyclomatic \(Go\): 3/);
+assert.match(svg, /Functions over threshold: 4 \(threshold 10\)/);
+assert.match(svg, /go vet: 0/);
+assert.match(svg, /&lt;tool&gt;: 5/);
+assert.match(svg, /o\/&lt;b&gt;/);
+assert.doesNotMatch(svg, /<b>|<tool>|NaN|undefined/);
+// Every repo has gaps: no continuous lines across an unmeasured month.
+assert.doesNotMatch(svg, /<polyline/);
+const contiguous = evMaintainabilitySvg(evMaintainabilityRows({hours: 0, complexity_by_repo: [
+  {repo: 'o/r', months: [snap('2020-01', 2, 0, {'go vet': 0}), snap('2020-02', 4, 1, {'go vet': 3})]}
+]}), []);
+assert.equal((contiguous.match(/<polyline/g) || []).length, 3);
+assert.match(contiguous, /stroke-dasharray="3 3"/);
+const missingTools = evMaintainabilitySvg([{repo: 'o/r', months: [snap('2020-01', 1, 0)]}], []);
+assert.match(missingTools, /No tool measurements/);
+assert.doesNotMatch(missingTools, /NaN|undefined/);
+// Report-only panels end in a "Not graded" badge, never "Rated: Not enough data".
+const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };
+const ungraded = evGradeLine('ungraded', 'report-only; no threshold to grade against');
+assert.match(ungraded, /<span class="ev-grade ungraded">Not graded<\/span> <span class="ev-grade-why">report-only; no threshold to grade against<\/span>/);
+assert.doesNotMatch(ungraded, /Rated:|Not enough data/);
+assert.match(evGradeLine('none', 'needs more'), /<span class="ev-grade none">Rated: Not enough data<\/span>/);
+assert.match(evGradeLine('strong'), /Rated: Strong<\/span>$/);
+const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];
+const PRT_WINDOWS = [], prtHours = 0;
+const card = {innerHTML: '', querySelector() { return null; }};
+const document = {getElementById() { return card; }};
+renderEvidenceSummary({...dto, all_time: true});
+assert.match(card.innerHTML, /data-ev-panel="maintainability" open><summary>Maintainability trend<span[^>]*>n=1/);
+assert.ok(card.innerHTML.indexOf('data-ev-panel="maintainability"') < card.innerHTML.indexOf('data-ev-panel="shadow-gates"'));
+assert.match(card.innerHTML, /Report-only; Go-only cyclomatic complexity. No causal claim/);
+renderEvidenceSummary(null);
+assert.match(card.innerHTML, /data-ev-panel="maintainability" open><summary>Maintainability trend<span[^>]*>n=0/);
+assert.match(card.innerHTML, /no monthly complexity snapshots/);
+`)
+	if out, err := exec.Command(node, "-e", source.String()).CombinedOutput(); err != nil {
+		t.Fatalf("maintainability renderer failed: %v\n%s", err, out)
+	}
+}
+
 // TestEvidenceCardUIHasNoUndefinedCallees is the ReferenceError guard for the
 // Evidence card helpers.
 func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
@@ -228,6 +316,8 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 		"evQueueGrowth",
 		"evSentinelSparkline",
 		"evShadowGateSvg",
+		"evMaintainabilityRows",
+		"evMaintainabilitySvg",
 		"evClaimVsVerdictSvg",
 		"evWorkBalanceSvg",
 		"escapeHtml",
@@ -301,7 +391,9 @@ func TestEvidenceCardExplainers(t *testing.T) {
 		"const EV_BLOCKED_FAIR = 0.05;",
 		"const EV_DATA_SINCE = '2026-10-08';",
 		"const EV_REVERTS_SINCE = '2026-10-15';",
-		"const EV_GRADES = { excellent: 'Excellent', good: 'Good', strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };",
+		"const EV_GRADES = { excellent: 'Excellent', good: 'Good', strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data', ungraded: 'Not graded' };",
+		"const label = grade === 'ungraded' ? EV_GRADES.ungraded : `Rated: ${EV_GRADES[grade]}`;",
+		"grade: 'ungraded', reason: 'report-only; no threshold to grade against',",
 		"'outcome-by-author': (dto) => {",
 		"calibration: (dto) => {",
 		"'accuracy-by-model': (dto) => {",

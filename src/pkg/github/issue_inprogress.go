@@ -156,7 +156,7 @@ func (c *Client) markInProgressStarted(ctx context.Context, repo string, number 
 		return
 	}
 	body := InProgressCommentBody(agent, set.HiveID, now, now.Add(set.TTL))
-	if err := c.CreateIssueComment(ctx, repo, number, body); err != nil && c.logger != nil {
+	if err := c.CreateIssueCommentBudgeted(ctx, repo, number, body); err != nil && c.logger != nil {
 		c.logger.Warn("in-progress: posting start mark failed", "repo", repo, "issue", number, "agent", agent, "error", err)
 	}
 }

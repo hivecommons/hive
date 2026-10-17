@@ -1062,9 +1062,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			store.Forget(key)
 			c.resolveNudge(ctx, prevRec, hadPrev, obs)
 		} else {
-			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && prevRec.AdoptedInPlace() {
+			if hadPrev && prevRec.AdoptedInPlace() {
 				// In-place adoption: a head the hive pushed keeps the
 				// adoption; a head the contributor pushed yields it.
+				// Settled on every head change whatever the lane sees —
+				// the hive's fix going green must not hide the yield.
 				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec)
 				result.Comments += n
 				if err != nil && firstErr == nil {
@@ -1072,9 +1074,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 				prevRec, _ = store.Get(key)
 			}
-			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && (prevRec.Adopted(obs.HeadSHA) || prevRec.AdoptedInPlace()) {
-				// Adopted at this head: the lane still sees a red
-				// contributor PR, but the hive owns it now.
+			if hadPrev && prevRec.AdoptionLive(obs.HeadSHA) && verdict.Stage.YieldsToAdoption() {
+				// The hive owns this PR: whether the lane sees it red,
+				// pending or awaiting a verdict, the stage is 074 until the
+				// adoption is released or the merge gate takes it
+				// (hivecommons/hive#12736).
 				verdict.Stage = stagelabels.AdoptedByHive
 			}
 			tr = store.Observe(key, verdict.Stage, obs.Reason)

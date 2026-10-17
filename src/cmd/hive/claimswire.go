@@ -104,7 +104,7 @@ func githubClaimHooks(ctx context.Context, cfg *config.Config, client func() *gi
 			go func() {
 				if comment && outcome == claims.OutcomeClaimed {
 					run("claim comment", c, func(ctx context.Context, gh *github.Client) error {
-						return gh.CreateIssueComment(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
+						return gh.CreateIssueCommentBudgeted(ctx, c.Repo, c.Issue, claims.ClaimComment(c))
 					})
 				}
 				if label {

@@ -101,3 +101,98 @@ func TestReadIssueWeekRejectsInvalid(t *testing.T) {
 		t.Error("malformed JSON accepted")
 	}
 }
+
+func TestIssueWeekCovers(t *testing.T) {
+	from := time.Date(2026, 1, 26, 0, 0, 0, 0, time.UTC)
+	w := IssueWeek{Week: "2026-W05", CoveredFrom: from, CoveredTo: from.AddDate(0, 0, 8)}
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"zero", time.Time{}, false},
+		{"before", from.Add(-time.Nanosecond), false},
+		{"inclusive start", from, true},
+		{"inside", from.Add(time.Hour), true},
+		{"different week", from.AddDate(0, 0, 7), false},
+		{"exclusive end", w.CoveredTo, false},
+		{"same instant in another zone", from.In(time.FixedZone("west", -8*60*60)), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := w.Covers(tc.at); got != tc.want {
+				t.Errorf("Covers(%s) = %v, want %v", tc.at, got, tc.want)
+			}
+		})
+	}
+	// Check the exclusive end within the ISO week, independently of the week gate.
+	w.CoveredTo = from.Add(time.Hour)
+	if w.Covers(w.CoveredTo) {
+		t.Error("coverage end accepted")
+	}
+	if got := IssueWeekKey(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)); got != "2020-W53" {
+		t.Errorf("ISO year boundary = %q, want 2020-W53", got)
+	}
+}
+
+func TestLoadIssueSeries(t *testing.T) {
+	root := t.TempDir()
+	from := time.Date(2026, 1, 26, 0, 0, 0, 0, time.UTC)
+	events := []IssueEvent{
+		{At: from, Action: IssueActionOpened, Kind: AuthorHuman},
+		{At: from.Add(time.Hour), Action: IssueActionOpened, Kind: AuthorAgent},
+		{At: from.Add(2 * time.Hour), Action: IssueActionOpened, Kind: AuthorBot},
+		{At: from.Add(3 * time.Hour), Action: IssueActionClosed},
+	}
+	for _, tc := range []struct {
+		repo   string
+		events []IssueEvent
+	}{
+		{"o/populated", events},
+		{"other/empty", []IssueEvent{}},
+		{"o/missing-events", nil},
+		{"o/unknown-action", []IssueEvent{{At: from, Action: "reopened"}}},
+		{"o/unknown-kind", []IssueEvent{{At: from, Action: IssueActionOpened, Kind: "unknown"}}},
+		{"o/outside-window", append(append([]IssueEvent{}, events...), IssueEvent{At: from.AddDate(0, 0, 7), Action: IssueActionClosed})},
+	} {
+		w := IssueWeek{
+			Week: "2026-W05", Opened: map[string]int{},
+			CoveredFrom: from, CoveredTo: from.AddDate(0, 0, 7), Events: tc.events,
+		}
+		if err := WriteIssueWeek(root, tc.repo, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One unreadable snapshot must not hide valid weeks from other repositories.
+	path, err := IssueWeekPath(root, "o/broken", "2026-W05")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := LoadIssueSeries(root)
+	if len(got) != 2 {
+		t.Fatalf("loaded %d weeks, want populated and observed-empty only: %+v", len(got), got)
+	}
+	byRepo := make(map[string]IssueWeek)
+	for _, w := range got {
+		byRepo[w.Repo] = w.IssueWeek
+	}
+	if w, ok := byRepo["o/populated"]; !ok || len(w.Events) != len(events) || !w.Events[0].At.Equal(from) {
+		t.Errorf("populated week lost: %+v", w)
+	}
+	if w, ok := byRepo["other/empty"]; !ok || w.Events == nil || len(w.Events) != 0 {
+		t.Errorf("observed empty week lost: %+v", w)
+	}
+}
+
+func TestLoadIssueSeriesUnavailable(t *testing.T) {
+	for _, root := range []string{filepath.Join(t.TempDir(), "missing"), "["} {
+		if got := LoadIssueSeries(root); len(got) != 0 {
+			t.Errorf("LoadIssueSeries(%q) = %+v, want no weeks", root, got)
+		}
+	}
+}

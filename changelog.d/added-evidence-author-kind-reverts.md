@@ -1,0 +1,1 @@
+- The hub evidence drill-down now shows pooled revert rates by human, agent, and bot author, with sample sizes and Wilson intervals; older spokes remain unknown and follow-up fixes are excluded from revert counts.

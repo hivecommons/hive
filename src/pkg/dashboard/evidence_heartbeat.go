@@ -82,7 +82,9 @@ func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge
 // window over already-folded PRs; it leaves the lifetime fields (auto-merge
 // posture, write counters, Windows) empty.
 func buildHeartbeatEvidenceWindow(prs map[string]*evidence.PR, now time.Time, window time.Duration) *spoke.HeartbeatEvidence {
-	out := &spoke.HeartbeatEvidence{}
+	out := &spoke.HeartbeatEvidence{ByAuthorKind: map[string]spoke.HeartbeatEvidenceBucket{
+		evidence.AuthorHuman: {}, evidence.AuthorAgent: {}, evidence.AuthorBot: {},
+	}}
 	cutoff := now.Add(-window)
 
 	reviewers := map[string]bool{}
@@ -100,6 +102,15 @@ func buildHeartbeatEvidenceWindow(prs map[string]*evidence.PR, now time.Time, wi
 		if merged {
 			out.Merged90d++
 			mergedPRs = append(mergedPRs, &evidence.Bundle{Merge: b.Merge})
+			if counts, ok := out.ByAuthorKind[b.Author.Kind]; ok {
+				counts.N++
+				// Follow-ups are not reverts. Backlinks are captured by the
+				// evidence linker within its 14-day post-merge window.
+				if len(b.RevertedBy) > 0 {
+					counts.Bad++
+				}
+				out.ByAuthorKind[b.Author.Kind] = counts
+			}
 		}
 		if failed {
 			out.Reverted14d90d++
