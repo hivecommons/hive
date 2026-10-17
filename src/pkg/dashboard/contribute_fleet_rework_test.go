@@ -342,3 +342,77 @@ assert.match(fleet.html, /class="clanker-sub">on org\/r#5</, 'legacy current_tas
 		t.Fatalf("clanker row render: %v\n%s", err, out)
 	}
 }
+
+// hivecommons/hive#12527: a stale relay with an unanswered nudge shows its
+// 072 PRs as "adopting (contributor offline)"; once stage 074 took a PR over
+// it is listed as "adopted by hive". A live relay shows no state.
+func TestFleetReworkAdoptionState(t *testing.T) {
+	hub, _, store := reworkHub(t)
+	now := time.Now()
+	c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now)
+	store.Observe(stagelabels.Key("org/r", 1), stagelabels.ReturnedToContributor, "check-failing:build")
+	store.NoteAuthor(stagelabels.Key("org/r", 1), "alice")
+	store.MarkNudged(stagelabels.Key("org/r", 1), "aaa", 1, true, now)
+	store.Observe(stagelabels.Key("org/r", 2), stagelabels.ReturnedToContributor, "check-failing:build")
+	store.NoteAuthor(stagelabels.Key("org/r", 2), "alice")
+	store.Observe(stagelabels.Key("org/r", 3), stagelabels.AdoptedByHive, "check-failing:build")
+	store.NoteAuthor(stagelabels.Key("org/r", 3), "alice")
+
+	fc := snapshotFor(t, hub, "alice")
+	if fc.Stale || len(fc.PendingReworkPRs) != 3 {
+		t.Fatalf("live: %+v", fc.FleetRework)
+	}
+	byNumber := map[int]FleetReworkPR{}
+	for _, pr := range fc.PendingReworkPRs {
+		byNumber[pr.Number] = pr
+	}
+	if byNumber[1].State != "" || byNumber[2].State != "" || byNumber[3].State != FleetReworkStateAdopted || byNumber[3].Stage != stagelabels.AdoptedByHive.Label() {
+		t.Fatalf("live states: %+v", fc.PendingReworkPRs)
+	}
+
+	c.mu.Lock()
+	c.lastPong = now.Add(-2 * wsHeartbeatTimeout)
+	c.mu.Unlock()
+	fc = snapshotFor(t, hub, "alice")
+	if !fc.Stale {
+		t.Fatalf("stale: %+v", fc.FleetRework)
+	}
+	byNumber = map[int]FleetReworkPR{}
+	for _, pr := range fc.PendingReworkPRs {
+		byNumber[pr.Number] = pr
+	}
+	// Nudged and unanswered → adopting; never nudged → plain 072; 074 → adopted.
+	if byNumber[1].State != FleetReworkStateAdopting || byNumber[2].State != "" || byNumber[3].State != FleetReworkStateAdopted {
+		t.Fatalf("stale states: %+v", fc.PendingReworkPRs)
+	}
+	raw, _ := json.Marshal(fc.PendingReworkPRs)
+	if !strings.Contains(string(raw), `"state":"adopting (contributor offline)"`) {
+		t.Fatalf("json: %s", raw)
+	}
+}
+
+// Presence feeds the stage engine's offline-adoption rule: registered iff a
+// profile or connection exists, online iff a heartbeat is within the window,
+// last_seen = freshest heartbeat.
+func TestContributeHubPresence(t *testing.T) {
+	hub, _, _ := reworkHub(t)
+	now := time.Now()
+	if p := hub.Presence(context.Background(), "nobody"); p.Registered || p.Online || !p.LastSeen.IsZero() {
+		t.Fatalf("unknown user: %+v", p)
+	}
+	c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now)
+	p := hub.Presence(context.Background(), "alice")
+	if !p.Registered || !p.Online || p.LastSeen.IsZero() {
+		t.Fatalf("live relay: %+v", p)
+	}
+	// Online follows the stage presence window (15m default), not the
+	// 4s-tick WS heartbeat: a relay silent past the window is offline.
+	gone := now.Add(-hub.presenceWindow() - time.Minute)
+	c.mu.Lock()
+	c.lastPong = gone
+	c.mu.Unlock()
+	p = hub.Presence(context.Background(), "alice")
+	if !p.Registered || p.Online || !p.LastSeen.Equal(gone) {
+		t.Fatalf("offline relay: %+v", p)
+	}
+}

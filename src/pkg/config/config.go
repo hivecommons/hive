@@ -4093,10 +4093,42 @@ type StageAdoptionConfig struct {
 	// Enabled turns adoption on. nil = true. Off, PRs stay in 072 and only
 	// stall.
 	Enabled *bool `yaml:"enabled"`
+	// AfterOffline is how long the author's relay must have been offline
+	// (no heartbeat within presence_window) after the 072 nudge before the
+	// hive adopts a clanker PR (default 30m). Applies to authors with a
+	// contributor profile on this hive.
+	AfterOffline string `yaml:"after_offline,omitempty"`
+	// AfterUnregistered is the wait after the 072 nudge, with no new head,
+	// before the hive adopts a clanker PR whose author has NO contributor
+	// profile on this hive (another hive posted it; default 2h).
+	AfterUnregistered string `yaml:"after_unregistered,omitempty"`
+	// InPlace lets the hive adopt by pushing to the PR's own branch when
+	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
+	// opening a superseding App PR. nil = true.
+	InPlace *bool `yaml:"in_place,omitempty"`
 }
 
 // IsEnabled reports whether adoption runs (default on).
 func (c StageAdoptionConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
+
+// InPlaceEnabled reports whether in-place adoption is allowed (default on).
+func (c StageAdoptionConfig) InPlaceEnabled() bool { return c.InPlace == nil || *c.InPlace }
+
+// Defaults for the offline-adoption waits (stage 074, hivecommons/hive#12436).
+const (
+	DefaultAdoptAfterOffline      = 30 * time.Minute
+	DefaultAdoptAfterUnregistered = 2 * time.Hour
+)
+
+// EffectiveAfterOffline parses AfterOffline (default 30m).
+func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
+	return parseDurationOr(c.AfterOffline, DefaultAdoptAfterOffline)
+}
+
+// EffectiveAfterUnregistered parses AfterUnregistered (default 2h).
+func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
+	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
+}
 
 // Default graces before a red contributor PR is adopted (stage 074).
 const (

@@ -63,7 +63,17 @@ type FleetReworkPR struct {
 	Since string `json:"since,omitempty"`
 	// Cause is the failing check / review ask, when the fix queue knows it.
 	Cause string `json:"cause,omitempty"`
+	// State explains what the hive is doing about a PR the contributor is
+	// not working: "adopting (contributor offline)" while the connection is
+	// stale and the nudge went unanswered; "adopted by hive" once stage 074
+	// took it over (hivecommons/hive#12436).
+	State string `json:"state,omitempty"`
 }
+
+const (
+	FleetReworkStateAdopting = "adopting (contributor offline)"
+	FleetReworkStateAdopted  = "adopted by hive"
+)
 
 // FleetRework is the per-contributor rework view spliced onto FleetClanker.
 type FleetRework struct {
@@ -227,6 +237,23 @@ func (h *ContributeWSHub) fleetReworkFor(c *ContributorConnection, stale bool) F
 			continue
 		}
 		pr := FleetReworkPR{Repo: repo, Number: number, Stage: ai.Record.Stage.Label()}
+		if !ai.Record.EnteredAt.IsZero() {
+			pr.Since = ai.Record.EnteredAt.UTC().Format(time.RFC3339)
+		}
+		if stale && ai.Record.NudgeCount > 0 {
+			pr.State = FleetReworkStateAdopting
+		}
+		pending[ai.Key] = pr
+	}
+	for _, ai := range store.ByAuthor(user, stagelabels.AdoptedByHive) {
+		if _, dup := pending[ai.Key]; dup {
+			continue
+		}
+		repo, number := splitStageKey(ai.Key)
+		if repo == "" || number == 0 {
+			continue
+		}
+		pr := FleetReworkPR{Repo: repo, Number: number, Stage: ai.Record.Stage.Label(), State: FleetReworkStateAdopted}
 		if !ai.Record.EnteredAt.IsZero() {
 			pr.Since = ai.Record.EnteredAt.UTC().Format(time.RFC3339)
 		}

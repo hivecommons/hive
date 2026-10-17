@@ -195,7 +195,7 @@ referenced it) a lone `stage/050-review-pending`
 | `stage/060-reviewed` | PR | swarm verdict approve but a gate is still pending (CI running, soak not started) | 30m |
 | `stage/070-fixing` | PR | hive-authored (App/taken-over) PR: CI red, changes requested or needs-rebase; a hive agent is reworking it | 2h |
 | `stage/072-returned-to-contributor` | PR | contributor PR (relay or external): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the author's court | 24h |
-| `stage/074-adopted-by-hive` | PR | the author was unavailable past the grace (see below); the hive pushed `hive/adopt-<n>` at the contributor's head, opened a superseding App PR that keeps the author's commits, and the scanner's red-PR fix kick is finishing it. The original closes automatically when the superseder merges | 3h |
+| `stage/074-adopted-by-hive` | PR | the author (a clanker) was unavailable — relay offline, never registered, or silent past the grace (see below); the hive took the PR over: in place on the PR's own branch when it may push there (the scanner's red-PR fix kick rebases and fixes it, then the normal `050 → 100` path), otherwise via `hive/adopt-<n>` and a superseding App PR that keeps the author's commits (the original closes automatically when the superseder merges). A push by the contributor on an in-place adoption hands the PR back (072) | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green (no red check on the head, required or not), verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
 | `stage/085-needs-decision` | PR, issue | on an issue: parked on a person by a hard-suppress label (`needs-human`, `needs-direction`, `needs-decision`, `needs-spec`) — it is outside the agent work queue until a maintainer replies; a lapsed claim on a parked issue never shows 030. On a PR: a person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
 | `stage/090-ready-for-human-merge` | PR | the hive would merge this itself but trust/role blocks it: reviewer verdict approve at the **current** head, required checks green (tide excluded), DCO yes, no sentinel alert, no conflicts, soak elapsed, no hold — and the only remaining lane reason is the author's tier/role. A maintainer's `/lgtm` `/approve` is the only missing step. One `<!-- hive:stage-ready-for-human-merge -->` comment on entry carries the evidence. Always read with the `role/*` and `author/*` labels. (Was `stage/090-needs-human` before [#12528](https://github.com/hivecommons/hive/issues/12528); the engine renames the GitHub label in place) | none |
@@ -238,9 +238,10 @@ stateDiagram-v2
     s100 --> s072: contributor head red (backward hop, commented)
     s070 --> s050: fixed head pushed
     s072 --> s050: author pushes a new head
-    s072 --> s074: grace expired, superseding App PR opened
+    s072 --> s074: clanker unavailable (offline / unregistered / grace), adopted in place or superseded
+    s074 --> s050: in-place fix green (normal path resumes)
     s074 --> [*]: superseder merged (original closed)
-    s074 --> s072: superseder closed unmerged (handed back)
+    s074 --> s072: superseder closed unmerged, or contributor pushed over an in-place adoption (handed back)
     s050 --> s085: hold / sentinel / human-only lane rule
     s060 --> s090: untrusted tier, head otherwise mergeable, soak elapsed
     s085 --> s090: hold lifted / alert cleared, head mergeable
@@ -550,12 +551,53 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
      task waits server-side and the PR carries stage 072 + the comment only.
    Protocol fields and client behaviour:
    [contributor-relay.md § fix-pr tasks](contributor-relay.md#fix-pr-tasks).
-3. If the author stays unavailable past the grace — counted from the FIRST
-   nudge for the head: `governor.labels.stage.contributor_grace_online`
-   (default 2h) when the nudge reached a relay (`mode=spawn|preempt|queued`),
-   `governor.labels.stage.contributor_grace_offline` (default 1h) after a
-   comment-only nudge (offline relay or external author) — the hive adopts
-   the PR (`governor.labels.stage.adoption.enabled`, default `true`):
+   The interrupt machinery in this step and the adoption in the next are for
+   `author/clanker` PRs only — there is a hive on the other end to interrupt
+   or stand in for. `author/human` and `author/hive` PRs follow the same
+   stage transitions and simply wait at 072 for a push or a comment: no
+   nudge, no adoption, no extra comment
+   ([Stage 072 by author kind](#stage-072-by-author-kind)).
+3. If the author stays unavailable the hive adopts the PR
+   (`governor.labels.stage.adoption.enabled`, default `true`). "Unavailable"
+   is decided against the contributor's **live** presence on the hub at
+   every sweep, not a snapshot taken when the nudge went out
+   (hivecommons/hive#12527: the author's relay was polling for work during
+   the nudge and dropped off 30 minutes later; a snapshot-based grace kept
+   the PR at 072 indefinitely). The marker records which rule fired:
+   - `reason=contributor-offline` — the author has a contributor profile
+     here and no relay heartbeat within `governor.labels.stage.presence_window`:
+     adopted `governor.labels.stage.adoption.after_offline` (default 30m)
+     after the later of its last heartbeat and the first nudge;
+   - `reason=contributor-unregistered` — no profile here (another hive, or a
+     relay that never registered, posted the PR): adopted
+     `governor.labels.stage.adoption.after_unregistered` (default 2h) after
+     the first nudge;
+   - `reason=grace-elapsed` — the relay is online but the nudge went
+     unanswered for `governor.labels.stage.contributor_grace_online` (default
+     2h); and, on a hub that reports no presence at all, the nudge-time
+     graces (`contributor_grace_online` 2h / `contributor_grace_offline` 1h
+     after a comment-only nudge).
+   A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
+   adopted (a human parked it; one log line, the stage stays 072).
+   How the hive takes over depends on whether it can push to the PR's own
+   branch (`governor.labels.stage.adoption.in_place`, default `true`):
+   - **in place** (`mode=in-place`) — the head is in the base repo, or the
+     fork allows edits by maintainers (`maintainer_can_modify`, resolved with
+     one `GET pulls/N` at adoption time): the hive posts ONE
+     `<!-- hive:adopted by=<hive-id> reason=<r> mode=in-place head=<sha> -->`
+     comment, moves the PR to `stage/074-adopted-by-hive` and files it in
+     `ci-failing.json` as its own (`"adopted": true`, `reachable_action:
+     push`, conflicted rows included — ordinarily only hive-authored
+     conflict PRs are listed) so the scanner's FIX-BEFORE-NEW kick rebases
+     and fixes CI **on the PR's branch**. No superseding PR, no `hive/adopt-<n>`
+     branch; the PR then runs the normal `050 → 100` path. The hive's own
+     pushes keep the adoption (the stage stays 074). A push by anyone else
+     means the contributor is back: the hive yields — ONE
+     `<!-- hive:adoption-yield head=<sha> -->` note, the adoption is forgotten
+     and the PR is back on the ordinary 072 flow (a fresh nudge for the new
+     head; it may be adopted again under the same rules).
+   - **supersede** (`mode=supersede`) — the fork forbids maintainer edits,
+     or `in_place: false`:
    - pushes `hive/adopt-<n>` in the base repo at the contributor's head SHA
      (the fork's commits, authorship and `Signed-off-by` preserved byte for
      byte — "sign-off survives the squash");
@@ -565,9 +607,10 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
      carries the original's `Closes/Fixes/Resolves` lines and instructs the
      fix agent to rebase on the base and fix CI **on that branch** without
      opening another PR;
-   - posts ONE `<!-- hive:adopted by=#M head=<sha> -->` comment on the
-     original and moves it to `stage/074-adopted-by-hive` (its linked issue
-     mirrors the stage). The hub drops the PR from the contributor's fix queue.
+   - posts ONE `<!-- hive:adopted by=<hive-id> reason=<r> mode=supersede
+     superseded_by=M head=<sha> -->` comment on the original and moves it to
+     `stage/074-adopted-by-hive` (its linked issue mirrors the stage). The
+     hub drops the PR from the contributor's fix queue (either mode).
    The superseding PR is App-authored and red with the same failures, so the
    existing machinery takes over: it lands in `ci-failing.json` and the
    scanner's FIX-BEFORE-NEW kick (the route every red hive-authored PR takes,
@@ -580,8 +623,12 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
    is forgotten and the original returns to 072 (not a regression).
 4. A new head from the author at any point before adoption re-arms the nudge
    (grace restarts) or, if green, returns the PR to the normal `050 → 100`
-   path; no adoption. After adoption the author can still push a new head on
-   the original and say so on the superseder.
+   path; no adoption. After a superseding adoption the author can still push
+   a new head on the original and say so on the superseder; after an
+   in-place adoption their push makes the hive yield (above).
+   The contribute page's "PRs awaiting rework" list for a relay shows
+   `adopting (contributor offline)` on a nudged PR whose relay connection is
+   stale, and `adopted by hive` once the PR is in 074.
 5. Backpressure — the per-contributor fix budget. Capacity = the relay's
    advertised `max_parallel_fixes` (fix sub-sessions beside the primary),
    clamped by `contribute.max_parallel_fixes` (default 2); an unadvertised

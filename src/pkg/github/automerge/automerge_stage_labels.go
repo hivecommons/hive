@@ -59,6 +59,17 @@ type StageLabelPolicy struct {
 	// relay was online at the nudge (defaults 2h / 1h).
 	GraceOnline  time.Duration
 	GraceOffline time.Duration
+	// AdoptAfterOffline is how long the author's relay must have been
+	// offline after the nudge before a clanker PR is adopted (default 30m);
+	// AdoptAfterUnregistered is the wait for a clanker author with no
+	// contributor profile on this hive (default 2h). Both need a presence
+	// source (ContributorPresenceSource); without one the graces above apply.
+	AdoptAfterOffline      time.Duration
+	AdoptAfterUnregistered time.Duration
+	// AdoptInPlace allows adoption by pushing to the PR's own branch when
+	// GitHub permits (same-repo head or maintainer_can_modify) instead of a
+	// superseding App PR (governor.labels.stage.adoption.in_place, default on).
+	AdoptInPlace bool
 	// HiveID is this hive's id; hive/<HiveID> on a PR the App did not author
 	// is a stray the reconciler removes (hivecommons/hive#12545), and the
 	// `<!-- hive:origin hive=<id> -->` marker naming it marks a PR as
@@ -810,7 +821,11 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 // engine's own identity. Labels the same pass is about to strip as strays
 // (agent/<lane> on a PR the App did not author, #12545) are excluded first,
 // so a mis-stamped human PR is never read as author/hive for a cycle.
-func (c *Engine) stageAuthorKind(obs stageObservation, policy StageLabelPolicy) authorkind.Kind {
+//
+// relayKnown is extra evidence the caller already holds (a live presence
+// source saying the author runs a registered relay here); it ORs with the
+// policy's RelayKnown hook.
+func (c *Engine) stageAuthorKind(obs stageObservation, policy StageLabelPolicy, relayKnown bool) authorkind.Kind {
 	appLogin := c.transport.AppBotLogin()
 	stray := strayOwnershipLabels(obs.Labels, obs.Author, appLogin, policy.HiveID)
 	labels := obs.Labels
@@ -826,8 +841,8 @@ func (c *Engine) stageAuthorKind(obs stageObservation, policy StageLabelPolicy) 
 			}
 		}
 	}
-	in := authorkind.Input{Author: obs.Author, AppLogin: appLogin, HiveID: policy.HiveID, Labels: labels, Body: obs.Body}
-	if policy.RelayKnown != nil && obs.Author != "" {
+	in := authorkind.Input{Author: obs.Author, AppLogin: appLogin, HiveID: policy.HiveID, Labels: labels, Body: obs.Body, RelayKnown: relayKnown}
+	if !in.RelayKnown && policy.RelayKnown != nil && obs.Author != "" {
 		in.RelayKnown = policy.RelayKnown(obs.Author)
 	}
 	kind, rule := authorkind.Explain(in)
@@ -921,7 +936,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				continue
 			}
 		}
-		obs.AuthorKind = c.stageAuthorKind(obs, policy)
+		obs.AuthorKind = c.stageAuthorKind(obs, policy, false)
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
@@ -941,7 +956,17 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			store.Forget(key)
 			c.resolveNudge(ctx, prevRec, hadPrev, obs)
 		} else {
-			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && prevRec.Adopted(obs.HeadSHA) {
+			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && prevRec.AdoptedInPlace() {
+				// In-place adoption: a head the hive pushed keeps the
+				// adoption; a head the contributor pushed yields it.
+				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec)
+				result.Comments += n
+				if err != nil && firstErr == nil {
+					firstErr = err
+				}
+				prevRec, _ = store.Get(key)
+			}
+			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && (prevRec.Adopted(obs.HeadSHA) || prevRec.AdoptedInPlace()) {
 				// Adopted at this head: the lane still sees a red
 				// contributor PR, but the hive owns it now.
 				verdict.Stage = stagelabels.AdoptedByHive
@@ -1032,18 +1057,35 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
-		if want.Stage == stagelabels.ReturnedToContributor && policy.ContributorNudge {
-			n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
-			result.Comments += n
-			if err != nil && firstErr == nil {
-				firstErr = err
+		if want.Stage == stagelabels.ReturnedToContributor && (policy.ContributorNudge || policy.Adoption) {
+			// The 072 interrupt machinery (nudge + adoption) is for
+			// author/clanker only: there is a hive on the other end to
+			// interrupt or stand in for. Human and hive-authored PRs
+			// simply wait at 072 (docs: "Stage 072 by author kind").
+			presence, hasPresence := c.contributorPresence(ctx, obs.Author)
+			kind := obs.AuthorKind
+			if kind != authorkind.Clanker && hasPresence && presence.Registered {
+				// Live presence is registry evidence the label pass did
+				// not have: a registered relay author is a clanker.
+				kind = c.stageAuthorKind(obs, policy, true)
 			}
-		}
-		if want.Stage == stagelabels.ReturnedToContributor && policy.Adoption {
-			n, err := c.adoptContributorPR(ctx, store, key, obs, policy, now)
-			result.Comments += n
-			if err != nil && firstErr == nil {
-				firstErr = err
+			if kind == authorkind.Clanker {
+				if policy.ContributorNudge {
+					n, err := c.nudgeContributor(ctx, store, key, obs, policy, now)
+					result.Comments += n
+					if err != nil && firstErr == nil {
+						firstErr = err
+					}
+				}
+				if policy.Adoption {
+					n, err := c.adoptContributorPR(ctx, store, key, obs, policy, presence, hasPresence, now)
+					result.Comments += n
+					if err != nil && firstErr == nil {
+						firstErr = err
+					}
+				}
+			} else if rec, ok := store.Get(key); ok && rec.NudgeHead != obs.HeadSHA {
+				c.info("stage labels: 072 without interrupt (author kind)", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", string(kind))
 			}
 		}
 		if want.Stage == stagelabels.AdoptedByHive {
