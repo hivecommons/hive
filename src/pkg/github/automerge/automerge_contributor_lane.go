@@ -699,6 +699,9 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	}
 	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
+		if reason == contributorLaneReasonAppAuthored {
+			c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
+		}
 		return AutoMergeSweepEvent{}, reason, nil
 	}
 	author := hgithub.SafeGetLogin(pr.GetUser())

@@ -1,0 +1,1 @@
+- App-authored pull requests no longer flap between `role/trusted` and `role/untrusted` when automerge lanes observe them in different sweep ticks.
