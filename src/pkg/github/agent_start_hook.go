@@ -103,7 +103,9 @@ func commentIsDeferral(body string) bool {
 
 // commentEscalation matches a comment that parks the issue on a person
 // instead of starting it: one that opens with an escalation verdict
-// (`needs-decision (scanner): …`, `needs-direction …`, `Triage (scanner):
+// (`needs-decision (scanner): …`, `needs-direction …` — the explanation
+// text that accompanies a stage/085 park, hivecommons/hive#12683 — or
+// `Triage (scanner):
 // not a … defect`) or with "parking"/"parked", or that says "parking this
 // [issue/RFC] …", "out of the [agent] work queue" or "no PR to open"
 // anywhere. The scanner posted exactly these on hivecommons/hive#12570 and
@@ -141,6 +143,7 @@ func commentIsEscalation(body string) bool {
 // stage/030 together for five hours).
 var escalationLabels = map[string]bool{
 	issueNeedsHumanLabel:                true,
+	NeedsDecisionStageLabel:             true,
 	issueNeedsDirectionLabel:            true,
 	issueNeedsDecisionLabel:             true,
 	issueNeedsSpecLabel:                 true,

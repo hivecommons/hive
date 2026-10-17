@@ -33,12 +33,12 @@ func TestOverviewServerClassifierAndCSVParity9102(t *testing.T) {
 	var script strings.Builder
 	script.WriteString(`
 const REPO_ISSUE_BAND_DEFAULTS = {
-  waitingLabels: ['blocked', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
+  waitingLabels: ['blocked', 'stage/085-needs-decision', 'needs-decision', '2-discussing', 'Epic', 'needs-human', 'needs-triage'],
   doneLabels: ['hive/already-done', '🐝 covered by PR', 'hive/covered-by-pr', 'hive/likely-done'],
   staleDays: 14
 };
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const PR_HUMAN_GATE_LABELS = ['needs-human', 'needs-decision', '2-discussing'];
+const PR_HUMAN_GATE_LABELS = ['needs-human', 'stage/085-needs-decision', 'needs-decision', '2-discussing'];
 const PR_BAND_ORDER = ['waiting', 'eligible', 'blocked', 'in-review', 'open', 'draft'];
 const OVERVIEW_ISSUE_BAND_ORDER = ['ready', 'in-progress', 'agent-filed', 'waiting', 'done'];
 const HOLD_LABEL_SPELLINGS = ['hold', 'on-hold', 'hold/review'];

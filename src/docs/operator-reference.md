@@ -173,7 +173,7 @@ Top-level YAML keys accepted by `config.Config`:
 | `review.severity.block_at` | Unset; owner-only. | Lowest finding priority that blocks merge: `P1` (ship fast, P0–P1 block), `P2` (strict, P0–P2 block) or `P3` (everything blocks). Also drives `classification.review_bots.min_priority` when that key is not set in `hive.yaml` or `hive-project.yaml`. Any other value fails load naming the field. Features -> Review gate -> Severity & backlog. See [review-swarm.md](review-swarm.md#blocking-line-reviewseverity-reviewbacklog). |
 | `review.severity.comment_below` / `backlog_below` | `true` / `true`; owner-only. | Whether findings below the blocking line are posted as non-blocking comments and filed to `review.backlog`. |
 | `review.backlog.destination` | `github_issue`; owner-only. | `github_issue`, `github_project`, `linear` or `jira`. The last three need the matching `governor.work_source.type` (`github_projects`, `linear`, `jira`); on a mismatch the hive falls back to `github_issue`. Destination fields: `project_column_id` (required for `github_project`), `linear_state`, `jira_status`. |
-| `review.backlog.labels` / `max_per_pr_per_day` | `[origin/reviewer]` / `10`; owner-only. `from-review` and `origin/review` are accepted and mapped to `origin/reviewer`. | Labels on every backlog item and the per-PR-per-day cap (negative fails load; 0 = default). |
+| `review.backlog.labels` / `max_per_pr_per_day` | `[origin/reviewer]` / `10`; owner-only. `from-review` and `origin/review` are accepted and mapped to `origin/reviewer`. | Labels on every backlog item and the per-PR-per-day cap (negative fails load; 0 = default). `origin/reviewer` is one value of the universal `origin/<source>` provenance axis: every hive-created issue carries exactly one (`origin/<lane>`, `origin/selfreport`, `origin/governor`, `origin/dashboard`, `origin/forge`, `origin/convergence`); the one-time startup migration (`/data/origin-label-migration-v3.done`) backfills it on open hive-authored issues. |
 | `review.contributor_prs.base_sync` | Off by default; owner-only. | Lets PR follow-up use GitHub's update-branch API on hive-authored lane PRs whose head is in a contributor fork, whose `mergeable_state` is `behind`/`dirty`, and whose author enabled "allow edits by maintainers". `behind` PRs get a GitHub-authored merge commit; `dirty`/422 falls back to the `hive-base-moved` repair note and kick. This requires an agent/proxy mode with `ISSUES_PRS_MERGE` because `PUT /pulls/{n}/update-branch` is merge-scoped. It does not rewrite history and does not add a human/bot-authored DCO commit; the repository's "Sign-off survives the squash" check examines the PR's own commits, not GitHub's update-branch merge commit. |
 | `governor.advisory.post_retry_backoff_s` | `3600` seconds. `HIVE_ADVISORY_POST_RETRY_BACKOFF_S` overrides the default when the key is unset; a negative value disables the pause. | How long the advisory digest write is paused after GitHub refuses it with `403 Resource not accessible by integration`. That refusal is structural (foreign-authored comment, repo dropped from the installation, or repo transferred to another owner), so per-cycle retries only burn API quota. The failed edit first falls back to creating a fresh App-authored comment; if the create is refused too, the error is recorded for the hub health row — naming the new `owner/repo` when the repository has moved — and attempts pause for this window. See [advisory.md](advisory.md#when-the-write-is-refused). |
 | `governor.trajectory.enabled` | Defaults to enabled. | The lane no-ops until a reviewer endpoint and model resolve from `governor.trajectory` or `governor.litellm`. |
@@ -325,7 +325,7 @@ advanced into the merge path.
 | `auto_merge.trusted_authors.require_github_permission` | `true` | Also require GitHub to report author write access; API errors fail closed. Fork PRs still need this check even if the setting is false. |
 | `auto_merge.trusted_authors.exclude_labels` | `hold`, `do-not-merge`, `needs-human` | Labels that keep a PR out of trusted-author auto-merge. |
 | `auto_merge.contributor_lane.enabled` | `true` | Enables the contributor-lane tier: Hive merges a green, soaked, reviewer-approved PR whose author holds a `require_tiers` tier in the contributor registry (`registry_tiers_sufficient`), or whose linked issue carries this hive's App-authored `hive:claim kind=contributor` marker naming the PR author with a `tier=` in `require_tiers` and `verified=true`. Grants unattended merge only to contributors an operator granted such a tier and whose GitHub login was proven; set `false` to make every contributor PR wait for a human `/lgtm` + `/approve`. See [hive-merge.md](hive-merge.md#contributor-lane-auto-merge). |
-| `auto_merge.contributor_lane.soak_minutes` | `120` | How long the current head must stay green before the tier merges it; a new push restarts the soak. `0` merges on the first green sweep. |
+| `auto_merge.contributor_lane.soak_minutes` | `30` | How long the current head must stay green before the tier merges it; a new push restarts the soak. `0`/unset means the default (30); the shortest real soak is `1`. |
 | `auto_merge.contributor_lane.require_reviewer_verdict` | `true` | Require an approving aggregate reviewer verdict for the current head. Independently of this key, a hive with no reviewer agent never merges through the tier (`contributor-lane:no-reviewer`). |
 | `auto_merge.contributor_lane.require_tiers` | `trusted`, `merger` | Contributor trust tiers whose verified claims the tier may merge. Only operator-granted tiers (`trusted`, `merger`, `advisor`) are accepted; `newcomer` and `contributor` are rejected at validation. |
 | `auto_merge.contributor_lane.registry_tiers_sufficient` | `true` | Admit a PR whose author's contributor-registry profile carries a `require_tiers` tier without a linked issue or `hive:claim` marker (logged as `contributor-lane:registry-trusted`). All other gates still apply. `false` requires the claim marker for every contributor. |
@@ -487,9 +487,9 @@ transition history (the `stage/regressed` label is retired, #12534). Default
 on; `governor.labels.stage.enabled: false` stops the reconciler,
 `governor.labels.stage.dwell.<slug>` re-times a stage's stalled threshold,
 `governor.labels.stage.stalled.require_quiet: false` measures the dwell from
-stage entry instead of last activity (Settings → Labels). When a contributor
+stage entry instead of last activity (Settings → Labels). When a clanker
 PR enters
-`stage/072-needs-author` the hive posts one nudge comment per head
+`stage/072-returned-to-contributor` the hive posts one nudge comment per head
 (re-nudged once after `governor.labels.stage.contributor_nudge.renudge_interval`,
 default = the 24h dwell; cap 2) and, for a contributor whose relay heartbeat is
 within `governor.labels.stage.presence_window` (default 15m), pushes a `fix-pr`
@@ -843,7 +843,10 @@ owner-role entries plus the device-flow operator) so a maintainer can see who
 is affected. Each report also names the repositories the hive watches
 (`project.repos`) and their owners, and the body block keeps an
 `Affected repos (N)` / `Affected repo owners (N)` union across reporting
-hives (hivecommons/hive#12338).
+hives (hivecommons/hive#12338). Every selfreport carries
+`origin/selfreport` (the provenance axis every hive-created issue records,
+see [labels-and-control-signals.md](labels-and-control-signals.md#origin-sources))
+next to the deprecated `hive/selfreport`.
 
 ```yaml
 governor:

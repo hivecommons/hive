@@ -95,7 +95,7 @@ type githubIssueBacklogSink struct{ c *Client }
 func (githubIssueBacklogSink) Destination() string { return config.ReviewBacklogGitHubIssue }
 
 func (s githubIssueBacklogSink) CreateItem(ctx context.Context, item ReviewBacklogItem) (ReviewBacklogRef, error) {
-	res, err := s.c.createIssue(ctx, item.Repo, item.Title, item.Body, item.Labels, true)
+	res, err := s.c.createIssue(ctx, CreateIssueRequest{Repo: item.Repo, Title: item.Title, Body: item.Body, Labels: item.Labels, Origin: config.OriginSourceReviewer, ConsolidateOpen: true})
 	if err != nil {
 		return ReviewBacklogRef{}, err
 	}

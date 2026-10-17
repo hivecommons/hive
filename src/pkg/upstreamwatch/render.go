@@ -3,6 +3,8 @@ package upstreamwatch
 import (
 	"fmt"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 const (
@@ -89,6 +91,9 @@ func RenderIssue(upstream string, item Item, j Judgement, label string) Issue {
 	if l := strings.TrimSpace(label); l != "" {
 		labels = []string{l}
 	}
+	// The watch files on the governor's behalf; origin/governor is its
+	// provenance label (the forge auto-creates unknown labels on create).
+	labels = config.WithOriginLabel(labels, config.OriginSourceGovernor)
 	return Issue{Title: titlePrefix + title, Body: b.String(), Labels: labels}
 }
 

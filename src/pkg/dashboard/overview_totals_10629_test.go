@@ -19,7 +19,7 @@ func TestOverviewTotalsUseForgeCountsAndExplainScannerGap10629(t *testing.T) {
 			OpenPrs:          []any{github.PullRequest{Number: 4, Repo: "hivecommons/hive", Title: "ready PR"}},
 			HeldPrs:          []any{github.PullRequest{Number: 5, Repo: "hivecommons/hive", Title: "held PR", Labels: []string{"hold"}}},
 			WorkBreakdown: &github.RepoWorkBreakdown{
-				Issues: github.RepoIssueBreakdown{Actionable: 2, Hold: 1, Filtered: 2, NeedsDirection: 1, Exempt: 1},
+				Issues: github.RepoIssueBreakdown{Actionable: 2, Hold: 1, Filtered: 2, NeedsDecision: 1, Exempt: 1},
 				PRs:    github.RepoPRBreakdown{Actionable: 1, Hold: 1, Draft: 1},
 			},
 		},
@@ -38,8 +38,8 @@ func TestOverviewTotalsUseForgeCountsAndExplainScannerGap10629(t *testing.T) {
 	if got.OverviewTotals.Issues.Forge != 7 || got.OverviewTotals.Issues.Tracked != 4 || got.OverviewTotals.Issues.Outside != 3 {
 		t.Fatalf("issue totals = %+v, want forge=7 tracked=4 outside=3", got.OverviewTotals.Issues)
 	}
-	if got.OverviewTotals.Issues.Breakdown["needs_direction"] != 1 || got.OverviewTotals.Issues.Breakdown["needs_decision"] != 1 || got.OverviewTotals.Issues.Breakdown["exempt"] != 1 {
-		t.Fatalf("issue breakdown = %+v, want needs-direction, needs-decision, and exempt gaps", got.OverviewTotals.Issues.Breakdown)
+	if got.OverviewTotals.Issues.Breakdown["needs_decision"] != 2 || got.OverviewTotals.Issues.Breakdown["exempt"] != 1 {
+		t.Fatalf("issue breakdown = %+v, want needs-decision and exempt gaps", got.OverviewTotals.Issues.Breakdown)
 	}
 	if got.OverviewTotals.PRs.Forge != 4 || got.OverviewTotals.PRs.Tracked != 3 || got.OverviewTotals.PRs.Outside != 1 || got.OverviewTotals.PRs.Breakdown["draft"] != 1 {
 		t.Fatalf("PR totals = %+v, want multi-repo forge total with draft breakdown", got.OverviewTotals.PRs)
@@ -136,7 +136,7 @@ func TestOverviewOutsideBreakdownExplainsEveryScannerFilter(t *testing.T) {
 		WorkBreakdown: &github.RepoWorkBreakdown{
 			Issues: github.RepoIssueBreakdown{
 				Actionable: 2, Hold: 1, Filtered: 27,
-				NeedsHuman: 1, NeedsDirection: 2, NeedsDecision: 3, NeedsSpec: 4, ReporterConfirmation: 6, Exempt: 5,
+				NeedsHuman: 1, NeedsDecision: 5, NeedsSpec: 4, ReporterConfirmation: 6, Exempt: 5,
 				ReporterTriage: 7, HiveAdvisory: 8, DependencyDashboard: 9, Other: 10,
 			},
 			PRs: github.RepoPRBreakdown{Actionable: 1, Hold: 1, Draft: 11, Filtered: 12, Other: 13},
@@ -171,8 +171,7 @@ func TestOverviewOutsideBreakdownExplainsEveryScannerFilter(t *testing.T) {
 		t.Fatalf("outside breakdown sum = %d, outside count = %d (%+v)", sum, got.Outside.Count, got.Outside.Breakdown)
 	}
 	for key, want := range map[string]int{
-		"needs-direction":            2,
-		"needs-decision":             3,
+		"needs-decision":             5,
 		"needs-spec":                 4,
 		"exempt-labels":              5,
 		"project-issue-filter":       6,
@@ -221,15 +220,15 @@ const issueEq = { kind: 'issues', open: 42, result: 4, terms: [
   { key: 'held', label: 'held', count: 10 },
   { key: 'blocked_needs_human', label: 'blocked/needs-human', count: 3 },
   { key: 'outside', label: 'outside', count: 25, breakdown: [
-    { key: 'needs-direction', label: 'needs-direction', count: 6, settingsTab: 'Labels', docsHref: '/docs/dashboard.md#outside-buckets' },
-    { key: 'needs-decision', label: 'needs-decision', count: 2 },
+    { key: 'needs-decision', label: 'needs human decision', count: 8, settingsTab: 'Labels', docsHref: '/docs/dashboard.md#outside-buckets' },
     { key: 'needs-spec', label: 'needs-spec', count: 0 },
+    { key: 'waiting-on-reporter', label: 'waiting on reporter', count: 0 },
     { key: 'exempt-labels', label: 'exempt', count: 1 },
     { key: 'reporter-triage', label: 'reporter triage', count: 7 },
     { key: 'project-issue-filter', label: 'project issue filter', count: 0 },
     { key: 'standing-meta-advisory', label: 'hive advisory', count: 1 },
-    { key: 'dependency-dashboard', label: 'dependency dashboard', count: 0 },
-    { key: 'hold-adjacent-other-issues', label: 'other/unclassified', count: 8 }
+    { key: 'dependency-dashboard', label: 'dependency dashboard', count: 2 },
+    { key: 'hold-adjacent-other-issues', label: 'other/unclassified', count: 6 }
   ] }
 ] };
 const subline = renderOverviewTotalPartitionSubline(issueEq);
@@ -237,7 +236,7 @@ const m = subline.match(/(\d+) actionable \+ (\d+) held \+ (\d+) blocked \+ (\d+
 if (!m) throw new Error('partition subline did not render expected breakdown: ' + subline);
 const nums = m.slice(1).map(Number);
 if (42 !== nums[0] + nums[1] + nums[2] + nums[3]) throw new Error('partition terms do not sum to open total: ' + subline);
-const outside = Array.from(subline.matchAll(/(\d+) (needs-direction|needs-decision|exempt|reporter triage|hive advisory|other\/unclassified)/g)).reduce((n, row) => n + Number(row[1]), 0);
+const outside = Array.from(subline.matchAll(/(\d+) (needs human decision|exempt|reporter triage|hive advisory|dependency dashboard|other\/unclassified)/g)).reduce((n, row) => n + Number(row[1]), 0);
 if (outside !== nums[3]) throw new Error('outside breakdown does not sum: ' + subline);
 const actionSubline = renderActionableEquationSubline(issueEq);
 if (!actionSubline.includes('Outside: items Hive is configured to leave alone.')) throw new Error('compact outside summary missing: ' + actionSubline);

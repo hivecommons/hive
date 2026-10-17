@@ -99,7 +99,7 @@ func TestCreateIssueAndCreateIssueCommentAgreeOnCanaryFailClosed(t *testing.T) {
 	defer issueServer.Close()
 	issueClient := newTestClient(t, issueServer, "org", []string{"org/repo"})
 	issueClient.SetCanaryScanner(true, true, r, nil)
-	_, issueErr := issueClient.CreateIssue(context.Background(), "org/repo", "title", body, nil)
+	_, issueErr := issueClient.CreateIssue(context.Background(), CreateIssueRequest{Repo: "org/repo", Title: "title", Body: body, Origin: "test"})
 	if issueErr == nil || !strings.Contains(issueErr.Error(), "ioscan canary leak") {
 		t.Fatalf("CreateIssue error = %v, want canary block", issueErr)
 	}
@@ -141,7 +141,7 @@ func TestCreateIssueCommentCanaryFailOpenMatchesCreateIssue(t *testing.T) {
 	issueClient := newTestClient(t, issueServer, "org", []string{"org/repo"})
 	issueLeakSeen := false
 	issueClient.SetCanaryScanner(true, false, r, func(ioscan.CanaryLeak) { issueLeakSeen = true })
-	if _, err := issueClient.CreateIssue(context.Background(), "org/repo", "title", body, nil); err != nil {
+	if _, err := issueClient.CreateIssue(context.Background(), CreateIssueRequest{Repo: "org/repo", Title: "title", Body: body, Origin: "test"}); err != nil {
 		t.Fatalf("CreateIssue with fail-closed off: %v", err)
 	}
 	if created != 1 {

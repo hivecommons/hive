@@ -3,6 +3,8 @@ package github
 import (
 	"sort"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The standalone `label` relay operation (hivecommons/hive#9587).
@@ -30,7 +32,8 @@ var reservedExactLabels = []string{
 	HumanAckLabel,        // approved-direction: a person endorsed the direction
 	"design-approved",    // config.DefaultDesignApprovedLabel
 	"needs-human",        // escalation to a person
-	"needs-decision",     // blocked on a human decision
+	"needs-decision",     // retired park label (hivecommons/hive#12683); never written again
+	"needs-direction",    // retired park label (hivecommons/hive#12683); never written again
 	"blocked",            // workflow skip marker
 	AutoMergeQueuedLabel, // lgtm: queues the merge
 }
@@ -38,14 +41,29 @@ var reservedExactLabels = []string{
 // reservedLabelPrefixes are namespaces owned by the hive itself: claim
 // ownership (`hive/claimed-by-<agent>`), the PR-claim bookkeeping labels and
 // most verification state labels are written by hive code paths that read
-// them back as fact.
-var reservedLabelPrefixes = []string{"hive/"}
+// them back as fact, and the `stage/*` family the reconcilers compute.
+var reservedLabelPrefixes = []string{"hive/", stagelabels.Prefix}
 
 // agentRecordableHiveStateLabels are the narrow exceptions agents may add
 // because hive explicitly asks for them as the agent's audited verdict. The
 // relay still refuses removing them and refuses every other hive/* label.
 var agentRecordableHiveStateLabels = []string{
 	VerifiedOpenLabel,
+}
+
+// agentMayAddLabel reports whether an agent may ADD label through the relay
+// even though it is reserved: the recordable hive-state verdicts, and the
+// hive's configured needs-decision label (`stage/085-needs-decision` by
+// default). Parking an item on a maintainer decision is ADR-0019's
+// escalation move (it replaced the retired `needs-direction` and
+// `needs-decision` labels, hivecommons/hive#12683); an agent that parks
+// itself gives up work, it never decides its own merge. Removing the label
+// — the un-park — stays a maintainer's `/hive approve` / `/hive decision`.
+func (c *Client) agentMayAddLabel(label string) bool {
+	if agentRecordableHiveStateLabel(label) {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(label), c.needsDecisionLabel())
 }
 
 // reservedLabelForAgents reports whether label is refused to the label relay.
@@ -127,7 +145,7 @@ func (c *Client) reservedLabelRefusal(add, remove []string) (string, bool) {
 	var bad []string
 	seen := map[string]bool{}
 	for _, label := range add {
-		if agentRecordableHiveStateLabel(label) {
+		if c.agentMayAddLabel(label) {
 			continue
 		}
 		if !reservedLabelForAgents(label, autoMerge) {

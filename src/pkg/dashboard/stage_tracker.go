@@ -105,17 +105,16 @@ type StageTrackerItem struct {
 	AuthorKindSource string `json:"author_kind_source,omitempty"`
 	// Tier is the author/<tier> admission label without its prefix.
 	Tier string `json:"tier,omitempty"`
+	// Origin is the origin/<source> provenance label without its prefix:
+	// which hive component created the item ("" = none, e.g. human-filed).
+	Origin string `json:"origin,omitempty"`
 	// Lane is the pipeline route the item is on: issue, hive or contributor.
 	Lane string `json:"lane"`
 	// Stage is the stage number (0 = no stage known); StageSince is when
 	// the item entered it (nil when only the label is known).
-	Stage      int    `json:"stage"`
-	StageSlug  string `json:"stage_slug,omitempty"`
-	StageLabel string `json:"stage_label,omitempty"`
-	// StageShort is the chevron word for this item; it differs from the
-	// stage table's short caption only for 072, where it follows the
-	// author kind (stageTrackerShortFor).
-	StageShort string     `json:"stage_short,omitempty"`
+	Stage      int        `json:"stage"`
+	StageSlug  string     `json:"stage_slug,omitempty"`
+	StageLabel string     `json:"stage_label,omitempty"`
 	StageSince *time.Time `json:"stage_since,omitempty"`
 	// Mirrored is true for an issue whose stage is its covering PR's.
 	Mirrored bool `json:"mirrored,omitempty"`
@@ -125,8 +124,8 @@ type StageTrackerItem struct {
 	Caption string `json:"caption"`
 	Actor   string `json:"actor,omitempty"`
 	// Modifiers are the health and control markers in effect: stalled,
-	// regressed, hold, needs-human, needs-decision, needs-rebase, blocked,
-	// draft.
+	// regressed, hold, needs-human, needs-decision (stage/085 carried as a
+	// park signal), needs-rebase, blocked, draft.
 	Modifiers     []string   `json:"modifiers"`
 	RegressedFrom int        `json:"regressed_from,omitempty"`
 	NudgeCount    int        `json:"nudge_count,omitempty"`
@@ -166,7 +165,8 @@ const (
 	trackerNumberAwaitingMerge  = 80
 	trackerNumberReviewPending  = 50
 	trackerNumberFixing         = 70
-	trackerNumberNeedsAuthor    = 72
+	trackerNumberNeedsAuthor    = 71
+	trackerNumberReturned       = 72
 	trackerNumberAdopted        = 74
 	trackerNumberNeedsDecision  = 85
 	trackerNumberReadyForHuman  = 90
@@ -214,7 +214,7 @@ const (
 // lights the "Merge admission" chevron.
 func stageTrackerBranchFrom(number int) int {
 	switch number {
-	case trackerNumberFixing, trackerNumberNeedsAuthor, trackerNumberAdopted:
+	case trackerNumberFixing, trackerNumberNeedsAuthor, trackerNumberReturned, trackerNumberAdopted:
 		return trackerNumberReviewPending
 	case trackerNumberNeedsDecision, trackerNumberReadyForHuman:
 		return trackerNumberAwaitingMerge
@@ -240,7 +240,9 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.Fixing:
 		return "Fixing"
 	case stagelabels.NeedsAuthor:
-		return stagelabels.NeedsAuthorWordHuman
+		return "Needs author"
+	case stagelabels.ReturnedToContributor:
+		return "Returned to contributor"
 	case stagelabels.AdoptedByHive:
 		return "Adopted by hive"
 	case stagelabels.AwaitingMergeAdmission:
@@ -253,19 +255,6 @@ func stageTrackerShort(s stagelabels.Stage) string {
 		return "Merge queue"
 	}
 	return s.Slug()
-}
-
-// stageTrackerShortFor is the chevron word for one item: the stage's short
-// caption, except stage 072 whose word depends on the author kind (clanker →
-// "Returned to contributor", otherwise "Needs author"); the slug is the same.
-func stageTrackerShortFor(s stagelabels.Stage, authorKind string) string {
-	if s == stagelabels.NeedsAuthor {
-		if authorKind == authorKindClanker {
-			return stagelabels.NeedsAuthorWordClanker
-		}
-		return stagelabels.NeedsAuthorWordHuman
-	}
-	return stageTrackerShort(s)
 }
 
 func stageTrackerStages(overrides map[string]time.Duration) []StageTrackerStage {
@@ -372,7 +361,9 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			set[modRegressed] = true
 		case "needs-human":
 			set[modNeedsHuman] = true
-		case "needs-decision":
+		case needsDecisionLabel, "needs-decision":
+			// The stage label is the park signal (hivecommons/hive#12683);
+			// the retired spelling is read until migrated.
 			set[modNeedsDecision] = true
 		case "needs-rebase":
 			set[modNeedsRebase] = true
@@ -486,7 +477,7 @@ func joinClause(head, clause string) string {
 }
 
 // stageTrackerCaption builds the human sentence and the actor for an item.
-func stageTrackerCaption(stage stagelabels.Stage, reason, author, authorKind string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int) (caption, actor string) {
+func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind string, mirrored bool, rec stagelabels.Record, hasRec bool, linkedPR int) (caption, actor string) {
 	clause := humanizeStageReason(reason)
 	who := strings.TrimSpace(author)
 	if who == "" {
@@ -517,11 +508,9 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author, authorKind str
 	case stagelabels.Fixing:
 		return joinClause("Red or changes requested; a hive agent is fixing it", clause), "hive"
 	case stagelabels.NeedsAuthor:
-		head := "Needs " + who
-		if authorKind == authorKindClanker {
-			head = "Returned to " + who
-		}
-		c := joinClause(head, clause) + " — " + who + " must act"
+		return joinClause("Needs "+who, clause) + " — " + who + " must act", strings.TrimPrefix(who, "@")
+	case stagelabels.ReturnedToContributor:
+		c := joinClause("Returned to "+who, clause) + " — " + who + " must act"
 		if hasRec && rec.NudgeCount > 0 {
 			c += " (" + plural(rec.NudgeCount, "nudge") + " sent)"
 		}
@@ -630,9 +619,6 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		it.Stage = stage.Number()
 		it.StageSlug = stage.Slug()
 		it.StageLabel = stage.Label()
-		if stage != stagelabels.None {
-			it.StageShort = stageTrackerShortFor(stage, it.AuthorKind)
-		}
 		if m := trackerPRNumberRE.FindStringSubmatch(it.Reason); m != nil && it.Kind == "issue" {
 			it.LinkedPR, _ = strconv.Atoi(m[1])
 		}
@@ -643,7 +629,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if stage == stagelabels.NeedsDecision {
 			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
-		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.AuthorKind, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
+		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
 		it.History = stageTrackerHistory(rec)
 	}
 	seen := map[string]bool{}
@@ -666,6 +652,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer
 		} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {
 			it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
+		}
+		if l, ok := config.FirstOriginLabel(issue.Labels); ok {
+			it.Origin = config.OriginSourceOf(l)
 		}
 		stage := labelStage(issue.Labels)
 		if stage == stagelabels.None && !(ok && rec.Stage != stagelabels.None) {

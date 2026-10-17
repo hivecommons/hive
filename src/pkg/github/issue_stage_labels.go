@@ -13,10 +13,13 @@ package github
 //     covering PR's own stage (read from the shared stage store the
 //     automerge sweep fills) is narrated in the reason, never written as
 //     a second label — 050+ are PR-only stages (hivecommons/hive#12451)
-//   - parked on a person by an escalation label (needs-human,
-//     needs-decision, needs-spec, or the retired needs-direction alias) → stage/085-needs-decision,
-//     the same "a human decision is owed" stage PRs use; the label that
-//     parked it is the reason
+//   - parked on a person: carrying stage/085-needs-decision itself (the
+//     single park signal, hivecommons/hive#12683 — an agent, the relay or a
+//     person put it there and it stays until a maintainer un-parks), or an
+//     escalation label (needs-human, needs-spec, or the retired
+//     needs-decision / needs-direction) → stage/085-needs-decision, the same
+//     "a human decision is owed" stage PRs use; the label that parked it is
+//     the reason
 //   - carrying hive/likely-done (merged PR, awaiting confirmation), or
 //     filtered out of the pipeline by any other exempt label → no stage.
 //
@@ -26,7 +29,9 @@ package github
 // issue so exactly one stage label survives (hivecommons/hive#12512). It
 // also strips the retired `claimed`, `hive/in-progress` and `🐝 covered by
 // PR` labels: one cycle after upgrade every open issue carries its stage
-// label instead. Health (`stage/stalled`) is tracked for the issue's own
+// label instead. The retired `needs-decision` / `needs-direction` park
+// labels come off the same way once 085 is on (legacy_decision_labels.go),
+// and their definitions are deleted once nothing open carries them. Health (`stage/stalled`) is tracked for the issue's own
 // stages (010–030); a covered issue (040) leaves health to the PR, where the
 // reason is legible. For those issue stages the dwell is still measured
 // from stage entry: the issue list payload carries no comment count or
@@ -81,9 +86,12 @@ type IssueStageResult struct {
 	// ClaimedByHealed counts backend-named `hive/claimed-by-*` labels
 	// rewritten to the holder's login (see healBackendClaimedByLabels).
 	ClaimedByHealed int
-	// DirectionMigrated counts issues whose legacy `needs-direction` label
-	// was replaced by the needs-decision label (hivecommons/hive#12683).
-	DirectionMigrated int
+	// LegacyDecisionMigrated counts issues whose retired needs-decision /
+	// needs-direction label came off after stage/085 was confirmed on them;
+	// LegacyDecisionDefinitionsDeleted counts repo label definitions removed
+	// (hivecommons/hive#12683).
+	LegacyDecisionMigrated           int
+	LegacyDecisionDefinitionsDeleted int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -218,6 +226,8 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 		return rec.Stage
 	}
 	seen := map[string]bool{}
+	legacyCarriers := map[string]int{}
+	reposSeen := map[string]bool{}
 	for _, in := range IssueStageInputs(result) {
 		owner, name := client.splitRepo(in.Repo)
 		key := stagelabels.Key(owner+"/"+name, in.Number)
@@ -226,10 +236,11 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 		}
 		seen[key] = true
 		res.Items++
-		res.ClaimedByHealed += healBackendClaimedByLabels(ctx, client, in, logger)
-		if migrateNeedsDirection(ctx, client, in, logger) {
-			res.DirectionMigrated++
+		reposSeen[in.Repo] = true
+		if hasLegacyDecisionLabel(in.Labels) {
+			legacyCarriers[in.Repo]++
 		}
+		res.ClaimedByHealed += healBackendClaimedByLabels(ctx, client, in, logger)
 		stage, covered, reason := IssueStageFor(in, prStage)
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
@@ -245,6 +256,12 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 		}
 		add, remove := stagelabels.Plan(in.Labels, want)
 		if len(add)+len(remove) == 0 {
+			// Stage already right; a retired park label left beside 085
+			// still has to come off (hivecommons/hive#12683).
+			if n := removeLegacyDecisionLabels(ctx, client, in, in.Labels, logger); n > 0 {
+				res.LegacyDecisionMigrated += n
+				legacyCarriers[in.Repo]--
+			}
 			continue
 		}
 		if err := client.ensureStageLabelFamily(ctx, in.Repo); err != nil {
@@ -268,6 +285,14 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 		if out.Healed {
 			res.Healed++
 		}
+		if err == nil && out.Stage == stagelabels.NeedsDecision {
+			// 085 is on the issue (written or confirmed); the retired park
+			// label that used to carry the meaning can go.
+			if n := removeLegacyDecisionLabels(ctx, client, in, append(append([]string(nil), in.Labels...), out.Added...), logger); n > 0 {
+				res.LegacyDecisionMigrated += n
+				legacyCarriers[in.Repo]--
+			}
+		}
 		if logger != nil && (out.Changed() || err != nil) {
 			logger.Info("issue stage labels reconciled", "repo", in.Repo, "issue", in.Number, "stage", out.Stage.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "clamped", out.Clamped, "wanted", out.Wanted.String(), "reason", reason, "bucket", in.Bucket)
 		}
@@ -287,42 +312,15 @@ func SyncIssueStageLabels(ctx context.Context, client *Client, result *Actionabl
 			}
 		}
 	}
+	for repo := range reposSeen {
+		if legacyCarriers[repo] <= 0 {
+			res.LegacyDecisionDefinitionsDeleted += client.retireLegacyDecisionLabelDefinitions(ctx, repo, logger)
+		}
+	}
 	if err := store.Save(); err != nil && logger != nil {
 		logger.Warn("issue stage labels: persisting state failed", "error", err)
 	}
 	return res
-}
-
-// migrateNeedsDirection is the one-shot retirement of the legacy
-// `needs-direction` label (hivecommons/hive#12683): an issue carrying it gets
-// the configured needs-decision label and loses `needs-direction`. The add
-// goes first and the remove only follows a successful add, so an issue
-// mid-migration never un-parks; both writes re-read the issue and are
-// journaled against that read (AddLabelsFresh / RemoveLabelsFresh), so an
-// issue carrying both labels costs one remove and an unlabelled one costs
-// nothing. Readers keep accepting `needs-direction` as an alias. Reports
-// whether the legacy label was removed.
-func migrateNeedsDirection(ctx context.Context, client *Client, in IssueStageInput, logger *slog.Logger) bool {
-	if client == nil || !issueHasLabel(in.Labels, issueNeedsDirectionLabel) {
-		return false
-	}
-	want := client.needsDecisionLabel()
-	if err := client.AddLabelsFresh(ctx, in.Repo, in.Number, stagelabels.None, want); err != nil {
-		if logger != nil {
-			logger.Warn("needs-direction migration: adding needs-decision failed", "repo", in.Repo, "issue", in.Number, "label", want, "error", err)
-		}
-		return false
-	}
-	if err := client.RemoveLabelsFresh(ctx, in.Repo, in.Number, issueNeedsDirectionLabel); err != nil {
-		if logger != nil {
-			logger.Warn("needs-direction migration: removing needs-direction failed", "repo", in.Repo, "issue", in.Number, "error", err)
-		}
-		return false
-	}
-	if logger != nil {
-		logger.Info("needs-direction migrated", "repo", in.Repo, "issue", in.Number, "added", want)
-	}
-	return true
 }
 
 // ensureStageLabelFamily provisions (or recolours) the stage/author label

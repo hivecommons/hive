@@ -434,3 +434,18 @@ func TestReportsCarryHiveStateOutsideBody(t *testing.T) {
 		}
 	}
 }
+
+// Selfreports keep the deprecated hive/selfreport marker for operators'
+// existing filters and ALSO carry origin/selfreport, the universal
+// provenance axis every hive-created issue records.
+func TestRuntimeReportCarriesBothSelfReportLabels(t *testing.T) {
+	ev := Evidence{Component: "merge", ErrorClass: "conflict", Severity: "high", Class: "unclassified_error_repeated", Message: "boom"}
+	r := BuildRuntimeReport(Observation{Mode: "busy"}, ev, "fp", "inst", "hive", "v", "c", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	has := map[string]bool{}
+	for _, l := range r.Labels {
+		has[l] = true
+	}
+	if !has[LabelSelfReport] || !has[LabelOriginSelfReport] || LabelOriginSelfReport != "origin/selfreport" {
+		t.Fatalf("labels = %v, want both %s and origin/selfreport", r.Labels, LabelSelfReport)
+	}
+}

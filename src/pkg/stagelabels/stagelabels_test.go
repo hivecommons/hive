@@ -2,6 +2,7 @@ package stagelabels
 
 import (
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/config"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,7 +38,7 @@ func TestTableIsOrderedSparseAndUnique(t *testing.T) {
 		Actionable: "stage/010-actionable", Claimed: "stage/020-claimed", PRInProgress: "stage/030-pr-in-progress",
 		CoveredByPR: "stage/040-covered-by-pr", ReviewPending: "stage/050-review-pending", Reviewed: "stage/060-reviewed",
 		AwaitingMergeAdmission: "stage/080-awaiting-merge-admission",
-		Fixing:                 "stage/070-fixing", NeedsAuthor: "stage/072-needs-author", AdoptedByHive: "stage/074-adopted-by-hive",
+		Fixing:                 "stage/070-fixing", NeedsAuthor: "stage/071-needs-author", ReturnedToContributor: "stage/072-returned-to-contributor", AdoptedByHive: "stage/074-adopted-by-hive",
 		MergeQueue: "stage/100-merge-queue", ReadyForHumanMerge: "stage/090-ready-for-human-merge", NeedsDecision: "stage/085-needs-decision",
 	}
 	for s, l := range want {
@@ -292,7 +293,7 @@ func TestStoreObserveRegressRecoverAndStalled(t *testing.T) {
 	if !IsRegression(MergeQueue, Fixing) || IsRegression(Fixing, Reviewed) || !IsRegression(Fixing, Claimed) {
 		t.Fatal("IsRegression repair-route exception wrong")
 	}
-	if IsRegression(AdoptedByHive, NeedsAuthor) || IsRegression(AdoptedByHive, ReviewPending) || !IsRegression(AdoptedByHive, Claimed) {
+	if IsRegression(AdoptedByHive, ReturnedToContributor) || IsRegression(AdoptedByHive, ReviewPending) || !IsRegression(AdoptedByHive, Claimed) {
 		t.Fatal("IsRegression adoption hand-back exception wrong")
 	}
 	if tr = st.Observe(key, Reviewed, "y"); tr.Recovered {
@@ -460,7 +461,7 @@ func TestStoreMarkNudged(t *testing.T) {
 		t.Fatal("MarkNudged created a record")
 	}
 	key := Key("acme/widget", 7)
-	s.Observe(key, NeedsAuthor, "check-failing:unit")
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
 	s.MarkNudged(key, "a", 1, true, now)
 	r, _ := s.Get(key)
 	if r.NudgeHead != "a" || r.NudgeCount != 1 || !r.LastNudgeAt.Equal(now) || !r.FirstNudgeAt.Equal(now) || !r.NudgeOnline {
@@ -500,7 +501,7 @@ func TestStoreMarkNudged(t *testing.T) {
 // (hivecommons/hive#12403, #12528).
 func TestHumanStagesAreNotHighWaterMarks(t *testing.T) {
 	for _, from := range []Stage{ReadyForHumanMerge, NeedsDecision} {
-		for _, to := range []Stage{ReviewPending, Reviewed, Fixing, NeedsAuthor, AwaitingMergeAdmission} {
+		for _, to := range []Stage{ReviewPending, Reviewed, Fixing, ReturnedToContributor, AwaitingMergeAdmission} {
 			if IsRegression(from, to) {
 				t.Errorf("%v → %v flagged as regression", from, to)
 			}
@@ -524,7 +525,7 @@ func TestHumanStagesAreNotHighWaterMarks(t *testing.T) {
 	}
 	// A record persisted by the old rule.
 	st.items[key] = Record{Stage: ReviewPending, EnteredAt: now, RegressedFrom: ReadyForHumanMerge, RegressedAt: now, RegressionCommented: true}
-	tr := st.Observe(key, NeedsAuthor, "reviewer-verdict:changes_requested")
+	tr := st.Observe(key, ReturnedToContributor, "reviewer-verdict:changes_requested")
 	if !tr.Recovered || tr.Regressed {
 		t.Fatalf("stale 090 mark did not heal: %+v", tr)
 	}
@@ -544,10 +545,10 @@ func TestStoreNoteAuthorAndByAuthor(t *testing.T) {
 	if _, ok := st.Get("acme/w#1"); ok {
 		t.Fatal("NoteAuthor must not create a record")
 	}
-	st.Observe("acme/w#1", NeedsAuthor, "check-failing:unit")
-	st.Observe("acme/w#2", NeedsAuthor, "conflicting")
+	st.Observe("acme/w#1", ReturnedToContributor, "check-failing:unit")
+	st.Observe("acme/w#2", ReturnedToContributor, "conflicting")
 	st.Observe("acme/w#3", ReviewPending, "")
-	st.Observe("acme/w#4", NeedsAuthor, "changes-requested")
+	st.Observe("acme/w#4", ReturnedToContributor, "changes-requested")
 	st.NoteAuthor("acme/w#1", "Alice")
 	st.NoteAuthor("acme/w#2", "alice")
 	st.NoteAuthor("acme/w#3", "ALICE")
@@ -560,7 +561,7 @@ func TestStoreNoteAuthorAndByAuthor(t *testing.T) {
 	if r, _ := st.Get("acme/w#4"); r.Author != "bob" {
 		t.Fatalf("empty login must not clear the author, got %q", r.Author)
 	}
-	got := st.ByAuthor("aLiCe", NeedsAuthor)
+	got := st.ByAuthor("aLiCe", ReturnedToContributor)
 	if len(got) != 2 || got[0].Key != "acme/w#1" || got[1].Key != "acme/w#2" {
 		t.Fatalf("ByAuthor(072) = %+v", got)
 	}
@@ -582,7 +583,7 @@ func TestStoreNoteAuthorAndByAuthor(t *testing.T) {
 	if r, _ := st2.Get("acme/w#1"); r.Author != "alice" || r.Stage != ReviewPending {
 		t.Fatalf("round trip: %+v", r)
 	}
-	if got := st2.ByAuthor("alice", NeedsAuthor); len(got) != 1 || got[0].Key != "acme/w#2" {
+	if got := st2.ByAuthor("alice", ReturnedToContributor); len(got) != 1 || got[0].Key != "acme/w#2" {
 		t.Fatalf("after recovery ByAuthor(072) = %+v", got)
 	}
 }
@@ -842,7 +843,7 @@ func TestStoreAdoptInPlaceAndYield(t *testing.T) {
 	if _, ok := s.Get("missing"); ok {
 		t.Fatal("MarkAdoptedInPlace created a record")
 	}
-	s.Observe(key, NeedsAuthor, "check-failing:unit")
+	s.Observe(key, ReturnedToContributor, "check-failing:unit")
 	r, _ := s.Get(key)
 	if r.AdoptedInPlace() || r.Adopted("a") {
 		t.Fatalf("fresh record adopted: %+v", r)
@@ -901,52 +902,76 @@ func TestClampLabelDescription(t *testing.T) {
 	}
 }
 
-// Stage 072 was renamed from stage/072-returned-to-contributor to
-// stage/072-needs-author: both spellings read as 072 during the rollout, the
-// plan drops the old one for the new, and a dwell override keyed by the
-// retired slug still applies.
-func TestNeedsAuthorRenameAliases(t *testing.T) {
-	const old = "stage/072-returned-to-contributor"
-	if NeedsAuthor.Label() != "stage/072-needs-author" || Renames[old] != NeedsAuthor {
-		t.Fatalf("label=%s renames=%v", NeedsAuthor.Label(), Renames)
+// Stage 07x by author kind: the "author must act" outcome is 070 fixing for
+// the hive's own PR, 071 needs-author for a human's, 072
+// returned-to-contributor for a clanker's. Same evidence, same transitions;
+// only who is on the hook differs.
+func TestFixingStageForByAuthorKind(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		self bool
+		kind authorkind.Kind
+		want Stage
+	}{
+		{"human", false, authorkind.Human, NeedsAuthor},
+		{"clanker", false, authorkind.Clanker, ReturnedToContributor},
+		{"hive kind", false, authorkind.Hive, Fixing},
+		{"self-authored lane", true, authorkind.Unknown, Fixing},
+		{"self-authored lane beats clanker kind", true, authorkind.Clanker, Fixing},
+		{"unknown kind reads as human", false, authorkind.Unknown, NeedsAuthor},
+	} {
+		if got := FixingStageFor(tc.self, tc.kind); got != tc.want {
+			t.Errorf("%s: FixingStageFor(%v, %q) = %v, want %v", tc.name, tc.self, tc.kind, got, tc.want)
+		}
 	}
-	if got := Current([]string{"kind/bug", old}); got != NeedsAuthor {
-		t.Fatalf("old spelling: Current = %v", got)
+	for _, s := range []Stage{Fixing, NeedsAuthor, ReturnedToContributor} {
+		if !AuthorBlocked(s) {
+			t.Errorf("%v must be author-blocked", s)
+		}
 	}
-	if got := Current([]string{NeedsAuthor.Label()}); got != NeedsAuthor {
-		t.Fatalf("new spelling: Current = %v", got)
+	for _, s := range []Stage{None, ReviewPending, AdoptedByHive, NeedsDecision, MergeQueue} {
+		if AuthorBlocked(s) {
+			t.Errorf("%v must not be author-blocked", s)
+		}
 	}
-	if got := Current([]string{old, NeedsAuthor.Label()}); got != NeedsAuthor {
-		t.Fatalf("both spellings: Current = %v", got)
+	// 071 sits between 070 and 072, is a PR-only stage, dwells like 072, and
+	// reads from labels like any other stage.
+	d, ok := definition(NeedsAuthor)
+	if !ok || d.Number != 71 || d.Slug != "needs-author" || !d.PR || d.Issue || d.Dwell != ReturnedToContributor.Dwell() {
+		t.Fatalf("071 definition = %+v ok=%v", d, ok)
 	}
-	add, remove := Plan([]string{old, "role/contributor"}, Desired{Stage: NeedsAuthor, Role: RoleContributor})
-	if strings.Join(add, ",") != NeedsAuthor.Label() || strings.Join(remove, ",") != old {
-		t.Fatalf("plan: add=%v remove=%v", add, remove)
+	if !Fixing.Before(NeedsAuthor) || !NeedsAuthor.Before(ReturnedToContributor) {
+		t.Fatal("071 must order between 070 and 072")
 	}
-	if got := Dwell(NeedsAuthor, map[string]time.Duration{"returned-to-contributor": 7 * time.Hour}); got != 7*time.Hour {
-		t.Fatalf("legacy dwell key: %v", got)
+	if got := Current([]string{"kind/bug", "stage/071-needs-author"}); got != NeedsAuthor {
+		t.Fatalf("Current = %v", got)
 	}
-	if got := Dwell(NeedsAuthor, map[string]time.Duration{"needs-author": 5 * time.Hour, "returned-to-contributor": 7 * time.Hour}); got != 5*time.Hour {
-		t.Fatalf("new dwell key must win: %v", got)
+	// Leaving 071 for review of a new head is the repair route, not a
+	// regression; 074 → 071 is a declined adoption handed back, not a knock-back.
+	if IsRegression(NeedsAuthor, ReviewPending) || IsRegression(NeedsAuthor, Reviewed) || IsRegression(AdoptedByHive, NeedsAuthor) {
+		t.Fatal("071 repair transitions must not regress")
 	}
-	if !strings.HasPrefix(NeedsAuthor.Description(), "Needs author — returned to contributor for clanker PRs") {
-		t.Fatalf("description: %q", NeedsAuthor.Description())
+	if !IsRegression(MergeQueue, NeedsAuthor) {
+		t.Fatal("100 → 071 is a regression")
 	}
 }
 
-// One slug, two words: the 072 display word follows the author kind.
-func TestNeedsAuthorWordByAuthorKind(t *testing.T) {
-	for _, tc := range []struct {
-		kind authorkind.Kind
-		want string
-	}{
-		{authorkind.Human, "Needs author"},
-		{authorkind.Clanker, "Returned to contributor"},
-		{authorkind.Hive, "Needs author"},
-		{authorkind.Unknown, "Needs author"},
-	} {
-		if got := NeedsAuthorWord(tc.kind); got != tc.want {
-			t.Errorf("%q: word = %q, want %q", tc.kind, got, tc.want)
-		}
+func TestRenamesWithdrawnNeedsAuthorSpellingReads072(t *testing.T) {
+	if got := Current([]string{"stage/072-needs-author"}); got != ReturnedToContributor {
+		t.Fatalf("withdrawn 072 spelling = %v, want ReturnedToContributor", got)
+	}
+	if got := Current([]string{NeedsAuthor.Label()}); got != NeedsAuthor {
+		t.Fatalf("071 label = %v, want NeedsAuthor", got)
+	}
+	if NeedsAuthor.Label() != "stage/071-needs-author" || ReturnedToContributor.Label() != "stage/072-returned-to-contributor" {
+		t.Fatalf("labels: %q %q", NeedsAuthor.Label(), ReturnedToContributor.Label())
+	}
+}
+
+// hivecommons/hive#12683: config spells the decision park label out because
+// it cannot import this package; the two must never drift.
+func TestNeedsDecisionLabelMatchesConfigDefault(t *testing.T) {
+	if NeedsDecision.Label() != config.DefaultNeedsDecisionLabel {
+		t.Fatalf("stage label %q != config.DefaultNeedsDecisionLabel %q", NeedsDecision.Label(), config.DefaultNeedsDecisionLabel)
 	}
 }

@@ -385,10 +385,11 @@ A PR merges through this tier only when all of the following hold:
   and no reviewer has an outstanding `CHANGES_REQUESTED`.
 - No excluded label (`hold`, `do-not-merge*`, `needs-human`, `blocked`,
   `needs-rebase` by default), not draft, mergeable, no human-merge path.
-- The head SHA has stayed green for `soak_minutes` (default 120). The first
+- The head SHA has stayed green for `soak_minutes` (`0`/unset = default 30;
+  the shortest real soak is `1`). The first
   green sighting per (repo, PR, head) is tracked in process; a new push restarts
   the soak and the skip reason reports the time left
-  (`contributor-lane:soaking(remaining=1h30m0s)`).
+  (`contributor-lane:soaking(remaining=25m0s)`).
 
 Merges squash through the same effect-claimed `MergePR` path as the other tiers,
 log `automerge merged tier=contributor-lane admitted_by=<path>`, record the
@@ -401,7 +402,7 @@ trusted tier in this hive's contributor registry.` for the registry path.
 auto_merge:
   contributor_lane:
     enabled: true                 # default on; false restores the human /lgtm wait
-    soak_minutes: 120
+    soak_minutes: 30
     require_reviewer_verdict: true
     repos: []                     # optional allow-list; empty = all watched repos
     exclude_labels:
@@ -446,7 +447,8 @@ no-verdict → `stage/085-needs-decision` with reason
 `contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
-contributor PR → `stage/072-needs-author`, hold / sentinel alert →
+human-authored PR → `stage/071-needs-author`, on a clanker PR →
+`stage/072-returned-to-contributor`, hold / sentinel alert →
 `stage/085-needs-decision`, untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
@@ -476,7 +478,7 @@ writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same
 ([#12436](https://github.com/hivecommons/hive/issues/12436)).
 
-A PR entering `stage/072-needs-author` also triggers the
+A clanker PR entering `stage/072-returned-to-contributor` also triggers the
 contributor nudge: the sweep posts one `<!-- hive:contributor-nudge head=…
 -->` comment per head naming the failing checks / review asks (re-nudged
 once at the stall threshold, cap 2) and hands the diagnosis to the contribute

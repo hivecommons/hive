@@ -732,13 +732,13 @@ var stageFixingReasons = map[string]bool{
 }
 
 // fixingStage is the rework stage for the lane: a hive agent reworks its
-// own (self-authored lane) PR, while a contributor's PR (trusted-author or
-// contributor lane) is handed back to its author with the diagnosis.
+// own (self-authored lane) PR at 070, while a contributor's PR (trusted-
+// author or contributor lane) is handed back to its author with the
+// diagnosis — 072 for a clanker, 071 for a human. Before the author kind
+// is known (resolveStage runs on raw observations) a non-self PR reads as
+// 071; the apply pass re-derives once stageAuthorKind has run.
 func fixingStage(o stageObservation) stagelabels.Stage {
-	if o.Lane == stageLaneSelf {
-		return stagelabels.Fixing
-	}
-	return stagelabels.NeedsAuthor
+	return stagelabels.FixingStageFor(o.Lane == stageLaneSelf, o.AuthorKind)
 }
 
 // classifyStage maps one lane observation to a stage opinion. Reason
@@ -1007,6 +1007,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 		}
 		obs.AuthorKind = c.stageAuthorKind(obs, policy, false)
+		if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
+			// classifyStage ran before the author kind was known: split
+			// the author-blocked outcome by kind now (human 071 / clanker 072).
+			verdict.Stage = fixingStage(obs)
+		}
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
@@ -1057,7 +1062,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			store.Forget(key)
 			c.resolveNudge(ctx, prevRec, hadPrev, obs)
 		} else {
-			if verdict.Stage == stagelabels.NeedsAuthor && hadPrev && prevRec.AdoptedInPlace() {
+			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && prevRec.AdoptedInPlace() {
 				// In-place adoption: a head the hive pushed keeps the
 				// adoption; a head the contributor pushed yields it.
 				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec)
@@ -1067,7 +1072,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				}
 				prevRec, _ = store.Get(key)
 			}
-			if verdict.Stage == stagelabels.NeedsAuthor && hadPrev && (prevRec.Adopted(obs.HeadSHA) || prevRec.AdoptedInPlace()) {
+			if verdict.Stage == stagelabels.ReturnedToContributor && hadPrev && (prevRec.Adopted(obs.HeadSHA) || prevRec.AdoptedInPlace()) {
 				// Adopted at this head: the lane still sees a red
 				// contributor PR, but the hive owns it now.
 				verdict.Stage = stagelabels.AdoptedByHive
@@ -1079,7 +1084,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			if dcoRead {
 				store.NoteDCO(key, obs.HeadSHA, obs.Detail.DCOTotal, obs.Detail.DCOUnsigned)
 			}
-			if verdict.Stage != stagelabels.NeedsAuthor {
+			if verdict.Stage != stagelabels.ReturnedToContributor && verdict.Stage != stagelabels.NeedsAuthor {
 				c.resolveNudge(ctx, prevRec, hadPrev, obs)
 			}
 			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
@@ -1162,11 +1167,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
-		if want.Stage == stagelabels.NeedsAuthor && (policy.ContributorNudge || policy.Adoption) {
+		if (want.Stage == stagelabels.ReturnedToContributor || want.Stage == stagelabels.NeedsAuthor) && (policy.ContributorNudge || policy.Adoption) {
 			// The 072 interrupt machinery (nudge + adoption) is for
 			// author/clanker only: there is a hive on the other end to
-			// interrupt or stand in for. Human and hive-authored PRs
-			// simply wait at 072 (docs: "Stage 072 by author kind").
+			// interrupt or stand in for. A human-authored PR simply waits
+			// at 071 (docs: "Stage 07x by author kind").
 			presence, hasPresence := c.contributorPresence(ctx, obs.Author)
 			kind := obs.AuthorKind
 			if kind != authorkind.Clanker && hasPresence && presence.Registered {
@@ -1190,7 +1195,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					}
 				}
 			} else if rec, ok := store.Get(key); ok && rec.NudgeHead != obs.HeadSHA {
-				c.info("stage labels: 072 without interrupt (author kind)", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", string(kind))
+				c.info("stage labels: 07x without interrupt (author kind)", "stage", want.Stage.String(), "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", string(kind))
 			}
 		}
 		if want.Stage == stagelabels.AdoptedByHive {

@@ -1,0 +1,1 @@
+- In-place adoption no longer yields the PR back to an offline contributor when the hive's own fixer agent pushes: a push now releases the adoption only when it is attributable to the PR author, so fixer commits with a bare git identity (no GitHub login) keep the adoption instead of bouncing the PR to 072 and re-adopting it 15 minutes later.

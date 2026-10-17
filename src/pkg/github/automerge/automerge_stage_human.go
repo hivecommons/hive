@@ -94,6 +94,7 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 		DecisionQuestion: strings.TrimSpace(contributorVerdict.DecisionQuestion),
 		HumanSummaries:   append([]string(nil), contributorVerdict.HumanSummaries...),
 		SelfAuthored:     obs.Lane == stageLaneSelf,
+		AuthorKind:       obs.AuthorKind,
 	}
 	sentinel := c.sentinelLabelName()
 	if sentinel == "" {

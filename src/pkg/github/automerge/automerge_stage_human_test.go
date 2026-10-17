@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,22 +109,22 @@ func TestHumanHandoffRoutesByEvidence(t *testing.T) {
 		t.Fatalf("090 → 050 regressed: %+v", rec)
 	}
 
-	// Changes requested → 072 with the verdict as the lane reason.
+	// Changes requested → 071 (human author) with the verdict as the lane reason.
 	*verdict = ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}
 	sweep("role/contributor", "author/human", "stage/050-review-pending")
 	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.NeedsAuthor || rec.Reason != stagelabels.LaneReasonChangesRequested {
 		t.Fatalf("changes requested: %+v", rec)
 	}
 
-	// Back to approve but a red check → 072 naming the check; DCO missing →
-	// 072; conflicts → 072 (#12471: sentinel + conflicts is the author's
+	// Back to approve but a red check → 071 naming the check; DCO missing →
+	// 071; conflicts → 071 (#12471: sentinel + conflicts is the author's
 	// problem first).
 	*verdict = ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
 	e.checkSummary = func(context.Context, string, string, string) (hgithub.CommitChecksSummary, error) {
 		return hgithub.CommitChecksSummary{Total: 3, Green: 2, Red: []string{"lint"}, DCO: 1}, nil
 	}
 	clock.at = clock.at.Add(humanChecksTTL) // past the per-head check cache
-	sweep("role/contributor", "author/human", "stage/072-needs-author")
+	sweep("role/contributor", "author/human", "stage/071-needs-author")
 	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.NeedsAuthor || rec.Reason != "check-failing:lint" {
 		t.Fatalf("red check: %+v", rec)
 	}
@@ -131,22 +132,22 @@ func TestHumanHandoffRoutesByEvidence(t *testing.T) {
 		return hgithub.CommitChecksSummary{Total: 3, Green: 3, DCO: -1}, nil
 	}
 	clock.at = clock.at.Add(humanChecksTTL)
-	sweep("role/contributor", "author/human", "stage/072-needs-author")
+	sweep("role/contributor", "author/human", "stage/071-needs-author")
 	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.NeedsAuthor || rec.Reason != stagelabels.LaneReasonDCOMissing {
 		t.Fatalf("dco: %+v", rec)
 	}
 	e.checkSummary = greenChecks
 	clock.at = clock.at.Add(humanChecksTTL)
 	// needs-rebase is intercepted by classifyStage before routing; the
-	// stage is 072 either way and the sentinel alert does not outrank it.
-	sweep("role/contributor", "author/human", "stage/072-needs-author", "needs-rebase", "sentinel-alert")
+	// stage is 071 either way and the sentinel alert does not outrank it.
+	sweep("role/contributor", "author/human", "stage/071-needs-author", "needs-rebase", "sentinel-alert")
 	if rec, _ := store.Get(stageKey("acme", "widget", 9)); rec.Stage != stagelabels.NeedsAuthor {
 		t.Fatalf("conflict: %+v", rec)
 	}
 
 	// Sentinel alone (head otherwise mergeable) → 085, decision comment.
 	clock.at = clock.at.Add(time.Hour)
-	sweep("role/contributor", "author/human", "stage/072-needs-author", "sentinel-alert")
+	sweep("role/contributor", "author/human", "stage/071-needs-author", "sentinel-alert")
 	if got := stageOf(t, store, 9); got != stagelabels.NeedsDecision {
 		t.Fatalf("sentinel: stage=%v", got)
 	}
@@ -226,6 +227,20 @@ func TestEnsureStageLabelsRenamesInPlace(t *testing.T) {
 		t.Fatalf("pr writes added=%v removed=%v", api.added, api.removed)
 	}
 
+	// The withdrawn #12713 spelling of 072 is renamed back in place too.
+	api3 := &stageAPI{labels: map[string]string{"stage/072-needs-author": stagelabels.StageColor}}
+	srv3 := newStageAPI(t, api3)
+	defer srv3.Close()
+	e3, _, _ := newStageEngine(t, srv3.URL, clock)
+	e3.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(12, "author/human", "stage/072-needs-author"), contributorLaneReasonNoVerdict, false, nil)
+	e3.noteStageRole("acme", "widget", 12, stagelabels.RoleContributor)
+	if _, err := e3.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, old := api3.labels["stage/072-needs-author"]; old || api3.labels["stage/072-returned-to-contributor"] != stagelabels.StageColor || !slices.Contains(api3.edits, "stage/072-returned-to-contributor="+stagelabels.StageColor) {
+		t.Fatalf("072 rename-back edits=%v labels=%v", api3.edits, api3.labels)
+	}
+
 	// A repo that already has both spellings: no PATCH, nothing created twice.
 	api2 := &stageAPI{labels: map[string]string{"stage/090-needs-human": "123456", "stage/090-ready-for-human-merge": stagelabels.StageColor}}
 	srv2 := newStageAPI(t, api2)
@@ -237,33 +252,6 @@ func TestEnsureStageLabelsRenamesInPlace(t *testing.T) {
 	}
 	if len(api2.edits) != 0 || api2.labels["stage/090-needs-human"] != "123456" {
 		t.Fatalf("both spellings: edits=%v labels=%v", api2.edits, api2.labels)
-	}
-
-	// stage/072-returned-to-contributor → stage/072-needs-author: PATCHed in
-	// place, so the PR carrying the old spelling keeps its stage (072) and
-	// only the spelling on the PR changes.
-	api3 := &stageAPI{labels: map[string]string{"stage/072-returned-to-contributor": stagelabels.StageColor}}
-	srv3 := newStageAPI(t, api3)
-	defer srv3.Close()
-	e3, _, _ := newStageEngine(t, srv3.URL, clock)
-	e3.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(13, "author/human", "stage/072-returned-to-contributor"), "check-failing:unit", false, nil)
-	e3.noteStageRole("acme", "widget", 13, stagelabels.RoleContributor)
-	if _, err := e3.ApplyStageLabels(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if _, old := api3.labels["stage/072-returned-to-contributor"]; old {
-		t.Fatalf("old 072 label still present: %v", api3.labels)
-	}
-	if api3.labels["stage/072-needs-author"] != stagelabels.StageColor || !reflect.DeepEqual(api3.edits, []string{"stage/072-needs-author=" + stagelabels.StageColor}) {
-		t.Fatalf("072 rename edits=%v labels=%v", api3.edits, api3.labels)
-	}
-	for _, c := range api3.creates {
-		if c == "stage/072-needs-author" {
-			t.Fatal("renamed 072 label was also created")
-		}
-	}
-	if !reflect.DeepEqual(api3.added, [][]string{{"role/contributor", "stage/072-needs-author"}}) || !reflect.DeepEqual(api3.removed, []string{"stage/072-returned-to-contributor"}) {
-		t.Fatalf("072 pr writes added=%v removed=%v", api3.added, api3.removed)
 	}
 }
 

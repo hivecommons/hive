@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
 	"github.com/hivecommons/hive/pkg/logscrub"
@@ -512,7 +513,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		if req.NeedsDecision {
 			createLabels = appendLabelIfMissing(createLabels, c.needsDecisionLabel())
 		}
-		res, err = c.createIssue(ctx, req.Repo, req.Title, body, createLabels, true)
+		res, err = c.createIssue(ctx, CreateIssueRequest{Repo: req.Repo, Title: req.Title, Body: body, Labels: createLabels, Origin: req.Agent, ConsolidateOpen: true})
 		if err == nil && res.RejectedTwin {
 			// Terminal, not retried: a maintainer already rejected this
 			// finding, and no amount of retrying changes their verdict
@@ -733,29 +734,60 @@ type CreateIssueResult struct {
 	Consolidated bool
 }
 
+// CreateIssueRequest is what every hive issue-create path hands the central
+// helper. Origin is required: it names the origin/<source> provenance label
+// the issue carries (config.OriginSource* or an agent lane), so no hive-filed
+// issue reaches GitHub without exactly one origin/* label. A label already in
+// Labels that belongs to the family wins over Origin, and further origin/*
+// entries are dropped, so an agent that labelled its own filing is honoured
+// without ever double-labelling.
+type CreateIssueRequest struct {
+	// Repo may be "owner/repo" or bare (owner defaults to the hive org).
+	Repo   string
+	Title  string
+	Body   string
+	Labels []string
+	// Origin is the origin/<source> provenance source (without the prefix).
+	// Agent-filed issues pass the agent name; it is reduced to its lane.
+	Origin string
+	// ConsolidateOpen turns on open-twin consolidation: a finding over the
+	// same files as an open hive-filed issue is folded into it (#9376).
+	ConsolidateOpen bool
+}
+
+// OriginLabel returns the origin/* label this request resolves to: the one
+// already present in Labels, else origin/<Origin>.
+func (r CreateIssueRequest) OriginLabel() string {
+	if label, ok := config.FirstOriginLabel(r.Labels); ok {
+		return label
+	}
+	return config.OriginLabelForAgent(r.Origin)
+}
+
+// ErrOriginRequired is returned when a create carries no origin/* label and
+// names no Origin source.
+var ErrOriginRequired = errors.New("CreateIssue: origin/<source> provenance is required (set Origin or pass an origin/* label)")
+
 // CreateIssue creates an issue as the hive's App bot, ensuring requested labels
-// exist first and deduping by exact open-issue title. repo may be "owner/repo"
-// or bare (owner defaults to the hive org).
-func (c *Client) CreateIssue(ctx context.Context, repo, title, body string, labels []string) (CreateIssueResult, error) {
-	return c.createIssue(ctx, repo, title, body, labels, false)
+// exist first and deduping by exact open-issue title. Every issue gets
+// exactly one origin/<source> label (see CreateIssueRequest.Origin).
+func (c *Client) CreateIssue(ctx context.Context, req CreateIssueRequest) (CreateIssueResult, error) {
+	return c.createIssue(ctx, req)
 }
 
-// CreateIssueConsolidated is CreateIssue with open-twin consolidation on, for
-// hive lanes outside this package (the convergence publisher and the
-// dashboard's ACMM gap issues) that must fold into an open twin over the same
-// files instead of filing beside it (#11578).
-func (c *Client) CreateIssueConsolidated(ctx context.Context, repo, title, body string, labels []string) (CreateIssueResult, error) {
-	return c.createIssue(ctx, repo, title, body, labels, true)
-}
-
-// createIssue is CreateIssue with the open-twin consolidation switch. The
-// agent issue-request watcher turns it on: agents file findings one at a time
-// and cannot see each other's, so two findings about the same files become
-// two issues, two PRs, and a merge conflict (#9376). Hive-internal callers
-// (fleet report, review backlog, and through CreateIssueConsolidated the
-// convergence publisher and ACMM gap issues) also turn it on; the public
-// CreateIssue wrapper keeps plain semantics.
-func (c *Client) createIssue(ctx context.Context, repo, title, body string, labels []string, consolidateOpen bool) (CreateIssueResult, error) {
+// createIssue is the one create path. The agent issue-request watcher turns
+// ConsolidateOpen on: agents file findings one at a time and cannot see each
+// other's, so two findings about the same files become two issues, two PRs,
+// and a merge conflict (#9376). Hive-internal callers (fleet report, review
+// backlog, the convergence publisher through the forge seam, and the
+// dashboard's ACMM gap issues) also turn it on.
+func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (CreateIssueResult, error) {
+	repo, title, body, consolidateOpen := req.Repo, req.Title, req.Body, req.ConsolidateOpen
+	originLabel := req.OriginLabel()
+	if originLabel == "" {
+		return CreateIssueResult{}, ErrOriginRequired
+	}
+	labels := config.WithOriginLabel(req.Labels, originLabel)
 	if c == nil || c.client == nil {
 		return CreateIssueResult{}, ErrNoGitHubClient
 	}
@@ -915,8 +947,10 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	}
 
 	// Ensure labels exist. Retryable failures keep the whole request queued
-	// because provenance labels (agent/*) drive hive filtering and
-	// duplicate guards. Terminal label failures still degrade to unlabeled.
+	// because routing labels (agent/*) drive hive filtering and duplicate
+	// guards. Terminal label failures still degrade to unlabeled, and so does
+	// any failure on the origin/* label: provenance is never a gate, so a
+	// label-API blip must not block the filing itself.
 	var usable []string
 	for _, l := range labels {
 		l = strings.TrimSpace(l)
@@ -924,19 +958,23 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 			continue
 		}
 		if err := c.ensureCreateIssueLabel(ctx, owner, repoName, l); err != nil {
-			if isRetryableGitHubError(err) {
+			if isRetryableGitHubError(err) && !IsOriginLabel(l) {
 				return CreateIssueResult{}, fmt.Errorf("CreateIssue: could not ensure label %q in %s/%s due to retryable error: %w", l, owner, repoName, err)
 			}
+			reasonClass := "terminal"
+			if isRetryableGitHubError(err) {
+				reasonClass = "retryable"
+			}
 			c.logger.Warn("CreateIssue: could not ensure label, creating without it",
-				slog.String("repo", repoName), slog.String("label", l), slog.String("reason_class", "terminal"), slog.String("error", err.Error()))
+				slog.String("repo", repoName), slog.String("label", l), slog.String("reason_class", reasonClass), slog.String("error", err.Error()))
 			continue
 		}
 		usable = append(usable, l)
 	}
 
-	req := &gh.IssueRequest{Title: gh.Ptr(title), Body: gh.Ptr(body)}
+	ghReq := &gh.IssueRequest{Title: gh.Ptr(title), Body: gh.Ptr(body)}
 	if len(usable) > 0 {
-		req.Labels = &usable
+		ghReq.Labels = &usable
 	}
 	var issue *gh.Issue
 	claim := issueCreateClaim(owner+"/"+repoName, title, body, issueCreateNow())
@@ -946,7 +984,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 		res, err = effects.Execute(ctx, c.mutationBoundary(), claim,
 			func(ctx context.Context) (effects.Result, error) {
 				var apiErr error
-				issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, req)
+				issue, _, apiErr = c.client.Issues.Create(ctx, owner, repoName, ghReq)
 				if apiErr != nil {
 					return effects.Result{}, apiErr
 				}

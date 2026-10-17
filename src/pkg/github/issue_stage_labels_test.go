@@ -29,6 +29,9 @@ type issueStageServer struct {
 	// set it to a different label set to simulate another writer.
 	truth map[int][]string
 	gets  map[int]int
+	// deletedDefs records repo label definitions deleted via
+	// DELETE /repos/acme/widgets/labels/<name> (hivecommons/hive#12683).
+	deletedDefs []string
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -47,6 +50,23 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		switch {
+		case r.Method == http.MethodGet && rest == "issues":
+			// List-by-label used by the legacy decision-label retirement:
+			// answer from truth so carriers block definition deletion.
+			want := strings.ToLower(r.URL.Query().Get("labels"))
+			out := []map[string]any{}
+			for n, labels := range s.truth {
+				for _, l := range labels {
+					if strings.ToLower(l) == want {
+						out = append(out, map[string]any{"number": n})
+						break
+					}
+				}
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodDelete && strings.HasPrefix(rest, "labels/"):
+			s.deletedDefs = append(s.deletedDefs, strings.TrimPrefix(rest, "labels/"))
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet && rest == "labels":
 			s.lists++
 			var out []map[string]string
@@ -73,7 +93,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 		case r.Method == http.MethodDelete && strings.Contains(rest, "/labels/"):
 			var n int
 			tail, _ := sscanIssue(rest, &n)
-			s.removed[n] = append(s.removed[n], strings.TrimPrefix(tail, "labels/"))
+			name := strings.TrimPrefix(tail, "labels/")
+			s.removed[n] = append(s.removed[n], name)
+			kept := s.truth[n][:0:0]
+			for _, l := range s.truth[n] {
+				if !strings.EqualFold(l, name) {
+					kept = append(kept, l)
+				}
+			}
+			s.truth[n] = kept
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && strings.HasSuffix(rest, "/comments"):
 			var n int
@@ -444,43 +472,6 @@ func TestSyncIssueStageLabels_HealsDuplicateStageLabels(t *testing.T) {
 	defer fake.mu.Unlock()
 	if fake.gets[13] != 0 || len(fake.removed[13]) != 0 {
 		t.Fatalf("unchanged payload must not read or write (gets=%d removed=%v); the next cycle's payload carries the duplicate", fake.gets[13], fake.removed[13])
-	}
-}
-
-// hivecommons/hive#12683: needs-direction is retired in favour of
-// needs-decision. The reconciler migrates it once; until then (and for the
-// issue that carries only the legacy label) it still parks at 085.
-func TestSyncIssueStageLabels_MigratesNeedsDirection(t *testing.T) {
-	cases := []struct {
-		name       string
-		labels     []string
-		wantAdded  []string
-		wantRemove []string
-	}{
-		{"legacy only", []string{"needs-direction", stagelabels.NeedsDecision.Label()}, []string{"needs-decision"}, []string{"needs-direction"}},
-		{"legacy only, stage not yet derived", []string{"needs-direction"}, []string{"needs-decision", stagelabels.NeedsDecision.Label()}, []string{"needs-direction"}},
-		{"both present is idempotent", []string{"needs-direction", "needs-decision", stagelabels.NeedsDecision.Label()}, nil, []string{"needs-direction"}},
-		{"already migrated", []string{"needs-decision", stagelabels.NeedsDecision.Label()}, nil, nil},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			fake := newIssueStageServer(t)
-			c := issueStageTestClient(t, fake.srv, true)
-			result := &ActionableResult{}
-			appendRepoWorkIssueDetail(result, Issue{Repo: "acme/widgets", Number: 7, Labels: tc.labels}, "filtered", "needs-decision")
-			res := syncSeeded(fake, c, result, stagelabels.NewStore("", stageNow), stageNow())
-			fake.mu.Lock()
-			defer fake.mu.Unlock()
-			if got := strings.Join(fake.added[7], ","); got != strings.Join(tc.wantAdded, ",") {
-				t.Errorf("added %q, want %v", got, tc.wantAdded)
-			}
-			if got := strings.Join(fake.removed[7], ","); got != strings.Join(tc.wantRemove, ",") {
-				t.Errorf("removed %q, want %v", got, tc.wantRemove)
-			}
-			if migrated := len(tc.wantRemove) > 0; (res.DirectionMigrated == 1) != migrated {
-				t.Errorf("DirectionMigrated = %d, want migrated=%v", res.DirectionMigrated, migrated)
-			}
-		})
 	}
 }
 

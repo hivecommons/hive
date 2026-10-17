@@ -51,7 +51,7 @@ func TestStageActivitySharedCIAndBudgetWaitOnHive(t *testing.T) {
 			t.Fatalf("%q does not wait on the hive", reason)
 		}
 	}
-	if a := stageActivity(stageObservation{HeadSHA: "sha", Reason: "conflicting"}, stagelabels.NeedsAuthor); a.WaitingOnHive {
+	if a := stageActivity(stageObservation{HeadSHA: "sha", Reason: "conflicting"}, stagelabels.ReturnedToContributor); a.WaitingOnHive {
 		t.Fatal("conflicting waits on the hive")
 	}
 }
@@ -91,7 +91,7 @@ func TestApplyStageLabelsSharedCIIncidentStableWithoutNudge(t *testing.T) {
 	if len(asked) == 0 || asked[0] != "acme/widget|aaa" {
 		t.Fatalf("SharedCIIncident asked %v, want acme/widget|aaa", asked)
 	}
-	if !hasAdded(api, "stage/050-review-pending") || hasAdded(api, "stage/072-needs-author") {
+	if !hasAdded(api, "stage/050-review-pending") || hasAdded(api, "stage/072-returned-to-contributor") {
 		t.Fatalf("first sweep added=%v, want 050 and no 072", api.added)
 	}
 	if len(nudgeComments(api)) != 0 || len(sink.nudges) != 0 {
@@ -115,7 +115,7 @@ func TestApplyStageLabelsSharedCIIncidentStableWithoutNudge(t *testing.T) {
 	open = 0
 	clock.at = clock.at.Add(time.Minute)
 	observe(nudgePR(7, "aaa", labels...))
-	if !hasAdded(api, "stage/072-needs-author") || len(nudgeComments(api)) != 1 || len(sink.nudges) != 1 {
+	if !hasAdded(api, "stage/072-returned-to-contributor") || len(nudgeComments(api)) != 1 || len(sink.nudges) != 1 {
 		t.Fatalf("after recovery: added=%v comments=%v sink=%v", api.added, api.comments, sink.nudges)
 	}
 }

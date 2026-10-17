@@ -504,7 +504,7 @@ func (s *Store) CountOwnComments(key string, n int) {
 
 // IsRegression reports whether moving from → to is a backward transition
 // worth flagging. A lower number is backward, except leaving a repair stage
-// (fixing, needs-author, adopted-by-hive) for review of the new
+// (fixing, needs-author, returned-to-contributor, adopted-by-hive) for review of the new
 // head, which is the repair route itself, not a second regression, and
 // leaving the two human stages: 085 and 090 are parking stages ("the hive
 // cannot act"), not progress, so moving out of them means the picture
@@ -520,11 +520,11 @@ func IsRegression(from, to Stage) bool {
 	case AdoptedByHive:
 		// 074 → 072 is an adoption that was declined (superseder closed
 		// unmerged): the PR is handed back, not knocked back.
-		if to == NeedsAuthor {
+		if to == ReturnedToContributor || to == NeedsAuthor {
 			return false
 		}
 		return to != ReviewPending && to != Reviewed
-	case Fixing, NeedsAuthor:
+	case Fixing, NeedsAuthor, ReturnedToContributor:
 		return to != ReviewPending && to != Reviewed
 	case ReadyForHumanMerge, NeedsDecision:
 		return false
@@ -842,16 +842,6 @@ func (s *Store) ByAuthor(login string, stage Stage) []AuthorItem {
 func Dwell(stage Stage, overrides map[string]time.Duration) time.Duration {
 	if d, ok := overrides[stage.Slug()]; ok {
 		return d
-	}
-	// A dwell keyed by a retired slug (Renames) still applies to the
-	// renamed stage, so an operator's override survives the rollout.
-	for old, to := range Renames {
-		if to != stage {
-			continue
-		}
-		if d, ok := overrides[strings.TrimPrefix(old, Prefix+numberString(to.Number())+"-")]; ok {
-			return d
-		}
 	}
 	return stage.Dwell()
 }

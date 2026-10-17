@@ -13,7 +13,7 @@ import (
 // Stage-072 contributor nudge → relay `fix-pr` task (hivecommons/hive#12436).
 //
 // The automerge stage engine calls Nudge when a contributor's PR enters
-// stage/072-needs-author. The hub resolves the author to their
+// stage/072-returned-to-contributor. The hub resolves the author to their
 // live relay connection(s), decides presence from the relay heartbeat, and —
 // through the per-contributor fixqueue.Scheduler — dispatches a `fix-pr`
 // task_assign with priority `interrupt` as either a parallel sub-session

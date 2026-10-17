@@ -65,10 +65,7 @@ const (
 	ReviewPending
 	Reviewed
 	Fixing
-	// NeedsAuthor is stage/072: the PR is red or blocked on something only
-	// its author can do (CI, rebase, DCO, changes requested). One slug for
-	// every author kind; the display word differs — see NeedsAuthorWord.
-	NeedsAuthor
+	ReturnedToContributor
 	AdoptedByHive
 	AwaitingMergeAdmission
 	// ReadyForHumanMerge is stage/090 (hivecommons/hive#12528): the hive
@@ -81,6 +78,12 @@ const (
 	// value) written before it existed keep their meaning; pipeline order
 	// comes from the Table's numbers, never from this enum.
 	NeedsDecision
+	// NeedsAuthor is stage/071: a human-authored PR that is red or blocked
+	// on something only its author can do (CI, rebase, DCO, changes
+	// requested). The clanker counterpart is 072 returned-to-contributor,
+	// the hive's own is 070 fixing — see FixingStageFor. Appended for the
+	// same persisted-enum reason as NeedsDecision.
+	NeedsAuthor
 )
 
 // Prefix is the stage label family prefix. Every label under it is
@@ -214,12 +217,36 @@ var Table = []Definition{
 	{Stage: ReviewPending, Number: 50, Slug: "review-pending", Description: "Review swarm requested; awaiting a verdict for the current head", Dwell: time.Hour, PR: true},
 	{Stage: Reviewed, Number: 60, Slug: "reviewed", Description: "Review swarm verdict approve; a gate is still pending (CI running, soak not started)", Dwell: 30 * time.Minute, PR: true},
 	{Stage: Fixing, Number: 70, Slug: "fixing", Description: "Hive-authored PR: CI red, changes requested or needs rebase; a hive agent is fixing it", Dwell: 2 * time.Hour, PR: true},
-	{Stage: NeedsAuthor, Number: 72, Slug: "needs-author", Description: "Needs author — returned to contributor for clanker PRs: CI red, changes requested or conflicting", Dwell: 24 * time.Hour, PR: true},
+	{Stage: NeedsAuthor, Number: 71, Slug: "needs-author", Description: "Human-authored PR: CI red, changes requested or conflicting; diagnosis posted, the author must act", Dwell: 24 * time.Hour, PR: true},
+	{Stage: ReturnedToContributor, Number: 72, Slug: "returned-to-contributor", Description: "Clanker PR: CI red, changes requested or conflicting; diagnosis posted, its hive must act", Dwell: 24 * time.Hour, PR: true},
 	{Stage: AdoptedByHive, Number: 74, Slug: "adopted-by-hive", Description: "Contributor PR adopted: author unavailable after red CI; the hive is finishing it (takeover path)", Dwell: 3 * time.Hour, PR: true},
 	{Stage: AwaitingMergeAdmission, Number: 80, Slug: "awaiting-merge-admission", Description: "CI green, verdict approve, no modifiers; the automerge lane has not admitted it yet", Dwell: 30 * time.Minute, StallNote: true, PR: true},
 	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed: sentinel alert, hold/needs-decision label, human-only rule or parked issue", Issue: true, PR: true},
 	{Stage: ReadyForHumanMerge, Number: 90, Slug: "ready-for-human-merge", Description: "Hive would merge this but trust/role blocks it; a maintainer's /lgtm /approve is all that is missing", PR: true},
 	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted: soaking, merge-eligible or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
+}
+
+// FixingStageFor is the "author must act" stage for a red or blocked PR by
+// who wrote it: the hive's own PR (selfAuthored, or author/hive) goes to 070
+// fixing — a hive agent reworks it; an author/clanker PR goes to 072
+// returned-to-contributor — the contributor's hive is handed it back; a
+// human (or unknown-kind) PR goes to 071 needs-author — the person must act.
+// The three carry the same evidence and leave through the same transitions;
+// only who is on the hook differs (docs: "Stage 07x by author kind").
+func FixingStageFor(selfAuthored bool, kind authorkind.Kind) Stage {
+	switch {
+	case selfAuthored, kind == authorkind.Hive:
+		return Fixing
+	case kind == authorkind.Clanker:
+		return ReturnedToContributor
+	}
+	return NeedsAuthor
+}
+
+// AuthorBlocked reports whether s is one of the three "author must act"
+// repair stages (070 fixing, 071 needs-author, 072 returned-to-contributor).
+func AuthorBlocked(s Stage) bool {
+	return s == Fixing || s == NeedsAuthor || s == ReturnedToContributor
 }
 
 // MergeQueueNumber is fixed: the merge queue is always the top stage. New
@@ -697,27 +724,10 @@ func Owned(label string) bool {
 // item carrying the old name keeps its stage through the upgrade, and
 // Current reads the old spelling as the new stage until then.
 var Renames = map[string]Stage{
-	"stage/090-needs-human":             ReadyForHumanMerge,
-	"stage/072-returned-to-contributor": NeedsAuthor,
-}
-
-// Display words for stage 072 by author kind. The slug is the same for every
-// kind; the word says who the PR is waiting on in that kind's own idiom.
-const (
-	NeedsAuthorWordHuman   = "Needs author"
-	NeedsAuthorWordClanker = "Returned to contributor"
-)
-
-// NeedsAuthorWord is the stage-072 display word for a PR of the given author
-// kind: author/clanker → "Returned to contributor" (a contributor-run hive is
-// handed its PR back); everything else → "Needs author". A hive-authored red
-// PR goes to 070 fixing, never 072, so an author/hive item that somehow
-// carries 072 reads as "Needs author" too.
-func NeedsAuthorWord(kind authorkind.Kind) string {
-	if kind == authorkind.Clanker {
-		return NeedsAuthorWordClanker
-	}
-	return NeedsAuthorWordHuman
+	"stage/090-needs-human": ReadyForHumanMerge,
+	// #12713 briefly renamed 072 to `stage/072-needs-author`; that spelling
+	// was withdrawn when 071 took the "needs author" meaning for human PRs.
+	"stage/072-needs-author": ReturnedToContributor,
 }
 
 // Current returns the stage a label set carries, or None. An unknown
