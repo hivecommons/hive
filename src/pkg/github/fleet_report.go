@@ -88,7 +88,8 @@ func (c *Client) EnsureFleetReport(ctx context.Context, report fleetreport.Repor
 //  3. otherwise create the issue.
 //
 // Joining = one "also seen" comment (if allowed), the hive/selfreport label,
-// and an idempotent edit of the Affected-hives block in the body. The
+// and an idempotent edit of the Affected-hives block in the body (the hive's
+// line gains its instance, owner logins and seen/last-seen counters). The
 // hive/<slug> label is retired (hivecommons/hive#12539): the seen marker
 // and the Affected-hives block already name the joining hive.
 func (c *Client) EnsureFleetReportWithOptions(ctx context.Context, report fleetreport.Report, opts FleetReportOptions) (FleetReportResult, error) {
@@ -173,7 +174,8 @@ func (c *Client) joinFleetReportIssue(ctx context.Context, repo string, existing
 				_ = c.AddLabels(ctx, repo, num, []string{fleetreport.LabelSelfReport})
 			}
 		}
-		if newBody, changed := fleetreport.UpdateAffectedBlockWithRepos(existing.GetBody(), hive, report.Repos, opts.SeenCommentAllowed); changed {
+		entry := fleetreport.AffectedHive{Hive: hive, Instance: report.InstanceID, Owners: report.Owners, OwnersHidden: report.OwnersHidden, Last: opts.now()}
+		if newBody, changed := fleetreport.UpdateAffected(existing.GetBody(), entry, report.Repos, opts.SeenCommentAllowed); changed {
 			if _, _, err := c.client.Issues.Edit(ctx, owner, name, num, &gh.IssueRequest{Body: gh.Ptr(logscrub.ScrubString(newBody))}); err != nil {
 				c.logger.Warn("fleet report: could not update affected-hives block", "issue", num, "error", err)
 			} else {

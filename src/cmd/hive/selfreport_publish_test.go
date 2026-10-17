@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -211,10 +212,21 @@ func TestPublishFleetReportsRelaysToHubOnForbidden(t *testing.T) {
 		relayed = append(relayed, req)
 		return selfReportRelayResponse{OK: true, Number: 77, URL: "u77"}, nil
 	}
-	res := &fleetreport.Result{Reports: []fleetreport.Report{runtimeReport("fp-relay", fleetreport.ClassInferenceAuthFailed)}}
+	report := runtimeReport("fp-relay", fleetreport.ClassInferenceAuthFailed)
+	report.InstanceID, report.Repos, report.Owners = "inst-x", []string{"acme/widgets"}, []string{"alice", "bob"}
+	res := &fleetreport.Result{Reports: []fleetreport.Report{report}}
 	publishFleetReportsWith(context.Background(), slog.Default(), srv, res, deps)
 	if len(relayed) != 1 || relayed[0].HiveID != "hosted-x" || relayed[0].Fingerprint != "fp-relay" || relayed[0].Repo != "hivecommons/hive" || relayed[0].Class != fleetreport.ClassInferenceAuthFailed {
 		t.Fatalf("relayed = %#v", relayed)
+	}
+	// The hive's identity rides on the wire so the hub can name WHO is
+	// affected (#12529): instance, repos and owner logins as explicit fields.
+	if relayed[0].InstanceID != "inst-x" || strings.Join(relayed[0].Repos, ",") != "acme/widgets" || strings.Join(relayed[0].Owners, ",") != "alice,bob" || relayed[0].OwnersHidden {
+		t.Fatalf("relayed identity = %#v", relayed[0])
+	}
+	wire, _ := json.Marshal(relayed[0])
+	if !strings.Contains(string(wire), `"owners":["alice","bob"]`) {
+		t.Fatalf("wire payload lacks owners: %s", wire)
 	}
 	o := srv.FleetReportState().Open["fp-relay"]
 	if o.Number != 77 || !o.OpenedByHive || o.PostedAt.IsZero() {

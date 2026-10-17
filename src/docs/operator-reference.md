@@ -836,10 +836,14 @@ auth failures or advisory post failures — it files an issue on
 itself to an open issue that already describes the problem (fingerprint
 match, `hive/selfreport` + class match, or keyword match on a human-filed
 issue). Joining posts one "Also seen on **<hive>**" comment per 24h and
-bumps the `Affected hives (N)` block in the body.
-Each report also names the repositories the hive watches (`project.repos`)
-and their owners, and the body block keeps an `Affected repos (N)` /
-`Affected owners (N)` union across reporting hives (hivecommons/hive#12338).
+bumps the `Affected hives (N)` block in the body, where each hive has its own
+line — `- <hive> (instance <id>) — owner(s): @login — seen N, last <time>` —
+naming the GitHub login(s) of the hive owner (`dashboard.authorized_users`
+owner-role entries plus the device-flow operator) so a maintainer can see who
+is affected. Each report also names the repositories the hive watches
+(`project.repos`) and their owners, and the body block keeps an
+`Affected repos (N)` / `Affected repo owners (N)` union across reporting
+hives (hivecommons/hive#12338).
 
 ```yaml
 governor:
@@ -847,7 +851,8 @@ governor:
     enabled: true            # unset = on for hub-managed hives, off (dry-run) for self-hosted
     repo: hivecommons/hive
     max_per_day: 5
-    include_repos: true      # false: never name project.repos / owners (set this if any watched repo is private)
+    include_repos: true      # false: never name project.repos / repo owners (set this if any watched repo is private)
+    include_owners: true     # false: render "(anonymous)" instead of the hive owner's GitHub login(s)
 ```
 
 Rate limits: `max_per_day` new issues per hive per 24h, at least 1h between

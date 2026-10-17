@@ -45568,6 +45568,8 @@ function burnAreaChart() {
       fr = fr || {};
       const on = fr.enabled === true;
       const reposOn = fr.include_repos !== false;
+      const ownersOn = fr.include_owners !== false;
+      const ownerNote = ownersOn && Array.isArray(fr.owners) && fr.owners.length ? ` Currently: ${fr.owners.map(o => '@' + o).join(', ')}.` : '';
       const sourceNote = fr.explicit ? 'set in hive.yaml' : (fr.hub_managed ? 'default for hub-managed hives: on' : 'default for self-hosted hives: off (dry-run preview only)');
       const openReports = Array.isArray(fr.open_reports) ? fr.open_reports : [];
       const openHtml = openReports.length === 0
@@ -45587,6 +45589,10 @@ function burnAreaChart() {
           <div class="config-toggle">
             <div class="config-toggle-switch ${reposOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="fleet-report" data-key="include_repos"></div>
             <span class="config-toggle-label">Name the watched repositories in self-reports ${yamlHint('governor.fleet_report.include_repos')} ${settingHelpMark('settings', 'features', 'Name the watched repositories in self-reports', `When on (default), a self-report lists the owner/repo names this hive watches and the owners derived from them, and the fleet issue merges them into its Affected repos / Affected owners lines, so a maintainer can see which projects an error touches. The report repo is public: turn this off if the watched repos include private repositories — the fields then render as "—" and nothing about the repos leaves the hive.`)}</span>
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${ownersOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="fleet-report" data-key="include_owners"></div>
+            <span class="config-toggle-label">Name the hive owner(s) in self-reports ${yamlHint('governor.fleet_report.include_owners')} ${settingHelpMark('settings', 'features', 'Name the hive owner(s) in self-reports', `When on (default), a self-report names the GitHub login(s) of this hive's owner — the authorized users holding the owner role and the operator signed in via the device flow — on the hive's line of the fleet issue's Affected hives block, so a maintainer can see who is affected and ping them. Turn this off to render "(anonymous)" instead; no login then leaves the hive.${esc(ownerNote)}`)}</span>
           </div>
           <div class="qa-schedule">${fr.hive_slug ? `<span class="qa-note">Identified upstream as <code>${esc(fr.hive_slug)}</code>. </span>` : ''}${openHtml}</div>
         </div>`;

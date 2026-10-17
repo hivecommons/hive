@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/fleetreport"
 )
 
 func resetSelfReportRate(t *testing.T) {
@@ -49,7 +52,7 @@ func selfReportGitHubScript(searchHit bool) (http.HandlerFunc, *[]string) {
 		case r.URL.Path == "/search/issues":
 			items := []map[string]any{}
 			if searchHit {
-				items = append(items, map[string]any{"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "<!-- hive-fleet-fingerprint:abc123 -->"})
+				items = append(items, map[string]any{"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "<!-- hive-fleet-fingerprint:abc123 -->\n" + fleetreport.RenderAffectedBlock([]string{"other-hive"}, 1)})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -57,6 +60,8 @@ func selfReportGitHubScript(searchHit bool) (http.HandlerFunc, *[]string) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/labels"):
 			_ = json.NewEncoder(w).Encode([]any{})
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/hivecommons/hive/issues/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 42, "html_url": "https://github.com/hivecommons/hive/issues/42"})
@@ -254,6 +259,94 @@ func TestHubSelfReportIngestJoinsExistingFingerprint(t *testing.T) {
 	_ = json.Unmarshal(gh.bodies[2], &labels)
 	if strings.Join(labels["labels"], ",") != "hive/selfreport" {
 		t.Fatalf("labels = %v", labels)
+	}
+	// The affected block is edited in place: the joining hive gets its own
+	// line (owners unknown here: the payload carried none and no SaaS record
+	// exists) and seen_count is bumped.
+	if !strings.Contains(joined, "PATCH /repos/hivecommons/hive/issues/7") {
+		t.Fatalf("github calls = %v", *paths)
+	}
+	var patch map[string]string
+	_ = json.Unmarshal(gh.bodies[3], &patch)
+	if !strings.Contains(patch["body"], "**Affected hives (2):**\n- h1 — owner(s): unknown — seen 1, last ") || !strings.Contains(patch["body"], "\n- other-hive — owner(s): unknown — seen 1\n") || !strings.Contains(patch["body"], "seen_count: 2") {
+		t.Fatalf("patched body = %q", patch["body"])
+	}
+}
+
+// TestHubSelfReportIngestJoinNamesOwners: the spoke's owners field lands on
+// the hive's affected line, and a spoke that predates the field is named
+// from the hub's own SaaS owner record.
+func TestHubSelfReportIngestJoinNamesOwners(t *testing.T) {
+	resetSelfReportRate(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	if err := os.MkdirAll(filepath.Join(saasHivesDir, "h1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saasHivesDir, "h1", "meta.json"), []byte(`{"id":"h1","owner":"Dana"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, extra, want string
+	}{
+		{"spoke owners", `"instance_id":"b04ca59b7312017e","owners":["@Alice","github:bob","ibmid:123"],`, "- h1 (instance b04ca59b7312017e) — owner(s): @alice, @bob — seen 1, last "},
+		{"hub fallback", ``, "- h1 — owner(s): @dana — seen 1, last "},
+		{"anonymous opt-out", `"owners_hidden":true,`, "- h1 — owner(s): (anonymous) — seen 1, last "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, _ := selfReportGitHubScript(true)
+			gh := interceptFeedbackGitHub(t, handler)
+			s := npsTestHub("h1")
+			body := strings.Replace(selfReportValidBody, `"hive_id":"h1",`, `"hive_id":"h1",`+tc.extra, 1)
+			rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var patch map[string]string
+			_ = json.Unmarshal(gh.bodies[3], &patch)
+			if !strings.Contains(patch["body"], tc.want) {
+				t.Fatalf("patched body = %q, want line %q", patch["body"], tc.want)
+			}
+			if strings.Contains(patch["body"], "ibmid") || (tc.name == "anonymous opt-out" && strings.Contains(patch["body"], "dana")) {
+				t.Fatalf("patched body leaked an identity: %q", patch["body"])
+			}
+		})
+	}
+}
+
+// TestHubSelfReportIngestCreateFillsOwnersForLegacySpoke: a spoke whose body
+// still carries the inline hive list gets its line filled from the hub's
+// owner record before the issue is created.
+func TestHubSelfReportIngestCreateFillsOwnersForLegacySpoke(t *testing.T) {
+	resetSelfReportRate(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+	if err := os.MkdirAll(filepath.Join(saasHivesDir, "h1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(saasHivesDir, "h1", "meta.json"), []byte(`{"id":"h1","owner":"dana"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, paths := selfReportGitHubScript(false)
+	gh := interceptFeedbackGitHub(t, handler)
+	s := npsTestHub("h1")
+	legacyBlock := strings.ReplaceAll(fleetreport.AffectedBlockStart+"\n**Affected hives (1):** h1\nseen_count: 1\n"+fleetreport.AffectedBlockEnd, "\n", `\n`)
+	body := strings.Replace(selfReportValidBody, `\nbody"`, `\nbody\n\n`+legacyBlock+`"`, 1)
+	rec := selfReportIngest(s, body, s.heartbeatKeyFor("h1"))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Join(*paths, ",") != "GET /search/issues,POST /repos/hivecommons/hive/issues" {
+		t.Fatalf("github calls = %v", *paths)
+	}
+	var payload struct {
+		Body string `json:"body"`
+	}
+	_ = json.Unmarshal(gh.bodies[1], &payload)
+	if !strings.Contains(payload.Body, "**Affected hives (1):**\n- h1 — owner(s): @dana — seen 1, last ") || !strings.Contains(payload.Body, "seen_count: 1") {
+		t.Fatalf("created body = %q", payload.Body)
 	}
 }
 

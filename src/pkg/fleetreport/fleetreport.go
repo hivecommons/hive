@@ -84,6 +84,12 @@ type Observation struct {
 	// to leave the hive. They render in the evidence table and feed the
 	// affected-repos / affected-owners union on the fleet issue (#12338).
 	Repos []string
+	// Owners are the GitHub logins of the hive's owner(s): authorized users
+	// holding the owner role plus the operator the spoke authenticated via
+	// the device flow. They name WHO is affected on the fleet issue.
+	// OwnersHidden is governor.fleet_report.include_owners: false.
+	Owners       []string
+	OwnersHidden bool
 	// Now is the evaluation clock; zero means time.Now().
 	Now time.Time
 	// HiveState is the 24 h / 7 d hive state trends (#12339), copied onto
@@ -168,6 +174,11 @@ type Report struct {
 	// the operator's include_repos policy. Joining merges them into the
 	// issue's affected block.
 	Repos []string `json:"repos,omitempty"`
+	// Owners are the GitHub logins of this hive's owner(s) so a maintainer
+	// can see WHO is affected; OwnersHidden is the operator's opt-out
+	// (governor.fleet_report.include_owners: false), rendered "(anonymous)".
+	Owners       []string `json:"owners,omitempty"`
+	OwnersHidden bool     `json:"owners_hidden,omitempty"`
 	// HiveState is Observation.HiveState. It is kept out of Body so trends
 	// moving do not count as a changed report.
 	HiveState *hivestate.Trends `json:"hive_state,omitempty"`

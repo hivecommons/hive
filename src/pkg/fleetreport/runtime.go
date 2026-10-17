@@ -470,7 +470,8 @@ func SeenMarker(fp, hive string) string {
 }
 
 // BuildRuntimeReport renders a runtime-error report. hive is the display
-// identity (hub slug for hosted spokes, anonymous instance otherwise).
+// identity (hub slug for hosted spokes, anonymous instance otherwise); the
+// owner logins come from obs.Owners unless obs.OwnersHidden.
 func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, version, commit string, now time.Time) Report {
 	if strings.TrimSpace(hive) == "" {
 		hive = instance
@@ -484,6 +485,7 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	b.WriteString("## Evidence\n\n| Field | Value |\n|---|---|\n")
 	fmt.Fprintf(&b, "| hive | %s |\n", hive)
 	fmt.Fprintf(&b, "| anonymous instance | %s |\n", instance)
+	fmt.Fprintf(&b, "| owner(s) | %s |\n", OwnerMentions(obs.Owners, obs.OwnersHidden))
 	fmt.Fprintf(&b, "| hive version | %s |\n", version)
 	fmt.Fprintf(&b, "| hive commit | %s |\n", commit)
 	fmt.Fprintf(&b, "| cluster | %s |\n", emptyDash(safeToken(obs.Cluster)))
@@ -505,11 +507,15 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	if itemRepo != "" {
 		repos = NormalizeRepos(append(append([]string(nil), watched...), itemRepo))
 	}
-	b.WriteString(RenderAffectedBlockWithRepos([]string{hive}, repos, 1))
+	owners := NormalizeLogins(obs.Owners)
+	if obs.OwnersHidden {
+		owners = nil
+	}
+	b.WriteString(AffectedBlock{Hives: []AffectedHive{{Hive: hive, Instance: instance, Owners: owners, OwnersHidden: obs.OwnersHidden, Seen: 1, Last: now}}, Repos: repos, Seen: 1}.Render())
 	if ev.Diagnostics != "" {
 		fmt.Fprintf(&b, "\n\n<details><summary>Diagnostics (scrubbed)</summary>\n\n```\n%s\n```\n</details>\n", ev.Diagnostics)
 	}
-	return Report{Fingerprint: fp, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Trigger: TriggerRuntimeError, Class: ev.Class, Hive: hive, Evidence: []Evidence{ev}, Repos: repos, HiveState: obs.HiveState}
+	return Report{Fingerprint: fp, InstanceID: instance, Title: safeText(title), Body: safeText(b.String()), Labels: labels, Trigger: TriggerRuntimeError, Class: ev.Class, Hive: hive, Evidence: []Evidence{ev}, Repos: repos, Owners: owners, OwnersHidden: obs.OwnersHidden, HiveState: obs.HiveState}
 }
 
 // maxReposInTable bounds the repos / owners cells of the evidence table; the
@@ -608,73 +614,45 @@ func OwnersOf(repos []string) []string {
 	return out
 }
 
-// RenderAffectedBlock renders the idempotent "Affected hives" block without
-// repository attribution; see RenderAffectedBlockWithRepos.
+// RenderAffectedBlock renders the affected block for hives known by name
+// only; see AffectedBlock.Render.
 func RenderAffectedBlock(hives []string, seen int) string {
 	return RenderAffectedBlockWithRepos(hives, nil, seen)
 }
 
-// RenderAffectedBlockWithRepos renders the idempotent affected block: the
-// hives, the union of the repos they watch, the owners derived from those
-// repos, and seen_count. The repos and owners lines are omitted when no hive
-// contributed repos, so the block renders exactly as it did before #12338 for
-// hives that opt out.
+// RenderAffectedBlockWithRepos renders the affected block for hives known by
+// name only plus the union of the repos they watch.
 func RenderAffectedBlockWithRepos(hives, repos []string, seen int) string {
-	uniq := map[string]bool{}
-	var list []string
-	for _, h := range hives {
-		h = labelValue(h)
-		if h == "" || uniq[h] {
-			continue
-		}
-		uniq[h] = true
-		list = append(list, h)
-	}
-	sort.Strings(list)
-	if seen < len(list) {
-		seen = len(list)
-	}
-	repos = NormalizeRepos(repos)
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s\n**Affected hives (%d):** %s\n", AffectedBlockStart, len(list), strings.Join(list, ", "))
-	if len(repos) > 0 {
-		owners := OwnersOf(repos)
-		fmt.Fprintf(&b, "**Affected repos (%d):** %s\n", len(repos), strings.Join(repos, ", "))
-		fmt.Fprintf(&b, "**Affected owners (%d):** %s\n", len(owners), strings.Join(owners, ", "))
-	}
-	fmt.Fprintf(&b, "seen_count: %d\n%s", seen, AffectedBlockEnd)
-	return b.String()
+	return AffectedBlock{Hives: affectedByName(hives), Repos: repos, Seen: seen}.Render()
 }
 
-// ParseAffectedBlock extracts the hives and seen_count from a body; ok is
-// false when the body has no block.
+func affectedByName(hives []string) []AffectedHive {
+	out := make([]AffectedHive, 0, len(hives))
+	for _, h := range hives {
+		out = append(out, AffectedHive{Hive: h})
+	}
+	return out
+}
+
+// ParseAffectedBlock extracts the hive names and seen_count from a body; ok
+// is false when the body has no block.
 func ParseAffectedBlock(body string) (hives []string, seen int, ok bool) {
 	hives, _, seen, ok = ParseAffectedBlockWithRepos(body)
 	return hives, seen, ok
 }
 
-// ParseAffectedBlockWithRepos extracts the hives, repos and seen_count from a
-// body; ok is false when the body has no block. Owners are not parsed: they
-// are always re-derived from the repos on render.
+// ParseAffectedBlockWithRepos extracts the hive names, repos and seen_count
+// from a body; ok is false when the body has no block. See ParseAffected for
+// the per-hive owner / instance / seen details.
 func ParseAffectedBlockWithRepos(body string) (hives, repos []string, seen int, ok bool) {
-	start := strings.Index(body, AffectedBlockStart)
-	end := strings.Index(body, AffectedBlockEnd)
-	if start < 0 || end < 0 || end < start {
+	blk, ok := ParseAffected(body)
+	if !ok {
 		return nil, nil, 0, false
 	}
-	block := body[start+len(AffectedBlockStart) : end]
-	for _, line := range strings.Split(block, "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "**Affected hives"):
-			hives = append(hives, affectedLineItems(line)...)
-		case strings.HasPrefix(line, "**Affected repos"):
-			repos = append(repos, affectedLineItems(line)...)
-		case strings.HasPrefix(line, "seen_count:"):
-			_, _ = fmt.Sscanf(strings.TrimSpace(strings.TrimPrefix(line, "seen_count:")), "%d", &seen)
-		}
+	for _, h := range blk.Hives {
+		hives = append(hives, h.Hive)
 	}
-	return hives, repos, seen, true
+	return hives, blk.Repos, blk.Seen, true
 }
 
 // affectedLineItems splits the comma list after the ":**" of an affected line.
@@ -700,37 +678,9 @@ func UpdateAffectedBlock(body, hive string, bump bool) (string, bool) {
 }
 
 // UpdateAffectedBlockWithRepos is UpdateAffectedBlock that also merges repos
-// (the joining hive's watched repos plus its triggering item) into the
-// block's union. changed is false when neither the hive nor any repo is new
-// and no bump is requested, so a re-report never edits the issue for nothing.
+// into the block's union. See UpdateAffected for the owner-aware form.
 func UpdateAffectedBlockWithRepos(body, hive string, repos []string, bump bool) (string, bool) {
-	hives, have, seen, ok := ParseAffectedBlockWithRepos(body)
-	hv := labelValue(hive)
-	already := false
-	for _, h := range hives {
-		if h == hv {
-			already = true
-			break
-		}
-	}
-	merged := NormalizeRepos(append(append([]string(nil), have...), repos...))
-	reposChanged := len(merged) != len(NormalizeRepos(have))
-	if already && !bump && !reposChanged {
-		return body, false
-	}
-	if !already && hv != "" {
-		hives = append(hives, hv)
-	}
-	if bump {
-		seen++
-	}
-	block := RenderAffectedBlockWithRepos(hives, merged, seen)
-	if !ok {
-		return strings.TrimRight(body, "\n") + "\n\n" + block + "\n", true
-	}
-	start := strings.Index(body, AffectedBlockStart)
-	end := strings.Index(body, AffectedBlockEnd) + len(AffectedBlockEnd)
-	return body[:start] + block + body[end:], true
+	return UpdateAffected(body, AffectedHive{Hive: hive}, repos, bump)
 }
 
 // SeenComment renders the "also seen" comment a joining hive posts.

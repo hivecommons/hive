@@ -219,8 +219,9 @@ func selfReportTestReport(fp string) fleetreport.Report {
 	return fleetreport.Report{
 		Fingerprint: fp, Class: fleetreport.ClassRestartStorm, Trigger: fleetreport.TriggerRuntimeError,
 		Title: "[selfreport] restart_storm: agent restarted N times", Body: "<!-- hive-fleet-fingerprint:" + fp + " -->\nbody",
-		Labels:   []string{"fleet-report", fleetreport.LabelSelfReport},
-		Evidence: []fleetreport.Evidence{{Class: fleetreport.ClassRestartStorm, Count: 4, Message: "restart storm"}},
+		Labels:     []string{"fleet-report", fleetreport.LabelSelfReport},
+		Evidence:   []fleetreport.Evidence{{Class: fleetreport.ClassRestartStorm, Count: 4, Message: "restart storm"}},
+		InstanceID: "inst-aslom", Owners: []string{"bob", "alice"},
 	}
 }
 
@@ -259,7 +260,7 @@ func TestEnsureFleetReportWithOptionsJoinsViaLabelAndClass(t *testing.T) {
 	if strings.Contains(strings.Join(f.labelsCreated, ","), "hive/hosted-aslom") {
 		t.Fatalf("retired hive/<slug> label was created: %v", f.labelsCreated)
 	}
-	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], "Affected hives (1):** hosted-aslom") || !strings.Contains(f.bodyPatches[0], "Restart storm on hosted hives after upgrade") || !res.BodyUpdated {
+	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], `Affected hives (1):**\n- hosted-aslom (instance inst-aslom) — owner(s): @alice, @bob — seen 1, last `) || !strings.Contains(f.bodyPatches[0], "Restart storm on hosted hives after upgrade") || !res.BodyUpdated {
 		t.Fatalf("body patches = %q", f.bodyPatches)
 	}
 	if len(f.searches) != 2 {
@@ -303,7 +304,7 @@ func TestEnsureFleetReportWithOptionsSkipsSeenCommentInsideGapButStillLabels(t *
 	if len(f.labelsCreated) != 0 {
 		t.Fatalf("existing labels re-created: %v", f.labelsCreated)
 	}
-	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], "Affected hives (2):** hosted-aslom, other-hive") {
+	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], `Affected hives (2):**\n- hosted-aslom (instance inst-aslom) — owner(s): @alice, @bob — seen 1, last `) || !strings.Contains(f.bodyPatches[0], `\n- other-hive — owner(s): unknown — seen 1\n`) {
 		t.Fatalf("body patches = %q", f.bodyPatches)
 	}
 }

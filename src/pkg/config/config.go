@@ -2351,11 +2351,42 @@ type FleetReportConfig struct {
 	// record repo visibility, so operators whose project.repos include
 	// private repositories set this to false; the fields then render as "—".
 	IncludeRepos *bool `yaml:"include_repos,omitempty" json:"include_repos,omitempty"`
+	// IncludeOwners controls whether a self-report names the GitHub
+	// login(s) of this hive's owner(s) (authorized users with the owner
+	// role, the device-flow operator) so maintainers can see WHO is
+	// affected. nil = true. false renders "(anonymous)" instead.
+	IncludeOwners *bool `yaml:"include_owners,omitempty" json:"include_owners,omitempty"`
 }
 
 // IncludesRepos resolves include_repos: nil defaults to true.
 func (f FleetReportConfig) IncludesRepos() bool {
 	return f.IncludeRepos == nil || *f.IncludeRepos
+}
+
+// IncludesOwners resolves include_owners: nil defaults to true.
+func (f FleetReportConfig) IncludesOwners() bool {
+	return f.IncludeOwners == nil || *f.IncludeOwners
+}
+
+// OwnerLogins returns the AuthorizedUsers entries that hold the owner role
+// (the first entry without an explicit role, plus any ":owner" entry), in
+// their raw identity form ("alice", "github:alice"); non-GitHub identities
+// are included as-is and filtered by the caller.
+func (d DashboardConfig) OwnerLogins() []string {
+	var out []string
+	for i, entry := range d.AuthorizedUsers {
+		name, role := splitAuthorizedEntry(entry)
+		if name == "" {
+			continue
+		}
+		if role == "" && i == 0 {
+			role = RoleOwner
+		}
+		if role == RoleOwner {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // DefaultFleetReportRepo is where self-reports land unless overridden.
