@@ -18526,7 +18526,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (ctx.labelDriven) after.push({ type: 'note', text: 'This repository is label-driven: accept or un-park it with the repository\'s triage labels; Hive refuses /hive approve and /hive decision here.' });
         else after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
       }
-      if (ctx.kind === 'issue' && own.action === 'release' && own.release_tag && ctx.canToggleHold) {
+      if (ctx.kind === 'issue' && own.action === 'release' && own.release_tag && ctx.canToggleHold && !ctx.labelDriven) {
         actions.push({ type: 'action', id: 'release', label: 'Release ' + own.release_tag });
       }
       if (own.verb === 'SPEC') {

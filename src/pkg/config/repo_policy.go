@@ -91,10 +91,13 @@ func (c *Config) RepoLabelDriven(repo string) bool {
 
 // RepoReleaseOnApprove reports whether repo opted in to release-on-approve
 // (hivecommons/hive#12631). It is only the opt-in switch; unset means false and
-// a kind=release owner step behaves as it does today.
+// a kind=release owner step behaves as it does today. A label-driven repo
+// never executes a release: its sweep answers `/hive approve` with the
+// triage-label pointer before reaching the release executor, so the dashboard
+// action and the command share the same refusal (hivecommons/hive#12635).
 func (c *Config) RepoReleaseOnApprove(repo string) bool {
 	rp, ok := c.RepoPolicyFor(repo)
-	return ok && rp.ReleaseOnApprove
+	return ok && rp.ReleaseOnApprove && !rp.LabelDriven
 }
 
 // RepoReleaseVersionSource returns the optional repository-relative version

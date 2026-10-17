@@ -81,7 +81,10 @@ full immutable SHA; `/hive done` and `/hive decision <text>` remain available.
 An eligible `/hive approve`, or the dashboard Your-turn menu's
 "Release `<tag>`" action, makes the hub App create exactly that tag and GitHub
 Release. The dashboard action has the same repository-write/owner gate as
-"Release hold" and calls the same executor as the command.
+"Release hold" and calls the same executor as the command. On a repo with
+`label_driven: true` the sweep answers `/hive approve` with the triage-label
+pointer before reaching the release step, so `release_on_approve` has no effect
+there and the dashboard offers no "Release" action either.
 Immediately before the write, Hive confirms that the target is still the
 default-branch head or its named ancestor, the tag is absent, and every required
 check is green. When `release_version_source` names a repository-relative text

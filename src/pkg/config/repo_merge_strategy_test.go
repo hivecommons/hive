@@ -138,11 +138,16 @@ project:
       release_version_source: VERSION
     - repo: b
       auto_merge: false
+    - repo: d
+      label_driven: true
+      release_on_approve: true
 `)
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	cases := map[string]bool{"a": true, "acme/a": true, "b": false, "c": false}
+	// d: label_driven refuses /hive approve before the release executor, so
+	// release_on_approve is inert there (hivecommons/hive#12635).
+	cases := map[string]bool{"a": true, "acme/a": true, "b": false, "c": false, "d": false}
 	for repo, want := range cases {
 		if got := cfg.RepoReleaseOnApprove(repo); got != want {
 			t.Errorf("RepoReleaseOnApprove(%q) = %v, want %v", repo, got, want)

@@ -275,6 +275,24 @@ type unparkLabelApproval struct {
 	audit   func(IssueLabelApprovalEvent)
 }
 
+// issueOwnerStepProposed reports whether the hive ever parked the issue on an
+// owner step: a hive-authored body marker or a hive comment marker. Any such
+// issue keeps its cache entry current, so a typed release proposed in a
+// comment and later superseded by a manual step (releaseStep == nil, no body
+// marker) clears the stale "Release <tag>" the dashboard would otherwise
+// keep offering until restart.
+func (c *Client) issueOwnerStepProposed(issue *gh.Issue, comments []*gh.IssueComment) bool {
+	if c.isHiveAccount(issue.GetUser()) && hasOwnerStepMarker(issue.GetBody()) {
+		return true
+	}
+	for _, cm := range comments {
+		if cm != nil && c.isHiveAccount(cm.GetUser()) && hasOwnerStepMarker(cm.GetBody()) {
+			return true
+		}
+	}
+	return false
+}
+
 // tryUnparkIssue handles one parked issue: keep its "What to reply" comment
 // current, then answer the newest eligible command on it. On a label-driven
 // repo there is no notice; without label approval configured there is no
@@ -289,7 +307,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return false, err
 	}
 	menu := c.unparkMenuFor(issue.GetBody(), issue.GetUser(), comments)
-	if menu.releaseStep != nil || (c.isHiveAccount(issue.GetUser()) && parseIssueOwnerStep(issue.GetBody()) != nil) {
+	if menu.releaseStep != nil || c.issueOwnerStepProposed(issue, comments) {
 		c.rememberIssueOwnerStep(displayRepo, number, menu.releaseStep)
 	}
 	if !labelDriven {

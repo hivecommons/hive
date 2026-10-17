@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 type releaseApprovalFixture struct {
@@ -318,4 +320,64 @@ func containsFold(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// A label-driven repo refuses `/hive approve` before the release executor runs,
+// even when the operator also set release_on_approve (hivecommons/hive#12635).
+// The dashboard action shares this refusal through Config.RepoReleaseOnApprove.
+func TestReleaseApprovalRefusedOnLabelDrivenRepo12635(t *testing.T) {
+	issue := releaseApprovalIssue(humanComment(101, "maintainer", "/hive approve"))
+	fx := &releaseApprovalFixture{}
+	server := newReleaseApprovalServer(t, issue, fx, "write")
+	client := newTestClient(t, server, "org", []string{"repo"})
+	client.SetAppBotLogin("hive[bot]")
+
+	opts := releaseApprovalOptions()
+	opts.LabelDriven = func(string) bool { return true }
+	result, err := client.SweepIssueUnparkCommands(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if fx.creates != 0 || len(result.Unparked) != 0 || len(fx.removed) != 0 {
+		t.Fatalf("label-driven repo released: creates=%d unparked=%v removed=%v", fx.creates, result.Unparked, fx.removed)
+	}
+	if result.Replies != 1 || !strings.Contains(strings.Join(fx.posted, "\n"), "label-driven") {
+		t.Fatalf("label-driven refusal not posted: replies=%d posted=%q", result.Replies, fx.posted)
+	}
+}
+
+// A release step proposed in a hive comment and later superseded by a manual
+// owner-step comment leaves releaseStep nil with no body marker. The sweep
+// must still refresh the owner-step cache so the dashboard stops offering
+// "Release <tag>" on the parked issue (hivecommons/hive#12635).
+func TestSweepClearsSupersededCommentReleaseStepFromCache12635(t *testing.T) {
+	step := testReleaseStep()
+	issue := unparkWireIssue{
+		Number: 42,
+		Title:  "release v0.12.0",
+		Body:   "Plain body without an owner step.",
+		User:   wireUser{Login: "hive[bot]"},
+		Labels: []wireLabel{{Name: issueNeedsDecisionLabel}},
+		Comments: []unparkWireComment{
+			hiveComment(301, "Remaining step: cut the release.\n\n"+step.marker()),
+			hiveComment(302, "Remaining step: rotate the signing key by hand.\n\n"+unparkOwnerStepMarker),
+		},
+	}
+	fx := &releaseApprovalFixture{}
+	server := newReleaseApprovalServer(t, issue, fx, "write")
+	client := newTestClient(t, server, "org", []string{"repo"})
+	client.SetAppBotLogin("hive[bot]")
+
+	// Stale entry from an earlier sweep, before the manual step superseded it.
+	client.rememberIssueOwnerStep("org/repo", 42, step)
+	if _, err := client.SweepIssueUnparkCommands(context.Background(), releaseApprovalOptions()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	snapshot := &gh.Issue{Number: gh.Ptr(42), Body: gh.Ptr(issue.Body), User: &gh.User{Login: gh.Ptr("hive[bot]")}}
+	if got := client.issueOwnerStepForSnapshot("org/repo", snapshot); got != nil {
+		t.Fatalf("superseded release step still cached: %+v", got)
+	}
+	if fx.creates != 0 {
+		t.Fatalf("sweep created a release without a command: %d", fx.creates)
+	}
 }

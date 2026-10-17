@@ -914,6 +914,7 @@ assert.ok(!yourTurnMenuModel(yourTurnMenuContext('o/r', 'issue', 7)).entries.som
 window._lastStatus = `+yourTurnJSON(t, enabled)+`;
 const ctx = yourTurnMenuContext('o/r', 'issue', 7);
 assert.equal(ctx.own.release_tag, 'v0.12.0');
+assert.ok(!yourTurnMenuModel(Object.assign({}, ctx, { labelDriven: true })).entries.some(e => e.id === 'release'), 'label-driven repo never offers the release action next to the refusal note');
 const model = yourTurnMenuModel(ctx);
 assert.equal(model.entries[0].label, 'Release v0.12.0');
 const menu = mkEl('release-menu');

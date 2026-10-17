@@ -704,7 +704,9 @@ or bands (hivecommons/hive#11566).
   snapshot when chosen); a parked trusted `kind=release` issue offers
   "Release `<tag>`" when `release_on_approve` is enabled, using that same
   repository-write/owner gate and the same preflight checks and executor as
-  `/hive approve`; a reporter-confirmation `CLOSE` offers `/fixed`.
+  `/hive approve` (and the same refusal: on a `label_driven` repository neither
+  the command nor the button executes a release); a reporter-confirmation
+  `CLOSE` offers `/fixed`.
 - **Sort.** Within each band, your-turn rows precede all others.
 - **The Your turn strip.** Above the cards, the strip lists every your-turn item
   of the repositories shown, grouped by verb (`INSPECT`, `DECIDE`, `STEER`,

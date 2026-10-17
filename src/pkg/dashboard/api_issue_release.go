@@ -26,6 +26,12 @@ func (s *Server) handleRepoIssueRelease(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	repo := owner + "/" + repoName
+	// Same order as the comment path: a label-driven repo refuses `/hive
+	// approve` before the release executor runs, so the button refuses too.
+	if s.deps.Config.RepoLabelDriven(repo) {
+		jsonError(w, "this repository is label-driven: Hive refuses /hive approve here, so it does not execute releases from the dashboard either", http.StatusConflict)
+		return
+	}
 	if !s.deps.Config.RepoReleaseOnApprove(repo) {
 		jsonError(w, "release_on_approve is not enabled for this repository", http.StatusConflict)
 		return
