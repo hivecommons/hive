@@ -193,7 +193,7 @@ referenced it) a lone `stage/050-review-pending`
 | `stage/072-returned-to-contributor` | PR | contributor PR (relay or external): CI red / changes requested / conflicting; the hive posted its diagnosis, the ball is in the author's court | 24h |
 | `stage/074-adopted-by-hive` | PR | the author was unavailable past the grace (see below); the hive pushed `hive/adopt-<n>` at the contributor's head, opened a superseding App PR that keeps the author's commits, and the scanner's red-PR fix kick is finishing it. The original closes automatically when the superseder merges | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green (no red check on the head, required or not), verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
-| `stage/085-needs-decision` | PR | a person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
+| `stage/085-needs-decision` | PR, issue | on an issue: parked on a person by a hard-suppress label (`needs-human`, `needs-direction`, `needs-decision`, `needs-spec`) — it is outside the agent work queue until a maintainer replies; a lapsed claim on a parked issue never shows 030. On a PR: a person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
 | `stage/090-ready-for-human-merge` | PR | the hive would merge this itself but trust/role blocks it: reviewer verdict approve at the **current** head, required checks green (tide excluded), DCO yes, no sentinel alert, no conflicts, soak elapsed, no hold — and the only remaining lane reason is the author's tier/role. A maintainer's `/lgtm` `/approve` is the only missing step. One `<!-- hive:stage-ready-for-human-merge -->` comment on entry carries the evidence. Always read with the `author/*` label. (Was `stage/090-needs-human` before [#12528](https://github.com/hivecommons/hive/issues/12528); the engine renames the GitHub label in place) | none |
 | `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window — and every check on the head is green (tide excluded). A red optional check is 070/072 like any red CI | 3h |
 
@@ -281,7 +281,14 @@ history hop in the store. The claim
 relay (`hive-open-issue claim`) writes `stage/020-claimed` /
 `stage/030-pr-in-progress` directly alongside `hive/claimed-by-<who>` so the
 label is right as soon as the claim lands; `hive-open-pr --issues` swaps 030
-for 040 when the PR opens; close-on-merge strips every hive-owned label from
+for 040 when the PR opens. An agent comment that *escalates* (opens with
+`needs-decision`/`needs-direction`/…, "parking this", "Triage (x): not a …
+defect") or a label request carrying only escalation labels is not a start
+signal: it records no agent claim and never stages the issue 030. Every stage
+write outside the reconciler (claim relay, claim release, in-progress sweep,
+PR-claim sync) goes through a fresh read so the mutation journal keys it to
+the item's `updated_at` — a label a human removed is re-applied, not replayed
+as "already applied"; close-on-merge strips every hive-owned label from
 an issue it closes. Timing shares the PR engine's state file
 (`/data/stage-labels.json`, issues and PRs share a number space per repo);
 an issue's record never holds a PR stage, so a PR falling `100 → 060` does

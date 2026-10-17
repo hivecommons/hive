@@ -1,6 +1,9 @@
 package github
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // Agent start signals (hivecommons/hive#10527).
 //
@@ -98,19 +101,82 @@ func commentIsDeferral(body string) bool {
 	return true
 }
 
+// commentEscalation matches a comment that parks the issue on a person
+// instead of starting it: one that opens with an escalation verdict
+// (`needs-decision (scanner): …`, `needs-direction …`, `Triage (scanner):
+// not a … defect`) or with "parking"/"parked", or that says "parking this
+// [issue/RFC] …", "out of the [agent] work queue" or "no PR to open"
+// anywhere. The scanner posted exactly these on hivecommons/hive#12570 and
+// #12481 and the hive answered with a 🔒 agent claim and
+// stage/030-pr-in-progress: "PR in progress" on an RFC it had just declined
+// to implement.
+var commentEscalation = regexp.MustCompile(`(?i)` +
+	`^\W*(?:(?:status|update|triage(?:\s*\([^)]*\))?)\s*:\W*)?(?:` +
+	`needs-(?:decision|direction|spec|human|signal)\b` +
+	`|park(?:ed|ing)\b` +
+	`|not\s+a\s+(?:\S+\s+){0,2}?(?:code\s+)?(?:defect|bug)\b` +
+	`)` +
+	`|\bpark(?:s|ed|ing)?\s+(?:this|it)\b` +
+	`|\bout\s+of\s+the\s+(?:agent\s+)?work\s+queue\b` +
+	`|\bno\s+PR\s+to\s+open\b`)
+
+// commentIsEscalation reports whether a comment body parks the issue on a
+// person (see commentEscalation) with no statement that work is starting.
+func commentIsEscalation(body string) bool {
+	if !commentEscalation.MatchString(body) {
+		return false
+	}
+	for _, m := range commentStartNow.FindAllStringSubmatch(body, -1) {
+		if m[1] == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// escalationLabels are the labels an agent puts on an issue to hand it to a
+// person. A label request that adds nothing else is the agent stepping
+// AWAY from the issue, so it must not record the claim that stages it
+// "pr-in-progress" (hivecommons/hive#12481 carried needs-direction and
+// stage/030 together for five hours).
+var escalationLabels = map[string]bool{
+	issueNeedsHumanLabel:                true,
+	issueNeedsDirectionLabel:            true,
+	issueNeedsDecisionLabel:             true,
+	issueNeedsSpecLabel:                 true,
+	NeedsSignalLabel:                    true,
+	issueNeedsReporterConfirmationLabel: true,
+}
+
+// labelsOnlyEscalate reports whether every label in labels is an escalation
+// label. An empty list (a remove-only request) is not a start either.
+func labelsOnlyEscalate(labels []string) bool {
+	for _, l := range labels {
+		if !escalationLabels[strings.ToLower(strings.TrimSpace(l))] {
+			return false
+		}
+	}
+	return true
+}
+
 // issueRequestStartSignal maps a successful issue request to the start
 // signal it is, or "" for requests that are not one: creating an issue,
-// closing one, asking for a review, and a deferral comment (#12387) do not
-// show the agent working an existing issue. A label or claim request is a
-// start signal whatever an accompanying comment said.
-func issueRequestStartSignal(kind, body string) string {
+// closing one, asking for a review, a deferral comment (#12387), an
+// escalation comment or a label request that only parks the issue on a
+// person do not show the agent working an existing issue. labels are the
+// labels a "label" request adds. A claim request is a start signal
+// whatever an accompanying comment said.
+func issueRequestStartSignal(kind, body string, labels []string) string {
 	switch kind {
 	case "comment":
-		if commentIsDeferral(body) {
+		if commentIsDeferral(body) || commentIsEscalation(body) {
 			return ""
 		}
 		return AgentStartSignalComment
 	case "label":
+		if labelsOnlyEscalate(labels) {
+			return ""
+		}
 		return AgentStartSignalLabel
 	case "claim":
 		return AgentStartSignalClaim

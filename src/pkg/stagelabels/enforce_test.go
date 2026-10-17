@@ -131,24 +131,32 @@ func TestEnforceStage_KeepsAuthorAndHealth(t *testing.T) {
 // hivecommons/hive#12451: the stage table says which kind of item a stage
 // may be written to. 050+ are PR stages; an issue asked to carry one gets
 // 040-covered-by-pr (the PR exists — that is all the issue says), and an
-// issue stage asked of a PR means nothing and clears the stage.
+// issue stage asked of a PR means nothing and clears the stage. The one
+// stage both kinds share is 085-needs-decision: an issue parked on a
+// person by an escalation label (hivecommons/hive#12481) wears it too.
 func TestStageForItem(t *testing.T) {
 	for _, d := range Table {
-		if d.Issue == d.PR {
-			t.Fatalf("%s: a stage is an issue stage or a PR stage, never both or neither", d.Stage)
+		if !d.Issue && !d.PR {
+			t.Fatalf("%s: a stage is an issue stage, a PR stage or both, never neither", d.Stage)
 		}
-		if d.Issue && d.Number > CoveredByPR.Number() {
-			t.Fatalf("%s: an issue's pipeline ends at 040-covered-by-pr", d.Stage)
+		if d.Issue && d.PR && d.Stage != NeedsDecision {
+			t.Fatalf("%s: only 085-needs-decision is shared by issues and PRs", d.Stage)
+		}
+		if d.Issue && !d.PR && d.Number > CoveredByPR.Number() {
+			t.Fatalf("%s: an issue's own pipeline ends at 040-covered-by-pr", d.Stage)
 		}
 		if d.PR && d.Number <= CoveredByPR.Number() {
 			t.Fatalf("%s: PR stages start after 040", d.Stage)
 		}
-		if got := d.Stage.For(IssueItem); d.Issue && got != d.Stage || d.PR && got != CoveredByPR {
+		if got := d.Stage.For(IssueItem); d.Issue && got != d.Stage || !d.Issue && got != CoveredByPR {
 			t.Errorf("%s.For(issue) = %s", d.Stage, got)
 		}
-		if got := d.Stage.For(PRItem); d.PR && got != d.Stage || d.Issue && got != None {
+		if got := d.Stage.For(PRItem); d.PR && got != d.Stage || !d.PR && got != None {
 			t.Errorf("%s.For(pr) = %s", d.Stage, got)
 		}
+	}
+	if NeedsDecision.For(IssueItem) != NeedsDecision || ReadyForHumanMerge.For(IssueItem) != CoveredByPR {
+		t.Fatal("085 is an issue stage too; 090 asked of an issue is still just a covering PR")
 	}
 	if !None.Applies(IssueItem) || !None.Applies(PRItem) || None.For(PRItem) != None {
 		t.Fatal("None applies everywhere")
@@ -200,5 +208,25 @@ func TestEnforce_ClampsStageToItemKind(t *testing.T) {
 	out, err = Enforce(context.Background(), ok, PRItem, "acme", "widgets", 8, ok.truth, Desired{Stage: Reviewed})
 	if err != nil || out.Clamped || out.Stage != Reviewed || out.Wanted != Reviewed {
 		t.Fatalf("outcome %+v err %v", out, err)
+	}
+}
+
+// EnforceStageAdding puts the caller's own labels on in the same add as the
+// stage, skips ones already present and never takes a stage label from
+// extra.
+func TestEnforceStageAdding_ExtraLabelsInOneAdd(t *testing.T) {
+	l := &fakeLabeler{truth: []string{"bug", "stage/010-actionable", "hive/claimed-by-reviewer"}}
+	out, err := EnforceStageAdding(context.Background(), l, IssueItem, "o", "r", 1, PRInProgress, "hive/claimed-by-scanner", "hive/claimed-by-reviewer", "stage/100-merge-queue", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"stage/030-pr-in-progress", "hive/claimed-by-scanner"}; !reflect.DeepEqual(out.Added, want) {
+		t.Fatalf("added = %v, want %v", out.Added, want)
+	}
+	if want := []string{"stage/010-actionable"}; !reflect.DeepEqual(out.Removed, want) {
+		t.Fatalf("removed = %v, want %v", out.Removed, want)
+	}
+	if want := []string{"bug", "hive/claimed-by-reviewer", "stage/030-pr-in-progress", "hive/claimed-by-scanner"}; !reflect.DeepEqual(l.truth, want) {
+		t.Fatalf("truth = %v, want %v", l.truth, want)
 	}
 }

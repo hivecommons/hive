@@ -128,7 +128,8 @@ type Definition struct {
 type Item int
 
 const (
-	// IssueItem: an issue. Only Issue:true stages (010–040) may land on it.
+	// IssueItem: an issue. Only Issue:true stages (010–040, and 085 for an
+	// issue parked on a person) may land on it.
 	IssueItem Item = iota
 	// PRItem: a pull request. Only PR:true stages (050–100) may land on it.
 	PRItem
@@ -160,23 +161,18 @@ func (s Stage) Applies(k Item) bool {
 
 // For returns the stage to write on an item of kind k when the caller wants
 // s. An applicable stage is returned unchanged. A PR-only stage asked of an
-// issue clamps to the highest issue stage below it (040-covered-by-pr: the
-// PR exists, that is all the issue says). An issue-only stage asked of a PR
-// has no PR meaning and yields None. Unknown stages yield None.
+// issue clamps to 040-covered-by-pr (the PR exists, that is all the issue
+// says — never to 085, which an issue wears only when parked on a person).
+// An issue-only stage asked of a PR has no PR meaning and yields None.
+// Unknown stages yield None.
 func (s Stage) For(k Item) Stage {
 	if s.Applies(k) {
 		return s
 	}
-	if k == PRItem {
+	if k == PRItem || !s.Known() {
 		return None
 	}
-	best := None
-	for _, d := range Table {
-		if d.Issue && d.Number < s.Number() && best.Before(d.Stage) {
-			best = d.Stage
-		}
-	}
-	return best
+	return CoveredByPR
 }
 
 // Table is THE ordered stage table. Edit it to insert, rename or re-time a
@@ -192,7 +188,7 @@ var Table = []Definition{
 	{Stage: ReturnedToContributor, Number: 72, Slug: "returned-to-contributor", Description: "Contributor PR: CI red, changes requested or conflicting; diagnosis posted, author must act", Dwell: 24 * time.Hour, PR: true},
 	{Stage: AdoptedByHive, Number: 74, Slug: "adopted-by-hive", Description: "Contributor PR adopted: author unavailable after red CI; the hive is finishing it via the takeover path", Dwell: 3 * time.Hour, PR: true},
 	{Stage: AwaitingMergeAdmission, Number: 80, Slug: "awaiting-merge-admission", Description: "CI green, verdict approve, no modifiers; the automerge lane has not admitted it yet", Dwell: 30 * time.Minute, StallNote: true, PR: true},
-	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed before this can move: sentinel alert, hold / do-not-merge / needs-decision label, or a human-only lane rule (see the hive's stage comment)", PR: true},
+	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed before this can move: sentinel alert, hold / do-not-merge / needs-decision label, a human-only lane rule (see the hive's stage comment), or an issue parked by needs-human / needs-direction / needs-decision / needs-spec", Issue: true, PR: true},
 	{Stage: ReadyForHumanMerge, Number: 90, Slug: "ready-for-human-merge", Description: "Hive would merge this itself but trust/role blocks it; a maintainer's /lgtm /approve is the only missing step", PR: true},
 	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted: soaking, merge-eligible or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
 }

@@ -2026,7 +2026,7 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 			if !issueHasLabel(originalLabels, name) {
 				continue
 			}
-			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, name); err != nil && logger != nil {
+			if err := client.removeLabelObserved(ctx, issue.Repo, issue.Number, name, observedState(issue.UpdatedAt)); err != nil && logger != nil {
 				logger.Warn("removing retired covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "label", name, "error", err)
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, name)
@@ -2034,7 +2034,7 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 		if !coveredWanted && stagelabels.Current(originalLabels) == stagelabels.CoveredByPR {
 			// The claim lapsed (PR closed or merged) but the stage label is
 			// still on the issue: take it off now rather than a cycle later.
-			if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, CoveredByPRLabel); err != nil && logger != nil {
+			if err := client.removeLabelObserved(ctx, issue.Repo, issue.Number, CoveredByPRLabel, observedState(issue.UpdatedAt)); err != nil && logger != nil {
 				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
 			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)

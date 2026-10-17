@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -257,21 +258,42 @@ func TestInProgressSetting(t *testing.T) {
 func TestClaimHooks_ClaimedByLabelUsesLoginNeverBackend(t *testing.T) {
 	var mu sync.Mutex
 	var added, removed []string
+	// The release path re-reads the issue and removes only what it still
+	// carries (RemoveLabelsFresh), so the mock keeps live label truth.
+	truth := []string{"stage/010-actionable", "hive/claimed-by-copilot"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/widgets/issues/9", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"number":9,"labels":[{"name":"stage/010-actionable"},{"name":"hive/claimed-by-copilot"}]}`))
+		mu.Lock()
+		labels := make([]map[string]string, 0, len(truth))
+		for _, l := range truth {
+			labels = append(labels, map[string]string{"name": l})
+		}
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 9, "labels": labels})
 	})
 	mux.HandleFunc("/repos/acme/widgets/issues/9/labels", func(w http.ResponseWriter, r *http.Request) {
 		var body []string
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		mu.Lock()
 		added = append(added, body...)
+		truth = append(truth, body...)
 		mu.Unlock()
 		_, _ = w.Write([]byte(`[]`))
 	})
 	mux.HandleFunc("/repos/acme/widgets/issues/9/labels/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/9/labels/")
+		if u, err := url.PathUnescape(name); err == nil {
+			name = u
+		}
 		mu.Lock()
-		removed = append(removed, strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/9/labels/"))
+		removed = append(removed, name)
+		kept := truth[:0]
+		for _, l := range truth {
+			if l != name {
+				kept = append(kept, l)
+			}
+		}
+		truth = kept
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})
