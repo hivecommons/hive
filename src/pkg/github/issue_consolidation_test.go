@@ -458,7 +458,7 @@ func TestCreateIssue_DirectCallDoesNotConsolidate(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.appBotLogin = testBot
 
-	res, err := c.CreateIssue(context.Background(), "o/r", "[review] b in x.go", "pkg/x.go:9", nil)
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[review] b in x.go", Body: "pkg/x.go:9", Origin: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

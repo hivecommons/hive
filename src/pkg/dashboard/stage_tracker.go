@@ -105,6 +105,9 @@ type StageTrackerItem struct {
 	AuthorKindSource string `json:"author_kind_source,omitempty"`
 	// Tier is the author/<tier> admission label without its prefix.
 	Tier string `json:"tier,omitempty"`
+	// Origin is the origin/<source> provenance label without its prefix:
+	// which hive component created the item ("" = none, e.g. human-filed).
+	Origin string `json:"origin,omitempty"`
 	// Lane is the pipeline route the item is on: issue, hive or contributor.
 	Lane string `json:"lane"`
 	// Stage is the stage number (0 = no stage known); StageSince is when
@@ -666,6 +669,9 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			it.AuthorKind, it.AuthorKindSource = authorKindHuman, authorKindSrcInfer
 		} else if strings.HasSuffix(strings.ToLower(issue.Author), botLoginSuffix) {
 			it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
+		}
+		if l, ok := config.FirstOriginLabel(issue.Labels); ok {
+			it.Origin = config.OriginSourceOf(l)
 		}
 		stage := labelStage(issue.Labels)
 		if stage == stagelabels.None && !(ok && rec.Stage != stagelabels.None) {

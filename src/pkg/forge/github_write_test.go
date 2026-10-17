@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -188,8 +189,9 @@ func TestGitHubCreateIssueAndMarkerLookup(t *testing.T) {
 	if ref.Number != 77 || ref.URL == "" || w.created != 1 {
 		t.Fatalf("create ref = %+v created=%d", ref, w.created)
 	}
-	if w.createOwner != "acme" || w.createRepo != "widget" || w.createReq.GetTitle() != "finding: auth" || len(w.createReq.GetLabels()) != 1 {
-		t.Fatalf("create request = %s/%s %+v", w.createOwner, w.createRepo, w.createReq)
+	// The raw path adds origin/forge when the caller passed no origin label.
+	if w.createOwner != "acme" || w.createRepo != "widget" || w.createReq.GetTitle() != "finding: auth" || strings.Join(w.createReq.GetLabels(), ",") != "audit,origin/forge" {
+		t.Fatalf("create request = %s/%s %+v labels=%v", w.createOwner, w.createRepo, w.createReq, w.createReq.GetLabels())
 	}
 
 	w.listed = []*gh.Issue{
@@ -231,13 +233,20 @@ func TestGitHubIssueSeamErrors(t *testing.T) {
 }
 
 type stubIssueConsolidator struct {
-	res   github.CreateIssueResult
-	err   error
-	repos []string
+	res    github.CreateIssueResult
+	err    error
+	repos  []string
+	labels [][]string
+	origin []string
 }
 
-func (s *stubIssueConsolidator) CreateIssueConsolidated(_ context.Context, repo, _, _ string, _ []string) (github.CreateIssueResult, error) {
-	s.repos = append(s.repos, repo)
+func (s *stubIssueConsolidator) CreateIssue(_ context.Context, req github.CreateIssueRequest) (github.CreateIssueResult, error) {
+	s.repos = append(s.repos, req.Repo)
+	s.labels = append(s.labels, req.Labels)
+	s.origin = append(s.origin, req.Origin)
+	if !req.ConsolidateOpen {
+		return github.CreateIssueResult{}, errors.New("seam must consolidate open twins")
+	}
 	return s.res, s.err
 }
 
@@ -276,6 +285,22 @@ func TestGitHubIssueSeamCreatesThroughConsolidation(t *testing.T) {
 			if len(c.repos) != 1 || c.repos[0] != "acme/widget" {
 				t.Fatalf("consolidating create repos = %v, want [acme/widget]", c.repos)
 			}
+			if strings.Join(c.labels[0], ",") != "audit,origin/forge" || c.origin[0] != "forge" {
+				t.Fatalf("consolidating create labels = %v origin = %q, want origin/forge added once", c.labels[0], c.origin[0])
+			}
 		})
+	}
+}
+
+// A caller that already chose its origin (the convergence publisher passes
+// origin/convergence) keeps it: the seam never adds a second origin/* label.
+func TestGitHubIssueSeamKeepsCallerOriginLabel(t *testing.T) {
+	c := &stubIssueConsolidator{res: github.CreateIssueResult{Number: 1, URL: "u1"}}
+	f := &gitHubForge{writer: &stubGitHubWriter{}, org: "acme", consolidator: c}
+	if _, err := f.CreateIssue(context.Background(), "widget", "t", "b", []string{"origin/convergence", "public"}); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	if strings.Join(c.labels[0], ",") != "origin/convergence,public" {
+		t.Fatalf("labels = %v, want the caller's origin label kept and no origin/forge", c.labels[0])
 	}
 }

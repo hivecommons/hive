@@ -111,7 +111,7 @@ func stageTrackerFixture(t *testing.T, now time.Time) (*Server, *stagelabels.Sto
 		Name: "console", Full: "acme/console",
 		ActionableIssues: []any{
 			github.Issue{Number: 7, Title: "Login redirect loops", Author: "karibhou", AuthorIsHuman: true, Labels: []string{"stage/100-merge-queue"}},
-			github.Issue{Number: 8, Title: "Flaky test", Author: "hive-app[bot]", Labels: []string{"stage/010-actionable"}},
+			github.Issue{Number: 8, Title: "Flaky test", Author: "hive-app[bot]", Labels: []string{"stage/010-actionable", "agent/scanner", "origin/scanner"}},
 		},
 		OpenPrs: []any{
 			FrontendPR{PullRequest: github.PullRequest{Number: 101, Title: "Fix redirect", Author: "karibhou", Labels: []string{"stage/072-needs-author", "author/contributor", "needs-rebase"}}},
@@ -198,6 +198,14 @@ func TestStageTrackerEndpoint(t *testing.T) {
 				t.Fatalf("issue #%d linked PR #%d pairs needs-rebase with stage %d", it.Number, lp.Number, lp.Stage)
 			}
 		}
+	}
+	// The origin/<source> provenance label is surfaced as-is for hive-filed
+	// issues; a human-filed issue carries none.
+	if got := trackerItem(t, resp, "issue", 8).Origin; got != "scanner" {
+		t.Fatalf("issue 8 origin = %q, want scanner", got)
+	}
+	if got := trackerItem(t, resp, "issue", 7).Origin; got != "" {
+		t.Fatalf("issue 7 origin = %q, want none", got)
 	}
 	pr101 := trackerItem(t, resp, "pr", 101)
 	if pr101.Stage != 72 || pr101.StageLabel != "stage/072-needs-author" || pr101.Lane != laneContributor {

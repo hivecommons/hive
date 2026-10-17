@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
 
@@ -452,11 +453,15 @@ const (
 	SelfReportSeenMarkerPrefix = "<!-- hive:selfreport-seen "
 	AffectedBlockStart         = "<!-- hive:selfreport-affected -->"
 	AffectedBlockEnd           = "<!-- /hive:selfreport-affected -->"
-	LabelSelfReport            = "hive/selfreport"
-	LabelKindBug               = "kind/bug"
-	LabelNeedsTriage           = "needs-triage"
-	LabelFleetReport           = "fleet-report"
-	LabelObservation           = "hive-observation"
+	// LabelSelfReport is the self-report joiner's dedupe search key. As a
+	// provenance marker it is deprecated in favour of LabelOriginSelfReport
+	// (the origin/<source> axis); every report carries both.
+	LabelSelfReport       = "hive/selfreport"
+	LabelOriginSelfReport = config.OriginLabelPrefix + config.OriginSourceSelfReport
+	LabelKindBug          = "kind/bug"
+	LabelNeedsTriage      = "needs-triage"
+	LabelFleetReport      = "fleet-report"
+	LabelObservation      = "hive-observation"
 )
 
 // SelfReportMarker is the body marker a runtime-error report carries.
@@ -476,7 +481,7 @@ func BuildRuntimeReport(obs Observation, ev Evidence, fp, instance, hive, versio
 	if strings.TrimSpace(hive) == "" {
 		hive = instance
 	}
-	labels := []string{LabelFleetReport, LabelSelfReport, LabelKindBug, LabelNeedsTriage, "severity:" + labelValue(ev.Severity), "trigger:" + TriggerRuntimeError, "class:" + labelValue(ev.Class)}
+	labels := []string{LabelFleetReport, LabelSelfReport, LabelOriginSelfReport, LabelKindBug, LabelNeedsTriage, "severity:" + labelValue(ev.Severity), "trigger:" + TriggerRuntimeError, "class:" + labelValue(ev.Class)}
 	sort.Strings(labels)
 	title := fmt.Sprintf("[selfreport] %s: %s", ev.Class, ShortMessage(ev.Message))
 	var b strings.Builder

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestOriginLabelDefinitionsShareOneColour(t *testing.T) {
@@ -41,8 +43,8 @@ func TestOriginLabelDefinitionsShareOneColour(t *testing.T) {
 			t.Fatalf("CanonicalOriginLabel(%q) = %q, %v", retired, got, ok)
 		}
 	}
-	if !strings.HasSuffix(originLabelMigrationFileStem, "-v2") || !strings.HasSuffix(OriginLabelMigrationID, "-v2") {
-		t.Fatalf("migration marker/id must be versioned so v1 hives re-run: %q %q", originLabelMigrationFileStem, OriginLabelMigrationID)
+	if !strings.HasSuffix(originLabelMigrationFileStem, "-v3") || !strings.HasSuffix(OriginLabelMigrationID, "-v3") {
+		t.Fatalf("migration marker/id must be versioned so v1/v2 hives re-run: %q %q", originLabelMigrationFileStem, OriginLabelMigrationID)
 	}
 }
 
@@ -146,6 +148,10 @@ func newOriginMigrationServer(t *testing.T, org, repo string, issues []wireIssue
 		st.mu.Unlock()
 		var matched []wireIssue
 		for _, is := range issues {
+			if filter == "" {
+				matched = append(matched, is)
+				continue
+			}
 			for _, l := range is.Labels {
 				if l.Name == filter {
 					matched = append(matched, is)
@@ -232,8 +238,10 @@ func TestMigrateOriginLabelsSwapsBothRetiredNamesOnceWithoutDoubleLabelling(t *t
 	if report == nil || len(report.Migrated) != 4 || len(report.Errors) != 0 {
 		t.Fatalf("report = %+v", report)
 	}
-	if strings.Join(st.listQueries, ",") != "from-review,origin/review" {
-		t.Fatalf("list filters = %v, want both retired names in order", st.listQueries)
+	// Both retired names in order, then the unfiltered list the origin
+	// backfill scans.
+	if strings.Join(st.listQueries, ",") != "from-review,origin/review," {
+		t.Fatalf("list filters = %v, want both retired names in order then the backfill scan", st.listQueries)
 	}
 	for _, n := range []int{1, 3} {
 		if strings.Join(st.added[n], ",") != "origin/reviewer" {
@@ -299,9 +307,11 @@ func TestMigrateOriginLabelsRunsOnHiveThatCompletedV1(t *testing.T) {
 	c := newTestClient(t, server, org, []string{repo})
 
 	dataDir := t.TempDir()
-	v1Marker := filepath.Join(dataDir, "origin-label-migration.done")
-	if err := os.WriteFile(v1Marker, []byte("2026-01-01T00:00:00Z\n"), 0o600); err != nil {
-		t.Fatal(err)
+	// Markers of both earlier versions must not suppress v3.
+	for _, marker := range []string{"origin-label-migration.done", "origin-label-migration-v2.done"} {
+		if err := os.WriteFile(filepath.Join(dataDir, marker), []byte("2026-01-01T00:00:00Z\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	opts := OriginLabelMigrationOptions{DataDir: dataDir, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	report, err := c.MigrateOriginLabels(context.Background(), opts)
@@ -309,7 +319,7 @@ func TestMigrateOriginLabelsRunsOnHiveThatCompletedV1(t *testing.T) {
 		t.Fatalf("MigrateOriginLabels: %v", err)
 	}
 	if report == nil || len(report.Migrated) != 1 || report.Migrated[0].From != "origin/review" || report.Migrated[0].To != "origin/reviewer" {
-		t.Fatalf("v1 marker must not suppress v2: report = %+v", report)
+		t.Fatalf("v1/v2 markers must not suppress v3: report = %+v", report)
 	}
 	if strings.Join(st.added[7], ",") != "origin/reviewer" || strings.Join(st.removed[7], ",") != "origin/review" {
 		t.Fatalf("issue 7 added=%v removed=%v", st.added[7], st.removed[7])
@@ -317,11 +327,11 @@ func TestMigrateOriginLabelsRunsOnHiveThatCompletedV1(t *testing.T) {
 	if strings.Join(st.deleted, ",") != "origin/review" {
 		t.Fatalf("deleted definitions = %v", st.deleted)
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "origin-label-migration-v2.done")); err != nil {
-		t.Fatalf("v2 marker not written: %v", err)
+	if _, err := os.Stat(filepath.Join(dataDir, "origin-label-migration-v3.done")); err != nil {
+		t.Fatalf("v3 marker not written: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "origin-label-migration-v2.json")); err != nil {
-		t.Fatalf("v2 report not written: %v", err)
+	if _, err := os.Stat(filepath.Join(dataDir, "origin-label-migration-v3.json")); err != nil {
+		t.Fatalf("v3 report not written: %v", err)
 	}
 	if again, err := c.MigrateOriginLabels(context.Background(), opts); err != nil || again != nil {
 		t.Fatalf("second run = %+v, %v; want no-op", again, err)
@@ -359,5 +369,65 @@ func TestMigrateOriginLabelsKeepsRetiredDefinitionWhenAnItemFails(t *testing.T) 
 	}
 	if _, err := os.Stat(opts.MarkerPath); !os.IsNotExist(err) {
 		t.Fatalf("marker must not be written after errors: %v", err)
+	}
+}
+
+// The v3 backfill gives open hive-authored issues that predate the universal
+// origin axis their first origin/* label: origin/<lane> from agent/<lane>,
+// origin/selfreport from hive/selfreport (which wins over a lane), nothing on
+// human-filed issues, issues that already carry an origin label, or PRs.
+func TestMigrateOriginLabelsBackfillsLaneAndSelfReportOrigins(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	issues := []wireIssue{
+		{Number: 11, Title: "lane only", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/scanner"}, {Name: "kind/bug"}}, CreatedAt: hoursAgo(5)},
+		{Number: 12, Title: "selfreport with lane", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/quality"}, {Name: "hive/selfreport"}}, CreatedAt: hoursAgo(4)},
+		{Number: 13, Title: "already has origin", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/scanner"}, {Name: "origin/dashboard"}}, CreatedAt: hoursAgo(3)},
+		{Number: 14, Title: "human filed", User: wireUser{"alice"}, Labels: []wireLabel{{Name: "agent/scanner"}}, CreatedAt: hoursAgo(2)},
+		{Number: 15, Title: "no marker", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "kind/bug"}}, CreatedAt: hoursAgo(1)},
+		{Number: 16, Title: "a PR", User: wireUser{"hivecommons-hive[bot]"}, Labels: []wireLabel{{Name: "agent/scanner"}}, CreatedAt: hoursAgo(1), PullRequest: &struct{}{}},
+	}
+	st, server := newOriginMigrationServer(t, org, repo, issues)
+	defer server.Close()
+	c := newTestClient(t, server, org, []string{repo})
+	c.additionalBotLogins = []string{"hivecommons-hive[bot]"}
+
+	report, err := c.MigrateOriginLabels(context.Background(), originMigrationOpts(t))
+	if err != nil {
+		t.Fatalf("MigrateOriginLabels: %v", err)
+	}
+	if len(report.Errors) != 0 || len(report.Migrated) != 0 {
+		t.Fatalf("report = %+v", report)
+	}
+	if strings.Join(st.added[11], ",") != "origin/scanner" || strings.Join(st.added[12], ",") != "origin/selfreport" {
+		t.Fatalf("added = %v, want origin/scanner on 11 and origin/selfreport on 12", st.added)
+	}
+	for _, n := range []int{13, 14, 15, 16} {
+		if got, ok := st.added[n]; ok {
+			t.Fatalf("issue %d must not be touched, added %v", n, got)
+		}
+	}
+	if len(st.removed) != 0 {
+		t.Fatalf("backfill must never remove labels: %v", st.removed)
+	}
+	if st.created["origin/scanner"] != OriginLabelColor || st.created["origin/selfreport"] != OriginLabelColor {
+		t.Fatalf("created = %v, want both new labels in the family colour", st.created)
+	}
+	if len(report.Backfilled) != 2 || report.Backfilled[0].DerivedFrom != "agent/scanner" || report.Backfilled[1].DerivedFrom != "hive/selfreport" {
+		t.Fatalf("backfilled = %+v", report.Backfilled)
+	}
+}
+
+// Every origin/* label the hive can create resolves to the shared colour and
+// a per-source description, so a label created on demand for a new lane is
+// never a bare default-coloured label.
+func TestOriginLabelDefinitionCoversEverySource(t *testing.T) {
+	for _, source := range config.KnownOriginSources() {
+		def, ok := originLabelDefinition(config.OriginLabel(source))
+		if !ok || def.color != OriginLabelColor || !strings.Contains(def.description, "provenance") {
+			t.Fatalf("origin/%s definition = %+v ok=%v", source, def, ok)
+		}
+	}
+	if def, ok := originLabelDefinition("origin/brand-new-lane"); !ok || !strings.Contains(def.description, "brand-new-lane agent lane") {
+		t.Fatalf("unknown lane definition = %+v ok=%v", def, ok)
 	}
 }

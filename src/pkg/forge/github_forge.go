@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/logscrub"
 )
@@ -37,7 +38,7 @@ type githubWriter interface {
 // reuses an open issue with the same subject and folds a finding into an open
 // twin over the same files instead of filing a second issue (#11578).
 type githubIssueConsolidator interface {
-	CreateIssueConsolidated(ctx context.Context, repo, title, body string, labels []string) (github.CreateIssueResult, error)
+	CreateIssue(ctx context.Context, req github.CreateIssueRequest) (github.CreateIssueResult, error)
 }
 
 // markerLookupMaxPages bounds FindIssueByMarker to the most recent pages of
@@ -227,7 +228,7 @@ func (f *gitHubForge) SetHold(ctx context.Context, repo string, number int, hold
 // already-authenticated pkg/github client (the App-authenticated client a
 // GitHub hive boots with), so the publisher files as the hive's App identity
 // without a second token. Creates go through
-// *github.Client.CreateIssueConsolidated, the same consolidating create the
+// *github.Client.CreateIssue with ConsolidateOpen, the same consolidating create the
 // agent lane uses, so a convergence finding folds into an open issue over the
 // same files instead of twinning it under a different marker (#11578); the
 // publisher's mutation journal and marker lookup remain its own idempotency
@@ -241,10 +242,13 @@ func NewGitHubIssueSeam(client *github.Client, org string) IssueSeam {
 
 // CreateIssue files a new issue: through the consolidating create when the
 // seam was built over a *github.Client, else via go-github Issues.Create.
+// Every issue carries exactly one origin/<source> provenance label: the one
+// the caller passed in labels, else origin/forge.
 func (f *gitHubForge) CreateIssue(ctx context.Context, repo, title, body string, labels []string) (IssueRef, error) {
 	owner, name := splitRepo(repo, f.org)
+	labels = config.WithOriginLabel(labels, config.OriginSourceForge)
 	if f.consolidator != nil {
-		res, err := f.consolidator.CreateIssueConsolidated(ctx, owner+"/"+name, title, body, labels)
+		res, err := f.consolidator.CreateIssue(ctx, github.CreateIssueRequest{Repo: owner + "/" + name, Title: title, Body: body, Labels: labels, Origin: config.OriginSourceForge, ConsolidateOpen: true})
 		if err != nil {
 			return IssueRef{}, fmt.Errorf("forge: create issue in %s/%s: %w", owner, name, err)
 		}

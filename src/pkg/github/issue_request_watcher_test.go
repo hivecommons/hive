@@ -569,7 +569,7 @@ func TestWriteIssueRequest_Errors(t *testing.T) {
 // CreateIssue input validation and degraded-path behavior.
 func TestCreateIssue_ValidationAndDegradedPaths(t *testing.T) {
 	var nilClient *Client
-	if _, err := nilClient.CreateIssue(context.Background(), "o/r", "t", "b", nil); !errors.Is(err, ErrNoGitHubClient) {
+	if _, err := nilClient.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "t", Body: "b", Origin: "test"}); !errors.Is(err, ErrNoGitHubClient) {
 		t.Fatalf("nil client: want ErrNoGitHubClient, got %v", err)
 	}
 
@@ -578,12 +578,12 @@ func TestCreateIssue_ValidationAndDegradedPaths(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	if _, err := c.CreateIssue(context.Background(), "o/r", "   ", "b", nil); err == nil {
+	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "   ", Body: "b", Origin: "test"}); err == nil {
 		t.Fatal("blank title must be rejected")
 	}
 
 	// Blank labels are skipped, usable ones attached; create succeeds.
-	res, err := c.CreateIssue(context.Background(), "o/r", "with labels", "b", []string{" ", "security"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "with labels", Body: "b", Labels: []string{" ", "security"}, Origin: "test"})
 	if err != nil || res.Number != 99 {
 		t.Fatalf("create with labels: res=%+v err=%v", res, err)
 	}
@@ -610,7 +610,7 @@ func TestCreateIssue_DedupeRetryableFailureFailsClosed(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	if _, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", nil); err == nil || !isRetryableGitHubError(err) {
+	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Origin: "test"}); err == nil || !isRetryableGitHubError(err) {
 		t.Fatalf("dedupe rate limit must return retryable error, got %v", err)
 	}
 	if created != 0 {
@@ -639,7 +639,7 @@ func TestCreateIssue_DedupeTooManyRequestsFailsClosed(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	if _, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", nil); err == nil || !isRetryableGitHubError(err) {
+	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Origin: "test"}); err == nil || !isRetryableGitHubError(err) {
 		t.Fatalf("dedupe 429 must return retryable error, got %v", err)
 	}
 	if created != 0 {
@@ -671,7 +671,7 @@ func TestCreateIssue_LabelEnsureRetryableFailureFailsClosed(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	if _, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", []string{"agent/quality"}); err == nil || !isRetryableGitHubError(err) {
+	if _, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/quality"}, Origin: "test"}); err == nil || !isRetryableGitHubError(err) {
 		t.Fatalf("label rate limit must return retryable error, got %v", err)
 	}
 	if created != 0 {
@@ -718,7 +718,7 @@ func TestCreateIssue_LabelEnsureConcurrentCreateKeepsLabel(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	res, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", []string{"agent/quality"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/quality"}, Origin: "test"})
 	if err != nil {
 		t.Fatalf("concurrent label creation should keep label: %v", err)
 	}
@@ -759,11 +759,13 @@ func TestCreateIssue_LabelEnsureTerminalFailureCreatesWithoutLabel(t *testing.T)
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL)
 
-	res, err := c.CreateIssue(context.Background(), "o/r", "finding", "body", []string{"bad label"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"bad label"}, Origin: "test"})
 	if err != nil {
 		t.Fatalf("terminal label ensure failure should create without label: %v", err)
 	}
-	if created != 1 || res.Number != 123 || len(createLabels) != 0 {
+	// The bad label is dropped; the origin/* label survives because a 422 on
+	// an origin create means another writer defined it first.
+	if created != 1 || res.Number != 123 || strings.Join(createLabels, ",") != "origin/test" {
 		t.Fatalf("unexpected create result: created=%d labels=%v res=%+v", created, createLabels, res)
 	}
 }
@@ -1080,5 +1082,108 @@ func TestIssueRequestWatcher_ParentLinkFailureDoesNotFailCreate(t *testing.T) {
 	}
 	if resp.ParentLinkError == "" {
 		t.Fatalf("expected ParentLinkError to be populated on link failure")
+	}
+}
+
+// The central helper is where the origin axis becomes universal: every
+// caller must name its source, the label is injected when absent, a caller's
+// own origin label is kept and never doubled, and the created label carries
+// the family colour.
+func TestCreateIssue_InjectsExactlyOneOriginLabel(t *testing.T) {
+	var createLabels [][]string
+	var labelColors []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/"):
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/labels"):
+			var body struct {
+				Name  string `json:"name"`
+				Color string `json:"color"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if strings.HasPrefix(body.Name, "origin/") {
+				labelColors = append(labelColors, body.Color)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"`+body.Name+`","color":"`+body.Color+`"}`)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			var body struct {
+				Labels []string `json:"labels"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			createLabels = append(createLabels, body.Labels)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":7,"html_url":"https://github.example/o/r/issues/7"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	ctx := context.Background()
+
+	if _, err := c.CreateIssue(ctx, CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body"}); !errors.Is(err, ErrOriginRequired) {
+		t.Fatalf("missing origin must be rejected before any write, got %v", err)
+	}
+	if len(createLabels) != 0 {
+		t.Fatalf("issue created without origin: %v", createLabels)
+	}
+	if _, err := c.CreateIssue(ctx, CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/scanner"}, Origin: "scanner"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CreateIssue(ctx, CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"origin/dashboard", "origin/forge"}, Origin: "scanner"}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"agent/scanner,origin/scanner", "origin/dashboard"}
+	for i, labels := range createLabels {
+		if strings.Join(labels, ",") != want[i] {
+			t.Fatalf("create %d labels = %v, want %s", i, labels, want[i])
+		}
+	}
+	if strings.Join(labelColors, ",") != OriginLabelColor+","+OriginLabelColor {
+		t.Fatalf("origin label colours = %v", labelColors)
+	}
+}
+
+// Provenance is never a gate: a retryable failure ensuring the origin/* label
+// files the issue without it, while the same failure on a routing label
+// (agent/*) still fails closed so the request stays queued.
+func TestCreateIssue_OriginLabelEnsureBlipDoesNotBlockFiling(t *testing.T) {
+	var createLabels [][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/issues"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/labels/agent/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"agent/scanner"}`)
+		case strings.Contains(r.URL.Path, "/labels"):
+			w.WriteHeader(http.StatusBadGateway)
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/issues"):
+			var body struct {
+				Labels []string `json:"labels"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			createLabels = append(createLabels, body.Labels)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":9,"html_url":"https://github.example/o/r/issues/9"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "finding", Body: "body", Labels: []string{"agent/scanner"}, Origin: "scanner"})
+	if err != nil || res.Number != 9 {
+		t.Fatalf("origin label blip must not block filing: res=%+v err=%v", res, err)
+	}
+	if len(createLabels) != 1 || strings.Join(createLabels[0], ",") != "agent/scanner" {
+		t.Fatalf("labels = %v, want the routing label only", createLabels)
 	}
 }

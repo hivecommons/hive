@@ -12733,6 +12733,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? item.history.slice(-STAGE_TRACKER_TRAIL_HOPS).map(h => String(h.stage).padStart(3, '0')).join(' → ') : '';
       const lines = [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
       if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
+      if (item.origin) lines.push('Origin: origin/' + item.origin);
       if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
       else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
       const actorKind = stageTrackerActorKind(item);

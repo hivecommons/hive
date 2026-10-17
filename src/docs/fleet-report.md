@@ -186,7 +186,7 @@ hive adds itself to that issue instead of opening a new one:
 - one comment `Also seen on **<hive>** (v<version>, <cluster>) at <time>`
   carrying a `<!-- hive:selfreport-seen hive=<slug> fp=… -->` marker and its
   diagnostics excerpt — at most once per hive per 24h;
-- the `hive/selfreport` label (the per-hive `hive/<slug>` label is retired, #12539);
+- the `hive/selfreport` and `origin/selfreport` labels (the per-hive `hive/<slug>` label is retired, #12539; `hive/selfreport` is deprecated in favour of the `origin/selfreport` provenance label and is kept only so existing filters and the joiner's `label:hive/selfreport` search keep working);
 - a bump to the `Affected hives (N)` block in the issue body, edited
   idempotently between `<!-- hive:selfreport-affected -->` markers: the
   joining hive gets (or updates) its own line naming its owner(s), and its
