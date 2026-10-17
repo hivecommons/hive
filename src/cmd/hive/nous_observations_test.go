@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -171,5 +172,56 @@ func TestNousObservationsSinkFailureDoesNotSpendBudget(t *testing.T) {
 	budget, err := loadNousObservationBudget(h.deps.budgetPath)
 	if err != nil || len(budget.Filed) != 0 {
 		t.Fatalf("failed filing consumed budget: %+v, %v", budget, err)
+	}
+}
+
+func TestNousObservationsOverlappingCyclesShareBudget(t *testing.T) {
+	const maxPerWeek = 2
+	h := newNousObservationHarness(t, 5, maxPerWeek)
+	var mu sync.Mutex
+	var sunk []string
+	deps := h.deps
+	deps.detect = func(_ []hivestate.Bucket, _ time.Time, hiveID string) []hivestate.Observation {
+		out := make([]hivestate.Observation, 5)
+		for i := range out {
+			kind := fmt.Sprintf("kind-%d", i)
+			out[i] = hivestate.Observation{Kind: kind, Fingerprint: hiveID + ":" + kind}
+		}
+		return out
+	}
+	deps.sink = func(_ context.Context, obs hivestate.Observation) error {
+		mu.Lock()
+		defer mu.Unlock()
+		sunk = append(sunk, obs.Fingerprint)
+		return nil
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var total int
+	var totalMu sync.Mutex
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			n := runNousObservations(context.Background(), h.logger, deps)
+			totalMu.Lock()
+			total += n
+			totalMu.Unlock()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if total > maxPerWeek || len(sunk) > maxPerWeek {
+		t.Fatalf("filed %d (sink calls %d), want <= %d", total, len(sunk), maxPerWeek)
+	}
+	seen := map[string]bool{}
+	for _, fp := range sunk {
+		if seen[fp] {
+			t.Fatalf("fingerprint %q filed twice: %v", fp, sunk)
+		}
+		seen[fp] = true
 	}
 }

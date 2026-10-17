@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -82,6 +83,11 @@ type nousObservationBudget struct {
 // loadNousObservationBudget reads the ledger at path. A missing file is an
 // empty budget; an unreadable or corrupt one is returned with its error so
 // the caller can refuse to file rather than silently reset the budget.
+// nousObservationLedgerMu serializes the budget ledger's load/append/save so
+// overlapping eval cycles cannot file the same fingerprint twice or exceed
+// max_per_week.
+var nousObservationLedgerMu sync.Mutex
+
 func loadNousObservationBudget(path string) (nousObservationBudget, error) {
 	var b nousObservationBudget
 	data, err := os.ReadFile(path)
@@ -122,15 +128,25 @@ func (b nousObservationBudget) save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, 0o644)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, path)
+	}
+	if werr != nil {
 		_ = os.Remove(tmp)
-		return err
 	}
-	return nil
+	return werr
 }
 
 // runNousObservations runs the hive-state detectors once and files what they
@@ -161,6 +177,8 @@ func runNousObservations(ctx context.Context, logger *slog.Logger, d nousObserva
 		logger.Debug("nous observations: no observation sink on this build; not filing", "observations", len(found))
 		return 0
 	}
+	nousObservationLedgerMu.Lock()
+	defer nousObservationLedgerMu.Unlock()
 	budget, err := loadNousObservationBudget(d.budgetPath)
 	if err != nil {
 		logger.Warn("nous observations: weekly budget unreadable; not filing", "path", d.budgetPath, "error", err)
