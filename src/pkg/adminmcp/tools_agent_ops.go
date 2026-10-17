@@ -67,7 +67,8 @@ func (op agentResumeOp) Preview(ctx context.Context, args map[string]any) (Write
 
 // PreviewWithProvider discloses the pause-ownership claim handleResume stamps
 // (#5706) unless the agent is already operator-owned. When ownership cannot be
-// read the line is shown, since resume would claim it unless proven otherwise.
+// read the line is shown, since resume would claim it unless proven otherwise;
+// when the capped agent list hides the agent the line is hedged.
 func (agentResumeOp) PreviewWithProvider(ctx context.Context, args map[string]any, provider Provider) (WritePreview, error) {
 	agent, err := requiredString(args, "agent")
 	if err != nil {
@@ -75,31 +76,54 @@ func (agentResumeOp) PreviewWithProvider(ctx context.Context, args map[string]an
 	}
 	path := "/api/resume/" + url.PathEscape(agent)
 	effects := []string{"The named agent may accept work again."}
-	if !agentPauseOperatorOwned(ctx, provider, agent) {
+	switch agentPauseOwnership(ctx, provider, agent) {
+	case pauseOwnershipUnowned:
 		effects = append(effects, "Claims operator ownership of this agent's pause state (`pause_owner: operator`), so the ACMM pack visibility sweep will no longer pause it.")
+	case pauseOwnershipUnknown:
+		effects = append(effects, "May claim operator ownership of this agent's pause state (`pause_owner: operator`) unless it is already operator-owned, so the ACMM pack visibility sweep would no longer pause it; current ownership could not be determined because the agents list was truncated.")
 	}
 	return WritePreview{Operation: WriteOpAgentResume, Summary: "Resume agent " + agent, Target: agent, Request: WriteRequest{Method: http.MethodPost, Path: path}, Effects: effects, WideningDisclosure: "No widening: this operation targets exactly one named agent.", ConfirmationMessage: "Confirm resuming agent " + agent + ".", Details: map[string]any{"agent": agent}}, nil
 }
 
-func agentPauseOperatorOwned(ctx context.Context, provider Provider, agent string) bool {
+type pauseOwnership int
+
+const (
+	pauseOwnershipUnowned pauseOwnership = iota
+	pauseOwnershipOperator
+	pauseOwnershipUnknown
+)
+
+func agentPauseOwnership(ctx context.Context, provider Provider, agent string) pauseOwnership {
 	if provider == nil {
-		return false
+		return pauseOwnershipUnowned
 	}
 	data, err := provider.Read(ctx, ToolAgentsList, nil)
 	if err != nil {
-		return false
+		return pauseOwnershipUnowned
 	}
+	truncated := false
 	if m, ok := data.(map[string]any); ok {
-		data = m["agents"]
+		truncated, _ = m["truncated"].(bool)
+		if items, ok := m["items"]; ok {
+			data = items
+		} else {
+			data = m["agents"]
+		}
 	}
 	list, _ := data.([]any)
 	for _, item := range list {
 		entry, _ := item.(map[string]any)
 		if entry["name"] == agent {
-			return entry["pauseOwner"] == "operator"
+			if entry["pauseOwner"] == "operator" {
+				return pauseOwnershipOperator
+			}
+			return pauseOwnershipUnowned
 		}
 	}
-	return false
+	if truncated {
+		return pauseOwnershipUnknown
+	}
+	return pauseOwnershipUnowned
 }
 
 func (agentNudgeOp) Name() string { return WriteOpAgentNudge }

@@ -119,6 +119,8 @@ type WriteOp interface {
 }
 ```
 
+A write op may also implement `PreviewWithProvider(ctx, args, provider)` to read live hive state for its preview; `PreviewWrite` prefers it over `Preview`, which remains the provider-less fallback.
+
 The preview returns a `WritePreview` containing the operator-facing summary, widening disclosure, and the REST `WriteRequest` to execute on confirmation. Keep new operations in their own files (for example `tools_agent_ops.go`, `tools_fleet_ops.go`, `tools_repo_ops.go`) so later phases can add operations without editing unrelated operation groups. Phase 3 registered `agent.pause` and `agent.resume`. Phase 4 extends the same `tools_agent_ops.go` group with `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, and `agent.interaction_tier`; it also adds the read-only `agent_nudge_status` lookup for `GET /api/kick/{agent}/status`. Nudge previews include the prompt verbatim in the confirmation message, because that text is typed into an agent CLI session. Interaction-tier previews carry explicit widening disclosure because `ISSUES_ONLY`, `ISSUES_AND_PRS`, and `ISSUES_PRS_MERGE` grant progressively broader GitHub authority.
 
 Phase 6 adds `tools_repo_ops.go`, registering repository, spend, contributor and operations writes:
