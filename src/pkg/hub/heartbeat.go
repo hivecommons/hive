@@ -228,7 +228,6 @@ type HeartbeatGPUSummary struct {
 }
 
 type HeartbeatPayload struct {
-	SelfExperimentsOptIn         bool                            `json:"self_experiments_opt_in,omitempty"`
 	HiveID                       string                          `json:"hive_id"`
 	Org                          string                          `json:"org"`
 	Repos                        []string                        `json:"repos"`
@@ -332,6 +331,8 @@ type HeartbeatPayload struct {
 	FreshAgentStats              bool                            `json:"fresh_agent_stats,omitempty"`
 	Compliance                   *HeartbeatCompliance            `json:"compliance,omitempty"`
 	Evidence                     *HeartbeatEvidence              `json:"evidence,omitempty"`
+	// SelfExperimentsOptIn is local consent; absent or false means opted out.
+	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
 }
 
 const (
@@ -412,7 +413,6 @@ type HeartbeatGatewayConfig struct {
 }
 
 type HeartbeatResponse struct {
-	SelfExperimentFlag  *nous.SelfFlagAssignment  `json:"self_experiment_flag,omitempty"`
 	OK                  bool                      `json:"ok"`
 	UpgradeTo           string                    `json:"upgrade_to,omitempty"`
 	HubGitHash          string                    `json:"hub_git_hash,omitempty"`
@@ -434,6 +434,8 @@ type HeartbeatResponse struct {
 	SigSeq              int64                     `json:"sig_seq,omitempty"`
 	SigSignedAt         int64                     `json:"sig_ts,omitempty"`
 	SigVersion          int                       `json:"sig_v,omitempty"`
+	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
+	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

@@ -16,9 +16,12 @@ type SelfFlagAssignment struct {
 }
 
 func (a SelfFlagAssignment) Validate() error {
-	for name, value := range map[string]string{"experiment_id": a.ExperimentID, "flag": a.Flag} {
-		if value == "" || value != strings.TrimSpace(value) || len(value) > 128 {
-			return fmt.Errorf("invalid self-experiment %s", name)
+	for _, field := range []struct{ name, value string }{
+		{"experiment_id", a.ExperimentID},
+		{"flag", a.Flag},
+	} {
+		if field.value == "" || field.value != strings.TrimSpace(field.value) || len(field.value) > 128 {
+			return fmt.Errorf("invalid self-experiment %s", field.name)
 		}
 	}
 	return nil

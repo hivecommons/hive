@@ -633,11 +633,10 @@ type HeartbeatGPUSummary struct {
 }
 
 type HeartbeatPayload struct {
-	SelfExperimentsOptIn bool     `json:"self_experiments_opt_in,omitempty"`
-	HiveID               string   `json:"hive_id"`
-	Org                  string   `json:"org"`
-	Repos                []string `json:"repos"`
-	PrimaryRepo          string   `json:"primary_repo"`
+	HiveID      string   `json:"hive_id"`
+	Org         string   `json:"org"`
+	Repos       []string `json:"repos"`
+	PrimaryRepo string   `json:"primary_repo"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as. Reported
 	// so the hub can echo it back in HeartbeatProjectConfig rather than
 	// blanking it, and so the registry knows each hive's author without any
@@ -1125,6 +1124,8 @@ type HeartbeatPayload struct {
 	// That lets the hub keep liveness/staleness visible without overwriting
 	// agents and health with an old cached copy.
 	FreshAgentStats bool `json:"fresh_agent_stats,omitempty"`
+	// SelfExperimentsOptIn is local consent; absent or false means opted out.
+	SelfExperimentsOptIn bool `json:"self_experiments_opt_in,omitempty"`
 }
 
 const (
@@ -1689,7 +1690,9 @@ func collectFreshStatsWithTimeout(ctx context.Context, collect FreshStatusCollec
 }
 
 // postHeartbeat marshals and POSTs a beat to the hub, records success on
-// acceptance, and decodes the hub's response.
+// acceptance, and decodes the hub's response. It also overlays current local
+// experiment consent and revokes assignments on opt-out before any network I/O;
+// verified response assignments are applied separately by processHeartbeatResponse.
 //
 // Named ...ToHub to avoid colliding with the pkg-local test helper postHeartbeat.
 // Extracted from sendHeartbeat so the MINIMAL liveness beat (no cached payload,
@@ -2627,12 +2630,11 @@ type GatewayConfigCallback func(cfg *HeartbeatGatewayConfig)
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
 type HeartbeatResponse struct {
-	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
-	OK                 bool                     `json:"ok"`
-	UpgradeTo          string                   `json:"upgrade_to,omitempty"`
-	HubGitHash         string                   `json:"hub_git_hash,omitempty"`
-	LatestSHA          string                   `json:"latest_sha,omitempty"`
-	LatestTag          string                   `json:"latest_tag,omitempty"`
+	OK         bool   `json:"ok"`
+	UpgradeTo  string `json:"upgrade_to,omitempty"`
+	HubGitHash string `json:"hub_git_hash,omitempty"`
+	LatestSHA  string `json:"latest_sha,omitempty"`
+	LatestTag  string `json:"latest_tag,omitempty"`
 	// SwitchToTag instructs the spoke to change its own deployment image to
 	// ghcr.io/hivecommons/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has
@@ -2705,6 +2707,8 @@ type HeartbeatResponse struct {
 	SigSeq      int64  `json:"sig_seq,omitempty"`
 	SigSignedAt int64  `json:"sig_ts,omitempty"`
 	SigVersion  int    `json:"sig_v,omitempty"`
+	// SelfExperimentFlag is authoritative: nil/absent withdraws any prior assignment.
+	SelfExperimentFlag *nous.SelfFlagAssignment `json:"self_experiment_flag,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

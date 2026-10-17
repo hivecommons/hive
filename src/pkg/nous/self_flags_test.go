@@ -46,6 +46,9 @@ func TestSelfFlagGate(t *testing.T) {
 }
 
 func TestSelfFlagAssignmentValidation(t *testing.T) {
+	if err := (SelfFlagAssignment{}).Validate(); err == nil || err.Error() != "invalid self-experiment experiment_id" {
+		t.Fatalf("validation order must be stable: %v", err)
+	}
 	for _, a := range []SelfFlagAssignment{
 		{}, {ExperimentID: "exp"}, {Flag: "flag"},
 		{ExperimentID: " exp", Flag: "flag"},
