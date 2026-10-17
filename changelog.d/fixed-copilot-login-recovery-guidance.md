@@ -1,1 +1,1 @@
-Copilot agents stuck at the in-pane login now report the dashboard Copilot Login (device-flow) as the recovery path, and model-discovery self-reports for a missing Copilot credential are attributed to it (#12519, #12529).
+- Copilot agents stuck at the in-pane login now report the dashboard Copilot Login (device-flow) as the recovery path, and model-discovery self-reports for a missing Copilot credential are attributed to it (#12519, #12529).
