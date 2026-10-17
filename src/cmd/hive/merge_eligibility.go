@@ -442,7 +442,11 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	if pr.Draft {
 		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: "draft — mark ready for review to enter the sweep"}, ""
 	}
-	if reason := automergeBlockLabelReason(pr.Labels, hiveAuthoredPR(pr)); reason != "" {
+	// needs-rebase is prow's conflict marker, not a hold: it must reach the
+	// conflict bucket below so the fix lane rebases the PR. Skipping on it
+	// here left every conflicting PR prow had labelled (including adopted
+	// contributor PRs) out of ci-failing.json for good.
+	if reason := automergeBlockLabelReason(pr.Labels, hiveAuthoredPR(pr)); reason != "" && reason != blockLabelNeedsRebase {
 		return mergeBucketSkip, blockedOrOutstanding(reason), ""
 	}
 	// intent.Verdict.BlocksMerge is the one shared refusal predicate; the
@@ -579,6 +583,10 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	return mergeBucketEligible, github.MergeVerdict{State: github.MergeVerdictEligible, Reason: reason}, ""
 }
 
+// blockLabelNeedsRebase is the automergeBlockLabelReason result for prow's
+// needs-rebase label; the classifier routes it to the conflict bucket.
+const blockLabelNeedsRebase = "label:needs-rebase"
+
 func automergeBlockLabelReason(labels []string, trusted bool) string {
 	for _, label := range labels {
 		trimmed := strings.TrimSpace(label)
@@ -589,7 +597,7 @@ func automergeBlockLabelReason(labels []string, trusted bool) string {
 				return "sentinel"
 			}
 		case lower == "needs-rebase":
-			return "label:needs-rebase"
+			return blockLabelNeedsRebase
 		case lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/"):
 			return "label:" + lower
 		case lower == "hold" || strings.Contains(lower, "hold"):

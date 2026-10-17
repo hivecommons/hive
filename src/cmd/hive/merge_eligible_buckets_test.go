@@ -400,6 +400,23 @@ func TestWriteMergeEligible_ConflictedHivePRRoutesToOwnerOrFallback(t *testing.T
 	}
 }
 
+// A conflicting PR prow has labelled needs-rebase must still reach the
+// conflict bucket; the label is the conflict marker, not a hold.
+func TestWriteMergeEligible_NeedsRebaseLabelRoutesToConflictLane(t *testing.T) {
+	dirty := github.PullRequest{
+		Repo: "hive", Number: 12471, Title: "labelled dirty hive PR", CIStatus: "success",
+		Mergeable: github.MergeableNo, MergeableState: "dirty", AppAuthored: true,
+		Labels: []string{"needs-rebase", "agent/scanner"},
+	}
+	eligible, failing := runWriteMergeEligible(t, []github.PullRequest{dirty}, mergeEligibleInputs{org: "hivecommons"})
+	if len(eligible) != 0 || len(failing) != 1 {
+		t.Fatalf("eligible=%+v failing=%+v, want one conflict row", eligible, failing)
+	}
+	if f := failing[0]; !f.Conflict || f.Agent != "scanner" {
+		t.Fatalf("conflict row = %+v, want scanner-owned conflict row", f)
+	}
+}
+
 // Eligible entries carry the fields the merge step and relay compare against:
 // the org-qualified repo, the head SHA (CWE-367 guard), the tri-state
 // mergeability as a string (a bool defaulted every PR to false, #M4), and the
