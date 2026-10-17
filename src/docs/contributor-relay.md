@@ -441,6 +441,45 @@ Two things now hold, from either side of the pane:
 - **The relay sweeps the checkout on every task exit** — completion, failure, revoke, shutdown, headless or interactive — *after* the agent is stopped. If `$HIVE_WORKSPACE_DIR/<owner>/<repo>` is a repository with uncommitted changes (untracked files included), they are set aside with `git stash push --include-untracked -m "hive leftover <task_id> (<repo>#<n>, <exit>)"`, never reset or cleaned: the leftovers are somebody's work, and `git -C <checkout> stash list` shows which task they came from. The sweep is best-effort and never fatal — a git still holding the index lock makes it log and move on — and it runs only against a directory the relay can prove is the task's checkout: `HIVE_WORKSPACE_DIR` must be set explicitly (the relay's own cwd in local mode is *your* hive checkout, and is never swept), and the per-repo directory must itself be a repository.
 - **The assignment prompt tells the agent to look before branching**: run `git status`, stash anything it did not write with `git stash push -u -m "hive leftover"` rather than discard or commit it, confirm the tree is clean, and prefer `git worktree add` for its task branch so the shared checkout is never its working tree. This half covers a contributor whose relay never sees the checkout.
 
+## Contributor repository scope
+
+The generated `contributor.env` may narrow each Hive subscription with
+`HIVE_REPO_SCOPE`. Its comma-separated entries align with `HIVE_HUB` and the
+registration tokens. An absent key or `*` entry preserves legacy unrestricted
+behavior. Otherwise an entry contains semicolon-separated canonical repository
+IDs (`<forge>/<host>/<owner>/<name>`, lower case); an empty entry selects nothing.
+`HIVE_REPO_SCOPE_VERSION` is the projection's nonnegative monotonic integer.
+For example, `HIVE_REPO_SCOPE=*,github/github.com/org/a;github/github.com/org/b`
+leaves the first Hive unrestricted and selects two repositories on the second.
+A blank `HIVE_REPO_SCOPE=` for one Hive selects no repositories.
+
+A scoped subscription requires `repo_scope_v1` in `auth_ok.server_capabilities`.
+The relay sends `repo_scope` with `scope_version`, `mode: "selected"`, and
+`repositories`, and withholds every `ready` until a matching
+`repo_scope_ack` has `accepted: true`. Subsequent `ready` frames carry that
+version. A legacy Hive without the capability is marked `unsupported`, logged
+once, and skipped by Commons rotation. Scope status is recorded per contributor
+in `hubs-seen.json` and displayed by `hivectl hives list`; legacy timestamp
+entries remain readable by the updated CLI. Update the CLI with the relay when
+using scoped profiles, since older CLIs only understand timestamp entries.
+
+`SIGUSR1` reloads the saved projection synchronously and renegotiates changed
+scopes. Moving back to legacy scope on an existing connection sends `mode: "all"`
+and waits for its acknowledgement. Invalid projections withhold all new work.
+An already executing task retains its original Hive lease and credentials.
+Every new assignment, including a `fix-pr` interrupt, is checked against that
+Hive's latest local selection before credentials, CLI execution or local quota
+allowances can change. Scoped assignments need recognizable forge, host and
+repository identity (explicit `forge`/`host` fields, or the existing GitHub task
+URL); unknown or unselected identities are declined with
+`reason: "out_of_contributor_scope"`. The scope-capable hub releases that lease
+and rolls back its assignment allowance without recording a task failure.
+
+Empty or disabled selections everywhere log
+`no repositories selected on any hive — idle`. No strategy falls back to the
+default Hive or to all repositories. Contributor scope only narrows work;
+operator admission, task credentials, trust rules and quotas still apply.
+
 ## Multi-hub subscription
 
 A single relay can subscribe to multiple hives. Register with each hive first, then provide matching comma-separated lists:
