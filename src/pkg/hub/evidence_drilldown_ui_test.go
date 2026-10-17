@@ -48,6 +48,7 @@ func evidenceHarness(t *testing.T) string {
 		countryJSDecl(t, "EVIDENCE_MARGIN_TIP"),
 		countryJSDecl(t, "EVIDENCE_GLOSS_FALSE_APPROVE"),
 		countryJSDecl(t, "EVIDENCE_GLOSS_FALSE_BLOCK"),
+		countryJSDecl(t, "EVIDENCE_CRITERION_STATUSES"),
 		countryJSDecl(t, "EVIDENCE_FINDINGS_ORDER"),
 		countryJSDecl(t, "EVIDENCE_WINDOWS"),
 		countryJSDecl(t, "EVIDENCE_WINDOW_DEFAULT"),
@@ -122,6 +123,8 @@ func evidenceHarness(t *testing.T) string {
 		jsFunc(t, "evidenceWriteCountersSvg"),
 		jsFunc(t, "evidenceWriteCountersPanel"),
 		jsFunc(t, "evidenceShadowPanel"),
+		jsFunc(t, "evidenceCriterionText"),
+		jsFunc(t, "evidenceCriteriaPanel"),
 		jsFunc(t, "evidenceViewHTML"),
 		jsFunc(t, "evidencePanelHTML"),
 	}, "\n")
@@ -310,7 +313,10 @@ func TestEvidencePanelRendersEveryTable(t *testing.T) {
 		"<th title=\"Median of the per-hive median times from PR opened to merged. Not a pooled median: each hive counts once however many PRs it merged.\">Median time-to-merge (median of hive medians)</th>",
 		`<span class="evidence-rate-main">10.0% of 30</span><span class="evidence-rate-margin" title="Margin (95%): the true value is very likely inside this range. Fewer cases, wider range.">margin 3.5% – 25.6%</span></td><td class="evidence-empty">not reported</td></tr>`,
 		"<li>Revert rate by author kind per hive — not reported by any hive build yet.</li>",
-		"<li>Per-axis criteria table — not reported by any hive build yet.</li>",
+		// The per-axis criteria table renders; hives without criteria read
+		// "Not reported", never unmet.
+		`<th class="evidence-sticky-col">Hive</th><th>Axis</th><th>Met</th><th>Unmet</th><th>Not reported</th>`,
+		`<tr><td class="evidence-sticky-col">gamma</td><td colspan="4" class="evidence-empty">Not reported</td></tr>`,
 		"Evidence coverage", "Reviewer confidence", "Autonomy level × outcome",
 		"Same- vs cross-family review", "Per-hive evidence",
 		// Plain labels replace the jargon.
@@ -1060,5 +1066,44 @@ func TestEvidenceLayoutClasses(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("dashboardHTML CSS is missing %q", want)
 		}
+	}
+}
+
+// TestEvidenceCriteriaPanel drives the per-axis criteria table (#12463):
+// criteria sort into met / unmet / not reported per axis, and a hive with no
+// measured criterion is one "Not reported" row with the reason, never unmet.
+func TestEvidenceCriteriaPanel(t *testing.T) {
+	hives := `[
+  {id: 'alpha', criteria: [
+    {axis: 'trust', label: 'Trust', scored: true, criteria: [
+      {name: 'revert_rate', label: 'Revert rate', status: 'met', display: '0.0%', score: 100, good: 'Under 2% reverted.'},
+      {name: 'autonomy', label: 'Autonomy level', status: 'unmet', display: 'L1', score: 0},
+      {name: 'pulse', label: 'Pulse', status: 'not_reported', reason: 'no direct feedback signal exists yet'}]},
+    {axis: 'productivity', label: 'Productivity', scored: false, criteria: [
+      {name: 'relay_7d', label: 'Relay tasks', status: 'not_reported', reason: 'contributor relay not reported'}]}]},
+  {id: 'off', criteria: [
+    {axis: 'trust', label: 'Trust', scored: false, criteria: [
+      {name: 'autonomy', label: 'Autonomy level', status: 'not_reported', reason: 'hive is offline'}]}]}
+]`
+	var html string
+	runEvidenceJS(t, evidenceHarness(t)+"\nresult = evidenceCriteriaPanel("+hives+");", &html)
+	for _, want := range []string{
+		"Per-axis criteria",
+		`<tr><td class="evidence-sticky-col">alpha</td><td>Trust</td><td><span title="Good: Under 2% reverted.">Revert rate (0.0%)</span></td><td><span title="">Autonomy level (L1)</span></td><td><span title="no direct feedback signal exists yet">Pulse</span></td></tr>`,
+		`<tr><td class="evidence-sticky-col"></td><td>Productivity</td><td>—</td><td>—</td><td><span title="contributor relay not reported">Relay tasks</span></td></tr>`,
+		`<tr><td class="evidence-sticky-col">off</td><td colspan="4" class="evidence-empty">Not reported — hive is offline</td></tr>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("criteria panel missing %q\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, "undefined") || strings.Contains(html, "NaN") {
+		t.Errorf("leaked undefined/NaN: %s", html)
+	}
+
+	var empty string
+	runEvidenceJS(t, evidenceHarness(t)+"\nresult = evidenceCriteriaPanel([]);", &empty)
+	if !strings.Contains(empty, "No data reported yet.") {
+		t.Errorf("empty selection: %s", empty)
 	}
 }

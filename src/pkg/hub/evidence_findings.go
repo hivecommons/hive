@@ -343,7 +343,7 @@ func evidenceFindings(v EvidenceView) []string {
 
 // evidenceWaiting lists, in user terms, what the selected hives do not report
 // yet and why. Panels and the time-to-merge column are listed when absent
-// from the view; the three never-emitted items are always listed.
+// from the view; the two never-emitted items are always listed.
 func evidenceWaiting(v EvidenceView) []string {
 	upgrade := "hives report this once upgraded to the " + evidenceUpgradeBuild + " or later"
 	var out []string
@@ -357,7 +357,6 @@ func evidenceWaiting(v EvidenceView) []string {
 		out = append(out, "Shadow gates — shadow mode is off on every selected hive, or none has reported it yet ("+upgrade+").")
 	}
 	out = append(out,
-		"Per-axis criteria table — not reported by any hive build yet.",
 		"CI gate (claim vs verdict) totals — not reported by any hive build yet.")
 	if !evidenceHasTimeToMerge(v) {
 		out = append(out, evidenceWaitingTimeToMerge)

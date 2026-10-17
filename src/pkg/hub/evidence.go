@@ -471,6 +471,11 @@ type EvidenceHive struct {
 	// fleet-panel aggregates) so the drill-down can re-pool a hive / ACMM
 	// level selection client-side (#12370). nil when the hive never reported.
 	Counts *EvidenceHiveCounts `json:"counts,omitempty"`
+	// Criteria is the hive's per-axis criteria table (#12463), derived
+	// hub-side from the quadrant criteria; offline or unscored hives list
+	// every criterion as not reported. It reflects the hive's current
+	// heartbeat, not the selected window.
+	Criteria []EvidenceAxisCriteria `json:"criteria"`
 }
 
 // EvidenceHiveCounts is the raw per-hive evidence behind EvidenceHive's rates.
@@ -821,10 +826,11 @@ func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) Evidence
 	acmm := map[int]*acmmPool{}
 	fleet := newEvidencePool()
 	var covered, mergedTotal int
+	now := time.Now().UTC()
 	for _, h := range hives {
 		out.Spokes++
 		row := EvidenceHive{ID: h.ID, Name: h.Name, Online: h.Online, ACMMLevel: h.ACMMLevel,
-			PRsMerged90d: h.PRsMerged90d, Calibration: []EvidenceRate{}}
+			PRsMerged90d: h.PRsMerged90d, Calibration: []EvidenceRate{}, Criteria: evidenceCriteriaFor(h, now)}
 		e := h.Evidence
 		if e != nil && win.Key != "" {
 			if e = e.Windows[win.Key]; e == nil {

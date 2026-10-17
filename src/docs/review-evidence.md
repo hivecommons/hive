@@ -264,6 +264,30 @@ The client re-pools a hive / level selection by the same rule
 `evidenceLevelTimeToMerge` in `dashboard.html`). Reporting only: nothing reads
 it to decide a merge.
 
+### Per-axis criteria
+
+The **Per-axis criteria** table sits below the findings and the evidence
+tables. For each selected hive it lists the four quadrant axes (Trust ·
+Productivity · Satisfaction · Efficiency) and sorts each axis's criteria into
+**met**, **unmet** and **not reported**. It is derived hub-side from the same
+criteria the Fleet quadrant card scores (`pkg/hub/quadrant_axes.go`), so
+spokes send nothing new. It is served as `hives[].criteria[]` on
+`GET /api/hub/evidence`: one entry per axis (`axis`, `label`, `scored`) with
+its `criteria[]` (`name`, `label`, `status`, and `display` / `score` when
+measured, `reason` when not). Its rules:
+
+- A measured criterion is **met** when its 0–100 score is at least 50, that
+  is, at least halfway from its documented worst value to its documented best
+  (`evidenceCriterionMetScore` in `pkg/hub/evidence_criteria.go`; the curves
+  are in `pkg/hub/quadrant_curve.go`). Below 50 it is **unmet**.
+- A criterion with no input is **not reported**, with the reason. It is never
+  **unmet**.
+- An offline hive, a hive that has not sent an evidence summary, or a hive
+  with no scored axis shows every criterion as **not reported**.
+
+The table reflects each hive's latest heartbeat, not the selected window.
+Reporting only: nothing reads it to decide a merge.
+
 ### Reviewer-confidence ranges
 
 Spokes report calibration as six equal-width heartbeat buckets
