@@ -470,7 +470,7 @@ always resolved server-side from the validated token.
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/nous/status` | Dashboard auth/session | Nous Status | `pkg/dashboard/api.go:438` |
+| `GET` | `/api/nous/status` | Dashboard auth/session | Nous Status — includes `experimentLoop` (`dir`, `lastWriteAt`, `running`, `idleAfterSeconds`): whether the external experiment loop, the only producer of proposals, has written under `/var/run/nous/governor` within 24 evaluation cycles; ready cards then carry `experimentLoopIdle` ([#12541](https://github.com/hivecommons/hive/issues/12541)) | `pkg/dashboard/api.go:438` |
 | `GET` | `/api/nous/ledger` | Dashboard auth/session | Nous Ledger | `pkg/dashboard/api.go:439` |
 | `GET` | `/api/nous/principles` | Dashboard auth/session | Nous Principles | `pkg/dashboard/api.go:440` |
 | `POST` | `/api/nous/approve` | Owner only | Nous Approve | `pkg/dashboard/api.go:441` |

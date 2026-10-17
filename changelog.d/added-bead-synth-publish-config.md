@@ -1,0 +1,1 @@
+- Add owner-only bead-synth repository publishing settings to the knowledge pipeline API, with disabled-by-default publishing and validated path, mode, and cadence; publication itself is not yet implemented.

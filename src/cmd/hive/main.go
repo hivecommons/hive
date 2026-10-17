@@ -3209,6 +3209,8 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 			MaxAPICallsPerCycle: b.cfg.Knowledge.BeadSynthesizer.EffectiveMaxAPICallsPerCycle(),
 		}, b.logger, rawGH)
 
+		b.installBeadSynthPublisher()
+
 		if cleaned, err := b.beadSynth.CleanupVault(); err != nil {
 			b.logger.Warn("vault cleanup failed", "error", err)
 		} else if cleaned > 0 {
@@ -9990,11 +9992,12 @@ func loadNousState(logger *slog.Logger) *dashboard.NousState {
 
 func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string) *dashboard.NousState {
 	state := &dashboard.NousState{
-		Mode:   "observe",
-		Scope:  dashboard.NousScopeRepo,
-		Phase:  "collecting",
-		Status: make(map[string]interface{}),
-		Config: make(map[string]interface{}),
+		Mode:        "observe",
+		Scope:       dashboard.NousScopeRepo,
+		Phase:       "collecting",
+		Status:      make(map[string]interface{}),
+		Config:      make(map[string]interface{}),
+		GovernorDir: governorDir,
 	}
 
 	if ledgerData, err := os.ReadFile(filepath.Join(governorDir, "ledger.json")); err == nil {

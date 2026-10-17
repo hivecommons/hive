@@ -119,6 +119,9 @@ type Options struct {
 	// ContributorNudge receives stage-072 nudges (hivecommons/hive#12436);
 	// nil posts the GitHub comment only.
 	ContributorNudge ContributorNudgeSink
+	// CheckSummary reads a head's check digest for human-stage routing
+	// (hivecommons/hive#12528); nil uses the GitHub client.
+	CheckSummary CheckSummarizer
 }
 
 // Engine owns the automerge sweep policy state.
@@ -174,6 +177,7 @@ type Engine struct {
 	stageTracker     *StageTracker
 	stageStore       *stagelabels.Store
 	contributorNudge ContributorNudgeSink
+	checkSummary     CheckSummarizer
 }
 
 // New returns an automerge sweep engine over a GitHub transport client.
@@ -212,6 +216,7 @@ func New(transport Transport, opts Options) *Engine {
 		stageTracker:                      opts.StageTracker,
 		stageStore:                        opts.StageStore,
 		contributorNudge:                  opts.ContributorNudge,
+		checkSummary:                      opts.CheckSummary,
 		evaluatedHeads:                    make(map[string]string),
 		requiredChecksFallbackWarned:      make(map[string]bool),
 	}
@@ -1366,7 +1371,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	headPushedAt := c.headPushedAt(owner, repo, number, evaluatedHeadSHA, pr)
+	headPushedAt := c.headPushedAt(ctx, owner, repo, number, evaluatedHeadSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, evaluatedHeadSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
@@ -1767,7 +1772,7 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	headPushedAt := c.headPushedAt(owner, repo, number, headSHA, pr)
+	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err
@@ -2044,7 +2049,7 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	headPushedAt := c.headPushedAt(owner, repo, number, headSHA, pr)
+	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err

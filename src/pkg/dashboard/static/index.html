@@ -1755,6 +1755,8 @@
        `min-width: 0` lets a card the operator dragged wider than the
        viewport shrink back to fit instead of overflowing the page. */
     .repo-grid { --repo-cols: 4; --repo-gap: var(--sp-4); display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--repo-gap); }
+    /* The cross-repo filtered view swaps the grid out; display:flex above would otherwise beat the hidden attribute. */
+    .repo-grid[hidden], .swarm-panel[hidden] { display: none; }
     @media (max-width: 1400px) { .repo-grid { --repo-cols: 3; } }
     @media (max-width: 1000px) { .repo-grid { --repo-cols: 2; } }
     @media (max-width: 640px) { .repo-grid { --repo-cols: 1; } }
@@ -2041,6 +2043,10 @@
     .hf-editor-close { margin-left:auto; font-size:var(--fs-sm); }
     .hf-crossrepo { display:flex; flex-direction:column; gap:var(--sp-3); margin-top:var(--sp-3); }
     .hf-crossrepo-head { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; }
+    .hf-crossrepo-all { margin-top:var(--sp-0); border-top:0; padding-top:var(--sp-0); }
+    .hf-crossrepo-head.hf-header { text-transform:none; letter-spacing:normal; font-size:var(--fs-sm); color:var(--fg); }
+    .hf-crossrepo-body { gap:var(--sp-3); margin-top:var(--sp-3); }
+    .hf-crossrepo-body.collapsed { margin-top:0; }
     .hf-crossrepo-title { font-weight:700; }
     .hf-crossrepo-group { border:1px solid var(--border); border-radius:var(--r); padding:var(--sp-2) var(--sp-4); background:var(--card); }
     .hf-crossrepo-group .hf-section { margin-top:var(--sp-0); border-top:0; padding-top:var(--sp-0); }
@@ -3782,6 +3788,7 @@
     .nous-exp-stage { margin-top: var(--sp-2); font-size: var(--fs-sm); color: var(--text); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .nous-exp-stage .nous-exp-stage-label { font-weight: 600; }
     .nous-exp-stage[data-stage="ready"] .nous-exp-stage-label { color: var(--green); }
+    .nous-exp-stage[data-loop-idle="1"] .nous-exp-stage-label { color: var(--yellow); }
     .nous-exp-stage[data-stage="proposed"] .nous-exp-stage-label { color: var(--yellow); }
     .nous-exp-stage[data-stage="running"] .nous-exp-stage-label { color: var(--accent); }
     .nous-exp-stage-detail { color: var(--muted); }
@@ -6175,10 +6182,12 @@
            populated from /api/config at boot. Enforcement lives server-side
            at enumeration — this note only surfaces the active policy. -->
       <div id="repos-issue-filter" style="display:none;font-size:var(--fs-sm);color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-4)"></div>
-      <div id="swarm-panel" class="swarm-panel"></div>
       <!-- Cross-repo filtered view (#12172): opened from a pinned sidebar
            filter; replaces the card grid with one list grouped by repo. -->
       <div id="hf-crossrepo" class="hf-crossrepo" hidden aria-label="Cross-repo filtered view"></div>
+      <!-- Swarm header sits directly above the repo cards it refers to
+           ("start a swarm from any repository card"), below the filtered list. -->
+      <div id="swarm-panel" class="swarm-panel"></div>
       <div class="repo-grid" id="repos"></div>
     </div>
   </div>
@@ -18151,13 +18160,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     /** Sidebar navigation elsewhere (including back to Projects) leaves the cross-repo view. */
     function hfOnNavigate() { if (_hfUI.crossRepo) { _hfUI.crossRepo = false; hfRenderCrossRepo(); hfRenderPinned(); } }
+    const HF_CROSSREPO_SECTION_ID = 'hf-crossrepo-all';
     function hfCrossSectionId(repoFull) { return 'hf-x-' + String(repoFull || '').toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
     function hfRenderCrossRepo() {
       const panel = document.getElementById('hf-crossrepo');
       const grid = document.getElementById('repos');
+      const swarm = document.getElementById('swarm-panel');
       if (!panel) return;
       panel.hidden = !_hfUI.crossRepo;
       if (grid) grid.hidden = !!_hfUI.crossRepo;
+      if (swarm) swarm.hidden = !!_hfUI.crossRepo;
       if (!_hfUI.crossRepo) return;
       const cur = hfCurrent();
       const filter = hfEffectiveFilter(cur.filter);
@@ -18175,9 +18187,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           + `<div class="hf-body${collapsed ? ' collapsed' : ''}" id="${id}-body">${entries.map(e => hfRowHtml(e, filter)).join('')}</div></div></div>`;
       }).join('');
       const name = cur.name + (cur.modified ? ' *' : '');
-      const head = `<div class="hf-crossrepo-head"><span class="hf-crossrepo-title">🔎 ${esc(name)}</span><span class="badge-count"${total === 0 ? ' data-zero' : ''}>${total}</span><span class="hf-muted">across ${repos.length} project${repos.length === 1 ? '' : 's'} — refine with the facet bar above and save to keep the change</span><button type="button" class="hv-btn btn-secondary btn-sm hf-editor-close" data-action="hfCloseCrossRepo" title="Back to the project cards">← Project cards</button></div>`;
+      // The whole list collapses like its per-repo groups do, keyed with the same section-collapse store so it survives reload.
+      const allId = HF_CROSSREPO_SECTION_ID;
+      const allCollapsed = hfSectionCollapsed(allId, total);
+      const head = `<div class="hf-crossrepo-head hf-header" role="button" tabindex="0" aria-expanded="${allCollapsed ? 'false' : 'true'}" aria-controls="${allId}-body" data-action="hfToggleSection" data-keydown-action="hfToggleSection" data-keys="Enter, " data-arg0="${allId}" data-arg-types="s" title="${allCollapsed ? 'Expand' : 'Collapse'} the filtered list"><span class="section-chevron${allCollapsed ? ' collapsed' : ''}">▼</span><span class="hf-crossrepo-title">🔎 ${esc(name)}</span><span class="badge-count"${total === 0 ? ' data-zero' : ''}>${total}</span><span class="hf-muted">across ${repos.length} project${repos.length === 1 ? '' : 's'} — refine with the facet bar above and save to keep the change · collapse with the chevron, or ← Project cards to close (reopen from 📌 ${esc(cur.name)} in the sidebar)</span><button type="button" class="hv-btn btn-secondary btn-sm hf-editor-close" data-action="hfCloseCrossRepo" data-stop="1" title="Close this list and show the project cards again">← Project cards</button></div>`;
       const empty = total === 0 ? `<div class="hf-empty">${hfFilterIsEmpty(filter) ? 'No filter — pick labels, facets or text above' : 'Nothing matches this filter in any project'}</div>` : '';
-      setIfChanged(panel, head + empty + groups);
+      setIfChanged(panel, `<div class="hf-section hf-crossrepo-all${allCollapsed ? ' collapsed' : ''}" id="${allId}" data-hf-count="${total}">${head}<div class="hf-body hf-crossrepo-body${allCollapsed ? ' collapsed' : ''}" id="${allId}-body">${empty}${groups}</div></div>`);
     }
     function hfToggleFacetKinds(value) { hfToggleFacet('kinds', value); }
     function hfToggleFacetStates(value) { hfToggleFacet('states', value); }
@@ -23499,7 +23514,12 @@ function burnAreaChart() {
         else { stage = 'baseline'; label = `collecting baseline ${n} / ${target}`; }
       }
       const detail = c.stageDetail ? `<span class="nous-exp-stage-detail">${escapeHtml(c.stageDetail)}</span>` : '';
-      return `<div class="nous-exp-stage" data-stage="${escapeHtml(stage)}"><span class="nous-exp-stage-label">${escapeHtml(label)}</span>${detail}</div>`;
+      // The hive designs no proposals itself: when the server reports the
+      // external experiment loop idle, point at how to run it (#12541).
+      const loopDocs = c.experimentLoopIdle
+        ? '<a class="nous-exp-stage-docs" href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">How to run the experiment loop</a>'
+        : '';
+      return `<div class="nous-exp-stage" data-stage="${escapeHtml(stage)}"${c.experimentLoopIdle ? ' data-loop-idle="1"' : ''}><span class="nous-exp-stage-label">${escapeHtml(label)}</span>${detail}${loopDocs}</div>`;
     }
 
     const NOUS_PRINCIPLES_EXPLAINER = 'Principles are durable lessons the lab distils from judged experiments (principles.json). A new lab starts at 0 and the count grows as experiments conclude; none are needed to start an experiment.';
@@ -34630,7 +34650,7 @@ function burnAreaChart() {
       { tab: 'Thresholds', section: 'Thresholds', label: 'Delivery SLA targets', key: 'sla.targets', text: 'delivery sla targets sla.targets.start_to_pr_h sla.targets.pr_to_merge_h sla.targets.open_to_merge_h hours sparkline overview stale in-progress' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 connector', key: 'knowledge.connectors', lazy: true, text: 'context7 connector api key env file reference library ids topic validate integrations knowledge.connectors' },
       { tab: 'Knowledge', section: 'Knowledge Integrations', label: 'Context7 auto-import', key: 'knowledge.context7.auto_import', lazy: true, text: 'context7 auto import startup libraries knowledge.context7.auto_import[].id knowledge.context7.auto_import[].query' },
-      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
+      { tab: 'Knowledge', section: 'Knowledge pipeline', label: 'Bead synthesizer, curator, code maps and primer', key: 'knowledge.bead_synthesizer.enabled', lazy: true, text: 'knowledge pipeline bead synthesizer wiki facts schedule hourly daily confidence target layer facts per cycle api calls vault retention archive beads high priority dependents curator auto promote threshold promotion from to code maps repository layer max bytes primer facts merge strategy engine public read-only mcp knowledge.engine knowledge.public.enabled knowledge.bead_synthesizer.enabled knowledge.bead_synthesizer.schedule knowledge.bead_synthesizer.min_confidence knowledge.bead_synthesizer.target_layer knowledge.bead_synthesizer.max_facts_per_cycle knowledge.bead_synthesizer.max_api_calls_per_cycle knowledge.bead_synthesizer.vault_path publish to repository knowledge.bead_synthesizer.publish.enabled knowledge.bead_synthesizer.publish.repo knowledge.bead_synthesizer.publish.path knowledge.bead_synthesizer.publish.base_branch knowledge.bead_synthesizer.publish.mode knowledge.bead_synthesizer.publish.cadence knowledge.bead_synthesizer.retention_policy.max_beads knowledge.bead_synthesizer.retention_policy.archive_after_synth_days knowledge.bead_synthesizer.retention_policy.high_priority_retain_days knowledge.bead_synthesizer.retention_policy.preserve_with_deps knowledge.curator.enabled knowledge.curator.schedule knowledge.curator.auto_promote_threshold knowledge.curator.promote_from knowledge.curator.promote_to knowledge.code_maps.enabled knowledge.code_maps.schedule knowledge.code_maps.layer knowledge.code_maps.max_bytes knowledge.code_maps.vault_path knowledge.primer.max_facts knowledge.primer.max_bytes knowledge.primer.merge_strategy' },
       { tab: 'Forge App', section: 'Forge App', label: 'GitHub API quota, PR scans and authorship', key: 'github.api_reserve', lazy: true, text: 'github api quota reserve critical agent reserve floor pr detail cache ttl graphql batch page size app authored prs bot signed commits forge api url docs installation oauth client token github.api_reserve github.api_critical github.agent_reserve_floor github.pr_detail_ttl_s github.graphql_pr_batch github.graphql_pr_batch_page_size github.app_authored_prs github.app_signed_commits github.forge github.api_url github.docs_installation_id github.oauth_client_id github.token github.key_file' },
     ];
     let _settingsSearch = { active: false, query: '', previousTab: '', index: null, bound: false };
@@ -36082,6 +36102,23 @@ function burnAreaChart() {
             <span class="config-toggle-label">${esc(label)} ${yamlHint(path)} ${mark(label, tip)} <span class="text-muted">— ${help}${live ? ' Applies without a restart.' : restart}</span></span>
           </div>`;
       const roRow = (label, path, value, fallback) => `<div class="config-field"><label>${esc(label)} ${yamlHint(path)}</label><div class="fs-sm break-all">${value ? '<code>' + esc(String(value)) + '</code>' : '<span class="text-muted">' + esc(fallback) + '</span>'} <span class="text-muted">— set in hive.yaml; requires restart</span></div></div>`;
+      const pub = bs.publish || {};
+      const directCommitOK = Number((window._lastStatus && window._lastStatus.acmmLevel) || 0) >= 5;
+      const pubText = (id, label, path, value, placeholder, help) => `
+          <div class="config-field">
+            <label for="kp-${id}">${esc(label)} ${yamlHint(path)}</label>
+            <input id="kp-${id}" type="text" value="${esc(String(value || ''))}" placeholder="${esc(placeholder)}" ${dis}>
+            <div class="config-help">${help}${restart}</div>
+          </div>`;
+      const pubModes = directCommitOK ? ['pr', 'commit'] : ['pr'];
+      const pubModeField = `
+          <div class="config-field">
+            <label for="kp-pub-mode">Mode ${yamlHint('knowledge.bead_synthesizer.publish.mode')}</label>
+            <select id="kp-pub-mode" ${directCommitOK ? dis : 'disabled'}>
+              ${pubModes.map(v => `<option value="${v}" ${(directCommitOK ? pub.mode : 'pr') === v ? 'selected' : ''}>${v === 'pr' ? 'Pull request' : 'Direct commit'}</option>`).join('')}
+            </select>
+            <div class="config-help">${directCommitOK ? 'Pull request opens a PR for review; direct commit pushes to the base branch.' : 'Pull request only: this hive\'s policy level does not allow direct commits to the base branch.'}${restart}</div>
+          </div>`;
       const schedules = d.schedules || ['hourly', 'daily'];
       const layers = d.layers || ['personal', 'project', 'org', 'community'];
       return `
@@ -36098,6 +36135,17 @@ function burnAreaChart() {
             ${num('bs-max_api_calls_per_cycle', 'Max GitHub API calls per cycle', 'knowledge.bead_synthesizer.max_api_calls_per_cycle', bs.max_api_calls_per_cycle, def.bead_synthesizer_max_api_calls_per_cycle || 40, '1', '', 'Cap on charged PR GETs per cycle; HIVE_BEAD_SYNTH_MAX_API_CALLS still overrides.', 'Cap on charged GitHub PR GETs per synthesis cycle. PR reads are conditional, so a 304 reuses the cached PR and does not count. The HIVE_BEAD_SYNTH_MAX_API_CALLS environment variable overrides this. 0 restores the default (40).')}
           </div>
           ${roRow('Vault path', 'knowledge.bead_synthesizer.vault_path', bs.vault_path, 'default ' + (def.bead_synthesizer_vault_path || ''))}
+          <div class="settings-subsection-title mt-4">Publish to repository</div>
+          ${toggle('pub-enabled', 'Publish synthesized facts to a repository', 'knowledge.bead_synthesizer.publish.enabled', pub.enabled, 'off by default; only owners can change this.', false, 'Opt in to committing synthesized wiki facts into a repository path. Disabled unless you turn it on.')}
+          <div class="config-field-row">
+            ${pubText('pub-repo', 'Target repository', 'knowledge.bead_synthesizer.publish.repo', pub.repo, 'Default (hive primary repository)', 'owner/name. Empty uses the hive primary repository.')}
+            ${pubText('pub-path', 'Path', 'knowledge.bead_synthesizer.publish.path', pub.path, 'docs/knowledge/', 'Relative directory in the repository, no .. components.')}
+            ${pubText('pub-base_branch', 'Base branch', 'knowledge.bead_synthesizer.publish.base_branch', pub.base_branch, 'Default (repository default branch)', 'Branch the PR targets or the commit lands on.')}
+          </div>
+          <div class="config-field-row">
+            ${pubModeField}
+            ${choice('pub-cadence', 'Cadence', 'knowledge.bead_synthesizer.publish.cadence', pub.cadence, ['per_run', 'daily'], 'Default (per_run)', 'How often facts are published.', 'per_run publishes after each synthesis cycle; daily batches them once a day. Empty restores the default (per_run).')}
+          </div>
           <div class="settings-subsection-title mt-4">Bead retention</div>
           <div class="config-field-row">
             ${num('rp-max_beads', 'Max beads', 'knowledge.bead_synthesizer.retention_policy.max_beads', rp.max_beads, 5000, '1', '', 'Archiving starts above this many beads.', 'The bead lifecycle manager archives the lowest-scored beads once a store holds more than this, down to 80% of it. 0 uses the default (5000).')}
@@ -36150,6 +36198,7 @@ function burnAreaChart() {
       const d = _kpState.data || {};
       const cur = {
         bead_synthesizer: d.bead_synthesizer || {},
+        publish: (d.bead_synthesizer || {}).publish || {},
         retention_policy: (d.bead_synthesizer || {}).retention_policy || {},
         curator: d.curator || {},
         code_maps: d.code_maps || {},
@@ -36162,6 +36211,12 @@ function burnAreaChart() {
         ['bead_synthesizer', 'min_confidence', 'bs-min_confidence', 'frac'],
         ['bead_synthesizer', 'max_facts_per_cycle', 'bs-max_facts_per_cycle', 'int'],
         ['bead_synthesizer', 'max_api_calls_per_cycle', 'bs-max_api_calls_per_cycle', 'int'],
+        ['publish', 'enabled', 'pub-enabled', 'bool'],
+        ['publish', 'repo', 'pub-repo', 'str'],
+        ['publish', 'path', 'pub-path', 'str'],
+        ['publish', 'base_branch', 'pub-base_branch', 'str'],
+        ['publish', 'mode', 'pub-mode', 'str'],
+        ['publish', 'cadence', 'pub-cadence', 'str'],
         ['retention_policy', 'max_beads', 'rp-max_beads', 'int'],
         ['retention_policy', 'archive_after_synth_days', 'rp-archive_after_synth_days', 'int'],
         ['retention_policy', 'high_priority_retain_days', 'rp-high_priority_retain_days', 'int'],
@@ -36180,10 +36235,10 @@ function burnAreaChart() {
       ];
       const body = {};
       const put = (group, key, v) => {
-        if (group === 'retention_policy') {
+        if (group === 'retention_policy' || group === 'publish') {
           body.bead_synthesizer = body.bead_synthesizer || {};
-          body.bead_synthesizer.retention_policy = body.bead_synthesizer.retention_policy || {};
-          body.bead_synthesizer.retention_policy[key] = v;
+          body.bead_synthesizer[group] = body.bead_synthesizer[group] || {};
+          body.bead_synthesizer[group][key] = v;
         } else {
           body[group] = body[group] || {};
           body[group][key] = v;

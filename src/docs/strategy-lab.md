@@ -34,8 +34,8 @@ Nous state lives in three places, none of which is `hive.yaml`:
 
 | What | Where | Written by |
 |---|---|---|
-| Experiment ledger | `/var/run/nous/governor/ledger.json` | experiment loop, read at boot (the path is historical; it holds repo experiments) |
-| Learned principles | `/var/run/nous/governor/principles.json` | experiment loop, read at boot |
+| Experiment ledger | `/var/run/nous/governor/ledger.json` | the external [experiment loop](#the-experiment-loop) only, read at boot (the path is historical; it holds repo experiments) |
+| Learned principles | `/var/run/nous/governor/principles.json` | the external [experiment loop](#the-experiment-loop) only, read at boot |
 | Hive state snapshots | `/data/nous/snapshots/*.json` | one file per evaluation cycle, via `NousState.RecordSnapshot` → `pkg/hivestate`; see [Hive state time series](#hive-state-time-series) |
 | Experiment campaigns | `/data/nous/campaigns.json` | `pkg/nous` campaign store (file version 2), written by `POST/PATCH /api/nous/campaigns`, when the research question changes, or `POST /api/nous/campaign/start`; see [Campaigns and the per-campaign baseline](#campaigns-and-the-per-campaign-baseline) |
 | Mode, goals, output mode, repo targets, fast-fail bounds, schedule | in-memory `NousState.Config`, set via `PUT /api/nous/config/*` | dashboard config dialog or direct API calls |
@@ -179,6 +179,7 @@ gone):
 | `baseline` | *collecting baseline N / 672* | snapshots accumulating, one per evaluation cycle |
 | `ready` + `nextAction: generate_proposals` | *ready — generate proposals* with a single **Generate proposals** button | pressing it sets the trust-ladder mode to `suggest` (`PUT /api/nous/mode`) — the mode knob stays as the safety gate but is no longer something to discover |
 | `ready` (mode already `suggest`/`evolve`) | *ready — generating proposals* | the external experiment loop writing a proposal to the ledger |
+| `ready` + `experimentLoopIdle: true` (mode `suggest`/`evolve`) | *ready — the experiment loop is not running on this hive*, with a link to these docs | deploying the [experiment loop](#the-experiment-loop); the card returns to *generating proposals* as soon as the loop writes under `/var/run/nous/governor` |
 | `proposed` | *proposals awaiting your review* | Apply / Reject under Pending Proposal |
 | `running` | *running* | the experiment's phases completing |
 | `concluded` | *concluded* | archive, or let the lab propose more |
@@ -187,8 +188,10 @@ gone):
 Note that the hive process itself designs no proposals: `PUT /api/nous/mode`
 records the operator's trust level, and proposals, ledger rows and principles
 arrive from the experiment loop that writes the files in
-[State and storage](#state-and-storage) — on a hive without that loop a
-ready card waits indefinitely
+[State and storage](#state-and-storage). On a hive without that loop a ready
+card in Suggest/Evolve mode says so after `NousLoopIdleCycles` evaluation
+cycles instead of waiting indefinitely — see
+[The experiment loop](#the-experiment-loop)
 ([#12541](https://github.com/hivecommons/hive/issues/12541) tracks an
 in-process designer). `GET /api/nous/status` reports the
 **live** mode (an earlier bug kept echoing the boot-time `observe`).
@@ -197,6 +200,63 @@ in-process designer). `GET /api/nous/status` reports the
 from judged experiments into `principles.json`. A new lab legitimately shows
 0; none are needed to start an experiment, and the count grows as experiments
 conclude.
+
+### The experiment loop
+
+**The experiment loop is the sole producer of proposals, ledger rows and
+principles.** The hive binary contains no proposal designer: `PUT
+/api/nous/mode` only records the trust level, and nothing in-process consumes
+it. The loop is a separate component made of:
+
+- the external Nous strategy-evolution framework, cloned at a reviewed pin
+  into `/opt/nous` by `bin/nous-install.sh`;
+- `bin/nous-runner.sh`, which runs one `run_campaign.py` iteration per call
+  for the scope and mode in `/etc/hive/nous-campaign.yaml` and keeps its work
+  directory under `/var/run/nous/<scope>/` (`/var/run/nous/governor/state.json`
+  for the governor scope);
+- `bin/nous-hive-gate.py`, which posts design/findings gates to
+  `PUT /api/nous/gate-decision` and polls `GET /api/nous/gate-response`;
+- `bin/nous-sync.py`, which post-processes principles and recommendations.
+
+**File contract.** The hive reads exactly two files written by the loop, from
+`/var/run/nous/governor/` (`loadNousStateFromPaths` in `cmd/hive/main.go`),
+**once at boot** — restart the hive to pick up new rows:
+
+| File | Shape the hive parses |
+|---|---|
+| `ledger.json` | `{"iterations": [ {…}, … ]}`; each row's `type`/`status` (`pending`, `active`, `completed`, `judged`, …), `id`, `title`, `hypothesis`, `repo` and a start time (`started_at`, `ts`, …) drive the experiment rows and card stages; `dry_run` rows are ignored |
+| `principles.json` | `{"principles": [ {"id", "statement", "confidence": "high"\|"medium"\|"low", "category"} ]}` |
+
+Note that `bin/nous-sync.py` writes `principles.json` and `ledger.jsonl` at
+the top of `NOUS_RUN_DIR` (default `/var/run/nous`), not under
+`/var/run/nous/governor/`, so its output is not what the hive reads unless
+it is placed at the paths above.
+
+**Liveness.** On every `GET /api/nous/status` the hive takes the newest
+modification time of the regular files directly under
+`/var/run/nous/governor/` and reports it as the `experimentLoop` block
+(`dir`, `lastWriteAt`, `running`, `idleAfterSeconds`). The loop counts as
+running when that write is at most `NousLoopIdleCycles` (24) governor
+evaluation cycles old — `24 × governor.eval_interval_s`, 2 h at the default
+300 s. When it is not, every ready card in Suggest/Evolve mode carries
+`experimentLoopIdle: true` and reads *ready — the experiment loop is not
+running on this hive*. Only writes under `/var/run/nous/governor/` count,
+because that is the only loop output the hive reads: a loop that writes
+solely elsewhere (for example the repo-scope work directory
+`/var/run/nous/repo/`) produces nothing the lab can show and is reported as
+not running.
+
+**Deploying it.** The container image copies the four scripts to
+`/tmp/hive/bin/`, the example campaign files
+(`examples/kubestellar/nous-*.yaml`) to `/etc/hive/`, and creates
+`/var/run/nous/governor`, `/var/run/nous/repo`, `/data/nous/snapshots` and
+`/opt/nous` (`src/Dockerfile`). It does **not** run `nous-install.sh` or
+schedule the runner. The only driver in this repository is an agent policy
+that runs `bash /tmp/hive/bin/nous-runner.sh` on every kick — see the
+strategist example in `examples/kubestellar/agents/strategist.md`. Beyond
+that, deploying the loop on a stock install (installing the framework,
+choosing which agent runs it and how often) is **not documented in this
+repository**; anything that honours the file contract above works.
 
 ## Experiment lifecycle
 
@@ -366,8 +426,11 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 4. The question appears as an experiment card at 0 / 672. When its baseline
    is complete the card reads *ready — generate proposals*; press **Generate
    proposals** (equivalent to `PUT /api/nous/mode {"mode": "suggest"}`).
-   Review each proposal that appears under "Pending Proposal" and Apply or
-   Reject it. Add further questions with **+ New experiment**, each scoped
+   Proposals appear only if the external
+   [experiment loop](#the-experiment-loop) runs on this hive; if the card
+   instead reads *ready — the experiment loop is not running on this hive*,
+   deploy the loop first. Review each proposal that appears under "Pending
+   Proposal" and Apply or Reject it. Add further questions with **+ New experiment**, each scoped
    to its own repos.
 5. Only move to `evolve` once you're comfortable with the proposals Nous has
    made in `suggest` mode — `evolve` runs approved-pattern experiments without
@@ -375,6 +438,9 @@ mutating endpoints return `404 nous not configured`. The dashboard treats
 
 ## What does not exist today
 
+- No in-process proposal designer — proposals, ledger rows and principles
+  come only from the external [experiment loop](#the-experiment-loop)
+  ([#12541](https://github.com/hivecommons/hive/issues/12541)).
 - No `nous:` key in `hive.yaml` or `hive.yaml.example` — do not add one to an
   operator's config expecting it to be read; it is ignored.
 - No persistence of the `goals`/`output`/`fast_fail`/`schedule` config

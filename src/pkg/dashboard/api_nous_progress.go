@@ -24,6 +24,17 @@ type nousBaselineProgress struct {
 	Retention           string   `json:"retention"`
 }
 
+// nousExperimentLoopView is the experimentLoop block of GET /api/nous/status
+// (#12541): whether the external experiment loop — the only producer of
+// proposals, ledger rows and principles — has written to its directory
+// within NousLoopIdleCycles evaluation cycles.
+type nousExperimentLoopView struct {
+	Dir              string `json:"dir"`
+	LastWriteAt      string `json:"lastWriteAt,omitempty"`
+	Running          bool   `json:"running"`
+	IdleAfterSeconds int    `json:"idleAfterSeconds"`
+}
+
 type nousExperimentProgress struct {
 	ID                   string                 `json:"id"`
 	Title                string                 `json:"title,omitempty"`
@@ -110,6 +121,16 @@ func (s *Server) addNousProgressStatus(status map[string]interface{}, config map
 	if s != nil && s.deps.Config != nil && s.deps.Config.Governor.EvalIntervalS > 0 {
 		eval = s.deps.Config.Governor.EvalIntervalS
 	}
+	loopIdle := false
+	if ns != nil && ns.GovernorDir != "" {
+		loop := nousExperimentLoopView{Dir: ns.GovernorDir, IdleAfterSeconds: NousLoopIdleCycles * eval}
+		if last := ns.ExperimentLoopLastWrite(); !last.IsZero() {
+			loop.LastWriteAt = last.Format(time.RFC3339)
+			loop.Running = nousNow().Sub(last) <= time.Duration(loop.IdleAfterSeconds)*time.Second
+		}
+		loopIdle = !loop.Running
+		status["experimentLoop"] = loop
+	}
 	remaining := NousBaselineTarget - count
 	if remaining < 0 {
 		remaining = 0
@@ -137,13 +158,13 @@ func (s *Server) addNousProgressStatus(status map[string]interface{}, config map
 	if c, ok := status["campaign"].(nousCampaignView); ok {
 		c.Experiments = nousCountForCampaign(experiments, c.ID)
 		c.Principles = len(principles)
-		nousCampaignStage(&c, mode, experiments)
+		nousCampaignStage(&c, mode, experiments, loopIdle)
 		status["campaign"] = c
 	}
 	if views, ok := status["campaigns"].([]nousCampaignView); ok {
 		status["principlesExplainer"] = NousPrinciplesExplainer
 		for i := range views {
-			nousCampaignStage(&views[i], mode, experiments)
+			nousCampaignStage(&views[i], mode, experiments, loopIdle)
 			if views[i].Status == nous.StatusArchived {
 				continue
 			}

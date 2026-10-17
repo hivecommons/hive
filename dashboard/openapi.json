@@ -3483,7 +3483,7 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode)."
+                        "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode), experimentLoopIdle (true on a ready card in suggest/evolve mode when the external experiment loop has written nothing for NousLoopIdleCycles evaluation cycles)."
                       },
                       "description": "All campaigns — running, paused and archived — in id order."
                     },
@@ -3498,6 +3498,29 @@
                     "principlesExplainer": {
                       "type": "string",
                       "description": "What the Principles tile counts and how it grows; present when campaigns are enabled."
+                    },
+                    "experimentLoop": {
+                      "type": "object",
+                      "description": "Liveness of the external experiment loop, the only producer of proposals, ledger rows and principles; present when the governor directory is configured.",
+                      "properties": {
+                        "dir": {
+                          "type": "string",
+                          "example": "/var/run/nous/governor"
+                        },
+                        "lastWriteAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "Newest modification time of a file directly under dir; omitted when nothing was ever written."
+                        },
+                        "running": {
+                          "type": "boolean",
+                          "description": "True when lastWriteAt is at most idleAfterSeconds old."
+                        },
+                        "idleAfterSeconds": {
+                          "type": "integer",
+                          "description": "NousLoopIdleCycles (24) times the governor evaluation interval."
+                        }
+                      }
                     },
                     "activeExperiment": {
                       "type": "object",
@@ -18812,7 +18835,7 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode)."
+                        "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode), experimentLoopIdle (true on a ready card in suggest/evolve mode when the external experiment loop has written nothing for NousLoopIdleCycles evaluation cycles)."
                       }
                     },
                     "target": {
@@ -18895,7 +18918,7 @@
                     },
                     "campaign": {
                       "type": "object",
-                      "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode)."
+                      "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode), experimentLoopIdle (true on a ready card in suggest/evolve mode when the external experiment loop has written nothing for NousLoopIdleCycles evaluation cycles)."
                     }
                   }
                 }
@@ -18938,7 +18961,7 @@
                     },
                     "conflict": {
                       "type": "object",
-                      "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode)."
+                      "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode), experimentLoopIdle (true on a ready card in suggest/evolve mode when the external experiment loop has written nothing for NousLoopIdleCycles evaluation cycles)."
                     }
                   }
                 }
@@ -19026,7 +19049,7 @@
                     },
                     "campaign": {
                       "type": "object",
-                      "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode)."
+                      "description": "A campaign: id, question, hypothesis, status (active|paused|archived), startedAt, endedAt, snapshots (observed since start), target (672), percent, complete, targetExplainer (\"≈ 7 days of observations (4/hour)\"), experiments, principles, results, scope {repos, intervention, tags, hiveWide}, and the lifecycle stage: stage (baseline|ready|proposed|running|concluded|paused), stageLabel, stageDetail, nextAction (\"generate_proposals\" when the baseline is complete but the lab is still in observe mode), experimentLoopIdle (true on a ready card in suggest/evolve mode when the external experiment loop has written nothing for NousLoopIdleCycles evaluation cycles)."
                     }
                   }
                 }

@@ -1,0 +1,1 @@
+- Documented the `knowledge.bead_synthesizer.publish` repository-publish block (every field, default paths, PR-only policy for ACMM L<=4 hives) in the knowledge-curator and operator-reference pages and `hive.yaml.example`.

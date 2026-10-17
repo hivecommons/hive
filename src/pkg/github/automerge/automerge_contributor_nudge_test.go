@@ -244,6 +244,14 @@ func TestNudgeDiagnosisAndDue(t *testing.T) {
 	if !reflect.DeepEqual(asks, []string{"something-else"}) {
 		t.Fatalf("asks=%v", asks)
 	}
+	checks, asks, _ = nudgeDiagnosis("optional-check-failing:links", stageDetail{RedChecks: []string{"Playwright", "links"}})
+	if !reflect.DeepEqual(checks, []string{"Playwright", "links"}) || asks != nil {
+		t.Fatalf("red optional: %v %v", checks, asks)
+	}
+	checks, _, _ = nudgeDiagnosis("optional-check-failing:links", stageDetail{})
+	if !reflect.DeepEqual(checks, []string{"links"}) {
+		t.Fatalf("red optional without detail: %v", checks)
+	}
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	if _, ok := nudgeDue(stagelabels.Record{}, "", time.Hour, now); ok {
 		t.Fatal("empty head due")

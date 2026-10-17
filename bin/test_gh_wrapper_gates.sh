@@ -664,8 +664,9 @@ assert_author "#6908 an authorless search is still allowed" \
 
 # ── #12545: routing/provenance labels only on the hive's OWN PRs ─────────────
 #
-# `agent/<lane>` routes work (prOwningLane, classifier) and `hive/<id>` claims
-# authorship. The pr edit fall-through, pr merge and pr comment arms stamped
+# `agent/<lane>` routes work (prOwningLane, classifier); the `hive/<id>`
+# provenance label it used to ride with is retired (#12539), so the injected
+# label set is agent/<lane> alone. The pr edit fall-through, pr merge and pr comment arms stamped
 # both onto any PR the agent touched: a review-fix kick (review.fix_human_prs)
 # ran `gh pr edit 12495 --body …` on a contributor's PR and the scanner
 # "owned" it. The wrapper must look the PR's author up and compare it with
@@ -718,11 +719,11 @@ run_owner_wrapper() {
 
 # Self-authored PR: labels still injected (the existing behaviour is kept).
 result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr edit 5 --repo owner/repo --body b)"
-if [[ "$result" == exit=0* && "$result" == *"pr edit 5 --repo owner/repo --body b --add-label agent/testagent,hive/hive-test|"* ]]; then
-  echo "  PASS: pr edit on a self-authored PR still injects agent/ + hive/ labels"
+if [[ "$result" == exit=0* && "$result" == *"pr edit 5 --repo owner/repo --body b --add-label agent/testagent|"* ]]; then
+  echo "  PASS: pr edit on a self-authored PR still injects the agent/ label"
   PASS=$((PASS + 1))
 else
-  echo "  FAIL: pr edit on a self-authored PR still injects agent/ + hive/ labels"
+  echo "  FAIL: pr edit on a self-authored PR still injects the agent/ label"
   echo "        got '$result'"
   FAIL=$((FAIL + 1))
 fi
@@ -776,7 +777,7 @@ else
   FAIL=$((FAIL + 1))
 fi
 result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr merge 5 --repo owner/repo --squash)"
-if [[ "$result" == *"pr edit 5 --repo owner/repo --add-label agent/testagent,hive/hive-test|"* ]]; then
+if [[ "$result" == *"pr edit 5 --repo owner/repo --add-label agent/testagent|"* ]]; then
   echo "  PASS: pr merge on a self-authored PR still stamps routing labels"
   PASS=$((PASS + 1))
 else
@@ -789,7 +790,7 @@ rm -f "${WORK}/merge-eligible.json"
 
 # Issues are unaffected: the lane routing label on an issue is intended.
 result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- issue edit 42 --repo owner/repo --title t)"
-if [[ "$result" == exit=0* && "$result" == *"issue edit 42 --repo owner/repo --title t --add-label agent/testagent,hive/hive-test|"* ]]; then
+if [[ "$result" == exit=0* && "$result" == *"issue edit 42 --repo owner/repo --title t --add-label agent/testagent|"* ]]; then
   echo "  PASS: issue edit still injects the lane routing label"
   PASS=$((PASS + 1))
 else
