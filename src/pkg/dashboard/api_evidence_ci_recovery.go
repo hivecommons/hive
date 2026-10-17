@@ -36,9 +36,12 @@ var ciRecoveryPath = "/data/hive-metrics/ci-recovery.json"
 const (
 	// ciRecoveryRefresh bounds GitHub calls: at most one enrichment pass per
 	// hour, ciRecoveryMaxPerPass PRs per pass (each PR costs one PR GET, one
-	// commit list and up to prCITrailMaxHeads check summaries).
+	// commit list and up to prCITrailMaxHeads + PRCIConvergenceCap check
+	// summaries; the REST budget reserve sheds the pass under pressure). A
+	// busy hive merges a few hundred PRs a day, so the gate read catches up
+	// within a day and stays current.
 	ciRecoveryRefresh    = time.Hour
-	ciRecoveryMaxPerPass = 20
+	ciRecoveryMaxPerPass = 40
 	// ciRecoveryLookback is how far back (by PR open time) the collector
 	// looks for red-at-claim agent PRs to enrich.
 	ciRecoveryLookback = 60 * 24 * time.Hour
@@ -293,15 +296,38 @@ type EvidenceCIGate struct {
 	// Green is merged with every check green (required checks present when
 	// the policy names any).
 	Green int `json:"green"`
-	// Breaches is merged with a red check, or with a required check missing;
-	// each is listed so a reader can open it.
+	// Breaches is merged with a REQUIRED check red or missing, as the hive's
+	// own merge gate judges (branch-protection / configured required set),
+	// confirmed by GitHub's check-run conclusions on the merged head; each
+	// is listed so a reader can open it. A red check outside the required
+	// set never blocks the gate and is not a breach (see NonRequiredRed).
 	Breaches  int                    `json:"breaches"`
 	BreachPRs []EvidenceCIGateBreach `json:"breach_prs,omitempty"`
+	// NonRequiredRed is how many of Green merged with a failed check that
+	// the gate does not require (a docs link check, an optional build).
+	// Disclosed so the reader can see what "green" leaves out.
+	NonRequiredRed int `json:"non_required_red"`
+	// RequiredUnknown is merged PRs read from GitHub without a resolvable
+	// required set (judged on every check instead). Disclosed.
+	RequiredUnknown int `json:"required_unknown"`
+	// Suspected is merged PRs that read red or missing-required without
+	// confirmation: a review-time bundle snapshot that was red on the merged
+	// head (a check can be re-run to green on the same head after it), a
+	// required check GitHub shows no run for (the merge gate accepts a
+	// path-filtered skip; this panel cannot verify one), or a red read under
+	// an unresolved required set (may be an optional check). Disclosed, in
+	// no rate, enriched first.
+	Suspected    int                    `json:"suspected"`
+	SuspectedPRs []EvidenceCIGateBreach `json:"suspected_prs,omitempty"`
 	// Pending is merged while a check was still running: not green, not a
 	// red breach; disclosed, in no rate.
 	Pending int `json:"pending"`
-	// Unknown is merged PRs with no recorded merge-time checks and no trail.
+	// Unknown is merged PRs with no snapshot on the merged head and no trail
+	// (the newest reviewed head is often not the head that merged).
 	Unknown int `json:"unknown"`
+	// GreenFromBundles is how many of Green rest on a bundle snapshot rather
+	// than GitHub; a re-run cannot turn a green head red, so they count.
+	GreenFromBundles int `json:"green_from_bundles"`
 	// Gate cost: median hours from the first green on the merged head to the
 	// merge, over merged PRs where both times are known.
 	GreenToMergeN           int      `json:"green_to_merge_n"`
@@ -316,8 +342,12 @@ type EvidenceCIGateBreach struct {
 	Author   string    `json:"author_kind"`
 	State    string    `json:"state"` // red or missing_required
 	Missing  []string  `json:"missing,omitempty"`
+	Red      []string  `json:"red,omitempty"`
 	MergedAt time.Time `json:"merged_at"`
-	Source   string    `json:"source"` // bundle or github
+	// MergedBy is the login that merged it (GitHub-sourced only): a breach
+	// is a bypass by whoever merged, not a fault of the PR's author.
+	MergedBy string `json:"merged_by,omitempty"`
+	Source   string `json:"source"` // bundle or github
 }
 
 // gateMerge is a merged PR's merge-time check state as the bundles know it.
@@ -333,16 +363,25 @@ type gateMerge struct {
 	greenAt    time.Time // first time a live record saw the merged head green
 }
 
-// evidenceGateMerges folds every merged PR's live records into the check
-// state of the head that merged: the merging record's head, read from the
-// newest live snapshot for that head.
+// evidenceGateMerges folds every merged PR's records into the check state
+// of the head that merged. The merged head is the backfilled record's head
+// (GitHub's view of the PR) when one exists, else the newest live head; the
+// state is the newest live snapshot for that head, or none when no live
+// record saw it (a review-time record often predates the final push).
 func evidenceGateMerges(bundles []*evidence.Bundle, prs map[string]*evidence.PR) map[string]*gateMerge {
 	byPR := map[string][]*evidence.Bundle{}
+	mergedHead := map[string]string{}
 	for _, b := range bundles {
-		if b == nil || b.Backfilled {
+		if b == nil {
 			continue
 		}
 		k := evidence.PRKey(b.Repo, b.Number)
+		if b.Backfilled || b.Backfill != nil {
+			if b.HeadSHA != "" {
+				mergedHead[k] = b.HeadSHA
+			}
+			continue
+		}
 		byPR[k] = append(byPR[k], b)
 	}
 	out := map[string]*gateMerge{}
@@ -353,11 +392,7 @@ func evidenceGateMerges(bundles []*evidence.Bundle, prs map[string]*evidence.PR)
 		g := &gateMerge{key: k, repo: p.Repo, number: p.Number, authorKind: string(p.Author.Kind), openedAt: p.OpenedAt, mergedAt: p.Merge.At, state: evidenceCINone}
 		bs := byPR[k]
 		sort.SliceStable(bs, func(i, j int) bool { return bs[i].CreatedAt.Before(bs[j].CreatedAt) })
-		for _, b := range bs {
-			if b.Merge != nil {
-				g.head = b.HeadSHA
-			}
-		}
+		g.head = mergedHead[k]
 		if g.head == "" && len(bs) > 0 {
 			g.head = bs[len(bs)-1].HeadSHA
 		}
@@ -499,28 +534,50 @@ func buildEvidenceCIRecovery(claims map[string]*ciClaim, merges map[string]*gate
 		}
 		g.MergedN++
 		state, source, greenAt := m.state, "bundle", m.greenAt
-		var missing []string
+		var missing, red []string
+		var mergedBy string
+		var nonRequiredRed, requiredKnown bool
 		if state != evidenceCINone {
 			missing = evidenceGateMissingRequired(policy.RequiredChecks, m.checks)
 		}
-		if tr, ok := rollup.PRs[k]; ok && state == evidenceCINone && len(tr.Trail.Heads) > 0 {
+		if tr, ok := rollup.PRs[k]; ok && tr.Trail.State == "merged" && len(tr.Trail.Heads) > 0 {
 			if last := tr.Trail.Heads[len(tr.Trail.Heads)-1]; last.State != ghpkg.PRCIHeadNone {
-				state, source = last.State, "github"
+				// GitHub's reading of the merged head, judged on the required
+				// set when the trail resolved one.
+				state, source, missing, red = last.State, "github", last.MissingRequired, last.RequiredRed
+				nonRequiredRed = len(last.NonRequiredRed) > 0
+				requiredKnown = tr.Trail.RequiredKnown
+				mergedBy = tr.Trail.MergedBy
+				if !requiredKnown {
+					g.RequiredUnknown++
+				}
 				if last.State == ghpkg.PRCIHeadGreen && greenAt.IsZero() {
 					greenAt = last.At
 				}
 			}
 		}
+		// Only a required check GitHub reports red on the merged head, under
+		// a resolved required set, is a confirmed breach. A required check
+		// that never reported may have been skipped by a path filter (which
+		// the merge gate verifies and this panel cannot), a red read without
+		// a required set may be an optional check, and a review-time
+		// snapshot may predate a re-run: all suspected, listed, outside the rate.
+		confirmed := source == "github" && requiredKnown && state == evidenceCIRed
 		switch {
 		case state == evidenceCINone:
 			g.Unknown++
 		case state == evidenceCIRed || len(missing) > 0:
-			g.WithChecks++
-			g.Breaches++
-			br := EvidenceCIGateBreach{Repo: m.repo, Number: m.number, Head: m.head, Author: m.authorKind, State: "red", MergedAt: m.mergedAt, Source: source}
+			br := EvidenceCIGateBreach{Repo: m.repo, Number: m.number, Head: m.head, Author: m.authorKind, State: "red", Red: red, MergedAt: m.mergedAt, Source: source, MergedBy: mergedBy}
 			if state != evidenceCIRed {
 				br.State, br.Missing = "missing_required", missing
 			}
+			if !confirmed {
+				g.Suspected++
+				g.SuspectedPRs = append(g.SuspectedPRs, br)
+				break
+			}
+			g.WithChecks++
+			g.Breaches++
 			g.BreachPRs = append(g.BreachPRs, br)
 		case state == evidenceCIPending:
 			g.WithChecks++
@@ -528,6 +585,12 @@ func buildEvidenceCIRecovery(claims map[string]*ciClaim, merges map[string]*gate
 		default:
 			g.WithChecks++
 			g.Green++
+			if source == "bundle" {
+				g.GreenFromBundles++
+			}
+			if nonRequiredRed {
+				g.NonRequiredRed++
+			}
 			if !greenAt.IsZero() && m.mergedAt.After(greenAt) {
 				greenToMerge = append(greenToMerge, m.mergedAt.Sub(greenAt).Hours())
 			}
@@ -702,10 +765,11 @@ func (mc *MetricsCollector) collectCIRecovery(ctx context.Context) {
 			dueConv = append(dueConv, c)
 		}
 	}
-	// Gate integrity needs the merge-time check state of every merged PR;
-	// when no bundle snapshot has it, the trail's final head supplies it.
+	// Gate integrity needs GitHub's check state on every merged head: a
+	// review-time snapshot that was red is only a suspicion (a re-run can go
+	// green on the same head) and a merged head nobody reviewed has none.
 	for k, m := range evidenceGateMerges(bundles, prs) {
-		if m.state != evidenceCINone || m.openedAt.Before(now.Add(-ciRecoveryLookback)) {
+		if (m.state != evidenceCINone && m.state != evidenceCIRed) || m.openedAt.Before(now.Add(-ciRecoveryLookback)) {
 			continue
 		}
 		if _, ok := rollup.PRs[k]; ok {

@@ -2336,6 +2336,10 @@ type PRState struct {
 	State    string
 	MergedAt time.Time
 	ClosedAt time.Time
+	// BaseRef is the branch the PR targets ("" on an abbreviated payload).
+	BaseRef string
+	// MergedBy is the login that merged the PR ("" when not merged or unknown).
+	MergedBy string
 }
 
 // GetPRState fetches a single PR's state. The review-outcome ledger calls it
@@ -2357,7 +2361,7 @@ func (c *Client) GetPRState(ctx context.Context, repo string, number int) (PRSta
 		}
 		c.storePRDetail(repo, number, pr)
 	}
-	st := PRState{State: pr.GetState()}
+	st := PRState{State: pr.GetState(), BaseRef: prBaseRef(pr), MergedBy: pr.GetMergedBy().GetLogin()}
 	if !pr.GetMergedAt().IsZero() {
 		st.MergedAt = pr.GetMergedAt().Time
 	}

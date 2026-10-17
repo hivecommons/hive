@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,19 +17,34 @@ import (
 // carried from the claim head on, with what CI says about each now, so the
 // panel can count pushes to green and time to green.
 
-// PRCIHead is one PR head in the trail: when it was committed and the CI
-// state of its checks now (green, red, pending, or none when no gating
-// check exists for it).
+// PRCIHead is one PR head in the trail: when it was committed and what the
+// merge gate would say about it now. State is judged on the REQUIRED checks
+// only when the required set for the PR's base branch is known (green when
+// every required context succeeded, red when one failed, pending when one
+// is still running or has not reported yet, none when the head carries no
+// check at all); otherwise it falls back to every gating check on the head.
+// A red non-required check (a docs link check, a changelog guard, a
+// cancelled optional build) never makes a head red here, exactly as it does
+// not block the hive's merge gate — it is disclosed in NonRequiredRed.
 type PRCIHead struct {
 	SHA   string    `json:"sha"`
 	At    time.Time `json:"at"`
 	State string    `json:"state"`
+	// MissingRequired names required contexts with no status and no check
+	// run on this head. On a merged head that is a gate breach.
+	MissingRequired []string `json:"missing_required,omitempty"`
+	// RequiredRed names the required contexts that failed on this head.
+	RequiredRed []string `json:"required_red,omitempty"`
+	// NonRequiredRed names failed checks outside the required set. Disclosed,
+	// never graded.
+	NonRequiredRed []string `json:"non_required_red,omitempty"`
 }
 
 // PRCITrail is a PR's heads from the claim head onward plus its outcome.
 type PRCITrail struct {
 	State    string     `json:"state"` // open, closed or merged
 	MergedAt time.Time  `json:"merged_at,omitzero"`
+	MergedBy string     `json:"merged_by,omitempty"`
 	ClosedAt time.Time  `json:"closed_at,omitzero"`
 	Heads    []PRCIHead `json:"heads"`
 	// Truncated is true when the PR had more heads after the claim than
@@ -42,6 +58,11 @@ type PRCITrail struct {
 	Evaluated     int  `json:"evaluated,omitempty"`
 	PassesToGreen int  `json:"passes_to_green,omitempty"`
 	ScanCapped    bool `json:"scan_capped,omitempty"`
+	// RequiredKnown is true when head states were judged against the base
+	// branch's required checks (RequiredChecks); false means the any-check
+	// fallback was used because the required set could not be resolved.
+	RequiredKnown  bool     `json:"required_known,omitempty"`
+	RequiredChecks []string `json:"required_checks,omitempty"`
 }
 
 const (
@@ -72,14 +93,28 @@ func (c *Client) PRCIRecoveryTrail(ctx context.Context, repo string, number int,
 		return out, fmt.Errorf("github REST budget below reserve %d; skipping CI trail for %s#%d", lowValueRESTBudgetFloor, repo, number)
 	}
 	owner, name := c.splitRepo(repo)
+	var requiredSet map[string]bool
 	st, err := c.GetPRState(ctx, repo, number)
 	if err != nil {
 		return out, err
 	}
 	out.State = strings.ToLower(st.State)
+	if base := strings.TrimSpace(st.BaseRef); base != "" {
+		configSet, configKnown := c.configRequiredChecksForRepo(repo)
+		required, known := RequiredStatusCheckContexts(ctx, c.client, owner, name, base, configSet, configKnown)
+		if known && len(required) > 0 {
+			out.RequiredKnown = true
+			for n := range required {
+				out.RequiredChecks = append(out.RequiredChecks, n)
+			}
+			sort.Strings(out.RequiredChecks)
+			requiredSet = required
+		}
+	}
 	if !st.MergedAt.IsZero() {
 		out.State = "merged"
 		out.MergedAt = st.MergedAt.UTC()
+		out.MergedBy = st.MergedBy
 	}
 	if !st.ClosedAt.IsZero() {
 		out.ClosedAt = st.ClosedAt.UTC()
@@ -109,25 +144,25 @@ func (c *Client) PRCIRecoveryTrail(ctx context.Context, repo string, number int,
 		heads = heads[len(heads)-prCITrailMaxHeads:]
 		out.Truncated = true
 	}
-	states := map[string]string{}
-	stateOf := func(sha string) (string, error) {
-		if st, ok := states[sha]; ok {
-			return st, nil
+	reads := map[string]PRCIHead{}
+	readOf := func(sha string) (PRCIHead, error) {
+		if h, ok := reads[sha]; ok {
+			return h, nil
 		}
-		sum, err := SummarizeCommitChecks(ctx, c.client, owner, name, sha)
+		statuses, runs, err := fetchCommitChecks(ctx, c.client, owner, name, sha)
 		if err != nil {
-			return "", fmt.Errorf("checks for %s@%s: %w", repo, sha, err)
+			return PRCIHead{}, fmt.Errorf("checks for %s@%s: %w", repo, sha, err)
 		}
-		states[sha] = prCIHeadState(sum)
-		return states[sha], nil
+		h := prCIHeadRead(statuses, runs, requiredSet)
+		reads[sha] = h
+		return h, nil
 	}
 	for _, cm := range heads {
-		h := PRCIHead{SHA: cm.GetSHA(), At: cm.GetCommit().GetCommitter().GetDate().Time.UTC()}
-		st, err := stateOf(cm.GetSHA())
+		h, err := readOf(cm.GetSHA())
 		if err != nil {
 			return out, err
 		}
-		h.State = st
+		h.SHA, h.At = cm.GetSHA(), cm.GetCommit().GetCommitter().GetDate().Time.UTC()
 		out.Heads = append(out.Heads, h)
 	}
 	// Convergence: walk from the PR's first commit counting evaluated ones
@@ -137,20 +172,51 @@ func (c *Client) PRCIRecoveryTrail(ctx context.Context, repo string, number int,
 			out.ScanCapped = true
 			break
 		}
-		st, err := stateOf(cm.GetSHA())
+		h, err := readOf(cm.GetSHA())
 		if err != nil {
 			return out, err
 		}
-		if st == PRCIHeadNone {
+		if h.State == PRCIHeadNone {
 			continue
 		}
 		out.Evaluated++
-		if st == PRCIHeadGreen {
+		if h.State == PRCIHeadGreen {
 			out.PassesToGreen = out.Evaluated
 			break
 		}
 	}
 	return out, nil
+}
+
+// prCIHeadRead judges one head. With a known required set the verdict is
+// the gate's: required red → red; required pending or not yet reported →
+// pending; all required green → green. Without one, every gating check on
+// the head counts (the pre-#12610 reading). A head GitHub has nothing on is
+// none either way, so the convergence scan can skip commits CI never saw.
+func prCIHeadRead(statuses []*gh.RepoStatus, runs []*gh.CheckRun, required map[string]bool) PRCIHead {
+	all := summarizeChecks(statuses, runs)
+	if len(required) == 0 {
+		return PRCIHead{State: prCIHeadState(all)}
+	}
+	req := summarizeRequiredChecks(statuses, runs, required)
+	h := PRCIHead{RequiredRed: req.Red, MissingRequired: req.Missing}
+	for _, n := range all.Red {
+		if !required[n] {
+			h.NonRequiredRed = append(h.NonRequiredRed, n)
+		}
+	}
+	switch {
+	case all.Total == 0 && len(statuses) == 0 && len(runs) == 0:
+		h.State = PRCIHeadNone
+		h.MissingRequired = nil
+	case len(req.Red) > 0:
+		h.State = PRCIHeadRed
+	case req.Pending > 0 || len(req.Missing) > 0:
+		h.State = PRCIHeadPending
+	default:
+		h.State = PRCIHeadGreen
+	}
+	return h
 }
 
 func prCIHeadState(s CommitChecksSummary) string {
