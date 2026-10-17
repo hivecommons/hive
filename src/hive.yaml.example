@@ -490,8 +490,13 @@ governor:
       # presence_window: 15m            # relay heartbeat this fresh = contributor online → relay interrupt, else comment only
       # contributor_grace_online: 2h    # nudge unanswered this long (online author) → stage/074 adoption
       # contributor_grace_offline: 1h   # same for offline / external authors (comment-only nudge)
-      # adoption:                       # stage/074-adopted-by-hive: supersede a still-red contributor PR with an App PR
-      #   enabled: true                 # that keeps the author's commits; the scanner's red-PR fix kick finishes it
+      # adoption:                       # stage/074-adopted-by-hive: repair a still-red contributor PR
+      #   enabled: true                 # default true; false leaves the PR in stage/072
+      #   in_place: true                # default true; push to the original branch when GitHub permits
+      #                                 # otherwise supersede with an App PR retaining the author's commits
+      #   after_offline: 15m            # default 15m; registered relay offline, measured from the later
+      #                                 # of its last heartbeat and the first stage/072 nudge
+      #   after_unregistered: 15m       # default 15m; no contributor profile, wait after the nudge with no new head
 
   # Optional: read actionable work from Linear instead of GitHub Issues.
   # Secrets should come from env interpolation, not literal values.
