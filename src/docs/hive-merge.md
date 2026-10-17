@@ -385,10 +385,11 @@ A PR merges through this tier only when all of the following hold:
   and no reviewer has an outstanding `CHANGES_REQUESTED`.
 - No excluded label (`hold`, `do-not-merge*`, `needs-human`, `blocked`,
   `needs-rebase` by default), not draft, mergeable, no human-merge path.
-- The head SHA has stayed green for `soak_minutes` (default 120). The first
+- The head SHA has stayed green for `soak_minutes` (`0`/unset = default 30;
+  the shortest real soak is `1`). The first
   green sighting per (repo, PR, head) is tracked in process; a new push restarts
   the soak and the skip reason reports the time left
-  (`contributor-lane:soaking(remaining=1h30m0s)`).
+  (`contributor-lane:soaking(remaining=25m0s)`).
 
 Merges squash through the same effect-claimed `MergePR` path as the other tiers,
 log `automerge merged tier=contributor-lane admitted_by=<path>`, record the
@@ -401,7 +402,7 @@ trusted tier in this hive's contributor registry.` for the registry path.
 auto_merge:
   contributor_lane:
     enabled: true                 # default on; false restores the human /lgtm wait
-    soak_minutes: 120
+    soak_minutes: 30
     require_reviewer_verdict: true
     repos: []                     # optional allow-list; empty = all watched repos
     exclude_labels:

@@ -9149,9 +9149,10 @@ var DefaultContributorLaneRequireTiers = []string{"trusted", "merger"}
 var ContributorLaneGrantableTiers = []string{"trusted", "merger", "advisor"}
 
 // DefaultContributorLaneSoakMinutes is the contributor-lane soak when
-// auto_merge.contributor_lane.soak_minutes is unset: two hours of unchanged,
-// green head gives a maintainer who does want to look a realistic window.
-const DefaultContributorLaneSoakMinutes = 120
+// auto_merge.contributor_lane.soak_minutes is unset: thirty minutes of
+// unchanged, green head gives a maintainer who does want to look a window
+// without parking reviewed work for hours.
+const DefaultContributorLaneSoakMinutes = 30
 
 // DefaultContributorLaneExcludeLabels is the contributor-lane exclude set when
 // auto_merge.contributor_lane.exclude_labels is unset.
@@ -9242,7 +9243,7 @@ func IsContributorLaneGrantableTier(tier string) bool {
 
 func (c ContributorLaneAutoMergeConfig) Validate() error {
 	if c.SoakMinutes < 0 {
-		return fmt.Errorf("auto_merge.contributor_lane.soak_minutes must be 0 (default) or greater, got %d", c.SoakMinutes)
+		return fmt.Errorf("auto_merge.contributor_lane.soak_minutes must be 0 (default 30) or greater, got %d", c.SoakMinutes)
 	}
 	for _, tier := range c.RequireTiers {
 		if !IsContributorLaneGrantableTier(tier) {
