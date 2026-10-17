@@ -7,11 +7,37 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 )
 
-func TestStoreRoundTrip(t *testing.T) {
+func TestExperimentStoreIndependentOfCampaignStore(t *testing.T) {
+	dir := t.TempDir()
+	campaignPath := filepath.Join(dir, DefaultFileName)
+	ledgerPath := filepath.Join(dir, "experiments.json")
+	campaign, _, err := NewStore(campaignPath).Ensure("campaign question", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Experiment{exampleExperiment()}
+	if err := NewExperimentStore(ledgerPath).Save(want); err != nil {
+		t.Fatal(err)
+	}
+	gotCampaign, ok := NewStore(campaignPath).Active()
+	if !ok || !reflect.DeepEqual(gotCampaign, campaign) {
+		t.Fatalf("ledger save changed campaign: got %+v, active=%v", gotCampaign, ok)
+	}
+	if err := NewStore(campaignPath).SetQuestion("updated campaign question"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewExperimentStore(ledgerPath).Load()
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("campaign update changed ledger: got %#v, error %v", got, err)
+	}
+}
+
+func TestExperimentStoreRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nous", "experiments.json")
-	store := NewStore(path)
+	store := NewExperimentStore(path)
 	got, err := store.Load()
 	if err != nil || len(got) != 0 {
 		t.Fatalf("missing ledger: %v %v", got, err)
@@ -22,7 +48,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if err := store.Save(want); err != nil {
 		t.Fatal(err)
 	}
-	got, err = NewStore(path).Load()
+	got, err = NewExperimentStore(path).Load()
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("round trip: got %#v, error %v", got, err)
 	}
@@ -50,7 +76,7 @@ func TestStoreRoundTrip(t *testing.T) {
 
 func TestSaveRejectsInvalidStateWithoutReplacingLedger(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "experiments.json")
-	store := NewStore(path)
+	store := NewExperimentStore(path)
 	e := exampleExperiment()
 	if err := store.Save([]Experiment{e}); err != nil {
 		t.Fatal(err)
@@ -93,17 +119,17 @@ func TestLoadRejectsCorruptionAndInvalidRecords(t *testing.T) {
 			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := NewStore(path).Load(); err == nil {
+			if _, err := NewExperimentStore(path).Load(); err == nil {
 				t.Fatal("accepted invalid ledger")
 			}
 		})
 	}
 }
 
-func TestStoreIOFailures(t *testing.T) {
+func TestExperimentStoreIOFailures(t *testing.T) {
 	dir := t.TempDir()
 	// Reading a directory is not a missing ledger.
-	if _, err := NewStore(dir).Load(); err == nil {
+	if _, err := NewExperimentStore(dir).Load(); err == nil {
 		t.Fatal("ignored read error")
 	}
 	// A regular file cannot be used as the ledger's parent directory.
@@ -111,7 +137,7 @@ func TestStoreIOFailures(t *testing.T) {
 	if err := os.WriteFile(parent, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewStore(filepath.Join(parent, "ledger.json")).Save(nil); err == nil {
+	if err := NewExperimentStore(filepath.Join(parent, "ledger.json")).Save(nil); err == nil {
 		t.Fatal("ignored mkdir failure")
 	}
 	// Rename onto a directory must fail and clean up its temporary file.
@@ -119,7 +145,7 @@ func TestStoreIOFailures(t *testing.T) {
 	if err := os.Mkdir(target, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewStore(target).Save(nil); err == nil {
+	if err := NewExperimentStore(target).Save(nil); err == nil {
 		t.Fatal("ignored rename failure")
 	}
 	temps, err := filepath.Glob(filepath.Join(dir, ".nous-*.tmp"))
@@ -131,8 +157,8 @@ func TestStoreIOFailures(t *testing.T) {
 	}
 }
 
-func TestStoreConcurrentIO(t *testing.T) {
-	store := NewStore(filepath.Join(t.TempDir(), "ledger.json"))
+func TestExperimentStoreConcurrentIO(t *testing.T) {
+	store := NewExperimentStore(filepath.Join(t.TempDir(), "ledger.json"))
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)

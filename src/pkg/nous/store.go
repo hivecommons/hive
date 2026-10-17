@@ -16,15 +16,16 @@ type stateFile struct {
 	Experiments []Experiment `json:"experiments"`
 }
 
-// Store persists a complete Hive-self experiment ledger, independently of the
+// ExperimentStore persists a complete Hive-self experiment ledger, independently of the
 // repo Experiment Lab. Methods serialize I/O on this instance; callers must
 // serialize read-modify-write transactions and use a single writer per path.
-type Store struct {
+type ExperimentStore struct {
 	path string
 	mu   sync.Mutex
 }
 
-func NewStore(path string) *Store { return &Store{path: path} }
+// NewExperimentStore returns a ledger store backed by path, separate from the campaign Store.
+func NewExperimentStore(path string) *ExperimentStore { return &ExperimentStore{path: path} }
 
 func validateExperiments(experiments []Experiment) error {
 	seen := map[string]bool{}
@@ -42,7 +43,7 @@ func validateExperiments(experiments []Experiment) error {
 
 // Load treats only a missing file as an empty ledger. Corruption, unsupported
 // versions and invalid records fail closed rather than silently dropping history.
-func (s *Store) Load() ([]Experiment, error) {
+func (s *ExperimentStore) Load() ([]Experiment, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, err := os.ReadFile(s.path)
@@ -70,7 +71,7 @@ func (s *Store) Load() ([]Experiment, error) {
 
 // Save validates before touching disk and atomically replaces the ledger with a
 // private sibling temporary file. A failed write leaves the previous file intact.
-func (s *Store) Save(experiments []Experiment) error {
+func (s *ExperimentStore) Save(experiments []Experiment) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := validateExperiments(experiments); err != nil {
