@@ -1,0 +1,1 @@
+- Add `hivectl hives repos` and a Hives TUI repository-exclusion toggle to edit saved contributor selections through the existing profile commit/reload path; show effective scope summaries and reload on Hive addition/removal (runtime scope enforcement requires a compatible Hive and relay).
