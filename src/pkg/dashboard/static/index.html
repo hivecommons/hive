@@ -1310,6 +1310,7 @@
     .ham-labels { display: flex; flex-wrap: wrap; gap: var(--sp-1); margin-bottom: var(--sp-3); }
     .ham-labels:empty { display: none; }
     .ham-label-chip { font-family: var(--font-mono); }
+    .ham-labels-more { align-self: center; font-size: var(--fs-xs); color: var(--text-faint); }
     .ham-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-xs); color: var(--text-faint); margin-bottom: var(--sp-3); }
     .ham-meta-foot { margin: var(--sp-3) 0 0; }
     .ham-meta:empty { display: none; }
@@ -13014,7 +13015,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerLabelsHtml(facets) {
       if (!facets.chips.length) return '';
       return facets.chips.map(c => `<button type="button" class="ham-chip ham-label-chip" data-action="hamFilter" data-arg0="label" data-arg1="${esc(c.label)}" aria-pressed="${c.on ? 'true' : 'false'}" title="${esc((c.on ? 'Remove label filter ' : 'Filter by label ') + c.label)}">${esc(c.label)}<span class="ham-chip-n">${c.count}</span></button>`).join('')
-        + (facets.hidden ? `<span class="ham-chip-n" title="Labels carried by a single item are not offered as chips">+${facets.hidden} more</span>` : '');
+        + (facets.hidden ? `<span class="ham-labels-more" title="Labels carried by a single item are not offered as chips">+${facets.hidden} more</span>` : '');
     }
 
     function stageTrackerPagerHtml(page) {
@@ -13068,7 +13069,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Attention is counted over the filtered set, nested PRs included.
       const filteredAll = d.items.filter(it => stageTrackerMatches(it, f, ctx));
       const attention = filteredAll.filter(stageTrackerNeedsAttention).length;
-      const counts = stageTrackerCountsText(page, d.items.length, attention);
+      // "N filtered out" counts against the unfiltered row list, so nesting
+      // a PR under its issue is not reported as a filter.
+      const allRows = stageTrackerFilterActive(f) ? stageTrackerVisible(d.items, Object.assign(stageTrackerDefaultFilter(), { kind: f.kind === 'pr' ? 'pr' : 'all' }), ctx).length : visible.length;
+      const counts = stageTrackerCountsText(page, allRows, attention);
       setSectionSummary('activity-monitor-section', counts.header.replace(/(\d+) needs? attention/, m => `<span class="text-warn">${m}</span>`));
       const badge = document.getElementById('activity-monitor-sidebar-badge');
       const attentionAll = d.items.filter(stageTrackerNeedsAttention).length;
