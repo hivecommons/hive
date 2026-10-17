@@ -1,0 +1,1 @@
+- Add a Nous scheduler adapter that maps persisted Hive-self experiments to scheduler registrations, builds samples from treatment-cohort snapshot series (unavailable metrics stay missing evidence), and enforces absolute guardrail bounds as fast-fail without changing the delta-based `MaxIncrease` semantics.
