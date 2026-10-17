@@ -162,6 +162,34 @@ auto_merge:
     - your-org/docs-only-repo
 ```
 
+### Self-merge review gate
+
+Immediately before the self-authored sweep merges one of the App's own PRs
+(after the head SHA is re-verified), it reads the swarm review verdict for that
+head from the same `review-verdicts.json` the merge-eligible lane uses and
+classifies it as `no-review-bundle`, `awaiting-review-approval`,
+`changes-requested:<perspectives>` or `approved`
+([#12592](https://github.com/hivecommons/hive/issues/12592)). The mode is
+`governor.review_gate.mode: off | shadow | enforce` (default `shadow`), raised
+to `enforce` by `review.require_approval` and to at least `shadow` by
+`review.shadow`; all three are re-read on every evaluation, so a config reload
+takes effect without a restart.
+
+- **shadow** (default): the merge proceeds as before; the evidence bundle for
+  the head (started on the spot when none exists) records
+  `shadow.review_gate` with `lane: self-merge`, `would_have_held` and the
+  reason, so the Evidence card's Shadow gates panel can show what the gate
+  would have held.
+- **enforce**: anything but `approved` holds the merge with reason
+  `review-gate:<outcome>`; the PR is retried on a later sweep.
+- **off**: no evaluation.
+
+Each evaluation writes one audit line, action `review_evaluated`, detail
+`lane=self-merge would_hold=<bool> reason=<code> enforce=<bool> head=<sha>`.
+The gate applies to the `self-authored` lane only; trusted-bot PRs are
+unchanged. The merge and the CI snapshot are recorded in the evidence bundle
+in every mode, including when the bundle is created at merge time.
+
 ### Trusted bot authors
 
 The self-authored automerge sweep merges the App's own open, CI-green PRs. It

@@ -68,7 +68,17 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 		"thin: known < EV_CALIB_MIN_BUCKET_N, merge: evRate(k && k.merged, known), block: evRate(k && k.blocks, n)",
 		"const solid = pts.filter((q) => !q.thin && q.merge != null);",
 		".ev-svg .ev-pt.ev-thin",
-		"fa: evRate(s.approved_not_merged, approvalsKnown), fb: evRate(s.merged_after_block, blocksKnown)",
+		"fa: evRate(s.approved_not_merged, approvalsKnown), fb: evRate(s.merged_after_enforced_block, blocksKnown)",
+		// #12595: only enforced blocks are false blocks; advisory blocks are
+		// dissent before merge, a count and a share, never an error rate.
+		"const blocksKnown = (Number(s.enforced_blocks) || 0) - (Number(s.enforced_blocked_unknown) || 0);",
+		"advisory += Number(st.advisory_blocks) || 0; dissent += Number(st.dissent_before_merge) || 0;",
+		"Perspective verdicts were advisory on this hive (review.require_approval off); ${dissent} blocks preceded a merge",
+		"Perspective verdicts were advisory on this hive (review.require_approval off); ",
+		"false-block (enforced block, merged anyway)",
+		// #12592: the review gate's shadow observations split by lane.
+		"const lanes = sg.review_gate_by_lane || {};",
+		"[lanes.merge_eligible, 'Review · eligible', 'held'], [lanes.self_merge, 'Review · self-merge', 'held']",
 		"approved_unknown",
 		"blocked_unknown",
 		"false-approve (approved, closed without merge)",

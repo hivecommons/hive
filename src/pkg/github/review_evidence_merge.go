@@ -49,6 +49,7 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 	var (
 		head, actor, text string
 		opened            time.Time
+		fetched           *gh.PullRequest
 	)
 	if c.client != nil {
 		pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:review_evidence_merge"), owner, name, number)
@@ -56,6 +57,7 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 			c.logger.Warn("review evidence: could not fetch merged PR",
 				slog.String("repo", full), slog.Int("number", number), slog.String("error", err.Error()))
 		} else {
+			fetched = pr
 			head = pr.GetHead().GetSHA()
 			actor = pr.GetMergedBy().GetLogin()
 			text = pr.GetTitle() + "\n" + pr.GetBody()
@@ -81,7 +83,7 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 		c.captureReviewEvidenceMergeContext(ctx, owner, name, b, merge.At)
 		linkReviewEvidenceChanges(b, text, merge.At)
 	}
-	b := c.completeReviewEvidenceMerge(full, number, head, merge, settings, collect)
+	b := c.completeReviewEvidenceMerge(full, number, head, merge, settings, collect, fetched)
 	c.recordReviewEvidenceBacklinks(b, settings)
 	if b == nil || c.client == nil {
 		return
@@ -108,7 +110,12 @@ func (c *Client) recordReviewEvidenceMerge(repo string, number int, method, sha,
 // merge is returned untouched, so a replayed merge never churns its hash.
 // collect, when non-nil, completes the rest of the bundle (CI, human actions)
 // before it is sealed; it runs only when the merge is new.
-func (c *Client) completeReviewEvidenceMerge(repo string, number int, head string, merge evidence.MergeEvent, settings ReviewEvidenceSettings, collect func(*evidence.Bundle)) *evidence.Bundle {
+//
+// When the PR has no bundle at all — the merge outran the swarm review and
+// the CI snapshot (hivecommons/hive#12592) — and pr (the merged PR as
+// fetched) is known, the head's bundle is started here from pr so the merge
+// and its CI are never lost.
+func (c *Client) completeReviewEvidenceMerge(repo string, number int, head string, merge evidence.MergeEvent, settings ReviewEvidenceSettings, collect func(*evidence.Bundle), pr *gh.PullRequest) *evidence.Bundle {
 	reviewEvidenceMu.Lock()
 	defer reviewEvidenceMu.Unlock()
 
@@ -130,12 +137,16 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 	}
 	if b == nil {
 		found, err := FindReviewEvidence("", repo, number, "")
-		if err != nil || found.Entry == nil {
+		switch {
+		case err == nil && found.Entry != nil:
+			b, path = found.Entry.Bundle, found.Entry.Path
+		case head != "" && pr != nil:
+			b = c.newReviewEvidenceBundle(repo, number, head, pr, settings.Policy, merge.At)
+		default:
 			c.logger.Info("review evidence: no bundle for merged PR, no merge comment posted",
 				slog.String("repo", repo), slog.Int("number", number), slog.String("head", head))
 			return nil
 		}
-		b, path = found.Entry.Bundle, found.Entry.Path
 	}
 	if b.Merge != nil {
 		return b

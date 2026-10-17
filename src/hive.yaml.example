@@ -404,6 +404,16 @@ governor:
   #   enabled: true           # default; false opts out
   #   template_path: ""       # optional text/template file over firsttimer.Vars; must contain {{ .Marker }}
 
+  # Self-merge review gate (#12592). Immediately before the hive merges its
+  # own (App-authored) PR, read the swarm review verdict for the head SHA:
+  # no-review-bundle / awaiting-review-approval / changes-requested:<perspectives>
+  # hold the merge in enforce mode; shadow (default) only records what the gate
+  # would have held in the evidence bundle and merges as today. The effective
+  # mode is the strictest of this knob, review.require_approval (enforce) and
+  # review.shadow (shadow); all three are re-read on every evaluation.
+  # review_gate:
+  #   mode: shadow            # off | shadow | enforce
+
   # Kick prompt list caps (#7368). Every issue list and every PR list in a
   # kick is cut at these counts, with an explicit "… and N more" line, so a
   # large backlog cannot balloon the prompt (302 open PRs once produced a

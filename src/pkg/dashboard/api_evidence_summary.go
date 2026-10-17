@@ -292,17 +292,31 @@ type EvidenceModelAccuracy struct {
 // ApprovedNotMerged counts approvals on PRs whose record says closed without
 // merge or still open at backfill time — a known non-merge. ApprovedUnknown
 // and BlockedUnknown count verdicts on PRs with no recorded outcome; they are
-// excluded from both rates' denominators (false-approve rate =
-// ApprovedNotMerged / (Approvals - ApprovedUnknown), false-block rate =
-// MergedAfterBlock / (Blocks - BlockedUnknown)) and shown as unknown.
+// excluded from every rate's denominator and shown as unknown
+// (false-approve rate = ApprovedNotMerged / (Approvals - ApprovedUnknown)).
+//
+// Blocks are split by the bundle's policy.require_approval
+// (hivecommons/hive#12595). EnforcedBlocks were cast while a gate read the
+// verdict, so a merge after one is a human override: false-block rate =
+// MergedAfterEnforcedBlock / (EnforcedBlocks - EnforcedBlockedUnknown).
+// AdvisoryBlocks were cast while nothing read the verdict, so a merge after
+// one is not a reviewer error: it is DissentBeforeMerge, reported as a count
+// and a share of AdvisoryBlocks, never as an error rate. MergedAfterBlock and
+// BlockedUnknown stay the totals over both kinds.
 type EvidenceModelStat struct {
-	N                 int `json:"n"`
-	Approvals         int `json:"approvals"`
-	Blocks            int `json:"blocks"`
-	MergedAfterBlock  int `json:"merged_after_block"`
-	ApprovedNotMerged int `json:"approved_not_merged"`
-	ApprovedUnknown   int `json:"approved_unknown"`
-	BlockedUnknown    int `json:"blocked_unknown"`
+	N                        int `json:"n"`
+	Approvals                int `json:"approvals"`
+	Blocks                   int `json:"blocks"`
+	MergedAfterBlock         int `json:"merged_after_block"`
+	ApprovedNotMerged        int `json:"approved_not_merged"`
+	ApprovedUnknown          int `json:"approved_unknown"`
+	BlockedUnknown           int `json:"blocked_unknown"`
+	EnforcedBlocks           int `json:"enforced_blocks"`
+	AdvisoryBlocks           int `json:"advisory_blocks"`
+	MergedAfterEnforcedBlock int `json:"merged_after_enforced_block"`
+	EnforcedBlockedUnknown   int `json:"enforced_blocked_unknown"`
+	DissentBeforeMerge       int `json:"dissent_before_merge"`
+	AdvisoryBlockedUnknown   int `json:"advisory_blocked_unknown"`
 }
 
 type EvidenceSentinelSeries struct {
@@ -320,13 +334,28 @@ type EvidenceSentinelWeek struct {
 // (review gate) and WouldHaveBlocked (intent) count the PRs the gate would
 // have stopped. ReviewGate and Intent compare those PRs' recorded outcomes
 // with the PRs the gate would have let through.
+//
+// ReviewGateByLane splits ReviewGate by the lane that recorded the
+// observation (hivecommons/hive#12592): the merge-eligible lane
+// (review.shadow) or the self-merge lane's ReviewGate.
 type EvidenceShadowGate struct {
-	N                int                    `json:"n"`
-	WouldHaveHeld    int                    `json:"would_have_held"`
-	WouldHaveBlocked int                    `json:"would_have_blocked"`
-	ReviewGate       EvidenceShadowGateSide `json:"review_gate"`
-	Intent           EvidenceShadowGateSide `json:"intent"`
+	N                int                     `json:"n"`
+	WouldHaveHeld    int                     `json:"would_have_held"`
+	WouldHaveBlocked int                     `json:"would_have_blocked"`
+	ReviewGate       EvidenceShadowGateSide  `json:"review_gate"`
+	ReviewGateByLane EvidenceShadowGateLanes `json:"review_gate_by_lane"`
+	Intent           EvidenceShadowGateSide  `json:"intent"`
 }
+
+// EvidenceShadowGateLanes is the review gate's shadow observations per lane.
+type EvidenceShadowGateLanes struct {
+	MergeEligible EvidenceShadowGateSide `json:"merge_eligible"`
+	SelfMerge     EvidenceShadowGateSide `json:"self_merge"`
+}
+
+// evidenceShadowLaneSelfMerge is the ShadowGate.Lane the self-merge lane's
+// ReviewGate records; any other value is the merge-eligible lane.
+const evidenceShadowLaneSelfMerge = "self-merge"
 
 // EvidenceShadowGateSide is one shadow gate: N PRs evaluated, split into the
 // ones it would have stopped (Held) and the ones it would have passed.
@@ -751,6 +780,11 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 				resp.ShadowGate.N++
 			}
 			resp.ShadowGate.ReviewGate.add(b, held)
+			if sh.ReviewGate != nil && sh.ReviewGate.Lane == evidenceShadowLaneSelfMerge {
+				resp.ShadowGate.ReviewGateByLane.SelfMerge.add(b, held)
+			} else {
+				resp.ShadowGate.ReviewGateByLane.MergeEligible.add(b, held)
+			}
 			resp.ShadowGate.Intent.add(b, blocked)
 		}
 
@@ -817,11 +851,27 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 			}
 			if block {
 				st.Blocks++
+				enforced := b.Policy.RequireApproval
+				if enforced {
+					st.EnforcedBlocks++
+				} else {
+					st.AdvisoryBlocks++
+				}
 				switch {
 				case !known:
 					st.BlockedUnknown++
+					if enforced {
+						st.EnforcedBlockedUnknown++
+					} else {
+						st.AdvisoryBlockedUnknown++
+					}
 				case merged:
 					st.MergedAfterBlock++
+					if enforced {
+						st.MergedAfterEnforcedBlock++
+					} else {
+						st.DissentBeforeMerge++
+					}
 				}
 			}
 			m.ByAuthor[b.Author.Kind] = st

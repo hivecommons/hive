@@ -2385,6 +2385,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// config, same bead evidence, same BlocksMerge predicate) and asks
 	// intent.EvaluateForAppSelfMerge before every self-merge.
 	autoMergeOpts.IntentGate = selfMergeIntentGate(b.cfg, b.beadStores)
+	// Review gate (#12592): the same review-verdicts.json the human lane
+	// reads, on the re-verified head immediately before every self-merge.
+	// governor.review_gate.mode (default shadow), review.require_approval
+	// and review.shadow are read through b.cfg on every evaluation. The
+	// audit sink resolves b.dashSrv lazily: bootDashboard has not run yet.
+	autoMergeOpts.ReviewGate = selfMergeReviewGate(b.cfg, b.logger, func(e automerge.ReviewGateEvaluation) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLogRecord("system", reviewEvaluatedAuditAction, reviewEvaluatedAuditDetail(e), "", e.Repo, e.Number)
+		}
+	})
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }

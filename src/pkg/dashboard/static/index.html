@@ -23114,7 +23114,7 @@ function burnAreaChart() {
       },
       'accuracy-by-model': (dto) => {
         const models = Array.isArray(dto.reviewer_accuracy_by_model) ? dto.reviewer_accuracy_by_model : [];
-        let approvals = 0, fa = 0, blocks = 0, fb = 0, unknown = 0;
+        let approvals = 0, fa = 0, blocks = 0, fb = 0, unknown = 0, advisory = 0, dissent = 0, enforcedAll = 0;
         const perModel = [];
         models.forEach((m) => {
           if (!m) return;
@@ -23122,22 +23122,32 @@ function burnAreaChart() {
           Object.values(m.by_author_kind || {}).forEach((st) => {
             // Denominators are verdicts on PRs with a known outcome; the rest is reported as unknown.
             a += (Number(st.approvals) || 0) - (Number(st.approved_unknown) || 0); f += Number(st.approved_not_merged) || 0;
-            bl += (Number(st.blocks) || 0) - (Number(st.blocked_unknown) || 0); mb += Number(st.merged_after_block) || 0;
+            // Only blocks an enforcing gate read (policy.require_approval) can be false blocks (#12595);
+            // advisory blocks on merged PRs are dissent before merge, never an error rate.
+            bl += (Number(st.enforced_blocks) || 0) - (Number(st.enforced_blocked_unknown) || 0); mb += Number(st.merged_after_enforced_block) || 0;
+            enforcedAll += Number(st.enforced_blocks) || 0;
+            advisory += Number(st.advisory_blocks) || 0; dissent += Number(st.dissent_before_merge) || 0;
             unknown += (Number(st.approved_unknown) || 0) + (Number(st.blocked_unknown) || 0);
           });
           approvals += a; fa += f; blocks += bl; fb += mb;
           perModel.push({ model: String(m.model || 'unknown'), fa: evRate(f, a), a });
         });
         const faRate = evRate(fa, approvals), fbRate = evRate(fb, blocks);
+        const allAdvisory = advisory > 0 && enforcedAll === 0;
+        const dissentLine = advisory > 0
+          ? (allAdvisory
+            ? ` Perspective verdicts were advisory on this hive (review.require_approval off); ${dissent} blocks preceded a merge (dissent before merge, ${evPct(evRate(dissent, advisory))} of ${advisory} advisory blocks) — not counted as false blocks.`
+            : ` ${advisory} block(s) were advisory (review.require_approval off when cast); ${dissent} of them preceded a merge (dissent before merge, ${evPct(evRate(dissent, advisory))}) — not counted as false blocks.`)
+          : '';
         const worst = Math.max(faRate == null ? -1 : faRate, fbRate == null ? -1 : fbRate);
         const grade = evGrade(worst < 0 ? null : worst, approvals + blocks, EV_ERR_STRONG, EV_ERR_FAIR, false);
         const best = perModel.filter((m) => m.fa != null && m.a >= EV_GRADE_MIN_N).sort((x, y) => x.fa - y.fa)[0];
         return {
           matters: 'A reviewer that approves things that never merge wastes human time; one that blocks things that merge anyway teaches people to ignore it. This shows which models earn trust, and whether they treat agent and human authors alike.',
-          measured: 'How often each AI reviewer model gets it wrong, split by who wrote the PR. A "false approve" is an approval on a PR whose record says it closed without merging (or was still open when backfilled). A "false block" is a block (changes requested or reject) on a PR that merged anyway.',
-          how: 'For each reviewer model and author kind we count approvals and blocks, then compare each verdict with the PR\u2019s recorded outcome: false-approve rate = approvals on PRs known not to have merged ÷ approvals on PRs with a known outcome; false-block rate = blocks on merged PRs ÷ blocks on PRs with a known outcome. Verdicts on PRs with no recorded outcome are counted and shown as unknown, not as errors. On a live-only hive a known outcome is almost always a merge, so until a backfill covers the window the false-approve rate is a lower bound and the false-block rate an upper bound; read them next to the unknown count.',
+          measured: 'How often each AI reviewer model gets it wrong, split by who wrote the PR. A "false approve" is an approval on a PR whose record says it closed without merging (or was still open when backfilled). A "false block" is a block (changes requested or reject) that an enforcing gate (review.require_approval on) read, on a PR that merged anyway after a human override. A block cast while verdicts were advisory is "dissent before merge": a count and a share of advisory blocks, never an error rate.',
+          how: 'For each reviewer model and author kind we count approvals and blocks, then compare each verdict with the PR\u2019s recorded outcome: false-approve rate = approvals on PRs known not to have merged ÷ approvals on PRs with a known outcome; false-block rate = enforced blocks on merged PRs ÷ enforced blocks on PRs with a known outcome, where a block is enforced when the PR\u2019s evidence bundle records policy.require_approval on. Advisory blocks on merged PRs are reported as dissent before merge (count and % of advisory blocks) and never enter the grade. Verdicts on PRs with no recorded outcome are counted and shown as unknown, not as errors. On a live-only hive a known outcome is almost always a merge, so until a backfill covers the window the false-approve rate is a lower bound and the false-block rate an upper bound; read them next to the unknown count.',
           good: `Both bars short. ${Math.round(EV_ERR_STRONG * 100)}% or less on the worse of the two rates is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. Models should also look alike for human and agent authors; a model that only blocks agents is a bias, not accuracy.`,
-          ours: `Across all models: false-approve ${evPct(faRate)} of ${approvals} approvals with a known outcome, false-block ${evPct(fbRate)} of ${blocks} blocks with a known outcome.${unknown ? ` ${unknown} verdict(s) are on PRs with no recorded outcome (unknown).` : ''}${best ? ` Lowest false-approve rate: ${best.model} at ${evPct(best.fa)}.` : ''} ${evLimitsSentence()}`,
+          ours: `Across all models: false-approve ${evPct(faRate)} of ${approvals} approvals with a known outcome, false-block ${evPct(fbRate)} of ${blocks} enforced blocks with a known outcome.${dissentLine}${unknown ? ` ${unknown} verdict(s) are on PRs with no recorded outcome (unknown).` : ''}${best ? ` Lowest false-approve rate: ${best.model} at ${evPct(best.fa)}.` : ''} ${evLimitsSentence()}`,
           grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} known-outcome verdicts${evWindowHint(dto)}` : `worse rate ${evPct(worst)}`,
         };
       },
@@ -23154,7 +23164,7 @@ function burnAreaChart() {
         const grade = evGrade(falseAlarm, heldMerged, EV_SHADOW_FALSE_ALARM_STRONG, EV_SHADOW_FALSE_ALARM_FAIR, false);
         return {
           matters: 'Before a gate is allowed to hold real PRs, we want proof it would have caught problems without stopping good work. Shadow mode gives that proof without touching merges.',
-          measured: 'What would have happened if two safety gates were switched on. In "shadow mode" the review gate and intent verification only write down whether they would have stopped a PR; nothing is actually held or blocked.',
+          measured: 'What would have happened if two safety gates were switched on. In "shadow mode" the review gate and intent verification only write down whether they would have stopped a PR; nothing is actually held or blocked. The review gate is recorded on the merge-eligible lane (review.shadow) and, by default, on the self-merge lane just before the hive merges its own PR (no swarm review, review awaiting approval, or changes requested on the head); the panel splits the two lanes.',
           how: 'For each gate, PRs are split into "would have stopped" and "would have passed". Each bar shows how those PRs really turned out: merged, merged then reverted, or still open. A gate is useful when the PRs it would have stopped are the ones that later caused trouble.',
           good: `Reverts sitting mostly in the "would have stopped" bar and few in "would have passed". Of the stopped PRs that merged, ${Math.round(EV_SHADOW_FALSE_ALARM_STRONG * 100)}% or fewer merging cleanly (a false alarm) is Strong, ${Math.round(EV_SHADOW_FALSE_ALARM_FAIR * 100)}% or fewer is Fair, above that Weak.`,
           ours: `${Number(sg.n) || 0} PRs have a shadow observation. Would have stopped: ${heldN} (${heldMerged} merged, ${heldReverted} later reverted). Would have passed: ${passedN} (${passedReverted} later reverted).${shadowUnknown ? ` ${shadowUnknown} of these PRs have no recorded outcome.` : ''} ${evLimitsSentence()}`,
@@ -23374,25 +23384,29 @@ function burnAreaChart() {
         Object.keys(by).sort().forEach((kind) => {
           const s = by[kind] || {};
           const approvalsKnown = (Number(s.approvals) || 0) - (Number(s.approved_unknown) || 0);
-          const blocksKnown = (Number(s.blocks) || 0) - (Number(s.blocked_unknown) || 0);
-          rows.push({ model, kind, n: Number(s.n) || 0, approvals: approvalsKnown, blocks: blocksKnown,
+          const blocksKnown = (Number(s.enforced_blocks) || 0) - (Number(s.enforced_blocked_unknown) || 0);
+          const advisory = Number(s.advisory_blocks) || 0, dissent = Number(s.dissent_before_merge) || 0;
+          rows.push({ model, kind, n: Number(s.n) || 0, approvals: approvalsKnown, blocks: blocksKnown, advisory, dissent,
             unknown: (Number(s.approved_unknown) || 0) + (Number(s.blocked_unknown) || 0),
-            fa: evRate(s.approved_not_merged, approvalsKnown), fb: evRate(s.merged_after_block, blocksKnown) });
+            fa: evRate(s.approved_not_merged, approvalsKnown), fb: evRate(s.merged_after_enforced_block, blocksKnown) });
         });
       });
       if (!rows.length) return '<div class="ev-empty">— no reviewer verdicts in this window</div>';
       const unknownRows = rows.reduce((sum, r) => sum + r.unknown, 0);
+      const advisoryRows = rows.reduce((sum, r) => sum + r.advisory, 0);
+      const dissentRows = rows.reduce((sum, r) => sum + r.dissent, 0);
+      const enforcedRows = rows.reduce((sum, r) => sum + r.enforced, 0);
       const w = EV_SVG_W, label = 140, valW = 34, rowH = 24, t = 4;
       const barW = w - label - valW;
       const h = t + rows.length * rowH;
       const pct = (v) => (v == null ? '—' : Math.round(v * 100) + '%');
       const body = rows.map((row, i) => {
         const y0 = t + i * rowH;
-        const tip = escapeHtml(`${row.model} · ${row.kind} authors: false-approve ${pct(row.fa)} of ${row.approvals} approvals with a known outcome · false-block ${pct(row.fb)} of ${row.blocks} blocks with a known outcome · outcome unknown ${row.unknown} (not in either rate) · n=${row.n}`);
+        const tip = escapeHtml(`${row.model} · ${row.kind} authors: false-approve ${pct(row.fa)} of ${row.approvals} approvals with a known outcome · false-block ${pct(row.fb)} of ${row.blocks} enforced blocks with a known outcome · dissent before merge ${row.dissent} of ${row.advisory} advisory blocks (not an error rate) · outcome unknown ${row.unknown} (not in either rate) · n=${row.n}`);
         const bar = (cls, v, yy) => `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${v == null ? 0 : (v * barW).toFixed(1)}" height="8"><title>${tip}</title></rect><text class="ev-val" x="${w - 2}" y="${yy + 7}" text-anchor="end">${pct(v)}</text>`;
         return `<g class="${row.model === 'unknown' ? 'ev-unknown' : ''}"><text class="ev-lbl" x="0" y="${y0 + 13}">${escapeHtml(`${row.model} · ${row.kind}`.slice(0, 24))}<title>${tip}</title></text>${bar('fa', row.fa, y0 + 2)}${bar('fb', row.fb, y0 + 12)}</g>`;
       }).join('');
-      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer accuracy by reviewer model and author kind: false-approve and false-block rates">${body}</svg><div class="ev-legend"><span><i class="fa"></i>false-approve (approved, closed without merge)</span><span><i class="fb"></i>false-block (blocked, merged anyway)</span><span><i class="unknown"></i>model unknown</span><span>rates are over verdicts with a known PR outcome${unknownRows ? ` · ${unknownRows} verdict(s) on PRs with unknown outcome` : ''}</span></div>`;
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Reviewer accuracy by reviewer model and author kind: false-approve and false-block rates">${body}</svg><div class="ev-legend"><span><i class="fa"></i>false-approve (approved, closed without merge)</span><span><i class="fb"></i>false-block (enforced block, merged anyway)</span><span><i class="unknown"></i>model unknown</span><span>rates are over verdicts with a known PR outcome${unknownRows ? ` · ${unknownRows} verdict(s) on PRs with unknown outcome` : ''}</span>${advisoryRows ? `<span>${!enforcedRows ? 'Perspective verdicts were advisory on this hive (review.require_approval off); ' : `${advisoryRows} advisory block(s); `}${dissentRows} blocks preceded a merge (dissent before merge, ${pct(dissentRows / advisoryRows)} of advisory blocks; not an error rate)</span>` : ''}</div>`;
     }
 
     // Panel 8 (#12068): what the shadow review gate / intent verification
@@ -23400,10 +23414,16 @@ function burnAreaChart() {
     // a "would stop" and a "would pass" bar split into merged / reverted / open.
     function evShadowGateSvg(sg) {
       sg = sg || {};
-      const gates = [['review_gate', 'Review gate', 'held'], ['intent', 'Intent verification', 'blocked']];
+      // The review gate is split by the lane that recorded it (#12592): the
+      // merge-eligible lane (review.shadow) and the self-merge ReviewGate.
+      const lanes = sg.review_gate_by_lane || {};
+      const byLane = Number((lanes.self_merge || {}).n) > 0;
+      const gates = byLane
+        ? [[lanes.merge_eligible, 'Review · eligible', 'held'], [lanes.self_merge, 'Review · self-merge', 'held'], [sg.intent, 'Intent verification', 'blocked']]
+        : [[sg.review_gate, 'Review gate', 'held'], [sg.intent, 'Intent verification', 'blocked']];
       const rows = [];
-      gates.forEach(([key, label, verb]) => {
-        const g = sg[key] || {};
+      gates.forEach(([gate, label, verb]) => {
+        const g = gate || {};
         if (!(Number(g.n) > 0)) return;
         [['held', `would have ${verb}`], ['passed', 'would have passed']].forEach(([side, sideLabel]) => {
           const o = g[side] || {};
@@ -23412,7 +23432,7 @@ function burnAreaChart() {
           rows.push({ label: `${label} · ${sideLabel}`, gate: label, side: sideLabel, n, merged: Math.max(0, (Number(o.merged) || 0) - reverted), reverted, open: Number(o.open) || 0, unknown: Number(o.unknown) || 0 });
         });
       });
-      if (!rows.length) return '<div class="ev-empty">— no shadow-gate observations in this window (review.shadow / intent shadow mode is off, or no PR was evaluated)</div>';
+      if (!rows.length) return '<div class="ev-empty">— no shadow-gate observations in this window (review.shadow / intent shadow mode is off, the self-merge review gate is off, or no PR was evaluated)</div>';
       const w = EV_SVG_W, label = 110, valW = 30, rowH = 26, t = 4;
       const barW = w - label - valW;
       const h = t + rows.length * rowH;
@@ -23727,7 +23747,7 @@ function burnAreaChart() {
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationSvg(calib),
           `Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
-          `Outcome is recorded merge vs recorded close, not ground truth: a block that was later fixed and merged counts as a false block, and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here, merged elsewhere or by hand, or still open) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
+          `Outcome is recorded merge vs recorded close, not ground truth: an enforced block that was later fixed and merged counts as a false block (an advisory block is dissent before merge, never a false block), and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here, merged elsewhere or by hand, or still open) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
         + evPanel('boundary-enforcement', 'Boundary enforcement', writesN, evWriteActivitySvg(activity) + evSentinelSparkline(sentinel),
           `The denominator is every agent GitHub write the hive can see in the window: hive-mediated writes from the audit log plus direct writes through the proxy (weekly counters kept under /data). Blocked is what the proxy refused; would-block counts from intent verification are shown separately in the explainer and never counted as blocked.${directCoverage} Writes that bypass both the hive and the proxy are invisible here. Sentinel hits come from evidence bundles in the window. Blocked is not the same as harmful.`)
         + evPanel('claim-vs-verdict', 'CI gate — integrity + convergence', claimN, evCIGateHtml(rec) + evConvergenceSvg(rec.convergence) + evCIRecoveryHtml(rec) + evClaimVsVerdictSvg(claims),

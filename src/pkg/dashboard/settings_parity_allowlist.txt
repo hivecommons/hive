@@ -190,6 +190,7 @@ governor.llm-d.api_key_header # TODO #11854
 governor.llm-d.endpoint # TODO #11854
 governor.modes.<key>.cadences.<key> # TODO #11854
 governor.modes.<key>.threshold # TODO #11854
+governor.review_gate.mode # TODO #11854
 governor.rotation.agents.<key> # TODO #11854
 governor.rotation.providers.<key>.backends[] # TODO #11854
 governor.rotation.providers.<key>.class # TODO #11854
