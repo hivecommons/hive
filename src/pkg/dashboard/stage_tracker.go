@@ -202,7 +202,7 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.AwaitingMergeAdmission:
 		return "Merge gate"
 	case stagelabels.NeedsDecision:
-		return "Needs decision"
+		return "Needs human decision"
 	case stagelabels.ReadyForHumanMerge:
 		return "Ready for human merge"
 	case stagelabels.MergeQueue:
@@ -546,11 +546,10 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.Mirrored = it.Kind == "issue" && stage != stagelabels.None && stage.Number() > trackerNumberCoveredByPR
 		it.Modifiers = stageTrackerModifiers(labels, status.HiveID, rec, hasRec, overrides, now, draft)
-		// 085 shares the "Ready for human merge" chevron word with 090; the
-		// needs-decision chip is what tells them apart on the row.
-		if stage == stagelabels.NeedsDecision && !slices.Contains(it.Modifiers, modNeedsDecision) {
-			it.Modifiers = append(it.Modifiers, modNeedsDecision)
-			sort.Strings(it.Modifiers)
+		// 085 has its own chevron word ("Needs human decision"); the chip
+		// only adds information when needs-decision modifies another stage.
+		if stage == stagelabels.NeedsDecision {
+			it.Modifiers = slices.DeleteFunc(it.Modifiers, func(m string) bool { return m == modNeedsDecision })
 		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
 		it.History = stageTrackerHistory(rec)

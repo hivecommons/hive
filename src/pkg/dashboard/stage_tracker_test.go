@@ -203,7 +203,7 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	}
 
 	pr104 := trackerItem(t, resp, "pr", 104)
-	if pr104.Stage != 85 || pr104.StageSince != nil || len(pr104.History) != 0 || !hasMod(pr104, modNeedsDecision) || pr104.Actor != "maintainer" {
+	if pr104.Stage != 85 || pr104.StageSince != nil || len(pr104.History) != 0 || hasMod(pr104, modNeedsDecision) || pr104.Actor != "maintainer" {
 		t.Fatalf("label-only pr104 = %+v", pr104)
 	}
 

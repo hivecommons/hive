@@ -58,6 +58,7 @@ func TestStageTrackerRows(t *testing.T) {
 		jsConstLine(t, html, "STAGE_TRACKER_PR_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_MERGE_COLUMN"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTIVE_WORD"),
+		jsConstLine(t, html, "STAGE_TRACKER_MOD_TEXT"),
 		jsConstLine(t, html, "STAGE_TRACKER_TERMINAL"),
 		jsConstLine(t, html, "STAGE_TRACKER_TRAIL_HOPS"),
 		jsConstLine(t, html, "STAGE_TRACKER_MOD_PRIORITY"),
@@ -87,7 +88,7 @@ const stages = [
   { number: 70, label: 'Fixing', short: 'Fixing', branch_from: 50 }, { number: 72, label: 'Returned to contributor', short: 'Returned to contributor', branch_from: 50 },
   { number: 74, label: 'Adopted by hive', short: 'Adopted by hive', branch_from: 50 },
   { number: 80, label: 'Awaiting merge admission', short: 'Merge gate' },
-  { number: 85, label: 'Needs decision', short: 'Needs decision', branch_from: 80 }, { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
+  { number: 85, label: 'Needs human decision', short: 'Needs human decision', branch_from: 80 }, { number: 90, label: 'Ready for human merge', short: 'Ready for human merge', branch_from: 80 },
   { number: 100, label: 'Merge queue', short: 'Merge queue' }, { number: 110, label: 'Merged', short: 'Merged' },
 ];
 const strip = (row) => row.slice(row.indexOf('aria-label="Pipeline progress"'));
@@ -156,11 +157,15 @@ assert.ok(row.includes('<span class="ham-since ham-stalled">3h</span>'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 105, kind: 'pr', stage: 90 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Ready for human merge</span>'));
-// 085 shares the human-merge word; the needs-decision chip and tooltip carry the difference.
-row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 85, modifiers: ['needs-decision'], caption: 'DCO failing — fix, waive or close' }, stages, ctx);
+// 085 has its own word; needs-decision as a modifier elsewhere reads "needs human decision".
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 85, modifiers: ['blocked'], caption: 'DCO failing — fix, waive or close' }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
-assert.ok(row.includes('<span class="ham-detour">Ready for human merge</span>') && !row.includes('>Needs decision<'), row);
-assert.ok(row.includes('ham-mod-needs-decision">needs decision</span>') && tooltip(row).includes('Needs a decision'), row);
+assert.ok(row.includes('<span class="ham-detour">Needs human decision</span>') && !row.includes('ham-mod-needs-decision'), row);
+assert.ok(tooltip(row).includes('Needs a human decision'), row);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 50, modifiers: ['needs-decision'] }, stages, ctx);
+assert.ok(row.includes('ham-mod-needs-decision">needs human decision</span>') && tooltip(row).includes('Flags: needs human decision'), row);
+// Active chevrons carry words only; author-kind icons live in the PR column.
+assert.ok(!row.includes('ham-actor-ico'), row);
 
 // Merged: everything neutral-done, the cap carries the only check.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);

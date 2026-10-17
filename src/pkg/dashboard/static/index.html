@@ -1301,7 +1301,7 @@
     .ham-cols .ham-strip { height: auto; }
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
     .ham-cols .ham-since { color: var(--text-faint); font-family: inherit; }
-    .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-4) var(--sp-2); }
+    .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
     /* Title line = flow-positioned ghost strip (so the PR column aligns with
        the chevron below and stacks when an issue has several PRs) with the
        number + title overlaid at the left and the modifier chip at the right. */
@@ -12414,7 +12414,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_PR_COLUMN = 30;
     const STAGE_TRACKER_MERGE_COLUMN = 80;
     // Stages that share a column (or a detour word) and what the lit chevron says.
-    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 85: 'Ready for human merge' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 85: 'Needs human decision' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12439,7 +12439,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 72: return 'Back with the contributor' + viaPR;
         case 74: return 'Hive took it over' + viaPR;
         case 80: return 'Not yet admitted to auto merge' + viaPR;
-        case 85: return 'Needs a decision' + viaPR;
+        case 85: return 'Needs a human decision' + viaPR;
         case 90: return 'Ready for a human merge' + viaPR;
         case 100: return 'Admitted — merging' + viaPR;
         case 110: return 'Merged';
@@ -12488,6 +12488,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'draft'];
+    const STAGE_TRACKER_MOD_TEXT = { 'needs-decision': 'needs human decision' };
     // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
     const STAGE_TRACKER_ICONS = {
       0: '<circle cx="8" cy="8" r="5"/>',
@@ -12552,7 +12553,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const title = item.title || '';
       const ak = item.author_kind || '';
       const chips = [];
-      if (mods.length) chips.push(`<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`);
+      if (mods.length) chips.push(`<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`);
       // PR column of the title line: the item's own PR, or the issue's covering PRs.
       let prRefs = [];
       if (item.kind === 'pr') prRefs = [stageTrackerPRRef(item.number, item.url, ak, item.author, title)];
@@ -12579,7 +12580,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const tipLines = [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
       if (item.author || ak) tipLines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
       if (item.kind === 'issue' && prRefs.length) tipLines.push('Covering PR: ' + (Array.isArray(item.linked_prs) && item.linked_prs.length ? item.linked_prs.map(lp => '#' + lp.number).join(', ') : '#' + item.linked_pr));
-      if (mods.length) tipLines.push('Flags: ' + mods.join(', '));
+      if (mods.length) tipLines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
       if (sinceMs) tipLines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
       if (trail) tipLines.push('Trail: ' + trail);
       const tip = tipLines.filter(Boolean).join('\n');
