@@ -36,8 +36,17 @@ func TestStopMarksOperatorStopped(t *testing.T) {
 
 func TestStartClearsOperatorStopped(t *testing.T) {
 	m := testManager(5)
+	m.workDir = t.TempDir()
+	// SandboxEnabled is an AND of the global switch and the per-agent
+	// override; both are needed so Start takes the no-I/O sandbox branch.
 	m.sandboxConfig = config.AgentSandboxConfig{Enabled: true}
-	m.agents["a"] = &AgentProcess{Name: "a", State: StateStopped, OperatorStopped: true}
+	enabled := true
+	m.agents["a"] = &AgentProcess{
+		Name:            "a",
+		State:           StateStopped,
+		OperatorStopped: true,
+		Config:          config.AgentConfig{Sandbox: &config.AgentSandboxOverride{Enabled: &enabled}},
+	}
 	if err := m.Start(t.Context(), "a"); err != nil {
 		t.Fatal(err)
 	}
