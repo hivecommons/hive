@@ -1302,19 +1302,32 @@
     .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
     .ham-cols .ham-since { color: var(--text-faint); font-family: inherit; }
     .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-5) var(--sp-2); }
-    /* Title line = flow-positioned ghost strip (so the PR column aligns with
-       the chevron below and stacks when an issue has several PRs) with the
-       number + title overlaid at the left and the modifier chip at the right. */
+    /* Title line = a ghost strip with the same column widths as the chevrons
+       below: a lead cell spanning Open..Claimed carries the number + title, a
+       PR cell spanning PR in progress..Merge gate carries "[icon] #N title",
+       the cap column is kept for the modifier chip and the since column for
+       the time on step. Both cells truncate with an ellipsis rather than
+       wrap or collide; the lead keeps a clear gap before the PR column. The
+       spanning cells' flex-basis absorbs the gaps they cover so the PR cell
+       starts exactly at the PR in progress chevron. */
     .ham-row-head { position: relative; display: flex; align-items: flex-start; gap: var(--sp-3); font-size: var(--fs-sm); min-width: 0; line-height: 1.3; }
     .ham-head-cols { flex: 1 1 auto; min-width: 0; min-height: 1.3em; align-items: flex-start; }
     .ham-head-cols .ham-strip { height: auto; }
-    .ham-head-cols .ham-seg { background: transparent; clip-path: none; overflow: visible; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: var(--sp-1); padding: 0 var(--sp-2) 0 var(--sp-4); white-space: nowrap; }
-    .ham-head-main { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: var(--sp-3); white-space: nowrap; }
-    .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--muted); text-decoration: none; font-size: var(--fs-xs); white-space: nowrap; }
+    .ham-head-cols .ham-seg { background: transparent; clip-path: none; overflow: hidden; align-items: center; justify-content: flex-start; padding: 0 var(--sp-2) 0 var(--sp-4); white-space: nowrap; }
+    /* Lead = exactly three of the six equal chevrons (half of the strip
+       minus the fixed 4em cap and the six gaps) plus the two gaps between
+       them, so the PR cell starts at the PR in progress chevron; the PR cell takes what
+       is left and gives way to the chip, which lives in the cap cell. */
+    .ham-head-cols .ham-seg.ham-head-lead { flex: 0 0 calc((100% - 4em - 6 * var(--sp-1)) / 2 + 2 * var(--sp-1)); padding: 0 var(--sp-6) 0 0; }
+    .ham-head-cols .ham-seg.ham-head-pr { flex: 1 1 0; }
+    .ham-head-cols .ham-seg.cap { flex: 0 0 auto; min-width: 4em; overflow: visible; justify-content: flex-end; padding: 0; }
+    .ham-head-cols .ham-seg.cap .ham-badges { position: static; }
+    .ham-head-main { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; white-space: nowrap; }
+    .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; color: var(--muted); text-decoration: none; font-size: var(--fs-xs); white-space: nowrap; }
     .ham-pr-ref:hover { color: var(--text); }
     .ham-pr-ref:hover .ham-pr-num { text-decoration: underline; }
     .ham-pr-num { white-space: nowrap; }
-    .ham-pr-title { white-space: nowrap; color: var(--text-faint); }
+    .ham-pr-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-faint); }
     /* Author kind is the one coloured legend: hive blue / clanker purple
        (the author/* label colours), human teal. */
     .ham-author-ico { width: 13px; height: 13px; flex: 0 0 auto; color: var(--text-faint); }
@@ -1327,7 +1340,7 @@
     .ham-kind-ico { flex: 0 0 auto; width: 12px; height: 12px; color: var(--text-faint); }
     .ham-ref { color: var(--muted); text-decoration: none; white-space: nowrap; }
     .ham-ref:hover { text-decoration: underline; color: var(--text); }
-    .ham-title { color: var(--text); white-space: nowrap; }
+    .ham-title { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
     .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
     .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
@@ -12616,11 +12629,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
     }
 
-    // Ghost strip for a title line: the PR column carries the given refs and
-    // the since column the time on the current step (chips sit to its left).
-    function stageTrackerHeadColsHtml(prRefs, sinceHtml) {
-      const cols = STAGE_TRACKER_PATH.map(n => `<li class="ham-seg">${n === STAGE_TRACKER_PR_COLUMN ? prRefs.join('') : ''}</li>`).join('');
-      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip">${cols}<li class="ham-seg cap"></li></ol>${sinceHtml || '<span class="ham-since"></span>'}</div>`;
+    // Ghost strip for a title line: the lead cell (Open..Claimed) carries
+    // the item's own number + title, the PR cell (PR in progress..Merge gate)
+    // the given refs, and the since column the time on the current step
+    // (the chip sits in the cap cell, to its left).
+    function stageTrackerHeadColsHtml(prRefs, sinceHtml, leadHtml, chipsHtml) {
+      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip"><li class="ham-seg ham-head-lead">${leadHtml || ''}</li><li class="ham-seg ham-head-pr">${prRefs.join('')}</li><li class="ham-seg cap"><span class="ham-badges">${chipsHtml || ''}</span></li></ol>${sinceHtml || '<span class="ham-since"></span>'}</div>`;
     }
 
     function stageTrackerSinceHtml(item, nowMs) {
@@ -12637,8 +12651,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title);
       return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" title="${esc(stageTrackerTooltip(pr, nowMs))}">
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs))}
-            <span class="ham-badges">${stageTrackerChipsHtml(pr)}</span>
+            ${stageTrackerHeadColsHtml([ref], stageTrackerSinceHtml(pr, nowMs), '', stageTrackerChipsHtml(pr))}
           </div>
           <div class="ham-strip-row">
             <ol class="ham-strip" aria-label="Pipeline progress">${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}</ol>
@@ -12647,13 +12660,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         </div>`;
     }
 
+    // Covering PRs of an issue, furthest along first.
+    function stageTrackerLinkedSorted(item, stages) {
+      const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
+      const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
+      return linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages) - stageTrackerAnchor(x.stage, stages)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
+    }
+
+    // List order: furthest along the strip first — a covered issue counts as
+    // far along as its furthest covering PR — then longest-waiting first.
+    function stageTrackerSortKey(item, stages) {
+      const linked = item.kind === 'issue' ? stageTrackerLinkedSorted(item, stages) : [];
+      const lead = linked.length && linked[0].stage ? linked[0] : item;
+      return { anchor: stageTrackerAnchor(lead.stage, stages), since: Date.parse(lead.stage_since || '') || Infinity };
+    }
+
     // Row = title line (number, title, chips, since) + thin strip. Non-active
     // chevrons carry only a grey icon; the active one carries words.
     // Everything else is in the tooltip.
-    // An issue row with no PR yet owns the whole strip; once a PR covers it
-    // the issue strip stops at Claimed and one sub-row per covering PR,
-    // furthest along first, continues it. A PR without an issue owns the
-    // whole strip.
+    // An issue with no PR yet, or exactly one covering PR, is a single entry
+    // (the PR's stage drives the strip and its "[icon] #N title" sits in the
+    // PR column). With two or more covering PRs the issue strip stops at
+    // Claimed and one sub-row per PR continues it. A PR without an issue
+    // owns the whole strip.
     function stageTrackerRowHtml(item, stages, ctx) {
       ctx = ctx || {};
       const nowMs = Number(ctx.nowMs) || Date.now();
@@ -12661,26 +12690,29 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const title = item.title || '';
       let prRefs = [], shown = item, range = null, subs = '';
       if (isIssue) {
-        const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
-        // With a covering PR the issue strip ends at Claimed, all passed and
-        // nothing lit: the PR sub-rows carry the live chevron from here on.
-        range = linked.length ? { to: 20 } : null;
-        if (linked.length && stageTrackerAnchor(item.stage, stages) <= 20) shown = Object.assign({}, item, { stage: 40 });
-        const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
-        linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages) - stageTrackerAnchor(x.stage, stages)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
-        subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
+        const linked = stageTrackerLinkedSorted(item, stages);
+        if (linked.length === 1) {
+          // One covering PR: a single entry whose strip the PR's stage drives.
+          const lp = linked[0];
+          prRefs = [stageTrackerPRRef(lp.number, lp.url, lp.author_kind || '', lp.author, lp.title)];
+          shown = Object.assign({}, item, { stage: lp.stage || 40, stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, caption: lp.caption || item.caption, reason: lp.reason || item.reason });
+        } else if (linked.length) {
+          // Several covering PRs: the issue strip ends at Claimed, all passed
+          // and nothing lit; one sub-row per PR carries the live chevron.
+          range = { to: 20 };
+          if (stageTrackerAnchor(item.stage, stages) <= 20) shown = Object.assign({}, item, { stage: 40 });
+          subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
+        }
       } else {
         prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title)];
       }
-      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}" title="${esc(stageTrackerTooltip(item, nowMs))}">
+      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}" title="${esc(stageTrackerTooltip(shown, nowMs))}">
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(item, nowMs))}
-          <div class="ham-head-main">
+          ${stageTrackerHeadColsHtml(prRefs, stageTrackerSinceHtml(shown, nowMs), `<div class="ham-head-main">
             ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener">#${Number(item.number) || 0}</a>
-            <span class="ham-title">${esc(title)}</span>
-          </div>
-          <span class="ham-badges">${stageTrackerChipsHtml(item)}</span>
+            <span class="ham-title" title="${esc(title)}">${esc(title)}</span>
+          </div>`, stageTrackerChipsHtml(shown))}
         </div>
         <div class="ham-strip-row">
           <ol class="ham-strip" aria-label="Pipeline progress">${stageTrackerStripItems(shown, stages, range)}</ol>
@@ -12743,8 +12775,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       // Furthest along the strip first; within a column the item that has
       // waited longest comes first, since it is the likeliest to need a human.
-      const sinceOf = it => Date.parse(it.stage_since || '') || Infinity;
-      const ordered = visible.slice().sort((x, y) => (stageTrackerAnchor(y.stage, stages) - stageTrackerAnchor(x.stage, stages)) || (sinceOf(x) - sinceOf(y)) || ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0)));
+      const keyOf = it => stageTrackerSortKey(it, stages);
+      const ordered = visible.slice().sort((x, y) => { const a = keyOf(x), b = keyOf(y); return (b.anchor - a.anchor) || (a.since - b.since) || ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0)); });
       const html = stageTrackerHeaderHtml(stages) + ordered.map(it => stageTrackerRowHtml(it, stages, { nowMs })).join('');
       setIfChanged(el, html);
     }

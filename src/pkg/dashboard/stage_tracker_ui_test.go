@@ -75,6 +75,8 @@ func TestStageTrackerRows(t *testing.T) {
 		jsFunc(t, html, "stageTrackerHeadColsHtml"),
 		jsFunc(t, html, "stageTrackerSinceHtml"),
 		jsFunc(t, html, "stageTrackerSubRowHtml"),
+		jsFunc(t, html, "stageTrackerLinkedSorted"),
+		jsFunc(t, html, "stageTrackerSortKey"),
 		jsFunc(t, html, "esc"),
 		jsFunc(t, html, "agentNowAgo"),
 		jsFunc(t, html, "agentNowClockTime"),
@@ -134,14 +136,25 @@ assert.ok(!row.includes('ham-caption'), 'no caption line under the strip');
 assert.ok(tooltip(row).includes('Claimed by scanner') && tooltip(row).includes('@alice') && tooltip(row).includes('30 min ago'), tooltip(row));
 assert.ok(!row.includes('✓'), 'no text check glyphs');
 
-// Issue whose covering PR is in the merge queue: the issue row rides the PR's stage.
+// Issue with exactly one covering PR (only its number known, legacy linked_pr):
+// a single entry whose strip is driven by the PR; with no PR stage it lights
+// PR in progress.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', url: 'https://github.com/acme/console/issues/8', stage: 100, mirrored: true, linked_pr: 102, caption: 'Covered by PR #102' }, stages, ctx);
-assert.deepStrictEqual(segStates(row), [D, D, D, B, B, B, 'blank cap'], 'a covered issue ends at Claimed, all passed, nothing lit');
-assert.ok(!strip(row).includes('aria-current="step"') && !strip(row).includes('ham-actor-ico'), row);
-assert.ok(tooltip(row).includes('Admitted — merging (its PR)') && tooltip(row).includes('Covering PR: #102'), tooltip(row));
-assert.strictEqual(prCol(row).length, 0, 'the issue title line no longer lists PRs; they nest below');
-assert.strictEqual(subs(row).length, 1, 'one sub-row per covering PR, even when only the number is known');
-assert.ok(subs(row)[0].includes('#102') && segStates(subs(row)[0]).every(st => st.startsWith('blank') || st === 'todo' || st === 'todo cap'), 'unknown PR stage: blank lead-in, nothing lit');
+assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'one covering PR: single entry');
+assert.ok(tooltip(row).includes('Covering PR: #102'), tooltip(row));
+assert.deepStrictEqual(prCol(row).length, 1, 'the covering PR sits in the PR column of the title line');
+assert.strictEqual(subs(row).length, 0, 'no sub-rows for a single covering PR');
+// With the PR's stage known the issue strip rides it (merge queue → Merge gate lit, hive move).
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 40, linked_prs: [{ number: 102, title: 'Fix it', author_kind: 'human', author: 'bob', stage: 100, stage_since: new Date(now - 7200000).toISOString(), modifiers: ['stalled'], caption: 'Admitted, merging' }] }, stages, ctx);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
+assert.ok(row.includes('<span class="ham-seg-t">Ready for auto merge</span><svg class="ham-ico ham-actor-ico"') && row.includes('<title>Next move: hive</title>'), row);
+assert.ok(row.includes('ham-mod-stalled">stalled</span>') && row.includes('<span class="ham-since ham-stalled">2h</span>'), 'chips + since come from the covering PR: ' + row);
+assert.ok(tooltip(row).includes('Admitted, merging') && tooltip(row).includes('Covering PR: #102'), tooltip(row));
+assert.ok(prCol(row)[0].includes('ham-author-human') && prCol(row)[0].includes('<span class="ham-pr-title">Fix it</span>'), prCol(row)[0]);
+assert.strictEqual(subs(row).length, 0);
+// Two covering PRs, one of unknown stage: that sub-row is a blank lead-in with nothing lit.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 40, linked_prs: [{ number: 102, stage: 100 }, { number: 104 }] }, stages, ctx);
+assert.ok(subs(row)[1].includes('#104') && segStates(subs(row)[1]).every(st => st.startsWith('blank') || st === 'todo' || st === 'todo cap'), 'unknown PR stage: blank lead-in, nothing lit');
 assert.ok(tooltip(row).includes('acme/console'), 'repo lives in the tooltip');
 // Full PR row for 100: Merge gate lit as Ready for auto merge with the hive actor icon.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 102, kind: 'pr', stage: 100, author: 'hive-bot', author_kind: 'hive' }, stages, ctx);
@@ -197,7 +210,9 @@ assert.ok(!row.includes('ham-author-ico ham-actor') && !row.includes('ham-actor-
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 108, kind: 'pr', stage: 72, author_kind: 'clanker' }, stages, ctx);
 assert.ok(row.includes('<title>Next move: clanker</title>') && row.includes('<span class="ham-detour">Returned to contributor</span><svg class="ham-ico ham-actor-ico"'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }] }, stages, ctx);
-assert.ok(!strip(row).includes('ham-actor-ico') && subs(row)[0].includes('<title>Next move: clanker</title>') && subs(row)[0].includes('<span class="ham-seg-t">PR in progress</span><svg class="ham-ico ham-actor-ico"'), 'the PR sub-row, not the issue, lights PR in progress: ' + row);
+assert.ok(subs(row).length === 0 && strip(row).includes('<title>Next move: clanker</title>') && strip(row).includes('<span class="ham-seg-t">PR in progress</span><svg class="ham-ico ham-actor-ico"'), 'single covering PR: the issue strip lights PR in progress with the PR author as the mover: ' + row);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 7, kind: 'issue', stage: 40, linked_prs: [{ number: 108, author_kind: 'clanker', stage: 30 }, { number: 109, author_kind: 'hive', stage: 50 }] }, stages, ctx);
+assert.ok(!strip(row).includes('ham-actor-ico') && !strip(row).includes('aria-current') && subs(row).length === 2 && subs(row)[1].includes('<title>Next move: clanker</title>') && subs(row)[1].includes('<span class="ham-seg-t">PR in progress</span><svg class="ham-ico ham-actor-ico"'), 'two covering PRs: the sub-rows, not the issue, light their stage: ' + row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 20, claimant_kind: 'hive' }, stages, ctx);
 assert.ok(row.includes('<title>Next move: hive</title>') && row.includes('<span class="ham-seg-t">Claimed</span><svg class="ham-ico ham-actor-ico"'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', stage: 20 }, stages, ctx);
@@ -221,7 +236,7 @@ assert.ok(prCol(row)[0].includes('ham-author-hive'));
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 9, kind: 'issue', title: 'Ordering drifts', stage: 40, linked_prs: [{ number: 103, title: 'Backport', author_kind: 'clanker', stage: 30 }, { number: 102, title: 'Fix it', url: 'u', author_kind: 'human', stage: 70, stage_since: new Date(now - 3600000).toISOString(), modifiers: ['needs-rebase'], caption: 'Rebasing onto main' }] }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, B, B, B, 'blank cap']);
 assert.ok(!strip(row).includes('aria-current'), 'issue strip has no lit chevron once PRs cover it');
-assert.ok(row.includes('<span class="ham-title">Ordering drifts</span>'), 'issue keeps its own title on the left');
+assert.ok(row.includes('<span class="ham-title" title="Ordering drifts">Ordering drifts</span>'), 'issue keeps its own title on the left');
 assert.ok(tooltip(row).includes('Covering PR: #102, #103'));
 // Nested sub-rows, furthest along first: "[icon] #N title" at the PR column, then the PR's strip from that column on.
 let sr = subs(row);
@@ -237,9 +252,18 @@ row = stageTrackerRowHtml({ repo: 'acme/console', number: 10, kind: 'issue', sta
 assert.deepStrictEqual(segStates(row), [D, D, D, 'active', T, T, 'todo cap'], 'kick running, no PR yet: the issue lights PR in progress and draws the steps ahead');
 assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">PR in progress</span></li>') && strip(row).includes('title="PR in progress'), row);
 assert.strictEqual(subs(row).length, 0, 'no PR yet');
-// A merged covering PR nests with the green cap lit.
+// A merged covering PR: single entry with the green cap lit; nested when there are two.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 11, kind: 'issue', stage: 40, linked_prs: [{ number: 120, title: 'Done', author_kind: 'hive', stage: 110 }] }, stages, ctx);
-assert.deepStrictEqual(segStates(subs(row)[0]), [B, B, B, D, D, D, 'active cap merged']);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, D, D, 'active cap merged']);
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 11, kind: 'issue', stage: 40, linked_prs: [{ number: 121, title: 'Follow-up', author_kind: 'hive', stage: 50 }, { number: 120, title: 'Done', author_kind: 'hive', stage: 110 }] }, stages, ctx);
+assert.deepStrictEqual(segStates(subs(row)[0]), [B, B, B, D, D, D, 'active cap merged'], 'furthest along first');
+// Title line: lead cell (Open..Claimed) and PR cell (PR in progress..Merge gate) each truncate with an ellipsis; the full title is on the element itself.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 12, kind: 'issue', title: 'A very long issue title that must not wrap', stage: 10 }, stages, ctx);
+assert.ok(/<li class="ham-seg ham-head-lead"><div class="ham-head-main">[\s\S]*?<span class="ham-title" title="A very long issue title that must not wrap">A very long issue title that must not wrap<\/span>[\s\S]*?<\/li><li class="ham-seg ham-head-pr"><\/li><li class="ham-seg cap"><span class="ham-badges"><\/span><\/li>/.test(row), row);
+// Sort key: a covered issue counts as far along as its furthest PR.
+assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1, stage: 30 }, { number: 2, stage: 90 }] }, stages).anchor, 80);
+assert.strictEqual(stageTrackerSortKey({ kind: 'issue', stage: 40, linked_prs: [{ number: 1 }] }, stages).anchor, 30, 'unknown PR stage falls back to the issue');
+assert.strictEqual(stageTrackerSortKey({ kind: 'pr', stage: 72 }, stages).anchor, 50);
 
 // Header: names once, aligned with the chevrons, plus the since column.
 const head = stageTrackerHeaderHtml(stages);
