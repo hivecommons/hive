@@ -1,1 +1,1 @@
-- Keep needs-human issues human-held during un-park, re-park, stage, and good-first-issue label flows.
+- Keep needs-human issues human-held during un-park, re-park, and stage label flows.

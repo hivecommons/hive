@@ -286,11 +286,3 @@ func hasNewerDifferentDecisionCommand(comments []*gh.IssueComment, after time.Ti
 	}
 	return false
 }
-
-func containsLabelFold(labels []string, want string) bool {
-	want = strings.TrimSpace(want)
-	if want == "" {
-		return false
-	}
-	return labelPresent(labels, want)
-}
