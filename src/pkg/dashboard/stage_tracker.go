@@ -92,13 +92,26 @@ type StageTrackerItem struct {
 	// Modifiers are the health and control markers in effect: stalled,
 	// regressed, hold, needs-human, needs-decision, needs-rebase, blocked,
 	// draft.
-	Modifiers     []string          `json:"modifiers"`
-	RegressedFrom int               `json:"regressed_from,omitempty"`
-	NudgeCount    int               `json:"nudge_count,omitempty"`
-	LastNudgeAt   *time.Time        `json:"last_nudge_at,omitempty"`
-	AdoptedBy     int               `json:"adopted_by,omitempty"`
-	LinkedPR      int               `json:"linked_pr,omitempty"`
-	History       []StageTrackerHop `json:"history"`
+	Modifiers     []string   `json:"modifiers"`
+	RegressedFrom int        `json:"regressed_from,omitempty"`
+	NudgeCount    int        `json:"nudge_count,omitempty"`
+	LastNudgeAt   *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy     int        `json:"adopted_by,omitempty"`
+	LinkedPR      int        `json:"linked_pr,omitempty"`
+	// LinkedPRs lists the open pull requests covering an issue (the one
+	// named in the stage reason first) with the author kind of each, so
+	// the tracker can print "[author icon] #N title" in the PR column.
+	LinkedPRs []StageTrackerLinkedPR `json:"linked_prs,omitempty"`
+	History   []StageTrackerHop      `json:"history"`
+}
+
+// StageTrackerLinkedPR is one covering PR on an issue row.
+type StageTrackerLinkedPR struct {
+	Number     int    `json:"number"`
+	Title      string `json:"title,omitempty"`
+	URL        string `json:"url,omitempty"`
+	AuthorKind string `json:"author_kind,omitempty"`
+	Stage      int    `json:"stage,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -151,10 +164,13 @@ const (
 )
 
 // stageTrackerBranchFrom says which main segment a detour stage hangs off.
+// The PR strip collapses 050 and 060 into one "Review" chevron (lit during
+// 050, ticked from 060 on), so review-side detours hang off 050; 060 itself
+// lights the "Merge admission" chevron.
 func stageTrackerBranchFrom(number int) int {
 	switch number {
 	case trackerNumberFixing, trackerNumberReturned, trackerNumberAdopted:
-		return trackerNumberReviewed
+		return trackerNumberReviewPending
 	case trackerNumberNeedsDecision, trackerNumberReadyForHuman:
 		return trackerNumberAwaitingMerge
 	}
@@ -169,9 +185,9 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.Claimed:
 		return "Claimed"
 	case stagelabels.PRInProgress:
-		return "In progress"
+		return "PR in progress"
 	case stagelabels.CoveredByPR:
-		return "PR open"
+		return "Covered by PR"
 	case stagelabels.ReviewPending:
 		return "Review"
 	case stagelabels.Reviewed:
@@ -179,15 +195,15 @@ func stageTrackerShort(s stagelabels.Stage) string {
 	case stagelabels.Fixing:
 		return "Fixing"
 	case stagelabels.ReturnedToContributor:
-		return "Returned"
+		return "Returned to contributor"
 	case stagelabels.AdoptedByHive:
-		return "Adopted"
+		return "Adopted by hive"
 	case stagelabels.AwaitingMergeAdmission:
-		return "Admission"
+		return "Merge gate"
 	case stagelabels.NeedsDecision:
-		return "Decision"
+		return "Needs decision"
 	case stagelabels.ReadyForHumanMerge:
-		return "Human merge"
+		return "Ready for human merge"
 	case stagelabels.MergeQueue:
 		return "Merge queue"
 	}
@@ -546,6 +562,11 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 					it.AuthorKind, it.AuthorKindSource = authorKindHive, authorKindSrcInfer
 				}
 				finish(&it, issue.Labels, labelStage(issue.Labels), rec, ok, false)
+				for _, lp := range issue.LinkedPRs {
+					if lp.Number > 0 && !lp.Merged && !strings.EqualFold(lp.State, "closed") {
+						it.LinkedPRs = append(it.LinkedPRs, StageTrackerLinkedPR{Number: lp.Number, URL: lp.URL})
+					}
+				}
 				resp.Items = append(resp.Items, it)
 			}
 			for _, fp := range frontendRepoPRs(repo, held) {
@@ -571,14 +592,20 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 		}
 	}
+	stageTrackerResolveLinkedPRs(resp.Items)
 	sort.SliceStable(resp.Items, func(i, j int) bool {
 		a, b := resp.Items[i], resp.Items[j]
 		if a.Stage != b.Stage {
 			return a.Stage > b.Stage
 		}
+		// Within a stage the item that has waited longest comes first: it is
+		// the one most likely to need a human.
 		at, bt := trackerSince(a), trackerSince(b)
+		if at.IsZero() != bt.IsZero() {
+			return !at.IsZero()
+		}
 		if !at.Equal(bt) {
-			return at.After(bt)
+			return at.Before(bt)
 		}
 		if a.Repo != b.Repo {
 			return a.Repo < b.Repo
@@ -608,5 +635,48 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 	resp := s.buildStageTracker(status, s.stageStoreOrShared(), time.Now().UTC())
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slogWarnOverviewEncode(err)
+	}
+}
+
+// stageTrackerResolveLinkedPRs fills each issue's linked PR entries from the
+// PR items in the same response (title, author kind, stage), puts the PR the
+// stage reason names first and drops duplicates.
+func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
+	prs := map[string]*StageTrackerItem{}
+	for i := range items {
+		if items[i].Kind == "pr" {
+			prs[items[i].Repo+"#"+strconv.Itoa(items[i].Number)] = &items[i]
+		}
+	}
+	for i := range items {
+		it := &items[i]
+		if it.Kind != "issue" {
+			continue
+		}
+		seen := map[int]bool{}
+		out := make([]StageTrackerLinkedPR, 0, len(it.LinkedPRs)+1)
+		add := func(lp StageTrackerLinkedPR) {
+			if lp.Number == 0 || seen[lp.Number] {
+				return
+			}
+			seen[lp.Number] = true
+			if pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]; pr != nil {
+				lp.Title, lp.AuthorKind, lp.Stage = pr.Title, pr.AuthorKind, pr.Stage
+				if lp.URL == "" {
+					lp.URL = pr.URL
+				}
+			}
+			out = append(out, lp)
+		}
+		if it.LinkedPR > 0 {
+			add(StageTrackerLinkedPR{Number: it.LinkedPR})
+		}
+		for _, lp := range it.LinkedPRs {
+			add(lp)
+		}
+		if len(out) == 0 {
+			out = nil
+		}
+		it.LinkedPRs = out
 	}
 }

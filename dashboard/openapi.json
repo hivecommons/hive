@@ -1037,6 +1037,188 @@
         }
       }
     },
+    "/api/stage-tracker": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Hive activity monitor tracker rows",
+        "description": "One row per open issue and pull request for the Hive activity monitor strip: current stage/NNN-* label, time on the stage, humanised reason and actor, health modifiers, author kind, covering PRs, and the last stage hops from the stage store. Served from the cached status snapshot; returns {\"status\":\"initializing\"} until the first scan.",
+        "responses": {
+          "200": {
+            "description": "Tracker stages and items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "author_kind_labels": {
+                      "type": "boolean"
+                    },
+                    "stages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "number": {
+                            "type": "integer"
+                          },
+                          "slug": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "short": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "branch_from": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "issue",
+                              "pr"
+                            ]
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "author_kind": {
+                            "type": "string",
+                            "enum": [
+                              "human",
+                              "clanker",
+                              "hive",
+                              ""
+                            ]
+                          },
+                          "author_kind_source": {
+                            "type": "string"
+                          },
+                          "lane": {
+                            "type": "string"
+                          },
+                          "tier": {
+                            "type": "string"
+                          },
+                          "stage": {
+                            "type": "integer"
+                          },
+                          "stage_slug": {
+                            "type": "string"
+                          },
+                          "stage_label": {
+                            "type": "string"
+                          },
+                          "stage_since": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "caption": {
+                            "type": "string"
+                          },
+                          "actor": {
+                            "type": "string"
+                          },
+                          "mirrored": {
+                            "type": "boolean"
+                          },
+                          "modifiers": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "linked_pr": {
+                            "type": "integer"
+                          },
+                          "linked_prs": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "number": {
+                                  "type": "integer"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "url": {
+                                  "type": "string"
+                                },
+                                "author_kind": {
+                                  "type": "string"
+                                },
+                                "stage": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          },
+                          "history": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "stage": {
+                                  "type": "integer"
+                                },
+                                "at": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/status": {
       "get": {
         "tags": [

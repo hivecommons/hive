@@ -38,7 +38,7 @@ func TestStageTrackerNumbersPinned(t *testing.T) {
 			continue
 		}
 		detours++
-		if st.BranchFrom != trackerNumberReviewed && st.BranchFrom != trackerNumberAwaitingMerge {
+		if st.BranchFrom != trackerNumberReviewPending && st.BranchFrom != trackerNumberAwaitingMerge {
 			t.Errorf("detour %s branches from %d", st.Slug, st.BranchFrom)
 		}
 	}

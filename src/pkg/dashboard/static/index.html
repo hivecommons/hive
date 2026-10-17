@@ -1285,6 +1285,68 @@
     .agent-activity-table td.aa-reserved { color: var(--muted); font-size: var(--fs-xs); }
     .agent-activity-table .agent-now { text-align: left; margin-top: 0; }
     .agent-activity-empty { color: var(--muted); font-size: var(--fs-sm); }
+    /* Hive activity monitor (#12599): a pizza-tracker strip per issue / PR.
+       One shared pipeline for issues and PRs; only the current chevron is
+       coloured (amber; green once merged), every other chevron is a
+       low-contrast shape with a grey glyph. Detour stages (070/072/074 on
+       Review, 085/090 on Merge gate) light the chevron they branch from in
+       their own words, so every strip is the same width. */
+    .ham-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); margin-bottom: var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
+    .ham-toolbar label { display: inline-flex; align-items: center; gap: var(--sp-2); }
+    .ham-toolbar .hv-select, .ham-toolbar select { font-size: var(--fs-sm); }
+    .ham-chips { display: inline-flex; gap: var(--sp-1); }
+    .ham-chip { border: var(--line-width) solid var(--line); background: transparent; color: var(--muted); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-4); font-size: var(--fs-xs); cursor: pointer; }
+    .ham-chip[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); border-color: var(--line-strong); }
+    .ham-cols { padding: 0 var(--sp-2) var(--sp-2); border-bottom: var(--line-width) solid var(--line-subtle); margin-bottom: var(--sp-2); }
+    .ham-cols .ham-strip { height: auto; }
+    .ham-cols .ham-seg { background: transparent; clip-path: none; color: var(--text-faint); font-size: var(--fs-xs); justify-content: center; }
+    .ham-cols .ham-since { color: var(--text-faint); font-family: inherit; }
+    .ham-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-2); padding: var(--sp-4) var(--sp-2); }
+    /* Title line = flow-positioned ghost strip (so the PR column aligns with
+       the chevron below and stacks when an issue has several PRs) with the
+       number + title overlaid at the left and the modifier chip at the right. */
+    .ham-row-head { position: relative; display: flex; align-items: flex-start; gap: var(--sp-3); font-size: var(--fs-sm); min-width: 0; line-height: 1.3; }
+    .ham-head-cols { flex: 1 1 auto; min-width: 0; min-height: 1.3em; align-items: flex-start; }
+    .ham-head-cols .ham-strip { height: auto; }
+    .ham-head-cols .ham-seg { background: transparent; clip-path: none; overflow: visible; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: var(--sp-1); padding: 0 var(--sp-2) 0 var(--sp-4); white-space: nowrap; }
+    .ham-head-main { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: var(--sp-3); white-space: nowrap; }
+    .ham-pr-ref { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--muted); text-decoration: none; font-size: var(--fs-xs); white-space: nowrap; }
+    .ham-pr-ref:hover { color: var(--text); }
+    .ham-pr-ref:hover .ham-pr-num { text-decoration: underline; }
+    .ham-pr-num { white-space: nowrap; }
+    .ham-pr-title { white-space: nowrap; color: var(--text-faint); }
+    /* Author kind is the one coloured legend: hive blue / clanker purple
+       (the author/* label colours), human teal. */
+    .ham-author-ico { width: 13px; height: 13px; flex: 0 0 auto; color: var(--text-faint); }
+    .ham-author-ico.ham-author-hive { color: var(--blue); }
+    .ham-author-ico.ham-author-clanker { color: var(--purple); }
+    .ham-author-ico.ham-author-human { color: var(--cyan); }
+    .ham-strip-row { display: flex; align-items: center; gap: var(--sp-3); }
+    .ham-since { flex: 0 0 auto; width: 4em; text-align: right; font-size: var(--fs-xs); color: var(--text-faint); white-space: nowrap; }
+    .ham-since.ham-stalled { color: var(--red); }
+    .ham-kind-ico { flex: 0 0 auto; width: 12px; height: 12px; color: var(--text-faint); }
+    .ham-ref { color: var(--muted); text-decoration: none; white-space: nowrap; }
+    .ham-ref:hover { text-decoration: underline; color: var(--text); }
+    .ham-title { color: var(--text); white-space: nowrap; }
+    .ham-badges { position: absolute; right: calc(4em + var(--sp-3)); top: 0; display: inline-flex; gap: var(--sp-2); }
+    .ham-badge { display: inline-block; font-size: var(--fs-xs); line-height: 1.4; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: var(--line-width) solid var(--line-subtle); color: var(--text-faint); white-space: nowrap; }
+    .ham-badge-mod.ham-mod-stalled, .ham-badge-mod.ham-mod-regressed { color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+    .ham-strip { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--sp-1); height: 18px; flex: 1 1 auto; min-width: 0; --ham-notch: 8px; }
+    .ham-seg { position: relative; flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 0 var(--sp-4) 0 var(--sp-5); font-size: var(--fs-xs); font-weight: var(--fw-medium); white-space: nowrap; overflow: hidden; clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%, var(--ham-notch) 50%); }
+    .ham-seg:first-child { clip-path: polygon(0 0, calc(100% - var(--ham-notch)) 0, 100% 50%, calc(100% - var(--ham-notch)) 100%, 0 100%); }
+    .ham-seg.cap { flex: 0 0 4em; }
+    .ham-seg.active.merged { background: var(--green); color: var(--surface-0); animation: none; }
+    .ham-seg.active.merged .ham-ico { stroke-width: 2.5; }
+    .ham-seg-t { overflow: hidden; text-overflow: ellipsis; }
+    .ham-ico { width: 12px; height: 12px; flex: 0 0 auto; }
+    .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
+    .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
+    .ham-seg.active { background: var(--amber); color: var(--surface-0); animation: ham-pulse 1.6s ease-in-out infinite; }
+    .ham-detour { overflow: hidden; text-overflow: ellipsis; }
+    @keyframes ham-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
+    .ham-empty { color: var(--muted); font-size: var(--fs-sm); padding: var(--sp-4) 0; }
+    @media (prefers-reduced-motion: reduce) { .ham-seg.active { animation: none; box-shadow: inset 0 0 0 2px var(--surface-0); } }
+    @media (max-width: 1100px) { .ham-cols .ham-seg-t { display: none; } }
     .agent-blockers { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); margin-top: var(--sp-2); color: var(--muted); }
     .agent-blockers .ab-key { opacity: 0.65; margin-right: 3px; }
     .agent-blockers .ab-seg { white-space: nowrap; }
@@ -5878,6 +5940,7 @@
     <div class="oc-nav-group" id="dashboard-section-nav-group">
       <div class="oc-nav-label">Dashboard</div>
       <a class="oc-nav-item" data-section="overview-section" data-action="ocNavigate" data-arg0="overview-section"><span class="oc-nav-emoji">🍩</span><span class="oc-nav-text">Overview</span></a>
+      <a class="oc-nav-item" data-section="activity-monitor-section" data-action="ocNavigate" data-arg0="activity-monitor-section"><span class="oc-nav-emoji">📍</span><span class="oc-nav-text">Hive activity monitor</span><span id="activity-monitor-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span></a>
       <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span></a>
     </div>
@@ -6373,6 +6436,26 @@
     </div>
     <div class="section-body">
       <div class="agents" id="agents"></div>
+    </div>
+  </div>
+
+  <!-- Hive activity monitor (#12599): one Domino's-style tracker strip per
+       open issue / PR, grouped by current stage, fed by GET /api/stage-tracker.
+       Row/segment/caption markup is built by stageTrackerRowHtml() so a node
+       test can run it; guarded by stage_tracker_ui_test.go. -->
+  <div class="mt-6 mb-8" id="activity-monitor-section" data-dashboard-section="activity-monitor-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="activity-monitor-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Hive activity monitor section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📍 Hive activity monitor</h2>
+    <div class="section-body">
+      <div class="ham-toolbar" id="activity-monitor-toolbar">
+        <span class="ham-chips" role="group" aria-label="Item kind">
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="all" aria-pressed="true">All</button>
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="pr" aria-pressed="false">Pull requests</button>
+          <button type="button" class="ham-chip" data-action="hamFilter" data-arg0="kind" data-arg1="issue" aria-pressed="false">Issues</button>
+        </span>
+        <label><span>Repo</span> <select id="activity-monitor-repo" class="hv-btn btn-secondary btn" data-change-action="hamFilter" data-arg0="repo" data-arg-types="s,v"><option value="">All repos</option></select></label>
+        
+      </div>
+      <div id="activity-monitor-panel"><div class="ham-empty">Loading the tracker…</div></div>
     </div>
   </div>
 
@@ -7516,6 +7599,7 @@
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
       'agents-section': { title: '🤖 Agents', summary: '0 running / 0 total' },
       'agent-activity-section': { title: '📡 Agent activity', summary: '0 working / 0 total' },
+      'activity-monitor-section': { title: '📍 Hive activity monitor', summary: '0 items' },
       'faq-section': { title: '❓ FAQ', summary: 'questions' },
     });
     // Section help marks (#10915). Each entry's help sentence is word for word
@@ -7553,6 +7637,7 @@
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
       'agents-section': { heading: 'Agents', help: 'Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.' },
       'agent-activity-section': { heading: 'Agent activity', help: 'One line per worker showing what it is doing now, how long since it last acted, and which issues it has reserved.' },
+      'activity-monitor-section': { heading: 'Hive activity monitor', help: 'A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next.' },
       'faq-section': { heading: 'FAQ', help: 'Short answers to the questions people ask once a hive is running, each linking to the guide that explains it fully.' },
     });
     // The one place that decides where dashboard help lives: every help mark and
@@ -8967,7 +9052,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -12312,6 +12397,271 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         <tbody>${rows}</tbody>
       </table></div>`);
     }
+
+    /* ---- Hive activity monitor (#12599) ----------------------------------
+       One Domino's-style tracker strip per open work item from
+       GET /api/stage-tracker. Issues and PRs share ONE strip:
+       Open → 010 Actionable → 020 Claimed → 030 PR in progress →
+       040 Covered by PR → 050 Review → 080 Merge admission → 100 Merge
+       queue → ✓ merged. An issue keeps advancing with its covering PR's
+       stage; a PR filed without an issue shows the issue steps as passed.
+       060 Reviewed lights Merge admission; 070/072/074 ride Review and
+       085/090 ride Merge admission as detour badges.
+       stageTrackerRowHtml() is pure (no DOM) so stage_tracker_ui_test.go can
+       execute it under node. */
+    const STAGE_TRACKER_POLL_MS = 30000;
+    const STAGE_TRACKER_PATH = [0, 10, 20, 30, 50, 80];
+    const STAGE_TRACKER_PR_COLUMN = 30;
+    const STAGE_TRACKER_MERGE_COLUMN = 80;
+    // Stages that share a column but light it with their own word.
+    const STAGE_TRACKER_ACTIVE_WORD = { 100: 'Auto merge queue' };
+    const STAGE_TRACKER_TERMINAL = 110;
+    const STAGE_TRACKER_TRAIL_HOPS = 4;
+    var _stageTracker = null;
+    var _stageTrackerSig = '';
+    var _stageTrackerFilter = { kind: 'all', repo: '' };
+
+    function stageTrackerHeadline(item) {
+      const n = Number(item.stage) || 0;
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (mods.indexOf('stalled') >= 0) return 'Stalled';
+      if (mods.indexOf('regressed') >= 0) return 'Sent back';
+      const viaPR = item.kind === 'issue' && n >= 50 ? ' (its PR)' : '';
+      switch (n) {
+        case 0: return 'Open';
+        case 10: return 'Waiting for a worker';
+        case 20: return 'Claimed';
+        case 30: return 'PR in progress';
+        case 40: return 'Covered by a PR, not yet in review';
+        case 50: return 'Waiting for review' + viaPR;
+        case 60: return 'Reviewed' + viaPR;
+        case 70: return 'Fixing review findings' + viaPR;
+        case 72: return 'Back with the contributor' + viaPR;
+        case 74: return 'Hive took it over' + viaPR;
+        case 80: return 'Waiting for merge admission' + viaPR;
+        case 85: return 'Needs a decision' + viaPR;
+        case 90: return 'Ready for a human merge' + viaPR;
+        case 100: return 'In the merge queue' + viaPR;
+        case 110: return 'Merged';
+        default: return item.stage_label || 'Tracking';
+      }
+    }
+
+    // Which strip segment a stage lights: main stages light themselves,
+    // 040 shares the PR in progress column with 030, 060 and 100 share the
+    // Merge gate column with 080, detours light the segment they branch from.
+    function stageTrackerAnchor(stage, stages) {
+      const cur = Number(stage) || 0;
+      if (cur >= STAGE_TRACKER_TERMINAL) return STAGE_TRACKER_TERMINAL;
+      if (STAGE_TRACKER_PATH.indexOf(cur) >= 0) return cur;
+      if (cur === 40) return STAGE_TRACKER_PR_COLUMN;
+      if (cur === 60 || cur === 100) return STAGE_TRACKER_MERGE_COLUMN;
+      const st = (stages || []).find(x => Number(x.number) === cur) || {};
+      let from = Number(st.branch_from) || 0;
+      if (from === 60) from = 50;
+      return STAGE_TRACKER_PATH.indexOf(from) >= 0 ? from : 0;
+    }
+
+    // Segment list for one item: path segments with done/active state plus a
+    // detour badge when the item sits on a side stage, and the merged end-cap.
+    function stageTrackerSegments(item, stages) {
+      const byNum = {};
+      (stages || []).forEach(st => { byNum[st.number] = st; });
+      const cur = Number(item.stage) || 0;
+      const curStage = byNum[cur] || {};
+      const anchor = stageTrackerAnchor(cur, stages);
+      const terminal = anchor >= STAGE_TRACKER_TERMINAL;
+      const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== 40 && cur !== 60 && cur !== 100)
+        ? { text: curStage.short || curStage.label || String(cur) } : null;
+      const segs = STAGE_TRACKER_PATH.map(n => {
+        const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
+        let state = 'todo';
+        if (terminal || n < anchor) state = 'done';
+        else if (n === anchor) state = 'active';
+        // The lit column's tooltip names the real stage (030 vs 040, 060 vs 080).
+        const tipStage = (state === 'active' && !detour && curStage.label) ? curStage : st;
+        const word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, label: tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null };
+      });
+      segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
+      return segs;
+    }
+
+    const STAGE_TRACKER_MOD_PRIORITY = ['stalled', 'regressed', 'hold', 'needs-human', 'needs-decision', 'needs-rebase', 'blocked', 'draft'];
+    // 16-unit monochrome stroke icons, one per strip column (and the two kinds).
+    const STAGE_TRACKER_ICONS = {
+      0: '<circle cx="8" cy="8" r="5"/>',
+      10: '<path d="M9 1 3 9h4l-1 6 6-8H8z"/>',
+      20: '<rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/>',
+      30: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="5" r="1.5"/><path d="M4 4.5v7M12 6.5c0 3-8 1-8 4"/>',
+      40: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="12" r="1.5"/><path d="M4 4.5v7M4 6c0 3 6 2 6.5 5"/>',
+      50: '<path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/>',
+      80: '<path d="M8 1l6 2v5c0 3.5-2.5 6-6 7-3.5-1-6-3.5-6-7V3z"/>',
+      100: '<path d="M3 5h10M3 8h10M3 11h10"/>',
+      110: '<path d="M3 8l3 3 7-7"/>',
+      issue: '<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="1.5"/>',
+      human: '<circle cx="8" cy="5" r="3"/><path d="M2.5 14.5a5.5 5.5 0 0 1 11 0"/>',
+      clanker: '<rect x="3" y="5" width="10" height="8" rx="1.5"/><path d="M8 5V2M5 2h6"/><circle cx="6" cy="9" r="0.9"/><circle cx="10" cy="9" r="0.9"/>',
+      hive: '<path d="M8 1.5 13.6 4.75v6.5L8 14.5 2.4 11.25v-6.5z"/>',
+      pr: '<circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="13" r="1.5"/><path d="M4 4.5v7M12 11.5V7a2 2 0 0 0-2-2H8"/>',
+    };
+    function stageTrackerIcon(key, cls, title) {
+      const body = STAGE_TRACKER_ICONS[key];
+      if (!body) return '';
+      const t = title ? `<title>${esc(title)}</title>` : '';
+      return `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"${title ? ' role="img"' : ' aria-hidden="true"'}>${t}${body}</svg>`;
+    }
+
+    // "[author icon] #N title" for the PR in progress column of the title line.
+    function stageTrackerPRRef(number, url, authorKind, author, title) {
+      const ak = authorKind || 'hive';
+      const who = ak + (author ? ' · @' + author : '');
+      return `<a class="ham-pr-ref" href="${esc(url || '#')}" target="_blank" rel="noopener" title="${esc((title ? title + '\n' : '') + 'Author: ' + who)}">${stageTrackerIcon(ak, 'ham-author-ico ham-author-' + esc(ak), who)}<span class="ham-pr-num">#${Number(number) || 0}</span>${title ? `<span class="ham-pr-title">${esc(title)}</span>` : ''}</a>`;
+    }
+
+    function stageTrackerShortAgo(ms) {
+      const sec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+      if (sec < 60) return 'now';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return min + 'm';
+      const hours = Math.floor(min / 60);
+      if (hours < 48) return hours + 'h';
+      return Math.floor(hours / 24) + 'd';
+    }
+
+    // Column header: the stage names once, aligned with the chevrons below.
+    function stageTrackerHeaderHtml(stages) {
+      const byNum = {};
+      (stages || []).forEach(st => { byNum[st.number] = st; });
+      const cols = STAGE_TRACKER_PATH.map(n => {
+        const name = n === 0 ? 'Open' : ((byNum[n] || {}).short || (byNum[n] || {}).label || String(n));
+        return `<li class="ham-seg"><span class="ham-seg-t">${esc(name)}</span></li>`;
+      }).join('');
+      return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap">${stageTrackerIcon(STAGE_TRACKER_TERMINAL, 'ham-ico')}</li></ol><span class="ham-since">since</span></div></div>`;
+    }
+
+    // Row = title line + thin strip. Non-active chevrons carry only a grey
+    // icon; the active one carries words. Everything else is in the tooltip.
+    function stageTrackerRowHtml(item, stages, ctx) {
+      ctx = ctx || {};
+      const nowMs = Number(ctx.nowMs) || Date.now();
+      const segs = stageTrackerSegments(item, stages);
+      const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
+        .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
+      const title = item.title || '';
+      const ak = item.author_kind || '';
+      const chips = [];
+      if (mods.length) chips.push(`<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`);
+      // PR column of the title line: the item's own PR, or the issue's covering PRs.
+      let prRefs = [];
+      if (item.kind === 'pr') prRefs = [stageTrackerPRRef(item.number, item.url, ak, item.author, title)];
+      else if (Array.isArray(item.linked_prs)) prRefs = item.linked_prs.map(lp => stageTrackerPRRef(lp.number, lp.url, lp.author_kind, '', lp.title || ''));
+      else if (item.linked_pr) prRefs = [stageTrackerPRRef(item.linked_pr, '', '', '', '')];
+      const prCol = STAGE_TRACKER_PATH.map(n => `<li class="ham-seg">${n === STAGE_TRACKER_PR_COLUMN ? prRefs.join('') : ''}</li>`).join('');
+      const stripItems = segs.map(sg => {
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : ''].filter(Boolean).join(' ');
+        const tip = sg.label + (sg.description ? ' — ' + sg.description : '');
+        let inner;
+        if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
+        else if (sg.state === 'active') inner = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`;
+        else inner = stageTrackerIcon(sg.number, 'ham-ico');
+        return `<li class="${cls}" title="${esc(tip)}"${sg.state === 'active' ? ' aria-current="step"' : ''}>${inner}</li>`;
+      }).join('');
+      const sinceMs = Date.parse(item.stage_since || '');
+      const since = sinceMs ? stageTrackerShortAgo(nowMs - sinceMs) : '';
+      const stalled = mods.indexOf('stalled') >= 0;
+      const trail = Array.isArray(item.history) && item.history.length > 1
+        ? item.history.slice(-STAGE_TRACKER_TRAIL_HOPS).map(h => String(h.stage).padStart(3, '0')).join(' → ') : '';
+      const tipLines = [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
+      if (item.author || ak) tipLines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
+      if (item.kind === 'issue' && prRefs.length) tipLines.push('Covering PR: ' + (Array.isArray(item.linked_prs) && item.linked_prs.length ? item.linked_prs.map(lp => '#' + lp.number).join(', ') : '#' + item.linked_pr));
+      if (mods.length) tipLines.push('Flags: ' + mods.join(', '));
+      if (sinceMs) tipLines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
+      if (trail) tipLines.push('Trail: ' + trail);
+      const tip = tipLines.filter(Boolean).join('\n');
+      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}" title="${esc(tip)}">
+        <div class="ham-row-head">
+          <div class="ham-strip-row ham-head-cols"><ol class="ham-strip">${prCol}<li class="ham-seg cap"></li></ol><span class="ham-since"></span></div>
+          <div class="ham-head-main">
+            ${stageTrackerIcon(item.kind === 'issue' ? 'issue' : 'pr', 'ham-kind-ico')}
+            <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener">#${Number(item.number) || 0}</a>
+            <span class="ham-title">${esc(title)}</span>
+          </div>
+          <span class="ham-badges">${chips.join('')}</span>
+        </div>
+        <div class="ham-strip-row">
+          <ol class="ham-strip" aria-label="Pipeline progress">${stripItems}</ol>
+          <span class="ham-since${stalled ? ' ham-stalled' : ''}">${esc(since)}</span>
+        </div>
+      </div>`;
+    }
+
+    function stageTrackerNeedsAttention(item) {
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      const n = Number(item.stage) || 0;
+      return mods.length > 0 || n === 72 || n === 85 || n === 90;
+    }
+
+    function stageTrackerVisible(items) {
+      const f = _stageTrackerFilter;
+      return (items || []).filter(it =>
+        (f.kind === 'all' || it.kind === f.kind) &&
+        (!f.repo || it.repo === f.repo));
+    }
+
+    function hamFilter(key, value) {
+      if (key === 'kind') {
+        _stageTrackerFilter.kind = value || 'all';
+        document.querySelectorAll('#activity-monitor-toolbar .ham-chip').forEach(b => b.setAttribute('aria-pressed', b.dataset.arg1 === _stageTrackerFilter.kind ? 'true' : 'false'));
+      } else if (key === 'repo') _stageTrackerFilter.repo = value || '';
+      renderStageTracker();
+    }
+
+    function renderStageTracker(data) {
+      if (data && typeof data === 'object') _stageTracker = data;
+      const el = document.getElementById('activity-monitor-panel');
+      if (!el) return;
+      const d = _stageTracker;
+      if (!d || d.status === 'initializing' || !Array.isArray(d.items)) {
+        setIfChanged(el, '<div class="ham-empty">Waiting for the first scan…</div>');
+        return;
+      }
+      const nowMs = Date.parse(d.generated_at || '') || Date.now();
+      const stages = d.stages || [];
+      const sel = document.getElementById('activity-monitor-repo');
+      if (sel) {
+        const repos = Array.from(new Set(d.items.map(it => it.repo).filter(Boolean))).sort();
+        const want = '<option value="">All repos</option>' + repos.map(r => `<option value="${esc(r)}"${r === _stageTrackerFilter.repo ? ' selected' : ''}>${esc(r)}</option>`).join('');
+        if (sel.innerHTML !== want) sel.innerHTML = want;
+      }
+      const visible = stageTrackerVisible(d.items);
+      const attention = d.items.filter(stageTrackerNeedsAttention).length;
+      setSectionSummary('activity-monitor-section', `${d.items.length} items · ${attention ? `<span class="text-warn">${attention} need attention</span>` : 'nothing needs attention'}`);
+      const badge = document.getElementById('activity-monitor-sidebar-badge');
+      if (badge) { badge.textContent = String(attention); if (attention) badge.removeAttribute('data-zero'); else badge.setAttribute('data-zero', ''); }
+      if (!visible.length) {
+        setIfChanged(el, `<div class="ham-empty">${d.items.length ? 'Nothing matches the current filter.' : 'Nothing open is being tracked right now.'}</div>`);
+        return;
+      }
+      // Furthest along the strip first; within a column the item that has
+      // waited longest comes first, since it is the likeliest to need a human.
+      const sinceOf = it => Date.parse(it.stage_since || '') || Infinity;
+      const ordered = visible.slice().sort((x, y) => (stageTrackerAnchor(y.stage, stages) - stageTrackerAnchor(x.stage, stages)) || (sinceOf(x) - sinceOf(y)) || ((x.repo || '').localeCompare(y.repo || '')) || ((x.number || 0) - (y.number || 0)));
+      const html = stageTrackerHeaderHtml(stages) + ordered.map(it => stageTrackerRowHtml(it, stages, { nowMs })).join('');
+      setIfChanged(el, html);
+    }
+
+    async function fetchStageTracker() {
+      try {
+        const r = await fetch('/api/stage-tracker');
+        if (!r.ok) return;
+        const text = await r.text();
+        if (text === _stageTrackerSig) return;
+        _stageTrackerSig = text;
+        renderStageTracker(JSON.parse(text));
+      } catch (e) { /* keep the previous render */ }
+    }
+
     function parseCadenceMinutes(cadence) {
       if (!cadence || cadence === 'paused' || cadence === 'off' || cadence === 'on demand') return 0;
       const m = cadence.match(/^(\d+)(m|h)$/);
@@ -28601,7 +28951,7 @@ function burnAreaChart() {
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
         'knowledge-section', 'contributors-section', 'debug-section', 'logs-section',
-        'agents-section', 'agent-activity-section', 'faq-section'
+        'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       refreshDashboardSectionSummaries(data);
@@ -49827,6 +50177,7 @@ function burnAreaChart() {
           () => fetchAuditLog().then(() => { dashboardSetInterval('audit-log', fetchAuditLog, AUDIT_POLL_MS); }),
           () => fetchReviewQueue().then(() => { dashboardSetInterval('review-queue', fetchReviewQueue, REVIEW_QUEUE_POLL_MS); }),
           () => fetchReviewPipeline().then(() => { dashboardSetInterval('review-pipeline', fetchReviewPipeline, REVIEW_PIPELINE_POLL_MS); }),
+          () => fetchStageTracker().then(() => { dashboardSetInterval('stage-tracker', fetchStageTracker, STAGE_TRACKER_POLL_MS); }),
           () => fetchContributors().then(() => { dashboardSetInterval('contributors', fetchContributors, CONTRIBUTOR_POLL_MS); }),
           () => fetchLeaderboard().then(() => { dashboardSetInterval('leaderboard', fetchLeaderboard, LEADERBOARD_POLL_MS); }),
           () => fetchGitVersion().then(() => { dashboardSetInterval('git-version', fetchGitVersion, GIT_VERSION_POLL_MS); }),
