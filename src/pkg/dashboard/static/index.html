@@ -29613,15 +29613,15 @@ function burnAreaChart() {
       (campaigns || []).forEach(function(c) { byId[c.id] = c; });
       const latest = (campaigns || []).filter(function(c) { return !c.superseded_by || !byId[c.superseded_by]; });
       return latest.map(function(head) {
-        const history = [];
+        const earlier = [];
         const seen = {};
         let cur = head;
         while (cur && cur.revision_of && byId[cur.revision_of] && !seen[cur.revision_of]) {
           seen[cur.revision_of] = true;
           cur = byId[cur.revision_of];
-          history.push(cur);
+          earlier.push(cur);
         }
-        return { head: head, history: history };
+        return { head: head, history: earlier };
       });
     }
 
@@ -29684,7 +29684,7 @@ function burnAreaChart() {
 
     // Delete only removes the campaign record (saved inception state + wiki
     // snapshot). KB facts, Jam threads and scaffolded repo files are kept.
-    // In-app confirm — never window.confirm (#12698).
+    // In-app hiveConfirm dialog; native browser dialogs are forbidden (#12698).
     const CAMPAIGN_DELETE_CONFIRM_TITLE = 'Delete this campaign?';
     function campaignDeleteConfirmMessage(c) {
       const label = (c && (c.title || c.id)) || 'this campaign';
