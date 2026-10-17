@@ -1690,6 +1690,26 @@
     .ev-svg .ev-bar.wb { fill:var(--red); }
     .ev-legend i.wa { background:var(--blue); }
     .ev-legend i.wb { background:var(--red); }
+    .ev-svg .ev-bar.wm { fill:var(--blue); opacity:.45; }
+    .ev-legend i.wm { background:var(--blue); opacity:.45; }
+    .ev-svg .wb-queue, .ev-legend .wb-queue { --ev-c: var(--purple); }
+    .ev-svg .wb-queue .ev-line { stroke-dasharray:3 2; }
+    .ev-svg .ev-tick.wb-unmerged { stroke:var(--red); stroke-width:2; }
+    .ev-svg .ev-bar.cr-rec { fill:var(--green); }
+    .ev-svg .ev-bar.cr-green { fill:var(--green); opacity:.45; }
+    .ev-svg .ev-bar.cr-aband { fill:var(--red); }
+    .ev-svg .ev-bar.cr-pend { fill:var(--amber); opacity:.6; }
+    .ev-svg .ev-bar.cr-unk { fill:none; stroke:var(--muted); stroke-width:1; stroke-dasharray:2 2; }
+    .ev-legend i.cr-rec { background:var(--green); }
+    .ev-legend i.cr-green { background:var(--green); opacity:.45; }
+    .ev-legend i.cr-aband { background:var(--red); }
+    .ev-legend i.cr-pend { background:var(--amber); opacity:.6; }
+    .ev-legend i.cr-unk { background:none; border:1px dashed var(--muted); }
+    .ev-headline { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--text); }
+    .ev-headline b { font-weight:600; }
+    .ev-headline .ev-sub { color:var(--muted); font-size:var(--fs-2xs); }
+    .ev-flow { display:grid; grid-template-columns:1fr 1fr; gap:var(--sp-3); }
+    .ev-flow h5 { margin:var(--sp-2) 0 0; font-size:var(--fs-2xs); color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
     .ev-svg.ev-spark { max-width:480px; }
     .ev-note { margin-top:var(--sp-2); font-size:var(--fs-2xs); color:var(--muted); }
     .ev-empty { margin-top:var(--sp-2); font-size:var(--fs-xs); color:var(--muted); }
@@ -1710,7 +1730,8 @@
     .ev-explainer h4:first-child { margin-top:0; }
     .ev-explainer p { margin:2px 0 0; }
     .ev-grade { display:inline-block; margin-top:var(--sp-2); padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); font-weight:600; color:var(--muted); }
-    .ev-grade.strong { color:var(--green); border-color:var(--green); }
+    .ev-grade.excellent, .ev-grade.strong { color:var(--green); border-color:var(--green); }
+    .ev-grade.good { color:var(--blue); border-color:var(--blue); }
     .ev-grade.fair { color:var(--amber); border-color:var(--amber); }
     .ev-grade.weak { color:var(--red); border-color:var(--red); }
     .prt-trend-head { display:flex; justify-content:space-between; gap:var(--sp-2); align-items:center; margin-bottom:var(--sp-2); }
@@ -22893,14 +22914,38 @@ function burnAreaChart() {
     const EV_REVERT_FAIR = 0.15;            // ≤ → Fair, above → Weak
     const EV_SHADOW_FALSE_ALARM_STRONG = 0.25; // held-but-merged-clean share ≤ → Strong
     const EV_SHADOW_FALSE_ALARM_FAIR = 0.5;    // ≤ → Fair, above → Weak
-    const EV_BALANCE_STRONG = 0.8;          // issues closed ÷ issues opened ≥ → Strong
-    const EV_BALANCE_FAIR = 0.5;            // ≥ → Fair, below → Weak
-    const EV_BLOCKED_STRONG = 0.05;         // proxy-blocked share of attempted agent writes ≤ → Strong
-    const EV_BLOCKED_FAIR = 0.15;           // ≤ → Fair, above → Weak
+    const EV_THROUGHPUT_EXCELLENT = 0.95;   // closed ÷ opened (issues) or merged ÷ opened (PRs) ≥ → Excellent
+    const EV_THROUGHPUT_GOOD = 0.85;        // ≥ → Good
+    const EV_THROUGHPUT_FAIR = 0.70;        // ≥ → Fair, below → Weak
+    const EV_QUEUE_GROWTH_MAX = 0.10;       // week-end queue depth growing more than this week over week → Weak regardless of ratio
+    const EV_BLOCKED_STRONG = 0.01;         // proxy-blocked share of ALL agent writes (direct + hive-mediated) ≤ → Strong
+    const EV_BLOCKED_FAIR = 0.05;           // ≤ → Fair, above → Weak
+    const EV_RECOVERY_STRONG = 0.90;        // CI-red-at-claim PRs that went green and merged ÷ settled (merged + abandoned) ≥ → Strong
+    const EV_RECOVERY_FAIR = 0.70;          // ≥ → Fair, below → Weak
+    const EV_ABANDON_MAX = 0.25;            // abandoned ÷ settled above this → Weak regardless of recovery
     const EV_CALIB_MIN_BUCKET_N = 5;        // calibration buckets with fewer known-outcome verdicts are drawn hollow and not joined
     const EV_DATA_SINCE = '2026-10-08';     // first live evidence bundles were written
     const EV_REVERTS_SINCE = '2026-10-15';  // reverted_by links recorded from this date
-    const EV_GRADES = { strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };
+    const EV_GRADES = { excellent: 'Excellent', good: 'Good', strong: 'Strong', fair: 'Fair', weak: 'Weak', none: 'Not enough data' };
+    // Rank for "card grade = the lower of the two" comparisons.
+    const EV_GRADE_RANK = { none: -1, weak: 0, fair: 1, good: 2, strong: 3, excellent: 4 };
+    function evLowerGrade(a, b) { return EV_GRADE_RANK[a] <= EV_GRADE_RANK[b] ? a : b; }
+    // evThroughputGrade: closed ÷ opened over the window on the four-band
+    // scale, forced to Weak when the week-end queue grew more than
+    // EV_QUEUE_GROWTH_MAX week over week at the end of the window.
+    function evThroughputGrade(ratio, opened, queueGrowth) {
+      if (ratio == null || !(Number(opened) >= EV_GRADE_MIN_N)) return 'none';
+      if (queueGrowth != null && queueGrowth > EV_QUEUE_GROWTH_MAX) return 'weak';
+      return ratio >= EV_THROUGHPUT_EXCELLENT ? 'excellent' : ratio >= EV_THROUGHPUT_GOOD ? 'good' : ratio >= EV_THROUGHPUT_FAIR ? 'fair' : 'weak';
+    }
+    // evQueueGrowth: relative change of the last two week-end depths, or null
+    // when fewer than two weeks carry a depth sample.
+    function evQueueGrowth(rows, key) {
+      const depths = rows.map((r) => r[key]).filter((v) => v != null && Number.isFinite(Number(v))).map(Number);
+      if (depths.length < 2) return null;
+      const prev = depths[depths.length - 2], last = depths[depths.length - 1];
+      return prev > 0 ? (last - prev) / prev : (last > 0 ? 1 : 0);
+    }
     // Preset windows, longest first, keyed as the server's available_windows.
     const EV_AVAILABLE_KEYS = [['all', 'all time'], ['720', '30d'], ['168', '7d']];
 
@@ -23031,70 +23076,83 @@ function burnAreaChart() {
       },
       'claim-vs-verdict': (dto) => {
         const weeks = (Array.isArray(dto.claim_vs_verdict) ? dto.claim_vs_verdict : []).filter((w) => w && Number(w.n) > 0);
-        let claimed = 0, ciCaptured = 0, ciNotGreen = 0, ciPending = 0, notApprove = 0, both = 0;
+        let claimed = 0, ciCaptured = 0, ciNotGreen = 0, ciPending = 0, notApprove = 0;
         weeks.forEach((w) => {
           claimed += Number(w.claimed) || 0; ciCaptured += Number(w.ci_captured) || 0; ciNotGreen += Number(w.ci_not_green) || 0; ciPending += Number(w.ci_pending) || 0;
-          notApprove += Number(w.verdict_not_approve) || 0; both += Number(w.both) || 0;
+          notApprove += Number(w.verdict_not_approve) || 0;
         });
-        const emptyCI = Number((dto.missing || {}).records_empty_ci) || 0;
-        const ciRate = evRate(ciNotGreen, ciCaptured);
-        const swarmRate = evRate(notApprove, claimed);
-        const grade = evGrade(ciRate, ciCaptured, EV_ERR_STRONG, EV_ERR_FAIR, false);
+        const rec = dto.ci_recovery && typeof dto.ci_recovery === 'object' ? dto.ci_recovery : {};
+        const red = rec.red || {};
+        const pol = rec.policy || {};
+        const settled = (Number(red.recovered_merged) || 0) + (Number(red.abandoned) || 0);
+        const recovery = evRate(red.recovered_merged, settled);
+        const abandon = evRate(red.abandoned, settled);
+        let grade = evGrade(recovery, settled, EV_RECOVERY_STRONG, EV_RECOVERY_FAIR, true);
+        if (grade !== 'none' && abandon != null && abandon > EV_ABANDON_MAX) grade = 'weak';
+        const policy = pol.self_authored_automerge === false ? 'self-authored auto-merge is OFF on this hive, so a human merges after CI' : `self-authored auto-merge is ON (auto_merge.self_authored), so a red check simply holds the PR until the agent pushes a fix${Array.isArray(pol.required_checks) && pol.required_checks.length ? `; required checks: ${pol.required_checks.join(', ')}` : ''}`;
+        const med = red.median_pushes_to_green != null ? ` Median ${red.median_pushes_to_green} push(es) and ${red.median_hours_to_green != null ? Math.round(Number(red.median_hours_to_green) * 10) / 10 : '—'} h from claim to first green${red.same_head_recovered ? ` (${red.same_head_recovered} went green on the same head: a re-run or a flaky check, no new commit)` : ''}.` : '';
         return {
-          matters: 'An agent that says "done" while the tests fail, or while the reviewers object, is creating work for humans instead of finishing it. This panel shows how often the claim and the checks disagree.',
-          measured: 'For agent-written PRs only: each week, how many PRs the agent claimed were done (it opened the PR or marked it ready), how many of those had CI (the automated test run) not green, how many got a reviewer verdict other than approve, and how many had both.',
-          how: 'We take the newest evidence record per agent-authored PR in the window and group by the week the PR was opened. CI is read as captured when Hive checked merge eligibility (or at merge), not the final run. "CI not green" means the gate\u2019s verdict was failure, or a check concluded failure, cancelled, timed out or action required; skipped and neutral checks are green, as the gate treats them. CI not green rate = CI not green ÷ PRs whose CI had settled green or red. A PR with no captured checks, or whose checks were still running when captured, is left out of the CI count and reported, never counted as agreement or disagreement. "Swarm not approve" is any verdict that is not an approve, including requires-human.',
-          good: `Few disagreements: CI not green on ${Math.round(EV_ERR_STRONG * 100)}% or less of the PRs with captured checks is Strong, ${Math.round(EV_ERR_FAIR * 100)}% or less is Fair, above that Weak. A non-approve verdict is not proof the agent was wrong, so the swarm column is shown but not graded.`,
-          ours: `${claimed} agent PRs claimed done across ${weeks.length} week(s). Of ${ciCaptured} with settled CI, ${ciNotGreen} had CI not green (${evPct(ciRate)}); ${notApprove} got a non-approve verdict (${evPct(swarmRate)} of claimed); ${both} had both.${emptyCI ? ` ${emptyCI} record(s) had empty CI` : ''}${ciPending ? `${emptyCI ? ' and' : ''} ${ciPending} had checks still running when captured` : ''}${emptyCI || ciPending ? '; these are left out of the CI column.' : ''} ${evLimitsSentence()}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent PRs with captured checks${evWindowHint(dto)}` : `CI not green on ${evPct(ciRate)} of ${ciCaptured} PRs with checks`,
+          matters: 'This hive runs a "CI arbitrates" policy: agents open the PR as soon as they believe it is done and let CI kick it back rather than tying up an agent waiting on checks. So CI red at claim time is expected here, and the question that matters is what happens next: does the agent recover (push a fix, go green, merge) or is the PR abandoned?',
+          measured: 'For agent-written PRs only: the state of CI at the moment of the claim (the first evidence record that captured checks), how many claims got a non-approve swarm verdict, and — the headline — of the PRs that were CI-red at claim, how many later went green and merged (recovered), how many are green but still open, how many were closed without merging (abandoned), how many are still red or pending, and how many have no recorded outcome.',
+          how: `Claim = the first live evidence record per agent PR with captured checks; its head SHA is the claim head; skipped and neutral checks are green, as the merge gate treats them. For red-at-claim PRs the hive fetches the PR’s commit trail from GitHub (one head per push, newest 6) and reads each head’s check conclusion, refreshed hourly and kept in a durable rollup. Recovered = merged (from the bundle or GitHub). Abandoned = closed without merge. Recovery rate = recovered ÷ (recovered + abandoned) — only PRs whose outcome has settled. Green-but-open, still red/pending and outcome-unknown PRs are shown as counts and are not in any rate. Policy: ${policy}. No knob makes agents wait for CI; the merge gate requiring green checks is the policy.`,
+          good: `Recovery at or above ${Math.round(EV_RECOVERY_STRONG * 100)}% of settled red-at-claim PRs is Strong, ${Math.round(EV_RECOVERY_FAIR * 100)}% or more Fair, below that Weak; more than ${Math.round(EV_ABANDON_MAX * 100)}% abandoned is Weak whatever the recovery. A high red-at-claim share is NOT graded: under CI-arbitrates it is the design, not a defect.`,
+          ours: `${claimed} agent PRs claimed done across ${weeks.length} week(s). At claim: ${Number((rec.at_claim || {}).green) || 0} green · ${Number((rec.at_claim || {}).red) || 0} red · ${Number((rec.at_claim || {}).pending) || 0} pending · ${Number((rec.at_claim || {}).none) || 0} with no captured checks (bundle view: ${ciNotGreen} of ${ciCaptured} settled not green, ${ciPending} pending). ${notApprove} got a non-approve swarm verdict. Of ${Number(red.n) || 0} red at claim: ${Number(red.recovered_merged) || 0} recovered and merged (${evPct(recovery)} of ${settled} settled), ${Number(red.green_open) || 0} green but open, ${Number(red.abandoned) || 0} abandoned, ${Number(red.pending) || 0} still red or pending, ${Number(red.outcome_unknown) || 0} outcome unknown; ${Number(red.not_enriched) || 0} not yet enriched from GitHub.${med} ${evLimitsSentence()}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} red-at-claim PRs with a settled outcome${evWindowHint(dto)}` : `${evPct(recovery)} of ${settled} settled red-at-claim PRs recovered and merged · ${evPct(abandon)} abandoned`,
         };
       },
       'work-balance': (dto) => {
         const weeks = (Array.isArray(dto.work_balance) ? dto.work_balance : []).filter((w) => w && Number(w.n) > 0);
-        const opened = { human: 0, agent: 0, bot: 0 };
-        let closed = 0;
+        const src = dto.work_balance_sources && typeof dto.work_balance_sources === 'object' ? dto.work_balance_sources : {};
+        const opened = { human: 0, agent: 0, bot: 0 }, prsOpened = { human: 0, agent: 0, bot: 0 };
+        let closed = 0, merged = 0, prsClosed = 0;
         weeks.forEach((w) => {
-          Object.keys(opened).forEach((k) => { opened[k] += Number((w.opened || {})[k]) || 0; });
-          closed += Number(w.closed) || 0;
+          Object.keys(opened).forEach((k) => { opened[k] += Number((w.opened || {})[k]) || 0; prsOpened[k] += Number((w.prs_opened || {})[k]) || 0; });
+          closed += Number(w.closed) || 0; merged += Number(w.prs_merged) || 0; prsClosed += Number(w.prs_closed) || 0;
         });
         const openedTotal = opened.human + opened.agent + opened.bot;
-        const ratio = evRate(closed, openedTotal);
-        const grade = evGrade(ratio, openedTotal, EV_BALANCE_STRONG, EV_BALANCE_FAIR, true);
+        const prsTotal = prsOpened.human + prsOpened.agent + prsOpened.bot;
+        const issueRatio = evRate(closed, openedTotal), prRatio = evRate(merged, prsTotal);
+        const issueGrowth = evQueueGrowth(weeks, 'queue_issues'), prGrowth = evQueueGrowth(weeks, 'queue_prs');
+        const issueGrade = evThroughputGrade(issueRatio, openedTotal, issueGrowth);
+        const prGrade = evThroughputGrade(prRatio, prsTotal, prGrowth);
+        const grade = evLowerGrade(issueGrade, prGrade);
+        const last = weeks.length ? weeks[weeks.length - 1] : {};
+        const depth = last.queue_issues != null || last.queue_prs != null ? `Queue at the end of ${last.week}: ${last.queue_issues != null ? last.queue_issues : '—'} open issues · ${last.queue_prs != null ? last.queue_prs : '—'} open PRs.` : 'No week-end queue depth sample in this window.';
         const hrs = evWindowHours();
         const short = hrs <= EV_SHORT_WINDOW_HOURS ? ` Only ${hrs}h of data is in this window, so treat the grade as an early read.` : '';
-        const throttle = (dto.missing || {}).throttle_windows_unavailable === false ? 'Shaded weeks are governor throttle windows.' : 'This hive reports no issue-creation throttle windows, so no weeks are shaded.';
+        const auditNote = src.issues_github_since ? `Issue opens and closes come from GitHub (all authors, including humans and third-party bots) from ${src.issues_github_since}; ${src.audit_only_weeks ? `${src.audit_only_weeks} earlier week(s) fall back to the hive audit log, which only sees hive-mediated issue writes.` : 'every week in this window is GitHub-sourced.'}` : 'GitHub issue history has not been fetched yet on this hive, so issue opens and closes come from the hive audit log only: issues humans or other bots open directly on GitHub are not observed.';
         return {
-          matters: 'Agents that file issues faster than anyone closes them are amplifying work, not doing it. Watching opened against closed, by who opened them, shows whether the backlog is growing because of the agents.',
-          measured: 'Each week, how many issues were opened — split by whether a human, an AI agent or a bot (the hive\u2019s own automation) opened them — against how many issues were closed in the same week.',
-          how: `We read the hive\u2019s audit log for the selected window and repo, the same entries behind the Throughput card. Issue creates by the issue-request watcher count as agent, issues the hive files itself (advisory, ACMM gaps) count as bot, and audited closes count as closed. Bars are opened stacked by kind; the line is closed. ${throttle}`,
-          good: `Closed keeping pace with opened: closed ÷ opened at or above ${Math.round(EV_BALANCE_STRONG * 100)}% is Strong, ${Math.round(EV_BALANCE_FAIR * 100)}% or more is Fair, below that Weak. Agent-opened issues should not dwarf human-opened ones for long.`,
-          ours: `${openedTotal} issues opened across ${weeks.length} week(s) (human ${opened.human} · agent ${opened.agent} · bot ${opened.bot}) and ${closed} closed (${evPct(ratio)} of opened). Only hive-mediated issue writes are audited: issues humans or other bots open directly on GitHub are not observed, so the human column is a floor, and nothing is weighted by size or by whether an agent-opened issue was acted on.${short}`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} audited issue opens` : `${closed} closed for ${openedTotal} opened (${evPct(ratio)})`,
+          matters: 'The question is whether the queue keeps up: are issues and PRs being closed and merged about as fast as they are opened, and is the pile of open work at the end of each week shrinking, flat or growing? Raw volume is not the point — a hive that opens 400 issues a week and closes 400 is fine.',
+          measured: 'Each ISO week: issues opened (stacked by human / agent / bot) against issues closed; PRs opened (same split) against PRs merged and PRs closed without merge; and the number of actionable open issues and open PRs at the end of the week — the same queue the dashboard’s queue section shows.',
+          how: `${auditNote} PR opens, merges and closes come from the evidence bundles (live and backfilled) for PRs opened in the window; a PR’s author kind is the bundle’s. Week-end queue depth is the governor’s last state snapshot of each week (actionable open issues / open PRs, 30-day retention). Ratios: issues closed ÷ issues opened and PRs merged ÷ PRs opened over the whole window — nothing is dropped and PRs closed without merge are shown but not counted as merged.`,
+          good: `Issues and PRs are graded separately and the card takes the lower. Ratio at or above ${Math.round(EV_THROUGHPUT_EXCELLENT * 100)}% is Excellent, ${Math.round(EV_THROUGHPUT_GOOD * 100)}% Good, ${Math.round(EV_THROUGHPUT_FAIR * 100)}% Fair, below that Weak — and any grade becomes Weak if the week-end queue grew more than ${Math.round(EV_QUEUE_GROWTH_MAX * 100)}% from the previous week.`,
+          ours: `Issues: ${openedTotal} opened (human ${opened.human} · agent ${opened.agent} · bot ${opened.bot}), ${closed} closed → ${evPct(issueRatio)}, ${EV_GRADES[issueGrade]}${issueGrowth != null ? ` (queue ${issueGrowth >= 0 ? '+' : ''}${Math.round(issueGrowth * 100)}% week over week)` : ''}. PRs: ${prsTotal} opened (human ${prsOpened.human} · agent ${prsOpened.agent} · bot ${prsOpened.bot}), ${merged} merged, ${prsClosed} closed without merge → ${evPct(prRatio)}, ${EV_GRADES[prGrade]}${prGrowth != null ? ` (queue ${prGrowth >= 0 ? '+' : ''}${Math.round(prGrowth * 100)}% week over week)` : ''}. ${depth}${short}`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} issues and ${EV_GRADE_MIN_N} PRs opened in the window` : `issues ${evPct(issueRatio)} closed ÷ opened (${EV_GRADES[issueGrade]}) · PRs ${evPct(prRatio)} merged ÷ opened (${EV_GRADES[prGrade]}); lower wins`,
         };
       },
       'boundary-enforcement': (dto) => {
-        const counters = dto.write_counters && typeof dto.write_counters === 'object' ? dto.write_counters : {};
-        let attempted = 0, blocked = 0;
-        const reasons = {};
-        const tiers = Object.keys(counters).filter((k) => counters[k] && (Number(counters[k].attempted) > 0 || Number(counters[k].blocked) > 0));
-        tiers.forEach((k) => {
-          const c = counters[k];
-          attempted += Number(c.attempted) || 0; blocked += Number(c.blocked) || 0;
-          Object.entries(c.blocked_by_reason || {}).forEach(([r, v]) => { reasons[r] = (reasons[r] || 0) + (Number(v) || 0); });
-        });
-        const topReason = Object.entries(reasons).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+        const act = dto.write_activity && typeof dto.write_activity === 'object' ? dto.write_activity : {};
+        const direct = act.direct || {}, mediated = act.mediated || {};
+        const total = Number(act.total_writes) || 0, blocked = Number(act.blocked) || 0;
+        const byTier = direct.by_tier || {};
+        const tiers = Object.keys(byTier).filter((k) => byTier[k] && (Number(byTier[k].attempted) > 0 || Number(byTier[k].blocked) > 0));
+        const topReason = Object.entries(direct.blocked_by_reason || {}).filter(([, v]) => Number(v) > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+        const intent = dto.intent_counters && typeof dto.intent_counters === 'object' ? dto.intent_counters : {};
+        let wouldBlock = 0, evaluated = 0;
+        Object.values(intent).forEach((c) => { wouldBlock += Number(c && c.blocked) || 0; evaluated += Number(c && c.attempted) || 0; });
         const sentinel = dto.sentinel_hits_per_week || {};
         const sentinelWeeks = Array.isArray(sentinel.weeks) ? sentinel.weeks : [];
         const sentinelHits = sentinelWeeks.reduce((sum, wk) => sum + (Number(wk && wk.hits) || 0), 0);
-        const blockedRate = evRate(blocked, attempted);
-        const grade = evGrade(blockedRate, attempted, EV_BLOCKED_STRONG, EV_BLOCKED_FAIR, false);
+        const blockedRate = evRate(blocked, total);
+        const grade = evGrade(blockedRate, total, EV_BLOCKED_STRONG, EV_BLOCKED_FAIR, false);
+        const coverage = direct.recorded === false ? 'Direct-write counters have not been recorded on this hive yet, so the total only holds hive-mediated writes.' : direct.partial_coverage ? `Direct-write counters have only been recorded since ${direct.since}, so earlier weeks in this window hold hive-mediated writes only.` : '';
         return {
-          matters: 'Agents are only allowed to change GitHub through a proxy that enforces the trust tiers. If the proxy is blocking a lot, agents are repeatedly trying things they are not allowed to do; if it never blocks, either the agents are well behaved or the boundary is not being exercised.',
-          measured: 'Two things. First, every GitHub write an agent attempted through the proxy, per trust tier, and how many of those the proxy refused and why. Second, how many evidence records per week carry a "sentinel hit" — a canary that fires when an agent touched something it should not have.',
-          how: 'The proxy keeps a running tally per tier of attempted and blocked writes, with blocked split by refusal reason; bars show blocked as a share of attempted. Sentinel hits are counted from the newest evidence record per PR in the chosen window and grouped by ISO week.',
-          good: `Blocked at or below ${Math.round(EV_BLOCKED_STRONG * 100)}% of attempted writes is Strong, ${Math.round(EV_BLOCKED_FAIR * 100)}% or less is Fair, above that Weak. The sentinel line should sit at zero; any hit is worth reading the record for.`,
-          ours: `${attempted} agent writes attempted across ${tiers.length} tier(s), ${blocked} blocked (${evPct(blockedRate)})${topReason ? `, most often for ${topReason[0]} (${topReason[1]})` : ''}. ${sentinel.n ? `${sentinel.n} record(s) with ${sentinelHits} sentinel hit(s)` : 'No sentinel hits'} in this window. Write counters are all-time proxy totals and do not follow the selected window; direct writes that bypass the proxy are not seen at all.`,
-          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} attempted writes` : `${evPct(blockedRate)} of ${attempted} attempted writes blocked`,
+          matters: 'Agents change GitHub either through the hive (comments, issues, PRs, reviews it files on their behalf, all audited) or directly through a proxy that enforces the trust tiers. A handful of refusals out of thousands of writes means the boundary is doing its job quietly; a refusal rate in the percent range means agents are repeatedly trying things they are not allowed to do.',
+          measured: 'The headline is blocked ÷ ALL agent GitHub writes in the window: every hive-mediated write from the audit log plus every direct write the proxy saw, per trust tier, and how many the proxy refused and why. Separately: how many evidence records per week carry a "sentinel hit", a canary that fires when an agent touched something it should not have.',
+          how: `Denominator = hive-mediated writes (audit entries for agent comments, issues, PRs, reviews, labels, closes and pushes) + direct proxied writes (the proxy’s weekly tally per tier, kept under /data so it survives restarts). Numerator = writes the proxy refused (plus audited refusals of mediated writes). Per-tier bars show blocked ÷ direct writes for that tier. Would-block counts from intent verification are shown separately and are never in the blocked count. ${coverage}`,
+          good: `Blocked at or below ${Math.round(EV_BLOCKED_STRONG * 100)}% of all agent writes is Strong — a boundary that is exercised but rarely needed — ${Math.round(EV_BLOCKED_FAIR * 100)}% or less is Fair, above that Weak. The sentinel line should sit at zero; any hit is worth reading the record for.`,
+          ours: `${formatNumber(total)} agent writes in this window (${formatNumber(Number(mediated.n) || 0)} hive-mediated · ${formatNumber(Number(direct.attempted) || 0)} direct across ${tiers.length} tier(s)), ${blocked} blocked (${blockedRate == null ? '—' : (blockedRate * 100).toFixed(2) + '%'})${topReason ? `, most often for ${topReason[0]} (${topReason[1]})` : ''}.${evaluated ? ` Intent verification evaluated ${evaluated} write(s) and would have blocked ${wouldBlock} (not counted above).` : ''} ${sentinel.n ? `${sentinel.n} record(s) with ${sentinelHits} sentinel hit(s)` : 'No sentinel hits'} in this window. ${coverage} Direct writes that bypass both the hive and the proxy are not seen at all.`,
+          grade, reason: grade === 'none' ? `needs at least ${EV_GRADE_MIN_N} agent writes` : `${blocked} of ${formatNumber(total)} agent writes blocked (${blockedRate == null ? '—' : (blockedRate * 100).toFixed(2) + '%'})`,
         };
       },
     };
@@ -23285,37 +23343,50 @@ function burnAreaChart() {
     }
 
     // Panel 4 (#12368): boundary enforcement — the N behind "nothing bad
-    // happened". Attempted vs blocked agent writes per intent tier from the
-    // proxy's durable counter file, plus sentinel hits per ISO week from the
-    // bundles. Counters are proxy-side observations; nothing here gates.
+    // happened". Headline: blocked ÷ every agent GitHub write in the window
+    // (hive-mediated from the audit log + direct through the proxy). Rows:
+    // one per intent tier with direct writes (blocked ÷ direct writes for the
+    // tier) plus one for hive-mediated writes. Counters are observations;
+    // nothing here gates.
     const EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];
     const EV_TOP_REASONS = 3;
-    function evWriteCountersSvg(counters) {
-      if (!counters || typeof counters !== 'object') return '<div class="ev-empty">— no write counters yet (the proxy has not recorded an agent write, or the counter file is absent)</div>';
-      const tiers = EV_WRITE_TIERS.concat(Object.keys(counters).filter((k) => !EV_WRITE_TIERS.includes(k)).sort());
+    function evWriteActivitySvg(act) {
+      if (!act || typeof act !== 'object') return '<div class="ev-empty">— no agent writes recorded in this window (no audit entries and no proxy counters)</div>';
+      const direct = act.direct || {}, mediated = act.mediated || {};
+      const byTier = direct.by_tier || {};
+      const total = Number(act.total_writes) || 0, blocked = Number(act.blocked) || 0;
+      const rate = evRate(blocked, total);
+      const headline = `<div class="ev-headline"><b>${blocked} of ${formatNumber(total)} agent writes blocked</b> · ${rate == null ? '—' : (rate * 100).toFixed(2) + '%'} <span class="ev-sub">(${formatNumber(Number(mediated.n) || 0)} hive-mediated · ${formatNumber(Number(direct.attempted) || 0)} direct through the proxy${direct.recorded === false ? ' · direct-write counters not recorded yet' : direct.partial_coverage ? ` · direct-write counters recorded since ${escapeHtml(String(direct.since || ''))}` : ''})</span></div>`;
+      const tiers = EV_WRITE_TIERS.concat(Object.keys(byTier).filter((k) => !EV_WRITE_TIERS.includes(k)).sort());
       const rows = tiers.map((tier) => {
-        const c = counters[tier] || {};
-        const reasons = Object.entries(c.blocked_by_reason || {}).map(([k, v]) => [k, Number(v) || 0]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+        const c = byTier[tier] || {};
         const idx = EV_WRITE_TIERS.indexOf(tier);
-        return { tier, label: idx >= 0 ? `${idx} · ${tier}` : tier, attempted: Number(c.attempted) || 0, blocked: Number(c.blocked) || 0, reasons };
-      }).filter((r) => r.attempted > 0 || r.blocked > 0);
-      if (!rows.length) return '<div class="ev-empty">— no agent writes recorded by the proxy yet</div>';
-      const w = EV_SVG_W, label = 118, valW = 56, barH = 7, gap = 2, rowH = 2 * (barH + gap) + 6, t = 4;
+        return { label: idx >= 0 ? `${idx} · ${tier}` : tier, writes: Number(c.attempted) || 0, blocked: Number(c.blocked) || 0, kind: 'direct' };
+      }).filter((r) => r.writes > 0 || r.blocked > 0);
+      const reasons = Object.entries(direct.blocked_by_reason || {}).map(([k, v]) => [k, Number(v) || 0]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+      const topReasons = reasons.slice(0, EV_TOP_REASONS).map(([k, v]) => `${k} ${v}`).join(', ');
+      if (Number(mediated.n) > 0) {
+        const byAction = Object.entries(mediated.by_action || {}).map(([k, v]) => [k, Number(v) || 0]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, EV_TOP_REASONS).map(([k, v]) => `${k} ${v}`).join(', ');
+        rows.push({ label: 'hive-mediated', writes: Number(mediated.n) || 0, blocked: Number(mediated.refused) || 0, kind: 'mediated', detail: byAction });
+      }
+      if (!rows.length) return headline + '<div class="ev-empty">— no agent writes recorded in this window</div>';
+      const w = EV_SVG_W, label = 118, valW = 72, barH = 7, gap = 2, rowH = 2 * (barH + gap) + 6, t = 4;
       const barW = w - label - valW;
       const h = t + rows.length * rowH;
-      const maxN = Math.max(1, ...rows.map((r) => r.attempted));
-      const pct = (num, den) => { const v = evRate(num, den); return v == null ? '—' : Math.round(v * 100) + '%'; };
+      const maxN = Math.max(1, ...rows.map((r) => r.writes));
+      const pct = (num, den) => { const v = evRate(num, den); return v == null ? '—' : (v * 100).toFixed(v > 0 && v < 0.1 ? 2 : 0) + '%'; };
       const body = rows.map((row, i) => {
         const y0 = t + i * rowH;
-        const top = row.reasons.slice(0, EV_TOP_REASONS).map(([k, v]) => `${k} ${v}`).join(', ');
-        const tip = escapeHtml(`tier ${row.label}: attempted ${row.attempted} · blocked ${row.blocked} (${pct(row.blocked, row.attempted)})${top ? ` · top reasons: ${top}` : ''}`);
+        const tip = escapeHtml(row.kind === 'direct'
+          ? `tier ${row.label}: ${row.writes} direct writes through the proxy · ${row.blocked} blocked (${pct(row.blocked, row.writes)})${topReasons ? ` · top block reasons (all tiers): ${topReasons}` : ''}`
+          : `hive-mediated writes from the audit log: ${row.writes} · ${row.blocked} refused${row.detail ? ` · top actions: ${row.detail}` : ''}`);
         const bar = (cls, v, k, txt) => {
           const yy = y0 + k * (barH + gap);
-          return `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${((v / maxN) * barW).toFixed(1)}" height="${barH}"><title>${tip}</title></rect><text x="${w - 2}" y="${yy + barH}" text-anchor="end">${txt}</text>`;
+          return `<rect class="ev-bar ${cls}" x="${label}" y="${yy}" width="${Math.max(v > 0 ? 1 : 0, (v / maxN) * barW).toFixed(1)}" height="${barH}"><title>${tip}</title></rect><text x="${w - 2}" y="${yy + barH}" text-anchor="end">${txt}</text>`;
         };
-        return `<g><text x="0" y="${y0 + 13}">${escapeHtml(row.label.slice(0, 22))}<title>${tip}</title></text>${bar('wa', row.attempted, 0, row.attempted)}${bar('wb', row.blocked, 1, `${row.blocked} · ${pct(row.blocked, row.attempted)}`)}</g>`;
+        return `<g><text x="0" y="${y0 + 13}">${escapeHtml(row.label.slice(0, 22))}<title>${tip}</title></text>${bar(row.kind === 'direct' ? 'wa' : 'wm', row.writes, 0, formatNumber(row.writes))}${bar('wb', row.blocked, 1, `${row.blocked} · ${pct(row.blocked, row.writes)}`)}</g>`;
       }).join('');
-      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Boundary enforcement: attempted versus proxy-blocked agent writes per intent tier">${body}</svg><div class="ev-legend"><span><i class="wa"></i>attempted</span><span><i class="wb"></i>blocked by proxy</span><span>hover a row for the top block reasons</span></div>`;
+      return `${headline}<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Boundary enforcement: agent writes per intent tier and hive-mediated, against writes blocked"><g>${body}</g></svg><div class="ev-legend"><span><i class="wa"></i>direct writes (proxy)</span><span><i class="wm"></i>hive-mediated writes (audit)</span><span><i class="wb"></i>blocked</span>${topReasons ? `<span>top block reasons: ${escapeHtml(topReasons)}</span>` : ''}</div>`;
     }
 
     function evSentinelSparkline(series) {
@@ -23333,13 +23404,39 @@ function burnAreaChart() {
       return `<svg class="ev-svg ev-spark" viewBox="0 0 ${w} ${h}" role="img" aria-label="Sentinel hits per ISO week"><g class="ev-c3">${weeks.length > 1 ? `<polyline class="ev-line" points="${pts}"/>` : ''}${dots}</g><text x="${l}" y="${h - 3}">${escapeHtml(first)}</text><text x="${w - r}" y="${h - 3}" text-anchor="end">${escapeHtml(last)}</text></svg><div class="ev-legend"><span class="ev-c3"><i class="dot"></i>sentinel hits per ISO week (UTC Monday) · ${total} in ${weeks.length} week(s) · peak ${maxHits}</span></div>`;
     }
 
-    // Panel 5 (#12365): claim vs verdict. Each ISO week of agent-authored PRs
-    // gets grouped bars: claimed done (every agent PR), CI not green (captured
-    // checks only), swarm not approve, and both. Read-only; no gate reads it.
+    // Panel 5 (#12365): claim vs verdict, read as CI recovery. Headline strip:
+    // red-at-claim agent PRs by what happened next (recovered and merged ·
+    // green but open · abandoned · still red/pending · outcome unknown).
+    // Weekly bars below keep the claim-time facts: claimed done, CI not green
+    // at claim, swarm not approve, both. Read-only; no gate reads it.
+    function evCIRecoveryHtml(rec) {
+      if (!rec || typeof rec !== 'object' || !(Number(rec.n) > 0)) return '';
+      const red = rec.red || {}, at = rec.at_claim || {}, pol = rec.policy || {};
+      const segs = [['recovered_merged', 'cr-rec', 'recovered and merged'], ['green_open', 'cr-green', 'green, still open'], ['abandoned', 'cr-aband', 'abandoned (closed unmerged)'], ['pending', 'cr-pend', 'still red or pending'], ['outcome_unknown', 'cr-unk', 'outcome unknown']];
+      const n = Number(red.n) || 0;
+      const settled = (Number(red.recovered_merged) || 0) + (Number(red.abandoned) || 0);
+      const rate = evRate(red.recovered_merged, settled);
+      const policy = pol.self_authored_automerge === false ? 'self-authored auto-merge off' : 'CI arbitrates: self-authored auto-merge on';
+      const med = red.median_pushes_to_green != null ? ` · median ${red.median_pushes_to_green} push(es), ${red.median_hours_to_green != null ? Math.round(Number(red.median_hours_to_green) * 10) / 10 : '—'} h to green` : '';
+      const headline = `<div class="ev-headline"><b>${Number(red.recovered_merged) || 0} of ${settled} settled red-at-claim PRs recovered and merged</b> · ${evPct(rate)}${med} <span class="ev-sub">(${n} red at claim of ${Number(rec.n) || 0} claims: ${Number(at.green) || 0} green · ${Number(at.red) || 0} red · ${Number(at.pending) || 0} pending · ${Number(at.none) || 0} no checks captured · policy: ${escapeHtml(policy)}${Number(red.not_enriched) > 0 ? ` · ${red.not_enriched} not yet enriched from GitHub` : ''})</span></div>`;
+      if (!n) return headline;
+      const w = EV_SVG_W, h = 14;
+      let x = 0;
+      const bars = segs.map(([key, cls, label]) => {
+        const v = Number(red[key]) || 0;
+        if (!(v > 0)) return '';
+        const bw = (v / n) * w;
+        const r = `<rect class="ev-bar ${cls}" x="${x.toFixed(1)}" y="1" width="${bw.toFixed(1)}" height="${h - 2}"><title>${escapeHtml(`${label}: ${v} of ${n} red-at-claim PRs`)}</title></rect>`;
+        x += bw;
+        return r;
+      }).join('');
+      const legend = segs.filter(([key]) => Number(red[key]) > 0).map(([key, cls, label]) => `<span><i class="${cls}"></i>${label} ${Number(red[key]) || 0}</span>`).join('');
+      return `${headline}<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="CI recovery: red-at-claim agent PRs by what happened next">${bars}</svg><div class="ev-legend">${legend}</div>`;
+    }
     function evClaimVsVerdictSvg(weeks) {
       const rows = (Array.isArray(weeks) ? weeks : []).filter((w) => w && Number(w.n) > 0);
       if (!rows.length) return '<div class="ev-empty">— no agent-authored PRs with evidence in this window</div>';
-      const series = [['claimed', 'cv-claim', 'claimed done'], ['ci_not_green', 'cv-ci', 'CI not green'], ['verdict_not_approve', 'cv-swarm', 'swarm not approve'], ['both', 'cv-both', 'both']];
+      const series = [['claimed', 'cv-claim', 'claimed done'], ['ci_not_green', 'cv-ci', 'CI not green at claim'], ['verdict_not_approve', 'cv-swarm', 'swarm not approve'], ['both', 'cv-both', 'both']];
       const w = EV_SVG_W, h = 150, l = 26, r = 6, t = 8, b = 22;
       const pw = w - l - r, ph = h - t - b;
       const groupW = pw / rows.length;
@@ -23367,31 +23464,38 @@ function burnAreaChart() {
       return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Claim vs verdict: agent-authored PRs per week that claimed done against CI not green and swarm not approve">${grid}${body}</svg><div class="ev-legend">${legend}</div>`;
     }
 
-    // Panel 6 (#12366): work balance. Each ISO week gets one bar of issues
-    // opened, stacked by actor kind (human / agent / bot), and a closed-count
-    // line over the top. Throttle shading is drawn only for weeks the API
-    // flags as throttled; this hive reports none today. Read-only.
-    function evWorkBalanceSvg(weeks) {
-      const rows = (Array.isArray(weeks) ? weeks : []).filter((w) => w && Number(w.n) > 0);
-      if (!rows.length) return '<div class="ev-empty">— no audited issue opens or closes in this window</div>';
+    // Panel 6 (#12366): work balance, read as "is the queue keeping up?".
+    // Two charts per ISO week: issues (opened stacked by kind, closed line,
+    // week-end open-issue depth dashed) and PRs (opened stacked by kind,
+    // merged line, closed-unmerged tick, week-end open-PR depth dashed).
+    // Throttle shading is drawn only for weeks the API flags. Read-only.
+    function evFlowSvg(rows, cfg) {
       const kinds = [['human', 'wb-human', 'opened by humans'], ['agent', 'wb-agent', 'opened by agents'], ['bot', 'wb-bot', 'opened by bots']];
-      const w = EV_SVG_W, h = 150, l = 26, r = 6, t = 8, b = 22;
+      const w = EV_SVG_W, h = 150, l = 26, r = 26, t = 8, b = 22;
       const pw = w - l - r, ph = h - t - b;
       const groupW = pw / rows.length;
       const barW = Math.max(2, groupW * 0.6);
-      const opened = (row) => kinds.reduce((sum, [k]) => sum + (Number((row.opened || {})[k]) || 0), 0);
-      const maxN = Math.max(1, ...rows.map((row) => Math.max(opened(row), Number(row.closed) || 0)));
+      const opened = (row) => kinds.reduce((sum, [k]) => sum + (Number((row[cfg.opened] || {})[k]) || 0), 0);
+      const maxN = Math.max(1, ...rows.map((row) => Math.max(opened(row), Number(row[cfg.done]) || 0, Number(row[cfg.closed]) || 0)));
+      const depths = rows.map((row) => row[cfg.queue]).filter((v) => v != null).map(Number);
+      const maxQ = Math.max(1, ...depths);
       const y = (v) => t + ph - (v / maxN) * ph;
+      const yq = (v) => t + ph - (v / maxQ) * ph;
       const cx = (i) => l + i * groupW + groupW / 2;
       let grid = '';
       [0, 0.5, 1].forEach((f) => {
         const v = Math.round(maxN * f);
         grid += `<line class="ev-axis" x1="${l}" x2="${w - r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/><text x="${l - 4}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end">${v}</text>`;
+        if (depths.length) grid += `<text class="wb-queue" x="${w - r + 4}" y="${(yq(Math.round(maxQ * f)) + 3).toFixed(1)}">${Math.round(maxQ * f)}</text>`;
       });
+      const tipFor = (row) => {
+        const o = row[cfg.opened] || {};
+        const q = row[cfg.queue] != null ? ` · open at week end ${row[cfg.queue]}` : ' · no queue sample';
+        return escapeHtml(`${row.week}: ${cfg.noun} opened ${opened(row)} (human ${Number(o.human) || 0} · agent ${Number(o.agent) || 0} · bot ${Number(o.bot) || 0}) · ${cfg.doneLabel} ${Number(row[cfg.done]) || 0}${cfg.closed ? ` · closed without merge ${Number(row[cfg.closed]) || 0}` : ''}${q}${cfg.source && row[cfg.source] ? ` · source ${row[cfg.source]}` : ''}`);
+      };
       const body = rows.map((row, i) => {
-        const o = row.opened || {};
-        const closed = Number(row.closed) || 0;
-        const tip = escapeHtml(`${row.week}: opened ${opened(row)} (human ${Number(o.human) || 0} · agent ${Number(o.agent) || 0} · bot ${Number(o.bot) || 0}) · closed ${closed} · n=${Number(row.n) || 0}`);
+        const o = row[cfg.opened] || {};
+        const tip = tipFor(row);
         const shade = row.throttled ? `<rect class="ev-bar wb-throttle" x="${(l + i * groupW).toFixed(1)}" y="${t}" width="${groupW.toFixed(1)}" height="${ph}"><title>${tip}</title></rect>` : '';
         let acc = 0;
         const stack = kinds.map(([k, cls]) => {
@@ -23401,13 +23505,29 @@ function burnAreaChart() {
           acc += v;
           return `<rect class="ev-bar ${cls}" x="${(cx(i) - barW / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${(bottom - top).toFixed(1)}"><title>${tip}</title></rect>`;
         }).join('');
+        const closedTick = cfg.closed && Number(row[cfg.closed]) > 0 ? `<line class="ev-tick wb-unmerged" x1="${(cx(i) - barW / 2).toFixed(1)}" x2="${(cx(i) + barW / 2).toFixed(1)}" y1="${y(Number(row[cfg.closed])).toFixed(1)}" y2="${y(Number(row[cfg.closed])).toFixed(1)}"><title>${tip}</title></line>` : '';
         const label = rows.length > 8 ? String(row.week || '').replace(/^\d{4}-/, '') : String(row.week || '');
-        return `<g>${shade}${stack}<text x="${cx(i).toFixed(1)}" y="${h - 6}" text-anchor="middle">${escapeHtml(label)}<title>${tip}</title></text></g>`;
+        return `<g>${shade}${stack}${closedTick}<text x="${cx(i).toFixed(1)}" y="${h - 6}" text-anchor="middle">${escapeHtml(label)}<title>${tip}</title></text></g>`;
       }).join('');
-      const closedPts = rows.map((row, i) => `${cx(i).toFixed(1)},${y(Number(row.closed) || 0).toFixed(1)}`);
-      const closedLine = `<g class="wb-closed">${rows.length > 1 ? `<polyline class="ev-line" points="${closedPts.join(' ')}"/>` : ''}${closedPts.map((pt) => `<circle class="ev-pt" cx="${pt.split(',')[0]}" cy="${pt.split(',')[1]}" r="2.5"/>`).join('')}</g>`;
-      const legend = kinds.map(([, cls, label]) => `<span><i class="${cls}"></i>${label}</span>`).join('') + '<span class="wb-closed"><i class="dot"></i>closed</span>';
-      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Work balance: issues opened per week stacked by human, agent and bot, against issues closed">${grid}${body}${closedLine}</svg><div class="ev-legend">${legend}</div>`;
+      const donePts = rows.map((row, i) => `${cx(i).toFixed(1)},${y(Number(row[cfg.done]) || 0).toFixed(1)}`);
+      const doneLine = `<g class="wb-closed">${rows.length > 1 ? `<polyline class="ev-line" points="${donePts.join(' ')}"/>` : ''}${donePts.map((pt) => `<circle class="ev-pt" cx="${pt.split(',')[0]}" cy="${pt.split(',')[1]}" r="2.5"/>`).join('')}</g>`;
+      const qRows = rows.map((row, i) => [i, row[cfg.queue]]).filter(([, v]) => v != null);
+      const qPts = qRows.map(([i, v]) => `${cx(i).toFixed(1)},${yq(Number(v)).toFixed(1)}`);
+      const qLine = qPts.length ? `<g class="wb-queue">${qPts.length > 1 ? `<polyline class="ev-line" points="${qPts.join(' ')}"/>` : ''}${qRows.map(([i, v]) => `<circle class="ev-pt" cx="${cx(i).toFixed(1)}" cy="${yq(Number(v)).toFixed(1)}" r="2"><title>${escapeHtml(`${rows[i].week}: ${v} open ${cfg.noun} at week end`)}</title></circle>`).join('')}</g>` : '';
+      const legend = kinds.map(([, cls, label]) => `<span><i class="${cls}"></i>${label}</span>`).join('') + `<span class="wb-closed"><i class="dot"></i>${cfg.doneLabel}</span>${cfg.closed ? '<span>— closed without merge</span>' : ''}<span class="wb-queue"><i class="dot"></i>open at week end (right axis)</span>`;
+      return `<svg class="ev-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="${escapeHtml(cfg.aria)}">${grid}${body}${doneLine}${qLine}</svg><div class="ev-legend">${legend}</div>`;
+    }
+    function evWorkBalanceSvg(weeks, sources) {
+      const rows = (Array.isArray(weeks) ? weeks : []).filter((w) => w && Number(w.n) > 0);
+      if (!rows.length) return '<div class="ev-empty">— no issue or PR opens, closes or merges in this window</div>';
+      const last = rows[rows.length - 1];
+      const src = sources && typeof sources === 'object' ? sources : {};
+      const sum = (key, sub) => rows.reduce((acc, r) => acc + (sub ? Object.values(r[key] || {}).reduce((a, v) => a + (Number(v) || 0), 0) : (Number(r[key]) || 0)), 0);
+      const issuesOpened = sum('opened', true), issuesClosed = sum('closed'), prsOpened = sum('prs_opened', true), prsMerged = sum('prs_merged'), prsClosed = sum('prs_closed');
+      const headline = `<div class="ev-headline"><b>Queue at end of ${escapeHtml(String(last.week || ''))}: ${last.queue_issues != null ? last.queue_issues : '—'} open issues · ${last.queue_prs != null ? last.queue_prs : '—'} open PRs</b> <span class="ev-sub">· issues ${formatNumber(issuesOpened)} opened / ${formatNumber(issuesClosed)} closed (${evPct(evRate(issuesClosed, issuesOpened))}) · PRs ${formatNumber(prsOpened)} opened / ${formatNumber(prsMerged)} merged / ${formatNumber(prsClosed)} closed unmerged (${evPct(evRate(prsMerged, prsOpened))})${src.issues_github_since ? ` · issues from GitHub since ${escapeHtml(src.issues_github_since)}${src.audit_only_weeks ? `, ${src.audit_only_weeks} earlier week(s) audit-log only` : ''}` : ' · issues from the hive audit log only'}</span></div>`;
+      const issues = evFlowSvg(rows, { noun: 'issues', opened: 'opened', done: 'closed', doneLabel: 'closed', queue: 'queue_issues', source: 'issue_source', aria: 'Work balance: issues opened per week by human, agent and bot, against issues closed and open issues at week end' });
+      const prs = evFlowSvg(rows, { noun: 'PRs', opened: 'prs_opened', done: 'prs_merged', doneLabel: 'merged', closed: 'prs_closed', queue: 'queue_prs', aria: 'Work balance: PRs opened per week by human, agent and bot, against PRs merged and open PRs at week end' });
+      return `${headline}<div class="ev-flow"><div><h5>Issues</h5>${issues}</div><div><h5>Pull requests</h5>${prs}</div></div>`;
     }
 
     function renderEvidenceSummary(dto) {
@@ -23421,8 +23541,9 @@ function burnAreaChart() {
       const modelN = models.reduce((sum, m) => sum + (Number(m && m.n) || 0), 0);
       const unknown = Number((dto.missing || {}).verdicts_model_unknown) || 0;
       const shadow = dto.shadow_gate || {};
-      const counters = dto.write_counters && typeof dto.write_counters === 'object' ? dto.write_counters : null;
-      const attemptedN = counters ? Object.keys(counters).reduce((sum, k) => sum + (Number(counters[k] && counters[k].attempted) || 0), 0) : 0;
+      const activity = dto.write_activity && typeof dto.write_activity === 'object' ? dto.write_activity : null;
+      const writesN = activity ? Number(activity.total_writes) || 0 : 0;
+      const directCoverage = activity && activity.direct ? (activity.direct.recorded === false ? ' Direct-write counters have not been recorded on this hive yet, so the total holds hive-mediated writes only.' : activity.direct.partial_coverage ? ` Direct-write counters have only been recorded since ${activity.direct.since}; earlier weeks hold hive-mediated writes only.` : '') : '';
       const sentinel = dto.sentinel_hits_per_week || {};
       const outcomes = dto.outcomes_by_author_kind || {};
       const outcomeN = Object.keys(outcomes).reduce((sum, k) => sum + (Number(outcomes[k] && outcomes[k].n) || 0), 0);
@@ -23433,7 +23554,11 @@ function burnAreaChart() {
       const outcomeUnknown = Number((dto.missing || {}).prs_outcome_unknown) || 0;
       const balance = Array.isArray(dto.work_balance) ? dto.work_balance : [];
       const balanceN = balance.reduce((sum, w) => sum + (Number(w && w.n) || 0), 0);
+      const balanceSrc = dto.work_balance_sources && typeof dto.work_balance_sources === 'object' ? dto.work_balance_sources : {};
       const throttleNote = (dto.missing || {}).throttle_windows_unavailable === false ? 'Shaded weeks are governor issue-creation throttle windows.' : 'Throttle windows not reported by this hive, so no weeks are shaded.';
+      const issueSourceNote = balanceSrc.issues_github_since ? `Issue opens and closes are GitHub-truth (all authors) from ${balanceSrc.issues_github_since}${balanceSrc.audit_only_weeks ? `; the ${balanceSrc.audit_only_weeks} earlier week(s) are audit-log only, where issues humans or third-party bots open directly on GitHub are not observed` : ''}.` : 'GitHub issue history has not been fetched yet, so issue opens and closes are audit-log only: issues humans or third-party bots open directly on GitHub are not observed and the human column is a floor.';
+      const rec = dto.ci_recovery && typeof dto.ci_recovery === 'object' ? dto.ci_recovery : {};
+      const recRed = rec.red || {};
       const scope = evWindowLabel() + (dto.repo ? ` · ${dto.repo}` : '');
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
@@ -23444,12 +23569,12 @@ function burnAreaChart() {
           `Bad outcomes such as reverts are not recorded in evidence bundles yet, so only merge and block rates are plotted. The merged rate counts only verdicts on PRs with a recorded outcome; verdicts on PRs with no recorded outcome are shown as unknown, not as unmerged. Buckets with fewer than ${EV_CALIB_MIN_BUCKET_N} known-outcome verdicts are dashed and not joined. Merged is not the same as correct.`)
         + evPanel('accuracy-by-model', 'Reviewer accuracy × model family', modelN, evAccuracySvg(models),
           `Outcome is recorded merge vs recorded close, not ground truth: a block that was later fixed and merged counts as a false block, and an approval counts as a false approve only when the PR's record says it closed without merging. Verdicts on PRs with no recorded outcome (reviewed here, merged elsewhere or by hand, or still open) are excluded from both rates and reported as unknown.${unknown ? ` ${unknown} verdict(s) had no recorded reviewer model and are grouped as unknown.` : ''}`)
-        + evPanel('boundary-enforcement', 'Boundary enforcement', attemptedN, evWriteCountersSvg(counters) + evSentinelSparkline(sentinel),
-          'Write counters are proxy-side observations of agent GitHub writes since the counter file was created (all-time totals, reset only with the weekly file; they do not follow the Throughput window), so direct writes that bypass the proxy are invisible here. Would-block counts from intent verification are not included in these bars; only writes the proxy actually blocked are. Sentinel hits come from evidence bundles in the window. Blocked is not the same as harmful.')
-        + evPanel('claim-vs-verdict', 'Claim vs verdict', claimN, evClaimVsVerdictSvg(claims),
-          `Only agent-authored PRs; opening or marking a PR ready is taken as the agent claiming done. CI conclusion is as captured at merge-eligibility evaluation or at merge, not the final run; skipped and neutral checks are green, as the merge gate treats them. A PR with no captured checks${emptyCI ? ` (${emptyCI} in this window)` : ''} or whose checks were still running when captured${pendingCI ? ` (${pendingCI})` : ''} is left out of the CI column rather than counted either way. A non-approve verdict is not proof the agent was wrong.`)
-        + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance),
-          `Issues only, from this hive's audit log: issues humans or third-party bots open directly on GitHub are not observed, so the human column only counts hive-mediated opens. Nothing is weighted by size, and an agent-opened issue counts whether or not anyone acted on it. ${throttleNote}`)
+        + evPanel('boundary-enforcement', 'Boundary enforcement', writesN, evWriteActivitySvg(activity) + evSentinelSparkline(sentinel),
+          `The denominator is every agent GitHub write the hive can see in the window: hive-mediated writes from the audit log plus direct writes through the proxy (weekly counters kept under /data). Blocked is what the proxy refused; would-block counts from intent verification are shown separately in the explainer and never counted as blocked.${directCoverage} Writes that bypass both the hive and the proxy are invisible here. Sentinel hits come from evidence bundles in the window. Blocked is not the same as harmful.`)
+        + evPanel('claim-vs-verdict', 'Claim vs verdict · CI recovery', claimN, evCIRecoveryHtml(rec) + evClaimVsVerdictSvg(claims),
+          `Only agent-authored PRs; the first evidence record with captured checks is the claim. This hive runs CI-arbitrates (agents do not wait for CI; a red check holds the PR), so CI red at claim is by design and is not graded — recovery is. Recovery rate = recovered and merged ÷ (recovered + abandoned); PRs that are green but open, still red or pending${recRed.pending ? ` (${recRed.pending})` : ''}, or have no recorded outcome${recRed.outcome_unknown ? ` (${recRed.outcome_unknown})` : ''} are counted separately and in no rate. A PR with no captured checks${emptyCI ? ` (${emptyCI} in this window)` : ''} or still-running checks at claim${pendingCI ? ` (${pendingCI})` : ''} is left out of the CI column. Pushes and hours to green come from GitHub’s commit trail (newest 6 heads) and only for PRs already enriched${recRed.not_enriched ? ` (${recRed.not_enriched} not yet)` : ''}. A non-approve verdict is not proof the agent was wrong.`)
+        + evPanel('work-balance', 'Work balance', balanceN, evWorkBalanceSvg(balance, balanceSrc),
+          `${issueSourceNote} PR opens, merges and closes come from evidence bundles for PRs opened in the window (live and backfilled), so PRs never seen by this hive are missing. Week-end queue depth is the governor’s actionable open issues / PRs (held items excluded) from its last snapshot of the week, kept ${balanceSrc.queue_retention_days || 30} days${balanceSrc.queue_samples === 0 ? ' — no snapshot in this window' : ''}. Nothing is weighted by size, and an opened issue counts whether or not anyone acted on it. ${throttleNote}`)
         + evPanel('shadow-gates', 'Shadow gates', shadow.n, evShadowGateSvg(shadow),
           'Shadow mode only records; no merge was held or blocked. Closed-without-merge is known only from backfilled records; a PR with no recorded outcome is shown as unknown rather than as open, and a revert only shows once the reverting PR is linked. Merged is not the same as correct.');
     }
