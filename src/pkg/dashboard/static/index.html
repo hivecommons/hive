@@ -16368,6 +16368,22 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
     }
 
+    async function releaseIssueOwnerStep(repoFull, number, tag) {
+      const p = repoParts(repoFull);
+      if (!p.owner || !p.repo || !number) return;
+      try {
+        const resp = await fetch('/api/repos/' + encodeURIComponent(p.owner) + '/' + encodeURIComponent(p.repo) + '/issues/' + number + '/release', { method: 'POST' });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        if (data.minStatusSeq != null) _statusSeqFloor = Math.max(_statusSeqFloor || 0, Number(data.minStatusSeq) || 0);
+        const releaseTag = data.tag || tag || 'release';
+        showToast('Created release ' + releaseTag, 'success');
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        showToast('Release failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+      }
+    }
+
     // ── Per-repo card width (hivecommons/hive#8000) ───────────────────────
     //
     // Every card used to be exactly as wide as every other one, because the
@@ -18495,7 +18511,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     //   ctx.isOwner      the user holds the owner role
     //   ctx.planningAllowed  the hive plans (L5+), as for the 📐 button
     //   ctx.hasPlan      the issue already has a plan (the 📐 button is gone)
-    //   ctx.canToggleHold    the user may use the existing hold toggle here
+    //   ctx.canToggleHold    the live repository write gate used by hold/release
     //   ctx.held         the PR is held
     //   ctx.sentinelLabel, ctx.admissionLabels   names for the notes
     //   ctx.labelDriven  the repo's sweep refuses /hive approve and /hive decision
@@ -18509,6 +18525,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (own.verb === 'DECIDE' || own.verb === 'STEER' || (own.verb === 'REVIEW' && parkedIssue)) {
         if (ctx.labelDriven) after.push({ type: 'note', text: 'This repository is label-driven: accept or un-park it with the repository\'s triage labels; Hive refuses /hive approve and /hive decision here.' });
         else after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
+      }
+      if (ctx.kind === 'issue' && own.action === 'release' && own.release_tag && ctx.canToggleHold) {
+        actions.push({ type: 'action', id: 'release', label: 'Release ' + own.release_tag });
       }
       if (own.verb === 'SPEC') {
         if (ctx.kind === 'issue' && ctx.isOwner && ctx.planningAllowed && !ctx.hasPlan) actions.push({ type: 'action', id: 'design', label: 'Design before planning' });
@@ -18706,6 +18725,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return;
         }
         if (el.dataset.ytAct === 'release_hold') toggleRepoItemHold(ctx.repo, ctx.number, 'pr', false, null);
+        else if (el.dataset.ytAct === 'release') releaseIssueOwnerStep(ctx.repo, ctx.number, ctx.own.release_tag);
         else if (el.dataset.ytAct === 'design') designIssue(el);
         return;
       }

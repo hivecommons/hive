@@ -128,9 +128,14 @@ type Client struct {
 	canaryFailClosed          bool
 	canaryRegistry            *ioscan.CanaryRegistry
 	canaryLeakFunc            func(ioscan.CanaryLeak)
-	appBotLogin               string // "<app-slug>[bot]" when the client authenticates as a GitHub App
-	additionalBotLogins       []string
-	noBotIdentityWarned       sync.Once
+	// issueOwnerSteps caches the trusted body-or-comment release step resolved
+	// by the unpark sweep so the read-only dashboard snapshot can expose the
+	// same proposal without another per-issue comment listing.
+	issueOwnerStepsMu   sync.RWMutex
+	issueOwnerSteps     map[string]*IssueOwnerStep
+	appBotLogin         string // "<app-slug>[bot]" when the client authenticates as a GitHub App
+	additionalBotLogins []string
+	noBotIdentityWarned sync.Once
 	// approvalDesk is the RFC #4000 approval-desk consultation performed per PR
 	// by the self-authored auto-merge sweep. nil (the default) means the sweep
 	// behaves exactly as it did before the desk existed. Set by SetApprovalDesk
@@ -567,13 +572,15 @@ type IssueLinkedPR struct {
 }
 
 type Issue struct {
-	Repo              string `json:"repo"`
-	Number            int    `json:"number"`
-	Title             string `json:"title"`
-	Body              string `json:"body,omitempty"`
-	Author            string `json:"author"`
-	AuthorIsHuman     bool   `json:"author_is_human,omitempty"`
-	HumanAcknowledged bool   `json:"human_acknowledged,omitempty"`
+	Repo   string `json:"repo"`
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	// OwnerStep is trusted typed owner-step metadata resolved from a
+	// Hive-authored issue body or comment.
+	OwnerStep         *IssueOwnerStep `json:"owner_step,omitempty"`
+	Author            string          `json:"author"`
+	AuthorIsHuman     bool            `json:"author_is_human,omitempty"`
+	HumanAcknowledged bool            `json:"human_acknowledged,omitempty"`
 	// AckSource names where a hive-filed issue's acknowledgement came from
 	// when it was not given on the issue itself: "parent #N" for a child the
 	// relay split out of a human-filed or human-acknowledged parent
@@ -1512,6 +1519,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			Number:            issue.GetNumber(),
 			Title:             issue.GetTitle(),
 			Body:              issue.GetBody(),
+			OwnerStep:         c.issueOwnerStepForSnapshot(repo, issue),
 			Author:            safeGetLogin(issue.GetUser()),
 			AuthorIsHuman:     authorIsHuman,
 			HumanAcknowledged: acknowledged,
@@ -3732,12 +3740,13 @@ type RepoWorkDetails struct {
 }
 
 type RepoWorkIssue struct {
-	Repo      string   `json:"repo"`
-	Number    int      `json:"number"`
-	Title     string   `json:"title"`
-	Author    string   `json:"author,omitempty"`
-	Labels    []string `json:"labels,omitempty"`
-	Assignees []string `json:"assignees,omitempty"`
+	Repo      string          `json:"repo"`
+	Number    int             `json:"number"`
+	Title     string          `json:"title"`
+	OwnerStep *IssueOwnerStep `json:"owner_step,omitempty"`
+	Author    string          `json:"author,omitempty"`
+	Labels    []string        `json:"labels,omitempty"`
+	Assignees []string        `json:"assignees,omitempty"`
 	// HumanAcknowledged carries the issue's human acknowledgement so the
 	// your-turn decision can honour it on non-actionable rows.
 	HumanAcknowledged bool      `json:"human_acknowledged,omitempty"`
@@ -3764,6 +3773,7 @@ func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {
 		Repo:              issue.Repo,
 		Number:            issue.Number,
 		Title:             issue.Title,
+		OwnerStep:         issue.OwnerStep,
 		Author:            issue.Author,
 		Labels:            append([]string(nil), issue.Labels...),
 		Assignees:         append([]string(nil), issue.Assignees...),
@@ -3808,7 +3818,7 @@ func (c *Client) reporterConfirmationGateApplies(issue *gh.Issue) bool {
 	return issue != nil && c.reporterConfirmationCloseGateReason(issue) != ""
 }
 
-func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason string) RepoWorkIssue {
+func (c *Client) repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason string) RepoWorkIssue {
 	if issue == nil {
 		return RepoWorkIssue{Repo: repo, Labels: append([]string(nil), labels...), Bucket: bucket, Reason: reason}
 	}
@@ -3816,6 +3826,7 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 		Repo:      repo,
 		Number:    issue.GetNumber(),
 		Title:     issue.GetTitle(),
+		OwnerStep: c.issueOwnerStepForSnapshot(repo, issue),
 		Author:    safeGetLogin(issue.GetUser()),
 		Labels:    append([]string(nil), labels...),
 		Assignees: extractAssignees(issue.Assignees),
@@ -3831,7 +3842,7 @@ func repoWorkIssue(repo string, issue *gh.Issue, labels []string, bucket, reason
 // signal, so non-actionable rows (exempt, project-filter, ...) keep the
 // ownership decision a person's assignment or ack label earned.
 func (c *Client) repoWorkIssueAcked(repo string, issue *gh.Issue, labels []string, bucket, reason string) RepoWorkIssue {
-	row := repoWorkIssue(repo, issue, labels, bucket, reason)
+	row := c.repoWorkIssue(repo, issue, labels, bucket, reason)
 	if issue != nil {
 		row.HumanAcknowledged = c.issueHasCheapHumanAcknowledgement(issue)
 	}

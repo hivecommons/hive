@@ -103,6 +103,10 @@ var ownershipReasonVerbs = map[string]string{
 // It is offered only when the level gate is a hold's only source.
 const OwnershipActionReleaseHold = "release_hold"
 
+// OwnershipActionRelease is the hub-owned typed-release action. ReleaseTag
+// and ReleaseTarget carry the exact proposal the server already trusted.
+const OwnershipActionRelease = "release"
+
 const (
 	// ownershipLanePRMinLevel is the lowest ACMM level at which a hive pull
 	// request is covered by the safety net (no agent opens PRs at L1–L2).
@@ -159,6 +163,8 @@ type Ownership struct {
 	ReasonCode       string `json:"reason_code,omitempty"`
 	Reason           string `json:"reason,omitempty"`
 	Action           string `json:"action,omitempty"`
+	ReleaseTag       string `json:"release_tag,omitempty"`
+	ReleaseTarget    string `json:"release_target,omitempty"`
 	InboxRank        int    `json:"inbox_rank,omitempty"`
 	WaitingElsewhere bool   `json:"waiting_elsewhere,omitempty"`
 	// Link points at the dashboard section that acts on the item (a run or
@@ -222,6 +228,9 @@ type ownershipEnv struct {
 	// unparkCommandsRefused reports a repo whose sweep refuses the `/hive`
 	// un-park commands (labelDrivenRefusesUnparkCommands). Nil means none.
 	unparkCommandsRefused func(repo string) bool
+	// releaseOnApprove reports whether typed release actions are enabled for
+	// the repository. Nil keeps the dashboard action absent.
+	releaseOnApprove func(repo string) bool
 	// mergeLaneTakesAuthor reports whether a Hive merge lane admits PRs by
 	// author in repo (automerge.Engine.MergeLaneTakesAuthor); nil turns the
 	// hand-merge rule off.
@@ -250,6 +259,23 @@ func (e ownershipEnv) selfAuthorizationHoldFor(repo string) bool {
 		return e.hiveLevel < config.MaxACMMLevel
 	}
 	return e.selfAuthorizationHold(repo)
+}
+
+func (e ownershipEnv) releaseOnApproveFor(repo string) bool {
+	return e.releaseOnApprove != nil && e.releaseOnApprove(repo)
+}
+
+func withReleaseAction(decision Ownership, step *github.IssueOwnerStep, enabled bool) Ownership {
+	if !enabled || step == nil || step.Kind != "release" {
+		return decision
+	}
+	if !decision.YourTurn || decision.ReasonCode != OwnershipReasonParkedNeedsDecision {
+		return decision
+	}
+	decision.Action = OwnershipActionRelease
+	decision.ReleaseTag = step.Tag
+	decision.ReleaseTarget = step.Target
+	return decision
 }
 
 func (e ownershipEnv) reviewerLaneAvailableFor(repo string) bool {
@@ -697,7 +723,8 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 					holdSources:  sources,
 					band:         IssueBand(issue, held, cfg, env.now, env.selfAuthorizationHoldFor).Band,
 				}
-				record(ownershipKindIssue, issue.Number, issue.URL, decideIssueOwnershipGated(in, env), issue.CreatedAt, issue.UpdatedAt)
+				decision := withReleaseAction(decideIssueOwnershipGated(in, env), issue.OwnerStep, env.releaseOnApproveFor(issue.Repo))
+				record(ownershipKindIssue, issue.Number, issue.URL, decision, issue.CreatedAt, issue.UpdatedAt)
 			}
 		}
 		issueRows(repo.ActionableIssues, false)
@@ -718,7 +745,8 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				bucket:       item.Bucket,
 				bucketReason: item.Reason,
 			}
-			record(ownershipKindIssue, item.Number, item.URL, decideIssueOwnershipGated(in, env), item.CreatedAt, item.UpdatedAt)
+			decision := withReleaseAction(decideIssueOwnershipGated(in, env), item.OwnerStep, env.releaseOnApproveFor(in.repo))
+			record(ownershipKindIssue, item.Number, item.URL, decision, item.CreatedAt, item.UpdatedAt)
 		}
 		prRows := func(items []any, held bool) {
 			for _, raw := range items {
@@ -810,6 +838,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*agent.AgentPr
 		return reviewerLaneAvailable(cfg, agentStatuses, currentMode, repo)
 	}
 	env.unparkCommandsRefused = func(repo string) bool { return labelDrivenRefusesUnparkCommands(cfg, repo) }
+	env.releaseOnApprove = cfg.RepoReleaseOnApprove
 	env.laneCanOpenPR = laneCanOpenPRAt(env, agentStatuses)
 	return env
 }

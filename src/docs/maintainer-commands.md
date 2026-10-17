@@ -75,8 +75,13 @@ and immutable commit SHA (see [hive-open-issue.md](hive-open-issue.md#recording-
 By default it remains manual: cut the release and reply `/hive done`, or use
 `/hive decision <text>` to change direction.
 
-On a repo with `project.repo_policies[].release_on_approve: true`, an eligible
-`/hive approve` makes the hub App create exactly that tag and GitHub Release.
+On a repo with `project.repo_policies[].release_on_approve: true`, the issue's
+"What to reply" notice says that `/hive approve` creates the named tag at the
+full immutable SHA; `/hive done` and `/hive decision <text>` remain available.
+An eligible `/hive approve`, or the dashboard Your-turn menu's
+"Release `<tag>`" action, makes the hub App create exactly that tag and GitHub
+Release. The dashboard action has the same repository-write/owner gate as
+"Release hold" and calls the same executor as the command.
 Immediately before the write, Hive confirms that the target is still the
 default-branch head or its named ancestor, the tag is absent, and every required
 check is green. When `release_version_source` names a repository-relative text

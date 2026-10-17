@@ -73,7 +73,7 @@ func TestIssueOwnerStepValidation(t *testing.T) {
 	}
 }
 
-func TestReleaseStepMenuRemainsManual(t *testing.T) {
+func TestReleaseStepMenuPolicy(t *testing.T) {
 	c := menuTestClient()
 	step := testReleaseStep()
 	body := issueOwnerStepBody("Remaining step: cut the release.", true, step)
@@ -85,12 +85,26 @@ func TestReleaseStepMenuRemainsManual(t *testing.T) {
 			t.Fatalf("release metadata must not enable execution; menu = %q, want %q", got, want)
 		}
 	}
+	enabled := renderUnparkNoticeForPolicy(unparkMenuFromBody(body), true)
+	for _, want := range []string{"`/hive approve`: Hive creates release `v0.12.0`", "`" + step.Target + "`", "`/hive done`", "`/hive decision <your instructions>`"} {
+		if !strings.Contains(enabled, want) {
+			t.Errorf("enabled release notice missing %q:\n%s", want, enabled)
+		}
+	}
+	disabled := renderUnparkNoticeForPolicy(unparkMenuFromBody(body), false)
+	if strings.Contains(disabled, "/hive approve") || strings.Contains(disabled, step.Target) {
+		t.Fatalf("default-off release notice changed:\n%s", disabled)
+	}
 	if m := c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("someone", body)}); m.ownerStep || m.releaseStep != nil {
 		t.Fatal("non-Hive comment supplied a release proposal")
 	}
 	accepted := ghComment("hive[bot]", unparkReplyMarkerPrefix+"5 -->\n"+renderUnparkAcceptedReply("owner", unparkDoneDecision, nil))
 	if m := c.unparkMenuFor(body, menuTestHiveUser, []*gh.IssueComment{accepted}); m.ownerStep || m.releaseStep != nil {
 		t.Fatal("accepted reply must clear release proposal")
+	}
+	dashboardAccepted := ghComment("hive[bot]", renderUnparkAcceptedReply("owner", "create release", nil))
+	if m := c.unparkMenuFor(body, menuTestHiveUser, []*gh.IssueComment{dashboardAccepted}); m.ownerStep || m.releaseStep != nil {
+		t.Fatal("dashboard acceptance without a command-reply marker must clear release proposal")
 	}
 	manual := ghComment("hive[bot]", ownerStepCommentBody("Change settings instead.", true))
 	if m := c.unparkMenuFor(body, menuTestHiveUser, []*gh.IssueComment{manual}); !m.ownerStep || m.releaseStep != nil {
@@ -99,6 +113,35 @@ func TestReleaseStepMenuRemainsManual(t *testing.T) {
 	choice := issueOwnerStepBody("Option A: release\nOption B: wait", true, step)
 	if m := c.unparkMenuFor("body", menuTestHiveUser, []*gh.IssueComment{ghComment("hive[bot]", choice)}); m.ownerStep || m.releaseStep != nil {
 		t.Fatal("lettered options must not become a release action")
+	}
+}
+
+func TestIssueOwnerStepSnapshotUsesCommentAwareSweepResult12635(t *testing.T) {
+	c := menuTestClient()
+	step := testReleaseStep()
+	issue := &gh.Issue{
+		Number: gh.Ptr(42),
+		Body:   gh.Ptr(issueOwnerStepBody("release", true, step)),
+		User:   menuTestHiveUser,
+	}
+	if got := c.issueOwnerStepForSnapshot("Org/Repo", issue); !reflect.DeepEqual(got, step) {
+		t.Fatalf("trusted body step = %+v", got)
+	}
+
+	commentOnly := &gh.Issue{Number: gh.Ptr(43), Body: gh.Ptr("body"), User: gh.Ptr(gh.User{Login: gh.Ptr("someone")})}
+	c.rememberIssueOwnerStep("org/repo", 43, step)
+	got := c.issueOwnerStepForSnapshot("ORG/REPO", commentOnly)
+	if !reflect.DeepEqual(got, step) {
+		t.Fatalf("comment-resolved step = %+v", got)
+	}
+	got.Tag = "mutated"
+	if again := c.issueOwnerStepForSnapshot("org/repo", commentOnly); again.Tag != step.Tag {
+		t.Fatalf("snapshot leaked mutable cache pointer: %+v", again)
+	}
+
+	c.rememberIssueOwnerStep("org/repo", 42, nil)
+	if got := c.issueOwnerStepForSnapshot("org/repo", issue); got != nil {
+		t.Fatalf("answered comment must suppress stale body marker: %+v", got)
 	}
 }
 

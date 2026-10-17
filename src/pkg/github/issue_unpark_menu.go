@@ -16,9 +16,9 @@ import (
 const unparkOwnerStepMarker = "<!-- hive:owner-step -->"
 
 // unparkAcceptedMarker tags the hive's reply to an accepted un-park command
-// (`/hive approve`, `/hive decision`, `/hive done`). Only such a reply answers
-// an owner step; `/hive help`, the prose hint and the ai_author refusal leave
-// the step open.
+// (`/hive approve`, `/hive decision`, `/hive done`) or dashboard release.
+// Only such a reply answers an owner step; `/hive help`, the prose hint and
+// the ai_author refusal leave the step open.
 const unparkAcceptedMarker = "<!-- hive:unpark-accepted -->"
 
 // unparkDoneDecision is the recorded decision for `/hive done`. The reply
@@ -39,8 +39,9 @@ type unparkMenu struct {
 	// ownerStep is true when the issue is parked on a step only the owner can
 	// do, so `/hive done` is offered.
 	ownerStep bool
-	// releaseStep is descriptive only: approve retains its existing meaning
-	// until a separate, owner-gated hub release executor is implemented.
+	// releaseStep is the typed release proposal. The repo policy decides
+	// whether `/hive approve` may execute it; without that opt-in it remains
+	// descriptive metadata and the legacy manual-step menu is unchanged.
 	releaseStep *IssueOwnerStep
 }
 
@@ -92,13 +93,17 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 			continue
 		}
 		body := cm.GetBody()
+		if strings.Contains(body, unparkAcceptedMarker) {
+			// Accepted command replies and dashboard release replies both
+			// answer the step. Only command replies carry a per-comment
+			// unparkReplyMarkerPrefix.
+			ownerStep = false
+			m.releaseStep = nil
+			continue
+		}
 		if strings.Contains(body, unparkReplyMarkerPrefix) {
-			// Only an accepted command answers an owner step; `/hive help`,
-			// the prose hint and the ai_author refusal leave it open.
-			if strings.Contains(body, unparkAcceptedMarker) {
-				ownerStep = false
-				m.releaseStep = nil
-			}
+			// `/hive help`, the prose hint and the ai_author refusal leave
+			// the owner step open.
 			continue
 		}
 		if strings.Contains(body, unparkNoticeMarker) {
@@ -123,13 +128,22 @@ func (c *Client) unparkMenuFor(issueBody string, issueAuthor *gh.User, comments 
 	return m
 }
 
-// bullets lists the commands for this menu.
+// bullets lists the commands for this menu with release execution disabled,
+// preserving the default-off behavior for callers without repository policy.
 func (m unparkMenu) bullets() string {
+	return m.bulletsFor(false)
+}
+
+// bulletsFor lists the commands after applying the repository's release policy.
+func (m unparkMenu) bulletsFor(releaseOnApprove bool) string {
 	var b strings.Builder
 	if m.ownerStep {
 		fmt.Fprintln(&b, "- `/hive done`: you did the step only you can do; Hive re-checks it and closes the issue once it is verified")
 	}
 	switch {
+	case releaseOnApprove && m.releaseStep != nil:
+		fmt.Fprintf(&b, "- `/hive approve`: Hive creates release `%s` from `%s`\n", m.releaseStep.Tag, m.releaseStep.Target)
+		fmt.Fprintln(&b, "- `/hive decision <your instructions>`: go ahead, following your instructions")
 	case len(m.options) > 0 && m.recommended != "":
 		fmt.Fprintf(&b, "- `/hive approve`: go with the recommendation (option %s)\n", m.recommended)
 		for _, opt := range m.options {

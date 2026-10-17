@@ -490,10 +490,12 @@ decided on the server once per status refresh (hivecommons/hive#11507):
 `your_turn`, and for your-turn items the `verb` (`INSPECT`, `DECIDE`,
 `STEER`, `SPEC`, `REVIEW`, `TRIAGE`, `ADMIT`, `CLOSE`), a stable
 `reason_code`, a one-line `reason`, the resolving `action` when the dashboard
-already offers one (`release_hold`), and `inbox_rank`, the item's position in
-the inbox across all repositories (grouped by verb in that order, then least
-recently active first). Consumers read these fields and never re-derive them
-from labels or bands. The decision makes no GitHub API calls; the only local
+already offers one (`release_hold` or `release`), and `inbox_rank`, the item's
+position in the inbox across all repositories (grouped by verb in that order,
+then least recently active first). A `release` action also carries the exact
+`release_tag` and immutable `release_target` from Hive's trusted owner-step
+marker. Consumers read these fields and never re-derive them from labels or bands.
+The decision makes no GitHub API calls; the only local
 write is the first time a refresh saw a hive PR with `needs-human`, kept in
 `/data/ownership-state.json` so the adjudicator's four-hour wait survives a
 restart.
@@ -699,7 +701,10 @@ or bands (hivecommons/hive#11566).
   `project.issue_filter.reporter_trust`); `REVIEW` on a held agent PR whose only
   hold source is the level gate offers "Release hold" (the existing hold
   toggle, with its existing permission check, re-checked against the current
-  snapshot when chosen); a reporter-confirmation `CLOSE` offers `/fixed`.
+  snapshot when chosen); a parked trusted `kind=release` issue offers
+  "Release `<tag>`" when `release_on_approve` is enabled, using that same
+  repository-write/owner gate and the same preflight checks and executor as
+  `/hive approve`; a reporter-confirmation `CLOSE` offers `/fixed`.
 - **Sort.** Within each band, your-turn rows precede all others.
 - **The Your turn strip.** Above the cards, the strip lists every your-turn item
   of the repositories shown, grouped by verb (`INSPECT`, `DECIDE`, `STEER`,

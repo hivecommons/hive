@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // IssueOwnerStep describes a proposed owner-only action. It is metadata, not
@@ -69,6 +71,53 @@ func parseIssueOwnerStep(body string) *IssueOwnerStep {
 		return nil
 	}
 	return s
+}
+
+func issueOwnerStepSnapshotKey(repo string, number int) string {
+	return strings.ToLower(strings.TrimSpace(repo)) + "#" + fmt.Sprint(number)
+}
+
+func cloneIssueOwnerStep(step *IssueOwnerStep) *IssueOwnerStep {
+	if step == nil {
+		return nil
+	}
+	out := *step
+	return &out
+}
+
+// rememberIssueOwnerStep records the comment-aware result of the unpark
+// sweep. A present nil entry is meaningful: a trusted later comment answered
+// or superseded a body marker, so the dashboard must not resurrect it.
+func (c *Client) rememberIssueOwnerStep(repo string, number int, step *IssueOwnerStep) {
+	if c == nil || strings.TrimSpace(repo) == "" || number <= 0 {
+		return
+	}
+	c.issueOwnerStepsMu.Lock()
+	if c.issueOwnerSteps == nil {
+		c.issueOwnerSteps = make(map[string]*IssueOwnerStep)
+	}
+	c.issueOwnerSteps[issueOwnerStepSnapshotKey(repo, number)] = cloneIssueOwnerStep(step)
+	c.issueOwnerStepsMu.Unlock()
+}
+
+// issueOwnerStepForSnapshot exposes only trusted typed metadata. The unpark
+// sweep's comment-aware result wins; before that first sweep, a Hive-authored
+// body marker is available immediately.
+func (c *Client) issueOwnerStepForSnapshot(repo string, issue *gh.Issue) *IssueOwnerStep {
+	if c == nil || issue == nil {
+		return nil
+	}
+	key := issueOwnerStepSnapshotKey(repo, issue.GetNumber())
+	c.issueOwnerStepsMu.RLock()
+	cached, resolved := c.issueOwnerSteps[key]
+	c.issueOwnerStepsMu.RUnlock()
+	if resolved {
+		return cloneIssueOwnerStep(cached)
+	}
+	if !c.isHiveAccount(issue.GetUser()) {
+		return nil
+	}
+	return parseIssueOwnerStep(issue.GetBody())
 }
 
 func issueOwnerStepBody(body string, needsDecision bool, step *IssueOwnerStep) string {

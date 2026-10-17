@@ -18,24 +18,97 @@ type unparkReleasePolicy struct {
 	versionSource string
 }
 
-// approveIssueRelease executes a typed release owner step after the ordinary
-// /hive command author and permission gates have passed. Every live repository
-// precondition is re-read before the only release write.
+// IssueReleaseRefusalError reports a live release precondition that did not
+// hold. It is safe to show to an operator; the issue remains parked.
+type IssueReleaseRefusalError struct {
+	Reason string
+}
+
+func (e *IssueReleaseRefusalError) Error() string {
+	return e.Reason
+}
+
+// approveIssueRelease adapts the shared release operation to a `/hive approve`
+// comment. The ordinary command author and permission gates have already run.
 func (c *Client) approveIssueRelease(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, candidate *gh.IssueComment, actor string, step *IssueOwnerStep, policy unparkReleasePolicy, result *IssueUnparkSweepResult, audit func(IssueUnparkEvent)) (bool, error) {
-	number := issue.GetNumber()
-	refusal, err := c.releaseApprovalRefusal(ctx, displayRepo, owner, repo, step, policy)
+	event, removed, refusal, err := c.executeApprovedIssueRelease(ctx, displayRepo, owner, repo, issue, actor, step, policy)
 	if err != nil {
 		return false, err
 	}
 	if refusal != "" {
-		body := renderReleaseApprovalRefusal(step.Tag, refusal)
-		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), body); err != nil {
+		if err := c.postUnparkReply(ctx, owner, repo, issue.GetNumber(), candidate.GetID(), renderReleaseApprovalRefusal(step.Tag, refusal)); err != nil {
 			return false, err
 		}
 		result.Replies++
 		return true, nil
 	}
+	body := renderUnparkAcceptedReply(actor, event.Decision, removed) + "\n\nRelease: " + event.ReleaseURL
+	if err := c.postUnparkReply(ctx, owner, repo, issue.GetNumber(), candidate.GetID(), body); err != nil {
+		return false, err
+	}
+	event.CommentURL = candidate.GetHTMLURL()
+	result.Unparked = append(result.Unparked, event)
+	if audit != nil {
+		audit(event)
+	}
+	return true, nil
+}
 
+// ApproveIssueRelease executes the same release operation for an authenticated
+// dashboard action. It resolves the current trusted owner-step from GitHub
+// instead of accepting tag or target data from the browser.
+func (c *Client) ApproveIssueRelease(ctx context.Context, displayRepo string, number int, actor, versionSource string) (IssueUnparkEvent, error) {
+	if c == nil || c.client == nil {
+		return IssueUnparkEvent{}, ErrNoGitHubClient
+	}
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		actor = "dashboard owner"
+	}
+	owner, repo := c.splitRepo(displayRepo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, repo, number)
+	if err != nil {
+		return IssueUnparkEvent{}, fmt.Errorf("reading release owner-step on %s#%d: %w", displayRepo, number, err)
+	}
+	if issue == nil || issue.IsPullRequest() || !c.hasParkingLabel(issueLabelNames(issue.Labels)) {
+		return IssueUnparkEvent{}, &IssueReleaseRefusalError{Reason: "the issue is no longer parked on an owner step"}
+	}
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		return IssueUnparkEvent{}, err
+	}
+	menu := c.unparkMenuFor(issue.GetBody(), issue.GetUser(), comments)
+	c.rememberIssueOwnerStep(displayRepo, number, menu.releaseStep)
+	step := menu.releaseStep
+	if step == nil {
+		return IssueUnparkEvent{}, &IssueReleaseRefusalError{Reason: "the issue has no unanswered trusted release owner-step"}
+	}
+	event, removed, refusal, err := c.executeApprovedIssueRelease(ctx, displayRepo, owner, repo, issue, actor, step, unparkReleasePolicy{enabled: true, versionSource: versionSource})
+	if err != nil {
+		return event, err
+	}
+	if refusal != "" {
+		body := renderReleaseApprovalRefusal(step.Tag, refusal)
+		if err := c.CreateIssueComment(ctx, displayRepo, number, body); err != nil {
+			return IssueUnparkEvent{}, err
+		}
+		return IssueUnparkEvent{}, &IssueReleaseRefusalError{Reason: refusal}
+	}
+	body := renderUnparkAcceptedReply(actor, event.Decision, removed) + "\n\nRelease: " + event.ReleaseURL
+	if err := c.CreateIssueComment(ctx, displayRepo, number, body); err != nil {
+		return event, fmt.Errorf("release %s was created but its issue comment failed: %w", step.Tag, err)
+	}
+	return event, nil
+}
+
+// executeApprovedIssueRelease owns every release precondition and write used by
+// both `/hive approve` and the dashboard action. It does not decide who may
+// invoke the action; each caller applies its own owner/write gate first.
+func (c *Client) executeApprovedIssueRelease(ctx context.Context, displayRepo, owner, repo string, issue *gh.Issue, actor string, step *IssueOwnerStep, policy unparkReleasePolicy) (IssueUnparkEvent, []string, string, error) {
+	refusal, err := c.releaseApprovalRefusal(ctx, displayRepo, owner, repo, step, policy)
+	if err != nil || refusal != "" {
+		return IssueUnparkEvent{}, nil, refusal, err
+	}
 	release, _, err := c.client.Repositories.CreateRelease(ctx, owner, repo, &gh.RepositoryRelease{
 		TagName:              gh.Ptr(step.Tag),
 		TargetCommitish:      gh.Ptr(step.Target),
@@ -43,42 +116,32 @@ func (c *Client) approveIssueRelease(ctx context.Context, displayRepo, owner, re
 		GenerateReleaseNotes: gh.Ptr(true),
 	})
 	if err != nil {
-		return false, fmt.Errorf("creating approved release %s in %s/%s: %w", step.Tag, owner, repo, err)
+		return IssueUnparkEvent{}, nil, "", fmt.Errorf("creating approved release %s in %s/%s: %w", step.Tag, owner, repo, err)
 	}
 	releaseURL := strings.TrimSpace(release.GetHTMLURL())
 	if releaseURL == "" {
 		releaseURL = fmt.Sprintf("https://github.com/%s/%s/releases/tag/%s", owner, repo, url.PathEscape(step.Tag))
 	}
 	c.recordWriteAudit(AuditActionReleaseCreated, InvocationMeta{Agent: AttributionAgentGovernor},
-		WriteTarget{Repo: displayRepo, Number: number},
+		WriteTarget{Repo: displayRepo, Number: issue.GetNumber()},
 		"actor", actor, "tag", step.Tag, "target", step.Target, "url", releaseURL)
-
-	removed, err := c.clearIssueParkingLabels(ctx, owner, repo, number, issueLabelNames(issue.Labels))
+	removed, err := c.clearIssueParkingLabels(ctx, owner, repo, issue.GetNumber(), issueLabelNames(issue.Labels))
 	if err != nil {
-		return false, err
+		return IssueUnparkEvent{}, nil, "", err
 	}
-	decision := fmt.Sprintf("create release `%s` from `%s`", step.Tag, step.Target)
-	body := renderUnparkAcceptedReply(actor, decision, removed) + "\n\nRelease: " + releaseURL
-	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), body); err != nil {
-		return false, err
-	}
+	c.rememberIssueOwnerStep(displayRepo, issue.GetNumber(), nil)
 	event := IssueUnparkEvent{
 		Repo:       displayRepo,
-		Number:     number,
+		Number:     issue.GetNumber(),
 		Actor:      actor,
-		Decision:   decision,
-		CommentURL: candidate.GetHTMLURL(),
+		Decision:   fmt.Sprintf("create release `%s` from `%s`", step.Tag, step.Target),
 		ReleaseTag: step.Tag,
 		ReleaseURL: releaseURL,
 	}
-	result.Unparked = append(result.Unparked, event)
-	if audit != nil {
-		audit(event)
-	}
 	if c.logger != nil {
-		c.logger.Info("release created by maintainer approval", "repo", displayRepo, "issue", number, "actor", actor, "tag", step.Tag, "target", step.Target, "url", releaseURL)
+		c.logger.Info("release created by maintainer approval", "repo", displayRepo, "issue", issue.GetNumber(), "actor", actor, "tag", step.Tag, "target", step.Target, "url", releaseURL)
 	}
-	return true, nil
+	return event, removed, "", nil
 }
 
 // releaseApprovalRefusal returns a human-facing reason when a live release
@@ -122,6 +185,7 @@ func (c *Client) releaseApprovalRefusal(ctx context.Context, displayRepo, owner,
 		Required:                required,
 		RequiredKnown:           true,
 		RequiredKnownFromConfig: fromConfig,
+		FailOnAnyFailedCheck:    true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("checking release target CI: %w", err)

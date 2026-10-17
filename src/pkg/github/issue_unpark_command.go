@@ -288,8 +288,12 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	if err != nil {
 		return false, err
 	}
+	menu := c.unparkMenuFor(issue.GetBody(), issue.GetUser(), comments)
+	if menu.releaseStep != nil || (c.isHiveAccount(issue.GetUser()) && parseIssueOwnerStep(issue.GetBody()) != nil) {
+		c.rememberIssueOwnerStep(displayRepo, number, menu.releaseStep)
+	}
 	if !labelDriven {
-		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, number, issue.GetBody(), issue.GetUser(), comments); err != nil {
+		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, number, issue.GetBody(), issue.GetUser(), comments, releasePolicy.enabled); err != nil {
 			return false, err
 		}
 	}
@@ -348,7 +352,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 
 	switch command.Kind {
 	case unparkCommandHelp:
-		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkHelpFor(c.unparkMenuFor(issue.GetBody(), issue.GetUser(), comments))); err != nil {
+		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkHelpForPolicy(menu, releasePolicy.enabled)); err != nil {
 			return false, err
 		}
 		result.Replies++
@@ -362,11 +366,8 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return true, nil
 	}
 
-	if releasePolicy.enabled && command.Kind == unparkCommandApprove {
-		menu := c.unparkMenuFor(issue.GetBody(), comments)
-		if menu.releaseStep != nil {
-			return c.approveIssueRelease(ctx, displayRepo, owner, repo, issue, candidate, actor, menu.releaseStep, releasePolicy, result, audit)
-		}
+	if releasePolicy.enabled && command.Kind == unparkCommandApprove && menu.releaseStep != nil {
+		return c.approveIssueRelease(ctx, displayRepo, owner, repo, issue, candidate, actor, menu.releaseStep, releasePolicy, result, audit)
 	}
 
 	removed, err := c.clearIssueParkingLabels(ctx, owner, repo, number, issueLabelNames(issue.Labels))
@@ -376,6 +377,9 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	decision := unparkCommandDecisionText(command)
 	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkAcceptedReply(actor, decision, removed)); err != nil {
 		return false, err
+	}
+	if menu.releaseStep != nil {
+		c.rememberIssueOwnerStep(displayRepo, number, nil)
 	}
 	event := IssueUnparkEvent{
 		Repo:       displayRepo,
@@ -835,7 +839,11 @@ func renderUnparkHelpReply(issueBody string) string {
 }
 
 func renderUnparkHelpFor(menu unparkMenu) string {
-	return "**Maintainer commands**\n" + menu.bullets() + "\n" + maintainerCommandReference()
+	return renderUnparkHelpForPolicy(menu, false)
+}
+
+func renderUnparkHelpForPolicy(menu unparkMenu, releaseOnApprove bool) string {
+	return "**Maintainer commands**\n" + menu.bulletsFor(releaseOnApprove) + "\n" + maintainerCommandReference()
 }
 
 // unparkNoticeBody is the "What to reply" comment kept on every parked issue.
@@ -843,9 +851,13 @@ func unparkNoticeBody(issueBody string) string {
 	return renderUnparkNotice(unparkMenuFromBody(issueBody))
 }
 
-// renderUnparkNotice renders the "What to reply" comment for one menu.
+// renderUnparkNotice renders the default-off "What to reply" comment.
 func renderUnparkNotice(menu unparkMenu) string {
-	return unparkNoticeMarker + "\n**What to reply**\n" + menu.bullets() +
+	return renderUnparkNoticeForPolicy(menu, false)
+}
+
+func renderUnparkNoticeForPolicy(menu unparkMenu, releaseOnApprove bool) string {
+	return unparkNoticeMarker + "\n**What to reply**\n" + menu.bulletsFor(releaseOnApprove) +
 		"\nIf this issue is waiting only for reporter confirmation after a merged fix, the reporter or a maintainer can reply `/fixed` instead.\n\n" +
 		fmt.Sprintf("_Only a maintainer with write access can un-park; everything else is ignored. Full command reference: %s._", maintainerCommandsDocURL)
 }
@@ -908,8 +920,8 @@ func unparkOptionLetter(line string) string {
 // issue and edits it in place when the issue's options change, so a maintainer
 // reading the bottom of the issue always sees the current commands. Options
 // and owner-only steps the hive posted in comments count as well as the body.
-func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo string, number int, issueBody string, issueAuthor *gh.User, comments []*gh.IssueComment) error {
-	desired := renderUnparkNotice(c.unparkMenuFor(issueBody, issueAuthor, comments))
+func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo string, number int, issueBody string, issueAuthor *gh.User, comments []*gh.IssueComment, releaseOnApprove bool) error {
+	desired := renderUnparkNoticeForPolicy(c.unparkMenuFor(issueBody, issueAuthor, comments), releaseOnApprove)
 	for _, cm := range comments {
 		if cm == nil || !strings.Contains(cm.GetBody(), unparkNoticeMarker) {
 			continue

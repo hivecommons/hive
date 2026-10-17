@@ -66,6 +66,8 @@ func newReleaseApprovalServer(t *testing.T, issue unparkWireIssue, fx *releaseAp
 			_ = json.NewEncoder(w).Encode(map[string]any{"name": "repo", "default_branch": "main"})
 		case path == "issues" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode([]unparkWireIssue{issue})
+		case path == "issues/42" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(issue)
 		case path == "issues/42/comments" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(issue.Comments)
 		case path == "issues/42/comments" && r.Method == http.MethodPost:
@@ -136,9 +138,9 @@ func TestReleaseApprovalCreatesOncePostsURLAuditsAndClearsPark(t *testing.T) {
 	server := newReleaseApprovalServer(t, issue, fx, "write")
 	client := newTestClient(t, server, "org", []string{"repo"})
 	client.SetAppBotLogin("hive[bot]")
-	var auditAction, auditDetail string
+	var audits []struct{ action, detail string }
 	client.SetAttributionHooks(AttributionHooks{Audit: func(action, detail, _ string) {
-		auditAction, auditDetail = action, detail
+		audits = append(audits, struct{ action, detail string }{action, detail})
 	}})
 
 	result, err := client.SweepIssueUnparkCommands(context.Background(), releaseApprovalOptions())
@@ -161,14 +163,24 @@ func TestReleaseApprovalCreatesOncePostsURLAuditsAndClearsPark(t *testing.T) {
 	if !strings.Contains(posted, "https://github.com/org/repo/releases/tag/v0.12.0") || !strings.Contains(posted, unparkAcceptedMarker) {
 		t.Fatalf("success reply = %q", posted)
 	}
+	if !strings.Contains(posted, "`/hive approve`: Hive creates release `v0.12.0`") || !strings.Contains(posted, "`"+testReleaseStep().Target+"`") {
+		t.Fatalf("release notice did not name the approved tag and target: %q", posted)
+	}
 	if !containsFold(fx.removed, issueNeedsDecisionLabel) || containsFold(fx.removed, "hold") {
 		t.Fatalf("removed labels = %v", fx.removed)
 	}
 	if len(fx.added) != 1 || fx.added[0] != HumanAckLabel {
 		t.Fatalf("added labels = %v", fx.added)
 	}
-	if auditAction != AuditActionReleaseCreated || !strings.Contains(auditDetail, "tag=v0.12.0") || !strings.Contains(auditDetail, "target="+testReleaseStep().Target) {
-		t.Fatalf("audit = %q %q", auditAction, auditDetail)
+	foundReleaseAudit := false
+	for _, entry := range audits {
+		if entry.action == AuditActionReleaseCreated && strings.Contains(entry.detail, "tag=v0.12.0") && strings.Contains(entry.detail, "target="+testReleaseStep().Target) {
+			foundReleaseAudit = true
+			break
+		}
+	}
+	if !foundReleaseAudit {
+		t.Fatalf("release audit missing from %+v", audits)
 	}
 
 	// Replaying the same answered command is a no-op even though the tag now
@@ -205,23 +217,43 @@ func TestReleaseApprovalAcceptsNamedDefaultBranchAncestor(t *testing.T) {
 	}
 }
 
+func TestApproveIssueReleaseUsesCommandExecutor12635(t *testing.T) {
+	issue := releaseApprovalIssue(unparkWireComment{})
+	issue.Comments = nil
+	fx := &releaseApprovalFixture{}
+	server := newReleaseApprovalServer(t, issue, fx, "write")
+	client := newTestClient(t, server, "org", []string{"repo"})
+	client.SetAppBotLogin("hive[bot]")
+
+	event, err := client.ApproveIssueRelease(context.Background(), "org/repo", 42, "dashboard-owner", "VERSION")
+	if err != nil {
+		t.Fatalf("approve dashboard release: %v", err)
+	}
+	if fx.creates != 1 || event.ReleaseTag != "v0.12.0" || event.ReleaseURL == "" {
+		t.Fatalf("creates=%d event=%+v", fx.creates, event)
+	}
+	if !containsFold(fx.removed, issueNeedsDecisionLabel) || !strings.Contains(strings.Join(fx.posted, "\n"), event.ReleaseURL) {
+		t.Fatalf("removed=%v posted=%v", fx.removed, fx.posted)
+	}
+}
+
 func TestReleaseApprovalPreconditionRefusalsLeaveIssueParked(t *testing.T) {
 	otherSHA := strings.Repeat("b", 40)
 	cases := []struct {
 		name string
-		fx   releaseApprovalFixture
+		fx   *releaseApprovalFixture
 		want string
 	}{
-		{name: "moved head", fx: releaseApprovalFixture{head: otherSHA, compareStatus: "diverged"}, want: "no longer the `main` head or an ancestor"},
-		{name: "existing tag", fx: releaseApprovalFixture{tagExists: true}, want: "tag `v0.12.0` already exists"},
-		{name: "red required check", fx: releaseApprovalFixture{checkConclusion: "failure"}, want: "required checks are not green"},
-		{name: "version mismatch", fx: releaseApprovalFixture{version: "0.13.0\n"}, want: "does not match `0.13.0`"},
+		{name: "moved head", fx: &releaseApprovalFixture{head: otherSHA, compareStatus: "diverged"}, want: "no longer the `main` head or an ancestor"},
+		{name: "existing tag", fx: &releaseApprovalFixture{tagExists: true}, want: "tag `v0.12.0` already exists"},
+		{name: "red required check", fx: &releaseApprovalFixture{checkConclusion: "failure"}, want: "required checks are not green"},
+		{name: "version mismatch", fx: &releaseApprovalFixture{version: "0.13.0\n"}, want: "does not match `0.13.0`"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			issue := releaseApprovalIssue(humanComment(101, "maintainer", "/hive approve"))
 			fx := tc.fx
-			server := newReleaseApprovalServer(t, issue, &fx, "write")
+			server := newReleaseApprovalServer(t, issue, fx, "write")
 			client := newTestClient(t, server, "org", []string{"repo"})
 
 			result, err := client.SweepIssueUnparkCommands(context.Background(), releaseApprovalOptions())
@@ -254,6 +286,9 @@ func TestReleaseApprovalDefaultsOff(t *testing.T) {
 	}
 	if fx.creates != 0 || len(result.Unparked) != 1 {
 		t.Fatalf("default-off creates=%d unparked=%v", fx.creates, result.Unparked)
+	}
+	if posted := strings.Join(fx.posted, "\n"); strings.Contains(posted, "Hive creates release") || strings.Contains(posted, testReleaseStep().Target) {
+		t.Fatalf("default-off notice changed: %q", posted)
 	}
 }
 func TestReleaseApprovalIgnoresIneligibleCommenter(t *testing.T) {

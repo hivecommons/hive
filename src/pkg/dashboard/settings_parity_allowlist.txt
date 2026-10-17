@@ -348,6 +348,8 @@ project.repo_policies[].acmm_pinned # TODO #11854
 project.repo_policies[].auto_merge # TODO #11854
 project.repo_policies[].label_driven # TODO #11854
 project.repo_policies[].label_driven_approval_labels[] # TODO #11854
+project.repo_policies[].release_on_approve # TODO #12635
+project.repo_policies[].release_version_source # TODO #12635
 project.repo_policies[].repo # TODO #11854
 project.repo_policies[].reporter_trust_hold # TODO #11854
 project.repo_policies[].self_authorization_hold # TODO #11854

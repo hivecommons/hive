@@ -819,6 +819,9 @@ assert.match(yourTurnMenuHTML(m, { repo: 'o/r', number: 1, url: base.url }), /^<
 assert.deepEqual(kinds(m), [open, 'copy:/hive approve', 'copy:/hive decision <text>']);
 assert.deepEqual(kinds(model(own('STEER', 'parked_needs_direction'))), [open, 'copy:/hive approve', 'copy:/hive decision <text>']);
 assert.deepEqual(kinds(model(own('REVIEW', 'parked_needs_human'))), [open, 'copy:/hive approve', 'copy:/hive decision <text>']);
+const release = Object.assign(own('DECIDE', 'parked_needs_decision', 'release'), { release_tag: 'v0.12.0', release_target: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
+assert.deepEqual(kinds(model(release)), ['action:Release v0.12.0', open, 'copy:/hive approve', 'copy:/hive decision <text>']);
+assert.deepEqual(kinds(model(release, { canToggleHold: false })), [open, 'copy:/hive approve', 'copy:/hive decision <text>'], 'the repository write gate hides the release action');
 // SPEC: the design action for an owner at L5+, with the release note.
 assert.deepEqual(kinds(model(own('SPEC', 'parked_needs_spec'))), ['action:Design before planning', open, 'note:Adding the spec or removing the label releases it.']);
 assert.deepEqual(kinds(model(own('SPEC', 'parked_needs_spec'), { isOwner: false })), [open, 'note:Adding the spec or removing the label releases it.'], 'role gating');
@@ -869,12 +872,69 @@ assert.deepEqual(names(yourTurnMenuContext('o/r', 'issue', 1)), ['Open on GitHub
 	runYourTurnNode(t, script)
 }
 
+func TestYourTurnReleaseOwnerStepAction12635(t *testing.T) {
+	step := &github.IssueOwnerStep{Kind: "release", Tag: "v0.12.0", Target: strings.Repeat("a", 40)}
+	statusFor := func(enabled bool) map[string]any {
+		repos := []FrontendRepo{{
+			Name: "r", Full: "o/r",
+			NonActionableIssues: []any{github.RepoWorkIssue{
+				Repo: "o/r", Number: 7, Title: "release", Labels: []string{"needs-decision"},
+				Bucket: repoWorkBucketFiltered, Reason: "needs-decision", OwnerStep: step,
+			}},
+		}}
+		env := ownershipEnv11565(5)
+		env.releaseOnApprove = func(string) bool { return enabled }
+		decideRepoOwnership(repos, config.DashboardIssueBandsConfig{}, env)
+		got := repos[0].Ownership[ownershipKey(ownershipKindIssue, 7)]
+		if enabled {
+			if got.Action != OwnershipActionRelease || got.ReleaseTag != step.Tag || got.ReleaseTarget != step.Target {
+				t.Fatalf("enabled release ownership = %+v", got)
+			}
+		} else if got.Action != "" || got.ReleaseTag != "" || got.ReleaseTarget != "" {
+			t.Fatalf("default-off release ownership changed: %+v", got)
+		}
+		raw, err := json.Marshal((&Server{}).statusWithOverviewBands(&StatusPayload{HiveID: "h", ACMMLevel: 5, Repos: repos}, ownershipNow11565))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire map[string]any
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		return wire
+	}
+	disabled := statusFor(false)
+	enabled := statusFor(true)
+	script := yourTurnPageScript(t, map[string]bool{"releaseIssueOwnerStep": true}, `
+const calls = [];
+function releaseIssueOwnerStep(...args) { calls.push(args); }
+window._hiveRole = 'owner';
+window._lastStatus = `+yourTurnJSON(t, disabled)+`;
+assert.ok(!yourTurnMenuModel(yourTurnMenuContext('o/r', 'issue', 7)).entries.some(e => e.id === 'release'), 'default-off row has no release action');
+window._lastStatus = `+yourTurnJSON(t, enabled)+`;
+const ctx = yourTurnMenuContext('o/r', 'issue', 7);
+assert.equal(ctx.own.release_tag, 'v0.12.0');
+const model = yourTurnMenuModel(ctx);
+assert.equal(model.entries[0].label, 'Release v0.12.0');
+const menu = mkEl('release-menu');
+menu.connected = true;
+menu.innerHTML = yourTurnMenuHTML(model, ctx);
+_yourTurnMenu = { el: menu, key: yourTurnKey('o/r', 'issue', 7), variant: 'marker', opener: null, ctx, rect: { top: 0, left: 0 } };
+const action = menu.items.find(i => i.dataset.ytAct === 'release');
+assert.ok(action, 'release menu item rendered');
+yourTurnMenuClick({ target: action });
+assert.deepEqual(calls, [['o/r', 7, 'v0.12.0']]);
+`, "yourTurnMenuContext", "yourTurnMenuModel", "yourTurnMenuHTML", "yourTurnMenuClick")
+	runYourTurnNode(t, script)
+}
+
 func TestYourTurnMenuIsAMenuButtonWithKeyboardSupport11566(t *testing.T) {
 	status := yourTurnStatus11566(t, 5, nil, ladderRepos11566())
-	script := yourTurnPageScript(t, map[string]bool{"toggleRepoItemHold": true, "designIssue": true, "writeClipboardText": true, "showToast": true},
+	script := yourTurnPageScript(t, map[string]bool{"toggleRepoItemHold": true, "releaseIssueOwnerStep": true, "designIssue": true, "writeClipboardText": true, "showToast": true},
 		`
 const calls = [];
 function toggleRepoItemHold(...a) { calls.push(['hold', ...a]); }
+function releaseIssueOwnerStep(...a) { calls.push(['release', ...a]); }
 function designIssue(el) { calls.push(['design', el.dataset.repo, el.dataset.number]); }
 function writeClipboardText(text) { calls.push(['copy', text]); return Promise.resolve(true); }
 function showToast(m, k) { calls.push(['toast', k, m]); }
