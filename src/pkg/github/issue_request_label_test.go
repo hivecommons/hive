@@ -406,6 +406,30 @@ func TestIssueRequestWatcher_LabelRefusesReparkOnRecordedDecision(t *testing.T) 
 	}
 }
 
+func TestReparkDecisionRefusalRecognizesRetiredDecisionLabels(t *testing.T) {
+	const decision = "Agents stand down; owner/Console owners handle this"
+	reply := unparkWireComment{
+		ID: 902, Body: fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, 31, renderUnparkAcceptedReply("owner", decision, true)),
+		User: wireUser{Login: "hive[bot]"}, CreatedAt: unparkOld(), UpdatedAt: unparkOld(),
+	}
+	for _, label := range []string{NeedsDecisionStageLabel, issueNeedsDecisionLabel, issueNeedsDirectionLabel} {
+		t.Run(label, func(t *testing.T) {
+			issue := parkedIssue(12680, humanComment(31, "owner", "/hive decision "+decision), reply)
+			issue.Labels = []wireLabel{{Name: issueNeedsHumanLabel}, {Name: HumanAckLabel}}
+			server, _ := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, nil)
+			c := newTestClient(t, server, "org", []string{"repo"})
+
+			reason, refused, err := c.reparkDecisionRefusal(context.Background(), "org/repo", 12680, []string{label})
+			if err != nil {
+				t.Fatalf("reparkDecisionRefusal: %v", err)
+			}
+			if !refused || !strings.Contains(reason, "already decided") || !strings.Contains(reason, issueNeedsHumanLabel) {
+				t.Fatalf("label %q refused=%v reason=%q, want recorded-decision refusal", label, refused, reason)
+			}
+		})
+	}
+}
+
 // Without `approved-direction` the same request parks as before, and an
 // agent may add `needs-human` (never remove it).
 func TestIssueRequestWatcher_LabelAllowsNeedsHumanAdd(t *testing.T) {

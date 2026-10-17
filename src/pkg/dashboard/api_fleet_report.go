@@ -21,6 +21,10 @@ import (
 // knowledge.SetBaseDirForTest convention.
 var fleetReportStatePath = "/data/fleet-report-state.json"
 
+// fleetStallNudgeMinEvents mirrors fleetreport's unexported periodicMinEvents:
+// the recurrence bar before a stall nudge count becomes evidence.
+const fleetStallNudgeMinEvents = 3
+
 // SetFleetReportStatePathForTest redirects fleet-report state persistence to
 // path for the lifetime of t.
 func SetFleetReportStatePathForTest(t interface {
@@ -224,8 +228,12 @@ func (s *Server) buildFleetReportEvidence(status *StatusPayload) []fleetreport.E
 			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent crash loop", Count: maxInt(1, a.Restarts), Severity: "high", Attributable: true})
 			continue
 		}
-		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || a.StallNudges > 0 {
-			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent stall", Count: maxInt(1, a.StallNudges), Window: 24 * time.Hour, Severity: "medium", Attributable: true})
+		// a.StallNudges is a cumulative since-boot counter of harness "continue"
+		// nudges, so a single nudge is the designed self-recovery working, not a
+		// hive defect, and the count has no window. Report a stall only while
+		// the agent currently reads as stalled or once nudges recur.
+		if strings.Contains(strings.ToLower(a.StructuredStatus), "stalled") || a.StallNudges >= fleetStallNudgeMinEvents {
+			out = append(out, fleetreport.Evidence{Component: "agent-runtime", Agent: a.Name, Lane: a.Role, ErrorClass: "agent stall", Count: maxInt(1, a.StallNudges), Severity: "medium", Attributable: true})
 		}
 		// #9673: the harness backstop nudges an agent that keeps polling CI
 		// on its own PR, but a nonzero count here means the nudge fired at

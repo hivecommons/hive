@@ -155,7 +155,9 @@ func TestEvidenceViewTimeToMergeByLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "time_to_merge") {
+	// Match the JSON key only: the per-axis criteria table still names the
+	// unmeasured criterion ("name":"time_to_merge") as not reported.
+	if strings.Contains(string(raw), `"time_to_merge":`) {
 		t.Errorf("unreported time_to_merge must be omitted: %s", raw)
 	}
 }

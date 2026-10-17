@@ -59,3 +59,23 @@ func TestSelfFlagAssignmentValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfFlagGateRevertSurvivesApply(t *testing.T) {
+	var gate SelfFlagGate
+	assignment := &SelfFlagAssignment{ExperimentID: "exp-1", Flag: "review-v2", Enabled: true}
+	gate.Revert("")
+	gate.Apply(true, assignment)
+	gate.Revert("exp-1")
+	gate.Revert("exp-1")
+	if gate.Enabled("review-v2") || !gate.Reverted("exp-1") || gate.Reverted("exp-2") {
+		t.Fatal("revert did not disable the current assignment")
+	}
+	gate.Apply(true, assignment)
+	if gate.Enabled("review-v2") || gate.Assignment().ExperimentID != "exp-1" {
+		t.Fatal("heartbeat re-enabled a reverted experiment")
+	}
+	gate.Apply(true, &SelfFlagAssignment{ExperimentID: "exp-2", Flag: "review-v2", Enabled: true})
+	if !gate.Enabled("review-v2") {
+		t.Fatal("revert must be scoped to the experiment ID")
+	}
+}

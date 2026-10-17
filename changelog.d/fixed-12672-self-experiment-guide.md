@@ -1,1 +1,0 @@
-- Clarify the Hive-self operator guide's planned local opt-in, pending feature-flag delivery, and separation from image-channel switching ([#12672](https://github.com/hivecommons/hive/issues/12672)).

@@ -4250,6 +4250,53 @@
         }
       }
     },
+    "/api/contribute/repositories": {
+      "get": {
+        "tags": [
+          "Contributors"
+        ],
+        "summary": "Contribution-eligible repositories",
+        "description": "Public, unauthenticated. Lists the repositories a contributor relay can name in repo_scope: the hive's monitored repositories minus hub.disabled_repos. id is the lower-cased {forge}/{host}/{owner}/{name}.",
+        "responses": {
+          "200": {
+            "description": "Eligible repositories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repositories": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "forge": {
+                            "type": "string"
+                          },
+                          "host": {
+                            "type": "string"
+                          },
+                          "full_name": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "generated_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/contribute/help-links": {
       "put": {
         "tags": [

@@ -1,1 +1,0 @@
-- Hardened in-place adoption head attribution so forgeable commit identities hand PRs back unless GitHub links the head to the App or the hive recorded pushing it.

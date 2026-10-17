@@ -138,7 +138,6 @@ Auth levels are derived from dashboard middleware (`isPublicPath`, dashboard tok
 | `PUT` | `/api/config/governor/thresholds` | Owner only | Governor Thresholds | `pkg/dashboard/api.go:202` |
 | `PUT` | `/api/config/governor/labels` | Owner only | Governor Labels | `pkg/dashboard/api.go:209` |
 | `PUT` | `/api/config/governor/budget` | Owner only | Governor Budget | `pkg/dashboard/api.go:210` |
-| `POST` | `/api/config/governor/cadence-templates` | Owner only | Apply a cadence template to all agents | `pkg/dashboard/api.go:205` |
 | `PUT` | `/api/config/governor/notifications` | Owner only | Governor Notifications | `pkg/dashboard/api.go:214` |
 | `PUT` | `/api/config/governor/health` | Owner only | Governor Health | `pkg/dashboard/api.go:215` |
 | `PUT` | `/api/config/governor/logging` | Owner only | Governor Logging | `pkg/dashboard/api.go:227` |
@@ -377,42 +376,43 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 | `POST` | `/api/contribute/invite` | Public | Contribute Invite | `pkg/dashboard/api_contribute.go:140` |
 | `POST` | `/api/contribute/reissue-token` | Public | Contribute Reissue Token | `pkg/dashboard/api_contribute.go:141` |
 | `GET` | `/api/contribute/status` | Public | Contribute Status | `pkg/dashboard/api_contribute.go:142` |
-| `GET` | `/api/contribute/activity` | Public | Contribute Activity | `pkg/dashboard/api_contribute.go:146` |
-| `GET` | `/api/contribute/fleet` | Public | Contribute Fleet | `pkg/dashboard/api_contribute.go:147` |
-| `GET` | `/api/contribute/events` | Public | Contribute Events (SSE). Every frame carries a monotonic `seq`; a connection whose channel filled gets a `gap` frame naming how many events it missed, so a long-lived client can tell "nothing happened" from "I missed events" ([#6218](https://github.com/hivecommons/hive/issues/6218)) | `pkg/dashboard/api_contribute.go:151` |
-| `GET` | `/api/contribute/queue` | Public | Contribute Queue | `pkg/dashboard/api_contribute.go:154` |
-| `GET` | `/api/contribute/opportunistic` | Public | Contribute Opportunistic | `pkg/dashboard/api_contribute.go:158` |
-| `GET` | `/api/contribute/limits` | Public | Contribute Limits | `pkg/dashboard/api_contribute.go:163` |
-| `GET` | `/api/contribute/metrics` | Public | Contribute Metrics | `pkg/dashboard/api_contribute.go:169` |
-| `GET` | `/api/contribute/me` | Public path; caller identity resolved server-side (401 anonymous; a signed-in caller with no profile on this hive gets 200 with `has_profile:false` and no counters, [#12111](https://github.com/hivecommons/hive/issues/12111)) | The caller's OWN contribution stats — issues worked (24h and all-time), completions that produced a verified PR (24h and all-time, [#7894](https://github.com/hivecommons/hive/issues/7894)), and failures. No username parameter, so it only ever answers for its caller ([#6543](https://github.com/hivecommons/hive/issues/6543)) | `pkg/dashboard/api_contribute.go:179` |
+| `GET` | `/api/contribute/repositories` | Public | Contribution-eligible repositories for a contributor `repo_scope`: `{repositories:[{id,forge,host,full_name}],generated_at}`, the monitored repos minus `hub.disabled_repos`; `id` is `{forge}/{host}/{owner}/{name}` lower-cased ([#12805](https://github.com/hivecommons/hive/issues/12805)) | `pkg/dashboard/api_contribute.go:145` |
+| `GET` | `/api/contribute/activity` | Public | Contribute Activity | `pkg/dashboard/api_contribute.go:149` |
+| `GET` | `/api/contribute/fleet` | Public | Contribute Fleet | `pkg/dashboard/api_contribute.go:150` |
+| `GET` | `/api/contribute/events` | Public | Contribute Events (SSE). Every frame carries a monotonic `seq`; a connection whose channel filled gets a `gap` frame naming how many events it missed, so a long-lived client can tell "nothing happened" from "I missed events" ([#6218](https://github.com/hivecommons/hive/issues/6218)) | `pkg/dashboard/api_contribute.go:154` |
+| `GET` | `/api/contribute/queue` | Public | Contribute Queue | `pkg/dashboard/api_contribute.go:157` |
+| `GET` | `/api/contribute/opportunistic` | Public | Contribute Opportunistic | `pkg/dashboard/api_contribute.go:161` |
+| `GET` | `/api/contribute/limits` | Public | Contribute Limits | `pkg/dashboard/api_contribute.go:166` |
+| `GET` | `/api/contribute/metrics` | Public | Contribute Metrics | `pkg/dashboard/api_contribute.go:172` |
+| `GET` | `/api/contribute/me` | Public path; caller identity resolved server-side (401 anonymous; a signed-in caller with no profile on this hive gets 200 with `has_profile:false` and no counters, [#12111](https://github.com/hivecommons/hive/issues/12111)) | The caller's OWN contribution stats — issues worked (24h and all-time), completions that produced a verified PR (24h and all-time, [#7894](https://github.com/hivecommons/hive/issues/7894)), and failures. No username parameter, so it only ever answers for its caller ([#6543](https://github.com/hivecommons/hive/issues/6543)) | `pkg/dashboard/api_contribute.go:182` |
 | `GET` | `/api/contribute/run-stats/models` | Public | Per-model run evidence for the contributor wall: runs, verified-PR share, and failure rate over the selected window. | `pkg/dashboard/api_contribute.go` |
 | `GET` | `/api/contribute/wall` | Public | Contributor wall posts when the hive-wide wall switch is enabled; anonymous readers see visible posts, authors can still see their own hidden posts. | `pkg/dashboard/api_contribute.go` |
 | `POST` | `/api/contribute/wall` | Signed-in contributor | Create a 500-character plain-text wall post or one-level reply, with optional `model`, `backend`, and `repo` tags. Returns 401 anonymous, 403 when disabled/revoked/muted, and 429 when rate-limited. | `pkg/dashboard/api_contribute.go` |
 | `DELETE` | `/api/contribute/wall/{id}` | Post author | Author deletes their own wall post; action is audit logged. | `pkg/dashboard/api_contribute.go` |
 | `POST` | `/api/contribute/wall/{id}/hide` | Owner/read-write | Hide a wall post from public readers while leaving it visible to the author; action is audit logged and pushed over `/api/contribute/events`. | `pkg/dashboard/api_contribute.go` |
 | `POST` | `/api/contribute/wall/{id}/flag` | Signed-in contributor | Flag a wall post for Management review; action is audit logged. | `pkg/dashboard/api_contribute.go` |
-| `GET` | `/api/contribute/triage` | Public | Contribute Triage | `pkg/dashboard/api_contribute.go:200` |
-| `PUT` | `/api/contribute/queue/order` | Public | Contribute Queue Order | `pkg/dashboard/api_contribute.go:204` |
-| `POST` | `/api/contribute/queue/hold` | Public | Contribute Queue Hold | `pkg/dashboard/api_contribute.go:209` |
-| `POST` | `/api/contribute/queue/hold/clear` | Public | Contribute Queue Hold Clear | `pkg/dashboard/api_contribute.go:213` |
-| `GET` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:219` |
-| `PUT` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:220` |
-| `GET` | `/api/contributors` | Dashboard auth/session | Contributors List | `pkg/dashboard/api_contribute.go:226` |
-| `GET` | `/api/contributors/{id}` | Dashboard auth/session | Contributor Get | `pkg/dashboard/api_contribute.go:227` |
+| `GET` | `/api/contribute/triage` | Public | Contribute Triage | `pkg/dashboard/api_contribute.go:203` |
+| `PUT` | `/api/contribute/queue/order` | Public | Contribute Queue Order | `pkg/dashboard/api_contribute.go:207` |
+| `POST` | `/api/contribute/queue/hold` | Public | Contribute Queue Hold | `pkg/dashboard/api_contribute.go:212` |
+| `POST` | `/api/contribute/queue/hold/clear` | Public | Contribute Queue Hold Clear | `pkg/dashboard/api_contribute.go:216` |
+| `GET` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:222` |
+| `PUT` | `/api/contribute/interests` | Public | Contribute Interests | `pkg/dashboard/api_contribute.go:223` |
+| `GET` | `/api/contributors` | Dashboard auth/session | Contributors List | `pkg/dashboard/api_contribute.go:229` |
+| `GET` | `/api/contributors/{id}` | Dashboard auth/session | Contributor Get | `pkg/dashboard/api_contribute.go:230` |
 | `POST` | `/api/contributors/{id}/wall-mute` | Owner only | Mute or unmute a contributor from posting to the contributor wall; action is audit logged. | `pkg/dashboard/api_contribute.go` |
-| `PUT` | `/api/contributors/{id}/trust` | Owner only | Contributor Trust | `pkg/dashboard/api_contribute.go:229` |
-| `PUT` | `/api/contributors/{id}/agent-role` | Owner only | Contributor Agent Role | `pkg/dashboard/api_contribute.go:230` |
-| `PUT` | `/api/contributors/{id}/agent-role-grants` | Owner only | Contributor Agent Role Grants | `pkg/dashboard/api_contribute.go:231` |
-| `POST` | `/api/contributors/{id}/revoke` | Owner only | Contributor Revoke | `pkg/dashboard/api_contribute.go:232` |
-| `POST` | `/api/contributors/{id}/requeue` | Dashboard auth/session | Contributor Requeue | `pkg/dashboard/api_contribute.go:233` |
-| `DELETE` | `/api/contributors/{id}` | Owner only | Contributor Delete | `pkg/dashboard/api_contribute.go:234` |
+| `PUT` | `/api/contributors/{id}/trust` | Owner only | Contributor Trust | `pkg/dashboard/api_contribute.go:232` |
+| `PUT` | `/api/contributors/{id}/agent-role` | Owner only | Contributor Agent Role | `pkg/dashboard/api_contribute.go:233` |
+| `PUT` | `/api/contributors/{id}/agent-role-grants` | Owner only | Contributor Agent Role Grants | `pkg/dashboard/api_contribute.go:234` |
+| `POST` | `/api/contributors/{id}/revoke` | Owner only | Contributor Revoke | `pkg/dashboard/api_contribute.go:235` |
+| `POST` | `/api/contributors/{id}/requeue` | Dashboard auth/session | Contributor Requeue | `pkg/dashboard/api_contribute.go:236` |
+| `DELETE` | `/api/contributors/{id}` | Owner only | Contributor Delete | `pkg/dashboard/api_contribute.go:237` |
 | `GET` | `/contribute/dossier/{username}` | Public | Contributor Dossier Page (HTML) | `pkg/dashboard/api_contribute.go:132` |
-| `GET` | `/api/contribute/run-stats` | Public | Contribute Run Stats | `pkg/dashboard/api_contribute.go:187` |
-| `GET` | `/api/contribute/runs` | Public | Contribute Per-Run History | `pkg/dashboard/api_contribute.go:275` |
-| `GET` | `/api/contribute/decisions` | Owner/read-write | Contribute Hub Decisions | `pkg/dashboard/api_contribute.go:285` |
-| `GET` | `/api/contribute/dossier` | Public | Contribute Dossier Get | `pkg/dashboard/api_contribute.go:224` |
-| `POST` | `/api/contribute/dossier` | Public | Contribute Dossier Update | `pkg/dashboard/api_contribute.go:225` |
-| `GET` | `/api/leaderboard/contributor/{username}/heraldry` | Public | Contributor Heraldry | `pkg/dashboard/api_contribute.go:255` |
+| `GET` | `/api/contribute/run-stats` | Public | Contribute Run Stats | `pkg/dashboard/api_contribute.go:190` |
+| `GET` | `/api/contribute/runs` | Public | Contribute Per-Run History | `pkg/dashboard/api_contribute.go:278` |
+| `GET` | `/api/contribute/decisions` | Owner/read-write | Contribute Hub Decisions | `pkg/dashboard/api_contribute.go:288` |
+| `GET` | `/api/contribute/dossier` | Public | Contribute Dossier Get | `pkg/dashboard/api_contribute.go:227` |
+| `POST` | `/api/contribute/dossier` | Public | Contribute Dossier Update | `pkg/dashboard/api_contribute.go:228` |
+| `GET` | `/api/leaderboard/contributor/{username}/heraldry` | Public | Contributor Heraldry | `pkg/dashboard/api_contribute.go:258` |
 | `GET` | `/api/cards/player/{asset}` | Public | OpenAPI alias for a cacheable contributor social-card SVG (`asset` is `<github-login>.svg`). | `pkg/dashboard/social_cards.go:112` |
 | `GET` | `/api/cards/achievement/{login}/{asset}` | Public | OpenAPI alias for a cacheable attained-achievement SVG (`asset` is `<achievement-id>.svg`). | `pkg/dashboard/social_cards.go:113` |
 | `GET` | `/api/cards/leaderboard/{asset}` | Public | OpenAPI alias for a cacheable leaderboard-summary SVG (`contributors.svg`, `teams.svg`, or `swarm.svg`). | `pkg/dashboard/social_cards.go:114` |
@@ -422,10 +422,10 @@ Read the result from `GET /api/kick/{agent}/status`, which returns `status` of `
 | `GET` | `/share/player/{login}` | Public | Share landing page with Open Graph/Twitter metadata for a contributor card and link to the public dossier. | `pkg/dashboard/social_cards.go:115` |
 | `GET` | `/share/achievement/{login}/{achievementID}` | Public | Share landing page with metadata for an unlocked achievement card and link to the public dossier. | `pkg/dashboard/social_cards.go:116` |
 | `GET` | `/share/leaderboard/{board}` | Public | Share landing page with metadata for a public leaderboard card and link to live standings. | `pkg/dashboard/social_cards.go:117` |
-| `PUT` | `/api/contribute/help-links` | Owner/read-write | Contribute Help Links | `pkg/dashboard/api_contribute.go:145` |
-| `GET` | `/api/contribute/operators/message` | Public path; caller identity resolved server-side (401 anonymous, 403 without a profile) | Returns only the signed-in contributor's unacknowledged operator messages; no username/body field can select another recipient ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:180` |
-| `POST` | `/api/contribute/operators/message` | Owner/read-write | Sends a sanitized, length-capped one-to-one operator note to a contributor profile, persists it until acknowledgement, and pushes it to matching live relay sockets only ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:181` |
-| `POST` | `/api/contribute/operators/message/ack` | Public path; caller identity resolved server-side | Acknowledges the signed-in contributor's own message, optionally recording a short sanitized reply for operators. | `pkg/dashboard/api_contribute.go:182` |
+| `PUT` | `/api/contribute/help-links` | Owner/read-write | Contribute Help Links | `pkg/dashboard/api_contribute.go:148` |
+| `GET` | `/api/contribute/operators/message` | Public path; caller identity resolved server-side (401 anonymous, 403 without a profile) | Returns only the signed-in contributor's unacknowledged operator messages; no username/body field can select another recipient ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:183` |
+| `POST` | `/api/contribute/operators/message` | Owner/read-write | Sends a sanitized, length-capped one-to-one operator note to a contributor profile, persists it until acknowledgement, and pushes it to matching live relay sockets only ([#8461](https://github.com/hivecommons/hive/issues/8461)). | `pkg/dashboard/api_contribute.go:184` |
+| `POST` | `/api/contribute/operators/message/ack` | Public path; caller identity resolved server-side | Acknowledges the signed-in contributor's own message, optionally recording a short sanitized reply for operators. | `pkg/dashboard/api_contribute.go:185` |
 
 ### Issue claims (hivecommons/hive#8380)
 
@@ -571,23 +571,23 @@ always resolved server-side from the validated token.
 | `PUT` | `/api/hive-id` | Owner only | Hive IDSet | `pkg/dashboard/api.go:410` |
 | `POST` | `/api/chat` | Dashboard auth/session | Chat | `pkg/dashboard/api.go:439` |
 | `GET` | `/api/auth/token` | Public | Auth Token | `pkg/dashboard/api.go:473` |
-| `GET` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:236` |
-| `POST` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:237` |
-| `GET` | `/api/docs` | Dashboard auth/session | APIDocs | `pkg/dashboard/api_contribute.go:238` |
-| `GET` | `/leaderboard` | Public | Leaderboard Page | `pkg/dashboard/api_contribute.go:240` |
-| `GET` | `/api/leaderboard` | Public | Leaderboard API | `pkg/dashboard/api_contribute.go:241` |
-| `GET` | `/api/leaderboard/teams` | Public | Team Leaderboards | `pkg/dashboard/api_contribute.go:242` |
-| `GET` | `/api/leaderboard/style` | Public | Leaderboard Style | `pkg/dashboard/api_contribute.go:243` |
+| `GET` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:239` |
+| `POST` | `/api/v1/` | GitHub token | Contributor v1 API dispatcher | `pkg/dashboard/api_contribute.go:240` |
+| `GET` | `/api/docs` | Dashboard auth/session | APIDocs | `pkg/dashboard/api_contribute.go:241` |
+| `GET` | `/leaderboard` | Public | Leaderboard Page | `pkg/dashboard/api_contribute.go:243` |
+| `GET` | `/api/leaderboard` | Public | Leaderboard API | `pkg/dashboard/api_contribute.go:244` |
+| `GET` | `/api/leaderboard/teams` | Public | Team Leaderboards | `pkg/dashboard/api_contribute.go:245` |
+| `GET` | `/api/leaderboard/style` | Public | Leaderboard Style | `pkg/dashboard/api_contribute.go:246` |
 | `GET` | `/api/leaderboard/battle-log` | Public | Scrubbed public Battle Log activity feed for leaderboard widgets. | `pkg/dashboard/battle_log.go:108` |
 | `GET` | `/api/leaderboard/hive-of-week` | Public | Featured weekly project metadata, configured render URLs (empty when none), gource source URL, and embed snippets. | `pkg/dashboard/battle_log.go:109` |
 | `GET` | `/api/leaderboard/gource-log` | Public | Gource custom log source for a project/week, derived from public hive event data. | `pkg/dashboard/battle_log.go:110` |
 | `POST` | `/api/leaderboard/hive-of-week/archive` | Owner only | Archive the selected project's weekly gource source log into knowledge; stores source only, never rendered video. | `pkg/dashboard/battle_log.go:111` |
-| `GET` | `/api/leaderboard/contributor/{username}` | Public | Contributor Profile | `pkg/dashboard/api_contribute.go:250` |
-| `GET` | `/api/hives` | Dashboard auth/session | Hives List | `pkg/dashboard/api_contribute.go:261` |
-| `POST` | `/api/hives/register` | Dashboard auth/session | Hives Register | `pkg/dashboard/api_contribute.go:262` |
-| `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:263` |
-| `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:264` |
-| `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:265` |
+| `GET` | `/api/leaderboard/contributor/{username}` | Public | Contributor Profile | `pkg/dashboard/api_contribute.go:253` |
+| `GET` | `/api/hives` | Dashboard auth/session | Hives List | `pkg/dashboard/api_contribute.go:264` |
+| `POST` | `/api/hives/register` | Dashboard auth/session | Hives Register | `pkg/dashboard/api_contribute.go:265` |
+| `POST` | `/api/hives/{id}/heartbeat` | Dashboard auth/session | Hives Heartbeat | `pkg/dashboard/api_contribute.go:266` |
+| `DELETE` | `/api/hives/{id}` | Owner only | Hives Delete | `pkg/dashboard/api_contribute.go:267` |
+| `POST` | `/api/hives/onboard` | Dashboard auth/session | Hives Onboard | `pkg/dashboard/api_contribute.go:268` |
 | `GET` | `/sso` | Public | SSO | `pkg/dashboard/server.go:1386` |
 
 ## Hub SaaS
@@ -726,7 +726,7 @@ always resolved server-side from the validated token.
 | `GET` | `/api/hub/leaderboard` | Hub handler-specific | Leaderboard | `pkg/hub/server.go:1685` |
 | `GET` | `/api/hub/stats` | Hub handler-specific | Stats | `pkg/hub/server.go:1686` |
 | `GET` | `/api/fleet-stats` | Hub handler-specific | Fleet Stats | `pkg/hub/server.go:1687` |
-| `GET` | `/api/hub/evidence` | Hub admin | Read-only cross-hive evidence drill-down from each spoke's stored heartbeat `evidence` summary ([#12116](https://github.com/hivecommons/hive/issues/12116)); non-admins get `403`. Returns `spokes`, `reporting`, pooled `calibration` (bucket 0–5 → `{n, bad, rate, lo, hi}`; the hub view folds the six buckets into four reviewer-confidence ranges), `findings[]` (the plain-language *What this says* sentences, generated from the same fields; [#12456](https://github.com/hivecommons/hive/issues/12456)), `by_acmm_level` (`level`, `hives`, `merged_90d`, `revert_rate`, and `time_to_merge` — `median_of_hive_medians_s`, `hives`, `n` — the median of the level's per-hive median time-to-merge, omitted when no hive at the level reports one; [#12464](https://github.com/hivecommons/hive/issues/12464)), `family_false_approve_rate` (`same`/`cross`/`mixed`, hives classed by their reviewer vs author family sets), fleet `record_coverage` (merged PRs with an evidence record over `prs_merged_90d`), fleet panels ([#12370](https://github.com/hivecommons/hive/issues/12370)) `outcomes_by_author_kind[]` (`kind`, `hives`, `n`, `merged`, `reverted`, `merge_rate`, `revert_rate`), `write_counters[]` (`tier`, `hives`, `attempted`, `blocked`, `block_rate`) and `shadow_gate` (`review_gate` / `intent` → `held` / `passed` outcomes with `revert_rate`), each omitted while no spoke reports it and repeated per `by_acmm_level[]` row, and per hive `hives[]` with `acmm_level`, `prs_merged_90d`, `record_coverage`, `family_mix`, false-approve / false-block / revert rates, families, a calibration series and the raw `counts` behind them so the drill-down can re-pool a hive / ACMM-level selection client-side. Every rate is `{n, rate, lo, hi}` with a 95% Wilson interval; `rate`/`lo`/`hi` are null when `n` < 10. Window selection ([RFC #12062](https://github.com/hivecommons/hive/issues/12062)): `?hours=24|168|720` pools each hive's matching heartbeat `windows` block instead of its 90-day block (any other or absent `hours` → 90 days); `?from=YYYY-MM-DD|RFC3339[&to=…]` (date-only `to` is inclusive, `to` defaults to now, `to` ≥ `from`, span ≤ 366 days, else `400`) is served from the smallest reported window that reaches back to `from` and flagged `window.approximate`. The response carries `window` (`hours`, `key`, `label`, `from`, `to`, `approximate`, `coverage_available` — `record_coverage` is only computed for the 90-day window because `prs_merged_90d` is a 90-day count), `window_unreported` and per-hive `window_unreported` for hives whose spoke predates per-window reporting. `?hive=<id>[,<id>…]` (repeatable) and `?level=<n>` restrict the registry server-side to those hives / that ACMM level before pooling. Hub admins open it from the Fleet quadrant card or its **🔬 Evidence** button ([#12117](https://github.com/hivecommons/hive/issues/12117)), pick a window (24h / 7d / 30d / 90d / custom), filter it by hive and ACMM level and read each section's ⓘ explainer; author-kind revert rate per hive is not emitted yet ([#12326](https://github.com/hivecommons/hive/issues/12326)). Never consulted by merge decisions | `pkg/hub/evidence.go` |
+| `GET` | `/api/hub/evidence` | Hub admin | Read-only cross-hive evidence drill-down from each spoke's stored heartbeat `evidence` summary ([#12116](https://github.com/hivecommons/hive/issues/12116)); non-admins get `403`. Returns `spokes`, `reporting`, pooled `calibration` (bucket 0–5 → `{n, bad, rate, lo, hi}`; the hub view folds the six buckets into four reviewer-confidence ranges), `findings[]` (the plain-language *What this says* sentences, generated from the same fields; [#12456](https://github.com/hivecommons/hive/issues/12456)), `by_acmm_level` (`level`, `hives`, `merged_90d`, `revert_rate`, and `time_to_merge` — `median_of_hive_medians_s`, `hives`, `n` — the median of the level's per-hive median time-to-merge, omitted when no hive at the level reports one; [#12464](https://github.com/hivecommons/hive/issues/12464)), `family_false_approve_rate` (`same`/`cross`/`mixed`, hives classed by their reviewer vs author family sets), fleet `record_coverage` (merged PRs with an evidence record over `prs_merged_90d`), fleet panels ([#12370](https://github.com/hivecommons/hive/issues/12370)) `outcomes_by_author_kind[]` (`kind`, `hives`, `n`, `merged`, `reverted`, `merge_rate`, `revert_rate`), `write_counters[]` (`tier`, `hives`, `attempted`, `blocked`, `block_rate`) and `shadow_gate` (`review_gate` / `intent` → `held` / `passed` outcomes with `revert_rate`), each omitted while no spoke reports it and repeated per `by_acmm_level[]` row, and per hive `hives[]` with `acmm_level`, `prs_merged_90d`, `record_coverage`, `family_mix`, false-approve / false-block / revert rates, families, a calibration series the raw `counts` behind them (including `by_author_kind`) so the drill-down can re-pool a hive / ACMM-level selection client-side, and `criteria[]`: the per-axis criteria table derived hub-side from the quadrant criteria (`axis`, `label`, `scored`, `criteria[]` with `name`, `label`, `status` `met`/`unmet`/`not_reported`, `display`/`score` when measured, `reason` otherwise; offline, evidence-less or unscored hives are `not_reported`, never `unmet`; [#12463](https://github.com/hivecommons/hive/issues/12463)). Every rate is `{n, rate, lo, hi}` with a 95% Wilson interval; `rate`/`lo`/`hi` are null when `n` < 10. Window selection ([RFC #12062](https://github.com/hivecommons/hive/issues/12062)): `?hours=24|168|720` pools each hive's matching heartbeat `windows` block instead of its 90-day block (any other or absent `hours` → 90 days); `?from=YYYY-MM-DD|RFC3339[&to=…]` (date-only `to` is inclusive, `to` defaults to now, `to` ≥ `from`, span ≤ 366 days, else `400`) is served from the smallest reported window that reaches back to `from` and flagged `window.approximate`. The response carries `window` (`hours`, `key`, `label`, `from`, `to`, `approximate`, `coverage_available` — `record_coverage` is only computed for the 90-day window because `prs_merged_90d` is a 90-day count), `window_unreported` and per-hive `window_unreported` for hives whose spoke predates per-window reporting. `?hive=<id>[,<id>…]` (repeatable) and `?level=<n>` restrict the registry server-side to those hives / that ACMM level before pooling. Hub admins open it from the Fleet quadrant card or its **🔬 Evidence** button ([#12117](https://github.com/hivecommons/hive/issues/12117)), pick a window (24h / 7d / 30d / 90d / custom), filter it by hive and ACMM level and read each section's ⓘ explainer; the per-hive author-kind revert counts behind the *Revert rate by author kind* panel are `hives[].counts.by_author_kind` ([#12326](https://github.com/hivecommons/hive/issues/12326)). Never consulted by merge decisions | `pkg/hub/evidence.go` |
 | `GET` | `/api/hub/evidence/report` | Hub admin | Plain-language report of the hub evidence view ([#12456](https://github.com/hivecommons/hive/issues/12456)), rendered server-side from the same `EvidenceView` as `/api/hub/evidence` so every figure reconciles with the modal; non-admins get `403`. Same `hours=` / `from=` / `to=` window and `hive=` / `level=` filter parameters. `format=md` (default, `text/markdown`) or `format=html` (standalone page, inline CSS, no scripts or external assets, hive names escaped); any other value → `400`. `download=1` sets `Content-Disposition: attachment; filename="hive-evidence-<hive|fleet>-<from>-<to>.md|html"`, otherwise inline. Sections: Summary (the generated findings), What we measured and why, The numbers, How to read these, What is not reported yet and why, Grade per section, footer link to `review-evidence.md`. `Cache-Control: no-store`. Read-only; never consulted by merge decisions | `pkg/hub/evidence_report.go` |
 | `GET` | `/api/hub/version` | Hub handler-specific | Hub Version | `pkg/hub/server.go:1692` |
 | `DELETE` | `/api/hub/registry/{id}` | Hub handler-specific | Registry Delete | `pkg/hub/server.go:1702` |

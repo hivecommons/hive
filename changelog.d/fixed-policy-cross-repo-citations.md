@@ -1,1 +1,0 @@
-- PR-capable policies now keep cross-repository porting issue and PR references in issue or PR bodies, rather than committed files; committed explanations use local references or state the reasoning in place.

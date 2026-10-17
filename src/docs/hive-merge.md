@@ -476,9 +476,15 @@ hive-authored red PR, and the scanner's FIX-BEFORE-NEW kick rebases and fixes
 it on that branch (never a replacement PR), after which it follows the normal
 `050 → 100` path. When adoption is in-place on the contributor PR's own
 branch, a changed head stays adopted only with hive-controlled evidence
-(GitHub-linked App commit metadata or a locally recorded hive-pushed SHA);
+(GitHub-linked App commit metadata; the stage store only remembers SHAs that
+already passed that check);
 forgeable git author/committer names and emails are treated as contributor
-pushes and release adoption. The issues a PR covers
+pushes and release adoption once repo evidence exists
+(`governor.labels.stage.adoption.strict_attribution`, default on). Push-capable
+App-authored agents commit with the App bot noreply email (keyed by the bot's
+GitHub user id, not the App id) so their fixer pushes
+normally provide the GitHub linkage, while their commit name/sign-off still
+shows the lane. The issues a PR covers
 follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
 writes the same stage on each linked issue (`stage/040-covered-by-pr` until
 then), so the issue list and the PR list read the same

@@ -217,6 +217,10 @@ func (m model) updateHives(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		next, _ := m.hives.BeginRemove()
 		m.hives = &next
 		return m, nil
+	case "x":
+		next, _ := m.hives.BeginRepo()
+		m.hives = &next
+		return m, nil
 	case "r":
 		next, _ := m.hives.BeginRename()
 		m.hives = &next
@@ -346,6 +350,7 @@ func hiveRows(set *hivectl.ProfileSet) []panes.HiveRow {
 	rows := make([]panes.HiveRow, 0, len(ordered))
 	for _, p := range ordered {
 		rows = append(rows, panes.HiveRow{
+			Scope:         set.SelectionSummary(p.Name),
 			Disabled:      p.Disabled,
 			Name:          p.Name,
 			Hub:           p.Hub,
@@ -435,14 +440,14 @@ func (m model) runHivesAction(overlayID uint64, action panes.HivesAction) tea.Cm
 }
 
 func hivesActionSignalsRelay(kind panes.HivesActionKind) bool {
-	return kind == panes.HivesActionEnable || kind == panes.HivesActionDisable || kind == panes.HivesActionUse || kind == panes.HivesActionMoveUp || kind == panes.HivesActionMoveDown || kind == panes.HivesActionStrategy
+	return kind == panes.HivesActionAdd || kind == panes.HivesActionRemove || kind == panes.HivesActionToggleRepo || kind == panes.HivesActionEnable || kind == panes.HivesActionDisable || kind == panes.HivesActionUse || kind == panes.HivesActionMoveUp || kind == panes.HivesActionMoveDown || kind == panes.HivesActionStrategy
 }
 
 func hivesSwitchNote(note, name string, kind panes.HivesActionKind, result hivectl.RelaySwitchResult) string {
 	if result.Running {
 		return fmt.Sprintf("%s; running relay signaled (%s), in-flight work finishes on its original hive", note, result.Target)
 	}
-	if kind == panes.HivesActionEnable || kind == panes.HivesActionDisable {
+	if kind == panes.HivesActionAdd || kind == panes.HivesActionRemove || kind == panes.HivesActionToggleRepo || kind == panes.HivesActionEnable || kind == panes.HivesActionDisable {
 		return note + "; no running relay found, applies on next start"
 	}
 	if kind == panes.HivesActionStrategy {
@@ -462,6 +467,15 @@ func hivesSwitchNote(note, name string, kind panes.HivesActionKind, result hivec
 // remember.
 func applyHivesAction(env hivesEnv, set *hivectl.ProfileSet, action panes.HivesAction) (string, error) {
 	switch action.Kind {
+	case panes.HivesActionToggleRepo:
+		id, err := hivectl.RepositoryInput(action.Repository, "github", "github.com")
+		if err != nil {
+			return "", err
+		}
+		if err := set.ToggleRepoExclusion(action.Name, id); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("✓ repository exclusion toggled for %s on %q", id, action.Name), nil
 	case panes.HivesActionEnable, panes.HivesActionDisable:
 		disabled := action.Kind == panes.HivesActionDisable
 		if err := set.SetDisabled(action.Name, disabled); err != nil {

@@ -17,6 +17,7 @@ type backfillIssue struct {
 	Number      int        `json:"number"`
 	Body        string     `json:"body"`
 	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 	ClosedAt    *time.Time `json:"closed_at"`
 	PullRequest *struct{}  `json:"pull_request"`
 	User        struct {
@@ -30,23 +31,34 @@ func issueWeekKey(t time.Time) string {
 	return fmt.Sprintf("%04d-W%02d", year, week)
 }
 
-// listIssues scans all issues created before until. Older issues can close in
-// the requested range, so stopping at since would undercount closes.
-func (f *backfillFetcher) listIssues(ctx context.Context, repo string, until time.Time) ([]backfillIssue, error) {
+// listIssues pages through issues updated at or after since, newest-updated
+// first, and returns those created before until. Older issues can close in the
+// requested range, but a close updates the issue, so since bounds the scan.
+// Paging stops at the first page that is entirely older than since.
+func (f *backfillFetcher) listIssues(ctx context.Context, repo string, since, until time.Time) ([]backfillIssue, error) {
 	var out []backfillIssue
 	for page := 1; ; page++ {
-		q := url.Values{"state": {"all"}, "sort": {"created"}, "direction": {"desc"},
+		q := url.Values{"state": {"all"}, "sort": {"updated"}, "direction": {"desc"},
+			"since":    {since.UTC().Format(time.RFC3339)},
 			"per_page": {strconv.Itoa(evidenceBackfillPerPage)}, "page": {strconv.Itoa(page)}}
 		var batch []backfillIssue
 		if err := f.get(ctx, "/repos/"+repo+"/issues", q, &batch); err != nil {
 			return nil, err
 		}
+		if len(batch) == 0 {
+			return out, nil
+		}
+		olderThanSince := true
 		for _, issue := range batch {
+			if issue.UpdatedAt.Before(since) {
+				continue
+			}
+			olderThanSince = false
 			if issue.PullRequest == nil && issue.CreatedAt.Before(until) {
 				out = append(out, issue)
 			}
 		}
-		if len(batch) < evidenceBackfillPerPage {
+		if olderThanSince || len(batch) < evidenceBackfillPerPage {
 			return out, nil
 		}
 	}
@@ -138,7 +150,7 @@ func newEvidenceBackfillIssuesCommand(env *commandEnv) *cobra.Command {
 				root = ghpkg.ReviewEvidenceRoot
 			}
 			fetcher := newBackfillFetcher(apiBase, backfillToken(tokenEnv))
-			issues, err := fetcher.listIssues(cmd.Context(), repo, until)
+			issues, err := fetcher.listIssues(cmd.Context(), repo, since, until)
 			if err != nil {
 				return fmt.Errorf("listing issues: %w", err)
 			}

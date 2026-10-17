@@ -2,7 +2,9 @@
 package gitidentity
 
 import (
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +26,23 @@ func AgentIdentity(agentName string) (name, email string, ok bool) {
 		domain = DefaultBotEmailDomain
 	}
 	return agentName, agentName + "@" + domain, true
+}
+
+// AppLinkedAgentIdentity returns the lane name with the App bot's GitHub
+// noreply address "<botUserID>+<botLogin>@users.noreply.github.com". GitHub
+// links commits carrying that address to the bot account by its USER id —
+// not the App id used for JWT auth (hivecommons-hive[bot] is user 280983584,
+// App 3568013), so callers must pass the id from GET /users/<slug>[bot]. The
+// human-readable name and `git commit -s` trailer still identify the lane.
+func AppLinkedAgentIdentity(agentName string, botUserID int64, botLogin string) (name, email string, ok bool) {
+	if !isIdentToken(agentName, true) || botUserID <= 0 {
+		return "", "", false
+	}
+	botLogin = strings.TrimSpace(botLogin)
+	if botLogin == "" || strings.ContainsAny(botLogin, " <>\n\r\t") {
+		return "", "", false
+	}
+	return agentName, fmt.Sprintf("%s+%s@users.noreply.github.com", strconv.FormatInt(botUserID, 10), botLogin), true
 }
 
 func isIdentToken(s string, allowUnderscore bool) bool {

@@ -4225,6 +4225,13 @@ type StageAdoptionConfig struct {
 	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
 	// opening a superseding App PR. nil = true.
 	InPlace *bool `yaml:"in_place,omitempty"`
+	// StrictAttribution makes in-place adoption fail closed on changed heads:
+	// only commits GitHub links to the App bot keep ownership (the stage store
+	// remembers those heads so a re-observed SHA is not re-fetched, but it is
+	// not an independent evidence source). nil = true; first-deploy/old-session
+	// safety is handled by the stage store until any App-linked head has been
+	// recorded for the repo.
+	StrictAttribution *bool `yaml:"strict_attribution,omitempty"`
 }
 
 // IsEnabled reports whether adoption runs (default on).
@@ -4232,6 +4239,12 @@ func (c StageAdoptionConfig) IsEnabled() bool { return c.Enabled == nil || *c.En
 
 // InPlaceEnabled reports whether in-place adoption is allowed (default on).
 func (c StageAdoptionConfig) InPlaceEnabled() bool { return c.InPlace == nil || *c.InPlace }
+
+// StrictAttributionEnabled reports whether changed in-place adoption heads
+// require hive-controlled evidence (default on).
+func (c StageAdoptionConfig) StrictAttributionEnabled() bool {
+	return c.StrictAttribution == nil || *c.StrictAttribution
+}
 
 // Defaults for the offline-adoption waits (stage 074, hivecommons/hive#12436).
 const (

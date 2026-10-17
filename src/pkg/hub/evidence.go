@@ -471,6 +471,11 @@ type EvidenceHive struct {
 	// fleet-panel aggregates) so the drill-down can re-pool a hive / ACMM
 	// level selection client-side (#12370). nil when the hive never reported.
 	Counts *EvidenceHiveCounts `json:"counts,omitempty"`
+	// Criteria is the hive's per-axis criteria table (#12463), derived
+	// hub-side from the quadrant criteria; offline or unscored hives list
+	// every criterion as not reported. It reflects the hive's current
+	// heartbeat, not the selected window.
+	Criteria []EvidenceAxisCriteria `json:"criteria"`
 }
 
 // EvidenceHiveCounts is the raw per-hive evidence behind EvidenceHive's rates.
@@ -488,6 +493,9 @@ type EvidenceHiveCounts struct {
 	WriteCounters        map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
 	ShadowGate           *EvidenceShadow               `json:"shadow_gate,omitempty"`
 	TimeToMerge          *EvidenceTimeToMerge          `json:"time_to_merge,omitempty"`
+	// ByAuthorKind is the hive's merged / linked-revert counts per author
+	// kind (see HeartbeatEvidence.ByAuthorKind); nil on older spokes.
+	ByAuthorKind map[string]EvidenceBucket `json:"by_author_kind,omitempty"`
 }
 
 // EvidenceAuthorKindOutcome is the pooled outcome of one author kind: Hives
@@ -821,10 +829,11 @@ func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) Evidence
 	acmm := map[int]*acmmPool{}
 	fleet := newEvidencePool()
 	var covered, mergedTotal int
+	now := time.Now().UTC()
 	for _, h := range hives {
 		out.Spokes++
 		row := EvidenceHive{ID: h.ID, Name: h.Name, Online: h.Online, ACMMLevel: h.ACMMLevel,
-			PRsMerged90d: h.PRsMerged90d, Calibration: []EvidenceRate{}}
+			PRsMerged90d: h.PRsMerged90d, Calibration: []EvidenceRate{}, Criteria: evidenceCriteriaFor(h, now)}
 		e := h.Evidence
 		if e != nil && win.Key != "" {
 			if e = e.Windows[win.Key]; e == nil {
@@ -846,7 +855,8 @@ func buildEvidenceViewWindow(hives []RegistryEntry, win EvidenceWindow) Evidence
 			counts := &EvidenceHiveCounts{Verdicts90d: e.Verdicts90d, FalseApprove90d: e.FalseApprove90d,
 				FalseBlock90d: e.FalseBlock90d, Merged90d: e.Merged90d, Reverted14d90d: e.Reverted14d90d,
 				Calibration: e.Calibration[:], OutcomesByAuthorKind: e.OutcomesByAuthorKind,
-				WriteCounters: e.WriteCounters, ShadowGate: e.ShadowGate, TimeToMerge: e.TimeToMerge}
+				WriteCounters: e.WriteCounters, ShadowGate: e.ShadowGate, TimeToMerge: e.TimeToMerge,
+				ByAuthorKind: e.ByAuthorKind}
 			row.Counts = counts
 			if h.PRsMerged90d != nil && win.Coverage {
 				// Both counts are 90-day merged PRs; the record count comes from

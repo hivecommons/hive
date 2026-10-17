@@ -216,6 +216,26 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "unknown_fingerprint"})
 			return
 		}
+		// Every hive-filed fleet issue (runtime errors, ACMM criteria,
+		// defects) carries the same fingerprint marker, and those
+		// fingerprints are deterministic and fleet-wide. Only an issue the
+		// hub itself filed as an observation may be closed by a spoke's
+		// recovery; the request's class is the caller's claim, the label is
+		// the issue's.
+		if !containsString(existing.Labels, selfReportObservationLabel) {
+			if s.logger != nil {
+				s.logger.Warn("selfreport relay: recovery target is not an observation issue; ignoring", "hive", req.HiveID, "fingerprint", req.Fingerprint, "issue", existing.Number)
+			}
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "not_observation"})
+			return
+		}
+		// Fingerprints may be supplied by detectors, so neither the request
+		// nor a fingerprint prefix proves ownership. Bind recovery to the
+		// hive identity recorded in the matched observation's evidence.
+		if !selfReportObservationBelongsToHive(existing.Body, req.HiveID) {
+			writeSelfReportRelayResponse(w, http.StatusOK, selfReportRelayResponse{Reason: "hive_mismatch"})
+			return
+		}
 		if _, err := postHubGitHubIssueComment(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, req.Body); err != nil {
 			if s.logger != nil {
 				s.logger.Error("selfreport relay: recovery comment failed", "hive", req.HiveID, "issue", existing.Number, "error", err)
@@ -310,6 +330,24 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 	writeSelfReportRelayResponse(w, http.StatusCreated, selfReportRelayResponse{OK: true, Number: res.Number, URL: res.URL})
 }
 
+// selfReportObservationBelongsToHive reads the evidence field emitted by
+// fleetreport.BuildObservationReport. Missing, malformed or duplicate ownership
+// fields fail closed, including when the fingerprint looks hive-scoped.
+func selfReportObservationBelongsToHive(body, hiveID string) bool {
+	found := false
+	for _, line := range strings.Split(body, "\n") {
+		cells := strings.Split(strings.TrimSpace(line), "|")
+		if len(cells) < 2 || strings.TrimSpace(cells[1]) != "hive id" {
+			continue
+		}
+		if found || len(cells) != 4 || strings.TrimSpace(cells[0]) != "" || strings.TrimSpace(cells[3]) != "" || strings.TrimSpace(cells[2]) != hiveID {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 func writeSelfReportRelayResponse(w http.ResponseWriter, status int, resp selfReportRelayResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -358,6 +396,9 @@ func findSelfReportIssueByFingerprint(ctx context.Context, client *http.Client, 
 			Number  int    `json:"number"`
 			HTMLURL string `json:"html_url"`
 			Body    string `json:"body"`
+			Labels  []struct {
+				Name string `json:"name"`
+			} `json:"labels"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -365,7 +406,11 @@ func findSelfReportIssueByFingerprint(ctx context.Context, client *http.Client, 
 	}
 	for _, it := range out.Items {
 		if strings.Contains(it.Body, "hive-fleet-fingerprint:"+fingerprint) {
-			return feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body}, nil
+			labels := make([]string, 0, len(it.Labels))
+			for _, l := range it.Labels {
+				labels = append(labels, l.Name)
+			}
+			return feedbackIssueResult{Number: it.Number, URL: it.HTMLURL, Body: it.Body, Labels: labels}, nil
 		}
 	}
 	return feedbackIssueResult{}, nil

@@ -1,12 +1,14 @@
 package automerge
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/evidence"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
 // Review gate modes (governor.review_gate.mode, hivecommons/hive#12592).
@@ -23,6 +25,7 @@ const (
 	ReviewGateOutcomeAwaiting         = "awaiting-review-approval"
 	ReviewGateOutcomeChangesRequested = "changes-requested"
 	ReviewGateOutcomeApproved         = "approved"
+	ReviewGateOutcomeHumanApproved    = "human-approved"
 )
 
 // autoMergeReasonReviewGatePrefix prefixes the sweep skip reason when an
@@ -50,13 +53,14 @@ type ReviewGateVerdictFunc func(repo string, number int, headSHA string) ReviewG
 // ReviewGateEvaluation is one evaluation of the review gate on the
 // self-merge lane, for the audit log. Recording only.
 type ReviewGateEvaluation struct {
-	Lane      string
-	Repo      string
-	Number    int
-	HeadSHA   string
-	Outcome   string
-	WouldHold bool
-	Enforced  bool
+	Lane          string
+	Repo          string
+	Number        int
+	HeadSHA       string
+	Outcome       string
+	WouldHold     bool
+	Enforced      bool
+	HumanApprover string
 }
 
 // ReviewGate is the swarm-review policy the self-authored sweep evaluates on
@@ -130,7 +134,7 @@ func (g *ReviewGate) effectiveMode() string {
 	return mode
 }
 
-// reviewGateOutcome classifies a verdict into one of the four outcomes.
+// reviewGateOutcome classifies a verdict into one of the swarm outcomes.
 // An unreadable artifact counts as no bundle: the gate cannot show the
 // swarm reviewed the head, so it fails closed when enforcing.
 func reviewGateOutcome(v ReviewGateVerdict) string {
@@ -181,7 +185,7 @@ type reviewEvidenceStarter interface {
 // proceed and a skip reason ("review-gate:<outcome>") when an enforcing gate
 // holds it. Only the self-authored lane is gated; trusted-bot PRs are not
 // reviewed by the swarm and pass untouched.
-func (c *Engine) selfMergeReviewGate(displayRepo, owner, repo, lane string, number int, pr *gh.PullRequest, head string) string {
+func (c *Engine) selfMergeReviewGate(ctx context.Context, displayRepo, owner, repo, lane string, number int, pr *gh.PullRequest, head string) string {
 	gate := c.currentReviewGate()
 	if gate == nil || lane != stageLaneSelf {
 		return ""
@@ -196,21 +200,34 @@ func (c *Engine) selfMergeReviewGate(displayRepo, owner, repo, lane string, numb
 		verdict = gate.Verdict(fullRepo, number, head)
 	}
 	outcome := reviewGateOutcome(verdict)
-	wouldHold := outcome != ReviewGateOutcomeApproved
 	enforce := mode == ReviewGateModeEnforce
+	humanApprover := ""
+	if enforce && outcome != ReviewGateOutcomeApproved && !strings.HasPrefix(outcome, ReviewGateOutcomeChangesRequested) {
+		if approver, ok := c.latestTrustedHumanApproval(ctx, owner, repo, number, head); ok {
+			humanApprover = approver
+			outcome = ReviewGateOutcomeHumanApproved
+		}
+	}
+	wouldHold := outcome != ReviewGateOutcomeApproved
+	if outcome == ReviewGateOutcomeHumanApproved {
+		wouldHold = false
+	}
 	if starter, ok := c.transport.(reviewEvidenceStarter); ok {
 		starter.StartReviewEvidence(fullRepo, number, head, pr)
 	}
 	if gate.RecordEvaluation != nil {
 		gate.RecordEvaluation(ReviewGateEvaluation{
 			Lane: intentLaneSelfMerge, Repo: fullRepo, Number: number, HeadSHA: head,
-			Outcome: outcome, WouldHold: wouldHold, Enforced: enforce,
+			Outcome: outcome, WouldHold: wouldHold, Enforced: enforce, HumanApprover: humanApprover,
 		})
 	}
 	if enforce {
 		if wouldHold {
 			c.info("self-authored automerge sweep review gate holding merge", "repo", displayRepo, "pr", number, "head", head, "outcome", outcome)
 			return autoMergeReasonReviewGatePrefix + outcome
+		}
+		if humanApprover != "" {
+			c.info("self-authored automerge sweep review gate cleared by trusted human approval", "repo", displayRepo, "pr", number, "head", head, "approver", humanApprover)
 		}
 		return ""
 	}
@@ -224,4 +241,43 @@ func (c *Engine) selfMergeReviewGate(displayRepo, owner, repo, lane string, numb
 		})
 	}
 	return ""
+}
+
+func (c *Engine) latestTrustedHumanApproval(ctx context.Context, owner, repo string, number int, head string) (string, bool) {
+	if c == nil || c.gh == nil {
+		return "", false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opts := &gh.ListOptions{PerPage: 100}
+	var seen []*gh.PullRequestReview
+	for {
+		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
+		if err != nil {
+			c.warn("self-merge review gate could not read PR reviews for human approval", "owner", owner, "repo", repo, "pr", number, "error", err)
+			return "", false
+		}
+		seen = append(seen, reviews...)
+		for _, review := range reviews {
+			if !strings.EqualFold(review.GetState(), "APPROVED") || strings.TrimSpace(review.GetCommitID()) != head {
+				continue
+			}
+			login := strings.TrimSpace(hgithub.SafeGetLogin(review.GetUser()))
+			if login == "" || c.isHiveAppReviewAuthor(review) || strings.HasSuffix(strings.ToLower(login), "[bot]") {
+				continue
+			}
+			trusted, configured := c.isTrustedMerger(login)
+			if configured && trusted {
+				c.noteStageReviews(owner, repo, number, seen)
+				return login, true
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	c.noteStageReviews(owner, repo, number, seen)
+	return "", false
 }

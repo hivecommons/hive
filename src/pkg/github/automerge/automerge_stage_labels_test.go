@@ -508,6 +508,117 @@ func TestApplyStageLabelsWeakOpinionWaitsForEveryLane(t *testing.T) {
 	}
 }
 
+func TestApplyStageLabelsRoleOwnerStableAcrossLaneOrder(t *testing.T) {
+	type laneFn func(*Engine, int, []string)
+	withAuthor := func(pr *gh.PullRequest, login string) *gh.PullRequest {
+		pr.User = &gh.User{Login: gh.Ptr(login)}
+		return pr
+	}
+	selfHandoff := func(e *Engine, number int, labels []string) {
+		e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", withAuthor(stagePR(number, labels...), "human"), "not-app-authored", false, nil)
+	}
+	cases := []struct {
+		name   string
+		labels []string
+		lanes  map[string]laneFn
+	}{
+		{
+			name:   "app-authored",
+			labels: []string{"role/trusted", "author/hive", "stage/050-review-pending"},
+			lanes: map[string]laneFn{
+				"self": func(e *Engine, number int, labels []string) {
+					e.recordStage(stageLaneSelf, "acme/widget", "acme", "widget", withAuthor(stagePR(number, labels...), testHiveAppBotLogin), "required-check-pending:build", false, nil)
+					e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+				},
+				"trusted": func(e *Engine, number int, labels []string) {
+					e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", withAuthor(stagePR(number, labels...), testHiveAppBotLogin), "untrusted-author-role", false, nil)
+				},
+				"contributor": func(e *Engine, number int, labels []string) {
+					e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", withAuthor(stagePR(number, labels...), testHiveAppBotLogin), contributorLaneReasonAppAuthored, false, nil)
+					e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+				},
+			},
+		},
+		{
+			name:   "trusted-human",
+			labels: []string{"role/trusted", "author/human", "stage/050-review-pending"},
+			lanes: map[string]laneFn{
+				"self": selfHandoff,
+				"trusted": func(e *Engine, number int, labels []string) {
+					e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", withAuthor(stagePR(number, labels...), "maintainer"), "required-check-pending:build", false, nil)
+					e.noteStageRole("acme", "widget", number, stagelabels.RoleTrusted)
+				},
+				"contributor": func(e *Engine, number int, labels []string) {
+					e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", withAuthor(stagePR(number, labels...), "maintainer"), contributorLaneReasonNoClaim, false, nil)
+					e.noteStageRole("acme", "widget", number, stagelabels.RoleUntrusted)
+				},
+			},
+		},
+		{
+			name:   "untrusted-contributor",
+			labels: []string{"role/untrusted", "author/human", "stage/085-needs-decision"},
+			lanes: map[string]laneFn{
+				"self": selfHandoff,
+				"trusted": func(e *Engine, number int, labels []string) {
+					e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", withAuthor(stagePR(number, labels...), "outside"), "untrusted-author-role", false, nil)
+				},
+				"contributor": func(e *Engine, number int, labels []string) {
+					e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", withAuthor(stagePR(number, labels...), "outside"), contributorLaneReasonNoClaim, false, nil)
+					e.noteStageRole("acme", "widget", number, stagelabels.RoleUntrusted)
+				},
+			},
+		},
+	}
+	orders := [][]string{
+		{"self", "trusted", "contributor"},
+		{"self", "contributor", "trusted"},
+		{"trusted", "self", "contributor"},
+		{"trusted", "contributor", "self"},
+		{"contributor", "self", "trusted"},
+		{"contributor", "trusted", "self"},
+	}
+	ctx := context.Background()
+	labelWrites := func(api *stageAPI) int {
+		api.mu.Lock()
+		defer api.mu.Unlock()
+		return len(api.added) + len(api.removed)
+	}
+	for i, tc := range cases {
+		for j, order := range orders {
+			t.Run(tc.name+"/"+strings.Join(order, "-"), func(t *testing.T) {
+				api := &stageAPI{}
+				srv := newStageAPI(t, api)
+				defer srv.Close()
+				clock := &contributorLaneClock{at: time.Date(2026, 10, 16, 18, 30, 0, 0, time.UTC)}
+				e, _, _ := newStageEngine(t, srv.URL, clock)
+				e.trustedAuthorPolicy = func() TrustedAuthorPolicy { return TrustedAuthorPolicy{Enabled: true} }
+				e.contributorLanePolicy = func() ContributorLanePolicy { return ContributorLanePolicy{Enabled: true} }
+				number := 12600 + i*10 + j
+				for _, lane := range order {
+					tc.lanes[lane](e, number, tc.labels)
+				}
+				if _, err := e.ApplyStageLabels(ctx); err != nil {
+					t.Fatal(err)
+				}
+				if labelWrites(api) != 0 {
+					t.Fatalf("combined drain churned labels: added=%v removed=%v comments=%d", api.added, api.removed, len(api.comments))
+				}
+
+				api.reset()
+				for _, lane := range order {
+					tc.lanes[lane](e, number, tc.labels)
+					if _, err := e.ApplyStageLabels(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if labelWrites(api) != 0 {
+					t.Fatalf("split drains churned labels: added=%v removed=%v comments=%d", api.added, api.removed, len(api.comments))
+				}
+			})
+		}
+	}
+}
+
 func TestApplyStageLabelsProvisionsWritesOnceAndClearsOnTerminal(t *testing.T) {
 	api := &stageAPI{labels: map[string]string{"stage/050-review-pending": "0000ff", "bug": "ff0000"}}
 	srv := newStageAPI(t, api)

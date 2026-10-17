@@ -1973,10 +1973,19 @@
       var covered = 0, mergedTotal = 0;
       var outcomes = {}, outcomeHives = 0, writes = {}, writeHives = 0;
       var shadow = { hives: 0, review_gate: { hives: 0, held: evidenceOutcomeZero(), passed: evidenceOutcomeZero() }, intent: { hives: 0, held: evidenceOutcomeZero(), passed: evidenceOutcomeZero() } };
+      var authorKinds = {};
       hives.forEach(function(h) {
         var c = h && h.reported && h.counts;
         if (!c) return;
         out.reporting++;
+        if (c.by_author_kind && typeof c.by_author_kind === 'object') {
+          ['human', 'agent', 'bot'].forEach(function(k) {
+            var b = c.by_author_kind[k];
+            if (!b) return;
+            var p = authorKinds[k] || (authorKinds[k] = { n: 0, bad: 0 });
+            p.n += Number(b.n) || 0; p.bad += Number(b.bad) || 0;
+          });
+        }
         if (c.recorded_90d !== null && c.recorded_90d !== undefined && h.prs_merged_90d !== null && h.prs_merged_90d !== undefined) {
           covered += Number(c.recorded_90d) || 0; mergedTotal += Number(h.prs_merged_90d) || 0;
         }
@@ -2014,6 +2023,8 @@
         }
       });
       out.record_coverage = evidenceRateOf(covered, mergedTotal);
+      out.revert_rate_by_author_kind = {};
+      Object.keys(authorKinds).forEach(function(k) { out.revert_rate_by_author_kind[k] = evidenceRateOf(authorKinds[k].bad, authorKinds[k].n); });
       out.calibration = pooled.map(function(b, j) { var r = evidenceRateOf(b.bad, b.n); r.bucket = j; r.bad = b.bad; return r; });
       out.family_false_approve_rate = {};
       Object.keys(fam).forEach(function(k) { out.family_false_approve_rate[k] = evidenceRateOf(fam[k].bad, fam[k].n); });
@@ -2228,11 +2239,10 @@
       if (!Array.isArray(v.outcomes_by_author_kind)) out.push('Outcome by author kind \u2014 ' + upgrade + '.');
       if (!Array.isArray(v.write_counters)) out.push('Boundary enforcement (agent writes the guardrail proxy blocked) \u2014 ' + upgrade + '.');
       if (!(v.shadow_gate && typeof v.shadow_gate === 'object')) out.push('Shadow gates \u2014 shadow mode is off on every selected hive, or none has reported it yet (' + upgrade + ').');
-      out.push('Per-axis criteria table \u2014 not reported by any hive build yet.');
       out.push('CI gate (claim vs verdict) totals \u2014 not reported by any hive build yet.');
       var ttm = (Array.isArray(v.by_acmm_level) ? v.by_acmm_level : []).some(function(a) { return a && a.time_to_merge; });
       if (!ttm) out.push('Median time-to-merge per autonomy level \u2014 no selected hive reports it yet (it needs a build that records when each merged PR was opened).');
-      out.push('Revert rate by author kind per hive \u2014 not reported by any hive build yet.');
+      if (!Object.keys(v.revert_rate_by_author_kind || {}).length) out.push('Revert rate by author kind \u2014 ' + upgrade + '.');
       return out;
     }
 
@@ -2339,6 +2349,41 @@
         norm.map(function(r) {
           return '<tr><td>' + esc(r.tier) + '</td><td>' + evidenceCount(r.hives) + '</td><td>' + evidenceCount(r.attempted) + '</td>' + evidenceRateCells(r.block_rate) + '</tr>';
         }).join('') + '</tbody></table></div></section>';
+    }
+
+    /* evidenceCriteriaPanel renders hives[].criteria (pkg/hub/evidence_criteria.go):
+       per hive and quadrant axis, the criteria met, unmet and not reported.
+       A hive with nothing measured (offline, unscored, or an older hub) is
+       one "Not reported" row, never a row of unmet criteria. */
+    var EVIDENCE_CRITERION_STATUSES = [['met', 'Met'], ['unmet', 'Unmet'], ['not_reported', 'Not reported']];
+    function evidenceCriterionText(c) {
+      var title = c.status === 'not_reported' ? (c.reason || 'not reported') : (c.good ? 'Good: ' + c.good : '');
+      return '<span title="' + escAttr(title) + '">' + esc(c.label || c.name || '') + (c.display ? ' (' + esc(c.display) + ')' : '') + '</span>';
+    }
+    function evidenceCriteriaPanel(hives) {
+      var rows = (hives || []).map(function(h) {
+        var axes = Array.isArray(h && h.criteria) ? h.criteria : [];
+        var reported = axes.some(function(a) {
+          return (a.criteria || []).some(function(c) { return c.status === 'met' || c.status === 'unmet'; });
+        });
+        if (!reported) {
+          var reason = '';
+          axes.some(function(a) { return (a.criteria || []).some(function(c) { reason = c.reason || ''; return !!reason; }); });
+          return '<tr><td class="evidence-sticky-col">' + evidenceHiveLabel(h) + '</td><td colspan="4" class="evidence-empty">Not reported' +
+            (reason ? ' \u2014 ' + esc(reason) : '') + '</td></tr>';
+        }
+        return axes.map(function(a, i) {
+          return '<tr><td class="evidence-sticky-col">' + (i === 0 ? evidenceHiveLabel(h) : '') + '</td><td>' + esc(a.label || a.axis || '') + '</td>' +
+            EVIDENCE_CRITERION_STATUSES.map(function(st) {
+              var list = (a.criteria || []).filter(function(c) { return c.status === st[0]; });
+              return '<td>' + (list.length ? list.map(evidenceCriterionText).join(', ') : EVIDENCE_NULL) + '</td>';
+            }).join('') + '</tr>';
+        }).join('');
+      }).join('');
+      return evidenceTable('Per-axis criteria',
+        '<th class="evidence-sticky-col">Hive</th><th>Axis</th>' + EVIDENCE_CRITERION_STATUSES.map(function(st) { return '<th>' + esc(st[1]) + '</th>'; }).join(''),
+        rows,
+        'Each hive\u2019s quadrant criteria from its latest heartbeat: met when the criterion scores at least halfway from its worst to its best value. A criterion with no data is \u201Cnot reported\u201D, never unmet.', '', null, true);
     }
 
     function evidenceShadowPanel(view) {
@@ -2464,6 +2509,7 @@
         'Linked reverts within 14 days of merge / merged PRs in the selected evidence window. Follow-ups excluded; only spokes reporting author-kind counts contribute.');
 
       out += evidenceShadowPanel(view);
+      out += evidenceCriteriaPanel(hives);
       out += evidenceWaitingHTML(view);
       return out;
     }

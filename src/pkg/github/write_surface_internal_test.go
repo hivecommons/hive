@@ -493,7 +493,7 @@ func TestReviewBacklog_FiledIssuesAndSummaryAudited(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = io.WriteString(w, `{"message":"not found"}`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/labels":
-			_, _ = io.WriteString(w, `{"name":"origin/reviewer"}`)
+			_, _ = io.WriteString(w, `{"name":"agent/reviewer"}`)
 		case r.Method == "POST" && r.URL.Path == "/repos/o/r/issues":
 			created++
 			fmt.Fprintf(w, `{"number":%d,"html_url":"https://github.test/o/r/issues/%d"}`, 100+created, 100+created)

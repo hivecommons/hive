@@ -82,6 +82,7 @@ func newHivesCommand(env *commandEnv) *cobra.Command {
   hivectl hives remove acme`,
 	}
 	cmd.AddCommand(newHivesListCommand(env))
+	cmd.AddCommand(newHivesReposCommand(env))
 	cmd.AddCommand(newHivesAddCommand(env))
 	cmd.AddCommand(newHivesReissueCommand(env))
 	cmd.AddCommand(newHivesUseCommand(env))
@@ -160,6 +161,7 @@ func commit(deps *hivesDeps, set *hivectl.ProfileSet) error {
 // ── list ────────────────────────────────────────────────────────────────────
 
 type hivesListRow struct {
+	Scope         string `json:"scope" yaml:"scope"`
 	Disabled      bool   `json:"disabled" yaml:"disabled"`
 	Name          string `json:"name" yaml:"name"`
 	Hub           string `json:"hub" yaml:"hub"`
@@ -210,6 +212,7 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 	rows := make([]hivesListRow, 0, len(set.Profiles))
 	for _, p := range set.Ordered() {
 		row := hivesListRow{
+			Scope:         set.SelectionSummary(p.Name),
 			Disabled:      p.Disabled,
 			Name:          p.Name,
 			Hub:           p.Hub,
@@ -238,7 +241,7 @@ func (e *commandEnv) runHivesList(cmd *cobra.Command, check bool) error {
 }
 
 func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
-	header := " \tNAME\tHUB\tCONTRIBUTOR ID\tSESSION\tADDED\tLAST SEEN"
+	header := " \tNAME\tHUB\tCONTRIBUTOR ID\tSESSION\tADDED\tLAST SEEN\tSCOPE"
 	if check {
 		header += "\tREACHABLE"
 	}
@@ -253,7 +256,7 @@ func printHivesTable(out io.Writer, rows []hivesListRow, check bool) {
 		if row.Disabled {
 			name += " (disabled)"
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", marker, name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt), dashIfEmpty(row.LastSeen))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", marker, name, row.Hub, dashIfEmpty(row.ContributorID), dashIfEmpty(row.Session), dashIfEmpty(row.AddedAt), dashIfEmpty(row.LastSeen)) + "\t" + row.Scope
 		if check {
 			state := "-"
 			if row.Reachable != nil {
@@ -423,8 +426,7 @@ func (e *commandEnv) runHivesAdd(cmd *cobra.Command, name string, opts *hivesAdd
 		_, _ = fmt.Fprintln(out, "  active: yes — the relay will solicit from this hive first")
 	}
 	_, _ = fmt.Fprintf(out, "  saved to %s; %s regenerated\n", deps.store.Path(), deps.store.EnvPath())
-	_, _ = fmt.Fprintln(out, "  restart the relay ('just contribute-stop' then 'just contribute-hive') to pick this up")
-	return nil
+	return reloadHivesAfterEdit(cmd, deps)
 }
 
 // alreadyRegisteredError turns the hub's "already registered, no token for
@@ -1106,7 +1108,7 @@ func (e *commandEnv) runHivesRemove(cmd *cobra.Command, name string, yes bool) e
 	case wasActive:
 		_, _ = fmt.Fprintf(out, "  active hive is now %q\n", set.Active)
 	}
-	return nil
+	return reloadHivesAfterEdit(cmd, deps)
 }
 
 func confirmRemoval(cmd *cobra.Command, name, hub string) (bool, error) {

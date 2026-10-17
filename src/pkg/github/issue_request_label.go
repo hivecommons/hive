@@ -201,7 +201,7 @@ func (c *Client) reservedLabelRefusal(add, remove []string) (string, bool) {
 // the work for people — add `needs-human` and unclaim. A lookup failure is
 // returned so the caller retries rather than reading "unknown" as allowed.
 func (c *Client) reparkDecisionRefusal(ctx context.Context, repo string, number int, add []string) (string, bool, error) {
-	if number <= 0 || !containsLabelFold(add, c.needsDecisionLabel()) {
+	if number <= 0 || !containsDecisionParkLabel(add, c.needsDecisionLabel()) {
 		return "", false, nil
 	}
 	owner, name := c.splitRepo(repo)
@@ -228,6 +228,24 @@ func (c *Client) reparkDecisionRefusal(ctx context.Context, repo string, number 
 		"re-parking it on `%s` asks for a decision that has been given. Follow the decision. "+
 		"If it reserves the work for people, add `%s` through this relay and `/unclaim` instead.",
 		repo, number, decision, HumanAckLabel, c.needsDecisionLabel(), issueNeedsHumanLabel), true, nil
+}
+
+func containsDecisionParkLabel(labels []string, configured string) bool {
+	for _, label := range labels {
+		name := strings.TrimSpace(label)
+		if name == "" || strings.EqualFold(name, issueNeedsHumanLabel) {
+			continue
+		}
+		if strings.EqualFold(name, strings.TrimSpace(configured)) {
+			return true
+		}
+		for _, parking := range issueParkingLabels {
+			if strings.EqualFold(name, parking) && !strings.EqualFold(parking, issueNeedsHumanLabel) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // unparkDecisionLinePrefix is how the hive's accepted un-park reply records
@@ -267,12 +285,4 @@ func hasNewerDifferentDecisionCommand(comments []*gh.IssueComment, after time.Ti
 		}
 	}
 	return false
-}
-
-func containsLabelFold(labels []string, want string) bool {
-	want = strings.TrimSpace(want)
-	if want == "" {
-		return false
-	}
-	return labelPresent(labels, want)
 }

@@ -41,8 +41,8 @@ func TestSyncIssueStageLabels_MigratesLegacyDecisionLabels(t *testing.T) {
 	if len(fake.removed[3]) != 0 {
 		t.Errorf("needs-human must stay: removed %v", fake.removed[3])
 	}
-	if got := fake.added[3]; strings.Join(got, ",") != stagelabels.NeedsDecision.Label() {
-		t.Errorf("issue 3 added %v, want derived stage/085", got)
+	if got := fake.added[3]; len(got) != 0 {
+		t.Errorf("issue 3 added %v, want no stage for needs-human", got)
 	}
 }
 

@@ -78,23 +78,26 @@ var ErrProfileNotFound = errors.New("no such hive profile")
 // or a CI log. Redacted() is what the commands print.
 type Profile struct {
 	// Disabled pauses new work without forgetting credentials. Omitted means enabled.
-	Disabled          bool      `yaml:"disabled,omitempty" json:"disabled"`
-	Name              string    `yaml:"name" json:"name"`
-	Hub               string    `yaml:"hub" json:"hub"`
-	ContributorID     string    `yaml:"contributor_id,omitempty" json:"contributor_id,omitempty"`
-	RegistrationToken string    `yaml:"registration_token" json:"-"`
-	Session           string    `yaml:"session,omitempty" json:"session,omitempty"`
-	Backend           string    `yaml:"backend,omitempty" json:"backend,omitempty"`
-	Model             string    `yaml:"model,omitempty" json:"model,omitempty"`
-	AddedAt           time.Time `yaml:"added_at,omitempty" json:"added_at,omitempty"`
+	Disabled          bool                 `yaml:"disabled,omitempty" json:"disabled"`
+	Name              string               `yaml:"name" json:"name"`
+	Hub               string               `yaml:"hub" json:"hub"`
+	ContributorID     string               `yaml:"contributor_id,omitempty" json:"contributor_id,omitempty"`
+	RegistrationToken string               `yaml:"registration_token" json:"-"`
+	Session           string               `yaml:"session,omitempty" json:"session,omitempty"`
+	Backend           string               `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Model             string               `yaml:"model,omitempty" json:"model,omitempty"`
+	AddedAt           time.Time            `yaml:"added_at,omitempty" json:"added_at,omitempty"`
+	Selection         *RepositorySelection `yaml:"selection,omitempty" json:"-"`
 }
 
 // ProfileSet is the whole file: every hive, plus which one is active.
 type ProfileSet struct {
-	Version         int       `yaml:"version"`
-	Active          string    `yaml:"active,omitempty"`
-	CommonsStrategy string    `yaml:"commons_strategy,omitempty"`
-	Profiles        []Profile `yaml:"profiles"`
+	Version          int                `yaml:"version"`
+	Active           string             `yaml:"active,omitempty"`
+	CommonsStrategy  string             `yaml:"commons_strategy,omitempty"`
+	Profiles         []Profile          `yaml:"profiles"`
+	Presets          []PresetProvenance `yaml:"presets,omitempty" json:"-"`
+	RepoScopeVersion uint64             `yaml:"repo_scope_version,omitempty" json:"-"`
 }
 
 // ProfileStore reads and writes profiles.yml and its contributor.env
@@ -216,6 +219,8 @@ func (set *ProfileSet) Ordered() []Profile {
 // Redacted returns a copy safe to print or serialize: the registration token is
 // replaced by a fixed placeholder so `hives list -o json` never leaks it.
 func (p Profile) Redacted() Profile {
+	// Local consent and provenance are not portable profile exports.
+	p.Selection = nil
 	if p.RegistrationToken != "" {
 		p.RegistrationToken = "(set)"
 	}
@@ -244,6 +249,14 @@ func (set *ProfileSet) Validate() error {
 		if err := ValidateHubURL(p.Hub); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
 		}
+		if err := p.Selection.Validate(); err != nil {
+			return fmt.Errorf("profile %q: %w", p.Name, err)
+		}
+		if p.Selection != nil {
+			if _, err := NormalizeHiveID(p.Hub); err != nil {
+				return fmt.Errorf("profile %q: %w", p.Name, err)
+			}
+		}
 		if err := validateEnvValue("registration_token", p.RegistrationToken); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
 		}
@@ -257,6 +270,20 @@ func (set *ProfileSet) Validate() error {
 		}
 		if err := validateEnvValue("contributor_id", p.ContributorID); err != nil {
 			return fmt.Errorf("profile %q: %w", p.Name, err)
+		}
+	}
+	presetIDs := map[string]bool{}
+	for _, preset := range set.Presets {
+		if err := ValidateProfileName(preset.ID); err != nil {
+			return fmt.Errorf("preset: %w", err)
+		}
+		key := strings.ToLower(preset.ID)
+		if presetIDs[key] {
+			return fmt.Errorf("duplicate preset id %q", preset.ID)
+		}
+		presetIDs[key] = true
+		if strings.TrimSpace(preset.Source) == "" || strings.TrimSpace(preset.ReviewedRevision) == "" {
+			return fmt.Errorf("preset %q requires source and reviewed_revision", preset.ID)
 		}
 	}
 	if set.Active != "" {
@@ -597,6 +624,14 @@ func (s *ProfileStore) WriteEnvProjection(set *ProfileSet) error {
 		env.unset("HIVE_SESSION")
 	}
 	env.set("HIVE_COMMONS_STRATEGY", set.EffectiveCommonsStrategy())
+	scopes, err := set.RepositoryScopes()
+	if err != nil {
+		return err
+	}
+	// Semicolons separate repositories, so quote this value for shell sourcing.
+	// Canonical IDs cannot contain quotes or shell expansions.
+	env.set("HIVE_REPO_SCOPE", "'"+strings.Join(scopes, ",")+"'")
+	env.set("HIVE_REPO_SCOPE_VERSION", fmt.Sprint(set.RepoScopeVersion))
 
 	if _, statErr := os.Stat(s.EnvPath()); statErr == nil {
 		if err := s.backupEnv(); err != nil {

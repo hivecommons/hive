@@ -1,1 +1,0 @@
-- Add default-off Hive-self experiment flags delivered per hive over heartbeat, with explicit local opt-in (`HIVE_SELF_EXPERIMENTS_OPT_IN=true`) and revocation on the next verified heartbeat (local opt-out clears on the next attempt; hub outages retain the last assignment until then or restart), separate from repo experiments and governor settings.

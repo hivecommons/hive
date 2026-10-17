@@ -51,7 +51,7 @@ func TestValidateRepoRefRejectsEmptyAndPathTricks(t *testing.T) {
 // that a doomed request costs zero rate limit.
 func TestCreateIssueRefusesPlaceholderRepoWithoutCallingGitHub(t *testing.T) {
 	c := &Client{}
-	if _, err := c.CreateIssue(t.Context(), CreateIssueRequest{Repo: "<org>/<target-repo>", Title: "t", Body: "b", Origin: "test"}); err == nil {
+	if _, err := c.CreateIssue(t.Context(), CreateIssueRequest{Repo: "<org>/<target-repo>", Title: "t", Body: "b", Origin: "governor"}); err == nil {
 		t.Fatal("CreateIssue accepted a placeholder repo")
 	}
 }

@@ -174,8 +174,81 @@ func (set *ProfileSet) SetCommonsStrategy(strategy string) error {
 // hives no file records — a relay soliciting from a hub the operator can no
 // longer see, rename or remove.
 func (s *ProfileStore) Commit(set *ProfileSet) error {
+	if set == nil {
+		return errors.New("refusing to commit a nil hive profile set")
+	}
+	if err := set.Validate(); err != nil {
+		return err
+	}
+	// Persist the generation before the env projection, so retries and process
+	// restarts never reuse an older scope version. Save alone is not a mutation.
+	previous := set.RepoScopeVersion
+	saved, err := s.Load()
+	if err != nil {
+		return err
+	}
+	version := previous
+	if saved != nil && saved.RepoScopeVersion > version {
+		version = saved.RepoScopeVersion
+	}
+	if version == ^uint64(0) {
+		return errors.New("repository scope version exhausted")
+	}
+	set.RepoScopeVersion = version + 1
 	if err := s.Save(set); err != nil {
+		set.RepoScopeVersion = previous
 		return err
 	}
 	return s.WriteEnvProjection(set)
+}
+
+// FindHive resolves a discovery target by origin, not profile name or path.
+// Legacy users can deliberately have multiple identities at one origin. Never
+// guess which credential to adopt in that case; the caller must ask the user.
+func (set *ProfileSet) FindHive(hub string) (*Profile, error) {
+	id, err := NormalizeHiveID(hub)
+	if err != nil {
+		return nil, err
+	}
+	var found *Profile
+	for i := range set.Profiles {
+		candidate := &set.Profiles[i]
+		candidateID, err := NormalizeHiveID(candidate.Hub)
+		if err != nil {
+			return nil, err
+		}
+		if candidateID != id {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("multiple contributor profiles for hive %s; choose an identity explicitly", id)
+		}
+		found = candidate
+	}
+	return found, nil
+}
+
+// EnsureHive gives preset/hub onboarding set semantics. An existing subscription
+// is returned unchanged, including its endpoint, token and personal consent.
+// Callers merge reviewed recommendations explicitly, never by overwriting it
+// with a publisher's profile. A different origin needs its own registration.
+// Add remains available for intentionally distinct legacy contributor identities.
+func (set *ProfileSet) EnsureHive(profile Profile, activate bool) (target *Profile, added bool, err error) {
+	existing, err := set.FindHive(profile.Hub)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing != nil {
+		if activate {
+			set.Active = existing.Name
+		}
+		return existing, false, nil
+	}
+	if err := profile.Selection.Validate(); err != nil {
+		return nil, false, err
+	}
+	if err := set.Add(profile, activate); err != nil {
+		return nil, false, err
+	}
+	return &set.Profiles[len(set.Profiles)-1], true, nil
 }

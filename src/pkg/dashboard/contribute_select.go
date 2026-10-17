@@ -106,6 +106,16 @@ const (
 	// completion or genuinely-attempted (slow) failure.
 	taskUnavailableFailureStreak          = "contributor_failure_streak"
 	taskUnavailableExternalDispatchFailed = "external_dispatch_failed"
+	// taskUnavailableNoSelectedWork (hivecommons/hive#12805): the connection
+	// acknowledged a selected repository scope and nothing admissible remains
+	// inside it — out-of-scope work may exist but is left for other
+	// contributors. Also sent while a ready's scope_version differs from the
+	// acknowledged one (the relay is mid-reload; it waits).
+	taskUnavailableNoSelectedWork = "no_selected_work"
+	// taskUnavailableRepoScopeInvalid (#12805): the connection's latest
+	// repo_scope was malformed; it is served nothing until a valid scope is
+	// acknowledged (fail closed).
+	taskUnavailableRepoScopeInvalid = "repo_scope_invalid"
 )
 
 // rateWindowCounts returns how many task assignments the given identity has been
@@ -379,6 +389,11 @@ func (h *ContributeWSHub) repoUnmintable(repo string, now time.Time) bool {
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
+	// hivecommons/hive#12805: an invalid or not-yet-acknowledged contributor
+	// repository scope fails closed — nothing is leased or minted at all.
+	if reason := repoScopeGateReason(c); reason != "" {
+		return h.taskUnavailable(reason)
+	}
 	// hivecommons/hive#12436: "contributors should clean up their mess before
 	// taking on new stuff" — a contributor's queued red-PR fixes are served
 	// before any new issue at every task boundary.
@@ -717,6 +732,15 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	}
 	var candidates []candidate
 	capabilityMismatchSeen := false
+	// #12805: the connection's acknowledged repository scope. Nil / mode "all"
+	// leaves selection exactly as before; "selected" skips every repo outside
+	// it here, before any lease or mint, so out-of-scope work stays available
+	// to other contributors.
+	repoScope := acknowledgedRepoScope(c)
+	scopeHost := repoScopeDefaultHost
+	if repoScope.restricts() && h.server.deps != nil && h.server.deps.Config != nil {
+		scopeHost = h.server.deps.Config.GitHub.Forge()
+	}
 
 	// One ledger snapshot for this whole selection pass (#3845), shared with the
 	// contributor-neutral admission gate below so ReadyQueue and selectTask judge
@@ -729,6 +753,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			continue
 		}
 		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
+			continue
+		}
+		if !repoScope.allows(repoScopeID(repoScopeDefaultForge, scopeHost, repo.Full)) {
 			continue
 		}
 		if h.repoUnmintable(repo.Full, time.Now()) {
@@ -993,6 +1020,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		// "hub not ready". Send an explicit no_matching_work negative-ack.
 		if capabilityMismatchSeen {
 			return h.taskUnavailable(taskUnavailableCapabilityMismatch)
+		}
+		if repoScope.restricts() {
+			return h.taskUnavailable(taskUnavailableNoSelectedWork)
 		}
 		return h.taskUnavailable(taskUnavailableNoMatchingWork)
 	}
@@ -1339,6 +1369,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		Number:  chosen.number,
 		Title:   chosen.title,
 		URL:     chosen.url,
+		Forge:   repoScopeDefaultForge,
+		Host:    h.assignmentHost(),
 		// Source-aware identity (kubestellar/hive#4245). Additive: a GitHub
 		// assignment carries exactly the fields it always did, and these tell a
 		// relay working a Linear or Jira item what the item actually IS instead
@@ -1460,4 +1492,13 @@ func runStageFromIssueMap(issue map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// assignmentHost is the host segment stamped on task_assign, from the same
+// source the advertised repository-scope ids use.
+func (h *ContributeWSHub) assignmentHost() string {
+	if h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		return h.server.deps.Config.GitHub.Forge()
+	}
+	return repoScopeDefaultHost
 }

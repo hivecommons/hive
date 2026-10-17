@@ -36,13 +36,25 @@ The third route is the human-approved queue (normally `lgtm`): an authorized mer
 | PR motivated by an untrusted reporter's issue | When reporter-trust holding is enabled, an untrusted cited issue causes literal `hold`; a maintainer reviews and removes it. Triaging the issue alone does not release the PR. See [reporter-trust hold](../pkg/github/pr_reporter_trust.go). |
 | Draft | Excluded; author marks ready for review when finished. See [eligibility](../cmd/hive/merge_eligibility.go) and [sweep](../pkg/github/automerge/automerge_sweep.go). |
 | GitHub-blocked PR | Missing required checks/reviews, signatures, conflicts or branch rules still bind the merge. Satisfy the actual rule, not just the Hive pill. See [merge block reasons](../pkg/github/merge_block_reason.go) and [sweep](../pkg/github/automerge/automerge_sweep.go). |
-| PR escalated after failed fixes | The fix ledger parks exhausted repair work; `needs-human` is a triage signal, **not by itself a universal merge hold**. The scanner separates escalated rows; the App sweep does not consult that ledger. A green App PR may still merge. Add `hold` if the decision must prevent merging; repair/review, clear the escalation, then release the hold. See [escalation](../pkg/escalation/escalation.go), `writeMergeEligible` in [eligibility](../cmd/hive/merge_eligibility.go), and [sweep](../pkg/github/automerge/automerge_sweep.go). |
+| PR escalated after failed fixes | The fix ledger parks exhausted repair work; `needs-human` is a triage signal, **not by itself a universal merge hold**. The scanner separates escalated rows; outside the self-authored review gate below, a green App PR may still merge. Add `hold` if the decision must prevent merging; repair/review, clear the escalation, then release the hold. See [escalation](../pkg/escalation/escalation.go), `writeMergeEligible` in [eligibility](../cmd/hive/merge_eligibility.go), and [sweep](../pkg/github/automerge/automerge_sweep.go). |
 | Behind/conflicting fork PR | A GitHub `behind` state triggers an update attempt in the sweep, not a guaranteed repair. The hive cannot assume write access to a contributor's fork. Author rebases/updates the fork, resolves conflicts and reruns CI; a fork merely older than base is not blocked unless GitHub requires freshness or reports a conflict. See [sweep](../pkg/github/automerge/automerge_sweep.go) and `UpdateBranch` in [pull requests](../pkg/github/pullrequest.go). |
 | Issue parked for a maintainer decision | A human with repository write/maintain/admin permission comments `/hive approve` or `/hive decision <direction>`; the un-park sweep removes decision labels, never `hold`. Plain "approved" is insufficient. See [maintainer commands](maintainer-commands.md) and [un-park implementation](../pkg/github/issue_unpark_command.go). |
 
 ### Does the Hive reviewer stop a merge?
 
-**Default: no automatic guarantee.** The reviewer is advisory. Its `requires_human` text is not read by the App sweep. With `review.require_approval: true`, the **scanner eligibility path** requires aggregate approval at the same head SHA; absent artifacts or a non-approved verdict stop that path. It does **not** add a review gate to the App sweep or replace GitHub branch rules. Dispatch fan-out also has its own enabling conditions. See `classifyMergeEligibility` in [eligibility](../cmd/hive/merge_eligibility.go), `PlanDispatch` in [review dispatch](../pkg/review/dispatch.go), and [sweep](../pkg/github/automerge/automerge_sweep.go).
+**Default: no automatic guarantee.** The reviewer is advisory unless the
+self-authored review gate is in enforce mode (directly or through
+`review.require_approval: true`). In enforce mode, the App self-authored sweep
+requires aggregate approval for the current head. If the swarm is incomplete or
+returns `requires_human`, a trusted human merger may clear that specific hold by
+submitting a normal GitHub **Approve** review on the exact head SHA; no special
+review body is required. A swarm `changes_requested` or `reject` verdict is not
+overridden this way. Outside that self-authored gate, reviewer text still does
+not replace GitHub branch rules or an actual hold. Dispatch fan-out also has its
+own enabling conditions. See `classifyMergeEligibility` in
+[eligibility](../cmd/hive/merge_eligibility.go), `PlanDispatch` in
+[review dispatch](../pkg/review/dispatch.go), and
+[sweep](../pkg/github/automerge/automerge_sweep.go).
 
 The [policy matrix](acmm-policy-matrix.md) describes the same distinction: reviewer verdicts alone are not universal merge stops, and promotion does not automatically release level holds. Use GitHub rules or an actual hold for a safety guarantee.
 

@@ -261,7 +261,7 @@ func TestEvidenceFindingsFallbacks(t *testing.T) {
 		t.Errorf("empty findings = %d sentences: %q", len(got), got)
 	}
 	waiting := evidenceWaiting(empty)
-	if len(waiting) != 7 || !strings.Contains(waiting[2], "shadow mode is off on every selected hive") {
+	if len(waiting) != 6 || !strings.Contains(waiting[2], "shadow mode is off on every selected hive") {
 		t.Errorf("waiting = %q", waiting)
 	}
 	for _, s := range waiting {

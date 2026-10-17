@@ -636,7 +636,7 @@ func TestRenderUnparkHelpReplyListsDocumentedCommands(t *testing.T) {
 // `needs-human`, and both issues became stage/010-actionable. An un-park
 // records the decision and clears the decision park label, but never lifts
 // `needs-human`; the accepted reply says so; and the resulting label set
-// still derives stage/085 so the issue stays out of the agent queue.
+// remains hard-suppressed without re-deriving stage/085.
 func TestSweepIssueUnparkCommandsKeepsNeedsHuman(t *testing.T) {
 	issue := parkedIssue(12680, humanComment(31, "owner", "/hive decision Agents stand down; owner/Console owners handle this"))
 	issue.Labels = []wireLabel{{Name: "needs-human"}, {Name: NeedsDecisionStageLabel}, {Name: "kind/bug"}}
@@ -669,8 +669,8 @@ func TestSweepIssueUnparkCommandsKeepsNeedsHuman(t *testing.T) {
 	// What the issue carries after the sweep, as the stage reconciler sees it.
 	after := []string{"needs-human", "kind/bug", HumanAckLabel}
 	stage, _, reason := IssueStageFor(IssueStageInput{Repo: "org/repo", Number: 12680, Labels: after}, nil)
-	if stage != stagelabels.NeedsDecision || reason != "parked on a person: needs-human" {
-		t.Fatalf("stage after un-park = %s (%s), want %s parked on needs-human", stage, reason, stagelabels.NeedsDecision)
+	if stage != stagelabels.None || reason != "held for a person: needs-human" {
+		t.Fatalf("stage after un-park = %s (%s), want no stage while needs-human holds it", stage, reason)
 	}
 	if !hasHardSuppressIssueLabel(after) {
 		t.Fatal("an issue still carrying needs-human must remain hard-suppressed after un-park")

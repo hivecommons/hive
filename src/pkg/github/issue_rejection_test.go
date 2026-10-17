@@ -230,7 +230,7 @@ func TestCreateIssue_RefusesRejectedTwin(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.appBotLogin = "hive-app[bot]"
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "SyntaxError: unparenthesized multi-except breaks integration at import", Body: "unparenthesized except at __init__.py:45, client.py:321 — see client.py:374", Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "SyntaxError: unparenthesized multi-except breaks integration at import", Body: "unparenthesized except at __init__.py:45, client.py:321 — see client.py:374", Origin: "governor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestCreateIssue_FilesWhenClosedCompleted(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.appBotLogin = "hive-app[bot]"
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug is back in client.py", Body: "regressed at client.py:310", Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug is back in client.py", Body: "regressed at client.py:310", Origin: "governor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestCreateIssue_FilesWhenFileSetDiffers(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.appBotLogin = "hive-app[bot]"
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug in client.py and server.py", Body: "at client.py:290 and server.py:12", Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug in client.py and server.py", Body: "at client.py:290 and server.py:12", Origin: "governor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestCreateIssue_FilesWhenRejectionExpired(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.appBotLogin = "hive-app[bot]"
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug in client.py", Body: "at client.py:290", Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug in client.py", Body: "at client.py:290", Origin: "governor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestCreateIssue_FilesWhenRejectionLookupFails(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.appBotLogin = "hive-app[bot]"
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug in client.py", Body: "at client.py:290", Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug in client.py", Body: "at client.py:290", Origin: "governor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +328,7 @@ func TestCreateIssue_SkipsGateWithoutBotLogin(t *testing.T) {
 	defer srv.Close()
 	c := issueTestClient(t, srv.URL) // appBotLogin left empty
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug in client.py", Body: "at client.py:290", Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "bug in client.py", Body: "at client.py:290", Origin: "governor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestCreateIssue_SkipsGateWithoutFileRefs(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.appBotLogin = "hive-app[bot]"
 
-	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "governance process is unclear", Body: "no file names anything", Origin: "test"})
+	res, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "governance process is unclear", Body: "no file names anything", Origin: "governor"})
 	if err != nil {
 		t.Fatal(err)
 	}

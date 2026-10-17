@@ -203,6 +203,16 @@ type ContributorConnection struct {
 	// lastIdleReason (#2546); NEVER used to route, gate, or adjust a work item's
 	// failure cooldown.
 	lastFailure *ContributorFailure
+	// repoScope is the contributor repository scope this hub last ACKNOWLEDGED
+	// on the connection (hivecommons/hive#12805). Nil when the relay never sent
+	// repo_scope: selection is then exactly as before. repoScopeInvalid is set
+	// when the latest repo_scope was malformed; the connection is served
+	// nothing until a valid one arrives (fail closed). readyScopeVersion is the
+	// scope_version the latest ready carried (0 = not stated); a non-zero value
+	// must equal repoScope.version or selection waits. Guarded by mu.
+	repoScope         *contributorRepoScope
+	repoScopeInvalid  bool
+	readyScopeVersion int
 	// pendingToken is the scoped, expiring GitHub credential minted for currentTask
 	// but NOT yet delivered to the relay (kubestellar/hive#2537). The credential no
 	// longer travels inside task_assign; it is held here until the task's acceptance
@@ -527,15 +537,20 @@ type WSMessage struct {
 	// whose task was revoked and reassigned cannot later overwrite the new owner's
 	// state. Additive: an unversioned relay omits it (0), and the hub falls back to the
 	// pre-existing TaskID match for those clients. Never a credential.
-	TaskGen uint64   `json:"task_gen,omitempty"`
-	Stage   string   `json:"stage,omitempty"`
-	Kind    string   `json:"kind,omitempty"`
-	Repo    string   `json:"repo,omitempty"`
-	Number  int      `json:"number,omitempty"`
-	Title   string   `json:"title,omitempty"`
-	URL     string   `json:"url,omitempty"`
-	Labels  []string `json:"labels,omitempty"`
-	Prompt  string   `json:"prompt,omitempty"`
+	TaskGen uint64 `json:"task_gen,omitempty"`
+	Stage   string `json:"stage,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	Number  int    `json:"number,omitempty"`
+	Title   string `json:"title,omitempty"`
+	URL     string `json:"url,omitempty"`
+	// Forge and Host identify the forge an assignment's Repo belongs to, in the
+	// same terms as the repository-scope ids this hub advertises
+	// (forge/host/owner/name). Additive and omitempty.
+	Forge  string   `json:"forge,omitempty"`
+	Host   string   `json:"host,omitempty"`
+	Labels []string `json:"labels,omitempty"`
+	Prompt string   `json:"prompt,omitempty"`
 	// Requirements carries the hub-derived task-side capability requirements
 	// used by #2547 routing. Additive and advisory: older relays ignore it, and
 	// enforcement already happened server-side before assignment.
@@ -716,6 +731,16 @@ type WSMessage struct {
 	// contributor will be rejected outright, so the hub should prefer a
 	// different contributor. See kubestellar/hive#2203.
 	Permanent bool `json:"permanent,omitempty"`
+	// ScopeVersion, Repositories, Accepted and Unknown carry the contributor
+	// repository scope (hivecommons/hive#12805, capability repo_scope_v1).
+	// repo_scope sends scope_version + mode + repositories; repo_scope_ack
+	// answers scope_version + accepted + unknown (+ reason when rejected);
+	// ready may carry scope_version so the hub only selects under the version
+	// it acknowledged. All additive: relays without the capability omit them.
+	ScopeVersion int      `json:"scope_version,omitempty"`
+	Repositories []string `json:"repositories,omitempty"`
+	Accepted     *bool    `json:"accepted,omitempty"`
+	Unknown      []string `json:"unknown,omitempty"`
 }
 
 type VerdictEvidence struct {
@@ -2283,6 +2308,8 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			s.handleTaskAccepted(msg)
 		case "task_declined":
 			s.handleTaskDeclined(msg)
+		case "repo_scope":
+			s.handleRepoScope(msg)
 		case "task_progress":
 			s.handleTaskProgress(msg)
 		case "task_complete":
@@ -3010,6 +3037,9 @@ func (s *wsSession) handleReady(msg WSMessage) (stop bool) {
 		return false
 	}
 	s.contributor.mu.Lock()
+	// #12805: the scope version this ready was sent under; selection only
+	// proceeds when it matches the acknowledged scope (0 = not stated).
+	s.contributor.readyScopeVersion = msg.ScopeVersion
 	abandoned := s.contributor.currentTask
 	// #7317: captured under the same lock as currentTask so the run record
 	// below can report the task's real wall-clock duration. On the session
@@ -3222,6 +3252,10 @@ func (s *wsSession) handleTaskAccepted(msg WSMessage) {
 // decline an offered task after metadata but before the scoped credential is
 // delivered. This is local capacity, not a task failure: release the lease
 // and connection state without recording failure cooldown or trust impact.
+//
+// A decline with reason out_of_contributor_scope (hivecommons/hive#12805) is
+// "not this contributor's work": it additionally hands back the hourly/daily
+// rate-window slot the claim consumed, so it costs the contributor nothing.
 func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 	h := s.h
 	contributor := s.contributor
@@ -3236,6 +3270,7 @@ func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 		!contributor.credentialDelivered &&
 		contributor.pendingToken != "" {
 		declined := contributor.currentTask
+		assignedAt := contributor.taskAssignedAt
 		contributor.currentTask = nil
 		contributor.currentTaskGen = h.nextTaskGen()
 		contributor.lastLeaseRenew = time.Time{}
@@ -3247,6 +3282,9 @@ func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 		contributor.tokenMintedAt = time.Time{}
 		contributor.mu.Unlock()
 		h.revokeLease(identityOf(contributor), msg.TaskID)
+		if msg.Reason == taskDeclinedOutOfScope {
+			h.unrecordAssignment(identityOf(contributor), assignedAt)
+		}
 		h.logger.Info("[contribute-ws] task declined by contributor preflight",
 			"username", contributor.profile.GitHubUsername,
 			"task", msg.TaskID,
@@ -3263,6 +3301,90 @@ func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 		"client_gen", msg.TaskGen,
 	)
 	contributor.mu.Unlock()
+}
+
+// handleRepoScope records a contributor repository scope (hivecommons/hive
+// #12805) and answers with repo_scope_ack. A valid scope replaces the
+// acknowledged one; a malformed scope clears it and fails the connection
+// closed — selectTask serves it nothing until a valid scope arrives. Ids this
+// hub does not offer are echoed back in unknown; they are kept in the scope
+// (harmless: they never match a candidate) so the relay can show them.
+func (s *wsSession) handleRepoScope(msg WSMessage) {
+	h := s.h
+	c := s.contributor
+	if c == nil {
+		return
+	}
+	scope, ids, reason := parseRepoScope(msg)
+	ack := WSMessage{Type: "repo_scope_ack", Seq: h.nextSeq(), ScopeVersion: msg.ScopeVersion}
+	if reason != "" {
+		c.mu.Lock()
+		c.repoScope = nil
+		c.repoScopeInvalid = true
+		c.mu.Unlock()
+		accepted := false
+		ack.Accepted = &accepted
+		ack.Reason = reason
+		h.logger.Warn("[contribute-ws] rejected malformed repo_scope; serving nothing until a valid scope arrives",
+			"username", contributorUsername(c), "scope_version", msg.ScopeVersion, "reason", reason)
+	} else {
+		var unknown []string
+		if scope.restricts() && h.server != nil {
+			offered := make(map[string]struct{})
+			for _, r := range h.server.contributeEligibleRepositories() {
+				offered[r.ID] = struct{}{}
+			}
+			for _, id := range ids {
+				if _, ok := offered[id]; !ok {
+					unknown = append(unknown, id)
+				}
+			}
+		}
+		c.mu.Lock()
+		c.repoScope = scope
+		c.repoScopeInvalid = false
+		c.mu.Unlock()
+		accepted := true
+		ack.Accepted = &accepted
+		ack.Mode = scope.mode
+		ack.Unknown = unknown
+		h.logger.Info("[contribute-ws] repo_scope acknowledged",
+			"username", contributorUsername(c), "scope_version", scope.version,
+			"mode", scope.mode, "repositories", len(ids), "unknown", len(unknown))
+	}
+	if err := c.send(ack); err != nil {
+		h.logger.Warn("[contribute-ws] failed to send repo_scope_ack", "error", err)
+	}
+}
+
+// repoScopeGateReason is the connection-level half of the contributor scope
+// gate (hivecommons/hive#12805), checked before any selection: a connection
+// whose latest scope was malformed is served nothing, and a ready sent under a
+// scope version the hub has not acknowledged waits. "" means proceed.
+func repoScopeGateReason(c *ContributorConnection) string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.repoScopeInvalid {
+		return taskUnavailableRepoScopeInvalid
+	}
+	if c.readyScopeVersion != 0 && (c.repoScope == nil || c.repoScope.version != c.readyScopeVersion) {
+		return taskUnavailableNoSelectedWork
+	}
+	return ""
+}
+
+// acknowledgedRepoScope snapshots the connection's acknowledged scope. Nil
+// means unrestricted.
+func acknowledgedRepoScope(c *ContributorConnection) *contributorRepoScope {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.repoScope
 }
 
 // handleTaskProgress is the lease phase: progress reports renew the lease and

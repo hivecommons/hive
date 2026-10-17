@@ -1,1 +1,0 @@
-- Populate historical evidence work-balance weeks from the backfilled GitHub issue series, preserving collector authority and per-repository audit fallback when coverage is incomplete (#12670).

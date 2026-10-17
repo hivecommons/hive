@@ -70,6 +70,12 @@ type StageLabelPolicy struct {
 	// GitHub permits (same-repo head or maintainer_can_modify) instead of a
 	// superseding App PR (governor.labels.stage.adoption.in_place, default on).
 	AdoptInPlace bool
+	// AdoptionStrictAttribution makes in-place adoption yield on a changed head
+	// unless GitHub links the commit to the App bot (the stage store only
+	// caches heads that already passed that check). It defaults on after the
+	// App-linked git identity rollout, with a first-deploy safety valve in
+	// settleInPlaceAdoption.
+	AdoptionStrictAttribution bool
 	// DCORequired resolves the per-repo `governor.labels.stage.dco.required`
 	// override for "owner/repo"; ok false means "detect" (a DCO context in
 	// the branch's required checks or on the head). nil = always detect.
@@ -1067,7 +1073,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				// adoption; a head the contributor pushed yields it.
 				// Settled on every head change whatever the lane sees —
 				// the hive's fix going green must not hide the yield.
-				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec)
+				n, err := c.settleInPlaceAdoption(ctx, store, key, obs, prevRec, policy)
 				result.Comments += n
 				if err != nil && firstErr == nil {
 					firstErr = err

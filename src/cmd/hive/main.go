@@ -2080,9 +2080,29 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PRsAllowed:       b.cfg.Project.PRsAllowed(),
 		PolicyDir:        b.policyDirPath,
 		AppAuthoredPRs:   b.cfg.GitHub.AppAuthoredPRsEnabled(),
+		AppBotLogin:      b.cfg.GitHub.BotLogin(),
+		AppBotUserID:     b.appBotUserIDResolver(),
 		BobSessionPrefix: b.cfg.Governor.Bob.SessionPrefix,
 	}
 	return true
+}
+
+// appBotUserIDResolver returns the lazy lookup of the App bot's GitHub USER id
+// that push-capable agents' git noreply email is keyed by. GitHub links
+// `<id>+<login>@users.noreply.github.com` by the bot user id, which differs
+// from the App id, so this goes through GET /users/<slug>[bot] (cached on the
+// client after the first success) rather than config. Nil without a client.
+func (b *boot) appBotUserIDResolver() func() int64 {
+	if b.ghClient == nil {
+		return nil
+	}
+	return func() int64 {
+		ctx := b.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return b.ghClient.AppBotUserID(ctx)
+	}
 }
 
 // bootAgents constructs the agent manager and everything that hangs off it
@@ -5918,9 +5938,10 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
 		}
-		// Provenance-only rename (from-review / origin/review → origin/reviewer). Nothing reads
-		// either label as a gate, so a failure here only leaves old names on
-		// open items; the marker is not written and the next boot retries.
+		// Provenance-only migration. Retired reviewer labels map to agent/reviewer;
+		// redundant lane-origin labels are removed. Nothing reads origin/* as a gate,
+		// so a failure here only leaves old names on open items; the marker is not
+		// written and the next boot retries.
 		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
 			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyOriginReviewLabel+" or "+github.LegacyFromReviewLabel, "error", err)
 		}

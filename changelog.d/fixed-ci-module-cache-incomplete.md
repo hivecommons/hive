@@ -1,1 +1,0 @@
-- Classify missing files in the runner's versioned Go module cache as infrastructure failures so CI can use its existing bounded rerun and infrastructure reporting.

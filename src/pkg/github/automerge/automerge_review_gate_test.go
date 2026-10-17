@@ -2,6 +2,9 @@ package automerge
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/evidence"
@@ -184,6 +187,89 @@ func TestSelfAuthoredSweepReviewGateReadsKnobsEveryEvaluation(t *testing.T) {
 	}
 }
 
+func TestSelfMergeReviewGateTrustedHumanApproval(t *testing.T) {
+	tests := []struct {
+		name         string
+		verdict      ReviewGateVerdict
+		reviews      []map[string]any
+		wantReason   string
+		wantOutcome  string
+		wantApprover string
+		wantCalls    int
+	}{
+		{
+			name:    "human approval clears requires human",
+			verdict: reviewGateAwaiting,
+			reviews: []map[string]any{{
+				"state": "APPROVED", "commit_id": "sha7", "user": map[string]string{"login": "bob"},
+			}},
+			wantOutcome:  ReviewGateOutcomeHumanApproved,
+			wantApprover: "bob",
+			wantCalls:    1,
+		},
+		{
+			name:        "stale approval does not clear",
+			verdict:     reviewGateAwaiting,
+			reviews:     []map[string]any{{"state": "APPROVED", "commit_id": "oldsha", "user": map[string]string{"login": "bob"}}},
+			wantReason:  autoMergeReasonReviewGatePrefix + ReviewGateOutcomeAwaiting,
+			wantOutcome: ReviewGateOutcomeAwaiting,
+			wantCalls:   1,
+		},
+		{
+			name:        "untrusted reviewer does not clear",
+			verdict:     reviewGateAwaiting,
+			reviews:     []map[string]any{{"state": "APPROVED", "commit_id": "sha7", "user": map[string]string{"login": "mallory"}}},
+			wantReason:  autoMergeReasonReviewGatePrefix + ReviewGateOutcomeAwaiting,
+			wantOutcome: ReviewGateOutcomeAwaiting,
+			wantCalls:   1,
+		},
+		{
+			name:        "changes requested is not overridden",
+			verdict:     reviewGateChanges,
+			wantReason:  autoMergeReasonReviewGatePrefix + "changes-requested:correctness,security",
+			wantOutcome: "changes-requested:correctness,security",
+		},
+		{
+			name:        "swarm approval makes no review API call",
+			verdict:     reviewGateApproved,
+			wantOutcome: ReviewGateOutcomeApproved,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reviewCalls := 0
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7/reviews" {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+				reviewCalls++
+				json.NewEncoder(w).Encode(tt.reviews)
+			}))
+			defer api.Close()
+
+			var rec reviewGateRecords
+			c := newReviewGateSweepClient(api.URL, ReviewGate{
+				Mode:    func() string { return ReviewGateModeEnforce },
+				Verdict: func(string, int, string) ReviewGateVerdict { return tt.verdict },
+			}, &rec)
+			reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", stageLaneSelf, 7, nil, "sha7")
+			if reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
+			}
+			if reviewCalls != tt.wantCalls {
+				t.Fatalf("review API calls = %d, want %d", reviewCalls, tt.wantCalls)
+			}
+			if len(rec.evals) != 1 {
+				t.Fatalf("evaluations = %+v, want one", rec.evals)
+			}
+			e := rec.evals[0]
+			if e.Outcome != tt.wantOutcome || e.HumanApprover != tt.wantApprover || e.WouldHold != (tt.wantReason != "") {
+				t.Fatalf("evaluation = %+v, want outcome %q approver %q", e, tt.wantOutcome, tt.wantApprover)
+			}
+		})
+	}
+}
+
 // Only the App's own PRs are gated; a nil gate or a trusted-bot lane PR is
 // never evaluated.
 func TestSelfMergeReviewGateScope(t *testing.T) {
@@ -203,7 +289,7 @@ func TestSelfMergeReviewGateScope(t *testing.T) {
 				tt.gate.Verdict = func(string, int, string) ReviewGateVerdict { asked++; return reviewGateNoBundle }
 				c.SetReviewGate(tt.gate)
 			}
-			if reason := c.selfMergeReviewGate("acme/widget", "acme", "widget", tt.lane, 7, nil, "sha7"); reason != "" || asked != 0 {
+			if reason := c.selfMergeReviewGate(context.Background(), "acme/widget", "acme", "widget", tt.lane, 7, nil, "sha7"); reason != "" || asked != 0 {
 				t.Fatalf("reason = %q, asked = %d; want no evaluation", reason, asked)
 			}
 		})

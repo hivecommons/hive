@@ -1,1 +1,0 @@
-- Preserve agent-observation counts in hive-state windows and hub sanitization; do not score an unobserved zero idle ratio as perfect efficiency. Older spokes with positive idle ratios remain measurable.

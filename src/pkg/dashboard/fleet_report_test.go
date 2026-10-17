@@ -124,3 +124,34 @@ func TestFleetReportEvidenceIgnoresInferenceBlockedAgents(t *testing.T) {
 		t.Fatalf("inference-blocked agent must not be hive-code evidence: %#v", got)
 	}
 }
+
+func TestFleetReportEvidenceAgentStallRequiresRecurrence(t *testing.T) {
+	cases := []struct {
+		name      string
+		agent     FrontendAgent
+		wantCount int
+	}{
+		{"single nudge", FrontendAgent{Name: "a", Role: "r", State: "running", StallNudges: 1}, 0},
+		{"two nudges", FrontendAgent{Name: "a", Role: "r", State: "running", StallNudges: 2}, 0},
+		{"three nudges", FrontendAgent{Name: "a", Role: "r", State: "running", StallNudges: 3}, 3},
+		{"live stalled status", FrontendAgent{Name: "a", Role: "r", State: "running", StructuredStatus: "Stalled: waiting", StallNudges: 0}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{}
+			status := &StatusPayload{Agents: []FrontendAgent{tc.agent}}
+			got := 0
+			for _, ev := range s.buildFleetReportEvidence(status) {
+				if ev.ErrorClass == "agent stall" {
+					got = ev.Count
+					if ev.Window != 0 {
+						t.Fatalf("cumulative stall count must not claim a window: %v", ev.Window)
+					}
+				}
+			}
+			if got != tc.wantCount {
+				t.Fatalf("agent stall count = %d, want %d", got, tc.wantCount)
+			}
+		})
+	}
+}

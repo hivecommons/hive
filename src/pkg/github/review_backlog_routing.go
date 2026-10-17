@@ -149,7 +149,7 @@ func (s githubIssueBacklogSink) ItemOpen(ctx context.Context, repo string, ref R
 // reviewBacklogTarget resolves the sink and labels for one filing pass. When
 // the configured destination could not be built (its work source is not
 // active or not configured) the sink is the GitHub issue fallback, and the
-// origin/reviewer label is always applied so the fallback items stay findable.
+// agent/reviewer label is always applied so the fallback items stay findable.
 func (c *Client) reviewBacklogTarget(r ReviewBacklogRouting) (ReviewBacklogSink, []string) {
 	labels := append([]string(nil), r.Backlog.EffectiveLabels()...)
 	sink := r.Sink

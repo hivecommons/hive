@@ -404,6 +404,7 @@ func (h *ContributeWSHub) sendFixTask(c *ContributorConnection, user string, d *
 		Type: "task_assign", Seq: h.nextSeq(), TaskID: d.ID, TaskGen: h.nextTaskGen(),
 		Kind: taskKindFixPR, Priority: priority, Mode: string(d.Mode),
 		Repo: assign.Repo, Number: assign.Number, Title: assign.Title, URL: assign.URL,
+		Forge: repoScopeDefaultForge, Host: h.assignmentHost(),
 		FixPRs: prs, Prompt: fixPRInstruction(prs, d.Mode),
 	}
 	if h.fixDispatched != nil {
