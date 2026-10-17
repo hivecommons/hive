@@ -243,7 +243,7 @@ Prerequisites:
   shipped v6 work (`src/docs/roadmap.md:55`).
 - Configure the Discord bot token, channel ID, and the maintainer's Discord user
   ID in `allowed_users`; the Discord config structure uses `bot_token`,
-  `channel_id`, and `allowed_users` (`src/pkg/config/notifications_config.go:91-105`).
+  `channel_id`, and `allowed_users` (`src/pkg/config/notifications_config.go:99-116`).
   The backend refuses to start without the bot token (`Bot.Start`, `src/pkg/discord/bot.go:139`).
 - In the Discord Developer Portal, enable the **Message Content Intent**
   (Bot → Privileged Gateway Intents) for the application backing the bot
@@ -292,7 +292,7 @@ Prerequisites:
   `client_secret`, `team_id`, `channel_id`, `webhook_url`, and an
   `allowed_users` entry for the maintainer's Azure AD object ID. The config
   field names and fail-closed allowed-user contract are in `MSTeamsConfig`
-  (`src/pkg/config/notifications_config.go:67-89`), and validation/startup require all
+  (`src/pkg/config/notifications_config.go:75-97`), and validation/startup require all
   Teams connection fields (`src/pkg/config/validate.go:107-125`,
   `src/pkg/msteams/bot.go:180-198`).
 - `webhook_url` must be a Teams **Workflows** webhook URL: in the target
@@ -301,9 +301,19 @@ Prerequisites:
   Office 365 Incoming Webhook connectors were retired by Microsoft in May 2026;
   connector URLs no longer work and must not be used.
 - Inbound commands are read from top-level channel posts and from thread
-  replies under the bot's most recent posts (for example checkpoint prompts).
-  Replies under other users' posts are not observed; send commands there as a
-  new top-level post.
+  replies under only the **five newest bot-authored root posts** (including
+  checkpoint prompts). Once five newer bot posts land, replies under an older
+  prompt are silently ignored, **even if its checkpoint is still pending**.
+  Notifications, command replies, each 4000-character message split, and the
+  15-minute status heartbeat consume this window: about 75 minutes with only
+  heartbeats, potentially much sooner with other traffic. This is a post-count
+  limit, not a time-based expiry (`replyThreadLimit` and `trackThread` in
+  `src/pkg/msteams/bot.go`). Replies under other users' posts are never observed.
+- For an older checkpoint prompt, send a **new top-level channel post**, not a
+  thread reply: `approve` when you have exactly one pending checkpoint, or
+  `!runs approve <key>` to select a run explicitly. Use `!runs list` to find the
+  run key. Approval still requires an `allowed_users` entry with the owner role;
+  this workaround does not bypass authorization.
 
 Run:
 

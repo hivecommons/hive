@@ -1,0 +1,1 @@
+- Document the Teams five-post thread-reply polling limit and top-level checkpoint approval workaround in `MSTeamsConfig` and the v6 readiness runbook ([#12739](https://github.com/hivecommons/hive/issues/12739)).

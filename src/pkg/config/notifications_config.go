@@ -64,6 +64,14 @@ type MatrixConfig struct {
 	AllowedUsers []string `yaml:"allowed_users,omitempty"`
 }
 
+// MSTeamsConfig configures the Teams chat surface. Inbound thread replies are
+// polled only under the five newest bot-authored root posts. After five newer
+// bot posts, replies under an older checkpoint prompt are ignored, even while
+// its checkpoint is pending. Notifications, command replies, split message parts,
+// and the 15-minute heartbeat all consume this window (~75 minutes with only
+// heartbeats). For older prompts, send a new top-level channel post: approve
+// (one pending checkpoint for you) or !runs approve <key> (explicit run key).
+// Approval still requires an allowed user with the owner role.
 type MSTeamsConfig struct {
 	Enabled      bool   `yaml:"enabled"`
 	TenantID     string `yaml:"tenant_id"`
