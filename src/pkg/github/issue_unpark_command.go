@@ -275,7 +275,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 		return false, err
 	}
 	if !labelDriven {
-		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, number, issue.GetBody(), comments); err != nil {
+		if err := c.ensureUnparkNoticeComment(ctx, owner, repo, number, issue.GetBody(), issue.GetUser(), comments); err != nil {
 			return false, err
 		}
 	}
@@ -334,7 +334,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 
 	switch command.Kind {
 	case unparkCommandHelp:
-		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkHelpFor(c.unparkMenuFor(issue.GetBody(), comments))); err != nil {
+		if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), renderUnparkHelpFor(c.unparkMenuFor(issue.GetBody(), issue.GetUser(), comments))); err != nil {
 			return false, err
 		}
 		result.Replies++
@@ -887,8 +887,8 @@ func unparkOptionLetter(line string) string {
 // issue and edits it in place when the issue's options change, so a maintainer
 // reading the bottom of the issue always sees the current commands. Options
 // and owner-only steps the hive posted in comments count as well as the body.
-func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo string, number int, issueBody string, comments []*gh.IssueComment) error {
-	desired := renderUnparkNotice(c.unparkMenuFor(issueBody, comments))
+func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo string, number int, issueBody string, issueAuthor *gh.User, comments []*gh.IssueComment) error {
+	desired := renderUnparkNotice(c.unparkMenuFor(issueBody, issueAuthor, comments))
 	for _, cm := range comments {
 		if cm == nil || !strings.Contains(cm.GetBody(), unparkNoticeMarker) {
 			continue
