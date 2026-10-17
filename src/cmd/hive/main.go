@@ -9730,13 +9730,15 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
 		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
 		prs = append(prs, review.PullRequest{
-			Repo:    pr.Repo,
-			Number:  pr.Number,
-			Title:   pr.Title,
-			Author:  pr.Author,
-			HeadSHA: pr.HeadSHA,
-			URL:     pr.URL,
-			Lane:    string(lane),
+			Repo:       pr.Repo,
+			Number:     pr.Number,
+			Title:      pr.Title,
+			Author:     pr.Author,
+			HeadSHA:    pr.HeadSHA,
+			UpdatedAt:  pr.UpdatedAt,
+			BodyDigest: pr.BodyDigest,
+			URL:        pr.URL,
+			Lane:       string(lane),
 			// Authorship signal for the fix gate (#8421): a PR an agent opened
 			// on a person's credentials is still the hive's own work.
 			HiveAttributed: pr.HiveAttributed,

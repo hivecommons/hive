@@ -194,6 +194,7 @@ type ContributorLaneVerdict struct {
 	Verdict           string
 	DecisionRequested bool
 	DecisionQuestion  string
+	HumanSummaries    []string
 }
 
 // ContributorLaneVerdictFunc resolves the reviewer verdict for repo#number at

@@ -181,15 +181,24 @@ func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automer
 }
 
 func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, number int, headSHA string, approved bool) automerge.ContributorLaneVerdict {
+	var match review.Aggregate
+	var ok bool
 	for _, item := range artifact.Items {
 		if item.Number == number && strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) && strings.TrimSpace(item.HeadSHA) == strings.TrimSpace(headSHA) {
-			return automerge.ContributorLaneVerdict{
-				Configured:        true,
-				Approved:          approved,
-				Verdict:           string(item.Verdict),
-				DecisionRequested: item.DecisionRequested,
-				DecisionQuestion:  item.DecisionQuestion,
+			if !ok || item.RecordedAt.After(match.RecordedAt) {
+				match = item
+				ok = true
 			}
+		}
+	}
+	if ok {
+		return automerge.ContributorLaneVerdict{
+			Configured:        true,
+			Approved:          approved && match.MergeEligible && match.Verdict == review.VerdictApprove,
+			Verdict:           string(match.Verdict),
+			DecisionRequested: match.DecisionRequested,
+			DecisionQuestion:  match.DecisionQuestion,
+			HumanSummaries:    append([]string(nil), match.HumanSummaries...),
 		}
 	}
 	return automerge.ContributorLaneVerdict{Configured: true, Approved: approved}

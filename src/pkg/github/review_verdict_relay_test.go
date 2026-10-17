@@ -50,6 +50,20 @@ func validVerdictJSONWithHead(t *testing.T, repo string, number int, perspective
 	return string(raw)
 }
 
+func validVerdictJSONWithHeadAndBodyDigest(t *testing.T, repo string, number int, perspective, verdict, headSHA, bodyDigest string) string {
+	t.Helper()
+	var report map[string]any
+	if err := json.Unmarshal([]byte(validVerdictJSONWithHead(t, repo, number, perspective, verdict, headSHA)), &report); err != nil {
+		t.Fatalf("unmarshal verdict fixture: %v", err)
+	}
+	report["body_digest"] = bodyDigest
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(raw)
+}
+
 func withVerdictDispatchState(t *testing.T, state review.DispatchState) {
 	t.Helper()
 	dir := t.TempDir()
@@ -117,13 +131,14 @@ func TestRecordReviewVerdictIsCollectable(t *testing.T) {
 func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
 	dir := t.TempDir()
 	c := &Client{logger: testLogger()}
-	raw := validVerdictJSONWithHead(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123")
+	raw := validVerdictJSONWithHeadAndBodyDigest(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123", "body-v1")
 	withVerdictDispatchState(t, review.DispatchState{Recent: []review.RecentReview{{
 		Repo:        "projectbluefin/common",
 		Number:      1121,
 		Perspective: review.PerspectiveCorrectness,
 		Agent:       "reviewer",
 		HeadSHA:     "abc123",
+		BodyDigest:  "body-v1",
 		Confirmed:   time.Now().UTC(),
 	}}})
 	body := "Looks correct, but this is a maintainer decision.\n\n<!-- hive-verdict: needs-decision -->\n<!-- hive-decision-question: @clubanderson should decide whether this groundwork lands before its consumer. -->"
@@ -141,6 +156,51 @@ func TestRecordReviewVerdictPromotesDecisionMarker(t *testing.T) {
 	if got.Verdict != review.VerdictRequiresHuman || !got.DecisionRequested ||
 		!strings.Contains(got.DecisionQuestion, "groundwork lands before its consumer") {
 		t.Fatalf("aggregate = %+v, want decision request", got)
+	}
+	if got.BodyDigest != "body-v1" {
+		t.Fatalf("BodyDigest = %q, want dispatch digest", got.BodyDigest)
+	}
+}
+
+func TestRecordReviewVerdictRejectsMissingBodyDigestForBodyBoundDispatch(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHead(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveCorrectness,
+		Agent:       "reviewer",
+		HeadSHA:     "abc123",
+		BodyDigest:  "body-v2",
+		Dispatched:  time.Now().UTC(),
+	}}})
+
+	recorded := c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
+
+	if len(recorded) != 0 {
+		t.Fatalf("recorded = %+v, want missing body digest rejected", recorded)
+	}
+}
+
+func TestRecordReviewVerdictRejectsMismatchedBodyDigest(t *testing.T) {
+	dir := t.TempDir()
+	c := &Client{logger: testLogger()}
+	raw := validVerdictJSONWithHeadAndBodyDigest(t, "projectbluefin/common", 1121, "correctness", "approve", "abc123", "body-v1")
+	withVerdictDispatchState(t, review.DispatchState{Pending: []review.PendingReview{{
+		Repo:        "projectbluefin/common",
+		Number:      1121,
+		Perspective: review.PerspectiveCorrectness,
+		Agent:       "reviewer",
+		HeadSHA:     "abc123",
+		BodyDigest:  "body-v2",
+		Dispatched:  time.Now().UTC(),
+	}}})
+
+	recorded := c.recordReviewVerdict(ReviewRequest{Repo: "projectbluefin/common", Number: 1121, Agent: "reviewer", Report: raw}, dir)
+
+	if len(recorded) != 0 {
+		t.Fatalf("recorded = %+v, want mismatched body digest rejected", recorded)
 	}
 }
 

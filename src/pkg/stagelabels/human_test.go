@@ -124,6 +124,10 @@ func TestRouteHumanDecision(t *testing.T) {
 			e.Verdict = VerdictRequiresHuman
 			e.DecisionQuestion = "@clubanderson should decide whether to land this now."
 		}, "reviewer question: @clubanderson should decide whether to land this now."},
+		{"requires_human summary", func(e *Evidence) {
+			e.Verdict = VerdictRequiresHuman
+			e.HumanSummaries = []string{"security requires human: relay owner should confirm before merge"}
+		}, "reviewer summary: security requires human: relay owner should confirm before merge"},
 		{"lane rule", func(e *Evidence) { e.Cause, e.CauseReason = CauseDecision, "the lane excludes `workflow-paths` edits" }, "the lane excludes `workflow-paths` edits"},
 		{"lane rule unnamed", func(e *Evidence) { e.Cause = CauseDecision }, "the automerge lane will not merge this unattended"},
 	}

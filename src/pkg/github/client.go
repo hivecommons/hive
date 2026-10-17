@@ -719,6 +719,7 @@ type PullRequest struct {
 	// judge this PR against, derived from closing keywords before the body is
 	// discarded from the actionable snapshot.
 	ScopeContract string        `json:"scope_contract,omitempty"`
+	BodyDigest    string        `json:"body_digest,omitempty"`
 	Rework        PRReworkStats `json:"rework,omitempty"`
 	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
 	// It is intentionally NOT a bool: a bool zero-values to false, which is
@@ -1728,6 +1729,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 			HiveRun:        runKey,
 			HivePlan:       planRef,
 			ScopeContract:  scopeContract,
+			BodyDigest:     review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody()),
 			// Mergeable is deliberately NOT set here. The PullRequests.List
 			// endpoint never populates "mergeable" — GitHub computes it
 			// per-PR and returns it only from the single-PR GET. Reading it

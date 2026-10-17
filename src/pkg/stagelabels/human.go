@@ -113,6 +113,9 @@ type Evidence struct {
 	// DecisionQuestion is the maintainer-facing question from the reviewer
 	// verdict/comment, when the swarm explicitly deferred a product call.
 	DecisionQuestion string
+	// HumanSummaries are reviewer summaries for requires_human verdicts that
+	// did not carry a structured decision question.
+	HumanSummaries []string
 	// SelfAuthored selects 070 fixing over 072 returned-to-contributor for
 	// the "author must act" outcome.
 	SelfAuthored bool
@@ -202,6 +205,12 @@ func RouteHuman(e Evidence) Route {
 		decide = append(decide, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
 		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
 			decide = append(decide, "reviewer question: "+q)
+		} else {
+			for _, summary := range e.HumanSummaries {
+				if s := strings.TrimSpace(summary); s != "" {
+					decide = append(decide, "reviewer summary: "+s)
+				}
+			}
 		}
 	}
 	if e.Sentinel {
