@@ -1,0 +1,1 @@
+- Start a stopped agent selected by the governor before delivering its kick, so continuous cadence can restore a tmux session after a hive restart instead of recording a failed kick and leaving the agent stopped.

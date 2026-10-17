@@ -7089,6 +7089,22 @@ func runEvalCycle(
 		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
 			sendKick:         agentMgr.SendKick,
+			startStoppedAgent: func(agentName string) error {
+				st, err := agentMgr.GetStatusFast(agentName)
+				if err != nil || st == nil || st.State != agent.StateStopped {
+					return nil
+				}
+				agentMgr.MarkStartupLaunchQueued([]string{agentName})
+				if err := agentMgr.Start(ctx, agentName); err != nil {
+					if stoppedAgentStartErrorIsBenign(err) {
+						logger.Info("stopped agent start raced with existing launch before governor kick", "agent", agentName, "error", err)
+						return nil
+					}
+					return fmt.Errorf("start stopped agent: %w", err)
+				}
+				logger.Info("started stopped agent before governor kick", "agent", agentName)
+				return nil
+			},
 			startKickSpan: func(agentName string) func(error) {
 				agentCfg := cfg.Agents[agentName]
 				_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
