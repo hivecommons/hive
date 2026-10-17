@@ -13,13 +13,14 @@ package github
 //     covering PR's own stage (read from the shared stage store the
 //     automerge sweep fills) is narrated in the reason, never written as
 //     a second label — 050+ are PR-only stages (hivecommons/hive#12451)
-//   - parked on a person: carrying stage/085-needs-decision itself (the
-//     single park signal, hivecommons/hive#12683 — an agent, the relay or a
-//     person put it there and it stays until a maintainer un-parks), or an
-//     escalation label (needs-human, needs-spec, or the retired
-//     needs-decision / needs-direction) → stage/085-needs-decision, the same
-//     "a human decision is owed" stage PRs use; the label that parked it is
-//     the reason
+//   - parked on a decision/spec: carrying stage/085-needs-decision itself (the
+//     single decision park signal, hivecommons/hive#12683 — an agent, the
+//     relay or a person put it there and it stays until a maintainer un-parks),
+//     needs-spec, or the retired needs-decision / needs-direction
+//     → stage/085-needs-decision, the same "a human decision is owed" stage
+//     PRs use; the label that parked it is the reason
+//   - held for a person by needs-human → no stage label; the issue is already
+//     hard-suppressed from the agent queue by the label itself
 //   - carrying hive/likely-done (merged PR, awaiting confirmation), or
 //     filtered out of the pipeline by any other exempt label → no stage.
 //
@@ -128,6 +129,9 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 	if issueHasLabel(in.Labels, LikelyDoneLabel) {
 		return stagelabels.None, false, "merged PR awaiting confirmation"
 	}
+	if issueHeldByNeedsHuman(in) {
+		return stagelabels.None, false, "held for a person: " + issueNeedsHumanLabel
+	}
 	if label := parkedOnPersonLabel(in); label != "" {
 		return stagelabels.NeedsDecision, false, "parked on a person: " + label
 	}
@@ -154,6 +158,11 @@ func IssueStageFor(in IssueStageInput, prStage func(repo string, number int) sta
 		return stagelabels.CoveredByPR, false, "open PR covers it"
 	}
 	return stagelabels.None, false, "outside the pipeline: " + in.Bucket
+}
+
+func issueHeldByNeedsHuman(in IssueStageInput) bool {
+	return hasIssueNeedsHumanLabel(in.Labels) ||
+		in.Bucket == workBucketFiltered && strings.EqualFold(strings.TrimSpace(in.Reason), issueNeedsHumanLabel)
 }
 
 // parkedOnPersonLabel returns the escalation label that parks the issue on

@@ -196,9 +196,10 @@ func TestIssueStageFor(t *testing.T) {
 		{"covered, cross-repo PR staged: stays 040", IssueStageInput{Repo: "acme/other", Bucket: workBucketClaimedByPR, Claim: &IssueClaimContext{PRNumber: 99, PRRepo: "acme/widgets"}}, stagelabels.CoveredByPR, true},
 		{"likely-done is no stage", IssueStageInput{Labels: []string{LikelyDoneLabel}}, stagelabels.None, false},
 		{"filtered out", IssueStageInput{Bucket: "filtered"}, stagelabels.None, false},
+		{"needs-human is human-held without stage 085", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"needs-human", stagelabels.NeedsDecision.Label()}}, stagelabels.None, false},
 		{"parked by needs-direction (#12481)", IssueStageInput{Bucket: "filtered", Reason: "needs-direction", Labels: []string{"help wanted", "needs-direction", stagelabels.PRInProgress.Label()}}, stagelabels.NeedsDecision, false},
 		{"parked by needs-decision", IssueStageInput{Bucket: "filtered", Reason: "needs-decision", Labels: []string{"needs-decision"}}, stagelabels.NeedsDecision, false},
-		{"parked by renamed label, bucket reason canonical", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"triage/needs-maintainer"}}, stagelabels.NeedsDecision, false},
+		{"renamed needs-human bucket is human-held without stage 085", IssueStageInput{Bucket: "filtered", Reason: "needs-human", Labels: []string{"triage/needs-maintainer"}}, stagelabels.None, false},
 		{"parked label still on a claimed issue", IssueStageInput{Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), Labels: []string{"needs-spec"}}, stagelabels.NeedsDecision, false},
 		{"exempt label is not parked", IssueStageInput{Bucket: "filtered", Reason: "Exempt label", Labels: []string{"wontfix"}}, stagelabels.None, false},
 		{"reporter triage", IssueStageInput{Bucket: "reporter_triage"}, stagelabels.None, false},
@@ -216,6 +217,30 @@ func TestIssueStageFor(t *testing.T) {
 				t.Fatalf("%s is not an issue stage", got)
 			}
 		})
+	}
+}
+
+func TestSyncIssueStageLabels_NeedsHumanClearsStaleDecisionStage(t *testing.T) {
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	result := &ActionableResult{}
+	appendRepoWorkIssueDetail(result, Issue{
+		Repo:   "acme/widgets",
+		Number: 6,
+		Labels: []string{issueNeedsHumanLabel, stagelabels.NeedsDecision.Label()},
+	}, workBucketFiltered, issueNeedsHumanLabel)
+
+	res := syncSeeded(fake, c, result, stagelabels.NewStore("", stageNow), stageNow())
+	if res.Items != 1 {
+		t.Fatalf("items = %d, want 1", res.Items)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if len(fake.added[6]) != 0 {
+		t.Fatalf("needs-human issue must not be re-staged: added=%v", fake.added[6])
+	}
+	if got := strings.Join(fake.removed[6], ","); got != stagelabels.NeedsDecision.Label() {
+		t.Fatalf("removed = %v, want stale %s cleared", fake.removed[6], stagelabels.NeedsDecision.Label())
 	}
 }
 
