@@ -14,6 +14,7 @@ var dashboardLayoutIDs9062 = []string{
 	"runs-section",
 	"pr-throughput-section",
 	"repos-section",
+	"activity-monitor-section",
 	"knowledge-section",
 	"review-queue-section",
 	"contributors-section",
@@ -38,6 +39,7 @@ var dashboardDefaultNavOrder9062 = []string{
 	"runs-section",
 	"pr-throughput-section",
 	"repos-section",
+	"activity-monitor-section",
 	"knowledge-section",
 	"review-queue-section",
 	"contributors-section",
@@ -53,7 +55,7 @@ var dashboardDefaultNavOrder9062 = []string{
 
 var dashboardDefaultLayoutOrder9062 = append([]string{}, dashboardLayoutIDs9062...)
 
-const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
+const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
 
 func jsArray9062(ids []string) string {
 	var b strings.Builder

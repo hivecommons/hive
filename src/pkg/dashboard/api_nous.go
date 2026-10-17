@@ -34,6 +34,12 @@ func (s *Server) handleNousStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	ledger := append([]map[string]interface{}(nil), s.deps.Nous.Ledger...)
 	principles := append([]NousPrinciple(nil), s.deps.Nous.Principles...)
+	// Mode is the live trust-ladder knob (PUT /api/nous/mode); the Status
+	// map only carries the boot-time value, so without this the lab kept
+	// reporting "observe" after the operator switched to suggest (#12532).
+	if s.deps.Nous.Mode != "" {
+		status["mode"] = s.deps.Nous.Mode
+	}
 	s.deps.Nous.Mu.Unlock()
 	// The Experiment Lab is repo-only: the reported scope is always "repo"
 	// and any governor phase block published by the experiment loop is

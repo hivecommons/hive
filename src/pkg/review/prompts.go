@@ -1,19 +1,29 @@
 package review
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
 
 type PullRequest struct {
-	Repo        string
-	Number      int
-	Title       string
-	Author      string
-	HeadSHA     string
+	Repo      string
+	Number    int
+	Title     string
+	Author    string
+	HeadSHA   string
+	UpdatedAt time.Time
+	// BodyDigest fingerprints the PR title/body that the reviewer judged.
+	// The body itself deliberately stays out of review.PullRequest (see
+	// grounding tests); this opaque digest lets a body-only remediation make
+	// an old non-approve verdict stale without leaking the rationale into the
+	// prompt model.
+	BodyDigest  string
 	URL         string
 	Lane        string
 	AuthorAgent string
@@ -45,6 +55,11 @@ type PullRequest struct {
 	// satisfy. It is extracted before prompt construction so the reviewer gets
 	// the contract without seeing the author's whole PR rationale.
 	ScopeContract string
+}
+
+func PullRequestBodyDigest(title, body string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(title) + "\x00" + strings.TrimSpace(body)))
+	return hex.EncodeToString(sum[:])
 }
 
 // Grounding thresholds, named so the numbers never appear bare in the prompt.
@@ -228,6 +243,9 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	if pr.HeadSHA != "" {
 		fmt.Fprintf(&b, "Head SHA: %s\n", pr.HeadSHA)
 	}
+	if pr.BodyDigest != "" {
+		fmt.Fprintf(&b, "Review body digest: %s\n", pr.BodyDigest)
+	}
 	if pr.Author != "" {
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
 	}
@@ -240,7 +258,7 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 		b.WriteString(planMatchSection(pr))
 	}
 	writeReviewWritingGuide(&b, opts)
-	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
+	b.WriteString("\nReturn exactly one JSON object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, head_sha, and body_digest.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	b.WriteString(findingSchemaInstruction)
 	b.WriteString("Use approve only when this perspective finds no IN-SCOPE blocker. Use changes_requested for agent-fixable in-scope issues. Use requires_human for ambiguous/high-risk in-scope judgment. Use reject for fundamentally unsuitable or harmful PRs. Out-of-scope findings alone must not lower the verdict.\n")
@@ -512,6 +530,9 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	if pr.HeadSHA != "" {
 		fmt.Fprintf(&b, "Head SHA: %s\n", pr.HeadSHA)
 	}
+	if pr.BodyDigest != "" {
+		fmt.Fprintf(&b, "Review body digest: %s\n", pr.BodyDigest)
+	}
 	if pr.Author != "" {
 		fmt.Fprintf(&b, "Author: @%s\n", strings.TrimPrefix(pr.Author, "@"))
 	}
@@ -527,7 +548,7 @@ func BuildCombinedPrompt(pr PullRequest, perspectives []Perspective, opts Prompt
 	writeReviewWritingGuide(&b, opts)
 	b.WriteString("\nReturn exactly one JSON ARRAY containing one object per perspective — all ")
 	fmt.Fprintf(&b, "%d of them, even the ones that found nothing.\n", len(perspectives))
-	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, and head_sha.\n")
+	b.WriteString("Each object: the standard outputschema AgentReport fields plus perspective, verdict, repo, number, head_sha, and body_digest.\n")
 	b.WriteString("Required AgentReport fields: lane, kind, findings, prs_opened, beads_filed, summary. Set kind to \"review\" and lane to \"review-swarm\". Use [] for empty arrays.\n")
 	fmt.Fprintf(&b, "Every object must carry the same repo (%s) and number (%d). Allowed perspective values: %s.\n", pr.Repo, pr.Number, joinPerspectives(perspectives))
 	b.WriteString(findingSchemaInstruction)
@@ -624,7 +645,7 @@ func buildCombinedPublishInstruction(pr PullRequest, perspectives []Perspective,
 // the gap with {"repo","pr","verdict","summary"}: every verdict it produced
 // was rejected and every PR it judged was handed straight back to it.
 // TestVerdictSchemaExampleValidates keeps this literal honest.
-const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41,"review_scope":"in-scope"}],"prs_opened":[],"beads_filed":[]}`
+const VerdictSchemaExample = `{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"requires_human","repo":"owner/repo","number":123,"head_sha":"<head commit sha>","body_digest":"<review body digest>","summary":"one paragraph: the judgement and why","findings":[{"title":"short finding title","severity":"high","summary":"mechanism and consequence","file":"path/to/file.go","line":41,"review_scope":"in-scope"}],"prs_opened":[],"beads_filed":[]}`
 
 const findingSchemaInstruction = "Allowed verdicts: approve, changes_requested, requires_human, reject.\n" +
 	"Each element of findings is an object with these keys: title (string, required), severity (one of info, low, medium, high, critical, required), summary (string, required — the mechanism and consequence; this is the field the collector reads, so never put the body under another name such as description or body), file (string, optional), line (integer, optional), review_scope (required for new reports; exactly \"in-scope\" or \"out-of-scope\"). A finding missing title, severity or summary, or carrying any other review_scope value, fails validation and the ENTIRE verdict — every perspective — is discarded unrecorded.\n"

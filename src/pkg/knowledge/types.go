@@ -146,6 +146,9 @@ type ExtractedFact struct {
 	Related    []string  `json:"related,omitempty"`
 	SourcePR   string    `json:"source_pr"`
 	SourceDate time.Time `json:"source_date"`
+	// Sensitive marks a fact that must stay inside the hive; repository
+	// publishing skips it (see IsSensitiveFact).
+	Sensitive bool `json:"sensitive,omitempty"`
 }
 
 func containsAny(s string, needles ...string) bool {

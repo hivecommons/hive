@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"math"
 	"sort"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/hivestate"
+	"github.com/hivecommons/hive/pkg/nous"
 )
 
 type nousBaselineProgress struct {
@@ -22,10 +24,23 @@ type nousBaselineProgress struct {
 	Retention           string   `json:"retention"`
 }
 
+// nousExperimentLoopView is the experimentLoop block of GET /api/nous/status
+// (#12541): whether the external experiment loop — the only producer of
+// proposals, ledger rows and principles — has written to its directory
+// within NousLoopIdleCycles evaluation cycles.
+type nousExperimentLoopView struct {
+	Dir              string `json:"dir"`
+	LastWriteAt      string `json:"lastWriteAt,omitempty"`
+	Running          bool   `json:"running"`
+	IdleAfterSeconds int    `json:"idleAfterSeconds"`
+}
+
 type nousExperimentProgress struct {
 	ID                   string                 `json:"id"`
 	Title                string                 `json:"title,omitempty"`
 	Hypothesis           string                 `json:"hypothesis,omitempty"`
+	Repo                 string                 `json:"repo,omitempty"`
+	CampaignID           int                    `json:"campaignId,omitempty"`
 	Status               string                 `json:"status"`
 	Phase                string                 `json:"phase"`
 	StartedAt            string                 `json:"startedAt,omitempty"`
@@ -75,29 +90,46 @@ func (s *Server) addNousProgressStatus(status map[string]interface{}, config map
 	if count == 0 {
 		count = intFromAny(status["snapshots"])
 	}
-	// With a campaign store the baseline is the active campaign's window
-	// (#12501); snapshots/snapshotCount keep reporting the whole history,
-	// which is also published as "observation".
+	// With a campaign store the baseline is the oldest running campaign's
+	// window (#12501); snapshots/snapshotCount keep reporting the whole
+	// history, which is also published as "observation". Every campaign —
+	// running, paused and archived — is listed in "campaigns" with its own
+	// baseline count (#12532); rows are dropped only when they predate every
+	// open campaign.
 	var since time.Time
 	var ns *NousState
 	if s != nil {
 		ns = s.deps.Nous
 	}
-	if active, ok := ns.ActiveCampaign(); ok {
-		since = active.StartedAt
-		count = ns.CampaignSnapshots(active)
-		status["campaign"] = nousCampaignToView(ns, active)
-		archived := []nousCampaignView{}
-		for _, c := range ns.Campaigns().Archived() {
-			archived = append(archived, nousCampaignToView(ns, c))
-		}
-		status["campaigns"] = archived
+	open := ns.OpenCampaigns()
+	if len(open) > 0 {
+		since = open[0].StartedAt
+		status["campaigns"] = s.nousCampaignViews(ns)
 		status["observation"] = ns.Observation()
-		status["baseline_pct"] = NousBaselinePct(count)
+		status["baselineTargetExplainer"] = NousBaselineTargetExplainer
+		if active, ok := ns.ActiveCampaign(); ok {
+			count = ns.CampaignSnapshots(active)
+			status["campaign"] = nousCampaignToView(ns, active)
+			status["baseline_pct"] = NousBaselinePct(count)
+		}
+	} else if ns.Campaigns() != nil {
+		status["campaigns"] = s.nousCampaignViews(ns)
+		status["observation"] = ns.Observation()
+		status["baselineTargetExplainer"] = NousBaselineTargetExplainer
 	}
 	eval := 120
 	if s != nil && s.deps.Config != nil && s.deps.Config.Governor.EvalIntervalS > 0 {
 		eval = s.deps.Config.Governor.EvalIntervalS
+	}
+	loopIdle := false
+	if ns != nil && ns.GovernorDir != "" {
+		loop := nousExperimentLoopView{Dir: ns.GovernorDir, IdleAfterSeconds: NousLoopIdleCycles * eval}
+		if last := ns.ExperimentLoopLastWrite(); !last.IsZero() {
+			loop.LastWriteAt = last.Format(time.RFC3339)
+			loop.Running = nousNow().Sub(last) <= time.Duration(loop.IdleAfterSeconds)*time.Second
+		}
+		loopIdle = !loop.Running
+		status["experimentLoop"] = loop
 	}
 	remaining := NousBaselineTarget - count
 	if remaining < 0 {
@@ -118,12 +150,37 @@ func (s *Server) addNousProgressStatus(status map[string]interface{}, config map
 		Retention: "24 h raw snapshots, then hourly buckets for 30 days",
 	}
 	experiments, results := s.nousExperimentProgress(status, config, ledger, principles, since)
+	nousAssignCampaigns(experiments, open)
+	nousAssignCampaigns(results, open)
 	status["experiments"] = experiments
 	status["results"] = results
+	mode := stringFromAny(status["mode"])
 	if c, ok := status["campaign"].(nousCampaignView); ok {
-		c.Experiments = len(experiments)
+		c.Experiments = nousCountForCampaign(experiments, c.ID)
 		c.Principles = len(principles)
+		nousCampaignStage(&c, mode, experiments, loopIdle)
 		status["campaign"] = c
+	}
+	if views, ok := status["campaigns"].([]nousCampaignView); ok {
+		status["principlesExplainer"] = NousPrinciplesExplainer
+		for i := range views {
+			nousCampaignStage(&views[i], mode, experiments, loopIdle)
+			if views[i].Status == nous.StatusArchived {
+				continue
+			}
+			views[i].Experiments = nousCountForCampaign(experiments, views[i].ID)
+			views[i].Principles = len(principles)
+			for _, r := range results {
+				if r.CampaignID != views[i].ID {
+					continue
+				}
+				var m map[string]interface{}
+				if data, err := json.Marshal(r); err == nil && json.Unmarshal(data, &m) == nil {
+					views[i].Results = append(views[i].Results, m)
+				}
+			}
+		}
+		status["campaigns"] = views
 	}
 }
 
@@ -185,11 +242,13 @@ func nousExperimentRow(src map[string]interface{}, fallback string, baseHours, e
 	id := firstString(src, "id", "experiment_id", "experimentId", "name")
 	title := firstString(src, "title", "name")
 	hypothesis := firstString(src, "hypothesis", "description", "summary")
+	repo := firstString(src, "repo", "target_repo", "targetRepo", "repository")
 	start := firstTime(src, "startedAt", "started_at", "start", "start_time", "ts", "timestamp", "created_at")
 	row := nousExperimentProgress{
 		ID:             id,
 		Title:          title,
 		Hypothesis:     hypothesis,
+		Repo:           repo,
 		Status:         status,
 		Phase:          "defined",
 		SnapshotCounts: map[string]int{},
@@ -527,4 +586,14 @@ func humanDuration(d time.Duration) string {
 		m = 1
 	}
 	return "~" + strconv.Itoa(m) + "m"
+}
+
+func nousCountForCampaign(rows []nousExperimentProgress, id int) int {
+	n := 0
+	for _, r := range rows {
+		if r.CampaignID == id {
+			n++
+		}
+	}
+	return n
 }

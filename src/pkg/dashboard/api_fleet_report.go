@@ -75,10 +75,16 @@ func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string
 		Unmet:      unmet,
 		Evidence:   s.buildFleetReportEvidence(status),
 		HiveSlug:   s.FleetReportHiveSlug(),
-		Cluster:    os.Getenv("HIVE_CLUSTER_ID"),
-		Repos:      s.FleetReportRepos(),
-		Now:        time.Now(),
-		HiveState:  s.hiveStateTrends(),
+		ProjectOrg: func() string {
+			if s.deps == nil || s.deps.Config == nil {
+				return ""
+			}
+			return strings.TrimSpace(s.deps.Config.Project.Org)
+		}(),
+		Cluster:   os.Getenv("HIVE_CLUSTER_ID"),
+		Repos:     s.FleetReportRepos(),
+		Now:       time.Now(),
+		HiveState: s.hiveStateTrends(),
 	}
 	res := fleetreport.Evaluate(obs, state, dryRun)
 	s.persistFleetReportState(res.State)

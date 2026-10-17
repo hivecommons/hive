@@ -1,1 +1,0 @@
-- Deduplicated `hive/partially-addressed` and `hive/likely-done` label color and description literals into shared package constants and registered them in `escalationIssueLabelDefinitions`. Closes #12399.

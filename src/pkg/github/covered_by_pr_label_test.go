@@ -59,13 +59,14 @@ func TestHasCoveredByPRLabelAcceptsStageAndRetiredSpellings(t *testing.T) {
 		{"bug", stagelabels.LegacyCoveredByPR},
 		{stagelabels.LegacyCoveredByPRASCII},
 		{CoveredByPRLabel},
-		{"bug", stagelabels.MergeQueue.Label()}, // mirrored PR stage
+		{"bug", stagelabels.MergeQueue.Label()},    // mirrored PR stage
+		{"bug", stagelabels.NeedsDecision.Label()}, // mirrored PR 085, no parking label
 	} {
 		if !HasCoveredByPRLabel(labels) {
 			t.Errorf("%v not recognised as covered", labels)
 		}
 	}
-	for _, labels := range [][]string{{"bug"}, {stagelabels.Claimed.Label()}, {stagelabels.Actionable.Label()}} {
+	for _, labels := range [][]string{{"bug"}, {stagelabels.Claimed.Label()}, {stagelabels.Actionable.Label()}, {"needs-direction", stagelabels.NeedsDecision.Label()}, {"needs-human", stagelabels.NeedsDecision.Label()}} {
 		if HasCoveredByPRLabel(labels) {
 			t.Errorf("%v wrongly recognised as covered", labels)
 		}

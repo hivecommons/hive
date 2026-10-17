@@ -250,12 +250,14 @@ func TestEnsureFleetReportWithOptionsJoinsViaLabelAndClass(t *testing.T) {
 	if f.reactions.Load() != 1 {
 		t.Fatalf("reactions = %d", f.reactions.Load())
 	}
+	// The hive/<slug> label is retired (#12539): joining adds hive/selfreport
+	// only; the seen marker above names the hive.
 	joinedLabels := strings.Join(f.labelsAdded, ",")
-	if !strings.Contains(joinedLabels, "hive/hosted-aslom") || !strings.Contains(joinedLabels, fleetreport.LabelSelfReport) || !res.LabelAdded {
+	if strings.Contains(joinedLabels, "hive/hosted-aslom") || !strings.Contains(joinedLabels, fleetreport.LabelSelfReport) {
 		t.Fatalf("labels added = %v (res=%#v)", f.labelsAdded, res)
 	}
-	if len(f.labelsCreated) == 0 || !strings.Contains(strings.Join(f.labelsCreated, ","), "hive/hosted-aslom") {
-		t.Fatalf("hive label not created when missing: %v", f.labelsCreated)
+	if strings.Contains(strings.Join(f.labelsCreated, ","), "hive/hosted-aslom") {
+		t.Fatalf("retired hive/<slug> label was created: %v", f.labelsCreated)
 	}
 	if len(f.bodyPatches) != 1 || !strings.Contains(f.bodyPatches[0], "Affected hives (1):** hosted-aslom") || !strings.Contains(f.bodyPatches[0], "Restart storm on hosted hives after upgrade") || !res.BodyUpdated {
 		t.Fatalf("body patches = %q", f.bodyPatches)

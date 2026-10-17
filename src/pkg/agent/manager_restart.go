@@ -889,6 +889,9 @@ func (m *Manager) restartWithReason(ctx context.Context, name, reason string, ki
 	// clear the record and let this attempt run. If it fails the same way, the
 	// ladder starts again from the first rung (#5958).
 	m.clearStartFailureLocked(agent)
+	// The operator explicitly asked for the agent to run again, so the
+	// governor may recover it from a later crash.
+	agent.OperatorStopped = false
 
 	if err := m.applyAgentSpec(agent); err != nil {
 		return err

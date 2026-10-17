@@ -122,7 +122,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Ensure PyYAML on self-hosted runners
         working-directory: .
-        run: python3 -c "import yaml" 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml; } || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q && python3 -m pip install --user -q pyyaml; }
+        run: |
+          python3 -c "import yaml" 2>/dev/null && exit 0
+          # A stale or unreachable third-party apt index (e.g. a PPA 503) must not block the install.
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq python3-yaml && exit 0
+          # Noble (Python 3.12) refuses --user installs under PEP 668 without --break-system-packages.
+          python3 -m pip install --user -q --break-system-packages pyyaml \
+            || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a

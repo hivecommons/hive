@@ -1,1 +1,0 @@
-- Changed Strategy Lab's Data Collection card to show "Baseline complete · N snapshots collected (target T)" once the baseline target is reached, added a persistent explainer that snapshots are passive baseline samples (not experiments), and clarified the upgrade hint as an owner action. Fixes #12335.

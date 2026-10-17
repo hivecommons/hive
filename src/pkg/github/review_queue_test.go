@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 var reviewQueueTestNow = time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
@@ -654,5 +655,38 @@ func TestBuildReviewQueue_IncompleteAggregateShowsMissingAndDispatch(t *testing.
 	}
 	if !e.PendingSince.Equal(dispatched) {
 		t.Fatalf("pending_since = %v, want %v", e.PendingSince, dispatched)
+	}
+}
+
+// The review-queue stage projection must decide stalled/past_dwell with the
+// same dwell overrides and require_quiet policy the engine labels with, or
+// the pill and hive_held disagree with the label on the PR.
+func TestReviewQueueStageFollowsStagePolicy(t *testing.T) {
+	clock := reviewQueueTestNow.Add(-2 * time.Hour)
+	store := stagelabels.NewStore("", func() time.Time { return clock })
+	key := stagelabels.Key("acme/a", 7)
+	store.Observe(key, stagelabels.Fixing, "check-failing:unit") // entered at now-2h, default dwell 2h
+	clock = reviewQueueTestNow.Add(-30 * time.Minute)
+	store.NoteActivity(key, stagelabels.Activity{Head: "h2", Comments: 3, Digest: "verdict:?|ci:red|"})
+	store.NoteActivity(key, stagelabels.Activity{Head: "h2", Comments: 4, Digest: "verdict:?|ci:red|"}) // quiet since now-30m
+
+	prs := []PullRequest{{Repo: "acme/a", Number: 7, Title: "fix: stage", HeadSHA: "h2", CIStatus: "failure", CreatedAt: reviewQueueTestNow.Add(-3 * time.Hour)}}
+	stage := func(opts ReviewQueueOptions) *ReviewQueueStage {
+		opts.Org, opts.Now, opts.StageStore = "acme", reviewQueueTestNow, store
+		q := BuildReviewQueue(prs, opts)
+		if len(q) != 1 || q[0].Stage == nil {
+			t.Fatalf("queue = %+v, want one entry with a stage", q)
+		}
+		return q[0].Stage
+	}
+
+	if st := stage(ReviewQueueOptions{}); st.Stalled || st.PastDwell {
+		t.Fatalf("defaults: quiet 30m < 2h dwell, got stalled=%v past_dwell=%v", st.Stalled, st.PastDwell)
+	}
+	if st := stage(ReviewQueueOptions{StageDwell: map[string]time.Duration{"fixing": 10 * time.Minute}}); !st.Stalled || !st.PastDwell {
+		t.Fatalf("dwell override 10m: want stalled and past_dwell, got stalled=%v past_dwell=%v", st.Stalled, st.PastDwell)
+	}
+	if st := stage(ReviewQueueOptions{StageStalledRequireQuiet: new(false)}); !st.Stalled || st.PastDwell {
+		t.Fatalf("require_quiet=false: 2h since entry stalls, quiet 30m is not past dwell; got stalled=%v past_dwell=%v", st.Stalled, st.PastDwell)
 	}
 }

@@ -155,6 +155,7 @@ ACTIONABLE PRs:
 ${PR_LIST}
 
 ⛔ NEVER run `gh issue list`, `gh pr list`, or `gh search issues` — the work list above is your ONLY source.
+⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, file an issue or leave one PR comment naming it and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no hive-controlled labels (`needs-human`, `needs-decision`, anything the hive sets) — use `hive-open-issue --needs-decision` for new issues and the `needs-direction` route for existing ones; no PR review comments (`POST /pulls/{n}/comments`) — use `gh pr comment`.
 
 ## After You Push: Do Not Wait for CI (MANDATORY)
 

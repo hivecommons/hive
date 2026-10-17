@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"testing"
 	"time"
 
@@ -355,5 +356,105 @@ func TestEvaluateCommitCIFailOnAnyFailedCheck(t *testing.T) {
 	}
 	if st.Green || st.Reason != "check-failing:syntax-check" {
 		t.Fatalf("with option = (%v,%q), want red check-failing:syntax-check", st.Green, st.Reason)
+	}
+}
+
+// hivecommons/hive#12457: the required-only gate walks past red optional
+// checks, but reports them so the stage engine can keep the PR out of the
+// merge-queue stage. Meta contexts (tide) are not red checks; a red REQUIRED
+// check is the blocker, not an optional one.
+func TestEvaluateCommitCIReportsFailingNonRequired(t *testing.T) {
+	checks := []map[string]string{
+		{"name": "build-gate", "status": "completed", "conclusion": "success"},
+		{"name": "relative links and anchors resolve", "status": "completed", "conclusion": "failure"},
+		{"name": "Playwright", "status": "completed", "conclusion": "cancelled"},
+		{"name": "lint", "status": "in_progress"},
+		{"name": "docs", "status": "completed", "conclusion": "skipped"},
+	}
+	statuses := []map[string]string{
+		{"context": "tide", "state": "failure"},
+		{"context": "ci/legacy", "state": "error"},
+	}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/widget/commits/sha/status":
+			json.NewEncoder(w).Encode(map[string]any{"state": "failure", "total_count": len(statuses), "statuses": statuses})
+		case "/repos/acme/widget/commits/sha/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"total_count": len(checks), "check_runs": checks})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer api.Close()
+	client := gh.NewClient(nil)
+	base, err := url.Parse(api.URL + "/")
+	if err != nil {
+		t.Fatalf("ParseURL: %v", err)
+	}
+	client.BaseURL = base
+
+	opts := CommitCIOptions{Required: map[string]bool{"build-gate": true}, RequiredKnown: true}
+	st, err := EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", opts)
+	if err != nil || !st.Green {
+		t.Fatalf("required-only = (%v,%q,%v), want green", st.Green, st.Reason, err)
+	}
+	want := []string{"Playwright", "ci/legacy", "relative links and anchors resolve"}
+	if !reflect.DeepEqual(st.FailingNonRequired, want) {
+		t.Fatalf("FailingNonRequired=%v want %v", st.FailingNonRequired, want)
+	}
+
+	opts.Required = map[string]bool{"build-gate": true, "relative links and anchors resolve": true}
+	st, err = EvaluateCommitCI(context.Background(), client, "acme", "widget", "sha", opts)
+	if err != nil || st.Green || st.Reason != "required-check-failing:relative links and anchors resolve" {
+		t.Fatalf("required red = (%v,%q,%v)", st.Green, st.Reason, err)
+	}
+	if want := []string{"Playwright", "ci/legacy"}; !reflect.DeepEqual(st.FailingNonRequired, want) {
+		t.Fatalf("FailingNonRequired=%v want %v", st.FailingNonRequired, want)
+	}
+}
+
+// HeadCommitPushedAt reads the head commit's committer date (#12557), clamps
+// it to the PR's creation, and reports errors instead of guessing.
+func TestHeadCommitPushedAt(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/o/r/git/commits/abc":
+			_, _ = w.Write([]byte(`{"sha":"abc","committer":{"name":"c","date":"2026-10-16T17:15:00Z"}}`))
+		case "/repos/o/r/git/commits/nodate":
+			_, _ = w.Write([]byte(`{"sha":"nodate"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		}
+	}))
+	defer api.Close()
+	client := gh.NewClient(nil)
+	base, err := url.Parse(api.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = base
+	ctx := context.Background()
+	committed := time.Date(2026, 10, 16, 17, 15, 0, 0, time.UTC)
+
+	pr := &gh.PullRequest{
+		CreatedAt: &gh.Timestamp{Time: committed.Add(-time.Hour)},
+		UpdatedAt: &gh.Timestamp{Time: committed.Add(3 * time.Hour)},
+	}
+	if got, err := HeadCommitPushedAt(ctx, client, "o", "r", "abc", pr); err != nil || !got.Equal(committed) {
+		t.Fatalf("HeadCommitPushedAt = %v, %v; want %v", got, err, committed)
+	}
+	created := committed.Add(time.Hour)
+	if got, err := HeadCommitPushedAt(ctx, client, "o", "r", "abc", &gh.PullRequest{CreatedAt: &gh.Timestamp{Time: created}}); err != nil || !got.Equal(created) {
+		t.Fatalf("clamped HeadCommitPushedAt = %v, %v; want %v", got, err, created)
+	}
+	for _, sha := range []string{"nodate", "missing", " "} {
+		if got, err := HeadCommitPushedAt(ctx, client, "o", "r", sha, pr); err == nil || !got.IsZero() {
+			t.Fatalf("sha %q: got %v, %v; want zero and an error", sha, got, err)
+		}
+	}
+	if _, err := HeadCommitPushedAt(ctx, nil, "o", "r", "abc", pr); err == nil {
+		t.Fatal("nil client must error")
 	}
 }

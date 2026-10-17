@@ -239,7 +239,11 @@ type AgentProcess struct {
 	// quiesce indistinguishable from a malfunction days later (#4041): the
 	// audit log had the actor, but nothing the UI or the fleet view reads
 	// carried it.
-	PausedBy          string
+	PausedBy string
+	// OperatorStopped marks a stop requested explicitly through Stop (dashboard
+	// or API) so the governor's kick-start path does not undo it. Start clears
+	// it; crashes and exits never set it. In-memory only, like State.
+	OperatorStopped   bool
 	PinnedCLI         string
 	PinnedModel       string
 	ModelOverride     string
@@ -998,6 +1002,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		m.mu.Unlock()
 		return fmt.Errorf("agent %s launch already in progress", name)
 	}
+	agent.OperatorStopped = false
 
 	if err := m.applyAgentSpec(agent); err != nil {
 		m.audit(AuditAgentStartFailed, name, auditFields(
@@ -1255,6 +1260,9 @@ func (m *Manager) Stop(name string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	if agent.State == StateStopped {
+		agent.OperatorStopped = true
+	}
 	if agent.State != StateRunning {
 		return nil
 	}
@@ -1266,6 +1274,7 @@ func (m *Manager) Stop(name string) error {
 	m.tmuxSendKeysForAgent(agent, "C-c", "")
 
 	agent.State = StateStopped
+	agent.OperatorStopped = true
 	m.logger.Info("audit: agent stopped", "name", name)
 	m.audit(AuditAgentStopped, name, auditFields(
 		"outcome", "success",

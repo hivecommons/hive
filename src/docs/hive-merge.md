@@ -421,14 +421,24 @@ tier before the issue is leased.
 
 Every sweep cycle also writes the hive-owned `stage/NNN-*` label for each PR
 it evaluated, derived from the same per-lane reason it logs
-(`contributor-lane:no-verdict` → `stage/050-review-pending`,
+(`contributor-lane:no-verdict` → `stage/050-review-pending`, unless the
+swarm's known verdict is `requires_human`, which the lane also reports as
+no-verdict → `stage/085-needs-decision` with reason
+`reviewer-verdict:requires_human`,
 `contributor-lane:soaking(...)` → `stage/100-merge-queue`, approve verdict +
 green CI but no lane decision yet → `stage/080-awaiting-merge-admission`
 (a stall there is logged on the PR with the lane's last skip reason), red CI on a
-contributor PR → `stage/072-returned-to-contributor`, hold / untrusted author →
-`stage/090-needs-human`, merged → no stage), plus one `author/*` label saying
-which admission tier the lane actually used and `stage/stalled` /
-`stage/regressed` when the progression is disrupted. Writes happen only when
+contributor PR → `stage/072-returned-to-contributor`, hold / sentinel alert →
+`stage/085-needs-decision`, untrusted author with an approve verdict at the
+current head, green checks, DCO and soak done →
+`stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
+missing), merged → no stage), plus one `role/*` label saying
+which admission tier the lane actually used, one `author/*` label saying who
+wrote the PR (`human`, `clanker` = a contributor's hive, `hive` = this repo's
+own; #12581) and `stage/stalled` when nobody
+but the hive has touched the PR for the stage's dwell (never while checks run
+or the reviewer verdict is pending). Backward moves are a one-line stage
+comment and dashboard history, not a label. Writes happen only when
 the planned set differs from the labels already on the PR, under the
 `hive:stage_labels` REST caller, and the whole family is switched by
 `governor.labels.stage.enabled`. The mapping table, numbering rules, dwell
@@ -543,7 +553,7 @@ A malformed request file (invalid JSON) is renamed `.bad`.
 | `/var/run/hive-metrics/merge-requests` | request files the watcher consumes |
 | `/var/run/hive-metrics/gh-app-token.cache` | cached App token, used to auto-resolve `--expect-sha` |
 | `/var/run/hive/uid-map.json` | UID → agent-name map, used for a nicer log line |
-| `/data/stage-labels.json` | persisted stage timing for `stage/stalled` / `stage/regressed` |
+| `/data/stage-labels.json` | persisted stage timing, last-activity clock and transition history for `stage/stalled` and the review-queue stage history |
 
 The UID map is **informational only** here. The watcher re-derives ownership
 from the file's UID regardless.

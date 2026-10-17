@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -19,18 +21,120 @@ var nousNow = time.Now
 // (hivecommons/hive#12501). Snapshots/Percent are scoped to the campaign
 // window; the whole observation history is reported separately.
 type nousCampaignView struct {
-	ID          int                      `json:"id"`
-	Question    string                   `json:"question"`
-	Status      string                   `json:"status"`
-	StartedAt   string                   `json:"startedAt"`
-	EndedAt     string                   `json:"endedAt,omitempty"`
-	Snapshots   int                      `json:"snapshots"`
-	Target      int                      `json:"target"`
-	Percent     float64                  `json:"percent"`
-	Complete    bool                     `json:"complete"`
-	Experiments int                      `json:"experiments"`
-	Principles  int                      `json:"principles"`
-	Results     []map[string]interface{} `json:"results,omitempty"`
+	ID         int               `json:"id"`
+	Question   string            `json:"question"`
+	Hypothesis string            `json:"hypothesis,omitempty"`
+	Scope      nousCampaignScope `json:"scope"`
+	Status     string            `json:"status"`
+	StartedAt  string            `json:"startedAt"`
+	EndedAt    string            `json:"endedAt,omitempty"`
+	Snapshots  int               `json:"snapshots"`
+	Target     int               `json:"target"`
+	// TargetExplainer says what Target means in words (#12532).
+	TargetExplainer string                   `json:"targetExplainer"`
+	Percent         float64                  `json:"percent"`
+	Complete        bool                     `json:"complete"`
+	Experiments     int                      `json:"experiments"`
+	Principles      int                      `json:"principles"`
+	Results         []map[string]interface{} `json:"results,omitempty"`
+	// Stage / StageLabel / StageDetail / NextAction describe where the
+	// campaign is in its lifecycle and what, if anything, the operator must
+	// do next (#12532). NextAction is empty when nothing is required.
+	Stage       string `json:"stage"`
+	StageLabel  string `json:"stageLabel"`
+	StageDetail string `json:"stageDetail,omitempty"`
+	NextAction  string `json:"nextAction,omitempty"`
+	// ExperimentLoopIdle marks a ready card in suggest/evolve mode on a hive
+	// where the external experiment loop has written nothing for
+	// NousLoopIdleCycles evaluation cycles (#12541), so the UI can point at
+	// the docs instead of promising proposals that will never come.
+	ExperimentLoopIdle bool `json:"experimentLoopIdle,omitempty"`
+	// Version / RestartedFrom: an experiment whose question or scope was
+	// edited after it started is archived and re-created as the next
+	// version; the card shows "v2 · restarted from #1".
+	Version       int `json:"version"`
+	RestartedFrom int `json:"restartedFrom,omitempty"`
+}
+
+// nousCampaignStage fills the lifecycle fields of v from the lab mode and the
+// experiment rows attributed to the campaign. Precedence: archived/paused →
+// running → proposed → concluded (results and nothing in flight) → baseline
+// → ready. The ready stage distinguishes "lab is in observe mode, press
+// Generate proposals" from "lab is in suggest/evolve mode, waiting for the
+// experiment loop", because the hive process itself designs no proposals.
+// loopIdle reports that the experiment loop is known not to be running
+// (#12541); the waiting ready stage then says so instead of waiting forever.
+func nousCampaignStage(v *nousCampaignView, mode string, rows []nousExperimentProgress, loopIdle bool) {
+	if v == nil {
+		return
+	}
+	v.NextAction = ""
+	v.ExperimentLoopIdle = false
+	switch v.Status {
+	case nous.StatusArchived:
+		v.Stage, v.StageLabel, v.StageDetail = NousStageConcluded, "concluded", "Archived; baseline, hypotheses and results are frozen read-only."
+		return
+	case nous.StatusPaused:
+		v.Stage, v.StageLabel, v.StageDetail = NousStagePaused, "paused", "Paused; its scope is released and the baseline count stops until resumed."
+		return
+	}
+	var running, pending, judged int
+	for _, r := range rows {
+		if r.CampaignID != v.ID {
+			continue
+		}
+		switch {
+		case r.Status == "pending":
+			pending++
+		case r.Phase == "judged":
+			judged++
+		case r.Status == "active" || r.Phase == "experiment" || r.Phase == "cooldown" || r.Phase == "judging":
+			running++
+		}
+	}
+	switch {
+	case running > 0:
+		v.Stage, v.StageLabel = NousStageRunning, "running"
+		v.StageDetail = fmt.Sprintf("%d experiment(s) in flight; results land under Results when judged.", running)
+	case pending > 0:
+		v.Stage, v.StageLabel = NousStageProposed, "proposals awaiting your review"
+		v.StageDetail = fmt.Sprintf("%d proposal(s) are pending — approve or reject them under Pending Proposal.", pending)
+	case judged > 0:
+		v.Stage, v.StageLabel = NousStageConcluded, "concluded"
+		v.StageDetail = fmt.Sprintf("%d experiment(s) judged; archive this experiment or let the lab propose more.", judged)
+	case !v.Complete:
+		v.Stage, v.StageLabel = NousStageBaseline, fmt.Sprintf("collecting baseline %d / %d", v.Snapshots, v.Target)
+		v.StageDetail = "Proposals are designed only once the baseline is complete (" + NousBaselineTargetExplainer + ")."
+	case strings.EqualFold(mode, "observe") || mode == "":
+		v.Stage, v.StageLabel = NousStageReady, "ready — generate proposals"
+		v.StageDetail = "Baseline complete. The lab is in Observe mode (data collection only); Generate proposals switches it to Suggest so proposals can be designed for your review."
+		v.NextAction = NousActionGenerateProposals
+	case loopIdle:
+		v.Stage, v.StageLabel = NousStageReady, "ready — the experiment loop is not running on this hive"
+		v.StageDetail = fmt.Sprintf("Baseline complete and the lab is in %s mode, but the experiment loop has written nothing to /var/run/nous/governor in the last %d evaluation cycles. The hive designs no proposals itself; they come only from the external experiment loop — see \"The experiment loop\" in the Experiment Lab operator guide.", strings.Title(strings.ToLower(mode)), NousLoopIdleCycles)
+		v.ExperimentLoopIdle = true
+	default:
+		v.Stage, v.StageLabel = NousStageReady, "ready — generating proposals"
+		v.StageDetail = "Baseline complete and the lab is in " + strings.Title(strings.ToLower(mode)) + " mode. Proposals appear here as soon as the experiment loop designs them; nothing more is needed from you."
+	}
+}
+
+// nousCampaignScope is the wire form of nous.Scope. Label is "hive-wide" or
+// the repo list joined for display.
+type nousCampaignScope struct {
+	Repos        []string `json:"repos"`
+	Intervention string   `json:"intervention,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+	HiveWide     bool     `json:"hiveWide"`
+}
+
+func nousScopeToView(sc nous.Scope) nousCampaignScope {
+	v := nousCampaignScope{Repos: append([]string{}, sc.Repos...), Intervention: sc.Intervention, Tags: sc.Tags, HiveWide: sc.HiveWide()}
+	return v
+}
+
+func nousScopeFromView(v nousCampaignScope) nous.Scope {
+	return nous.Scope{Repos: v.Repos, Intervention: v.Intervention, Tags: v.Tags}
 }
 
 // nousObservationView is the question-independent hive-state history.
@@ -184,11 +288,16 @@ func (s *Server) nousCampaignOutcome(c nous.Campaign) nous.Outcome {
 
 func nousCampaignToView(ns *NousState, c nous.Campaign) nousCampaignView {
 	v := nousCampaignView{
-		ID:        c.ID,
-		Question:  c.Question,
-		Status:    c.Status(),
-		StartedAt: c.StartedAt.UTC().Format(time.RFC3339),
-		Target:    NousBaselineTarget,
+		ID:              c.ID,
+		Question:        c.Question,
+		Hypothesis:      c.Hypothesis,
+		Scope:           nousScopeToView(c.Scope),
+		Status:          c.Status(),
+		StartedAt:       c.StartedAt.UTC().Format(time.RFC3339),
+		Target:          NousBaselineTarget,
+		TargetExplainer: NousBaselineTargetExplainer,
+		Version:         c.VersionNumber(),
+		RestartedFrom:   c.RestartedFrom,
 	}
 	if c.Archived() {
 		v.EndedAt = c.EndedAt.UTC().Format(time.RFC3339)
@@ -249,7 +358,9 @@ func (s *Server) handleNousCampaignStart(w http.ResponseWriter, r *http.Request)
 }
 
 // handleNousConfigGoals stores the goals section and, when the research
-// question materially changed, rotates the campaign (#12501).
+// question materially changed, rotates the campaign (#12501). The dashboard
+// no longer calls it (the dialog holds lab-wide guardrails only); it stays
+// for API clients and the experiment loop.
 func (s *Server) handleNousConfigGoals(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -287,4 +398,305 @@ func (s *Server) handleNousConfigGoals(w http.ResponseWriter, r *http.Request) {
 	}
 	s.refreshAndPersist()
 	jsonResponse(w, resp)
+}
+
+// OpenCampaigns returns every non-archived campaign (active and paused).
+func (ns *NousState) OpenCampaigns() []nous.Campaign {
+	store := ns.Campaigns()
+	if store == nil {
+		return nil
+	}
+	return store.Open()
+}
+
+// ArchiveCampaign ends campaign id with the outcome computed by outcome.
+func (ns *NousState) ArchiveCampaign(id int, outcome func(nous.Campaign) nous.Outcome) (nous.Campaign, error) {
+	store := ns.Campaigns()
+	if store == nil {
+		return nous.Campaign{}, nous.ErrNoActive
+	}
+	c, ok := store.Get(id)
+	if !ok {
+		return nous.Campaign{}, nous.ErrNotFound
+	}
+	var out nous.Outcome
+	if outcome != nil && !c.Archived() {
+		out = outcome(c)
+	}
+	return store.Archive(id, nousNow(), out)
+}
+
+// nousCampaignRequest is the body of POST /api/nous/campaigns and the edit
+// fields of PATCH /api/nous/campaigns/{id}.
+type nousCampaignRequest struct {
+	Question   *string            `json:"question,omitempty"`
+	Hypothesis *string            `json:"hypothesis,omitempty"`
+	Scope      *nousCampaignScope `json:"scope,omitempty"`
+	// Action is pause, resume or archive (PATCH only). Edits in the same
+	// body are applied first.
+	Action string `json:"action,omitempty"`
+	// Restart (PATCH only) acknowledges that the edit changes the research
+	// question or the repo scope: the campaign is archived as version N and
+	// re-created as version N+1 with a fresh baseline. Without it such an
+	// edit is refused with 409 restart_required.
+	Restart bool `json:"restart,omitempty"`
+}
+
+// nousRestartRequired writes the 409 for a question/scope edit sent without
+// restart: true, so a client never silently keeps a baseline that the edit
+// invalidated.
+func nousRestartRequired(w http.ResponseWriter, ns *NousState, c nous.Campaign) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":       false,
+		"error":    "changing the question or scope restarts this experiment: baseline resets to 0/" + strconv.Itoa(NousBaselineTarget) + " and hypotheses so far are archived with the old version. Repeat the request with \"restart\": true to confirm.",
+		"code":     "restart_required",
+		"campaign": nousCampaignToView(ns, c),
+	})
+}
+
+// nousCampaignConflict writes the 409 for a scope collision: the conflicting
+// campaign is included so the UI can offer to pause it (#12532).
+func nousCampaignConflict(w http.ResponseWriter, ns *NousState, conf *nous.Conflict) {
+	shared := nous.ScopeHiveWide
+	if len(conf.Shared) > 0 {
+		shared = strings.Join(conf.Shared, ", ")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":       false,
+		"error":    "scope conflicts with running experiment #" + strconv.Itoa(conf.With.ID) + " (" + shared + "): concurrent interventions on the same scope confound each other's outcomes. Pause that experiment or narrow the scope.",
+		"code":     "scope_conflict",
+		"shared":   conf.Shared,
+		"conflict": nousCampaignToView(ns, conf.With),
+	})
+}
+
+// nousCampaignError maps store errors to HTTP statuses.
+func (s *Server) nousCampaignError(w http.ResponseWriter, ns *NousState, err error) {
+	var conf *nous.Conflict
+	switch {
+	case errors.As(err, &conf):
+		nousCampaignConflict(w, ns, conf)
+	case errors.Is(err, nous.ErrNotFound):
+		jsonError(w, "campaign not found", http.StatusNotFound)
+	case errors.Is(err, nous.ErrArchived):
+		jsonError(w, "campaign is archived and read-only", http.StatusConflict)
+	default:
+		jsonError(w, "campaign: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) nousCampaignsStore(w http.ResponseWriter) (*NousState, *nous.Store, bool) {
+	if s.deps.Nous == nil {
+		jsonError(w, "nous not configured", http.StatusNotFound)
+		return nil, nil, false
+	}
+	ns := s.deps.Nous
+	store := ns.Campaigns()
+	if store == nil {
+		jsonError(w, "campaigns not enabled: no snapshot directory", http.StatusConflict)
+		return nil, nil, false
+	}
+	return ns, store, true
+}
+
+// nousCampaignViews renders every campaign, live-counting open ones.
+func (s *Server) nousCampaignViews(ns *NousState) []nousCampaignView {
+	out := []nousCampaignView{}
+	store := ns.Campaigns()
+	if store == nil {
+		return out
+	}
+	for _, c := range store.All() {
+		out = append(out, nousCampaignToView(ns, c))
+	}
+	return out
+}
+
+// handleNousCampaignsList is GET /api/nous/campaigns: every campaign in ID
+// order with per-campaign baseline counts.
+func (s *Server) handleNousCampaignsList(w http.ResponseWriter, r *http.Request) {
+	ns, _, ok := s.nousCampaignsStore(w)
+	if !ok {
+		return
+	}
+	jsonResponse(w, map[string]interface{}{
+		"ok":              true,
+		"campaigns":       s.nousCampaignViews(ns),
+		"target":          NousBaselineTarget,
+		"targetExplainer": NousBaselineTargetExplainer,
+	})
+}
+
+// handleNousCampaignsCreate is POST /api/nous/campaigns: start a new
+// experiment next to the running ones. 409 scope_conflict when a running
+// campaign already covers part of the scope. Owner role required.
+func (s *Server) handleNousCampaignsCreate(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	ns, store, ok := s.nousCampaignsStore(w)
+	if !ok {
+		return
+	}
+	var req nousCampaignRequest
+	if err := decodeBody(r, &req); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	question := ""
+	if req.Question != nil {
+		question = strings.TrimSpace(*req.Question)
+	}
+	if question == "" {
+		jsonError(w, "question is required", http.StatusBadRequest)
+		return
+	}
+	hypothesis := ""
+	if req.Hypothesis != nil {
+		hypothesis = *req.Hypothesis
+	}
+	var scope nous.Scope
+	if req.Scope != nil {
+		scope = nousScopeFromView(*req.Scope)
+	}
+	c, err := store.Create(question, hypothesis, scope, nousNow())
+	if err != nil {
+		s.nousCampaignError(w, ns, err)
+		return
+	}
+	s.auditFromRequest(r, "nous_campaign_create", auditDetail("campaign", strconv.Itoa(c.ID)), "")
+	s.nousSyncGoalsFromCampaigns(ns)
+	s.refreshAndPersist()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "status": "created", "campaign": nousCampaignToView(ns, c)})
+}
+
+// handleNousCampaignPatch is PATCH /api/nous/campaigns/{id}: edit question /
+// hypothesis / scope, then optionally pause, resume or archive. Owner role
+// required.
+func (s *Server) handleNousCampaignPatch(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	ns, store, ok := s.nousCampaignsStore(w)
+	if !ok {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		jsonError(w, "invalid campaign id", http.StatusBadRequest)
+		return
+	}
+	var req nousCampaignRequest
+	if err := decodeBody(r, &req); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(req.Action))
+	switch action {
+	case "", "pause", "resume", "archive":
+	default:
+		jsonError(w, "unknown action: "+action, http.StatusBadRequest)
+		return
+	}
+	c, ok := store.Get(id)
+	if !ok {
+		jsonError(w, "campaign not found", http.StatusNotFound)
+		return
+	}
+	if req.Question != nil || req.Hypothesis != nil || req.Scope != nil {
+		patch := nous.Patch{Question: req.Question, Hypothesis: req.Hypothesis}
+		if req.Scope != nil {
+			sc := nousScopeFromView(*req.Scope)
+			patch.Scope = &sc
+		}
+		// A question or repo-scope edit invalidates the baseline: it must be
+		// acknowledged with restart: true and becomes a new version. A
+		// hypothesis / tags edit is saved in place.
+		if !c.Archived() && c.MaterialChange(patch) {
+			if !req.Restart {
+				nousRestartRequired(w, ns, c)
+				return
+			}
+			prev, next, err := store.Restart(id, patch, nousNow(), s.nousCampaignOutcome(c))
+			if err != nil {
+				s.nousCampaignError(w, ns, err)
+				return
+			}
+			s.auditFromRequest(r, "nous_campaign_restart", auditDetail("campaign", strconv.Itoa(prev.ID)), strconv.Itoa(next.ID))
+			s.nousSyncGoalsFromCampaigns(ns)
+			s.refreshAndPersist()
+			jsonResponse(w, map[string]interface{}{"ok": true, "status": "restarted", "campaign": nousCampaignToView(ns, next), "archived": nousCampaignToView(ns, prev)})
+			return
+		}
+		if c, err = store.Update(id, patch); err != nil {
+			s.nousCampaignError(w, ns, err)
+			return
+		}
+	}
+	switch action {
+	case "pause":
+		c, err = store.Pause(id)
+	case "resume":
+		c, err = store.Resume(id)
+	case "archive":
+		c, err = ns.ArchiveCampaign(id, s.nousCampaignOutcome)
+	}
+	if err != nil {
+		s.nousCampaignError(w, ns, err)
+		return
+	}
+	s.auditFromRequest(r, "nous_campaign_update", auditDetail("campaign", strconv.Itoa(id)), action)
+	s.nousSyncGoalsFromCampaigns(ns)
+	s.refreshAndPersist()
+	jsonResponse(w, map[string]interface{}{"ok": true, "status": "updated", "action": action, "campaign": nousCampaignToView(ns, c)})
+}
+
+// nousSyncGoalsFromCampaigns keeps the legacy single-question goals section
+// pointing at the oldest running campaign so the experiment loop (which
+// reads goals.repoGoal) keeps working. The config dialog no longer shows
+// the question; experiments are defined only via + New experiment.
+func (s *Server) nousSyncGoalsFromCampaigns(ns *NousState) {
+	active, ok := ns.ActiveCampaign()
+	ns.Mu.Lock()
+	defer ns.Mu.Unlock()
+	if ns.Config == nil {
+		ns.Config = make(map[string]interface{})
+	}
+	if ok {
+		ns.Config["goals"] = map[string]interface{}{"repoGoal": active.Question}
+	} else {
+		delete(ns.Config, "goals")
+	}
+}
+
+// nousAssignCampaigns tags each experiment row with the open campaign it
+// belongs to: the row must start inside the campaign window and, when the
+// row names a repo, the campaign's scope must cover it (hive-wide covers
+// all). The oldest matching campaign wins.
+func nousAssignCampaigns(rows []nousExperimentProgress, open []nous.Campaign) {
+	for i := range rows {
+		rows[i].CampaignID = nousCampaignFor(rows[i], open)
+	}
+}
+
+func nousCampaignFor(row nousExperimentProgress, open []nous.Campaign) int {
+	start := parseTime(row.StartedAt)
+	for _, c := range open {
+		if !start.IsZero() && start.Before(c.StartedAt) {
+			continue
+		}
+		if row.Repo != "" && !c.Scope.HiveWide() {
+			if _, ok := c.Scope.Overlaps(nous.Scope{Repos: []string{row.Repo}}); !ok {
+				continue
+			}
+		}
+		return c.ID
+	}
+	return 0
 }

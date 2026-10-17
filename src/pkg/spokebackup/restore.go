@@ -23,12 +23,13 @@ import (
 // guard at all against splicing one hive's identity, config and GitHub App keys
 // onto another's.
 //
-// The mapping is a flat rename of the two archive prefixes:
+// The mapping is a flat rename of the archive prefixes:
 //
-//	spoke/<name>         -> <dataDir>/<name>
-//	beads/<agent>/<rel>  -> <dataDir>/beads/<agent>/<rel>
-//	nous/<rel>           -> <dataDir>/nous/<rel>        (#11694)
-//	MANIFEST.json        -> not restored; it is archive metadata, not spoke state
+//	spoke/<name>              -> <dataDir>/<name>
+//	beads/<agent>/<rel>       -> <dataDir>/beads/<agent>/<rel>
+//	nous/<rel>                -> <dataDir>/nous/<rel>        (#11694)
+//	bead-synth-wiki/<slug>.md -> <dataDir>/vaults/bead-synth-wiki/<slug>.md
+//	MANIFEST.json             -> not restored; it is archive metadata, not spoke state
 //
 // Everything else in the archive is ignored and reported, so a hub
 // disaster-recovery archive pointed at this path fails loudly rather than
@@ -321,6 +322,18 @@ func planRestore(staging, dataDir string) (*restorePlan, error) {
 				src:    path,
 				dst:    filepath.Join(dataDir, name),
 				secret: true, // config, identity and App keys — all owner-only
+			})
+		case parts[0] == beadSynthPrefix && len(parts) == 2 && strings.HasSuffix(parts[1], ".md"):
+			relDst := filepath.Join(vaultsSubdir, beadSynthPrefix, parts[1])
+			plan.moves = append(plan.moves, restoreMove{
+				rel: relDst,
+				src: path,
+				dst: filepath.Join(dataDir, relDst),
+				// Not secret: the archive mode is the synthesizer's own 0644
+				// (beadSynthFactMode). Nothing re-applies ownership under
+				// vaults/ at boot, so an owner-only restore from a different
+				// uid would hide the facts from the synthesizer and reindex.
+				secret: false,
 			})
 		case parts[0] == beadsPrefix && len(parts) >= 3:
 			agent := parts[1]

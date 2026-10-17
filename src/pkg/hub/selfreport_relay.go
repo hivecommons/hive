@@ -8,9 +8,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Self-report relay (hivecommons/hive#11868). Spokes whose GitHub credential
@@ -21,18 +22,18 @@ import (
 // spoke would: one search for the marker, comment if found, create if not.
 
 const (
-	selfReportIngestPath      = "/api/selfreport/ingest"
-	selfReportMaxRequestBytes = 256 << 10
-	selfReportDefaultRepo     = "hivecommons/hive"
-	selfReportRelayLabel      = "hive/selfreport"
+	selfReportIngestPath       = "/api/selfreport/ingest"
+	selfReportMaxRequestBytes  = 256 << 10
+	selfReportDefaultRepo      = "hivecommons/hive"
+	selfReportRelayLabel       = "hive/selfreport"
+	selfReportObservationClass = "observation"
+	selfReportObservationLabel = "hive-observation"
 )
 
 // selfReportRate reuses the feedback limiter shape (per-hive, 24h window,
 // feedbackHubMaxPerHivePerWindow creates) as its own instance so relayed
 // self-reports never eat the feedback budget or vice versa.
 var selfReportRate feedbackRateLimiter
-
-var selfReportHiveSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // selfReportRelayRequest mirrors cmd/hive's wire struct; Evidence is kept
 // opaque so pkg/hub does not import pkg/fleetreport.
@@ -46,6 +47,8 @@ type selfReportRelayRequest struct {
 	Version     string          `json:"version,omitempty"`
 	Repo        string          `json:"repo,omitempty"`
 	Evidence    json.RawMessage `json:"evidence,omitempty"`
+	Observation json.RawMessage `json:"observation,omitempty"`
+	HiveState   json.RawMessage `json:"hive_state,omitempty"`
 }
 
 type selfReportRelayResponse struct {
@@ -58,6 +61,7 @@ type selfReportRelayResponse struct {
 func validateSelfReportRelayRequest(req *selfReportRelayRequest) error {
 	req.HiveID = sanitizeHeartbeatField(req.HiveID)
 	req.Fingerprint = strings.TrimSpace(req.Fingerprint)
+	req.Class = strings.TrimSpace(req.Class)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Repo = strings.TrimSpace(req.Repo)
 	if req.Fingerprint == "" || len(req.Fingerprint) > 128 || strings.ContainsAny(req.Fingerprint, " \t\n\"'<>") {
@@ -70,6 +74,11 @@ func validateSelfReportRelayRequest(req *selfReportRelayRequest) error {
 		return fmt.Errorf("body is required")
 	}
 	if req.Repo == "" {
+		req.Repo = selfReportDefaultRepo
+	}
+	// Observation issues are always hub-owned. Do not trust a spoke-supplied
+	// project repo, even if an older spoke sends one by mistake.
+	if req.Class == selfReportObservationClass {
 		req.Repo = selfReportDefaultRepo
 	}
 	if _, _, err := splitHubRepo(req.Repo); err != nil {
@@ -93,6 +102,13 @@ func splitHubRepo(full string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid repo %q", full)
 	}
 	return owner, repo, nil
+}
+
+func selfReportNeedsDecisionLabel(hiveID string) string {
+	if hive := loadSaaSHive(hiveID); hive != nil && hive.IssueFilter != nil {
+		return strings.TrimSpace(hive.IssueFilter.NeedsDecisionLabel())
+	}
+	return config.DefaultNeedsDecisionLabel
 }
 
 func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Request) {
@@ -159,9 +175,9 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 			npsJSONError(w, "failed to update issue", http.StatusBadGateway)
 			return
 		}
-		if slug := "hive/" + req.HiveID; selfReportHiveSlugPattern.MatchString(req.HiveID) {
-			_ = postHubGitHubIssueLabels(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, []string{slug, selfReportRelayLabel})
-		}
+		// hive/selfreport only: the hive/<id> provenance label is retired
+		// (hivecommons/hive#12539); the seen marker above names the hive.
+		_ = postHubGitHubIssueLabels(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, []string{selfReportRelayLabel})
 		if s.logger != nil {
 			s.logger.Info("selfreport relay: joined existing issue", "hive", req.HiveID, "issue", existing.Number, "class", req.Class)
 		}
@@ -175,6 +191,14 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	labels := append([]string(nil), req.Labels...)
+	if req.Class == selfReportObservationClass {
+		if !containsString(labels, selfReportObservationLabel) {
+			labels = append(labels, selfReportObservationLabel)
+		}
+		if decision := selfReportNeedsDecisionLabel(req.HiveID); decision != "" && !containsString(labels, decision) {
+			labels = append(labels, decision)
+		}
+	}
 	if !containsString(labels, selfReportRelayLabel) {
 		labels = append(labels, selfReportRelayLabel)
 	}

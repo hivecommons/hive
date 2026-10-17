@@ -280,7 +280,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.301
+ARG CLAUDE_CODE_VERSION=2.1.302
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -301,9 +301,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.54.0
-ARG GOOSE_SHA256_AMD64=ab396c95aebbd28b4d38c175234be8d4a3ea0c96e7ccb24c307e4618c9be57e1
-ARG GOOSE_SHA256_ARM64=0f174b5118a53888cd4e65b7ca9a4b72dd0b887e89142c8ce41e2409205e40d5
+ARG GOOSE_VERSION=1.55.0
+ARG GOOSE_SHA256_AMD64=fd3932908328fac850ca7ad2a8289c744e0c2ddaf4c5a2338709fb17a00b3a4c
+ARG GOOSE_SHA256_ARM64=ea83f59bb165a3d999dd00edf69a58028747f31e404b96f0153452c6b1651188
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -328,10 +328,10 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # complete the interactive OAuth flow itself). This enables a self-hosted Hive
 # controller to use its configured agy fallback rung without pretending that
 # generic contributor containers can bootstrap Google login.
-ARG AGY_VERSION=1.3.0
-ARG AGY_BUILD=6233328509124608
-ARG AGY_SHA512_AMD64=f6f5e16f356ae8a345fd6ab265ad2a4e4dc8d0b7f4ac345249d0e250a06edd496677b8ac0193b258971feb7ccfbba2fccc2f482db1d62cc650498e352ef85280
-ARG AGY_SHA512_ARM64=8a880575accf28b03de00e748209dc735c11e59847de8b137cba07aaaab166c892836574cacd9a0d6fa1e24d6e19197d25f36b7e0a49fd84d64ea84ee26ab21d
+ARG AGY_VERSION=1.4.0
+ARG AGY_BUILD=5281842794987520
+ARG AGY_SHA512_AMD64=6c4b298c2a69b6bd0f58567031cc56d8097a32be54c4b633aa80ad395871b389618ab3860d4ba0a12599831b8226b51b03e258ee2ec7fae105a45b8e0fce2188
+ARG AGY_SHA512_ARM64=64dfb2a9665ebd19b6e9d687c094673b61ca9f5ffdebc81391cea8e3858773e1c88154f088e8a8691208561d946a7aea9acbec7a3bdca9e5d8a48fa197b0a308
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64|x86_64) AGY_URL_ARCH=x64; AGY_FILE_ARCH=x64; AGY_SHA512="$AGY_SHA512_AMD64" ;; \

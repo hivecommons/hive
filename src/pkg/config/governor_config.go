@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"gopkg.in/yaml.v3"
 )
 
@@ -81,6 +82,11 @@ type GovernorConfig struct {
 	// the ACMM advisor's full-autonomy coverage gate measure against. 0 means
 	// unset and resolves to DefaultCoverageTarget — see EffectiveCoverageTarget.
 	CoverageTarget int `yaml:"coverage_target,omitempty" json:"coverage_target,omitempty"`
+
+	// FirstTimerWelcome is the one-time comment the hive leaves on a
+	// first-time contributor's PR inviting them to run their own hive
+	// (see pkg/config/first_timer_welcome.go). Default ON.
+	FirstTimerWelcome FirstTimerWelcomeConfig `yaml:"first_timer_welcome,omitempty" json:"first_timer_welcome,omitempty"`
 
 	// CadenceOwners records WHO last set each governor mode cadence, keyed
 	// mode → agent → owner (FieldOwnerOperator). It is the cadence analogue of
@@ -248,6 +254,51 @@ type LabelsConfig struct {
 	// Stage configures the hive-owned stage/NN-* pipeline labels
 	// (hivecommons/hive#12429; docs/labels-and-control-signals.md).
 	Stage StageLabelsConfig `yaml:"stage"`
+	// Author names the hive-owned `author/<kind>` authorship labels
+	// (hivecommons/hive#12581). The trust axis (`role/<tier>`) is not
+	// renameable.
+	Author AuthorLabelsConfig `yaml:"author"`
+}
+
+// AuthorLabelsConfig is governor.labels.author: the label names for the
+// three authorship kinds pkg/authorkind detects. Each defaults to
+// `author/<kind>`; a configured name must keep the `author/` prefix so the
+// stage reconciler still owns it, and the three must differ.
+type AuthorLabelsConfig struct {
+	// Human is the label for a PR a person pushed themselves (default author/human).
+	Human string `yaml:"human,omitempty"`
+	// Clanker is the label for a PR a contributor's own hive authored under
+	// that contributor's login (default author/clanker).
+	Clanker string `yaml:"clanker,omitempty"`
+	// Hive is the label for a PR this repo's own hive authored (default author/hive).
+	Hive string `yaml:"hive,omitempty"`
+}
+
+// Names returns the effective label names (defaults filled in).
+func (c AuthorLabelsConfig) Names() authorkind.Names {
+	return authorkind.Names{Human: c.Human, Clanker: c.Clanker, Hive: c.Hive}.Normalize()
+}
+
+// Validate rejects names outside the author/ family, duplicates, and names
+// that collide with the retired `author/<tier>` role spellings the
+// reconciler removes.
+func (c AuthorLabelsConfig) Validate() error {
+	n := c.Names()
+	seen := map[string]string{}
+	for key, name := range map[string]string{"human": n.Human, "clanker": n.Clanker, "hive": n.Hive} {
+		if !strings.HasPrefix(name, authorkind.Prefix) || len(name) == len(authorkind.Prefix) {
+			return fmt.Errorf("governor.labels.author.%s %q must start with %q", key, name, authorkind.Prefix)
+		}
+		switch strings.TrimPrefix(name, authorkind.Prefix) {
+		case "trusted", "contributor", "newcomer", "untrusted":
+			return fmt.Errorf("governor.labels.author.%s %q is a retired role spelling; role labels live under role/", key, name)
+		}
+		if other, dup := seen[name]; dup {
+			return fmt.Errorf("governor.labels.author.%s and .%s both use %q", other, key, name)
+		}
+		seen[name] = key
+	}
+	return nil
 }
 
 // StageLabelsConfig is governor.labels.stage: the hive-owned stage/NN-*,
@@ -278,17 +329,65 @@ type StageLabelsConfig struct {
 	// contributor PR that is still red after the grace with an App PR that
 	// preserves the author's commits, and the scanner finishes it.
 	Adoption StageAdoptionConfig `yaml:"adoption"`
+	// Stalled configures the stage/stalled health marker.
+	Stalled StageStalledConfig `yaml:"stalled"`
 }
+
+// StageStalledConfig is governor.labels.stage.stalled.
+type StageStalledConfig struct {
+	// RequireQuiet (nil = true) measures the stage dwell from the last
+	// outside activity (head push, comment, review, CI change, label change
+	// by anyone but the hive) so stage/stalled means "nobody is working
+	// this". false measures from entering the stage. Either way the marker
+	// is never applied while the item waits on the hive (checks running,
+	// reviewer verdict pending) — hivecommons/hive#12534.
+	RequireQuiet *bool `yaml:"require_quiet"`
+}
+
+// IsRequireQuiet reports whether stalled requires a quiet dwell (default on).
+func (c StageStalledConfig) IsRequireQuiet() bool { return c.RequireQuiet == nil || *c.RequireQuiet }
 
 // StageAdoptionConfig is governor.labels.stage.adoption.
 type StageAdoptionConfig struct {
 	// Enabled turns adoption on. nil = true. Off, PRs stay in 072 and only
 	// stall.
 	Enabled *bool `yaml:"enabled"`
+	// AfterOffline is how long the author's relay must have been offline
+	// (no heartbeat within presence_window) after the 072 nudge before the
+	// hive adopts a clanker PR (default 30m). Applies to authors with a
+	// contributor profile on this hive.
+	AfterOffline string `yaml:"after_offline,omitempty"`
+	// AfterUnregistered is the wait after the 072 nudge, with no new head,
+	// before the hive adopts a clanker PR whose author has NO contributor
+	// profile on this hive (another hive posted it; default 2h).
+	AfterUnregistered string `yaml:"after_unregistered,omitempty"`
+	// InPlace lets the hive adopt by pushing to the PR's own branch when
+	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
+	// opening a superseding App PR. nil = true.
+	InPlace *bool `yaml:"in_place,omitempty"`
 }
 
 // IsEnabled reports whether adoption runs (default on).
 func (c StageAdoptionConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
+
+// InPlaceEnabled reports whether in-place adoption is allowed (default on).
+func (c StageAdoptionConfig) InPlaceEnabled() bool { return c.InPlace == nil || *c.InPlace }
+
+// Defaults for the offline-adoption waits (stage 074, hivecommons/hive#12436).
+const (
+	DefaultAdoptAfterOffline      = 30 * time.Minute
+	DefaultAdoptAfterUnregistered = 2 * time.Hour
+)
+
+// EffectiveAfterOffline parses AfterOffline (default 30m).
+func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
+	return parseDurationOr(c.AfterOffline, DefaultAdoptAfterOffline)
+}
+
+// EffectiveAfterUnregistered parses AfterUnregistered (default 2h).
+func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
+	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
+}
 
 // Default graces before a red contributor PR is adopted (stage 074).
 const (

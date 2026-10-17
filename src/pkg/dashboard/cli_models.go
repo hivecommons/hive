@@ -1116,7 +1116,7 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 	// persisted for an hour, so a transient discovery blip never files.
 	if r.discoveryErr != copilotHTTPCatalogOnlyErr {
 		fleetreport.Observe(fleetreport.ClassModelDiscoveryDegraded, backend,
-			fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served), r.discoveryErr)
+			discoveryDegradedMessage(backend, served, r.discoveryErr), r.discoveryErr)
 	}
 	if s.audit != nil {
 		s.audit.Log("system", auditActionModelDiscoveryFailed, auditDetail(
@@ -1128,6 +1128,17 @@ func (s *Server) auditDiscoveryTransition(backend string, r cliModelResult) {
 			"error", r.discoveryErr,
 		), "")
 	}
+}
+
+// discoveryDegradedMessage attributes a copilot "Not authenticated" discovery
+// failure to the missing credential so the self-report names the recovery
+// path instead of reading as a generic gateway fault.
+func discoveryDegradedMessage(backend, served, discoveryErr string) string {
+	msg := fmt.Sprintf("model discovery degraded for %s (served %s)", backend, served)
+	if backend == "copilot" && strings.Contains(strings.ToLower(discoveryErr), "not authenticated") {
+		msg += ": credential_missing; recovery: operator dashboard device-flow login (Copilot Login)"
+	}
+	return msg
 }
 
 // cliStaticFallback returns the current static model list for a CLI backend.

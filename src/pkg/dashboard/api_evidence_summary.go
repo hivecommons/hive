@@ -53,9 +53,18 @@ type EvidenceSummary struct {
 	// WriteCounters is the proxy's attempted-vs-blocked agent write totals per
 	// intent tier (#12069); omitted when the counter file is absent or unreadable.
 	WriteCounters map[string]EvidenceWriteCount `json:"write_counters,omitempty"`
+	// WriteActivity is every agent GitHub write observed in the window —
+	// direct writes through the proxy (from the durable counter file's weekly
+	// buckets) plus hive-mediated writes from the audit log — with the
+	// refusals of each, so the boundary rate has an honest denominator.
+	WriteActivity EvidenceWriteActivity `json:"write_activity"`
 	// ClaimVsVerdict is panel 5 (#12365): per ISO week, agent-authored PRs
 	// whose author said "done" versus what CI and the swarm said.
 	ClaimVsVerdict []EvidenceClaimWeek `json:"claim_vs_verdict"`
+	// CIRecovery is panel 5's headline: of agent PRs that were CI-red when
+	// the agent claimed done, how many recovered (went green and merged),
+	// how fast, and how many were abandoned, under the hive's CI policy.
+	CIRecovery EvidenceCIRecovery `json:"ci_recovery"`
 	// IntentCounters is the intent gate's evaluated-vs-would-block totals per
 	// tier (#12362), same shape as WriteCounters: Attempted is evaluations,
 	// Blocked is the subset BlocksMerge(true) would have withheld, whether or
@@ -69,36 +78,83 @@ type EvidenceSummary struct {
 	// WorkBalance is panel 6 (#12366): per ISO week, audited issues opened by
 	// actor kind against issues closed, over the same window and repo.
 	WorkBalance []EvidenceWorkBalanceWeek `json:"work_balance"`
-	Missing     EvidenceMissing           `json:"missing"`
+	// WorkBalanceSources names where each work_balance series came from and
+	// where GitHub-truth issue coverage begins (#12517).
+	WorkBalanceSources EvidenceWorkBalanceSources `json:"work_balance_sources"`
+	Missing            EvidenceMissing            `json:"missing"`
 }
 
 // EvidenceClaimWeek is one ISO week of agent-authored PRs (latest bundle per
 // PR). Claimed counts every such PR: opening or marking it ready is the agent
-// saying "done". CINotGreen counts PRs with at least one captured check whose
-// conclusion is not success; CICaptured is that column's denominator, since a
-// record with no captured checks is disclosed under missing.records_empty_ci
-// and never counted as agreement. VerdictNotApprove counts PRs with any
-// perspective verdict other than approve; Both counts PRs in both columns.
+// saying "done". CINotGreen counts PRs whose captured CI had settled red
+// (evidenceCIState); CICaptured is that column's denominator and counts only
+// PRs whose CI had settled green or red. A record with no captured checks is
+// disclosed under missing.records_empty_ci, and one whose checks were still
+// running when captured under CIPending / missing.records_ci_pending; neither
+// is counted as agreement or as disagreement. VerdictNotApprove counts PRs
+// with any perspective verdict other than approve; Both counts PRs in both
+// columns.
 type EvidenceClaimWeek struct {
 	Week              string `json:"week"`
 	N                 int    `json:"n"`
 	Claimed           int    `json:"claimed"`
 	CICaptured        int    `json:"ci_captured"`
 	CINotGreen        int    `json:"ci_not_green"`
+	CIPending         int    `json:"ci_pending"`
 	VerdictNotApprove int    `json:"verdict_not_approve"`
 	Both              int    `json:"both"`
 }
 
-// evidenceCINotGreen reports whether any captured check concluded with
-// something other than success. Empty CI is not disagreement; callers must
-// check len(b.CI.Checks) first.
-func evidenceCINotGreen(b *evidence.Bundle) bool {
+// CI states a bundle's captured checks can settle into (evidenceCIState).
+const (
+	evidenceCINone    = "none"
+	evidenceCIGreen   = "green"
+	evidenceCIRed     = "red"
+	evidenceCIPending = "pending"
+)
+
+// evidenceCIFailingConclusions are the check-run conclusions the merge gate
+// reads as a failure. "skipped" and "neutral" are not failures (a skipped
+// job is green for the gate), and "in_progress", "queued" or "pending" mean
+// the check had not finished when the snapshot was taken.
+var evidenceCIFailingConclusions = map[string]bool{
+	"failure": true, "cancelled": true, "timed_out": true, "action_required": true, "startup_failure": true, "stale": true,
+}
+
+// evidenceCIFinishedConclusions are the conclusions of a completed check
+// that did not fail.
+var evidenceCIFinishedConclusions = map[string]bool{"success": true, "skipped": true, "neutral": true}
+
+// evidenceCIState classifies the CI snapshot a bundle carries. The gate's
+// own verdict (ci.status, written at merge-eligibility time) wins when
+// present; otherwise the per-check conclusions decide: any failing
+// conclusion is red, all finished-clean is green, anything else (a check
+// still running, an unrecognised conclusion) is pending. A snapshot with no
+// checks is none. Counting a skipped or still-running check as "not green"
+// would turn almost every captured record into a disagreement, which is a
+// measurement error, not a finding.
+func evidenceCIState(b *evidence.Bundle) string {
+	if b == nil || len(b.CI.Checks) == 0 {
+		return evidenceCINone
+	}
+	switch b.CI.Status {
+	case "success":
+		return evidenceCIGreen
+	case "failure":
+		return evidenceCIRed
+	case "pending":
+		return evidenceCIPending
+	}
+	state := evidenceCIGreen
 	for _, c := range b.CI.Checks {
-		if c.Conclusion != "success" {
-			return true
+		switch {
+		case evidenceCIFailingConclusions[c.Conclusion]:
+			return evidenceCIRed
+		case !evidenceCIFinishedConclusions[c.Conclusion]:
+			state = evidenceCIPending
 		}
 	}
-	return false
+	return state
 }
 
 // evidenceVerdictNotApprove reports whether any perspective verdict is
@@ -187,15 +243,22 @@ func loadEvidenceWriteCounters(path string) map[string]EvidenceWriteCount {
 	return f.Totals
 }
 
-// EvidenceOutcomes counts PRs for one author kind. Closed counts PRs whose
-// backfilled record says closed without merge (hivecommons/hive#12371); a
-// live-only v1 bundle records a merge but not a close, so such PRs stay Open.
-// RevertedWithin14d is nil because revert tracking is not recorded in bundles.
+// EvidenceOutcomes counts PRs for one author kind. Merged is any record of
+// the PR with a merge event. Closed and Open come only from a backfilled
+// record (hivecommons/hive#12371): closed without merge, or still open when
+// the backfill ran. Unknown is a PR with live bundles only and no merge
+// event: a live bundle records a merge only when this hive merged, and never
+// a close, so the PR may be open, merged by someone else or closed by hand
+// and nothing on disk says which. Rates must use Merged+Closed+Open as their
+// denominator and report Unknown beside them, never fold it into "not
+// merged". RevertedWithin14d is nil because revert tracking is not recorded
+// in bundles.
 type EvidenceOutcomes struct {
 	N                 int  `json:"n"`
 	Merged            int  `json:"merged"`
 	Closed            int  `json:"closed"`
 	Open              int  `json:"open"`
+	Unknown           int  `json:"unknown"`
 	RevertedWithin14d *int `json:"reverted_14d"`
 }
 
@@ -205,12 +268,17 @@ type EvidencePerspectiveCalib struct {
 	Buckets     []EvidenceCalibBucket `json:"buckets"`
 }
 
+// EvidenceCalibBucket is one confidence bucket of one perspective. Merged
+// counts verdicts on PRs that merged; Unknown counts verdicts on PRs whose
+// outcome is not recorded (EvidenceOutcomes.Unknown), so the merged rate is
+// Merged / (N - Unknown), not Merged / N.
 type EvidenceCalibBucket struct {
 	Bucket    string `json:"bucket"`
 	N         int    `json:"n"`
 	Approvals int    `json:"approvals"`
 	Blocks    int    `json:"blocks"`
 	Merged    int    `json:"merged"`
+	Unknown   int    `json:"unknown"`
 }
 
 type EvidenceModelAccuracy struct {
@@ -221,12 +289,20 @@ type EvidenceModelAccuracy struct {
 
 // EvidenceModelStat: Approvals/Blocks are verdict counts; MergedAfterBlock and
 // ApprovedNotMerged compare the verdict with the PR's recorded outcome.
+// ApprovedNotMerged counts approvals on PRs whose record says closed without
+// merge or still open at backfill time — a known non-merge. ApprovedUnknown
+// and BlockedUnknown count verdicts on PRs with no recorded outcome; they are
+// excluded from both rates' denominators (false-approve rate =
+// ApprovedNotMerged / (Approvals - ApprovedUnknown), false-block rate =
+// MergedAfterBlock / (Blocks - BlockedUnknown)) and shown as unknown.
 type EvidenceModelStat struct {
 	N                 int `json:"n"`
 	Approvals         int `json:"approvals"`
 	Blocks            int `json:"blocks"`
 	MergedAfterBlock  int `json:"merged_after_block"`
 	ApprovedNotMerged int `json:"approved_not_merged"`
+	ApprovedUnknown   int `json:"approved_unknown"`
+	BlockedUnknown    int `json:"blocked_unknown"`
 }
 
 type EvidenceSentinelSeries struct {
@@ -261,24 +337,29 @@ type EvidenceShadowGateSide struct {
 }
 
 // EvidenceShadowOutcome is how a set of PRs actually turned out. Reverted is
-// a subset of Merged (the bundle has reverted_by links). Closed comes from a
-// backfilled record of the same PR; a live-only v1 bundle does not record a
-// close-without-merge.
+// a subset of Merged (the bundle has reverted_by links). Closed and Open come
+// from a backfilled record of the same PR; a live-only v1 bundle with no
+// merge event does not record what happened, so it counts as Unknown (see
+// EvidenceOutcomes).
 type EvidenceShadowOutcome struct {
 	N        int `json:"n"`
 	Merged   int `json:"merged"`
 	Closed   int `json:"closed"`
 	Open     int `json:"open"`
+	Unknown  int `json:"unknown"`
 	Reverted int `json:"reverted"`
 }
 
-func (o *EvidenceShadowOutcome) add(b *evidencePR) {
+func (o *EvidenceShadowOutcome) add(b *evidence.PR) {
 	o.N++
 	if b.Merge == nil {
-		if b.Closed {
+		switch {
+		case b.Closed:
 			o.Closed++
-		} else {
+		case b.OutcomeKnown():
 			o.Open++
+		default:
+			o.Unknown++
 		}
 		return
 	}
@@ -288,7 +369,7 @@ func (o *EvidenceShadowOutcome) add(b *evidencePR) {
 	}
 }
 
-func (s *EvidenceShadowGateSide) add(b *evidencePR, flag *bool) {
+func (s *EvidenceShadowGateSide) add(b *evidence.PR, flag *bool) {
 	if flag == nil {
 		return
 	}
@@ -301,10 +382,16 @@ func (s *EvidenceShadowGateSide) add(b *evidencePR, flag *bool) {
 }
 
 type EvidenceMissing struct {
-	VerdictsModelUnknown int  `json:"verdicts_model_unknown"`
-	RecordsEmptyCI       int  `json:"records_empty_ci"`
-	RecordsUnreadable    int  `json:"records_unreadable"`
-	ReviewerAccuracy     bool `json:"reviewer_accuracy_unavailable"`
+	VerdictsModelUnknown int `json:"verdicts_model_unknown"`
+	RecordsEmptyCI       int `json:"records_empty_ci"`
+	// RecordsCIPending counts PRs whose captured checks had not all finished
+	// when the snapshot was taken; they are in neither CI column.
+	RecordsCIPending int `json:"records_ci_pending"`
+	// PRsOutcomeUnknown counts PRs in the window with live bundles only and
+	// no merge event (EvidenceOutcomes.Unknown summed over author kinds).
+	PRsOutcomeUnknown int  `json:"prs_outcome_unknown"`
+	RecordsUnreadable int  `json:"records_unreadable"`
+	ReviewerAccuracy  bool `json:"reviewer_accuracy_unavailable"`
 	// IssuesHumanOpensUnobserved is always true today: the audit log only
 	// records hive-mediated issue writes, so issues humans or third-party bots
 	// open directly on GitHub never reach work_balance.
@@ -432,7 +519,16 @@ func (s *Server) handleEvidenceSummary(w http.ResponseWriter, r *http.Request) {
 	resp.WriteCounters = loadEvidenceWriteCounters(writeCountersPath)
 	resp.IntentCounters = loadEvidenceWriteCounters(intentCountersPath)
 	resp.ComplexityByRepo = loadEvidenceComplexity(ghpkg.ReviewEvidenceRoot)
-	resp.WorkBalance = buildEvidenceWorkBalance(evidenceWorkBalanceEntries(s.audit), win, repo)
+	resp.WorkBalance, resp.WorkBalanceSources = buildEvidenceWorkBalance(evidenceWorkBalanceInputs{
+		Entries: evidenceWorkBalanceEntries(s.audit),
+		Rollup:  loadIssueActivityRollup(issueActivityPath),
+		PRs:     evidence.FoldPRs(bundles, repo, ""),
+		Buckets: s.evidenceWorkBalanceBuckets(win),
+	}, win, repo)
+	resp.Missing.IssuesHumanOpensUnobserved = resp.WorkBalanceSources.IssuesGitHubSince == ""
+	resp.WriteActivity = buildEvidenceWriteActivity(writeCountersPath, evidenceWriteActivityEntries(s.audit), win, repo, now)
+	allPRs := evidence.FoldPRs(bundles, "", "")
+	resp.CIRecovery = buildEvidenceCIRecovery(evidenceCIClaims(bundles, allPRs), evidenceGateMerges(bundles, allPRs), loadCIRecoveryRollup(ciRecoveryPath), win, repo, evidenceCIPolicy(s))
 
 	days := (hours + 23) / 24
 	if days < 1 || days > reviewerAccuracyMaxWindowDays {
@@ -489,79 +585,6 @@ func loadEvidenceBundles(root string) ([]*evidence.Bundle, int, error) {
 	return out, unreadable, err
 }
 
-// evidencePR is one PR's bundles folded into a single view. Bundle is the
-// newest record (verdicts, CI, sentinel, shadow); OpenedAt, Merge, RevertedBy
-// and Closed come from whichever record of the same PR knows them. A live
-// bundle is created when review starts and only gains a merge event when the
-// hive itself merges, while a backfilled bundle (hivecommons/hive#12371) is
-// stamped with the PR's open time and its forge outcome; folding the two
-// keeps the verdicts and the outcome together, and windows select on PR
-// open time rather than on when any record happened to be written.
-type evidencePR struct {
-	*evidence.Bundle
-	OpenedAt   time.Time
-	Merge      *evidence.MergeEvent
-	RevertedBy []string
-	Closed     bool
-}
-
-// evidenceBundleClosed reports whether a bundle records a close without merge.
-func evidenceBundleClosed(b *evidence.Bundle) bool {
-	return b.Merge == nil && b.Backfill != nil && b.Backfill.State == evidence.BackfillStateClosed
-}
-
-// evidenceBundleOpenedAt is the PR open time a bundle knows: merge.opened_at
-// when captured, else the record's created_at (a backfilled record's
-// created_at is the PR's open time; a live record's is when review started).
-func evidenceBundleOpenedAt(b *evidence.Bundle) time.Time {
-	if b.Merge != nil && !b.Merge.OpenedAt.IsZero() && b.Merge.OpenedAt.Before(b.CreatedAt) {
-		return b.Merge.OpenedAt
-	}
-	return b.CreatedAt
-}
-
-// evidenceFoldPRs groups bundles by PR after the repo/author_kind filter.
-func evidenceFoldPRs(bundles []*evidence.Bundle, repo, kind string) map[string]*evidencePR {
-	prs := map[string]*evidencePR{}
-	for _, b := range bundles {
-		if repo != "" && !strings.EqualFold(b.Repo, repo) {
-			continue
-		}
-		if kind != "" && b.Author.Kind != kind {
-			continue
-		}
-		key := strings.ToLower(b.Repo) + "#" + strconv.Itoa(b.Number)
-		opened := evidenceBundleOpenedAt(b)
-		p := prs[key]
-		if p == nil {
-			p = &evidencePR{Bundle: b, OpenedAt: opened}
-			prs[key] = p
-		} else {
-			if b.CreatedAt.After(p.CreatedAt) || (b.CreatedAt.Equal(p.CreatedAt) && b.UpdatedAt.After(p.UpdatedAt)) {
-				p.Bundle = b
-			}
-			if opened.Before(p.OpenedAt) {
-				p.OpenedAt = opened
-			}
-		}
-		if b.Merge != nil && (p.Merge == nil || b.Merge.At.After(p.Merge.At)) {
-			p.Merge = b.Merge
-		}
-		if len(b.RevertedBy) > len(p.RevertedBy) {
-			p.RevertedBy = b.RevertedBy
-		}
-		if evidenceBundleClosed(b) {
-			p.Closed = true
-		}
-	}
-	for _, p := range prs {
-		if p.Merge != nil {
-			p.Closed = false
-		}
-	}
-	return prs
-}
-
 // evidenceWindowHas reports whether a PR opened inside the window.
 func evidenceWindowHas(win evidenceWindow, opened time.Time) bool {
 	bounded := win.Custom || win.Hours > 0
@@ -574,9 +597,10 @@ func evidenceWindowHas(win evidenceWindow, opened time.Time) bool {
 	return true
 }
 
-// evidenceLatestPerPR folds bundles per PR and keeps the PRs opened in win.
-func evidenceLatestPerPR(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) map[string]*evidencePR {
-	prs := evidenceFoldPRs(bundles, repo, kind)
+// evidenceLatestPerPR folds bundles per PR (evidence.FoldPRs) and keeps the
+// PRs opened in win.
+func evidenceLatestPerPR(bundles []*evidence.Bundle, win evidenceWindow, repo, kind string) map[string]*evidence.PR {
+	prs := evidence.FoldPRs(bundles, repo, kind)
 	for k, p := range prs {
 		if !evidenceWindowHas(win, p.OpenedAt) {
 			delete(prs, k)
@@ -593,7 +617,7 @@ var evidenceAvailableWindowHours = []int{24, 168, 720, 0}
 // repo/author_kind filter, so the card can say "window too short" instead
 // of "not enough data" when a longer window would have samples.
 func evidenceAvailableWindows(bundles []*evidence.Bundle, now time.Time, repo, kind string) map[string]int {
-	prs := evidenceFoldPRs(bundles, repo, kind)
+	prs := evidence.FoldPRs(bundles, repo, kind)
 	out := make(map[string]int, len(evidenceAvailableWindowHours))
 	for _, h := range evidenceAvailableWindowHours {
 		key := "all"
@@ -666,17 +690,25 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 		o := resp.Outcomes[b.Author.Kind]
 		o.N++
 		merged := b.Merge != nil
+		known := b.OutcomeKnown()
 		switch {
 		case merged:
 			o.Merged++
 		case b.Closed:
 			o.Closed++
-		default:
+		case known:
 			o.Open++
+		default:
+			o.Unknown++
+			resp.Missing.PRsOutcomeUnknown++
 		}
 		resp.Outcomes[b.Author.Kind] = o
-		if len(b.CI.Checks) == 0 {
+		ciState := evidenceCIState(b.Bundle)
+		switch ciState {
+		case evidenceCINone:
 			resp.Missing.RecordsEmptyCI++
+		case evidenceCIPending:
+			resp.Missing.RecordsCIPending++
 		}
 		if b.Author.Kind == evidence.AuthorAgent {
 			y, w := b.OpenedAt.UTC().ISOWeek()
@@ -688,10 +720,12 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 			}
 			c.N++
 			c.Claimed++
-			ciBad := false
-			if len(b.CI.Checks) > 0 {
+			ciBad := ciState == evidenceCIRed
+			switch ciState {
+			case evidenceCIGreen, evidenceCIRed:
 				c.CICaptured++
-				ciBad = evidenceCINotGreen(b.Bundle)
+			case evidenceCIPending:
+				c.CIPending++
 			}
 			swarmBad := evidenceVerdictNotApprove(b.Bundle)
 			if ciBad {
@@ -760,6 +794,9 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 			if merged {
 				c.buckets[idx].Merged++
 			}
+			if !known {
+				c.buckets[idx].Unknown++
+			}
 
 			m := models[model]
 			if m == nil {
@@ -771,13 +808,19 @@ func buildEvidenceSummaryWindow(bundles []*evidence.Bundle, win evidenceWindow, 
 			st.N++
 			if approve {
 				st.Approvals++
-				if !merged {
+				switch {
+				case !known:
+					st.ApprovedUnknown++
+				case !merged:
 					st.ApprovedNotMerged++
 				}
 			}
 			if block {
 				st.Blocks++
-				if merged {
+				switch {
+				case !known:
+					st.BlockedUnknown++
+				case merged:
 					st.MergedAfterBlock++
 				}
 			}

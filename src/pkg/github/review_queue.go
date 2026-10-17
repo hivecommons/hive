@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The PR review queue (hivecommons/hive#9590) is one ranked, maintainer-facing
@@ -193,6 +194,73 @@ type ReviewQueueEntry struct {
 	// Superseded is set when the supersession sweep has announced it will
 	// close this PR once its grace window ends (hivecommons/hive#11430).
 	Superseded *ReviewQueueSuperseded `json:"superseded,omitempty"`
+	// Stage is the stage-label engine's record for the PR (nil when the
+	// engine is off or has not seen it): the stage, how long it has been
+	// quiet, whether it waits on the hive, and its transition history —
+	// the dashboard's replacement for the retired stage/regressed label
+	// (hivecommons/hive#12534).
+	Stage *ReviewQueueStage `json:"stage,omitempty"`
+}
+
+// ReviewQueueStage is ReviewQueueEntry.Stage.
+type ReviewQueueStage struct {
+	Stage          string    `json:"stage"`
+	EnteredAt      time.Time `json:"entered_at,omitzero"`
+	LastActivityAt time.Time `json:"last_activity_at,omitzero"`
+	// QuietFor is how long nobody but the hive has touched the PR (Go
+	// duration string, "" when unknown).
+	QuietFor string `json:"quiet_for,omitempty"`
+	// Stalled mirrors the stage/stalled label as the engine last decided it.
+	Stalled bool `json:"stalled"`
+	// WaitingOnHive says the PR waits on the hive (checks running, verdict
+	// pending) and so cannot stall; when it sits past the stage's dwell the
+	// signal belongs on the hive's own lane, not on the PR.
+	WaitingOnHive bool `json:"waiting_on_hive"`
+	// PastDwell is true when the PR has been quiet longer than the stage's
+	// dwell, whichever side is holding it. With WaitingOnHive it is the
+	// hive-held alert: the reviewer lane, not the author, needs attention.
+	PastDwell bool                  `json:"past_dwell"`
+	History   []ReviewQueueStageHop `json:"history,omitempty"`
+}
+
+// ReviewQueueStageHop is one stage transition.
+type ReviewQueueStageHop struct {
+	From      string    `json:"from"`
+	To        string    `json:"to"`
+	At        time.Time `json:"at"`
+	Reason    string    `json:"reason,omitempty"`
+	Regressed bool      `json:"regressed,omitempty"`
+}
+
+// reviewQueueStage projects the stage store's record for a PR, deciding
+// stalled/past_dwell with the same dwell overrides and require_quiet
+// policy the engine labels with (ReviewQueueOptions.StageDwell /
+// StageStalledRequireQuiet) so the pill never disagrees with the label.
+func reviewQueueStage(store *stagelabels.Store, full string, number int, opts ReviewQueueOptions, now time.Time) *ReviewQueueStage {
+	if store == nil {
+		return nil
+	}
+	rec, ok := store.Get(stagelabels.Key(full, number))
+	if !ok || rec.Stage == stagelabels.None {
+		return nil
+	}
+	out := &ReviewQueueStage{
+		Stage:          rec.Stage.String(),
+		EnteredAt:      rec.EnteredAt,
+		LastActivityAt: rec.LastActivityAt,
+		WaitingOnHive:  rec.WaitingOnHive,
+		Stalled:        stagelabels.StalledWith(rec, opts.StageDwell, now, opts.stalledRequireQuiet()),
+	}
+	if q := rec.QuietFor(now); q > 0 {
+		out.QuietFor = q.Truncate(time.Minute).String()
+		if d := stagelabels.Dwell(rec.Stage, opts.StageDwell); d > 0 && q >= d {
+			out.PastDwell = true
+		}
+	}
+	for _, h := range rec.History {
+		out.History = append(out.History, ReviewQueueStageHop{From: h.From.String(), To: h.Stage.String(), At: h.At, Reason: h.Reason, Regressed: h.Regressed})
+	}
+	return out
 }
 
 // ReviewQueueSupersededReason is ReviewQueueSuperseded.Reason.
@@ -230,8 +298,25 @@ type ReviewQueueOptions struct {
 	Dispatch review.DispatchState
 	// Held marks PRs (by ReviewQueueKey) that sit on a hold label.
 	Held map[string]bool
+	// StageStore, when set, supplies each entry's Stage (stage-label engine
+	// record). nil leaves Stage unset.
+	StageStore *stagelabels.Store
+	// StageDwell is governor.labels.stage.dwell (per-slug overrides) and
+	// StageStalledRequireQuiet is governor.labels.stage.stalled.require_quiet
+	// as configured (nil when unset): the policy the engine labels
+	// stage/stalled with. The zero values are the engine's defaults (table
+	// dwell, quiet required), so a caller without config still agrees with
+	// a default-configured engine.
+	StageDwell               map[string]time.Duration
+	StageStalledRequireQuiet *bool
 	// Now is the reference time for ages. Zero means time.Now().
 	Now time.Time
+}
+
+// stalledRequireQuiet resolves StageStalledRequireQuiet with the engine's
+// default (config.StageStalledConfig.IsRequireQuiet): unset means required.
+func (o ReviewQueueOptions) stalledRequireQuiet() bool {
+	return o.StageStalledRequireQuiet == nil || *o.StageStalledRequireQuiet
 }
 
 // ReviewQueueKey is the case-insensitive identity of a PR in the queue.
@@ -325,6 +410,7 @@ func buildReviewQueueEntry(pr PullRequest, full, key string, opts ReviewQueueOpt
 		HiveAuthored: reviewQueueHiveAuthored(pr, opts.AIAuthor),
 		Held:         opts.Held[key],
 		CIState:      reviewCIState(pr),
+		Stage:        reviewQueueStage(opts.StageStore, full, pr.Number, opts, now),
 	}
 	if !pr.CreatedAt.IsZero() && now.After(pr.CreatedAt) {
 		e.AgeHours = int(now.Sub(pr.CreatedAt).Hours())

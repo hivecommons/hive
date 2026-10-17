@@ -12,6 +12,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Tests for hivecommons/hive#8380: an issue someone has CLAIMED on the issue
@@ -110,11 +111,11 @@ func (r *claimRecorder) CreateIssueComment(_ context.Context, repo string, numbe
 	return nil
 }
 
-func (r *claimRecorder) AddLabels(_ context.Context, repo string, number int, labels []string) error {
+func (r *claimRecorder) ApplyStageLabel(_ context.Context, repo string, number int, stage stagelabels.Stage) (stagelabels.Outcome, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.labels = append(r.labels, claimLabelPost{repo: repo, number: number, labels: append([]string(nil), labels...)})
-	return nil
+	r.labels = append(r.labels, claimLabelPost{repo: repo, number: number, labels: []string{stage.Label()}})
+	return stagelabels.Outcome{Added: []string{stage.Label()}}, nil
 }
 
 func (r *claimRecorder) RemoveLabel(_ context.Context, repo string, number int, label string) error {

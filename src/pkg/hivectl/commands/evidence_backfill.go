@@ -92,8 +92,9 @@ func newEvidenceBackfillCommand(env *commandEnv) *cobra.Command {
 			"records is written: author (with a documented kind heuristic), outcome and timestamps,\n" +
 			"merge actor, and revert / follow-up links under the same rules as the live recorder.\n" +
 			"Verdicts, CI, sentinel and shadow observations are left absent, never fabricated, and\n" +
-			"every bundle is marked backfilled: true. Existing bundles are skipped, so re-running is\n" +
-			"safe. Nothing here reads into or alters merge eligibility.\n\n" +
+			"every bundle is marked backfilled: true. Existing backfilled bundles and live bundles that already\n" +
+			"record a merge are skipped; a live bundle without a merge gets a sibling .backfill.json\n" +
+			"(reported as supplemented), so re-running is safe. Nothing here reads into or alters merge eligibility.\n\n" +
 			"Authentication: the token in $GITHUB_TOKEN (or --github-token-env), else `gh auth token`.",
 		Args: argsNone(),
 		Example: "  hivectl evidence backfill --repo ublue-os/bluefin --since 2025-01-01 --dry-run\n" +
@@ -361,6 +362,31 @@ func backfillBundle(repo string, pr backfillPR, now time.Time, opts *evidenceBac
 	return b
 }
 
+// backfillSupplementPath is where a backfilled record is written beside a live
+// bundle at path; the evidence loader reads every *.json under the PR dir.
+func backfillSupplementPath(path string) string {
+	return strings.TrimSuffix(path, ".json") + ".backfill.json"
+}
+
+// backfillTarget decides where the backfilled record for the bundle path goes.
+// A free path is used as is. A live bundle that has no merge event and is not
+// itself backfilled gets a sibling .backfill.json so the PR gains a GitHub
+// outcome; anything else already on disk is skipped.
+func backfillTarget(path string) (target string, skip bool) {
+	if _, err := os.Stat(path); err != nil {
+		return path, false
+	}
+	existing, err := ghpkg.LoadReviewEvidence(path)
+	if err != nil || existing.Backfilled || existing.Backfill != nil || existing.Merge != nil {
+		return "", true
+	}
+	sup := backfillSupplementPath(path)
+	if _, err := os.Stat(sup); err == nil {
+		return "", true
+	}
+	return sup, false
+}
+
 // backfillStore is the on-disk view the run links against: bundles written
 // by this run plus any already present under root. latest returns the
 // newest bundle for a PR, loading from disk when it was not built here.
@@ -564,15 +590,21 @@ func runEvidenceBackfill(cmd *cobra.Command, env *commandEnv, opts *evidenceBack
 	store := &backfillStore{root: opts.root, repo: opts.repo, built: map[int]*evidence.Bundle{}, disk: map[int]*evidence.Bundle{}}
 	counts := map[string]int{"open": 0, "closed": 0, "merged": 0, "human": 0, "agent": 0, "bot": 0}
 	var toWrite []*evidence.Bundle
-	skipped := 0
+	skipped, supplemented := 0, 0
+	paths := map[int]string{}
 	fetchErrors := 0
 	for i := range prs {
 		pr := &prs[i]
 		path := ghpkg.ReviewEvidencePath(opts.root, opts.repo, pr.Number, pr.Head.SHA)
-		if _, statErr := os.Stat(path); statErr == nil {
+		target, skip := backfillTarget(path)
+		if skip {
 			skipped++
 			continue
 		}
+		if target != path {
+			supplemented++
+		}
+		paths[pr.Number] = target
 		if pr.MergedAt != nil && !opts.skipMergers && !opts.dryRun {
 			if err := fetcher.mergedBy(ctx, opts.repo, pr); err != nil {
 				if ctx.Err() != nil {
@@ -620,6 +652,7 @@ func runEvidenceBackfill(cmd *cobra.Command, env *commandEnv, opts *evidenceBack
 		"fetched":       len(prs),
 		"to_write":      len(toWrite),
 		"skipped":       skipped,
+		"supplemented":  supplemented,
 		"merged":        counts["merged"],
 		"closed":        counts["closed"],
 		"open":          counts["open"],
@@ -655,8 +688,7 @@ func runEvidenceBackfill(cmd *cobra.Command, env *commandEnv, opts *evidenceBack
 	written, relinked := 0, 0
 	var writeErrs []error
 	for _, b := range toWrite {
-		path := ghpkg.ReviewEvidencePath(opts.root, opts.repo, b.Number, b.HeadSHA)
-		if err := writeBackfillBundle(path, b, key); err != nil {
+		if err := writeBackfillBundle(paths[b.Number], b, key); err != nil {
 			writeErrs = append(writeErrs, fmt.Errorf("%s: %w", b.ID, err))
 			continue
 		}

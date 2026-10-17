@@ -116,7 +116,7 @@ func TestBuildRuntimeReportCarriesMarkersAndLabels(t *testing.T) {
 		}
 		return false
 	}
-	for _, l := range []string{LabelSelfReport, LabelKindBug, LabelNeedsTriage, LabelFleetReport, "class:restart-storm", "severity:high", "trigger:" + TriggerRuntimeError, "hive/hosted-aslom"} {
+	for _, l := range []string{LabelSelfReport, LabelKindBug, LabelNeedsTriage, LabelFleetReport, "class:restart-storm", "severity:high", "trigger:" + TriggerRuntimeError} {
 		if !hasLabel(l) {
 			t.Fatalf("labels missing %q: %v", l, r.Labels)
 		}
@@ -299,18 +299,22 @@ func TestShortMessageDiagnosticsAndLabelHelpers(t *testing.T) {
 	if got := boundDiagnostics(big); len(got) > maxDiagnosticsBytes+4 || !strings.HasPrefix(got, "…\n") {
 		t.Fatalf("diagnostics not bounded: len=%d prefix=%q", len(got), got[:4])
 	}
-	if HiveLabel("") != "" || HiveLabel("Hosted X") != "hive/hosted-x" {
-		t.Fatalf("HiveLabel = %q %q", HiveLabel(""), HiveLabel("Hosted X"))
-	}
 	if displayVersion("") != "vunknown" || displayVersion("v5.1.0") != "v5.1.0" || displayVersion("5.1.0") != "v5.1.0" {
 		t.Fatalf("displayVersion: %q %q %q", displayVersion(""), displayVersion("v5.1.0"), displayVersion("5.1.0"))
 	}
-	// Anonymous hives (no slug) carry no hive/<slug> label.
-	r := BuildRuntimeReport(Observation{}, Evidence{Class: ClassRestartStorm, Severity: "high"}, "fp", "inst", "", "v5", "c", time.Now())
-	for _, l := range r.Labels {
-		if strings.HasPrefix(l, "hive/") && l != LabelSelfReport {
-			t.Fatalf("anonymous report carries %q", l)
+	// The hive/<slug> provenance label is retired (hivecommons/hive#12539):
+	// neither a named nor an anonymous report carries one; the body marker
+	// names the hive instead.
+	for _, hive := range []string{"", "Hosted X"} {
+		r := BuildRuntimeReport(Observation{}, Evidence{Class: ClassRestartStorm, Severity: "high"}, "fp", "inst", hive, "v5", "c", time.Now())
+		for _, l := range r.Labels {
+			if strings.HasPrefix(l, "hive/") && l != LabelSelfReport {
+				t.Fatalf("report for %q carries %q", hive, l)
+			}
 		}
+	}
+	if r := BuildRuntimeReport(Observation{}, Evidence{Class: ClassRestartStorm, Severity: "high"}, "fp", "inst", "Hosted X", "v5", "c", time.Now()); !strings.Contains(r.Body, "hive=hosted-x") {
+		t.Fatalf("report body does not name the hive: %q", r.Body)
 	}
 }
 

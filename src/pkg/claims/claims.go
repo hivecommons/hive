@@ -342,6 +342,14 @@ func (p Policy) ttlFor(k Kind, requested time.Duration) time.Duration {
 }
 
 // Ledger holds live claims, persists them, and applies precedence.
+// It maintains at most one live claim per (repo, issue) pair: a Claim either
+// renews an existing holder's TTL, displaces (takes over) a lower-ranked holder,
+// is held by same-rank contention, or is refused by higher rank. Two live
+// ledger claims never coexist on one issue. The hive/claimed-by-<who> label
+// mirrors the single live claim but reconciles stale remnants and hand-applied
+// labels: co-party claimed-by-* labels on the same issue therefore only arise
+// from manual label application or persistent debris from a previous holder,
+// not because the ledger models concurrent co-parties.
 type Ledger struct {
 	mu     sync.Mutex
 	claims map[string]Claim

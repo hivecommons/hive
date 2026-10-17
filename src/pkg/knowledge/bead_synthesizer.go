@@ -51,6 +51,7 @@ type BeadSynthesizer struct {
 	enricher         *PREnricher
 	lifecycleManager *BeadLifecycleManager
 	graphStore       *GraphStore
+	publisher        *beadPublishBatch
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -182,6 +183,16 @@ type beadCandidate struct {
 // RunSynthesis scans all bead stores for unsynthesized done/closed beads,
 // classifies them into facts, deduplicates, and ingests into the wiki.
 func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	publisher := s.publisher
+	s.mu.Unlock()
+	// Flush even when there are no new candidates: daily batches and failed
+	// publishes must not depend on another bead completing to be retried.
+	defer func() {
+		if err := publisher.flush(ctx); err != nil {
+			s.logger.Warn("bead fact publish failed; batch retained", "error", err)
+		}
+	}()
 	var candidates []beadCandidate
 
 	for agentName, store := range s.beadStores {
@@ -234,6 +245,7 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 			SourcePR:   fmt.Sprintf("bead:%s/%s", c.agent, c.bead.ID),
 			SourceDate: c.bead.UpdatedAt.Time,
 		}
+		fact.Sensitive = IsSensitiveFact(fact)
 
 		classified = append(classified, classifiedFact{fact: fact, candidate: c})
 	}
@@ -255,6 +267,8 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 			)
 			continue
 		}
+
+		publisher.enqueue(cf.fact)
 
 		store := s.beadStores[cf.candidate.agent]
 		if err := store.SetMetadata(cf.candidate.bead.ID, beadSynthMetaKeySynthesizedAt, time.Now().UTC().Format(time.RFC3339)); err != nil {

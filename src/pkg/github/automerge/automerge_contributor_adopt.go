@@ -68,16 +68,108 @@ func adoptionGrace(rec stagelabels.Record, policy StageLabelPolicy) time.Duratio
 	return time.Hour
 }
 
-// adoptionDue reports whether the PR at head has sat nudged past its grace
-// with no new head, and was not already adopted at this head.
-func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, now time.Time) bool {
+// ContributorPresence is what the hub knows about a contributor's relay:
+// whether they have a contributor profile on this hive at all, whether a
+// relay heartbeat is within the presence window right now, and the last
+// heartbeat seen (zero when none this process).
+type ContributorPresence struct {
+	Registered bool
+	Online     bool
+	LastSeen   time.Time
+}
+
+// ContributorPresenceSource is the optional second face of the nudge sink:
+// live presence, re-read every sweep, so adoption reacts to a relay that went
+// away AFTER the nudge instead of trusting the snapshot taken at nudge time.
+type ContributorPresenceSource interface {
+	Presence(ctx context.Context, login string) ContributorPresence
+}
+
+// Adoption reasons recorded on the store and in the adoption marker.
+const (
+	AdoptReasonOffline      = "contributor-offline"
+	AdoptReasonUnregistered = "contributor-unregistered"
+	AdoptReasonGrace        = "grace-elapsed"
+)
+
+// contributorPresence asks the sink for live presence; ok is false when the
+// sink does not provide it.
+func (c *Engine) contributorPresence(ctx context.Context, login string) (ContributorPresence, bool) {
+	src, ok := c.contributorNudge.(ContributorPresenceSource)
+	if !ok || src == nil || strings.TrimSpace(login) == "" {
+		return ContributorPresence{}, false
+	}
+	return src.Presence(ctx, login), true
+}
+
+// adoptionDue reports whether the PR at head has sat nudged long enough with
+// no new head, and was not already adopted at this head; reason says which
+// rule fired. With live presence: a registered relay that is online keeps
+// the online grace (its hive may be mid-fix); a registered relay that is
+// offline is adopted once it has been gone AdoptAfterOffline (counted from
+// its last heartbeat or the first nudge, whichever is later); an author with
+// no profile here (another hive posted the PR) is adopted after
+// AdoptAfterUnregistered. Without presence the nudge-time graces apply.
+func adoptionDue(rec stagelabels.Record, head string, policy StageLabelPolicy, now time.Time, presence ContributorPresence, hasPresence bool) (bool, string) {
 	if head == "" || rec.NudgeHead != head || rec.NudgeCount == 0 || rec.FirstNudgeAt.IsZero() {
-		return false
+		return false, ""
 	}
-	if rec.Adopted(head) {
-		return false
+	if rec.Adopted(head) || rec.AdoptedInPlace() {
+		return false, ""
 	}
-	return now.Sub(rec.FirstNudgeAt) >= adoptionGrace(rec, policy)
+	if !hasPresence {
+		return now.Sub(rec.FirstNudgeAt) >= adoptionGrace(rec, policy), AdoptReasonGrace
+	}
+	switch {
+	case presence.Registered && presence.Online:
+		grace := policy.GraceOnline
+		if grace <= 0 {
+			grace = 2 * time.Hour
+		}
+		return now.Sub(rec.FirstNudgeAt) >= grace, AdoptReasonGrace
+	case presence.Registered:
+		wait := policy.AdoptAfterOffline
+		if wait <= 0 {
+			wait = 30 * time.Minute
+		}
+		since := rec.FirstNudgeAt
+		if presence.LastSeen.After(since) {
+			since = presence.LastSeen
+		}
+		return now.Sub(since) >= wait, AdoptReasonOffline
+	default:
+		wait := policy.AdoptAfterUnregistered
+		if wait <= 0 {
+			wait = 2 * time.Hour
+		}
+		return now.Sub(rec.FirstNudgeAt) >= wait, AdoptReasonUnregistered
+	}
+}
+
+// adoptReasonText is the human-readable half of the adoption note.
+func adoptReasonText(reason string, grace time.Duration, online bool) string {
+	switch reason {
+	case AdoptReasonOffline:
+		return "your hive has been offline since the nudge"
+	case AdoptReasonUnregistered:
+		return "no hive of yours is registered here and nothing moved after the nudge"
+	}
+	if online {
+		return fmt.Sprintf("CI stayed red for %s after the nudge and the relay nudge went unanswered", formatGrace(grace))
+	}
+	return fmt.Sprintf("CI stayed red for %s after the nudge and no relay session was reachable", formatGrace(grace))
+}
+
+// adoptionBlocked reports a label that forbids adoption (the hive must not
+// take over a PR a human parked).
+func adoptionBlocked(labels []string) string {
+	for _, l := range labels {
+		switch strings.ToLower(strings.TrimSpace(l)) {
+		case "hold", "do-not-merge", "do-not-merge/hold":
+			return strings.TrimSpace(l)
+		}
+	}
+	return ""
 }
 
 // adoptionCloses extracts the closing-keyword lines from the original body.
@@ -118,16 +210,32 @@ func AdoptionPRBody(obs stageObservation, rec stagelabels.Record) string {
 	return b.String()
 }
 
-// AdoptionComment is the one note left on the original PR when adopted.
-func AdoptionComment(obs stageObservation, superseding int, grace time.Duration, online bool) string {
-	presence := "no relay session was reachable"
-	if online {
-		presence = "the relay nudge went unanswered"
-	}
-	return fmt.Sprintf("%s by=%d head=%s -->\n@%s the hive has adopted this PR (`%s`): CI stayed red for %s after the nudge and %s. "+
+// AdoptionComment is the one note left on the original PR when adopted by
+// supersession.
+func AdoptionComment(obs stageObservation, hiveID string, superseding int, reason string, grace time.Duration, online bool) string {
+	return fmt.Sprintf("%s by=%s reason=%s mode=%s superseded_by=%d head=%s -->\n@%s the hive has adopted this PR (`%s`): %s. "+
 		"It is being finished as #%d, which carries your commits (and sign-off) unchanged; the hive will rebase and fix CI there. "+
 		"This PR is closed automatically once #%d merges. If you would rather finish it yourself, push a new head here and say so on #%d.",
-		AdoptionMarkerPrefix, superseding, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), formatGrace(grace), presence, superseding, superseding, superseding)
+		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), reason, stagelabels.AdoptModeSupersede, superseding, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), adoptReasonText(reason, grace, online), superseding, superseding, superseding)
+}
+
+// AdoptionInPlaceComment is the one note left when the hive adopts the PR on
+// its own branch.
+func AdoptionInPlaceComment(obs stageObservation, hiveID, reason string, grace time.Duration, online bool) string {
+	return fmt.Sprintf("%s by=%s reason=%s mode=%s head=%s -->\n@%s the hive has adopted this PR (`%s`): %s. "+
+		"The hive will rebase this branch on `%s` and fix CI here; your commits and sign-off stay. "+
+		"Push a new head yourself at any time and the hive yields it back to you.",
+		AdoptionMarkerPrefix, nonEmpty(hiveID, "hive"), reason, stagelabels.AdoptModeInPlace, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), adoptReasonText(reason, grace, online), nonEmpty(obs.BaseRef, "the base branch"))
+}
+
+// AdoptionYieldMarker opens the note posted when the contributor pushes over
+// an in-place adoption.
+const AdoptionYieldMarker = "<!-- hive:adoption-yield"
+
+// AdoptionYieldComment is that note.
+func AdoptionYieldComment(obs stageObservation) string {
+	return fmt.Sprintf("%s head=%s -->\n@%s you pushed a new head, so the hive has handed this PR back to you (`%s` → `%s`). It will nudge again if CI stays red.",
+		AdoptionYieldMarker, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), stagelabels.ReturnedToContributor.Label())
 }
 
 func formatGrace(d time.Duration) string {
@@ -144,16 +252,23 @@ func shortSHA(sha string) string {
 	return sha
 }
 
-// adoptContributorPR runs the stage-074 check for one PR in stage 072 and,
-// when the grace has elapsed, performs the adoption. It returns the number
-// of comments posted. Failures are logged and the attempt is still recorded
-// (one per head) so a broken API never loops on the same PR.
-func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, now time.Time) (int, error) {
+// adoptContributorPR runs the stage-074 check for one clanker PR in stage
+// 072 and, when adoption is due, performs it: in place (the hive's fix lane
+// pushes to the PR's own branch) when GitHub permits and the policy allows,
+// else by supersession. It returns the number of comments posted. Failures
+// are logged and the attempt is still recorded (one per head) so a broken
+// API never loops on the same PR.
+func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, policy StageLabelPolicy, presence ContributorPresence, hasPresence bool, now time.Time) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || obs.Lane == stageLaneSelf || obs.Author == "" || obs.BaseRef == "" {
 		return 0, nil
 	}
-	if !adoptionDue(rec, obs.HeadSHA, policy, now) {
+	due, reason := adoptionDue(rec, obs.HeadSHA, policy, now, presence, hasPresence)
+	if !due {
+		return 0, nil
+	}
+	if l := adoptionBlocked(obs.Labels); l != "" {
+		c.info("stage labels: adoption due but blocked by label", "repo", obs.Display, "pr", obs.Number, "label", l)
 		return 0, nil
 	}
 	grace := adoptionGrace(rec, policy)
@@ -164,7 +279,18 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 		c.warn("stage labels: cannot adopt contributor PR, App login unknown", "repo", obs.Display, "pr", obs.Number)
 		return 0, nil
 	}
-	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "grace", grace.String(), "online", rec.NudgeOnline, "reason", obs.Reason)
+	c.info("stage labels: adopting contributor PR", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA, "reason", reason, "registered", presence.Registered, "online", presence.Online, "lane_reason", obs.Reason)
+
+	if policy.AdoptInPlace && c.canPushToPRBranch(ctx, obs) {
+		store.MarkAdoptedInPlace(key, obs.HeadSHA, reason, now)
+		body := AdoptionInPlaceComment(obs, policy.HiveID, reason, grace, rec.NudgeOnline)
+		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+			c.warn("stage labels: adoption comment failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+			return 0, err
+		}
+		c.info("stage labels: contributor PR adopted in place", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason)
+		return 1, nil
+	}
 
 	owner, repo, number := obs.Owner, obs.Repo, obs.Number
 	branch := adoptBranchPrefix + strconv.Itoa(number)
@@ -219,7 +345,7 @@ func (c *Engine) adoptContributorPR(ctx context.Context, store *stagelabels.Stor
 	store.MarkAdopted(key, obs.HeadSHA, superseding, now)
 	c.info("stage labels: contributor PR adopted", "repo", obs.Display, "pr", number, "head", obs.HeadSHA, "superseded_by", superseding, "branch", branch)
 
-	body := AdoptionComment(obs, superseding, grace, rec.NudgeOnline)
+	body := AdoptionComment(obs, policy.HiveID, superseding, reason, grace, rec.NudgeOnline)
 	if _, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn("stage labels: adoption comment failed", "repo", obs.Display, "pr", number, "superseded_by", superseding, "error", err)
 		return 0, err
@@ -262,4 +388,65 @@ func (c *Engine) settleAdoption(ctx context.Context, store *stagelabels.Store, k
 		store.ClearAdoption(key)
 	}
 	return 0, nil
+}
+
+// canPushToPRBranch reports whether the App can push to the PR's head: a
+// head in the base repo always; a fork head only with "allow edits by
+// maintainers", which the list payload omits, so one GET resolves it.
+func (c *Engine) canPushToPRBranch(ctx context.Context, obs stageObservation) bool {
+	if obs.HeadRepo == "" || strings.EqualFold(obs.HeadRepo, obs.Owner+"/"+obs.Repo) {
+		return obs.HeadRepo != ""
+	}
+	pr, _, err := c.gh.PullRequests.Get(ctx, obs.Owner, obs.Repo, obs.Number)
+	if err != nil {
+		c.warn("stage labels: adoption could not read maintainer_can_modify; superseding", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return false
+	}
+	return pr.GetMaintainerCanModify()
+}
+
+// settleInPlaceAdoption handles a head change on an in-place-adopted PR:
+// the hive's own fix push keeps the adoption (and moves it to the new head);
+// anyone else's push means the contributor is back, so the hive yields —
+// one note, adoption forgotten, the ordinary 072 flow re-arms. Returns the
+// number of comments posted.
+func (c *Engine) settleInPlaceAdoption(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, prev stagelabels.Record) (int, error) {
+	if !prev.AdoptedInPlace() || obs.HeadSHA == "" || obs.HeadSHA == prev.AdoptedHead {
+		return 0, nil
+	}
+	if prev.YieldedHead == obs.HeadSHA {
+		return 0, nil
+	}
+	app := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(c.transport.AppBotLogin()), "[bot]"))
+	commit, _, err := c.gh.Repositories.GetCommit(ctx, obs.Owner, obs.Repo, obs.HeadSHA, nil)
+	if err != nil {
+		// Unknown pusher: keep the adoption rather than bounce the PR.
+		c.warn("stage labels: adopted head changed; pusher unknown, keeping adoption", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "error", err)
+		store.MarkAdoptedHead(key, obs.HeadSHA)
+		return 0, nil
+	}
+	if commitByLogin(commit, app) {
+		store.MarkAdoptedHead(key, obs.HeadSHA)
+		c.info("stage labels: adopted PR advanced by the hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA)
+		return 0, nil
+	}
+	store.MarkYielded(key, obs.HeadSHA)
+	c.info("stage labels: contributor pushed over in-place adoption; yielding", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "head", obs.HeadSHA)
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(AdoptionYieldComment(obs))}); err != nil {
+		c.warn("stage labels: adoption yield note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
+		return 0, err
+	}
+	return 1, nil
+}
+
+// commitByLogin reports whether the commit's GitHub author or committer is
+// login ([bot] suffix tolerated).
+func commitByLogin(commit *gh.RepositoryCommit, login string) bool {
+	if commit == nil || login == "" {
+		return false
+	}
+	norm := func(u *gh.User) string {
+		return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(u.GetLogin()), "[bot]"))
+	}
+	return norm(commit.GetAuthor()) == login || norm(commit.GetCommitter()) == login
 }

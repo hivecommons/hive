@@ -23,6 +23,14 @@ type realTicker struct{ *time.Ticker }
 
 func (t realTicker) Chan() <-chan time.Time { return t.C }
 
+// realTimer adapts a one-shot *time.Timer to loopTicker for the continuous
+// re-kick wake.
+type realTimer struct{ *time.Timer }
+
+func (t realTimer) Chan() <-chan time.Time { return t.C }
+func (t realTimer) Stop()                  { t.Timer.Stop() }
+func (t realTimer) Reset(d time.Duration)  { t.Timer.Reset(d) }
+
 // runLoopDeps are runLoop's effects (#7571, step 2): the two timers, the CLI
 // startup wait, and the per-tick work units (eval cycle, rotation check,
 // GitHub sweeps — whose last-run stamps live on *boot — state persist, crash
@@ -32,6 +40,12 @@ func (t realTicker) Chan() <-chan time.Time { return t.C }
 type runLoopDeps struct {
 	waitCLIStartup func(ctx context.Context) bool
 	newTicker      func(d time.Duration) loopTicker
+	// newWakeTimer arms the continuous re-kick wake (one-shot). nil disables
+	// the wake, which is what the loop tests want unless they drive it.
+	newWakeTimer func(d time.Duration) loopTicker
+	// now is the wake's clock (nil = time.Now); tests inject it to step past
+	// continuousWakeMinGap and the stall hold without sleeping.
+	now            func() time.Time
 	runEval        func(b *boot, restarted []string)
 	runRotation    func(b *boot)
 	runSweeps      func(b *boot)
@@ -49,7 +63,8 @@ func defaultRunLoopDeps() runLoopDeps {
 				return false
 			}
 		},
-		newTicker: func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} },
+		newTicker:    func(d time.Duration) loopTicker { return realTicker{time.NewTicker(d)} },
+		newWakeTimer: func(d time.Duration) loopTicker { return realTimer{time.NewTimer(d)} },
 		runEval: func(b *boot, restarted []string) {
 			runEvalCycle(b.ctx, b.cfg, b.ghClient, b.gov, b.sched, b.agentMgr, b.dashSrv, b.notifier, b.beadStores,
 				b.tokenCollector, b.metricsCollector, b.nousState, &b.lastActionable, &b.lastMergeVerdicts, b.advisoryStore, b.advisoryIssues, restarted, b.approvalDesk, b.logger)
@@ -75,6 +90,7 @@ func defaultRunLoopDeps() runLoopDeps {
 			runIssueUnparkSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastIssueUnparkSweep, b.logger)
 			runSentinelSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, &b.lastSentinelSweep, b.logger)
 			runGoodFirstIssueSweepIfDue(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.gfiState(), b.lastActionable.Load(), &b.lastGFISweep, b.logger)
+			runFirstTimerWelcome(b.ctx, b.ghClient, b.cfg, b.dashSrv, b.firstTimerState(), b.firstTimerKnownContributor, b.lastActionable.Load(), b.logger)
 		},
 		persist: func(b *boot) {
 			persistState(b.agentMgr, b.gov, b.cfg, spokeStatePath, b.logger, b.dashSrv, b.wd)

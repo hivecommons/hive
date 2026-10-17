@@ -17,6 +17,28 @@ type fakeNudgeSink struct {
 	nudges   []ContributorNudge
 	resolved []int
 	outcome  ContributorNudgeOutcome
+	// presence overrides the default (a registered relay whose online state
+	// mirrors outcome.Online) returned by Presence.
+	presence *ContributorPresence
+}
+
+func (f *fakeNudgeSink) Presence(_ context.Context, _ string) ContributorPresence {
+	if f.presence != nil {
+		return *f.presence
+	}
+	return ContributorPresence{Registered: true, Online: f.outcome.Online}
+}
+
+// nudgeOnlySink is a sink without live presence (the pre-presence hub, or
+// hivecommons/hive#12561's lazy wrapper before it forwards Presence).
+type nudgeOnlySink struct{ inner *fakeNudgeSink }
+
+func (s nudgeOnlySink) Nudge(ctx context.Context, n ContributorNudge) ContributorNudgeOutcome {
+	return s.inner.Nudge(ctx, n)
+}
+
+func (s nudgeOnlySink) Resolve(ctx context.Context, owner, repo string, number int) {
+	s.inner.Resolve(ctx, owner, repo, number)
 }
 
 func (f *fakeNudgeSink) Nudge(_ context.Context, n ContributorNudge) ContributorNudgeOutcome {
@@ -32,9 +54,15 @@ func nudgePR(number int, head string, labels ...string) *gh.PullRequest {
 	pr := stagePR(number, labels...)
 	pr.Head.SHA = gh.Ptr(head)
 	pr.User = &gh.User{Login: gh.Ptr("mallory")}
+	// mallory's PR was opened by her own hive: the relay trailer makes it
+	// author/clanker, the only kind the nudge and adoption apply to.
+	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
 	pr.Title = gh.Ptr("fix: widget")
 	pr.HTMLURL = gh.Ptr("https://github.com/acme/widget/pull/7")
 	pr.CreatedAt = &gh.Timestamp{Time: time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)}
+	// A contributor's hive posted it (author/clanker): the 072 interrupt
+	// machinery applies even when the sink has no presence to consult.
+	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: mallory-hive\n")
 	return pr
 }
 
@@ -83,7 +111,7 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 	ctx := context.Background()
 	observe := func(pr *gh.PullRequest, reason string) StageLabelResult {
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, reason, false, nil)
-		e.noteStageAuthor("acme", "widget", 7, stagelabels.AuthorContributor)
+		e.noteStageRole("acme", "widget", 7, stagelabels.RoleContributor)
 		res, err := e.ApplyStageLabels(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -109,7 +137,7 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 
 	// Same head, same stage, next cycles: idempotent.
 	api.reset()
-	labels := []string{"stage/072-returned-to-contributor", "author/contributor"}
+	labels := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
 	clock.advance(time.Hour)
 	observe(nudgePR(7, "aaa", labels...), "check-failing:unit")
 	if api.writes() != 0 || len(sink.nudges) != 1 {
@@ -130,14 +158,14 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 	}
 	api.reset()
 	clock.advance(48 * time.Hour)
-	observe(nudgePR(7, "aaa", "stage/stalled", "stage/072-returned-to-contributor", "author/contributor"), "check-failing:unit")
+	observe(nudgePR(7, "aaa", "stage/stalled", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "check-failing:unit")
 	if len(nudgeComments(api)) != 0 || len(sink.nudges) != 2 {
 		t.Fatalf("third nudge posted: %v", api.comments)
 	}
 
 	// Author pushes a new head that is still red: count restarts.
 	api.reset()
-	observe(nudgePR(7, "bbb", "stage/stalled", "stage/072-returned-to-contributor", "author/contributor"), "changes-requested")
+	observe(nudgePR(7, "bbb", "stage/stalled", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "changes-requested")
 	if got := nudgeComments(api); len(got) != 1 || !strings.Contains(got[0], "head=bbb n=1") || !strings.Contains(got[0], "reviewer requested changes") {
 		t.Fatalf("new-head nudge: %v", api.comments)
 	}
@@ -150,11 +178,11 @@ func TestContributorNudgeOncePerHeadThenAtStall(t *testing.T) {
 
 	// New head goes green and awaits review: leaves 072 → Resolve once.
 	api.reset()
-	observe(nudgePR(7, "ccc", "stage/072-returned-to-contributor", "author/contributor"), "required-check-missing:unit")
+	observe(nudgePR(7, "ccc", "stage/072-returned-to-contributor", "role/contributor", "author/clanker"), "required-check-missing:unit")
 	if !reflect.DeepEqual(sink.resolved, []int{7}) {
 		t.Fatalf("resolved=%v", sink.resolved)
 	}
-	observe(nudgePR(7, "ccc", "stage/050-review-pending", "author/contributor"), "required-check-missing:unit")
+	observe(nudgePR(7, "ccc", "stage/050-review-pending", "role/contributor", "author/clanker"), "required-check-missing:unit")
 	if !reflect.DeepEqual(sink.resolved, []int{7}) {
 		t.Fatalf("resolve repeated: %v", sink.resolved)
 	}
@@ -209,7 +237,7 @@ func TestContributorNudgeTerminalDisabledAndNilSink(t *testing.T) {
 	// RenudgeInterval overrides the dwell: second nudge after 1h, not 24h.
 	api.reset()
 	clock.advance(time.Hour)
-	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", nudgePR(9, "aaa", "stage/072-returned-to-contributor", "author/trusted"), "status-failure", false, nil)
+	e.recordStage(stageLaneTrusted, "acme/widget", "acme", "widget", nudgePR(9, "aaa", "stage/072-returned-to-contributor", "role/trusted", "author/clanker"), "status-failure", false, nil)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -243,6 +271,14 @@ func TestNudgeDiagnosisAndDue(t *testing.T) {
 	_, asks, _ = nudgeDiagnosis("something-else", stageDetail{})
 	if !reflect.DeepEqual(asks, []string{"something-else"}) {
 		t.Fatalf("asks=%v", asks)
+	}
+	checks, asks, _ = nudgeDiagnosis("optional-check-failing:links", stageDetail{RedChecks: []string{"Playwright", "links"}})
+	if !reflect.DeepEqual(checks, []string{"Playwright", "links"}) || asks != nil {
+		t.Fatalf("red optional: %v %v", checks, asks)
+	}
+	checks, _, _ = nudgeDiagnosis("optional-check-failing:links", stageDetail{})
+	if !reflect.DeepEqual(checks, []string{"links"}) {
+		t.Fatalf("red optional without detail: %v", checks)
 	}
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 	if _, ok := nudgeDue(stagelabels.Record{}, "", time.Hour, now); ok {

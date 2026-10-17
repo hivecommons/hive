@@ -160,9 +160,10 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"stagePresenceWindow": cfg.Governor.Labels.Stage.PresenceWindow,
 		// governor.labels.stage.adoption.enabled / contributor_grace_*: the
 		// stage-074 adoption of red contributor PRs.
-		"stageAdoptionEnabled": cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
-		"stageGraceOnline":     cfg.Governor.Labels.Stage.ContributorGraceOnline,
-		"stageGraceOffline":    cfg.Governor.Labels.Stage.ContributorGraceOffline,
+		"stageAdoptionEnabled":     cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
+		"stageStalledRequireQuiet": cfg.Governor.Labels.Stage.Stalled.IsRequireQuiet(),
+		"stageGraceOnline":         cfg.Governor.Labels.Stage.ContributorGraceOnline,
+		"stageGraceOffline":        cfg.Governor.Labels.Stage.ContributorGraceOffline,
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -700,6 +701,8 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		StageAdoptionEnabled *bool   `json:"stage_adoption_enabled"`
 		StageGraceOnline     *string `json:"stage_grace_online"`
 		StageGraceOffline    *string `json:"stage_grace_offline"`
+		// governor.labels.stage.stalled.require_quiet (hivecommons/hive#12534).
+		StageStalledRequireQuiet *bool `json:"stage_stalled_require_quiet"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -906,6 +909,10 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.StageGraceOffline != nil {
 		s.deps.Config.Governor.Labels.Stage.ContributorGraceOffline = strings.TrimSpace(*body.StageGraceOffline)
+	}
+	if body.StageStalledRequireQuiet != nil {
+		v := *body.StageStalledRequireQuiet
+		s.deps.Config.Governor.Labels.Stage.Stalled.RequireQuiet = &v
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)

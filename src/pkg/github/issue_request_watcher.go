@@ -127,12 +127,6 @@ type IssueRequest struct {
 	OwnerStep *IssueOwnerStep `json:"owner_step,omitempty"` // requires NeedsDecision
 }
 
-// claimLabelPrefix is the label namespace applied for a "claim" request. The
-// full label is claimLabelPrefix + <sanitized agent name>, e.g.
-// "hive/claimed-by-scanner". Namespaced so it is easy to filter/sweep and never
-// collides with a project's own labels.
-const claimLabelPrefix = "hive/claimed-by-"
-
 // IssueResponse is written next to a consumed request as <name>.result.json.
 type IssueResponse struct {
 	OK             bool   `json:"ok"`
@@ -480,8 +474,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		}
 		// Apply a namespaced ownership label (App bots can't be assignees)
 		// and, when enabled, stage/030-pr-in-progress — the timestamped "an
-		// agent started a PR for this" signal (see issue_inprogress.go).
-		err = c.AddLabels(ctx, req.Repo, req.Number, c.inProgressLabelsForClaim(req.Agent))
+		// agent started a PR for this" signal (see issue_inprogress.go). The
+		// stage goes through the one enforcer and both writes are journaled
+		// against a fresh read, so a second claim on an issue whose earlier
+		// labels lapsed is written, not replayed (hivecommons/hive#12512).
+		err = c.AddLabelsFresh(ctx, req.Repo, req.Number, c.claimStage(), c.inProgressLabelsForClaim(req.Agent)...)
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
@@ -649,7 +646,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		return
 	}
 
-	if signal := issueRequestStartSignal(kind); signal != "" {
+	if signal := issueRequestStartSignal(kind, req.Body, req.Labels); signal != "" {
 		c.notifyAgentStart(req.Agent, req.Repo, req.Number, signal)
 	}
 
@@ -973,7 +970,7 @@ func (c *Client) createIssue(ctx context.Context, repo, title, body string, labe
 	}
 
 	// Ensure labels exist. Retryable failures keep the whole request queued
-	// because provenance labels (agent/*, hive/*) drive hive filtering and
+	// because provenance labels (agent/*) drive hive filtering and
 	// duplicate guards. Terminal label failures still degrade to unlabeled.
 	var usable []string
 	for _, l := range labels {

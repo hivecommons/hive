@@ -214,7 +214,25 @@ Every lane that can comment or file issues carries this rule in its policy (ci-m
 `--repo`, a number or URL, and `--body` are all required, or the script exits
 `2`.
 
-A comment posted via `hive-open-issue comment` is recorded as an agent start signal on the issue ([#10527](https://github.com/hivecommons/hive/issues/10527)). It records an agent claim in the hub's worker-claim ledger, marking the agent as active on that issue and preventing other agents or contributors from being offered the same work while the claim is live. The claim applies the `hive/claimed-by-<agent>` label and posts a bot comment with a timestamped marker so maintainers can see when work began.
+A posted comment is also the agent's **start signal** on that issue: the hub
+records a 2h agent claim the first time the agent's own comment, label or
+claim request (or a `hive-open-pr --issues` request) names it, so a second
+agent is not kicked onto the same work
+([#10527](https://github.com/hivecommons/hive/issues/10527)). A comment that
+is an explicit *deferral* is posted but records no claim
+([#12387](https://github.com/hivecommons/hive/issues/12387)): one that opens
+(after markdown and an optional `Status:`/`Update:` label) with
+"Deferred"/"Deferring", "Not starting", "[This is] [still] blocked by/on
+&lt;ref&gt;" or "Waiting on/for &lt;ref&gt;", where &lt;ref&gt; is `#N`,
+`owner/repo#N` or a GitHub issue/PR URL; or one that says "deferred this
+cycle", "pick(s) [this/it] up once/when …" or "pick(s) up after &lt;ref&gt;
+merges/lands" anywhere. A comment that also says work is starting now
+("starting now", "resuming now", "working on it now", "no longer blocked")
+still records the claim, as does a resume such as "Picking this up after #N
+merged, starting now." The opening forms only look at how the comment starts,
+so a progress comment with a deferral aside later on still claims. Label and
+claim requests are start signals whatever an accompanying comment said. To
+park an issue without claiming it, open the comment with the deferral.
 
 ### `claim`
 

@@ -1,1 +1,0 @@
-- Hive-owned `stage/NNN-*` pipeline labels (`010-actionable` … `100-merge-queue`, one per open item, derived from ONE ordered table in `pkg/stagelabels`), `author/*` admission-tier labels, and red `stage/stalled` / `stage/regressed` markers with a one-line regression comment; written by the automerge sweep only on change, switched by `governor.labels.stage.enabled` (#12429).

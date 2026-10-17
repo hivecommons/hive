@@ -1,1 +1,0 @@
-- Hub `POST /api/saas/hives/{id}/upgrade` on a spoke already at its reachable target now returns `200 {"status":"current", ...}` instead of `409`; both dashboards say "already up to date" and the spoke no longer records a failed self-upgrade for the no-op (#12494).

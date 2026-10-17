@@ -1,1 +1,0 @@
-- automerge: `HeadPushedAt` no longer derives from `updated_at`, so hive label/comment writes stop resetting head age and triggering spurious `stage/regressed` (#12491)

@@ -81,6 +81,7 @@ func rescanRepos(
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
 	lastActionable.Store(actionable)
+	publishStageSharedCIIncidents(actionable)
 	if data, marshalErr := json.Marshal(actionable); marshalErr == nil {
 		atomicWrite(lastActionablePath, data)
 	}

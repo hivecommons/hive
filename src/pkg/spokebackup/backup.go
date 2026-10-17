@@ -122,6 +122,11 @@ const (
 
 	// nousPrefix holds the durable Nous tree (minus snapshots).
 	nousPrefix = "nous"
+
+	// beadSynthPrefix holds the flat markdown facts of the reserved
+	// bead-synthesizer vault (see bead_synth.go). It is also the vault's
+	// on-disk directory name under vaultsSubdir.
+	beadSynthPrefix = "bead-synth-wiki"
 )
 
 // Size guards. A backup is streamed through the dashboard to a browser, so it
@@ -160,7 +165,8 @@ const BuildTimeout = 2 * time.Minute
 //     carries third-party tokens that should not be duplicated into an
 //     archive the owner will store outside the cluster.
 //   - logs/    32MB of rotating logs. Diagnostic, not state.
-//   - graph/, snapshots/, vaults/  derived or bulk artifacts (~19MB combined).
+//   - graph/, snapshots/, vaults/  derived or bulk artifacts (~19MB combined),
+//     except the reserved vaults/bead-synth-wiki/*.md synthesized facts.
 //   - prompt-history.jsonl  3.1MB append-only transcript; diagnostic.
 //   - audit.jsonl  860KB append-only audit trail. Excluded to keep the
 //     archive small and fast; it is a record OF actions, not state needed to
@@ -333,6 +339,11 @@ func Build(key []byte, hiveID string, logger *slog.Logger) (*Result, error) {
 		logger.Warn("spoke backup: nous dir failed", "dir", nousDir, "err", err)
 	} else {
 		res.NousIncluded = true
+	}
+
+	// 5. Small synthesized knowledge vault, independent of repository publishing.
+	if err := addBeadSynthVault(b, dataDir, res, logger); err != nil {
+		return nil, err
 	}
 
 	man := &hubbackup.Manifest{

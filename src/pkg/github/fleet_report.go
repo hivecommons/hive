@@ -21,8 +21,8 @@ const fleetReportRepo = "hivecommons/hive"
 type FleetReportOptions struct {
 	// Repo is the report repository (owner/name). Empty = hivecommons/hive.
 	Repo string
-	// HiveSlug is the hub-assigned slug; empty keeps the hive anonymous and
-	// skips the hive/<slug> label.
+	// HiveSlug is the hub-assigned slug named in the seen-marker comment and
+	// the Affected-hives block; empty keeps the hive anonymous.
 	HiveSlug string
 	Version  string
 	Cluster  string
@@ -68,8 +68,6 @@ type FleetReportResult struct {
 	// exists but is closed: the caller decides whether the closed cooldown
 	// applies.
 	ClosedAt time.Time
-	// LabelAdded reports whether hive/<slug> was added to the issue.
-	LabelAdded bool
 	// BodyUpdated reports whether the Affected-hives block was edited.
 	BodyUpdated bool
 }
@@ -89,8 +87,10 @@ func (c *Client) EnsureFleetReport(ctx context.Context, report fleetreport.Repor
 //     (catches human-filed issues). First match → join it.
 //  3. otherwise create the issue.
 //
-// Joining = one "also seen" comment (if allowed), the hive/<slug> label, and
-// an idempotent edit of the Affected-hives block in the body.
+// Joining = one "also seen" comment (if allowed), the hive/selfreport label,
+// and an idempotent edit of the Affected-hives block in the body. The
+// hive/<slug> label is retired (hivecommons/hive#12539): the seen marker
+// and the Affected-hives block already name the joining hive.
 func (c *Client) EnsureFleetReportWithOptions(ctx context.Context, report fleetreport.Report, opts FleetReportOptions) (FleetReportResult, error) {
 	if c == nil || c.client == nil {
 		return FleetReportResult{}, ErrNoGitHubClient
@@ -168,15 +168,6 @@ func (c *Client) joinFleetReportIssue(ctx context.Context, repo string, existing
 		}
 	}
 	if report.Trigger == fleetreport.TriggerRuntimeError {
-		if label := fleetreport.HiveLabel(opts.HiveSlug); label != "" && !ghIssueHasLabel(existing, label) {
-			if err := c.EnsureIssueLabel(ctx, repo, label, "0e8a16", "Reported by hive "+opts.HiveSlug); err != nil {
-				c.logger.Warn("fleet report: could not ensure hive label", "label", label, "error", err)
-			} else if err := c.AddLabels(ctx, repo, num, []string{label}); err != nil {
-				c.logger.Warn("fleet report: could not add hive label", "label", label, "issue", num, "error", err)
-			} else {
-				out.LabelAdded = true
-			}
-		}
 		if !ghIssueHasLabel(existing, fleetreport.LabelSelfReport) {
 			if err := c.EnsureIssueLabel(ctx, repo, fleetreport.LabelSelfReport, "d93f0b", "Filed or joined automatically by a hive self-report"); err == nil {
 				_ = c.AddLabels(ctx, repo, num, []string{fleetreport.LabelSelfReport})

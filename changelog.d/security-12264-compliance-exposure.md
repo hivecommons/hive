@@ -1,1 +1,0 @@
-- The public `/api/registry` and `/api/saas/my-hives` endpoints no longer expose the spoke compliance profile and posture-check summary to unauthenticated callers or non-admin members ([#12264](https://github.com/hivecommons/hive/issues/12264)).

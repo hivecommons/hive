@@ -1,1 +1,0 @@
-Fixed the `scale-envelope.md` citation of `RankActionableIssues` that drifted after #12468 and turned the docs-links check red on every open PR.

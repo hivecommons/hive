@@ -511,6 +511,7 @@ func (c *Config) applyDefaults() {
 		if c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle == 0 {
 			c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle = DefaultBeadSynthMaxAPICallsPerCycle
 		}
+		c.Knowledge.BeadSynthesizer.Publish = c.Knowledge.BeadSynthesizer.Publish.WithDefaults()
 		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
 			c.Knowledge.BeadSynthesizer.VaultPath = DefaultBeadSynthVaultPath
 		}

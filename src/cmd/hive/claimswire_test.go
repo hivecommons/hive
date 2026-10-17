@@ -1,17 +1,25 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func testClaimsLedger(t *testing.T) *claims.Ledger {
@@ -164,22 +172,61 @@ func TestLedgerHasContributor(t *testing.T) {
 // A hive agent's claim mirrors stage/030-pr-in-progress; a human or
 // contributor claim mirrors stage/020-claimed — one stage label per issue,
 // never the retired `claimed` / `hive/in-progress` pair (hivecommons/hive#12436).
-func TestClaimLabelsFor(t *testing.T) {
-	agent := claimLabelsFor(claims.Claim{Kind: claims.KindAgent})
-	if len(agent) != 1 || agent[0] != github.InProgressLabel || github.InProgressLabel != "stage/030-pr-in-progress" {
-		t.Fatalf("agent labels = %v", agent)
+func TestClaimStageFor(t *testing.T) {
+	if got := claimStageFor(claims.Claim{Kind: claims.KindAgent}); got != stagelabels.PRInProgress || got.Label() != github.InProgressLabel || github.InProgressLabel != "stage/030-pr-in-progress" {
+		t.Fatalf("agent stage = %s", got)
 	}
 	for _, kind := range []claims.Kind{claims.KindHuman, claims.KindContributor, claims.KindExternal} {
-		if got := claimLabelsFor(claims.Claim{Kind: kind}); len(got) != 1 || got[0] != claims.LabelClaimed || claims.LabelClaimed != "stage/020-claimed" {
-			t.Fatalf("%s labels = %v, want only stage/020-claimed", kind, got)
+		if got := claimStageFor(claims.Claim{Kind: kind}); got != stagelabels.Claimed || got.Label() != claims.LabelClaimed || claims.LabelClaimed != "stage/020-claimed" {
+			t.Fatalf("%s stage = %s, want stage/020-claimed", kind, got)
 		}
 	}
-	for _, labels := range [][]string{agent, claimLabelsFor(claims.Claim{Kind: claims.KindHuman})} {
-		for _, l := range labels {
-			if l == claims.LegacyLabelClaimed || l == claims.LegacyLabelInProgress {
-				t.Fatalf("retired label %q must not be written", l)
-			}
-		}
+}
+
+// The claim hooks write the stage through ApplyStageLabel: an issue the
+// reconciler had just staged 010 that takes a contributor claim ends up with
+// exactly stage/020-claimed, not both (hivecommons/hive#12512).
+func TestClaimHooks_ClaimReplacesStageLabel(t *testing.T) {
+	var mu sync.Mutex
+	var added, removed []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/issues/7", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"number":7,"labels":[{"name":"bug"},{"name":"stage/010-actionable"},{"name":"hive/claimed-by-ann"}]}`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/7/labels", func(w http.ResponseWriter, r *http.Request) {
+		var body []string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		added = append(added, body...)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/7/labels/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		removed = append(removed, strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/7/labels/"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := &config.Config{}
+	cfg.Governor.Claims.Label = boolPtr(true)
+	cfg.Governor.Claims.Comment = boolPtr(false)
+	hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
+	hooks.OnClaimed(claims.Claim{Repo: "acme/widgets", Issue: 7, Holder: "ann", Kind: claims.KindContributor}, claims.OutcomeClaimed)
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(added) > 0
+	}, "claim hook never added a stage label")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(added) != 1 || added[0] != "stage/020-claimed" {
+		t.Fatalf("added %v, want only stage/020-claimed", added)
+	}
+	if len(removed) != 1 || removed[0] != "stage%2F010-actionable" && removed[0] != "stage/010-actionable" {
+		t.Fatalf("removed %v, want stage/010-actionable", removed)
 	}
 }
 
@@ -202,4 +249,92 @@ func TestInProgressSetting(t *testing.T) {
 	if set = inProgressSetting(cfg); !set.Enabled || set.TTL != 10*time.Minute {
 		t.Fatalf("agent_ttl_s not honoured: %+v", set)
 	}
+}
+
+// A human claim relayed through the ledger (dashboard, /claim, hivectl, a
+// Copilot CLI session acting for the person) mirrors `hive/claimed-by-<login>`
+// and replaces a hand-applied backend-named label; release removes the
+// holder's label and nothing else.
+func TestClaimHooks_ClaimedByLabelUsesLoginNeverBackend(t *testing.T) {
+	var mu sync.Mutex
+	var added, removed []string
+	// The release path re-reads the issue and removes only what it still
+	// carries (RemoveLabelsFresh), so the mock keeps live label truth.
+	truth := []string{"stage/010-actionable", "hive/claimed-by-copilot"}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widgets/issues/9", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		labels := make([]map[string]string, 0, len(truth))
+		for _, l := range truth {
+			labels = append(labels, map[string]string{"name": l})
+		}
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 9, "labels": labels})
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/9/labels", func(w http.ResponseWriter, r *http.Request) {
+		var body []string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		added = append(added, body...)
+		truth = append(truth, body...)
+		mu.Unlock()
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/repos/acme/widgets/issues/9/labels/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/repos/acme/widgets/issues/9/labels/")
+		if u, err := url.PathUnescape(name); err == nil {
+			name = u
+		}
+		mu.Lock()
+		removed = append(removed, name)
+		kept := truth[:0]
+		for _, l := range truth {
+			if l != name {
+				kept = append(kept, l)
+			}
+		}
+		truth = kept
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	gh := github.NewClientForTest(srv.URL, "acme", []string{"widgets"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := &config.Config{}
+	cfg.Governor.Claims.Label = boolPtr(true)
+	cfg.Governor.Claims.Comment = boolPtr(false)
+	hooks := githubClaimHooks(context.Background(), cfg, func() *github.Client { return gh }, nil)
+	claim := claims.Claim{Repo: "acme/widgets", Issue: 9, Holder: "clubanderson", Kind: claims.KindHuman, Session: "copilot"}
+	hooks.OnClaimed(claim, claims.OutcomeClaimed)
+	has := func(list []string, want string) bool {
+		for _, l := range list {
+			if l == want || l == strings.ReplaceAll(want, "/", "%2F") {
+				return true
+			}
+		}
+		return false
+	}
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return has(added, "hive/claimed-by-clubanderson")
+	}, "claim hook never added the login claimed-by label")
+	mu.Lock()
+	if !has(removed, "hive/claimed-by-copilot") {
+		t.Fatalf("removed %v, want the backend-named label replaced", removed)
+	}
+	for _, l := range added {
+		if claims.ClaimedByLabelIsBackend(l) {
+			t.Fatalf("backend name leaked into labels: %v", added)
+		}
+	}
+	removed = nil
+	mu.Unlock()
+
+	hooks.OnReleased(claim, "released by clubanderson")
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return has(removed, "hive/claimed-by-clubanderson")
+	}, "release never removed the holder's claimed-by label")
 }

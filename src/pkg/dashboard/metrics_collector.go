@@ -53,6 +53,10 @@ type MetricsCollector struct {
 
 	// Optional override for isolated disk-cache tests; empty uses /data/metrics.
 	prIssueCachePath string
+	// issueActivityCachePath overrides issueActivityPath in tests.
+	issueActivityCachePath string
+	// ciRecoveryCachePath overrides ciRecoveryPath in tests.
+	ciRecoveryCachePath string
 	// prIssueWindowStart, when set, returns the first cost-history timestamp so
 	// cost-per-outcome divisors use the same persisted window as the numerator.
 	prIssueWindowStart func() time.Time
@@ -215,6 +219,8 @@ func (mc *MetricsCollector) collect(ctx context.Context) {
 
 	mc.collectMTTR(ctx)
 	mc.collectPRIssueCounts(ctx)
+	mc.collectIssueActivity(ctx)
+	mc.collectCIRecovery(ctx)
 	mc.collectIssuesDisabled(ctx)
 
 	mc.mu.Lock()

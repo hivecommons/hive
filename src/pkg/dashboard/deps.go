@@ -289,6 +289,10 @@ type NousState struct {
 	GatePending  map[string]interface{}   `json:"gate_pending,omitempty"`
 	GateResponse map[string]interface{}   `json:"gate_response,omitempty"`
 	SnapshotDir  string                   `json:"-"`
+	// GovernorDir is where the external experiment loop writes ledger.json,
+	// principles.json and its state (/var/run/nous/governor). Empty means
+	// the loop's activity cannot be observed (#12541).
+	GovernorDir string `json:"-"`
 	// PersistPanel, when set, receives the operator-set panel state (Mode,
 	// Scope, Config) after every mutating /api/nous call so it survives a
 	// restart (#11694); cmd/hive wires it to pkg/nousstore. Nil keeps the
@@ -361,7 +365,76 @@ type NousPrinciple struct {
 	Status     string  `json:"status"`
 }
 
-const NousBaselineTarget = 672
+// NousBaselineTarget is how many hive-state snapshots a campaign's baseline
+// needs: one every governor evaluation cycle (NousBaselinePerHour at the
+// default 15-minute interval) for NousBaselineDays — 4 × 24 × 7 = 672, about
+// one week of observations, so the baseline sees every weekday and weekend
+// regime once.
+const (
+	NousBaselinePerHour = 4
+	NousBaselineDays    = 7
+	NousBaselineTarget  = NousBaselinePerHour * 24 * NousBaselineDays
+)
+
+// NousBaselineTargetExplainer is the plain-language meaning of
+// NousBaselineTarget shown next to every "N / 672" in the Experiment Lab.
+const NousBaselineTargetExplainer = "≈ 7 days of observations (4/hour)"
+
+// NousPrinciplesExplainer says what the "Principles" tile counts and how the
+// number grows (#12532): principles are not a prerequisite for starting an
+// experiment, so a new lab legitimately shows 0.
+const NousPrinciplesExplainer = "Principles are durable lessons the lab distils from judged experiments (principles.json). A new lab starts at 0 and the count grows as experiments conclude; none are needed to start an experiment."
+
+// Per-campaign lifecycle stages (#12532). They are derived on every status
+// read from the campaign's baseline, the lab mode and the experiment rows
+// attributed to the campaign, so the card always says what happens next.
+const (
+	NousStageBaseline  = "baseline"  // collecting baseline snapshots
+	NousStageReady     = "ready"     // baseline complete, no proposals yet
+	NousStageProposed  = "proposed"  // a proposal awaits operator review
+	NousStageRunning   = "running"   // an experiment is in flight
+	NousStageConcluded = "concluded" // archived, or every experiment judged
+	NousStagePaused    = "paused"
+)
+
+// NousActionGenerateProposals is the single primary card action offered
+// when a campaign's baseline is complete but the lab is still in observe
+// mode: it flips the trust-ladder mode to suggest so the experiment loop
+// may design proposals for review.
+const NousActionGenerateProposals = "generate_proposals"
+
+// NousLoopIdleCycles is how many governor evaluation cycles may pass without
+// any file write under NousState.GovernorDir before the Experiment Lab says
+// the external experiment loop is not running on this hive (#12541). The
+// hive designs no proposals itself, so a ready card in suggest/evolve mode
+// would otherwise wait forever. 24 cycles is 2 h at the default 300 s
+// interval.
+const NousLoopIdleCycles = 24
+
+// ExperimentLoopLastWrite returns the newest modification time of the files
+// directly under GovernorDir — the directory the hive reads the external
+// experiment loop's output from — or the zero time when nothing was ever
+// written there.
+func (ns *NousState) ExperimentLoopLastWrite() time.Time {
+	var last time.Time
+	if ns == nil || ns.GovernorDir == "" {
+		return last
+	}
+	entries, err := os.ReadDir(ns.GovernorDir)
+	if err != nil {
+		return last
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if mt := info.ModTime(); mt.After(last) {
+			last = mt
+		}
+	}
+	return last.UTC()
+}
 
 // NousSnapshotRetention bounds the snapshots kept on disk: the newest
 // 4x baseline target, so baseline_pct stays at 100 while old files go

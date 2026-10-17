@@ -491,6 +491,15 @@ governor:
   conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
   optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
 
+  # First-time contributor welcome (see docs/good-first-issue.md#welcoming-first-time-contributors).
+  # When a human whose GitHub author_association is FIRST_TIME_CONTRIBUTOR /
+  # FIRST_TIMER opens a PR, post one comment (per author per repo, marker
+  # <!-- hive:first-timer-welcome -->) inviting them to run their own hive.
+  # Needs dashboard.public_url (or a hub-assigned dashboard URL).
+  # first_timer_welcome:
+  #   enabled: true           # default; false opts out
+  #   template_path: ""       # optional text/template file over firsttimer.Vars; must contain {{ .Marker }}
+
   # Kick prompt list caps (#7368). Every issue list and every PR list in a
   # kick is cut at these counts, with an explicit "… and N more" line, so a
   # large backlog cannot balloon the prompt (302 open PRs once produced a
@@ -553,7 +562,9 @@ governor:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
     stage:                              # Hive-owned stage/NN-* pipeline labels (docs/labels-and-control-signals.md)
-      enabled: true                     # One stage label per open issue/PR, plus author/* and stage/stalled|regressed
+      enabled: true                     # One stage label per open issue/PR, plus author/* and the stage/stalled marker
+      # stalled:                        # stage/stalled = "no activity"; never applied while the item waits on the hive (#12534)
+      #   require_quiet: true           # measure dwell from the last outside activity (push/comment/review/CI); false = from stage entry
       # dwell:                          # Per-stage "stalled" thresholds by slug; 0 = never
       #   review-pending: 1h
       #   returned-to-contributor: 24h
@@ -1182,6 +1193,14 @@ knowledge:
                                              # Defaults to true when retention_policy is
                                              # ABSENT, but false when the block is present
                                              # without this key — set it explicitly.
+    # publish:                               # Publish facts to a repo via PR (OFF by default)
+    #   enabled: false                       # The block does nothing until true
+    #   repo: ""                             # owner/name; empty = project.primary_repo
+    #   path: docs/knowledge/                # Or .hive/knowledge/; relative, no ".."
+    #   base_branch: ""                      # Empty = the repo's default branch
+    #   mode: pr                             # pr (default) | commit. ACMM L<=4 hives publish via
+    #                                        # PR only; commit is not honored and opens a PR
+    #   cadence: per_run                     # per_run (default) | daily
   # code_maps:                               # Generated repository code maps (#11106).
   #   enabled: true                          # OPT-IN; absent or false = never generated
   #   schedule: hourly                       # HEAD check cadence: hourly (default) or daily

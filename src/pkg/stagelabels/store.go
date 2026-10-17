@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -24,8 +25,9 @@ const StateFile = "stage-labels.json"
 var StatePath = filepath.Join(DefaultStateDir, StateFile)
 
 // Record is what the hive remembers about one item's stage: when it entered
-// the stage (for stalled detection, kept locally so no GitHub timeline GET is
-// needed) and any unresolved regression.
+// the stage and when it last saw activity (for stalled detection, kept
+// locally so no GitHub timeline GET is needed), its recent transitions and
+// any unresolved regression (narrated in a comment, no longer a label).
 type Record struct {
 	Stage     Stage     `json:"stage"`
 	EnteredAt time.Time `json:"entered_at"`
@@ -36,6 +38,11 @@ type Record struct {
 	// RegressionCommented records that the one-line regression comment for
 	// the current regression was posted, so it is never posted twice.
 	RegressionCommented bool `json:"regression_commented,omitempty"`
+	// RegressionCommentHead is the head SHA the last regression comment was
+	// posted for. Unlike RegressionCommented it survives a recover→regress
+	// flap, so a gate flapping on one head posts at most one regression
+	// comment for it (hivecommons/hive#12557). Empty for items without a head.
+	RegressionCommentHead string `json:"regression_comment_head,omitempty"`
 	// StallCommented records that the stall note for the current stage
 	// visit was posted (stages with StallNote only).
 	StallCommented bool `json:"stall_commented,omitempty"`
@@ -67,13 +74,152 @@ type Record struct {
 	AdoptedAt   time.Time `json:"adopted_at,omitempty"`
 	// AdoptCheckedAt is the last time the superseding PR's state was polled.
 	AdoptCheckedAt time.Time `json:"adopt_checked_at,omitempty"`
+	// EntryCommented records that the stage's entry comment (085 "needs a
+	// decision", 090 "ready for a human merge") was posted for the current
+	// stage visit; reset on every stage change so each transition explains
+	// itself exactly once (hivecommons/hive#12528).
+	EntryCommented bool `json:"entry_commented,omitempty"`
+	// History is the item's recent stage transitions, oldest first, capped
+	// at HistoryLimit: each entry is the stage entered, when, and the reason
+	// at entry. The dashboard's Hive activity monitor renders it as the
+	// item's tracker trail; nothing in the reconciler reads it back.
+	History []Hop `json:"history,omitempty"`
+	// AdoptMode is how the hive adopted the PR: AdoptModeSupersede (an App
+	// PR from hive/adopt-<n> carries the head) or AdoptModeInPlace (the
+	// hive's fix lane pushes to the PR's own branch, maintainer_can_modify).
+	// Empty on records written before in-place adoption existed, which were
+	// all supersessions.
+	AdoptMode string `json:"adopt_mode,omitempty"`
+	// AdoptReason is why the hive adopted ("contributor-offline",
+	// "contributor-unregistered", "grace-elapsed").
+	AdoptReason string `json:"adopt_reason,omitempty"`
+	// YieldedHead is the contributor head the hive yielded an in-place
+	// adoption on (the author pushed again); the yield note is posted once
+	// per head.
+	YieldedHead string `json:"yielded_head,omitempty"`
 	// LastSeen is the last cycle the item was observed; stale records are
 	// pruned by Prune so a closed item does not live in the file forever.
 	LastSeen time.Time `json:"last_seen"`
+	// LastActivityAt is when somebody other than the hive last touched the
+	// item as far as the reconciler can tell (hivecommons/hive#12534): a new
+	// head, a comment, a review/verdict, a CI state change or a non-hive
+	// label change. Stalled measures quiet time from here, never from the
+	// PR's updated_at (which the hive's own writes bump).
+	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
+	// ActivityHead, ActivityComments, ActivityReviews and ActivityDigest are
+	// the last observed activity inputs; a change in any of them is
+	// activity. ActivityComments counts the hive's own comments too, so the
+	// reconciler adds the ones it posts (CountOwnComments) and they never
+	// read as someone else acting. ActivityReviews counts review
+	// submissions by people (not the hive app), with or without inline
+	// comments: a body-only Approve / Request-changes is activity too.
+	ActivityHead     string `json:"activity_head,omitempty"`
+	ActivityComments int    `json:"activity_comments,omitempty"`
+	ActivityReviews  int    `json:"activity_reviews,omitempty"`
+	ActivityDigest   string `json:"activity_digest,omitempty"`
+	// WaitingOnHive records that, at the last observation, the item was
+	// waiting on the hive (required checks running, reviewer verdict
+	// pending for the head): it cannot stall, whatever the quiet time.
+	WaitingOnHive bool `json:"waiting_on_hive,omitempty"`
+	// HiveHeldWarned is set once the hive-side alert for an item held by
+	// the hive past its dwell has been logged; activity resets it.
+	HiveHeldWarned bool `json:"hive_held_warned,omitempty"`
+}
+
+// Activity is what the reconciler observed this cycle that a person (or
+// CI) could have changed; see Store.NoteActivity.
+type Activity struct {
+	// Head is the current head SHA ("" for an issue).
+	Head string
+	// Comments is the issue + review comment count, or -1 when unknown
+	// (the lane did not fetch the PR this cycle).
+	Comments int
+	// OwnComments is how many comments the hive posted on the item after
+	// Comments was fetched this cycle. They are added to the stored count
+	// but never compared, so the next fetch (which includes them) does not
+	// read them as a person acting.
+	OwnComments int
+	// Reviews is the number of review submissions by people (the hive
+	// app's own reviews excluded), or -1 when unknown (the lane did not
+	// list reviews this cycle). It catches a body-only Approve or
+	// Request-changes, which Comments (inline comments only) misses.
+	Reviews int
+	// Digest summarises the verdict, CI state and non-hive labels; any
+	// change is activity.
+	Digest string
+	// At, when non-zero, is the real timestamp of the activity when the
+	// caller has one; zero means "now" (the cycle that first observed it,
+	// which is what the PR reconciler passes: the list payload carries no
+	// commit or comment timestamps).
+	At time.Time
+	// WaitingOnHive says the item is waiting on the hive (checks running,
+	// verdict pending): it must not stall.
+	WaitingOnHive bool
+}
+
+// QuietSince is when the item's current quiet period began: the later of
+// entering the stage and the last activity.
+func (r Record) QuietSince() time.Time {
+	if r.LastActivityAt.After(r.EnteredAt) {
+		return r.LastActivityAt
+	}
+	return r.EnteredAt
+}
+
+// QuietFor is how long the item has been quiet at now (0 if unknown).
+func (r Record) QuietFor(now time.Time) time.Duration {
+	since := r.QuietSince()
+	if since.IsZero() || !now.After(since) {
+		return 0
+	}
+	return now.Sub(since)
+}
+
+// Hop is one stage entry in a Record's History: the stage entered, where
+// it came from (None on the first observation), when and why. It is also
+// the record of backward moves now that the stage/regressed label is
+// retired.
+type Hop struct {
+	From   Stage     `json:"from,omitempty"`
+	Stage  Stage     `json:"stage"`
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason,omitempty"`
+	// Regressed marks a backward hop (IsRegression); it replaces the
+	// retired stage/regressed label as the record of the move.
+	Regressed bool `json:"regressed,omitempty"`
+}
+
+// HistoryLimit bounds Record.History so the store file stays small for an
+// item that flaps between stages.
+const HistoryLimit = 8
+
+// appendHop appends h to history, dropping the oldest entries past
+// HistoryLimit. The result never aliases history's backing array when it
+// grows, so a Record copy held by a caller is not mutated.
+func appendHop(history []Hop, h Hop) []Hop {
+	out := make([]Hop, 0, len(history)+1)
+	out = append(out, history...)
+	out = append(out, h)
+	if len(out) > HistoryLimit {
+		out = out[len(out)-HistoryLimit:]
+	}
+	return out
 }
 
 // Regressed reports whether the item carries an unresolved regression.
 func (r Record) Regressed() bool { return r.RegressedFrom != None }
+
+// RegressionCommentDue reports whether the regression comment for the
+// current regression still needs posting on head: not when it was already
+// posted for this regression, nor when one was already posted for the same
+// non-empty head SHA in an earlier recover→regress cycle.
+func (r Record) RegressionCommentDue(head string) bool {
+	if r.RegressionCommented {
+		return false
+	}
+	head = strings.TrimSpace(head)
+	return head == "" || !strings.EqualFold(r.RegressionCommentHead, head)
+}
 
 // Transition is what Observe reports about one stage update.
 type Transition struct {
@@ -216,6 +362,7 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 	if !had || prev.Stage != stage {
 		next.EnteredAt = now
 		next.StallCommented = false
+		next.EntryCommented = false
 		tr.Changed = true
 	}
 	switch {
@@ -237,21 +384,106 @@ func (s *Store) Observe(key string, stage Stage, reason string) Transition {
 		next.RegressionCommented = false
 		tr.Recovered = true
 	}
-	if !had || next != prev {
+	if tr.Changed {
+		next.History = appendHop(prev.History, Hop{From: prev.Stage, Stage: stage, At: now, Reason: reason, Regressed: tr.Regressed})
+	}
+	if !had || tr.Changed || !recordEqual(next, prev) {
 		s.dirty = true
 	}
 	s.items[key] = next
 	return tr
 }
 
+// recordEqual compares two records field by field; History (a slice) makes
+// Record incomparable with ==, and it only changes when the stage does.
+func recordEqual(a, b Record) bool {
+	a.History, b.History = nil, nil
+	return reflect.DeepEqual(a, b)
+}
+
+// NoteActivity folds this cycle's activity inputs into key's record and
+// reports whether anything a person could have done changed since the last
+// observation. The first observation of a record seeds LastActivityAt
+// (with a.At when known, else now) so the quiet clock starts at upgrade
+// rather than reading a long-idle item as stalled on the first pass.
+func (s *Store) NoteActivity(key string, a Activity) (changed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return false
+	}
+	now := s.now()
+	at := a.At
+	if at.IsZero() || at.After(now) {
+		at = now
+	}
+	switch {
+	case r.LastActivityAt.IsZero():
+		changed = true
+	case a.Head != "" && a.Head != r.ActivityHead:
+		changed = true
+	case a.Comments >= 0 && a.Comments > r.ActivityComments:
+		changed = true
+	case a.Reviews >= 0 && a.Reviews > r.ActivityReviews:
+		changed = true
+	case a.Digest != r.ActivityDigest:
+		changed = true
+	}
+	if changed && at.After(r.LastActivityAt) {
+		r.LastActivityAt = at
+	}
+	if changed {
+		r.HiveHeldWarned = false
+	}
+	if a.Head != "" {
+		r.ActivityHead = a.Head
+	}
+	if a.Comments >= 0 {
+		r.ActivityComments = a.Comments + a.OwnComments
+	}
+	if a.Reviews >= 0 {
+		r.ActivityReviews = a.Reviews
+	}
+	r.ActivityDigest = a.Digest
+	r.WaitingOnHive = a.WaitingOnHive
+	s.items[key] = r
+	s.dirty = true
+	return changed
+}
+
+// CountOwnComments records that the hive itself posted n comments on key,
+// so the next observed comment count does not read as outside activity.
+// The credit sits on top of the last count NoteActivity stored, so it must
+// be applied after this cycle's NoteActivity (or in a cycle that observes
+// no count at all): a NoteActivity that follows it overwrites the credit
+// with the pre-comment count and the next fetch reads the hive's own
+// comment as a person acting.
+func (s *Store) CountOwnComments(key string, n int) {
+	if n <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.ActivityComments += n
+	s.items[key] = r
+	s.dirty = true
+}
+
 // IsRegression reports whether moving from → to is a backward transition
 // worth flagging. A lower number is backward, except leaving a repair stage
 // (fixing, returned-to-contributor, adopted-by-hive) for review of the new
 // head, which is the repair route itself, not a second regression, and
-// leaving needs-human: 090 is a parking stage ("the hive cannot act"), not
-// progress, so moving out of it means the blocker cleared, whatever the
-// destination (hivecommons/hive#12403 carried stage/regressed through
-// 090 → 050 → 072 churn that was never a step backwards for the author).
+// leaving the two human stages: 085 and 090 are parking stages ("the hive
+// cannot act"), not progress, so moving out of them means the picture
+// changed, whatever the destination — 090 → 072 is the hive learning the
+// head is red, not the author losing ground (hivecommons/hive#12403 carried
+// stage/regressed through 090 → 050 → 072 churn that was never a step
+// backwards for the author).
 func IsRegression(from, to Stage) bool {
 	if !to.Before(from) {
 		return false
@@ -266,7 +498,7 @@ func IsRegression(from, to Stage) bool {
 		return to != ReviewPending && to != Reviewed
 	case Fixing, ReturnedToContributor:
 		return to != ReviewPending && to != Reviewed
-	case NeedsHuman:
+	case ReadyForHumanMerge, NeedsDecision:
 		return false
 	}
 	return true
@@ -274,13 +506,42 @@ func IsRegression(from, to Stage) bool {
 
 // MarkRegressionCommented records that the regression comment was posted.
 func (s *Store) MarkRegressionCommented(key string) {
+	s.MarkRegressionCommentedForHead(key, "")
+}
+
+// MarkRegressionCommentedForHead records that the regression comment was
+// posted for head, so later regressions on the same head stay silent (see
+// RegressionCommentDue). An empty head records the comment only for the
+// current regression.
+func (s *Store) MarkRegressionCommentedForHead(key, head string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r, ok := s.items[key]
-	if !ok || r.RegressionCommented {
+	if !ok {
+		return
+	}
+	head = strings.TrimSpace(head)
+	if r.RegressionCommented && (head == "" || r.RegressionCommentHead == head) {
 		return
 	}
 	r.RegressionCommented = true
+	if head != "" {
+		r.RegressionCommentHead = head
+	}
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkEntryCommented records that the entry comment for the current stage
+// visit was posted.
+func (s *Store) MarkEntryCommented(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.EntryCommented {
+		return
+	}
+	r.EntryCommented = true
 	s.items[key] = r
 	s.dirty = true
 }
@@ -328,9 +589,66 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 	s.dirty = true
 }
 
+// Adoption modes (Record.AdoptMode).
+const (
+	AdoptModeSupersede = "supersede"
+	AdoptModeInPlace   = "in-place"
+)
+
 // Adopted reports whether head is the head the hive adopted (stage 074).
 func (r Record) Adopted(head string) bool {
 	return head != "" && r.AdoptedHead == head
+}
+
+// AdoptedInPlace reports whether the hive adopted this PR in place (its fix
+// lane owns the PR's own branch) and the adoption is still live. The head is
+// not compared: the hive's own pushes move it (see Store.MarkAdoptedHead).
+func (r Record) AdoptedInPlace() bool {
+	return r.AdoptedHead != "" && r.AdoptMode == AdoptModeInPlace
+}
+
+// MarkAdoptedInPlace records an in-place adoption of head for reason.
+func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, 0, now, now
+	r.AdoptMode, r.AdoptReason = AdoptModeInPlace, reason
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkAdoptedHead moves a live adoption to a new head the hive itself
+// pushed, so the record keeps reading as adopted.
+func (s *Store) MarkAdoptedHead(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.AdoptedHead == "" || head == "" {
+		return
+	}
+	r.AdoptedHead = head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkYielded forgets an in-place adoption because the contributor pushed
+// head themselves, remembering the head so the yield note posts once.
+func (s *Store) MarkYielded(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok {
+		return
+	}
+	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
+	r.AdoptMode, r.AdoptReason = "", ""
+	r.YieldedHead = head
+	s.items[key] = r
+	s.dirty = true
 }
 
 // MarkAdopted records the stage-074 adoption of head by superseding PR `by`
@@ -343,6 +661,7 @@ func (s *Store) MarkAdopted(key, head string, by int, now time.Time) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = head, by, now, now
+	r.AdoptMode = AdoptModeSupersede
 	s.items[key] = r
 	s.dirty = true
 }
@@ -369,6 +688,7 @@ func (s *Store) ClearAdoption(key string) {
 		return
 	}
 	r.AdoptedHead, r.AdoptedBy, r.AdoptedAt, r.AdoptCheckedAt = "", 0, time.Time{}, time.Time{}
+	r.AdoptMode, r.AdoptReason = "", ""
 	s.items[key] = r
 	s.dirty = true
 }
@@ -469,16 +789,56 @@ func Dwell(stage Stage, overrides map[string]time.Duration) time.Duration {
 	return stage.Dwell()
 }
 
-// Stalled reports whether r has sat in its stage past the dwell threshold.
+// Stalled reports whether nobody has worked r for its stage's dwell: the
+// quiet time (since the later of entering the stage and the last observed
+// activity) reached the threshold and the item is not waiting on the hive.
+// requireQuiet=false (governor.labels.stage.stalled.require_quiet) measures
+// from stage entry alone, the pre-#12534 rule; waiting on the hive still
+// never stalls.
 func Stalled(r Record, overrides map[string]time.Duration, now time.Time) bool {
-	if r.Stage == None || r.EnteredAt.IsZero() {
+	return StalledWith(r, overrides, now, true)
+}
+
+// StalledWith is Stalled with the require_quiet policy explicit.
+func StalledWith(r Record, overrides map[string]time.Duration, now time.Time, requireQuiet bool) bool {
+	if r.Stage == None || r.EnteredAt.IsZero() || r.WaitingOnHive {
 		return false
 	}
 	d := Dwell(r.Stage, overrides)
 	if d <= 0 {
 		return false
 	}
-	return now.Sub(r.EnteredAt) >= d
+	since := r.EnteredAt
+	if requireQuiet {
+		since = r.QuietSince()
+	}
+	return now.Sub(since) >= d
+}
+
+// HiveHeld reports whether the item has been quiet past its stage's dwell
+// while waiting on the hive. The author is not the holder, so this is not
+// a stage/stalled case: it is the hive's own lane (reviewer, CI) that
+// needs attention, and the engine surfaces it as a log warning and a
+// dashboard count rather than a label on the PR (hivecommons/hive#12534).
+func HiveHeld(r Record, overrides map[string]time.Duration, now time.Time) bool {
+	if r.Stage == None || r.EnteredAt.IsZero() || !r.WaitingOnHive {
+		return false
+	}
+	d := Dwell(r.Stage, overrides)
+	return d > 0 && r.QuietFor(now) >= d
+}
+
+// MarkHiveHeldWarned records that the hive-held alert was logged for key.
+func (s *Store) MarkHiveHeldWarned(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.HiveHeldWarned {
+		return
+	}
+	r.HiveHeldWarned = true
+	s.items[key] = r
+	s.dirty = true
 }
 
 // RegressionComment is the one-line, idempotent comment posted on a
@@ -492,14 +852,14 @@ func RegressionComment(from, to Stage, reason string) string {
 }
 
 // StallComment is the one-line, idempotent note posted when an item stalls
-// in a StallNote stage: `stage 080-awaiting-merge-admission stalled after
-// 30m: <lane's last skip reason>`.
+// in a StallNote stage: `stage 080-awaiting-merge-admission: no activity
+// for 30m0s: <lane's last skip reason>`.
 func StallComment(stage Stage, dwell time.Duration, reason string) string {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "lane has not evaluated this head"
 	}
-	return StallCommentMarker + "\nstage " + stage.String() + " stalled after " + dwell.String() + ": " + reason
+	return StallCommentMarker + "\nstage " + stage.String() + ": no activity for " + dwell.String() + ": " + reason
 }
 
 // StallCommentMarker tags the stall note.

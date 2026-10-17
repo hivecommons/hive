@@ -233,6 +233,7 @@ func formatRedPRFixData(data []byte, agent string) string {
 		Excerpt          string   `json:"excerpt"`
 		Escalated        bool     `json:"escalated"`
 		FromFork         bool     `json:"from_fork"`
+		Adopted          bool     `json:"adopted"`
 		HeadRepo         string   `json:"head_repo"`
 		Held             bool     `json:"held"`
 		MergeableState   string   `json:"mergeable_state"`
@@ -253,8 +254,11 @@ func formatRedPRFixData(data []byte, agent string) string {
 		if pr.Escalated {
 			continue // needs-human: hands off for agents
 		}
-		if pr.FromFork {
-			// A fork PR can never be "yours": the hive pushes only to the base
+		if pr.FromFork && !pr.Adopted {
+			// A fork PR can never be "yours" — unless the hive adopted it in
+			// place (stage 074): then maintainer_can_modify lets the fixer
+			// push to the contributor's branch and the row is listed.
+			// Otherwise: the hive pushes only to the base
 			// repository, so it did not open this PR and cannot repair it.
 			// Unattributed rows default to scanner below, which is exactly how
 			// 66 contributor PRs from forks became one scanner's FIX-BEFORE-NEW
@@ -318,6 +322,9 @@ func formatRedPRFixData(data []byte, agent string) string {
 			break
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		if pr.Adopted {
+			b.WriteString(fmt.Sprintf("    ADOPTED contributor PR (stage 074, head repo %s): the author is offline; `gh pr checkout` then push to the PR's own branch — maintainer_can_modify grants access.\n", pr.HeadRepo))
+		}
 		if pr.Conflict {
 			state := strings.TrimSpace(pr.MergeableState)
 			if state == "" {
