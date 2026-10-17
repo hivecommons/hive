@@ -188,7 +188,20 @@ unit of work keyed by its stable session/spec id:
   with a blank New Inception screen.
 - **Revise** calls `POST /api/campaigns/{id}/revise` and creates a new
   campaign linked with `revision_of`/`revision`, so changed requirements branch
-  from the shipped campaign instead of erasing its trail.
+  from the shipped campaign instead of erasing its trail. The list marks the
+  older campaign with `superseded_by`, and the dashboard shows one row per
+  Revise chain — the newest revision, with a `rev N` pill and an
+  "N earlier revisions" disclosure that can still continue or delete each
+  older revision — instead of one identical row per click.
+- **🗑 Delete** (icon button at the end of each row) calls
+  `DELETE /api/campaigns/{id}` after an in-app confirmation. It removes only
+  the campaign record: the saved Inception state and the archived wiki
+  snapshot under `inception/campaigns/<id>/`. Knowledge-base facts, Jam
+  threads, scaffolded repo files and the other revisions in the chain are
+  kept. Deleting the campaign that is also the live L1 session clears that
+  session. Run-backed Spektacular campaigns return `409 Conflict`; their rows
+  come and go with the run. The deletion is audit-logged as
+  `campaign_delete`.
 
 ## Configuring the brainstorm agent
 

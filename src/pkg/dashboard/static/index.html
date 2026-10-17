@@ -5545,6 +5545,14 @@
     .campaign-row-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
+    .campaign-revision-pill { border-color: var(--accent); color: var(--accent); }
+    /* Revise chains fold into one row; earlier revisions live in a
+       disclosure with their own Continue / Delete icon buttons (#12698). */
+    .campaign-history-list { display: grid; gap: var(--sp-2); margin-top: var(--sp-2); width: 100%; }
+    .campaign-history-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; border-top: 1px dashed var(--border); padding-top: var(--sp-2); }
+    .campaign-history-row .campaign-row-actions { margin-left: auto; }
+    .campaign-row-actions .nous-exp-icon { align-self: center; }
+    .nous-exp-icon-delete:hover, .nous-exp-icon-delete:focus-visible { color: var(--red); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
     .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
     .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
@@ -29596,6 +29604,73 @@ function burnAreaChart() {
         </div>`;
     }
 
+    // Revise chains (#12698): every Revise mints a linked `<root>-rev-N`
+    // archive with the same title, so the API marks the older ones with
+    // `superseded_by`. Show one row per chain (the newest revision) and fold
+    // the earlier ones into a history disclosure under it.
+    function campaignRevisionChains(campaigns) {
+      const byId = {};
+      (campaigns || []).forEach(function(c) { byId[c.id] = c; });
+      const latest = (campaigns || []).filter(function(c) { return !c.superseded_by || !byId[c.superseded_by]; });
+      return latest.map(function(head) {
+        const history = [];
+        const seen = {};
+        let cur = head;
+        while (cur && cur.revision_of && byId[cur.revision_of] && !seen[cur.revision_of]) {
+          seen[cur.revision_of] = true;
+          cur = byId[cur.revision_of];
+          history.push(cur);
+        }
+        return { head: head, history: history };
+      });
+    }
+
+    function campaignDeleteButton(c) {
+      return nousExpIconButton('deleteCampaign', escapeHtml(c.id), '', 'Delete campaign', '🗑', 'nous-exp-icon-delete campaign-delete');
+    }
+
+    function renderCampaignRow(c, history) {
+      const repo = (c.repos || []).join(', ') || 'no repo';
+      const activity = c.last_activity || 'no activity';
+      const engine = c.engine || 'unknown engine';
+      const rc = c.recheck || {};
+      const recheckText = rc.enabled ? `Rechecks every ${escapeHtml(rc.interval || 'default')} · next ${escapeHtml(rc.next_at ? relativeAge(rc.next_at) : 'not scheduled')} · last delta ${Number(rc.last_delta_count || 0)}` : 'Rechecks off';
+      const drift = c.drift || {};
+      const external = Array.isArray(drift.external) ? drift.external : [];
+      const failed = Array.isArray(rc.sources_failed) ? rc.sources_failed : (Array.isArray(drift.sources_failed) ? drift.sources_failed : []);
+      const recheckExternal = external.length ? `<details class="campaign-row-meta"><summary>${Number(drift.external_count || external.length)} external signals</summary><div class="campaign-jam-list">${external.map(ev => `<div><strong>${escapeHtml(ev.source || '')}</strong> · ${escapeHtml(ev.kind || '')}: ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ev.title || ev.url)}</a>` : escapeHtml(ev.title || '')}${ev.summary ? `<br>${escapeHtml(ev.summary)}` : ''}</div>`).join('')}${failed.length ? `<div>Failed sources: ${failed.map(f => `${escapeHtml(f.name || '')} (${escapeHtml(f.reason || '')})`).join(', ')}</div>` : ''}</div></details>` : (Number(rc.external_count || 0) ? `<div class="campaign-row-meta"><span>${Number(rc.external_count || 0)} external signals</span></div>` : '');
+      const recheckDisabled = rc.in_flight ? ' disabled' : '';
+      const revisionPill = c.revision ? `<span class="campaign-pill campaign-revision-pill" title="Revision ${Number(c.revision)}${c.revision_of ? ' of ' + escapeHtml(c.revision_of) : ''}">rev ${Number(c.revision)}</span>` : '';
+      const hist = Array.isArray(history) ? history : [];
+      const historyBlock = hist.length ? `<details class="campaign-row-meta campaign-history"><summary>${hist.length} earlier ${hist.length === 1 ? 'revision' : 'revisions'}</summary><div class="campaign-history-list">${hist.map(function(h) {
+        return `<div class="campaign-history-row" data-campaign-id="${escapeHtml(h.id)}"><span class="campaign-pill">${h.revision ? 'rev ' + Number(h.revision) : 'original'}</span><span>${escapeHtml(h.id)}</span><span>${escapeHtml(h.status || 'parked')}</span><span>${escapeHtml(h.last_activity || '')}</span><span class="campaign-row-actions">${nousExpIconButton('resumeCampaign', escapeHtml(h.id), '', 'Continue this revision', '▶', 'nous-exp-icon-resume')}${campaignDeleteButton(h)}</span></div>`;
+      }).join('')}</div></details>` : '';
+      return `<div class="campaign-row" data-campaign-id="${escapeHtml(c.id)}">
+          <div>
+            <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
+            <div class="campaign-row-meta">
+              <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
+              ${revisionPill}
+              <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
+              <span>${escapeHtml(repo)}</span>
+              <span>${escapeHtml(engine)}</span>
+              <span>${escapeHtml(activity)}</span>
+            </div>
+            <div class="campaign-row-meta"><span>${recheckText}</span></div>
+            ${recheckExternal}
+            ${historyBlock}
+          </div>
+          <div class="campaign-row-actions">
+            <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="recheckCampaign" data-arg0="${escapeHtml(c.id)}"${recheckDisabled}>Recheck</button>
+            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
+            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
+            ${campaignDeleteButton(c)}
+          </div>
+        </div>`;
+    }
+
     function renderCampaignsList() {
       const list = document.getElementById('campaigns-list');
       setSectionSummary('inception-section', inceptionSectionSummary());
@@ -29604,39 +29679,33 @@ function burnAreaChart() {
         list.innerHTML = '<div class="campaign-empty">No campaigns yet. New Inception archives completed sessions here.</div>';
         return;
       }
-      list.innerHTML = _campaigns.map(function(c) {
-        const repo = (c.repos || []).join(', ') || 'no repo';
-        const activity = c.last_activity || 'no activity';
-        const engine = c.engine || 'unknown engine';
-        const rc = c.recheck || {};
-        const recheckText = rc.enabled ? `Rechecks every ${escapeHtml(rc.interval || 'default')} · next ${escapeHtml(rc.next_at ? relativeAge(rc.next_at) : 'not scheduled')} · last delta ${Number(rc.last_delta_count || 0)}` : 'Rechecks off';
-        const drift = c.drift || {};
-        const external = Array.isArray(drift.external) ? drift.external : [];
-        const failed = Array.isArray(rc.sources_failed) ? rc.sources_failed : (Array.isArray(drift.sources_failed) ? drift.sources_failed : []);
-        const recheckExternal = external.length ? `<details class="campaign-row-meta"><summary>${Number(drift.external_count || external.length)} external signals</summary><div class="campaign-jam-list">${external.map(ev => `<div><strong>${escapeHtml(ev.source || '')}</strong> · ${escapeHtml(ev.kind || '')}: ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ev.title || ev.url)}</a>` : escapeHtml(ev.title || '')}${ev.summary ? `<br>${escapeHtml(ev.summary)}` : ''}</div>`).join('')}${failed.length ? `<div>Failed sources: ${failed.map(f => `${escapeHtml(f.name || '')} (${escapeHtml(f.reason || '')})`).join(', ')}</div>` : ''}</div></details>` : (Number(rc.external_count || 0) ? `<div class="campaign-row-meta"><span>${Number(rc.external_count || 0)} external signals</span></div>` : '');
-        const recheckDisabled = rc.in_flight ? ' disabled' : '';
-        return `<div class="campaign-row">
-          <div>
-            <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
-            <div class="campaign-row-meta">
-              <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
-              <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
-              <span>${escapeHtml(repo)}</span>
-              <span>${escapeHtml(engine)}</span>
-              <span>${escapeHtml(activity)}</span>
-            </div>
-            <div class="campaign-row-meta"><span>${recheckText}</span></div>
-            ${recheckExternal}
-          </div>
-          <div class="campaign-row-actions">
-            <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="recheckCampaign" data-arg0="${escapeHtml(c.id)}"${recheckDisabled}>Recheck</button>
-            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
-          </div>
-        </div>`;
-      }).join('');
+      list.innerHTML = campaignRevisionChains(_campaigns).map(function(chain) { return renderCampaignRow(chain.head, chain.history); }).join('');
+    }
+
+    // Delete only removes the campaign record (saved inception state + wiki
+    // snapshot). KB facts, Jam threads and scaffolded repo files are kept.
+    // In-app confirm — never window.confirm (#12698).
+    const CAMPAIGN_DELETE_CONFIRM_TITLE = 'Delete this campaign?';
+    function campaignDeleteConfirmMessage(c) {
+      const label = (c && (c.title || c.id)) || 'this campaign';
+      const rev = c && c.revision ? ` (revision ${Number(c.revision)})` : '';
+      return `Removes the campaign record for "${label}"${rev}: its saved Inception state and the archived wiki snapshot. It disappears from this list and cannot be continued or revised.\n\nKept: knowledge-base facts, Jam threads, and anything already scaffolded or pushed to the repo. Other revisions in the same chain are not affected.`;
+    }
+
+    async function deleteCampaign(id) {
+      if (!id) return;
+      const c = (_campaigns || []).find(function(x) { return x.id === id; }) || { id: id };
+      const ok = await hiveConfirm({ title: CAMPAIGN_DELETE_CONFIRM_TITLE, message: campaignDeleteConfirmMessage(c), confirmLabel: 'Delete campaign', cancelLabel: 'Keep', danger: true });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/campaigns/' + encodeURIComponent(id), { method: 'DELETE', headers: _inceptionAuthHeaders() });
+        const data = await r.json().catch(function() { return {}; });
+        if (!r.ok || !data.ok) { showToast(data.error || 'Failed to delete campaign', 'error'); return; }
+        _campaigns = (_campaigns || []).filter(function(x) { return x.id !== id; });
+        renderCampaignsList();
+        showToast('Campaign deleted — knowledge-base facts and Jam threads kept', 'info');
+        await loadCampaigns();
+      } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
 
     let _campaignJamSocket = null;
