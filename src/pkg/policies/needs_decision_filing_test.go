@@ -54,6 +54,7 @@ func TestLanePoliciesParkOwnerOnlyHandOffs(t *testing.T) {
 
 	rule := []byte("**Park an existing issue when only the owner can finish it.**")
 	command := []byte("`hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`")
+	releaseCommand := []byte("`--step-kind release --release-tag <tag> --release-target <full-commit-sha>`")
 
 	entries, err := fs.ReadDir(DefaultPolicies, "defaults")
 	if err != nil {
@@ -87,8 +88,8 @@ func TestLanePoliciesParkOwnerOnlyHandOffs(t *testing.T) {
 		if bytes.Contains(data, []byte("label the item and post one maintainer question")) {
 			t.Errorf("%s tells the agent to label the item for needs-direction without the relay flag", e.Name())
 		}
-		if !bytes.Contains(data, rule) || !bytes.Contains(data, command) {
-			t.Errorf("%s lacks the owner-only park rule naming %s", e.Name(), command)
+		if !bytes.Contains(data, rule) || !bytes.Contains(data, command) || !bytes.Contains(data, releaseCommand) {
+			t.Errorf("%s lacks the owner-only park rule naming %s and the typed release flags %s", e.Name(), command, releaseCommand)
 		}
 	}
 	if checked == 0 {

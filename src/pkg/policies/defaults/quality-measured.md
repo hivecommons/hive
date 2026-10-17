@@ -213,6 +213,9 @@ billing, or anything else agents are barred from), do not leave the issue
 unlabelled for your claim to lapse on. Post the diagnosis with the exact
 command or step the owner must run, and park the issue in the same request:
 `hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision`.
+When that owner-only remainder is a release, the same command MUST include
+`--step-kind release --release-tag <tag> --release-target <full-commit-sha>` so
+Hive keeps the typed release step in "Your turn" until the owner answers.
 Hive applies its configured needs-decision label itself, so the issue leaves
 the work queue and reaches the owner's "Your turn" inbox. The label relay
 refuses `needs-human` and `needs-decision` from agents, so use this flag

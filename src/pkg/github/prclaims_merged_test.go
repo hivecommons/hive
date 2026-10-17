@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -358,6 +359,87 @@ func TestFilterClaimedIssuesMergedClaimsAreNeverSuppressedByLabels(t *testing.T)
 	}
 	if got.ClaimContext == nil || !got.ClaimContext.MergedPR {
 		t.Fatalf("verified-open issue must keep merged claim context, got %+v", got.ClaimContext)
+	}
+}
+
+func TestFilterClaimedIssuesParksUnansweredReleaseOwnerStep(t *testing.T) {
+	stepBody := issueOwnerStepBody("Remaining step: cut the release.", true, testReleaseStep())
+	accepted := func(decision string) map[string]any {
+		return map[string]any{
+			"body": unparkReplyMarkerPrefix + "7 -->\n" + renderUnparkAcceptedReply("owner", decision, []string{issueNeedsDecisionLabel}),
+			"user": map[string]any{"login": "hive[bot]"},
+		}
+	}
+	hiveStep := map[string]any{"body": stepBody, "user": map[string]any{"login": "hive[bot]"}}
+
+	tests := []struct {
+		name          string
+		body          string
+		comments      []map[string]any
+		parkingLabels []string
+		wantPark      bool
+		wantNoFetch   bool
+	}{
+		{name: "unanswered body step", body: stepBody, parkingLabels: []string{issueNeedsDecisionLabel}, wantPark: true},
+		{name: "unanswered comment step", body: "issue body", comments: []map[string]any{hiveStep}, parkingLabels: []string{issueNeedsDecisionLabel}, wantPark: true},
+		{name: "removed parking label restores prior behavior", body: stepBody, wantNoFetch: true},
+		{name: "untyped owner step keeps prior behavior", body: "issue body", comments: []map[string]any{{
+			"body": ownerStepCommentBody("Owner changes settings.", true),
+			"user": map[string]any{"login": "hive[bot]"},
+		}}, parkingLabels: []string{issueNeedsDecisionLabel}},
+		{name: "done answers step", body: "issue body", comments: []map[string]any{hiveStep, accepted(unparkDoneDecision)}, parkingLabels: []string{issueNeedsDecisionLabel}},
+		{name: "decision answers step", body: "issue body", comments: []map[string]any{hiveStep, accepted("release a different tag")}, parkingLabels: []string{issueNeedsDecisionLabel}},
+		{name: "approve answers step", body: "issue body", comments: []map[string]any{hiveStep, accepted("go with the recommendation")}, parkingLabels: []string{issueNeedsDecisionLabel}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var commentFetches atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/repos/o/r/issues/300/comments" {
+					http.NotFound(w, r)
+					return
+				}
+				commentFetches.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(tt.comments)
+			}))
+			t.Cleanup(srv.Close)
+			client := NewClientForTest(srv.URL, "o", []string{"r"}, testLogger())
+			client.SetAppBotLogin("hive[bot]")
+
+			now := time.Now().UTC().Truncate(time.Second)
+			ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+			ledger.Reconcile([]IssueClaim{{
+				Repo: "o/r", Issue: 300, PRNumber: 501, PRRepo: "o/r",
+				Reference: true, MergedPR: true, MergedAt: now.Add(-time.Hour),
+				ObservedAt: now, FirstObservedAt: now.Add(-time.Hour),
+			}}, true)
+			labels := append([]string{VerifiedOpenLabel}, tt.parkingLabels...)
+			result := &ActionableResult{Issues: IssueResult{
+				Items: []Issue{{Repo: "o/r", Number: 300, Author: "hive[bot]", Body: tt.body, Labels: labels}},
+				Count: 1,
+			}}
+
+			pending := pendingReleaseOwnerSteps(context.Background(), client, result, ledger, testLogger())
+			_, parked := pending[claimKey("o/r", 300)]
+			if parked != tt.wantPark {
+				t.Fatalf("pending release park = %v, want %v", parked, tt.wantPark)
+			}
+			if tt.wantNoFetch && commentFetches.Load() != 0 {
+				t.Fatalf("unparked issue must not fetch comments: got %d fetches", commentFetches.Load())
+			}
+			suppressed := filterClaimedIssues(result, ledger, nil, pending, testLogger())
+			if tt.wantPark {
+				if suppressed != 1 || len(result.Issues.Items) != 0 {
+					t.Fatalf("unanswered release step must stay out of lanes: suppressed=%d items=%+v", suppressed, result.Issues.Items)
+				}
+				return
+			}
+			if suppressed != 0 || len(result.Issues.Items) != 1 {
+				t.Fatalf("answered or non-release step must restore prior behavior: suppressed=%d items=%+v", suppressed, result.Issues.Items)
+			}
+		})
 	}
 }
 

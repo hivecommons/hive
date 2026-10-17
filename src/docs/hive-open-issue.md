@@ -195,6 +195,11 @@ owner-step comment (or the initial issue body) supplies the proposal; a marker
 in another commenter's text is ignored. Lettered choices remain choices, not
 release actions.
 
+While that typed release step is unanswered, a verified-open issue behind a
+merged PR remains parked in "Your turn" instead of returning to agent lanes as
+generic remainder work. An accepted `/hive done`, `/hive decision` or
+`/hive approve` answer restores the normal merged-claim behavior.
+
 **This metadata is a proposal, not authorization by itself.** Hive parks the
 issue and offers `/hive done` and `/hive decision` as before. With the default
 `project.repo_policies[].release_on_approve: false`, `/hive approve` retains its

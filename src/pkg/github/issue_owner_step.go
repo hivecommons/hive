@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -71,6 +72,21 @@ func parseIssueOwnerStep(body string) *IssueOwnerStep {
 		return nil
 	}
 	return s
+}
+
+// pendingReleaseOwnerStep reports whether the newest Hive-authored owner step
+// is a typed release proposal that no accepted /hive command has answered.
+func (c *Client) pendingReleaseOwnerStep(ctx context.Context, issue Issue) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, repo := c.splitRepo(issue.Repo)
+	comments, err := c.listIssueComments(ctx, owner, repo, issue.Number)
+	if err != nil {
+		return false, err
+	}
+	menu := c.unparkMenuFor(issue.Body, &gh.User{Login: gh.Ptr(issue.Author)}, comments)
+	return menu.ownerStep && menu.releaseStep != nil, nil
 }
 
 // issueOwnerStepSnapshotKey keys the cache by owner/repo, so a bare

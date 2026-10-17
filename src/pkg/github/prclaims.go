@@ -1811,12 +1811,47 @@ func annotateIssueReopenedAfterMerge(issue *Issue, claim IssueClaim) {
 	issue.ClaimContext = cc
 }
 
+// pendingReleaseOwnerSteps returns verified-open merged-claim issues whose
+// newest Hive owner step is an unanswered typed release proposal and which
+// still carry a parking label. Requiring the label keeps manual unpark actions
+// authoritative and avoids fetching comments for unparked issues.
+func pendingReleaseOwnerSteps(ctx context.Context, client *Client, result *ActionableResult, ledger *ClaimLedger, logger *slog.Logger) map[string]struct{} {
+	if client == nil || result == nil || ledger == nil {
+		return nil
+	}
+	var pending map[string]struct{}
+	for _, issue := range result.Issues.Items {
+		claim, ok := ledger.Lookup(issue.Repo, issue.Number)
+		if !ok || !claim.MergedPR || !issueHasLabel(issue.Labels, VerifiedOpenLabel) ||
+			!client.hasParkingLabel(issue.Labels) {
+			continue
+		}
+		open, err := client.pendingReleaseOwnerStep(ctx, issue)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("checking release owner step failed; keeping issue actionable",
+					"repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+			continue
+		}
+		if !open {
+			continue
+		}
+		if pending == nil {
+			pending = make(map[string]struct{})
+		}
+		pending[claimKey(issue.Repo, issue.Number)] = struct{}{}
+	}
+	return pending
+}
+
 // FilterClaimedIssues applies the duplicate-PR guard to actionable issues.
 //
 // A strong open claim from this hive still suppresses duplicate agent work while
 // the PR is live. Pending evidence that is not safe to treat as resolved — a
 // weak reference claim, or any merged PR claim that left the issue open
-// — is kept actionable and annotated with linked PR context/labels (#8876).
+// — is kept actionable and annotated with linked PR context/labels (#8876),
+// unless an unanswered typed release owner step keeps it parked for its owner.
 // That lets repo cards and agents see the verified PR without auto-hiding an
 // issue on text evidence alone.
 //
@@ -1827,6 +1862,10 @@ func annotateIssueReopenedAfterMerge(issue *Issue, claim IssueClaim) {
 // and returns the number of issues suppressed. A nil result or nil ledger is a
 // no-op, so callers need no extra guards.
 func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale RedStaleFunc, logger *slog.Logger) int {
+	return filterClaimedIssues(result, ledger, redStale, nil, logger)
+}
+
+func filterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale RedStaleFunc, pendingReleases map[string]struct{}, logger *slog.Logger) int {
 	if result == nil || ledger == nil || ledger.Len() == 0 {
 		return 0
 	}
@@ -1870,12 +1909,21 @@ func FilterClaimedIssues(result *ActionableResult, ledger *ClaimLedger, redStale
 		}
 		// hive/verified-open is the agent's recorded outcome: the merged/reference
 		// PR did NOT finish this issue. Keep it actionable with the claim context
-		// (kickmessage renders "implement the rest" instead of "verify once") and
-		// never suppress it — a merged PR's state cannot change to release it.
+		// (kickmessage renders "implement the rest" instead of "verify once")
+		// unless an unanswered release owner step has parked it for the owner.
 		// hive/likely-done and hive/covered-by-pr are applied automatically by
 		// SyncIssuePRClaimLabels and are therefore NOT verification outcomes (#9691
 		// follow-up: treating them as such froze verified issues indefinitely).
 		if claim.MergedPR {
+			if _, parked := pendingReleases[claimKey(issue.Repo, issue.Number)]; parked {
+				suppressed++
+				appendRepoWorkIssueDetail(result, issue, "pending_release_owner_step", "Unanswered release owner step is parked for the owner")
+				if logger != nil {
+					logger.Info("parking issue: unanswered release owner step",
+						"repo", issue.Repo, "issue", issue.Number, "claimed_by_pr", claim.PRNumber)
+				}
+				continue
+			}
 			annotated = true
 			kept = append(kept, issue)
 			if logger != nil {
@@ -2111,7 +2159,8 @@ func ApplyDuplicatePRGuard(
 	}
 
 	SyncIssuePRClaimLabels(ctx, client, result, ledger, logger)
-	suppressed := FilterClaimedIssues(result, ledger, redStale, logger)
+	pendingReleases := pendingReleaseOwnerSteps(ctx, client, result, ledger, logger)
+	suppressed := filterClaimedIssues(result, ledger, redStale, pendingReleases, logger)
 	if saveErr := ledger.Save(); saveErr != nil && logger != nil {
 		logger.Warn("duplicate-PR guard: failed to persist filtered claim ledger", "error", saveErr)
 	}
