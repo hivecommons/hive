@@ -1399,7 +1399,7 @@ func TestApplyStageLabelsDCOFromCommits(t *testing.T) {
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{stagelabels.NoDCOLabel, "stage/070-fixing"}}) || len(api.comments) != 0 {
+	if !reflect.DeepEqual(api.added, [][]string{{"author/hive", stagelabels.NoDCOLabel, "stage/070-fixing"}}) || len(api.comments) != 0 {
 		t.Fatalf("self-authored: added=%v comments=%v", api.added, api.comments)
 	}
 }

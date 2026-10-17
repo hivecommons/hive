@@ -104,8 +104,6 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		human = true
 	case r == contributorLaneReasonChangesRequested, r == stagelabels.LaneReasonChangesRequested:
 		asks = append(asks, "the review swarm requested changes")
-	case r == stagelabels.LaneReasonDCOMissing:
-		asks = append(asks, "the DCO sign-off is missing (`git commit -s`, then force-push)")
 	case r == "conflicting" || r == "not-mergeable" || r == "label:needs-rebase":
 		asks = append(asks, "the branch conflicts with the base and needs a rebase")
 	case r == stagelabels.LaneReasonDCOMissing:
@@ -154,7 +152,7 @@ func nudgeDiagnosisRouted(reason string, d stageDetail, route *stagelabels.Route
 				asks = append(asks, a)
 			}
 		case r == "DCO sign-off missing":
-			if a := "the DCO sign-off is missing (`git commit -s`, then force-push)"; !seenAsk[a] {
+			if a := dcoAsk(d); !seenAsk[a] {
 				seenAsk[a] = true
 				asks = append(asks, a)
 			}
