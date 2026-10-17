@@ -12413,8 +12413,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_PATH = [0, 10, 20, 30, 50, 80];
     const STAGE_TRACKER_PR_COLUMN = 30;
     const STAGE_TRACKER_MERGE_COLUMN = 80;
-    // Stages that share a column but light it with their own word.
-    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Auto merge queue', 80: 'Auto merge queue', 100: 'Auto merge queue' };
+    // Stages that share a column (or a detour word) and what the lit chevron says.
+    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 85: 'Ready for human merge' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12472,7 +12472,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const anchor = stageTrackerAnchor(cur, stages);
       const terminal = anchor >= STAGE_TRACKER_TERMINAL;
       const detour = (!terminal && STAGE_TRACKER_PATH.indexOf(cur) < 0 && cur !== 40 && cur !== 60 && cur !== 100)
-        ? { text: curStage.short || curStage.label || String(cur) } : null;
+        ? { text: STAGE_TRACKER_ACTIVE_WORD[cur] || curStage.short || curStage.label || String(cur) } : null;
       const segs = STAGE_TRACKER_PATH.map(n => {
         const st = n === 0 ? { label: 'Open', short: 'Open', description: 'Open, not yet in a stage' } : (byNum[n] || {});
         let state = 'todo';

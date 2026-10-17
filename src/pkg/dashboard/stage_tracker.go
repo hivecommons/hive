@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -545,6 +546,12 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		it.Mirrored = it.Kind == "issue" && stage != stagelabels.None && stage.Number() > trackerNumberCoveredByPR
 		it.Modifiers = stageTrackerModifiers(labels, status.HiveID, rec, hasRec, overrides, now, draft)
+		// 085 shares the "Ready for human merge" chevron word with 090; the
+		// needs-decision chip is what tells them apart on the row.
+		if stage == stagelabels.NeedsDecision && !slices.Contains(it.Modifiers, modNeedsDecision) {
+			it.Modifiers = append(it.Modifiers, modNeedsDecision)
+			sort.Strings(it.Modifiers)
+		}
 		it.Caption, it.Actor = stageTrackerCaption(stage, it.Reason, it.Author, it.Kind, it.Mirrored, rec, hasRec, it.LinkedPR)
 		it.History = stageTrackerHistory(rec)
 	}

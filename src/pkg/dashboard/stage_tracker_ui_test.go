@@ -118,7 +118,7 @@ assert.ok(!row.includes('✓'), 'no text check glyphs');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', url: 'https://github.com/acme/console/issues/8', stage: 100, mirrored: true, linked_pr: 102, caption: 'Covered by PR #102' }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
 assert.ok(tooltip(row).includes('Admitted — merging (its PR)') && tooltip(row).includes('Covering PR: #102'), tooltip(row));
-assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Auto merge queue</span></li>'), '100 lights the Merge gate column as Auto merge queue');
+assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Ready for auto merge</span></li>'), '100 lights the Merge gate column as Ready for auto merge');
 assert.ok(strip(row).includes('title="Merge queue — admitted, merging"'), 'chevron tooltip carries 100: ' + row);
 assert.ok(text(row).startsWith('hive#102'), text(row));
 assert.ok(tooltip(row).includes('acme/console'), 'repo lives in the tooltip');
@@ -137,9 +137,9 @@ assert.ok(tooltip(row).includes('Flags: needs-human, needs-rebase') && tooltip(r
 // PR reviewed (060): Review done, Merge gate lit, no detour.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 60 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
-assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Auto merge queue</span></li>'), '060/080/100 all light Merge gate as Auto merge queue');
+assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Ready for auto merge</span></li>'), '060/080/100 all light Merge gate as Ready for auto merge');
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 80, caption: 'soak 20m left' }, stages, ctx);
-assert.ok(row.includes('<span class="ham-seg-t">Auto merge queue</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left"'), 'chevron tooltip carries 080: ' + row);
+assert.ok(row.includes('<span class="ham-seg-t">Ready for auto merge</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left"'), 'chevron tooltip carries 080: ' + row);
 
 // PR regressed from the queue back to review-pending: Review lit, "Sent back" in the tooltip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 103, kind: 'pr', stage: 50, modifiers: ['regressed', 'needs-rebase'], history: [{stage:80},{stage:100},{stage:50}] }, stages, ctx);
@@ -156,6 +156,11 @@ assert.ok(row.includes('<span class="ham-since ham-stalled">3h</span>'), row);
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 105, kind: 'pr', stage: 90 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
 assert.ok(row.includes('<span class="ham-detour">Ready for human merge</span>'));
+// 085 shares the human-merge word; the needs-decision chip and tooltip carry the difference.
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 85, modifiers: ['needs-decision'], caption: 'DCO failing — fix, waive or close' }, stages, ctx);
+assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active detoured', 'todo cap']);
+assert.ok(row.includes('<span class="ham-detour">Ready for human merge</span>') && !row.includes('>Needs decision<'), row);
+assert.ok(row.includes('ham-mod-needs-decision">needs decision</span>') && tooltip(row).includes('Needs a decision'), row);
 
 // Merged: everything neutral-done, the cap carries the only check.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 106, kind: 'pr', stage: 110 }, stages, ctx);
