@@ -338,9 +338,9 @@ func TestDecisionRequestedLandsAt085WithQuestion(t *testing.T) {
 	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
 	ctx := context.Background()
 
-	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(17, "author/contributor", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(17, "role/contributor", "author/human", "stage/050-review-pending"), contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 17, *verdict)
-	e.noteStageAuthor("acme", "widget", 17, stagelabels.AuthorContributor)
+	e.noteStageRole("acme", "widget", 17, stagelabels.RoleContributor)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
 		t.Fatal(err)
 	}
