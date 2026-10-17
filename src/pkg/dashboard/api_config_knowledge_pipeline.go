@@ -11,7 +11,7 @@ import (
 // the scalar knowledge.bead_synthesizer, knowledge.curator,
 // knowledge.code_maps and knowledge.primer keys. Every field is a pointer so
 // an absent key leaves the config untouched; 0 or "" restores the default.
-// Paths the hive writes to (the vault paths) and the engine are display-only
+// Local vault paths and the engine are display-only
 // and not accepted here.
 type knowledgePipelineBody struct {
 	BeadSynthesizer *struct {
@@ -21,7 +21,15 @@ type knowledgePipelineBody struct {
 		TargetLayer         *string  `json:"target_layer"`
 		MaxFactsPerCycle    *int     `json:"max_facts_per_cycle"`
 		MaxAPICallsPerCycle *int     `json:"max_api_calls_per_cycle"`
-		RetentionPolicy     *struct {
+		Publish             *struct {
+			Enabled    *bool   `json:"enabled"`
+			Repo       *string `json:"repo"`
+			Path       *string `json:"path"`
+			BaseBranch *string `json:"base_branch"`
+			Mode       *string `json:"mode"`
+			Cadence    *string `json:"cadence"`
+		} `json:"publish"`
+		RetentionPolicy *struct {
 			MaxBeads               *int  `json:"max_beads"`
 			ArchiveAfterSynthDays  *int  `json:"archive_after_synth_days"`
 			HighPriorityRetainDays *int  `json:"high_priority_retain_days"`
@@ -100,6 +108,42 @@ func (b knowledgePipelineBody) prepare(cur config.KnowledgeConfig) (func(*config
 				v = config.DefaultBeadSynthMaxAPICallsPerCycle
 			}
 			steps = append(steps, func(k *config.KnowledgeConfig) { k.BeadSynthesizer.MaxAPICallsPerCycle = v })
+		}
+		if p := bs.Publish; p != nil {
+			// Validate only carried fields; an unrelated legacy value must
+			// not prevent a partial update. Nothing here publishes facts.
+			if p.Path != nil {
+				probe.BeadSynthesizer.Publish.Path = strings.TrimSpace(*p.Path)
+			}
+			if p.Mode != nil {
+				probe.BeadSynthesizer.Publish.Mode = trimLower(p.Mode)
+			}
+			if p.Cadence != nil {
+				probe.BeadSynthesizer.Publish.Cadence = trimLower(p.Cadence)
+			}
+			r := *p
+			steps = append(steps, func(k *config.KnowledgeConfig) {
+				v := &k.BeadSynthesizer.Publish
+				if r.Enabled != nil {
+					v.Enabled = *r.Enabled
+				}
+				if r.Repo != nil {
+					v.Repo = strings.TrimSpace(*r.Repo)
+				}
+				if r.Path != nil {
+					v.Path = strings.TrimSpace(*r.Path)
+				}
+				if r.BaseBranch != nil {
+					v.BaseBranch = strings.TrimSpace(*r.BaseBranch)
+				}
+				if r.Mode != nil {
+					v.Mode = trimLower(r.Mode)
+				}
+				if r.Cadence != nil {
+					v.Cadence = trimLower(r.Cadence)
+				}
+				*v = v.WithDefaults()
+			})
 		}
 		if rp := bs.RetentionPolicy; rp != nil {
 			probe.BeadSynthesizer.RetentionPolicy = &config.RetentionPolicy{}
@@ -226,6 +270,7 @@ func knowledgePipelineResponse(cfg *config.Config) map[string]interface{} {
 		// Display-only: the engine picks the knowledge backend at boot.
 		"engine": k.Engine,
 		"bead_synthesizer": map[string]interface{}{
+			"publish":                 k.BeadSynthesizer.Publish.WithDefaults(),
 			"enabled":                 k.BeadSynthesizer.IsEnabled(),
 			"schedule":                k.BeadSynthesizer.Schedule,
 			"min_confidence":          k.BeadSynthesizer.MinConfidence,

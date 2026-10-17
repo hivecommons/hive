@@ -1,1 +1,0 @@
-- Dashboard settings dialogs: when clicking "Save & close" with no changes staged, the dialog now closes automatically alongside the "No changes to save" notification instead of remaining open ([#12298](https://github.com/hivecommons/hive/issues/12298)).

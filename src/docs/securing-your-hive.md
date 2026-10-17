@@ -222,7 +222,7 @@ What allowed each step, in order:
 2. **No level-hold on the PR.** The repo runs at an ACMM level where this
    agent's PRs are not held-gated, so #9762 never carried the level-hold
    `hold` label the L3–L5 packs would apply.
-3. **No prow gate.** Prow bot activity on the PR (`dco-signoff: yes`,
+3. **No prow gate.** Prow bot activity on the PR (`dco-signoff: yes` — now the hive's own `dco`,
    `size/XS`) is CI plumbing, not a merge gate for Hive's own merges — Prow's
    `tide` merge queue requires `lgtm`+`approved` labels that only a *human
    reviewer* can apply, and the Forge App can never review its own PR. Hive's
@@ -295,8 +295,8 @@ level, so no config error or race can produce an unattended merge. For a
 single in-flight item instead of the whole hive, apply the dashboard's
 `hive-pause/<hive-id>` label to that issue or PR (see [Hive Labels and
 Control Signals](labels-and-control-signals.md)); it is a manual hold
-distinct from the level-hold `hold` label and from the provenance-only
-`hive/<hive-id>` label.
+distinct from the level-hold `hold` label (the former provenance-only
+`hive/<hive-id>` label is retired, #12539).
 
 **What changes for existing hives when I turn reporter trust on?**
 Nothing immediately for maintainer-filed issues — `OWNER`/`MEMBER`/
@@ -405,8 +405,10 @@ project:
 - **`hive-pause/<hive-id>`** — the dashboard's exact, hive-scoped manual hold
   label; deliberately avoids the substring `hold` so it reads distinctly in
   the UI, but is enforced identically by the same hold predicate.
-- **`hive/<hive-id>`** — provenance/migration marker only; it is *not* a hold
-  label except as a temporary failed-migration fallback.
+- **`hive/<hive-id>`** — retired (#12539); never a hold label. The hold
+  migration still recognises it on a pre-#9371 upgrade, then the boot sweep
+  strips it. Origin now travels in the `<!-- hive:origin hive=… -->` body
+  marker.
 - **token tier** — the per-agent GitHub App installation token scope
   (`advisor`, `newcomer`, `contributor`, `trusted`) matched to the agent's
   policy mode; advisory tiers get read-only tokens that cannot even create

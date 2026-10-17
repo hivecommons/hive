@@ -2,7 +2,6 @@ package dashboard
 
 import (
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -62,50 +61,47 @@ func (s *Server) hiveStateTrends() *hivestate.Trends {
 	return s.deps.Nous.HiveState().Trends()
 }
 
-// buildHeartbeatEvidence aggregates the newest bundle per PR created within
+// buildHeartbeatEvidence aggregates the PRs opened within
 // evidenceHeartbeatWindow of now, plus the same counts for each shorter
-// window in spoke.HeartbeatEvidenceWindowKeys. Same-PR dedup matches
-// buildEvidenceSummary.
+// window in spoke.HeartbeatEvidenceWindowKeys. Bundles are folded per PR by
+// evidence.FoldPRs and windowed on PR open time, exactly as
+// buildEvidenceSummary does, so a PR with a live and a backfilled bundle is
+// one PR with the live verdicts and the forge outcome.
 func buildHeartbeatEvidence(bundles []*evidence.Bundle, now time.Time, selfMerge *bool) *spoke.HeartbeatEvidence {
-	out := buildHeartbeatEvidenceWindow(bundles, now, evidenceHeartbeatWindow)
+	prs := evidence.FoldPRs(bundles, "", "")
+	out := buildHeartbeatEvidenceWindow(prs, now, evidenceHeartbeatWindow)
 	out.AutomergeSelfAuthored = selfMerge
 	out.Windows = make(map[string]*spoke.HeartbeatEvidence, len(spoke.HeartbeatEvidenceWindowKeys))
 	for key, hours := range spoke.HeartbeatEvidenceWindowKeys {
-		out.Windows[key] = buildHeartbeatEvidenceWindow(bundles, now, time.Duration(hours)*time.Hour)
+		out.Windows[key] = buildHeartbeatEvidenceWindow(prs, now, time.Duration(hours)*time.Hour)
 	}
 	return out
 }
 
 // buildHeartbeatEvidenceWindow is buildHeartbeatEvidence for one trailing
-// window; it leaves the lifetime fields (auto-merge posture, write counters,
-// Windows) empty.
-func buildHeartbeatEvidenceWindow(bundles []*evidence.Bundle, now time.Time, window time.Duration) *spoke.HeartbeatEvidence {
+// window over already-folded PRs; it leaves the lifetime fields (auto-merge
+// posture, write counters, Windows) empty.
+func buildHeartbeatEvidenceWindow(prs map[string]*evidence.PR, now time.Time, window time.Duration) *spoke.HeartbeatEvidence {
 	out := &spoke.HeartbeatEvidence{ByAuthorKind: map[string]spoke.HeartbeatEvidenceBucket{
 		evidence.AuthorHuman: {}, evidence.AuthorAgent: {}, evidence.AuthorBot: {},
 	}}
 	cutoff := now.Add(-window)
-
-	latest := map[string]*evidence.Bundle{}
-	for _, b := range bundles {
-		if b == nil || b.CreatedAt.Before(cutoff) {
-			continue
-		}
-		key := strings.ToLower(b.Repo) + "#" + strconv.Itoa(b.Number)
-		if cur, ok := latest[key]; !ok || b.CreatedAt.After(cur.CreatedAt) {
-			latest[key] = b
-		}
-	}
 
 	reviewers := map[string]bool{}
 	authors := map[string]bool{}
 	outcomes := map[string]spoke.HeartbeatEvidenceOutcome{}
 	var shadow spoke.HeartbeatEvidenceShadow
 	shadowSeen := false
-	for _, b := range latest {
+	var mergedPRs []*evidence.Bundle
+	for _, b := range prs {
+		if b.OpenedAt.Before(cutoff) {
+			continue
+		}
 		merged := b.Merge != nil
 		failed := merged && (len(b.RevertedBy) > 0 || len(b.FollowedUpBy) > 0)
 		if merged {
 			out.Merged90d++
+			mergedPRs = append(mergedPRs, &evidence.Bundle{Merge: b.Merge})
 			if counts, ok := out.ByAuthorKind[b.Author.Kind]; ok {
 				counts.N++
 				// Follow-ups are not reverts. Backlinks are captured by the
@@ -169,7 +165,20 @@ func buildHeartbeatEvidenceWindow(bundles []*evidence.Bundle, now time.Time, win
 	if shadowSeen {
 		out.ShadowGate = &shadow
 	}
+	out.TimeToMerge = heartbeatTimeToMerge(mergedPRs)
 	return out
+}
+
+// heartbeatTimeToMerge is the median time-to-merge of the folded merged PRs
+// (each carries its PR's merge event, which holds opened_at when captured).
+// PRs without opened_at are skipped by evidence.MedianTimeToMerge, never
+// counted as zero; nil when none qualify.
+func heartbeatTimeToMerge(merged []*evidence.Bundle) *spoke.HeartbeatEvidenceTimeToMerge {
+	median, n := evidence.MedianTimeToMerge(merged)
+	if n == 0 {
+		return nil
+	}
+	return &spoke.HeartbeatEvidenceTimeToMerge{MedianSeconds: int64((median + time.Second/2) / time.Second), N: n}
 }
 
 func addHeartbeatOutcome(o spoke.HeartbeatEvidenceOutcome, merged, failed bool) spoke.HeartbeatEvidenceOutcome {

@@ -56,11 +56,11 @@ func TestReviewConfigPut_SeverityBacklog(t *testing.T) {
 	}
 
 	s.deps.Config.Governor.WorkSource.Type = "linear"
-	if rec := doPut(s, "/api/config/review", map[string]any{"backlog": map[string]any{"destination": "linear", "linear_state": " Triage ", "labels": []string{"origin/review", " ", "nit"}, "max_per_pr_per_day": 4}}); rec.Code != http.StatusOK {
+	if rec := doPut(s, "/api/config/review", map[string]any{"backlog": map[string]any{"destination": "linear", "linear_state": " Triage ", "labels": []string{"origin/reviewer", " ", "nit"}, "max_per_pr_per_day": 4}}); rec.Code != http.StatusOK {
 		t.Fatalf("PUT backlog: %d: %s", rec.Code, rec.Body.String())
 	}
 	bl := s.deps.Config.Review.Backlog
-	if bl.Destination != "linear" || bl.LinearState != "Triage" || !reflect.DeepEqual(bl.Labels, []string{"origin/review", "nit"}) || bl.MaxPerPRPerDay != 4 {
+	if bl.Destination != "linear" || bl.LinearState != "Triage" || !reflect.DeepEqual(bl.Labels, []string{"origin/reviewer", "nit"}) || bl.MaxPerPRPerDay != 4 {
 		t.Fatalf("backlog not stored: %+v", bl)
 	}
 

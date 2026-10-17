@@ -1,5 +1,6 @@
 // Package fleetreport decides when a spoke should report hive-attributable
-// ACMM shortfalls and unusual runtime errors upstream to hivecommons/hive.
+// ACMM shortfalls, unusual runtime errors, and Nous observations upstream to
+// hivecommons/hive.
 //
 // The package is deterministic and side-effect free. Callers provide weekly
 // observations, persisted state, and any runtime-error evidence; this package
@@ -9,6 +10,7 @@ package fleetreport
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -22,6 +24,7 @@ import (
 const (
 	TriggerACMMShortfall = "acmm-shortfall"
 	TriggerHiveDefect    = "hive-code-defect"
+	TriggerObservation   = "observation"
 
 	PersistentUnmetEpochs = 2
 	DefaultEvidenceWindow = 10 * time.Minute
@@ -72,17 +75,52 @@ type Observation struct {
 	// HiveSlug is the hub-assigned slug for a hub-managed spoke. Empty keeps
 	// the hive anonymous (instance digest only) in runtime-error reports.
 	HiveSlug string
-	Cluster  string
+	// ProjectOrg is the project owner only. Observation reports deliberately
+	// never carry the watched repository names or paths.
+	ProjectOrg string
+	Cluster    string
 	// Repos are the owner/repo names this hive watches (project.repos), as
 	// the operator's governor.fleet_report.include_repos policy allows them
 	// to leave the hive. They render in the evidence table and feed the
 	// affected-repos / affected-owners union on the fleet issue (#12338).
 	Repos []string
+	// Owners are the GitHub logins of the hive's owner(s): authorized users
+	// holding the owner role plus the operator the spoke authenticated via
+	// the device flow. They name WHO is affected on the fleet issue.
+	// OwnersHidden is governor.fleet_report.include_owners: false.
+	Owners       []string
+	OwnersHidden bool
 	// Now is the evaluation clock; zero means time.Now().
 	Now time.Time
 	// HiveState is the 24 h / 7 d hive state trends (#12339), copied onto
 	// every report; nil when the hive has no recent snapshot.
 	HiveState *hivestate.Trends
+}
+
+// ObservationFinding is the sink-facing shape produced by Nous detectors.
+// It contains aggregate evidence only: the relay body must not expose project
+// repository files or issue identifiers.
+type ObservationFinding struct {
+	Kind           string    `json:"kind"`
+	Title          string    `json:"title"`
+	Evidence       string    `json:"evidence"`
+	SuspectedCause string    `json:"suspected_cause"`
+	NextStep       string    `json:"next_step"`
+	Fingerprint    string    `json:"fingerprint"`
+	Series         []float64 `json:"series,omitempty"`
+}
+
+// ObservationMetadata is the hive-owned context rendered into an observation
+// issue. ProjectOrg is intentionally the only project identity included.
+type ObservationMetadata struct {
+	HiveID     string
+	HiveSlug   string
+	ProjectOrg string
+	ACMMLevel  int
+	Version    string
+	ClusterID  string
+	HiveState  *hivestate.Trends
+	Now        time.Time
 }
 
 type State struct {
@@ -128,7 +166,7 @@ type Report struct {
 	Trigger     string     `json:"trigger"`
 	Evidence    []Evidence `json:"evidence"`
 	Recovered   bool       `json:"recovered,omitempty"`
-	// Class and Hive are set for TriggerRuntimeError reports.
+	// Class and Hive are set for runtime-error and observation reports.
 	Class string `json:"class,omitempty"`
 	Hive  string `json:"hive,omitempty"`
 	// Repos are the owner/repo names this report attributes to the hive:
@@ -136,9 +174,18 @@ type Report struct {
 	// the operator's include_repos policy. Joining merges them into the
 	// issue's affected block.
 	Repos []string `json:"repos,omitempty"`
+	// Owners are the GitHub logins of this hive's owner(s) so a maintainer
+	// can see WHO is affected; OwnersHidden is the operator's opt-out
+	// (governor.fleet_report.include_owners: false), rendered "(anonymous)".
+	Owners       []string `json:"owners,omitempty"`
+	OwnersHidden bool     `json:"owners_hidden,omitempty"`
 	// HiveState is Observation.HiveState. It is kept out of Body so trends
 	// moving do not count as a changed report.
 	HiveState *hivestate.Trends `json:"hive_state,omitempty"`
+	// Observation carries the detector evidence used to build an observation
+	// report. It is also sent on the relay wire so future sinks can render it
+	// without parsing Markdown.
+	Observation *ObservationFinding `json:"observation,omitempty"`
 }
 
 type Result struct {
@@ -338,6 +385,116 @@ func Evaluate(obs Observation, prev State, dryRun bool) Result {
 	sort.Slice(res.Recoveries, func(i, j int) bool { return res.Recoveries[i].Fingerprint < res.Recoveries[j].Fingerprint })
 	res.State = state
 	return res
+}
+
+// BuildObservationReports converts detector findings into reports consumed by
+// the existing self-report publisher. The detector remains pure; filing and
+// deduplication stay in the publisher and hub relay.
+func BuildObservationReports(obs Observation, findings []ObservationFinding) []Report {
+	meta := ObservationMetadata{
+		HiveID:     obs.HiveID,
+		HiveSlug:   obs.HiveSlug,
+		ProjectOrg: obs.ProjectOrg,
+		ACMMLevel:  obs.ACMMLevel,
+		Version:    obs.Version,
+		ClusterID:  obs.Cluster,
+		HiveState:  obs.HiveState,
+		Now:        obs.Now,
+	}
+	reports := make([]Report, 0, len(findings))
+	for _, finding := range findings {
+		reports = append(reports, BuildObservationReport(finding, meta))
+	}
+	return reports
+}
+
+// BuildObservationReport renders one Nous detector finding without any watched
+// repository identity. The daily series is JSON in the body so a downstream
+// issue renderer can draw a sparkline without scraping prose.
+func BuildObservationReport(finding ObservationFinding, meta ObservationMetadata) Report {
+	kind := safeToken(finding.Kind)
+	if kind == "" {
+		kind = TriggerObservation
+	}
+	fingerprint := safeToken(finding.Fingerprint)
+	if fingerprint == "" {
+		fingerprint = safeToken(meta.HiveID) + ":" + kind
+	}
+	if fingerprint == ":"+kind {
+		fingerprint = kind
+	}
+	title := safeText(strings.TrimSpace(finding.Title))
+	if title == "" {
+		title = "Nous observation: " + kind
+	}
+	series := observationSeriesJSON(finding.Series)
+	labels := []string{
+		LabelFleetReport,
+		LabelObservation,
+		LabelSelfReport,
+		"observation:" + labelValue(kind),
+		"trigger:" + TriggerObservation,
+	}
+	sort.Strings(labels)
+
+	now := meta.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	hiveID := observationCell(meta.HiveID)
+	hiveSlug := observationCell(meta.HiveSlug)
+	projectOrg := observationCell(meta.ProjectOrg)
+	version := observationCell(meta.Version)
+	clusterID := observationCell(meta.ClusterID)
+	var b strings.Builder
+	fmt.Fprintf(&b, "<!-- hive-fleet-fingerprint:%s -->\n", fingerprint)
+	fmt.Fprintf(&b, "<!-- hive-observation-kind:%s -->\n\n", kind)
+	fmt.Fprintf(&b, "Nous observed **%s** across the hive state series.\n\n", observationCell(title))
+	b.WriteString("## Evidence\n\n| Field | Value |\n|---|---|\n")
+	fmt.Fprintf(&b, "| hive id | %s |\n", hiveID)
+	fmt.Fprintf(&b, "| hive slug | %s |\n", hiveSlug)
+	fmt.Fprintf(&b, "| project organization | %s |\n", projectOrg)
+	fmt.Fprintf(&b, "| ACMM level | L%d |\n", meta.ACMMLevel)
+	fmt.Fprintf(&b, "| hive version | %s |\n", version)
+	fmt.Fprintf(&b, "| cluster_id | %s |\n", clusterID)
+	fmt.Fprintf(&b, "| evidence | %s |\n", observationCell(finding.Evidence))
+	fmt.Fprintf(&b, "| suspected cause | %s |\n", observationCell(finding.SuspectedCause))
+	fmt.Fprintf(&b, "| next step | %s |\n", observationCell(finding.NextStep))
+	fmt.Fprintf(&b, "| series | `%s` |\n", series)
+	fmt.Fprintf(&b, "| reported at | %s |\n", now.UTC().Format(time.RFC3339))
+
+	findingCopy := finding
+	findingCopy.Kind = kind
+	findingCopy.Fingerprint = fingerprint
+	findingCopy.Series = append([]float64(nil), finding.Series...)
+	return Report{
+		Fingerprint: fingerprint,
+		Title:       title,
+		Body:        safeText(b.String()),
+		Labels:      labels,
+		Trigger:     TriggerObservation,
+		Class:       TriggerObservation,
+		Hive:        safeToken(meta.HiveSlug),
+		HiveState:   meta.HiveState,
+		Observation: &findingCopy,
+	}
+}
+
+func observationSeriesJSON(series []float64) string {
+	raw, err := json.Marshal(series)
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
+func observationCell(value string) string {
+	value = strings.Join(strings.Fields(safeText(value)), " ")
+	value = strings.ReplaceAll(value, "|", "\\|")
+	if value == "" {
+		return "—"
+	}
+	return value
 }
 
 func BuildReport(obs Observation, criterionKey, criterionName string, ev Evidence, fingerprint, instance, version, commit string) Report {

@@ -461,6 +461,16 @@ code{background:var(--surface-0);padding:var(--sp-1) var(--sp-4);border-radius:v
    page (see the .ops-shell overflow rule). */
 .clanker-fail{color:var(--cc-amber)}
 .clanker-fail b{color:var(--text);font-weight:600}
+/* #12502: capacity / in-flight / awaiting-rework lines on a clanker row. */
+.clanker-capacity{color:var(--text-muted)}
+.clanker-inflight{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2)}
+.clanker-inflight .work-title{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:28ch}
+.clanker-inflight .work-stage{color:var(--status-attention)}
+.work-kind{font-size:var(--fs-xs);font-weight:700;letter-spacing:.04em;padding:var(--sp-0) var(--sp-3);border-radius:var(--r-pill);border:1px solid transparent;font-family:inherit}
+.work-kind.new{background:color-mix(in srgb,var(--status-info) var(--component-tint),transparent);color:var(--status-info);border-color:color-mix(in srgb,var(--status-info) var(--component-border),transparent)}
+.work-kind.rework{background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);color:var(--status-attention);border-color:color-mix(in srgb,var(--status-attention) var(--component-border),transparent)}
+.clanker-idle-rework,.clanker-rework-pending{color:var(--status-error);font-weight:600}
+.clanker-rework-pending .cc-issue-link{color:var(--status-error)}
 .clanker-pane{margin-top:var(--sp-3);font-size:.72rem}
 .clanker-pane>summary{cursor:pointer;color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;user-select:none;list-style:none}
 .clanker-pane>summary::before{content:"\25B8";display:inline-block;width:1em;color:var(--text-muted)}
@@ -5269,10 +5279,12 @@ function renderClankers(list){
     // Small tier badge from this clanker's REAL trust_tier (defaults to newcomer).
     var tierPill=tierBadge(c.trust_tier,'tier-inline');
     var trustedBadge=c.eligible_for_trusted?'<span class="clanker-status reviewing" title="20+ PR tasks; use the tier dropdown to grant trusted">eligible for trusted</span>':'';
-    // #2546: when idle with a known reason, show "idle: no matching work" etc.
-    var task=c.current_task
-      ?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>')
-      :(c.idle_reason?('<div class="clanker-sub">idle: '+esc(idleReasonLabel(c.idle_reason))+'</div>'):'');
+    // #12502: capacity, every in-flight item tagged NEW/REWORK, and the
+    // contributor's returned PRs that have not been dispatched to them. The
+    // in-flight list supersedes the single "on repo#N" line; the idle line
+    // reads "idle · N PRs awaiting rework" when rework is waiting, else
+    // "idle: <reason>" as before (#2546).
+    var task=clankerCapacityLine(c)+clankerInFlightLines(c)+clankerIdleLine(c)+clankerPendingReworkLine(c);
     // #2547 (DECLARE half): the client-declared runtime posture, surfaced READ-ONLY
     // exactly like cli_backend/model/role above. It is a self-report and is NEVER
     // used to route or gate work — see capabilityLine() for the "self-declared" note
@@ -5334,10 +5346,11 @@ function renderClankers(list){
     // stable data-clanker key so the travel animation can target this row. "review"
     // is inferred when the in-flight task carries a review-ish signal; otherwise a
     // task in flight is "working" and no task is "idle".
-    var st=c.current_task?'working':'idle';
+    var busy=c.current_task||(c.in_flight&&c.in_flight.length);
+    var st=busy?'working':'idle';
     if(c.current_task&&/review|lgtm|approve/i.test((c.current_task.kind||'')+' '+(c.current_task.title||'')))st='reviewing';
     var statusText=st;
-    if(c.current_task&&c.role)statusText=st+' &middot; as '+esc(c.role);
+    if(busy&&c.role)statusText=st+' &middot; as '+esc(c.role);
     var statusPill='<span class="clanker-status '+st+'">'+statusText+'</span>';
     var key=(c.github_username||c.contributor_id||'').toLowerCase();
     // Enter pop-in for a clanker we haven't seen in the previous render (army framing).
@@ -5349,6 +5362,48 @@ function renderClankers(list){
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+knowLine+failLine+capsLine+protoLine+interestsLine+paneBlock+histLink+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
+}
+// #12502 helpers: capacity / in-flight / idle / awaiting-rework lines. Each
+// returns '' when there is nothing to show.
+function clankerCapacityLine(c){
+  var n=c.parallel_capacity|0;
+  var txt=n>0?('capacity '+n+(c.fix_mode?(' &middot; '+esc(c.fix_mode)):'')):'capacity: not advertised';
+  var tip=n>0?('The relay advertised parallel_sessions: up to '+n+' sessions (primary + '+(n-1)+' fix sub-session'+(n===2?'':'s')+'), clamped by contribute.max_parallel_fixes.'):'The relay did not advertise parallel_sessions; a returned PR preempts its primary task (capacity 1).';
+  return '<div class="clanker-sub clanker-capacity" title="'+tip+'">'+txt+'</div>';
+}
+function clankerWorkRef(it){
+  return ccIssueLinkHTML(it,(it.repo||'')+'#'+(it.number||''),'work-ref');
+}
+function clankerInFlightLines(c){
+  var items=c.in_flight||[];
+  if(!items.length){
+    // Older hubs: fall back to the single current_task line.
+    return c.current_task?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>'):'';
+  }
+  return items.map(function(it){
+    var rework=it.kind==='rework';
+    var badge='<span class="work-kind '+(rework?'rework':'new')+'" title="'+(rework?'Repair of this contributor&rsquo;s own PR (fix-pr task or PR in a repair stage)':'Fresh work: a new issue claim or other non-repair task')+'">'+(rework?'REWORK':'NEW')+'</span>';
+    var stage=it.stage?(' &middot; <span class="work-stage">'+esc(it.stage)+'</span>'):'';
+    var mode=it.mode?(' &middot; '+esc(it.mode)):'';
+    var title=it.title?(' <span class="work-title" title="'+esc(it.title)+'">'+esc(it.title)+'</span>'):'';
+    var since=it.started_at?(' &middot; '+esc(rel(it.started_at))):'';
+    return '<div class="clanker-sub clanker-inflight">'+badge+' '+clankerWorkRef(it)+title+stage+mode+since+'</div>';
+  }).join('');
+}
+function clankerIdleLine(c){
+  if(c.current_task||(c.in_flight&&c.in_flight.length))return '';
+  var pend=c.pending_rework|0;
+  if(pend>0)return '<div class="clanker-sub clanker-idle-rework">idle &middot; '+pend+' PR'+(pend===1?'':'s')+' awaiting rework</div>';
+  return c.idle_reason?('<div class="clanker-sub">idle: '+esc(idleReasonLabel(c.idle_reason))+'</div>'):'';
+}
+function clankerPendingReworkLine(c){
+  var pend=c.pending_rework|0;
+  if(pend<=0)return '';
+  var prs=(c.pending_rework_prs||[]).map(function(p){return (p.repo||'')+'#'+(p.number||'')+(p.cause?(' ('+p.cause+')'):'')+(p.state?(' — '+p.state):'');}).join(', ');
+  var links=(c.pending_rework_prs||[]).map(function(p){return clankerWorkRef(p)+(p.state?(' <i class="clanker-rework-state">'+esc(p.state)+'</i>'):'');}).join(', ');
+  var depth=c.fix_queue_depth|0;
+  var q=depth>0?(' &middot; fix queue '+depth):'';
+  return '<div class="clanker-sub clanker-rework-pending" title="'+esc(prs)+'">'+pend+' PR'+(pend===1?'':'s')+' awaiting rework (not yet dispatched)'+q+(links?(': '+links):'')+'</div>';
 }
 // #7317 item 3 helpers. Both return '' when there is nothing to show so a
 // healthy row is byte-for-byte what it was before.
@@ -5390,6 +5445,7 @@ function ccUpdateArmy(list){
   var w=0,rv=0,idle=0;
   (list||[]).forEach(function(c){
     if(c.current_task){ if(/review|lgtm|approve/i.test((c.current_task.kind||'')+' '+(c.current_task.title||'')))rv++; else w++; }
+    else if(c.in_flight&&c.in_flight.length)w++;
     else idle++;
   });
   var setTxt=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};

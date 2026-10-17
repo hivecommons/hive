@@ -112,8 +112,8 @@ beta reports evidence for the last 90d.
 
 - Shadow gates — shadow mode is off on every selected hive, or none has reported it yet (hives report this once upgraded to the Oct 16 build or later).
 - Per-axis criteria table — not reported by any hive build yet.
-- Claim-vs-verdict totals — not reported by any hive build yet.
-- Median time-to-merge per autonomy level — not reported by any hive build yet.
+- CI gate (claim vs verdict) totals — not reported by any hive build yet.
+- Median time-to-merge per autonomy level — no selected hive reports it yet (it needs a build that records when each merged PR was opened).
 - Revert rate by author kind per hive — not reported by any hive build yet.
 
 ## Grade per section

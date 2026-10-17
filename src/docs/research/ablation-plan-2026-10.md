@@ -154,6 +154,25 @@ Both flags are ignored when the corresponding enforcing flag is already on
 (`require_approval`, `enforce`); a hive that already enforces one gate records
 only the other in shadow and says so on #12373.
 
+### Pending arm — hive-on-hive self-merge review gate (#12592)
+
+Registered, not yet started. hive's own hive merges its own PRs on the
+self-merge lane, so arm 2's `review.shadow` alone never sees those merges. The
+[self-merge review gate](../hive-merge.md#self-merge-review-gate) records them
+in shadow by default (`governor.review_gate.mode: shadow`); for this arm hive's
+own hive also turns on `review.shadow: true` so both lanes are recorded:
+
+```diff
+ review:
++  shadow: true
+```
+
+The Shadow gates panel splits the review gate by lane (`merge_eligible`,
+`self_merge`). After 30 days of self-merge counts the owner revisits whether
+to enforce (`governor.review_gate.mode: enforce`) or keep shadow. Nothing is
+held while the arm runs; the `review_evaluated` audit lines and the bundles'
+`shadow.review_gate` are the record.
+
 ### Rollback (either arm)
 
 One config revert and a restart:

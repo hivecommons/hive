@@ -9,7 +9,7 @@ import (
 // Cards a brand-new browser must see expanded: they answer "is the hive alive
 // and merging?" (#12014). Everything else in the layout template is detail.
 var dashboardCriticalSections12014 = []string{
-	"overview-section", "governor", "repos-section", "review-queue-section", "approvals-section", "agents-section", "agent-activity-section",
+	"overview-section", "governor", "repos-section", "activity-monitor-section", "review-queue-section", "approvals-section", "agents-section", "agent-activity-section",
 }
 
 // jsConstBlock returns the `const NAME = ...;` statement for an Object.freeze([...]) list.

@@ -379,7 +379,7 @@ func TestRecordReviewEvidenceCI(t *testing.T) {
 		orig := writeTestEvidence(t, root, "h1", "", t0)
 		c := newClient(t, true)
 
-		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", green)
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, green)
 		b := mustLoadBundle(t, root, "h1")
 		if b.CI.Status != "success" || !reflect.DeepEqual(b.CI.Checks, wantGreen) || b.CI.CapturedAt.IsZero() {
 			t.Fatalf("first capture: %+v", b.CI)
@@ -392,7 +392,7 @@ func TestRecordReviewEvidenceCI(t *testing.T) {
 		}
 
 		// Same verdict and checks again: nothing written, captured_at stays put.
-		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", green)
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, green)
 		if again := mustLoadBundle(t, root, "h1"); again.Hash != b.Hash || !again.CI.CapturedAt.Equal(b.CI.CapturedAt) {
 			t.Fatalf("unchanged verdict rewrote the bundle: %+v", again.CI)
 		}
@@ -405,13 +405,13 @@ func TestRecordReviewEvidenceCI(t *testing.T) {
 		for i, cr := range greenWithURLs {
 			cr.HTMLURL = gh.Ptr(fmt.Sprintf("https://example.com/runs/%d", i))
 		}
-		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", greenWithURLs)
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, greenWithURLs)
 		if again := mustLoadBundle(t, root, "h1"); again.Hash != b.Hash {
 			t.Fatalf("URL-only difference rewrote the bundle: %+v", again.CI)
 		}
 
 		// A changed verdict is recorded.
-		c.recordReviewEvidenceCI("o/r", 7, "h1", "failure", red)
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "failure", nil, red)
 		b2 := mustLoadBundle(t, root, "h1")
 		if b2.CI.Status != "failure" || !reflect.DeepEqual(b2.CI.Checks, wantRed) || b2.Hash == b.Hash {
 			t.Fatalf("changed verdict not recorded: %+v", b2.CI)
@@ -421,7 +421,7 @@ func TestRecordReviewEvidenceCI(t *testing.T) {
 		}
 
 		// A gate status the caller never set falls back to the runs' verdict.
-		c.recordReviewEvidenceCI("o/r", 7, "h1", "", green)
+		c.recordReviewEvidenceCI("o/r", 7, "h1", "", nil, green)
 		if b3 := mustLoadBundle(t, root, "h1"); b3.CI.Status != "success" {
 			t.Fatalf("derived status = %q, want success", b3.CI.Status)
 		}
@@ -437,26 +437,38 @@ func TestRecordReviewEvidenceCI(t *testing.T) {
 		if err := writeReviewEvidence(ReviewEvidencePath(root, "o/r", 7, "h1"), b); err != nil {
 			t.Fatal(err)
 		}
-		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", green)
+		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", nil, green)
 		if got := mustLoadBundle(t, root, "h1"); got.Hash != b.Hash || got.CI.Status != "" {
 			t.Fatalf("merged bundle was rewritten: %+v", got.CI)
 		}
 	})
 
-	t.Run("never starts a bundle and skips when disabled", func(t *testing.T) {
+	t.Run("starts a bundle from available PR metadata", func(t *testing.T) {
 		root := withEvidenceRoot(t)
-		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", green)
+		pr := &gh.PullRequest{
+			User: &gh.User{Login: gh.Ptr("alice"), Type: gh.Ptr("User")},
+			Base: &gh.PullRequestBranch{SHA: gh.Ptr("base000")},
+		}
+		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", pr, green)
+		got := mustLoadBundle(t, root, "h1")
+		if got.Author.Login != "alice" || got.BaseSHA != "base000" || got.CI.Status != "success" || !reflect.DeepEqual(got.CI.Checks, wantGreen) {
+			t.Fatalf("bundle started from CI snapshot: author %+v base %q CI %+v", got.Author, got.BaseSHA, got.CI)
+		}
+	})
+
+	t.Run("skips when disabled or checks are empty", func(t *testing.T) {
+		root := withEvidenceRoot(t)
+		pr := &gh.PullRequest{
+			User: &gh.User{Login: gh.Ptr("alice"), Type: gh.Ptr("User")},
+			Base: &gh.PullRequestBranch{SHA: gh.Ptr("base000")},
+		}
+		newClient(t, false).recordReviewEvidenceCI("o/r", 7, "h1", "success", pr, green)
 		if _, err := os.Stat(ReviewEvidencePath(root, "o/r", 7, "h1")); !os.IsNotExist(err) {
-			t.Fatalf("bundle started by CI snapshot: %v", err)
+			t.Fatalf("disabled evidence started a bundle: %v", err)
 		}
-		b := writeTestEvidence(t, root, "h1", "", t0)
-		newClient(t, false).recordReviewEvidenceCI("o/r", 7, "h1", "success", green)
-		if got := mustLoadBundle(t, root, "h1"); got.Hash != b.Hash {
-			t.Fatalf("disabled evidence still wrote the bundle")
-		}
-		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", nil)
-		if got := mustLoadBundle(t, root, "h1"); got.Hash != b.Hash {
-			t.Fatalf("empty run list still wrote the bundle")
+		newClient(t, true).recordReviewEvidenceCI("o/r", 7, "h1", "success", pr, nil)
+		if _, err := os.Stat(ReviewEvidencePath(root, "o/r", 7, "h1")); !os.IsNotExist(err) {
+			t.Fatalf("empty run list started a bundle: %v", err)
 		}
 	})
 }

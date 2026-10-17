@@ -132,8 +132,8 @@ The review gate would have held 10 PRs; 6 of those merged and stuck (false alarm
 ## What is not reported yet and why
 
 - Per-axis criteria table — not reported by any hive build yet.
-- Claim-vs-verdict totals — not reported by any hive build yet.
-- Median time-to-merge per autonomy level — not reported by any hive build yet.
+- CI gate (claim vs verdict) totals — not reported by any hive build yet.
+- Median time-to-merge per autonomy level — no selected hive reports it yet (it needs a build that records when each merged PR was opened).
 - Revert rate by author kind per hive — not reported by any hive build yet.
 
 ## Grade per section

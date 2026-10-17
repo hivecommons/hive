@@ -3,6 +3,7 @@ package dashboard
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
@@ -63,5 +64,23 @@ func TestAgentStatusContinuousNotInMode(t *testing.T) {
 	}
 	if agents[0].ContinuousBlocked != "not_in_mode" {
 		t.Fatalf("continuousBlocked = %q, want not_in_mode", agents[0].ContinuousBlocked)
+	}
+}
+
+func TestContinuousIdleSince(t *testing.T) {
+	end := time.Date(2026, 10, 16, 20, 31, 0, 0, time.UTC)
+	next := end.Add(time.Minute)
+	if got := continuousIdleSince(true, "idle", end, next); !got.Equal(end) {
+		t.Fatalf("idle continuous agent awaiting re-kick: got %v, want %v", got, end)
+	}
+	for name, got := range map[string]time.Time{
+		"not continuous": continuousIdleSince(false, "idle", end, next),
+		"working":        continuousIdleSince(true, "working", end, next),
+		"no re-kick":     continuousIdleSince(true, "idle", end, time.Time{}),
+		"never kicked":   continuousIdleSince(true, "idle", time.Time{}, next),
+	} {
+		if !got.IsZero() {
+			t.Errorf("%s: want zero, got %v", name, got)
+		}
 	}
 }

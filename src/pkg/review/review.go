@@ -124,8 +124,13 @@ type PerspectiveReport struct {
 	Repo        string      `json:"repo"`
 	Number      int         `json:"number"`
 	HeadSHA     string      `json:"head_sha,omitempty"`
+	BodyDigest  string      `json:"body_digest,omitempty"`
 	AuthorModel string      `json:"author_model,omitempty"`
 	ReviewModel string      `json:"review_model,omitempty"`
+	// DecisionRequested means the review found no code defect it can route
+	// to the author, but explicitly deferred a maintainer/product decision.
+	DecisionRequested bool   `json:"decision_requested,omitempty"`
+	DecisionQuestion  string `json:"decision_question,omitempty"`
 	// NotApplicable marks a report whose perspective had nothing to judge on
 	// this PR -- today only plan_match on a PR with no Hive-Run / Hive-Plan
 	// trailer. It is neither an approval nor a withheld one: the aggregate
@@ -151,22 +156,26 @@ type AggregateOptions struct {
 }
 
 type Aggregate struct {
-	Repo             string                  `json:"repo"`
-	Number           int                     `json:"number"`
-	HeadSHA          string                  `json:"head_sha,omitempty"`
-	AuthorModel      string                  `json:"author_model,omitempty"`
-	ReviewModel      string                  `json:"review_model,omitempty"`
-	Verdict          Verdict                 `json:"verdict"`
-	MergeEligible    bool                    `json:"merge_eligible"`
-	FixCycle         bool                    `json:"fix_cycle"`
-	RequiresHuman    bool                    `json:"requires_human"`
-	CloseRecommended bool                    `json:"close_recommended"`
-	FixAttempts      int                     `json:"fix_attempts,omitempty"`
-	MaxFixAttempts   int                     `json:"max_fix_attempts,omitempty"`
-	Threshold        outputschema.Severity   `json:"human_threshold"`
-	Reasons          []string                `json:"reasons,omitempty"`
-	Findings         []PerspectiveFinding    `json:"findings,omitempty"`
-	Perspectives     map[Perspective]Verdict `json:"perspectives"`
+	Repo              string                  `json:"repo"`
+	Number            int                     `json:"number"`
+	HeadSHA           string                  `json:"head_sha,omitempty"`
+	BodyDigest        string                  `json:"body_digest,omitempty"`
+	AuthorModel       string                  `json:"author_model,omitempty"`
+	ReviewModel       string                  `json:"review_model,omitempty"`
+	Verdict           Verdict                 `json:"verdict"`
+	MergeEligible     bool                    `json:"merge_eligible"`
+	FixCycle          bool                    `json:"fix_cycle"`
+	RequiresHuman     bool                    `json:"requires_human"`
+	CloseRecommended  bool                    `json:"close_recommended"`
+	DecisionRequested bool                    `json:"decision_requested,omitempty"`
+	DecisionQuestion  string                  `json:"decision_question,omitempty"`
+	HumanSummaries    []string                `json:"human_summaries,omitempty"`
+	FixAttempts       int                     `json:"fix_attempts,omitempty"`
+	MaxFixAttempts    int                     `json:"max_fix_attempts,omitempty"`
+	Threshold         outputschema.Severity   `json:"human_threshold"`
+	Reasons           []string                `json:"reasons,omitempty"`
+	Findings          []PerspectiveFinding    `json:"findings,omitempty"`
+	Perspectives      map[Perspective]Verdict `json:"perspectives"`
 	// Confidence is the derived 0–5 mergeability score (hivecommons/hive#8182),
 	// computed from the same reports as the verdict so the two never disagree.
 	Confidence Confidence `json:"confidence"`
@@ -261,11 +270,17 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		return agg
 	}
 	seenVerdicts := map[Verdict]bool{}
+	var decisionRequested bool
+	var decisionQuestion string
 	for i, r := range reports {
 		effective := effectiveReports[i]
 		if agg.Repo == "" {
 			agg.Repo, agg.Number, agg.HeadSHA = r.Repo, r.Number, r.HeadSHA
+			agg.BodyDigest = strings.TrimSpace(r.BodyDigest)
 			agg.AuthorModel, agg.ReviewModel = r.AuthorModel, r.ReviewModel
+		}
+		if agg.BodyDigest == "" {
+			agg.BodyDigest = strings.TrimSpace(r.BodyDigest)
 		}
 		if agg.AuthorModel == "" {
 			agg.AuthorModel = r.AuthorModel
@@ -283,6 +298,19 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		}
 		agg.Perspectives[r.Perspective] = effective.Verdict
 		seenVerdicts[effective.Verdict] = true
+		if r.DecisionRequested {
+			decisionRequested = true
+			if decisionQuestion == "" {
+				decisionQuestion = strings.TrimSpace(r.DecisionQuestion)
+			}
+			agg.Reasons = append(agg.Reasons, decisionReason(r.DecisionQuestion))
+		}
+		if effective.Verdict == VerdictRequiresHuman {
+			if summary := humanSummaryReason(r); summary != "" {
+				agg.HumanSummaries = append(agg.HumanSummaries, summary)
+				agg.Reasons = append(agg.Reasons, summary)
+			}
+		}
 		for _, f := range r.Findings {
 			agg.Findings = append(agg.Findings, PerspectiveFinding{Perspective: r.Perspective, Finding: f})
 			if InScopeFinding(f) && severityAtLeast(f.Severity, threshold) {
@@ -291,7 +319,15 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 		}
 	}
 	sortReasons(agg.Reasons)
+	sort.Strings(agg.HumanSummaries)
 
+	if decisionRequested {
+		agg.Verdict = VerdictRequiresHuman
+		agg.RequiresHuman = true
+		agg.DecisionRequested = true
+		agg.DecisionQuestion = decisionQuestion
+		return agg
+	}
 	if seenVerdicts[VerdictReject] {
 		agg.Verdict = VerdictReject
 		agg.CloseRecommended = true
@@ -332,6 +368,22 @@ func AggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 	agg.RequiresHuman = true
 	agg.Reasons = []string{"review perspectives did not unanimously approve"}
 	return agg
+}
+
+func decisionReason(question string) string {
+	question = strings.TrimSpace(question)
+	if question == "" {
+		return "maintainer decision requested"
+	}
+	return "maintainer decision requested: " + question
+}
+
+func humanSummaryReason(r PerspectiveReport) string {
+	summary := strings.TrimSpace(r.Summary)
+	if summary == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s requires human: %s", r.Perspective, summary)
 }
 
 // incompleteCoverageReason names the configured perspectives this head has
@@ -413,13 +465,46 @@ func Collect(dir string, opts AggregateOptions) (Artifact, error) {
 		if err != nil {
 			return Artifact{}, fmt.Errorf("%s: %w", name, err)
 		}
-		groups[reviewKey(report.Repo, report.Number, report.HeadSHA)] = append(groups[reviewKey(report.Repo, report.Number, report.HeadSHA)], *report)
+		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
+		groups[key] = append(groups[key], *report)
 	}
+	groups = foldDigestlessReports(groups)
 	artifact := Artifact{GeneratedAt: time.Now().UTC()}
 	for _, key := range sortedKeys(groups) {
 		artifact.Items = append(artifact.Items, AggregateReports(groups[key], opts))
 	}
 	return artifact, nil
+}
+
+// foldDigestlessReports merges reports that carry no body digest into the
+// digest-keyed group for the same repo/number/head when exactly one such
+// group exists. Perspective reports from one swarm run do not all record the
+// digest (observed: style on hivecommons/hive#12421, correctness and
+// docs-currency on #12332), and keyed apart they read as two "incomplete"
+// aggregates — a 5/5 approval never became merge-eligible. With several
+// digest groups for a head the digestless reports cannot be attributed and
+// stay separate.
+func foldDigestlessReports(groups map[string][]PerspectiveReport) map[string][]PerspectiveReport {
+	byHead := map[string][]string{}
+	for key, reports := range groups {
+		if len(reports) == 0 || strings.TrimSpace(reports[0].BodyDigest) == "" {
+			continue
+		}
+		head := reviewKey(reports[0].Repo, reports[0].Number, reports[0].HeadSHA, "")
+		byHead[head] = append(byHead[head], key)
+	}
+	for head, keys := range byHead {
+		if len(keys) != 1 {
+			continue
+		}
+		loose, ok := groups[head]
+		if !ok {
+			continue
+		}
+		groups[keys[0]] = append(groups[keys[0]], loose...)
+		delete(groups, head)
+	}
+	return groups
 }
 
 func WriteArtifact(path string, artifact Artifact) error {
@@ -483,7 +568,7 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 			if now.Sub(item.RecordedAt) > VerdictRetention && !item.RecordedAt.IsZero() {
 				continue
 			}
-			key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+			key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
 			if _, seen := merged[key]; !seen {
 				order = append(order, key)
 			}
@@ -493,7 +578,7 @@ func CollectAndMerge(dir, path string, opts AggregateOptions, now time.Time) (Ar
 
 	for _, item := range fresh.Items {
 		item.RecordedAt = now
-		key := reviewKey(item.Repo, item.Number, item.HeadSHA)
+		key := reviewKey(item.Repo, item.Number, item.HeadSHA, item.BodyDigest)
 		if _, seen := merged[key]; !seen {
 			order = append(order, key)
 		}
@@ -577,15 +662,18 @@ func LoadArtifact(path string) (Artifact, error) {
 func (a Artifact) HasAggregateApproval(repo string, number int, headSHA string) bool {
 	wantRepo := strings.TrimSpace(repo)
 	wantSHA := strings.TrimSpace(headSHA)
+	var match Aggregate
+	var ok bool
 	for _, item := range a.Items {
-		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || !item.MergeEligible || item.Verdict != VerdictApprove {
+		if item.Number != number || strings.TrimSpace(item.Repo) != wantRepo || strings.TrimSpace(item.HeadSHA) != wantSHA {
 			continue
 		}
-		if strings.TrimSpace(item.HeadSHA) == wantSHA {
-			return true
+		if !ok || item.RecordedAt.After(match.RecordedAt) {
+			match = item
+			ok = true
 		}
 	}
-	return false
+	return ok && match.MergeEligible && match.Verdict == VerdictApprove
 }
 
 func agentReportJSON(r outputschema.AgentReport) []byte {
@@ -687,6 +775,9 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-func reviewKey(repo string, number int, headSHA string) string {
-	return fmt.Sprintf("%s#%d@%s", repo, number, headSHA)
+func reviewKey(repo string, number int, headSHA, bodyDigest string) string {
+	if strings.TrimSpace(bodyDigest) == "" {
+		return fmt.Sprintf("%s#%d@%s", repo, number, headSHA)
+	}
+	return fmt.Sprintf("%s#%d@%s body:%s", repo, number, headSHA, bodyDigest)
 }

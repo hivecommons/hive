@@ -494,7 +494,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			res.Action, res.Reason = CloseOnMergeNoop, "awaiting_comment_failed"
 			return res
 		}
-		if err := c.EnsureIssueLabel(ctx, issueRepo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && opts.Logger != nil {
+		if err := c.EnsureIssueLabel(ctx, issueRepo, LikelyDoneLabel, LikelyDoneLabelColor, LikelyDoneLabelDescription); err != nil && opts.Logger != nil {
 			opts.Logger.Warn("close-on-merge: ensuring likely-done label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
 		} else if err := c.AddLabels(ctx, issueRepo, issueNumber, []string{LikelyDoneLabel}); err != nil && opts.Logger != nil {
 			opts.Logger.Warn("close-on-merge: adding likely-done label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
@@ -597,7 +597,7 @@ func (c *Client) markPartiallyAddressed(ctx context.Context, issueRepo string, i
 			"repo", issueRepo, "issue", issueNumber, "pr", prNumber,
 			"closing_keyword", cov.Closing, "remainder", cov.Remainder, "untouched", cov.Untouched)
 	}
-	if err := c.EnsureIssueLabel(ctx, issueRepo, PartiallyAddressedLabel, "fbca04", "A merged PR addressed only part of this issue; remainder still actionable"); err != nil && opts.Logger != nil {
+	if err := c.EnsureIssueLabel(ctx, issueRepo, PartiallyAddressedLabel, PartiallyAddressedLabelColor, PartiallyAddressedLabelDescription); err != nil && opts.Logger != nil {
 		opts.Logger.Warn("close-on-merge: ensuring partially-addressed label failed", "repo", issueRepo, "issue", issueNumber, "error", err)
 	} else if err := c.AddLabels(ctx, issueRepo, issueNumber, []string{PartiallyAddressedLabel}); err != nil && opts.Logger != nil {
 		opts.Logger.Warn("close-on-merge: adding partially-addressed label failed", "repo", issueRepo, "issue", issueNumber, "error", err)

@@ -77,10 +77,10 @@ var ValidReviewBacklogDestinations = []string{ReviewBacklogGitHubIssue, ReviewBa
 
 // DefaultReviewBacklogLabel is the label applied when review.backlog.labels
 // is unset; it matches the out-of-scope backlog filer's label. It is the
-// review member of the origin/* provenance family: origin/<source> records
+// reviewer member of the origin/* provenance family: origin/<source> records
 // where a hive-authored issue came from, as opposed to agent/<lane>, which
 // says which agent works it.
-const DefaultReviewBacklogLabel = OriginReviewLabel
+const DefaultReviewBacklogLabel = OriginReviewerLabel
 
 // Origin provenance labels. Every hive-authored issue that carries a
 // provenance marker uses one origin/<source> label so operators can tell
@@ -88,10 +88,16 @@ const DefaultReviewBacklogLabel = OriginReviewLabel
 // "where is it in the pipeline" (stage/*).
 const (
 	OriginLabelPrefix = "origin/"
-	// OriginReviewLabel marks issues filed from review-swarm backlog findings.
-	OriginReviewLabel = OriginLabelPrefix + "review"
-	// LegacyReviewBacklogLabel is the pre-origin/* name of OriginReviewLabel.
-	// Config still accepts it; the hive maps it to OriginReviewLabel when
+	// OriginReviewerLabel marks issues filed by the reviewer swarm from
+	// backlog findings. It is provenance only; agent/reviewer is the
+	// separate ownership/routing label and must not be confused with it.
+	OriginReviewerLabel = OriginLabelPrefix + "reviewer"
+	// LegacyOriginReviewLabel is the first origin/* spelling of
+	// OriginReviewerLabel. Config still accepts it; the hive maps it to
+	// OriginReviewerLabel when filing and migrates open items once at startup.
+	LegacyOriginReviewLabel = OriginLabelPrefix + "review"
+	// LegacyReviewBacklogLabel is the pre-origin/* name of OriginReviewerLabel.
+	// Config still accepts it; the hive maps it to OriginReviewerLabel when
 	// filing and migrates open items once at startup.
 	LegacyReviewBacklogLabel = "from-review"
 )
@@ -100,7 +106,8 @@ const (
 // replacement. Readers use CanonicalOriginLabel; the startup reconciler swaps
 // the old name for the new one on open items.
 var OriginLabelRenames = map[string]string{
-	LegacyReviewBacklogLabel: OriginReviewLabel,
+	LegacyReviewBacklogLabel: OriginReviewerLabel,
+	LegacyOriginReviewLabel:  OriginReviewerLabel,
 }
 
 // CanonicalOriginLabel returns the origin/* replacement for a retired
@@ -136,8 +143,9 @@ type ReviewBacklogConfig struct {
 	// JiraStatus is the Jira status new items are transitioned to; empty
 	// leaves the project's initial status.
 	JiraStatus string `yaml:"jira_status,omitempty" json:"jira_status,omitempty"`
-	// Labels are applied to every backlog item. nil means [origin/review];
-	// the retired from-review name is accepted and mapped to origin/review.
+	// Labels are applied to every backlog item. nil means [origin/reviewer];
+	// the retired from-review and origin/review names are accepted and
+	// mapped to origin/reviewer.
 	Labels []string `yaml:"labels,omitempty" json:"labels,omitempty"`
 	// MaxPerPRPerDay caps backlog items filed per PR per day. 0 means
 	// DefaultReviewBacklogMaxPerPRPerDay.
@@ -190,7 +198,7 @@ func (b ReviewBacklogConfig) EffectiveDestination(workSourceType string) string 
 }
 
 // EffectiveLabels returns labels with the default applied. Retired
-// provenance names (from-review) are mapped to their origin/* replacement and
+// provenance names (from-review, origin/review) are mapped to origin/reviewer and
 // the result is de-duplicated case-insensitively, so a config that still lists
 // the old name never double-labels an item.
 func (b ReviewBacklogConfig) EffectiveLabels() []string {

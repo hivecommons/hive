@@ -93,3 +93,34 @@ func TestContributorLaneVerdictFunc(t *testing.T) {
 		t.Fatalf("request-changes = %+v", v)
 	}
 }
+
+func TestContributorLaneVerdictFromArtifactPrefersNewestHeadAggregate(t *testing.T) {
+	old := time.Date(2026, 10, 17, 1, 0, 0, 0, time.UTC)
+	newer := old.Add(time.Hour)
+	artifact := review.Artifact{Items: []review.Aggregate{
+		{
+			Repo:           "acme/widget",
+			Number:         7,
+			HeadSHA:        "sha7",
+			BodyDigest:     "old-body",
+			Verdict:        review.VerdictRequiresHuman,
+			HumanSummaries: []string{"security requires human: old body"},
+			RecordedAt:     old,
+		},
+		{
+			Repo:           "acme/widget",
+			Number:         7,
+			HeadSHA:        "sha7",
+			BodyDigest:     "new-body",
+			Verdict:        review.VerdictRequiresHuman,
+			HumanSummaries: []string{"security requires human: current body"},
+			RecordedAt:     newer,
+		},
+	}}
+
+	got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", false)
+
+	if got.Verdict != string(review.VerdictRequiresHuman) || len(got.HumanSummaries) != 1 || got.HumanSummaries[0] != "security requires human: current body" {
+		t.Fatalf("verdict = %+v, want newest body aggregate", got)
+	}
+}

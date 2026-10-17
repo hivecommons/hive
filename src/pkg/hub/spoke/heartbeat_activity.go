@@ -60,6 +60,7 @@ func AgentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 	if backend, ok := mgr.EffectiveBackend(name); ok {
 		act.Backend = backend
 	}
+	ApplyBackendAuth(&act, mgr, name, proc)
 	if total, last24h, lastRestartAt, lastReason, ok := mgr.RestartTelemetry(name); ok {
 		act.Restarts = AgentRestartTelemetry{
 			Total:      total,
@@ -72,6 +73,48 @@ func AgentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 	}
 
 	return act
+}
+
+// ApplyBackendAuth copies the agent's backend-auth canary (#6558) onto act,
+// plus whether its credential is refreshable without a human login
+// (ADR-0024). Shared by both heartbeat build paths so neither drops it.
+func ApplyBackendAuth(act *AgentActivity, mgr *agent.Manager, name string, proc *agent.AgentProcess) {
+	if act == nil || proc == nil {
+		return
+	}
+	if status := proc.BackendAuth.Status; status != "" && status != agent.BackendAuthOK {
+		act.BackendAuthStatus = status
+		act.BackendAuthSince = proc.BackendAuth.Since
+		act.BackendAuthLastError = proc.BackendAuth.LastError
+	}
+	if mgr == nil {
+		return
+	}
+	if refreshable, known := mgr.AgentCredentialRefreshable(name); known {
+		act.BackendAuthRefreshable = &refreshable
+	}
+}
+
+// ProviderStatusForHeartbeat rolls the heartbeat's agents up per provider
+// (ADR-0024, #12611). The provider is the agent's effective backend.
+func ProviderStatusForHeartbeat(agents []AgentSummary) []agent.ProviderStatus {
+	evidence := make([]agent.ProviderAgentEvidence, 0, len(agents))
+	for _, a := range agents {
+		e := agent.ProviderAgentEvidence{
+			Agent:          a.Name,
+			Provider:       a.Backend,
+			Enabled:        a.Enabled,
+			NeedsLogin:     a.NeedsLogin,
+			QuotaExhausted: a.QuotaExhausted,
+			AuthStatus:     a.BackendAuthStatus,
+			Refreshable:    a.BackendAuthRefreshable,
+		}
+		if t, err := time.Parse(time.RFC3339, a.BackendAuthSince); err == nil {
+			e.AuthSince = t
+		}
+		evidence = append(evidence, e)
+	}
+	return agent.RollUpProviderStatus(evidence)
 }
 
 func HeartbeatKickInterval(govState governor.State, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) time.Duration {

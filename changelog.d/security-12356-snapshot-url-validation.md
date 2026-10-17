@@ -1,1 +1,0 @@
-- Validate and normalize `hub.snapshot_url` on config load and in `PUT /api/config/governor/hub` to require an absolute http(s) URL with no query, fragment, or credentials ([#12356](https://github.com/hivecommons/hive/issues/12356)).

@@ -300,8 +300,9 @@ func HasAttributionTrailer(body string) bool {
 }
 
 // attributionIdentityFooter matches only the terminal block emitted by
-// bin/gh-wrapper.sh's _identity_footer, not arbitrary trailing Markdown.
-var attributionIdentityFooter = regexp.MustCompile("\\n[ \\t]*---[ \\t]*\\n🐝 \\*\\*Hive Agent\\*\\*:(?: `[^`\\n]+`)?(?: \\| \\*\\*Instance:\\*\\* `[^`\\n]+`)? \\| \\*\\*SHA:\\*\\* `[^`\\n]+`[ \\t\\n]*$")
+// bin/gh-wrapper.sh's _identity_footer, not arbitrary trailing Markdown. The
+// footer may end with the origin marker (`<!-- hive:origin … -->`, #12539).
+var attributionIdentityFooter = regexp.MustCompile("\\n[ \\t]*---[ \\t]*\\n🐝 \\*\\*Hive Agent\\*\\*:(?: `[^`\\n]+`)?(?: \\| \\*\\*Instance:\\*\\* `[^`\\n]+`)? \\| \\*\\*SHA:\\*\\* `[^`\\n]+`[ \\t]*(?:\\n[ \\t]*<!-- " + OriginMarkerName + "[^>]*-->)?[ \\t\\n]*$")
 
 // ParseAttributionTrailer extracts the launch metadata from the final visible
 // `— hive:` line in a PR body, optionally followed by Hive's identity footer.

@@ -701,6 +701,46 @@ _capture_run /dev/null pr comment 42 --repo test/repo -b'Attached short flag tex
 _expect_injected_body "pr comment -b<text> (attached short form) keeps the text" \
   pr comment 'Attached short flag text.'
 
+# hivecommons/hive#12539: the hive id travels in the body as the origin
+# marker, never as a hive/<id> label. The footer still prints the Instance.
+_origin_run() {
+  local stdin_file="$1"
+  shift
+  CAPTURE_SEQ=$((CAPTURE_SEQ + 1))
+  CAPTURE_DIR="${WORK_DIR}/argv-${CAPTURE_SEQ}"
+  mkdir -p "$CAPTURE_DIR"
+  touch "${WORK_DIR}/contributor-marker"
+  env \
+    HIVE_CONTRIBUTOR_MODE="true" \
+    HIVE_CONTRIBUTOR_USERNAME="test-contributor" \
+    HIVE_AGENT="$BODY_AGENT" \
+    HIVE_AGENT_DISPLAY_NAME="$BODY_AGENT" \
+    HIVE_AGENT_ID="$BODY_AGENT" \
+    HIVE_AGENT_MODE="" \
+    HIVE_ACMM_LEVEL="0" \
+    HIVE_ID="hosted-test-12539" \
+    MOCK_GH_LOGIN="test-bot[bot]" \
+    GH_TOKEN="test-token-mock" \
+    MOCK_GH_ARGV_DIR="$CAPTURE_DIR" \
+    bash "$TEST_WRAPPER" "$@" <"$stdin_file" >/dev/null 2>&1 || true
+  rm -f "${WORK_DIR}/contributor-marker"
+}
+_origin_run /dev/null pr comment 42 --repo test/repo -b 'Origin marker check.'
+_expect_injected_body "pr comment with HIVE_ID carries the origin marker and the Instance footer" \
+  pr comment 'Origin marker check.' '**Instance:** `hosted-test-12539`' '<!-- hive:origin hive=hosted-test-12539 at='
+_origin_all_args="$(for d in "${CAPTURE_DIR}"/inv-*/; do [ -f "${d}/argc" ] && _show_args "$d"; done)"
+if ! grep -qF '[comment]' <<<"$_origin_all_args"; then
+  echo "FAIL: origin-marker run recorded no gh invocations"
+  FAILED=$((FAILED + 1))
+elif grep -qF 'hive/hosted-test-12539' <<<"$_origin_all_args"; then
+  echo "FAIL: the retired hive/<id> label is still written or created"
+  echo "  argv: $_origin_all_args"
+  FAILED=$((FAILED + 1))
+else
+  echo "PASS: no gh call writes or creates the retired hive/<id> label"
+  PASSED=$((PASSED + 1))
+fi
+
 _capture_run /dev/null pr create --repo test/repo --title 'a fix' -F "$BODY_FILE"
 _expect_injected_body "pr create -F <file> keeps the body and adds the footer" \
   pr create 'Multi-paragraph review note.'

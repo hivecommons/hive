@@ -148,6 +148,10 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		// to the same screen; re-running prompt dismissal recovers it.
 		if reason := m.sessionStalled(agent, pane, time.Now()); reason != "" {
 			hungSessions = append(hungSessions, sessionRestart{name, agent.LastKickMessage, reason})
+		} else if reason := busyNoActivityStall(agent, pane, time.Now()); reason != "" {
+			// No replayed kick: the governor re-kicks once the pane is
+			// idle, and the storm breaker bounds repeat restarts.
+			hungSessions = append(hungSessions, sessionRestart{name, "", reason})
 		}
 		if IsInferenceBackend(effectiveBackend(agent)) {
 			if paneShowsConsentScreen(pane) {
@@ -811,6 +815,9 @@ func (m *Manager) restartWithReason(ctx context.Context, name, reason string, ki
 	// clear the record and let this attempt run. If it fails the same way, the
 	// ladder starts again from the first rung (#5958).
 	m.clearStartFailureLocked(agent)
+	// The operator explicitly asked for the agent to run again, so the
+	// governor may recover it from a later crash.
+	agent.OperatorStopped = false
 
 	if err := m.applyAgentSpec(agent); err != nil {
 		return err

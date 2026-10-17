@@ -1404,3 +1404,16 @@ func TestValidateGitHubAPIBudgetThresholds(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want github.api_critical", err)
 	}
 }
+
+func TestStageDCOConfigRequiredFor(t *testing.T) {
+	var none StageDCOConfig
+	if _, ok := none.RequiredFor("acme/widget"); ok {
+		t.Fatal("empty map must not match")
+	}
+	c := StageDCOConfig{Required: map[string]bool{"Acme/Widget": true, "docs": false, "*": true}}
+	for display, want := range map[string]bool{"acme/widget": true, "acme/docs": false, "other/thing": true} {
+		if got, ok := c.RequiredFor(display); !ok || got != want {
+			t.Fatalf("%s: got %v ok=%v want %v", display, got, ok, want)
+		}
+	}
+}

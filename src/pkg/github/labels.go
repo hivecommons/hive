@@ -64,6 +64,14 @@ var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{
 		color:       "fbca04",
 		description: "Hive needs a better CI or test signal before continuing",
 	},
+	PartiallyAddressedLabel: {
+		color:       PartiallyAddressedLabelColor,
+		description: PartiallyAddressedLabelDescription,
+	},
+	LikelyDoneLabel: {
+		color:       LikelyDoneLabelColor,
+		description: LikelyDoneLabelDescription,
+	},
 	"meta": {
 		color:       "5319e7",
 		description: "Tracker for multiple open items sharing one root cause",

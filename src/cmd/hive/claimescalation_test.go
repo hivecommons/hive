@@ -203,7 +203,7 @@ func TestClaimProgress(t *testing.T) {
 		{"legacy in-progress label", github.IssueEvent{Event: "unlabeled", Label: "hive/in-progress"}, false},
 		{"stage label", github.IssueEvent{Event: "labeled", Label: "stage/020-claimed"}, false},
 		{"stage health label", github.IssueEvent{Event: "labeled", Label: "stage/stalled"}, false},
-		{"author label", github.IssueEvent{Event: "labeled", Label: "author/trusted"}, false},
+		{"author label", github.IssueEvent{Event: "labeled", Label: "role/trusted"}, false},
 		{"preempted label", github.IssueEvent{Event: "unlabeled", Label: "preempted:alice"}, false},
 		{"needs-human added", github.IssueEvent{Event: "labeled", Label: "Needs-Human"}, false},
 		{"needs-human removed", github.IssueEvent{Event: "unlabeled", Label: "needs-human"}, true},

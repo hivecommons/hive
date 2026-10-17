@@ -332,6 +332,63 @@ well-tested surface, and merging `auth_health` into that taxonomy is left as
 a deliberate follow-up rather than risking that machinery in the same change
 that adds the canary.
 
+## Provider auth vs availability (#12611)
+
+[ADR-0024](adr/0024-provider-credential-lifecycle.md) splits provider health
+into two separate dimensions, so "not authenticated" never reads as
+"provider unavailable" or the other way round. It is read-only status: hive
+does not refresh, warm or share credentials.
+
+Each agent's backend-auth evidence gains `backendAuthRefreshable` (on
+`/api/status` and in the heartbeat's `agents[]`). For Claude agents it is
+`claude.HasUsableToken` over the agent's own credential: `true` when the
+access token is live or the refresh grant behind it still is (a CLI restart
+heals it), `false` when only a human login can. It is absent for every other
+backend, because hive has verified no idle-refresh path for them.
+
+The spoke rolls its **enabled** agents up per provider (the agent's effective
+backend) into a `providers[]` block, served on `/api/status` and sent in the
+hub heartbeat. The hub stores it on the hive's registry entry as `providers`.
+Disabled agents are skipped, so a provider nobody uses never becomes an
+incident. Each entry:
+
+| Field | Meaning |
+|---|---|
+| `provider` | Effective backend name (`claude`, `copilot`, …). |
+| `auth_state` | Worst auth state across the provider's enabled agents. |
+| `availability_state` | Worst availability state across the provider's enabled agents. |
+| `since` | Earliest `backendAuthSince` among affected agents (RFC3339), when known. |
+| `evidence` | Status counts only, for example `2 of 3 enabled agents: token-expired×2`. Never pane text or credential material. |
+| `next_action` | The one operator action for the worst condition. |
+| `affected_agents` | Agents contributing a non-healthy state. |
+
+`backendAuthStatus` is mapped onto the two dimensions, not replaced:
+
+| Per-agent evidence | `auth_state` | `availability_state` |
+|---|---|---|
+| `ok` / empty | `usable` | `available` |
+| `token-expired`, refreshable | `refreshable` | no evidence |
+| `token-expired`, not refreshable or unknown | `needs-login` | no evidence |
+| `unlicensed` | `needs-login` (next action: restore the seat) | no evidence |
+| `forbidden` | `unknown` (cause undetermined, never convicted as a logout) | no evidence |
+| `unreachable` | no evidence | `unavailable` |
+| `quota` | `usable` | `quota-exhausted` |
+| CLI sitting on a login prompt | `refreshable` or `needs-login` | no evidence |
+
+A dimension with no evidence from any agent is `unknown`, never silently
+healthy. `store-inaccessible` and `rate-limited` are part of the vocabulary
+but are not emitted yet: today's evidence cannot tell an unreadable store from
+an absent one, and rate limits are transient and deliberately never change
+`backendAuthStatus`.
+
+On `/fleet`, a hive with any provider that is not `usable` + `available`
+shows a **providers** row in its diagnosis block (red for `needs-login`,
+`store-inaccessible`, `unavailable` or `quota-exhausted`). The spoke
+dashboard shows the same as a **Providers** chip in the header. Set
+`providers.status.enabled: false` in `hive.yaml` to omit the block from both
+`/api/status` and the heartbeat (default `true`). Old hubs ignore the block;
+old spokes do not send it, which the hub reads as no signal.
+
 ## Compliance rollup (#11083)
 
 A spoke with a compliance framework selected (`compliance.frameworks`) adds a
@@ -360,8 +417,11 @@ rounded to whole percent and are `null`/absent when no check has been decided.
 ## Evidence summary heartbeat (#12114)
 
 Every spoke adds an `evidence` block to its hub heartbeat: a 90-day summary of
-its [review evidence](review-evidence.md) bundles (newest bundle per PR, the
-same store behind `GET /api/evidence/summary`):
+its [review evidence](review-evidence.md) bundles. Every bundle of a PR is
+folded into one row and windowed on PR open time with the same
+`evidence.FoldPRs` behind `GET /api/evidence/summary` (#12516), so a PR with a
+live and a backfilled bundle counts once, with the live verdicts and the
+forge outcome:
 
 ```json
 {"evidence": {"verdicts_90d": 30, "false_approve_90d": 2, "false_block_90d": 3,
@@ -390,9 +450,15 @@ same store behind `GET /api/evidence/summary`):
   → `{held, passed}`, each `{n, merged, reverted}`: what the shadow gate would
   have done versus how the PR turned out). A spoke predating #12370 sends none
   of them and the hub shows "not reported", never zero.
+- `time_to_merge` ([#12464](https://github.com/hivecommons/hive/issues/12464))
+  — `{median_s, n}`: the median time from PR opened to merged, in seconds,
+  over the `n` merged PRs that recorded `merge.opened_at`. Omitted when no
+  merged PR in the window recorded it (and by older spokes); the hub shows
+  "not reported", never zero. The hub reports the median of hive medians per
+  ACMM level (see [review evidence](review-evidence.md#median-time-to-merge-per-autonomy-level)).
 - `windows` ([RFC #12062](https://github.com/hivecommons/hive/issues/12062)) —
   the same counts (verdicts, false approves/blocks, merged, reverted,
-  calibration, author-kind outcomes, shadow gates) re-counted over trailing
+  calibration, author-kind outcomes, shadow gates, time to merge) re-counted over trailing
   windows keyed `24h`, `7d` and `30d`, so the hub evidence view can switch
   between windows. The field names keep their `_90d` suffix for wire
   compatibility; `write_counters` (lifetime) and `automerge_self_authored`

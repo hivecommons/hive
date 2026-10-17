@@ -10,8 +10,16 @@ import (
 )
 
 // WriteCountersPath is the durable attempted-vs-blocked write counter file
-// the dashboard reads (#12069). It lives beside the other hive-metrics state.
-const WriteCountersPath = "/var/run/hive-metrics/write-counters.json"
+// the dashboard reads (#12069). It lives under /data, the hive's persistent
+// volume, so the totals survive a restart: the previous home under
+// /var/run/hive-metrics is container-local and was wiped on every roll,
+// which left the Evidence card's "all-time" direct-write denominator at a
+// few hours' worth of traffic.
+const WriteCountersPath = "/data/hive-metrics/write-counters.json"
+
+// LegacyWriteCountersPath is where the counters lived before they were made
+// durable. MigrateWriteCounters folds a leftover file into WriteCountersPath.
+const LegacyWriteCountersPath = "/var/run/hive-metrics/write-counters.json"
 
 // writeCountersFlushInterval is how often pending counts are merged into the
 // file; shutdown flushes the remainder.
@@ -36,9 +44,14 @@ type WeekCounts struct {
 // restarts; Weeks is keyed by the UTC Monday (YYYY-MM-DD) starting the ISO
 // week. Observation only: nothing here gates a write or a merge.
 type DurableWriteCounts struct {
-	UpdatedAt time.Time              `json:"updated_at"`
-	Totals    map[string]WriteCounts `json:"totals"`
-	Weeks     map[string]WeekCounts  `json:"weeks"`
+	UpdatedAt time.Time `json:"updated_at"`
+	// RecordedSince is when this file first started accumulating counts,
+	// so a reader can say "direct writes not recorded before <date>" instead
+	// of presenting a short-lived total as all-time. Zero on files written
+	// before the field existed; EarliestWeek is the fallback.
+	RecordedSince time.Time              `json:"recorded_since,omitzero"`
+	Totals        map[string]WriteCounts `json:"totals"`
+	Weeks         map[string]WeekCounts  `json:"weeks"`
 }
 
 func newDurableWriteCounts() DurableWriteCounts {
@@ -131,6 +144,39 @@ func (d *DurableWriteCounts) merge(other DurableWriteCounts) {
 	}
 }
 
+// EarliestWeek returns the smallest week key (UTC Monday, YYYY-MM-DD) the
+// file holds, or "" when it has none.
+func (d DurableWriteCounts) EarliestWeek() string {
+	wk := ""
+	for k := range d.Weeks {
+		if wk == "" || k < wk {
+			wk = k
+		}
+	}
+	return wk
+}
+
+// MigrateWriteCounters folds a counter file left at legacy into path and
+// removes it, so counts recorded before the file became durable are not
+// lost on the first restart after the upgrade. A missing legacy file is a
+// no-op; a legacy file that cannot be read is left in place.
+func MigrateWriteCounters(legacy, path string, now time.Time) error {
+	if legacy == "" || legacy == path {
+		return nil
+	}
+	old, err := LoadDurableWriteCounts(legacy)
+	if err != nil {
+		return err
+	}
+	if old.empty() {
+		return nil
+	}
+	if err := mergeIntoFile(path, old, now); err != nil {
+		return err
+	}
+	return os.Remove(legacy)
+}
+
 func (d DurableWriteCounts) empty() bool {
 	return len(d.Totals) == 0 && len(d.Weeks) == 0
 }
@@ -179,6 +225,14 @@ func mergeIntoFile(path string, pending DurableWriteCounts, now time.Time) error
 	}
 	cur.merge(pending)
 	cur.UpdatedAt = now.UTC()
+	if cur.RecordedSince.IsZero() {
+		cur.RecordedSince = now.UTC()
+		if wk := cur.EarliestWeek(); wk != "" {
+			if t, err := time.Parse("2006-01-02", wk); err == nil && t.Before(cur.RecordedSince) {
+				cur.RecordedSince = t
+			}
+		}
+	}
 	data, err := json.Marshal(cur)
 	if err != nil {
 		return err

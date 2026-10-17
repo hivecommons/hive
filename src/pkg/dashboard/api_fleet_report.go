@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
@@ -75,10 +76,20 @@ func (s *Server) AttachFleetReport(status *StatusPayload, version, commit string
 		Unmet:      unmet,
 		Evidence:   s.buildFleetReportEvidence(status),
 		HiveSlug:   s.FleetReportHiveSlug(),
-		Cluster:    os.Getenv("HIVE_CLUSTER_ID"),
-		Repos:      s.FleetReportRepos(),
-		Now:        time.Now(),
-		HiveState:  s.hiveStateTrends(),
+		ProjectOrg: func() string {
+			if s.deps == nil || s.deps.Config == nil {
+				return ""
+			}
+			return strings.TrimSpace(s.deps.Config.Project.Org)
+		}(),
+		Cluster: os.Getenv("HIVE_CLUSTER_ID"),
+		Repos:   s.FleetReportRepos(),
+		Owners:  s.FleetReportOwners(),
+		OwnersHidden: func() bool {
+			return s.deps != nil && s.deps.Config != nil && !s.deps.Config.Governor.FleetReport.IncludesOwners()
+		}(),
+		Now:       time.Now(),
+		HiveState: s.hiveStateTrends(),
 	}
 	res := fleetreport.Evaluate(obs, state, dryRun)
 	s.persistFleetReportState(res.State)
@@ -110,6 +121,39 @@ func (s *Server) FleetReportRepos() []string {
 		return nil
 	}
 	return fleetreport.NormalizeRepos(s.deps.Config.Project.Repos)
+}
+
+// fleetReportOperatorLogin resolves the GitHub login behind the persisted
+// device-flow token (/data/gh-user-token), "" when there is none or it no
+// longer validates. Overridable for tests; the identity lookup is cached.
+var fleetReportOperatorLogin = func(apiURL string) string {
+	data, err := os.ReadFile(userTokenPath)
+	if err != nil || strings.TrimSpace(string(data)) == "" {
+		return ""
+	}
+	user, err := github.ValidateTokenCached(strings.TrimSpace(string(data)), apiURL)
+	if err != nil || user == nil {
+		return ""
+	}
+	return user.Login
+}
+
+// FleetReportOwners is the GitHub login list a self-report names as the
+// hive's owner(s): dashboard.authorized_users entries holding the owner
+// role plus the device-flow operator, normalised and deduped. nil when the
+// operator opted out via governor.fleet_report.include_owners: false (the
+// report then renders "(anonymous)") or when no GitHub owner identity is
+// known.
+func (s *Server) FleetReportOwners() []string {
+	if s == nil || s.deps == nil || s.deps.Config == nil || !s.deps.Config.Governor.FleetReport.IncludesOwners() {
+		return nil
+	}
+	cfg := s.deps.Config
+	logins := append([]string(nil), cfg.Dashboard.OwnerLogins()...)
+	if op := fleetReportOperatorLogin(cfg.GitHub.OAuthAPIURL()); op != "" {
+		logins = append(logins, op)
+	}
+	return fleetreport.NormalizeLogins(logins)
 }
 
 // FleetReportFilesUpstream resolves governor.fleet_report against the
