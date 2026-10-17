@@ -680,7 +680,7 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 	c := reporterTrustTestClient(t, srv, true)
 	// L6: no level hold. The reporter gate is the only thing between a
 	// stranger's request and an unattended merge.
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 
 	var reason string
 	c.SetReporterTrustEscalation(func(repo string, number int, value string) bool {
@@ -762,7 +762,7 @@ func TestPRRequestWatcher_UntrustedReporterAcceptance(t *testing.T) {
 			filter.ReporterTrust.UntrustedRequireLabels = tc.required
 			filter.ReporterTrust.Enabled = gh.Ptr(!tc.gateOff)
 			c.SetIssueFilter(filter)
-			c.prHoldLabel = func(string) bool { return false }
+			c.prHoldLabel = func(string, string) bool { return false }
 			// The watcher creates an App-authored PR; only its rationale's
 			// reporter and acceptance labels should decide this hold.
 			reqPath := runReporterTrustWatcher(t, c)
@@ -794,7 +794,7 @@ func TestPRRequestWatcher_UntrustedReporterAcceptance(t *testing.T) {
 func TestPRRequestWatcher_TrustedReporterPRNotHeld(t *testing.T) {
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "maintainer", Association: "COLLABORATOR"}}}
 	c := reporterTrustTestClient(t, srv, true)
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 	runReporterTrustWatcher(t, c)
 	if applied := srv.applied(); len(applied) != 0 {
 		t.Fatalf("labels applied = %v, want none for a collaborator's request", applied)
@@ -807,7 +807,7 @@ func TestPRRequestWatcher_TrustedReporterPRNotHeld(t *testing.T) {
 func TestPRRequestWatcher_ReporterTrustOffDoesNothing(t *testing.T) {
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}}
 	c := reporterTrustTestClient(t, srv, false)
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 	runReporterTrustWatcher(t, c)
 	if applied := srv.applied(); len(applied) != 0 {
 		t.Fatalf("labels applied = %v with the gate off, want none", applied)
@@ -820,7 +820,7 @@ func TestPRRequestWatcher_ReporterTrustOffDoesNothing(t *testing.T) {
 func TestPRRequestWatcher_HoldGatedLevelStillPostsReporterTrustNotice(t *testing.T) {
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}}
 	c := reporterTrustTestClient(t, srv, true)
-	c.prHoldLabel = func(string) bool { return true }
+	c.prHoldLabel = func(string, string) bool { return true }
 	runReporterTrustWatcher(t, c)
 	assertReporterTrustHoldLabels(t, srv.applied())
 	comments := srv.postedComments()
@@ -856,7 +856,7 @@ func TestReleaseLevelHold_ReporterTrustNoticeBlocksRelease(t *testing.T) {
 	// number it has no issue for, attributed to the App bot.
 	srv.comments = []string{levelHoldNotice("quality"), reporterTrustNotice(ReporterTrust{Held: true, Issue: 581, Repo: "o/r", Reporter: "stranger", Association: "NONE"})}
 	c := reporterTrustTestClient(t, srv, true)
-	c.prHoldLabel = func(string) bool { return false } // promoted to L6: level no longer requires the hold
+	c.prHoldLabel = func(string, string) bool { return false } // promoted to L6: level no longer requires the hold
 
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", reporterHeldPR(583))
 	if err != nil {
@@ -871,7 +871,7 @@ func TestReleaseLevelHold_ReEvaluatesAndPostsMissingReporterNotice(t *testing.T)
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "stranger", Association: "NONE"}}}
 	srv.comments = []string{levelHoldNotice("quality")} // the reporter notice never landed
 	c := reporterTrustTestClient(t, srv, true)
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", reporterHeldPR(583))
 	if err != nil {
@@ -888,7 +888,7 @@ func TestReleaseLevelHold_TrustedReporterStillReleases(t *testing.T) {
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "maintainer", Association: "OWNER"}}}
 	srv.comments = []string{levelHoldNotice("quality")}
 	c := reporterTrustTestClient(t, srv, true)
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 
 	_, reason, _ := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", reporterHeldPR(583))
 	if reason != "hold" {

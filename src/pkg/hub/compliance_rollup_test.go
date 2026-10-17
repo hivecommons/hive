@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func storedCompliance(t *testing.T, s *HubServer, id string) *HeartbeatCompliance {
@@ -136,5 +137,90 @@ func TestComplianceRollupEndpoint(t *testing.T) {
 	}
 	if got.ConfiguredSpokes != 1 || got.PassRate == nil || *got.PassRate != 50 {
 		t.Fatalf("rollup = %+v", got)
+	}
+}
+
+// TestRegistryOmitsCompliance pins the owner/admin-only contract on the public,
+// unauthenticated registry: the compliance profile must not leak there even
+// though it lives on RegistryEntry so saveRegistryNow can persist it.
+func TestRegistryOmitsCompliance(t *testing.T) {
+	srv := newHubServerForTest(t)
+	srv.mu.Lock()
+	srv.registry.Hives = []RegistryEntry{{
+		ID: "public-1", IsPublic: true, Online: true,
+		LastHeartbeat: time.Now().Format(time.RFC3339),
+		Compliance: &HeartbeatCompliance{
+			Frameworks: []string{"soc2-type2"},
+			Posture:    &CompliancePosture{Pass: 5, Fail: 1},
+		},
+	}}
+	srv.mu.Unlock()
+
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/registry", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), `"compliance"`) {
+		t.Fatalf("public registry leaked the compliance summary: %s", w.Body.String())
+	}
+	// The strip is on the response copy only; the stored entry still has it.
+	if c := storedCompliance(t, srv, "public-1"); c == nil || len(c.Frameworks) != 1 {
+		t.Fatalf("stored compliance was mutated by the handler: %+v", c)
+	}
+}
+
+// TestMyHivesComplianceOwnerOnly pins the row-level rule on /api/saas/my-hives:
+// an owner sees their hive's compliance summary, a read-only member does not.
+func TestMyHivesComplianceOwnerOnly(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	cleanupOwner := helperSetupAuthUser(t, "ghp_compliance_owner", "compliance-owner")
+	defer cleanupOwner()
+	cleanupMember := helperSetupAuthUser(t, "ghp_compliance_member", "compliance-member")
+	defer cleanupMember()
+	saveSaaSUser(&SaaSUser{GitHubUsername: "compliance-member", Hives: map[string]string{"h-comp": "read"}})
+
+	srv := newHubServerForTest(t)
+	srv.mu.Lock()
+	srv.registry.Hives = []RegistryEntry{{
+		ID: "h-comp", Name: "acme/widget", Owner: "compliance-owner", Online: true,
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+		Compliance: &HeartbeatCompliance{
+			Frameworks: []string{"soc2-type2"},
+			Posture:    &CompliancePosture{Pass: 8, Fail: 2},
+		},
+	}}
+	srv.mu.Unlock()
+
+	fetch := func(token string) MyHiveEntry {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/api/saas/my-hives", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.handleMyHives(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("my-hives status = %d (body %s)", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Hives []MyHiveEntry `json:"hives"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		for _, h := range resp.Hives {
+			if h.ID == "h-comp" {
+				return h
+			}
+		}
+		t.Fatalf("hive h-comp missing from response: %s", rec.Body.String())
+		return MyHiveEntry{}
+	}
+
+	if got := fetch("ghp_compliance_owner"); got.Compliance == nil || len(got.Compliance.Frameworks) != 1 {
+		t.Fatalf("owner must see the compliance summary: %+v", got.Compliance)
+	}
+	if got := fetch("ghp_compliance_member"); got.Compliance != nil {
+		t.Fatalf("read-only member must not see the compliance summary: %+v", got.Compliance)
 	}
 }

@@ -197,6 +197,7 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'v5' )
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       release: ${{ steps.derive.outputs.release }}
       version: ${{ steps.derive.outputs.version }}
@@ -303,6 +304,7 @@ jobs:
     needs: decide
     if: needs.decide.outputs.release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       proceed: ${{ steps.tip.outputs.proceed }}
       hold_sha: ${{ steps.tip.outputs.hold_sha }}
@@ -350,6 +352,7 @@ jobs:
     needs: [decide, precheck]
     if: needs.decide.outputs.release == 'true' && needs.precheck.outputs.proceed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     # Job-level permissions replace the workflow defaults. Repeat the release
     # job's existing scopes and add statuses:write for the gate/hold statuses
     # plus issues:write to remove the short-lived Tide hold labels (#5356/#10863).
@@ -1234,6 +1237,7 @@ jobs:
     needs: [precheck, release]
     if: ${{ always() && needs.precheck.outputs.hold_sha != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       statuses: write
       issues: write

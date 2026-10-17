@@ -40,7 +40,7 @@ func TestNewWiresAllFields(t *testing.T) {
 	c := github.NewClientForTest("http://127.0.0.1:0", "org", []string{"repo"}, discardLogger())
 	prAuthz := func(agent string, fileUID int) error { return nil }
 	issueAuthz := func(agent string, fileUID int, kind string) error { return nil }
-	holdLabel := func(agent string) bool { return agent == "quality" }
+	holdLabel := func(agent, _ string) bool { return agent == "quality" }
 	nowFn := func() time.Time { return time.Unix(42, 0) }
 
 	w := New(c, prAuthz, issueAuthz, holdLabel, nowFn)
@@ -50,7 +50,7 @@ func TestNewWiresAllFields(t *testing.T) {
 	if w.prAuthz == nil || w.issueAuthz == nil {
 		t.Errorf("New dropped an authorizer: pr=%v issue=%v", w.prAuthz, w.issueAuthz)
 	}
-	if w.holdLabel == nil || !w.holdLabel("quality") || w.holdLabel("other") {
+	if w.holdLabel == nil || !w.holdLabel("quality", "r") || w.holdLabel("other", "r") {
 		t.Errorf("New dropped or mangled holdLabel")
 	}
 	if w.nowFn == nil || !w.nowFn().Equal(time.Unix(42, 0)) {

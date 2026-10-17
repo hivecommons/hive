@@ -206,7 +206,7 @@ func TestLiftedHoldWasSelfAuthorization_ErrorPaths(t *testing.T) {
 func TestReleaseLevelHoldIfEligible_ExportedWrapper(t *testing.T) {
 	s := &levelHoldServer{comments: []string{levelHoldNotice("quality")}}
 	c := newLevelHoldClient(t, s)
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	released, reason, err := c.ReleaseLevelHoldIfEligible(context.Background(), "acme", "widget", heldPRFixture())
 	if err != nil || released || reason != "hold" {

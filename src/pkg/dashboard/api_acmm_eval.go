@@ -309,7 +309,10 @@ func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// The consolidating create reuses an open issue with the same subject or
 	// file set instead of filing a duplicate gap issue (#11578).
-	issue, err := s.deps.GHClient.CreateIssueConsolidated(ctx, owner+"/"+req.Repo, title, body, labels)
+	issue, err := s.deps.GHClient.CreateIssue(ctx, github.CreateIssueRequest{
+		Repo: owner + "/" + req.Repo, Title: title, Body: body, Labels: labels,
+		Origin: config.OriginSourceDashboard, ConsolidateOpen: true,
+	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to create issue: %v", err), http.StatusInternalServerError)
 		return

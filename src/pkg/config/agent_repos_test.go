@@ -272,3 +272,34 @@ func TestRepoScopedAgents(t *testing.T) {
 		t.Errorf("RepoScopedAgents = %v, want [alpha zeta]", got)
 	}
 }
+
+// AgentOwnsRepo is the same-repo / cross-repo line the outreach hold keys on:
+// a hive-managed repo (in any spelling) is the agent's own; any other
+// repository — same-named in another org included — is somebody else's.
+func TestAgentOwnsRepo_HiveManagedReposOnly(t *testing.T) {
+	cfg := newScopeTestConfig(t, map[string]AgentConfig{
+		"outreach": {Backend: "claude"},
+		"schema":   {Backend: "claude", Repos: []string{"dashboard"}},
+	})
+	for _, repo := range []string{"console", "Console", "acme/console", "ACME/Dashboard", "laredo/cuga-agent"} {
+		if !cfg.AgentOwnsRepo("outreach", repo) {
+			t.Errorf("unscoped outreach does not own hive-managed %q", repo)
+		}
+	}
+	for _, repo := range []string{"other-org/awesome-agents", "other/console", "never-heard-of-it", ""} {
+		if cfg.AgentOwnsRepo("outreach", repo) {
+			t.Errorf("outreach claimed %q, which the hive does not manage", repo)
+		}
+	}
+	// A scoped agent owns only the managed repos inside its scope.
+	if !cfg.AgentOwnsRepo("schema", "dashboard") {
+		t.Error("scoped agent does not own the repo in its scope")
+	}
+	if cfg.AgentOwnsRepo("schema", "console") {
+		t.Error("scoped agent owns the hive primary repo although its scope excludes it")
+	}
+	var nilCfg *Config
+	if nilCfg.AgentOwnsRepo("outreach", "console") {
+		t.Error("nil config must own nothing (fail closed to cross-repo)")
+	}
+}

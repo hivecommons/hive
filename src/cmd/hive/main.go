@@ -48,6 +48,7 @@ import (
 	"github.com/hivecommons/hive/pkg/hub"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/inference"
+	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -188,6 +189,15 @@ func defaultPersistPaths() persistPaths {
 	}
 }
 
+// heartbeatProviders is the ADR-0024 per-provider auth/availability roll-up
+// sent in the hub heartbeat; nil when the provider-status knob is off.
+func heartbeatProviders(cfg *config.Config, agents []spoke.AgentSummary) []agent.ProviderStatus {
+	if cfg == nil || !cfg.Providers.StatusEnabled() {
+		return nil
+	}
+	return spoke.ProviderStatusForHeartbeat(agents)
+}
+
 func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.State, currentMode, name string, proc *agent.AgentProcess, onDemandFromPack map[string]bool) hub.AgentActivity {
 	act := hub.AgentActivity{
 		Paused:         proc.Paused,
@@ -204,6 +214,9 @@ func agentActivityFor(mgr *agent.Manager, cfg *config.Config, govState governor.
 		act.BackendAuthStatus = status
 		act.BackendAuthSince = proc.BackendAuth.Since
 		act.BackendAuthLastError = proc.BackendAuth.LastError
+	}
+	if refreshable, known := mgr.AgentCredentialRefreshable(name); known {
+		act.BackendAuthRefreshable = &refreshable
 	}
 	if proc.StartedAt != nil {
 		act.StartedAt = *proc.StartedAt
@@ -1300,6 +1313,7 @@ func (b *boot) wireBootClosures() {
 			if proc.BackendOverride != "" {
 				act.Backend = proc.BackendOverride
 			}
+			spoke.ApplyBackendAuth(&act, b.agentMgr, name, proc)
 			if proc.StartedAt != nil {
 				act.StartedAt = *proc.StartedAt
 			}
@@ -2261,15 +2275,17 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// privilege. A denied request is quarantined, never opened.
 	// holdLabel (F6): at hold-gated ACMM levels (L3/L4/L5) every agent-opened
 	// PR must carry the "hold" label so the merge gate holds it for human
-	// approval. Outreach content is public speech on the project's behalf, so
-	// it remains human-reviewed at L6 too. This is decided server-side from the
-	// authenticated agent identity and authoritative hive level
+	// approval. Outreach content aimed at a repository the hive does not
+	// manage is public speech into someone else's project, so it remains
+	// human-reviewed at L6 too; outreach PRs into the agent's own repos are
+	// ordinary hive PRs. This is decided server-side from the authenticated
+	// agent identity, the PR's target repo and the authoritative hive level
 	// (GetACMMLevel), NOT from a client flag — the gh-wrapper.sh tail that used
 	// to add the label was dead code after `exec hive-open-pr`. L1/L2 open no
 	// agent PRs (manual); non-outreach L6 PRs retain their existing automerge
 	// behavior.
-	holdLabel := func(agentName string) bool {
-		return shouldHoldAgentPR(agentName, b.agentMgr.GetACMMLevel())
+	holdLabel := func(agentName, repo string) bool {
+		return shouldHoldAgentPR(agentName, repo, b.agentMgr.GetACMMLevel(), b.cfg.AgentOwnsRepo)
 	}
 	selfAuthorizationHoldEnabled := b.selfAuthorizationHoldEnabled
 
@@ -2288,8 +2304,12 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		ContributorLanePolicy:   contributorLanePolicyFunc(b.cfg),
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(b.cfg, b.logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
+		StageLabelPolicy:        stageLabelPolicyFunc(b.cfg),
 		SentinelLabel:           func() string { return b.cfg.Sentinel.LabelOrDefault() },
 	}
+	// Resolved lazily: bootDashboard has not run yet, so b.dashSrv is nil
+	// here (see lateContributorNudgeSink).
+	autoMergeOpts.ContributorNudge = lateContributorNudgeSink{hub: func() *dashboard.ContributeWSHub { return b.dashSrv.ContributeHub() }}
 
 	// commitGreen's required-checks gate (self-merge sweep, see
 	// automerge_sweep.go): install the operator-declared
@@ -2378,6 +2398,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// config, same bead evidence, same BlocksMerge predicate) and asks
 	// intent.EvaluateForAppSelfMerge before every self-merge.
 	autoMergeOpts.IntentGate = selfMergeIntentGate(b.cfg, b.beadStores)
+	// Review gate (#12592): the same review-verdicts.json the human lane
+	// reads, on the re-verified head immediately before every self-merge.
+	// governor.review_gate.mode (default shadow), review.require_approval
+	// and review.shadow are read through b.cfg on every evaluation. The
+	// audit sink resolves b.dashSrv lazily: bootDashboard has not run yet.
+	autoMergeOpts.ReviewGate = selfMergeReviewGate(b.cfg, b.logger, func(e automerge.ReviewGateEvaluation) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLogRecord("system", reviewEvaluatedAuditAction, reviewEvaluatedAuditDetail(e), "", e.Repo, e.Number)
+		}
+	})
 	// Human-merge paths (#11038): read through b.cfg on every evaluation so
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
@@ -2591,6 +2621,10 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	b.preShutdownHooks.add("close-contribute-hub", func() {
 		b.dashSrv.CloseContributeHub()
 	})
+	// Monthly per-repo complexity/static-analysis snapshot (RFC #12062,
+	// #12363). Report-only: it writes evidence files and never touches merge
+	// eligibility.
+	b.startComplexityRunner(newComplexityRunner(b.cfg, b.currentGitHubClient, b.logger))
 
 	// Wire ioscan input enforcement (opt-in via ioscan.enabled) to the dashboard
 	// audit log so a blocked/redacted issue title surfaces in the existing
@@ -2676,6 +2710,17 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			b.logger.Warn("sla history flush on shutdown failed", "error", err)
 		}
 	})
+
+	// Intent evaluation counters (#12362): one audit-log line per evaluation
+	// and a durable weekly file beside write-counters.json. Record-only;
+	// nothing reads these back into merge eligibility.
+	intent.SetEvaluationAuditSink(func(o intent.Observation) {
+		b.dashSrv.AuditLogRecord("system", intentEvaluatedAuditAction, intentEvaluatedAuditDetail(o), "", o.Repo, o.Number)
+	})
+	if err := intent.MigrateCounters(intent.LegacyCountersPath, intent.CountersPath, time.Now()); err != nil {
+		b.logger.Warn("intent counters: legacy file not migrated", "error", err)
+	}
+	b.preShutdownHooks.add("flush-intent-counters", intent.StartEvaluationCounterPersistence(intent.CountersPath, b.logger))
 
 	// The scheduler's classifier pass records KindClassified journeys the
 	// moment lane routing decides an issue's lane — same store, no extra work.
@@ -3189,6 +3234,8 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 
 			MaxAPICallsPerCycle: b.cfg.Knowledge.BeadSynthesizer.EffectiveMaxAPICallsPerCycle(),
 		}, b.logger, rawGH)
+
+		b.installBeadSynthPublisher()
 
 		if cleaned, err := b.beadSynth.CleanupVault(); err != nil {
 			b.logger.Warn("vault cleanup failed", "error", err)
@@ -4015,6 +4062,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// layout each agent has its own HOME, so the shared credential path is empty
 	// even for authenticated agents (see pkg/agent/authprobe.go).
 	dashboard.SetAgentAuthProvider(b.agentMgr.AgentAuthAvailable)
+	dashboard.SetAgentRefreshableProvider(b.agentMgr.AgentCredentialRefreshable)
 
 	// PR follow-up resume counters on /metrics (#9583).
 	dashboard.SetPRFollowUpCountersProvider(prFollowUpMetricsCounters)
@@ -4086,6 +4134,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
 		// Durable attempted-vs-blocked write counters (#12069); observation only.
+		if err := proxy.MigrateWriteCounters(proxy.LegacyWriteCountersPath, proxy.WriteCountersPath, time.Now()); err != nil {
+			b.logger.Warn("write counters: legacy file not migrated", "error", err)
+		}
 		stopWriteCounters := b.githubProxy.StartWriteCounterPersistence(proxy.WriteCountersPath)
 		b.preShutdownHooks.add("flush-write-counters", stopWriteCounters)
 		b.githubProxy.SetAgentGitHubBudgetConfig(b.cfg.AgentGitHubAPIHourlyCap, b.cfg.GitHubAgentReserveFloor)
@@ -4657,6 +4708,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				ProviderLimitRebuffs:    providerLimitRebuffs,
 				ProviderLimitHiveWide:   providerLimitHiveWide,
 				ProviderLimitAgents:     providerLimitAgents,
+				Providers:               heartbeatProviders(b.cfg, agents),
 				LastWriteCapableKickAt:  lastWriteKickAt,
 				LastKickDisposition:     kickDisposition,
 				LastKickSkipReason:      kickSkipReason,
@@ -5026,6 +5078,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						ProviderLimitRebuffs:    providerLimitRebuffs,
 						ProviderLimitHiveWide:   providerLimitHiveWide,
 						ProviderLimitAgents:     providerLimitAgents,
+						Providers:               heartbeatProviders(b.cfg, agents),
 						LastWriteCapableKickAt:  lastWriteKickAt,
 						LastKickDisposition:     kickDisposition,
 						LastKickSkipReason:      kickSkipReason,
@@ -5629,6 +5682,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					ProviderLimitRebuffs:    providerLimitRebuffs,
 					ProviderLimitHiveWide:   providerLimitHiveWide,
 					ProviderLimitAgents:     providerLimitAgents,
+					Providers:               heartbeatProviders(b.cfg, agents),
 					LastWriteCapableKickAt:  lastWriteKickAt,
 					LastKickDisposition:     kickDisposition,
 					LastKickSkipReason:      kickSkipReason,
@@ -5845,10 +5899,11 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			Logger: b.logger,
 		}); err != nil {
 			// No fail-closed fallback is possible here: the legacy hold label
-			// hive/<id> IS the provenance label on every claimed item, and
-			// github.HasHoldLabelWith never treats provenance labels as holds
-			// (#9371 - treating it as one parked every claimed item). Items
-			// still carrying only the legacy label are therefore NOT held.
+			// hive/<id> was the provenance label on every claimed item (now
+			// retired, #12539), and github.HasHoldLabelWith never treats
+			// provenance labels as holds (#9371 - treating it as one parked
+			// every claimed item). Items still carrying only the legacy
+			// label are therefore NOT held.
 			// Say so loudly, in the log and on the dashboard, instead of
 			// pretending to fail closed (#9614).
 			reportPath := ""
@@ -5862,6 +5917,20 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			if b.dashSrv != nil {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
+		}
+		// Provenance-only rename (from-review / origin/review → origin/reviewer). Nothing reads
+		// either label as a gate, so a failure here only leaves old names on
+		// open items; the marker is not written and the next boot retries.
+		if _, err := b.ghClient.MigrateOriginLabels(b.ctx, github.OriginLabelMigrationOptions{Logger: b.logger}); err != nil {
+			b.logger.Warn("origin provenance label migration incomplete; open items may still carry retired names such as "+github.LegacyOriginReviewLabel+" or "+github.LegacyFromReviewLabel, "error", err)
+		}
+		// The hive/<hive-id> provenance label is retired (#12539): the origin
+		// marker in every agent-written body carries the same fact. Runs
+		// after the hold migration so that migration still sees the label
+		// on an upgrade straight from a pre-#9371 hive. Provenance only, so
+		// a failure leaves stale labels and retries next boot.
+		if _, err := b.ghClient.RetireHiveIDLabels(b.ctx, github.HiveIDLabelRetireOptions{HiveID: b.cfg.HiveID, Logger: b.logger}); err != nil {
+			b.logger.Warn("hive/<hive-id> label retire sweep incomplete; open items may still carry "+github.HiveProvenanceLabel(b.cfg.HiveID), "error", err)
 		}
 	}
 	b.evalCycles++
@@ -5971,6 +6040,52 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	}
 	b.startReviewEvents()
 
+	// Continuous re-kick wake: a continuous agent's NextKick (set when its
+	// kick turn ends, + cooldown) was only consumed by the cadence eval tick,
+	// so with eval_interval_webhook_s=900 the reviewer sat idle at its prompt
+	// for up to 15 minutes after every "kick turn ended". The wake fires an
+	// early tick when the earliest NextKick elapses, bounded by
+	// continuousWakeMinGap, and otherwise re-checks every continuousWakePoll.
+	// When a wake-driven cycle leaves the due re-kick untouched (the agent was
+	// gated outside the governor: dashboard pause, first-scan deferral,
+	// provider budget, upgrade drain) wakeHold backs the wake off that re-kick
+	// so a gated agent does not turn the cadence into one eval per 30s.
+	wakeNow := deps.now
+	if wakeNow == nil {
+		wakeNow = time.Now
+	}
+	var (
+		wakeTimer    loopTicker
+		wakeCh       <-chan time.Time
+		lastWake     time.Time
+		wakeArmedFor time.Time
+		wakeHold     continuousWakeHold
+	)
+	armContinuousWake := func() {
+		if deps.newWakeTimer == nil || b.gov == nil {
+			return
+		}
+		next, who := b.gov.NextContinuousKickAt()
+		delay, _ := continuousWakeDecision(next, wakeNow(), lastWake, wakeHold.untilFor(next, who))
+		if delay <= 0 {
+			delay = continuousWakeMinDelay
+		}
+		if wakeTimer == nil {
+			wakeTimer = deps.newWakeTimer(delay)
+			wakeCh = wakeTimer.Chan()
+		} else {
+			wakeTimer.Stop()
+			wakeTimer.Reset(delay)
+		}
+		wakeArmedFor = next
+	}
+	armContinuousWake()
+	defer func() {
+		if wakeTimer != nil {
+			wakeTimer.Stop()
+		}
+	}()
+
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -5979,9 +6094,31 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 			return
 		case <-ticker.Chan():
 			tick()
+			armContinuousWake()
 		case <-b.reviewWake:
 			b.logger.Info("review webhook wake: running an early eval cycle")
 			tick()
+			armContinuousWake()
+		case <-wakeCh:
+			now := wakeNow()
+			next, who := b.gov.NextContinuousKickAt()
+			if _, due := continuousWakeDecision(next, now, lastWake, wakeHold.untilFor(next, who)); due {
+				idleFor := time.Duration(0)
+				if st, ok := b.gov.GetState().Continuous[who]; ok && !st.LastKickEnd.IsZero() {
+					idleFor = now.Sub(st.LastKickEnd).Round(time.Second)
+				}
+				b.logger.Info("continuous re-kick wake: running an early eval cycle",
+					"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "idle_for", idleFor.String(),
+					"was_armed_for", wakeArmedFor.UTC().Format(time.RFC3339))
+				lastWake = now
+				tick()
+				after, afterWho := b.gov.NextContinuousKickAt()
+				if backoff, stalled := wakeHold.observe(next, after, who, afterWho, wakeNow()); stalled {
+					b.logger.Info("continuous re-kick wake: eval cycle left the due re-kick unchanged (agent gated outside the governor); backing off",
+						"agent", who, "next_kick", next.UTC().Format(time.RFC3339), "backoff", backoff.String())
+				}
+			}
+			armContinuousWake()
 		case <-agentTickCh:
 			b.cfgReloadMu.Lock()
 			govState := b.gov.GetState()
@@ -6664,6 +6801,7 @@ func runEvalCycle(
 	reviewQueue := stampReviewQueue(cfg, actionable, logger)
 
 	lastActionable.Store(actionable)
+	publishStageSharedCIIncidents(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
 		atomicWrite(lastActionablePath, data)
 	}
@@ -7053,6 +7191,21 @@ func runEvalCycle(
 		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
 			sendKick:         agentMgr.SendKick,
+			startStoppedAgent: func(agentName string) error {
+				if !agentMgr.GovernorMayStart(agentName) {
+					return nil
+				}
+				agentMgr.MarkStartupLaunchQueued([]string{agentName})
+				if err := agentMgr.Start(ctx, agentName); err != nil {
+					if stoppedAgentStartErrorIsBenign(err) {
+						logger.Info("stopped agent start raced with existing launch before governor kick", "agent", agentName, "error", err)
+						return nil
+					}
+					return fmt.Errorf("start stopped agent: %w", err)
+				}
+				logger.Info("started stopped agent before governor kick", "agent", agentName)
+				return nil
+			},
 			startKickSpan: func(agentName string) func(error) {
 				agentCfg := cfg.Agents[agentName]
 				_, kickSpan := tracing.StartSpan(ctx, "agent.kick", tracing.AgentKickAttributes(
@@ -8605,6 +8758,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		ContributorLanePolicy:   contributorLanePolicyFunc(cfg),
 		ContributorLaneVerdict:  contributorLaneVerdictFunc(cfg, logger),
 		ContributorRegistryTier: contributorRegistryTierFunc(),
+		StageLabelPolicy:        stageLabelPolicyFunc(cfg),
+	}
+	// hivecommons/hive#12436: the contribute hub is the stage-072 nudge sink
+	// (relay fix-pr tasks). Guarded so a nil hub never becomes a typed-nil
+	// interface.
+	if hub := dashSrv.ContributeHub(); hub != nil {
+		opts.ContributorNudge = hub
 	}
 	if cfg != nil {
 		opts.SentinelLabel = func() string { return cfg.Sentinel.LabelOrDefault() }
@@ -8615,6 +8775,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.MinHeadAge = cfg.AutoMerge.EffectiveMinHeadAge()
 		opts.RepoAutoMergeEnabled = func(repo string) bool { return cfg.RepoAutoMergeEnabled(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
+		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	}
 	audit := func(event automerge.AutoMergeSweepEvent) {
 		if dashSrv == nil {
@@ -8638,8 +8799,9 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	remaining := automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
 	if remaining > 0 && opts.TrustedAuthorPolicy().Enabled {
 		trustedResult, trustedErr := automerge.SweepTrustedAuthorAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
-			MaxMerges: remaining,
-			Audit:     audit,
+			MaxMerges:              remaining,
+			Audit:                  audit,
+			SelfAuthoredLaneActive: cfg != nil && cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel),
 		})
 		if trustedErr != nil {
 			logger.Warn("trusted-author automerge sweep failed", "error", trustedErr)
@@ -8668,6 +8830,13 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 				logger.Info("contributor-lane automerge sweep complete", "seen", laneResult.Seen, "merged", len(laneResult.Merged), "skipped", laneResult.Skipped)
 			}
 		}
+	}
+	// Stage labels (#12429): the lanes above each recorded their per-PR
+	// reason into the process-shared tracker; one pass writes the labels.
+	if stageResult, stageErr := automerge.ApplyStageLabels(ctx, ghClient, opts); stageErr != nil {
+		logger.Warn("stage labels reconcile failed", "error", stageErr, "items", stageResult.Items, "writes", stageResult.Writes)
+	} else if stageResult.Writes+stageResult.Comments > 0 {
+		logger.Info("stage labels reconciled", "items", stageResult.Items, "writes", stageResult.Writes, "comments", stageResult.Comments, "healed", stageResult.Healed)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -9106,17 +9275,23 @@ func applyDuplicatePRGuard(
 		return
 	}
 	github.ApplyDuplicatePRGuard(ctx, ghClient, ledger, hiveIdentity(cfg), actionable, claimingPRRedStale(cfg, actionable), logger)
-	// hive/in-progress runs after the PR-claim guard so an issue whose PR just
-	// opened sheds the start mark here, and a lapsed mark frees the issue
-	// before kicks are built. Independent of governor.claims: the label is
-	// read from the issue, the marker from the comment, on every hive.
+	// The in-progress sweep runs after the PR-claim guard so an issue whose
+	// PR just opened sheds the start mark here, and a lapsed mark frees the
+	// issue before kicks are built. Independent of governor.claims: the
+	// label is read from the issue, the marker from the comment, on every hive.
 	if withheld := github.SweepInProgressIssues(ctx, ghClient, actionable, time.Now(), logger); withheld > 0 {
 		logger.Info("in-progress guard applied", "withheld", withheld)
+	}
+	// hivecommons/hive#12436: with every bucket final, mirror the cycle's
+	// decision about each open issue onto its stage/NNN label (and strip the
+	// retired claimed / hive/in-progress / 🐝 covered by PR labels).
+	if res := github.SyncIssueStageLabels(ctx, ghClient, actionable, nil, time.Now(), logger); res.Writes+res.Comments > 0 {
+		logger.Info("issue stage labels applied", "items", res.Items, "writes", res.Writes, "comments", res.Comments, "healed", res.Healed)
 	}
 	runCloseOnMergeSweep(ctx, cfg, ghClient, ledger, logger)
 }
 
-// inProgressSetting resolves the hive/in-progress label setting from config.
+// inProgressSetting resolves the pr-in-progress stage label setting from config.
 // The label follows the claims label mirror: an operator who set
 // governor.claims.label: false asked for no hive-managed claim labels, and
 // gets none here either; otherwise the start signal is always labelled. The
@@ -9299,6 +9474,12 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		return cfg.Governor.Claims.Enabled, cfg.Governor.Claims.EffectiveTTL()
 	})
 	client.SetInProgress(func() github.InProgressSetting { return inProgressSetting(cfg) })
+	// hivecommons/hive#12436: the issue stage reconciler follows the same
+	// governor.labels.stage policy as the PR one, read live.
+	client.SetIssueStageLabels(func() github.IssueStagePolicy {
+		p := stageLabelPolicyFunc(cfg)()
+		return github.IssueStagePolicy{Enabled: p.Enabled, Dwell: p.Dwell}
+	})
 	client.SetReviewCadenceLimits(
 		func() bool { return cfg.Review.CombinedPerspectives },
 		func() int { return cfg.Review.MaxReviewsPerHead },
@@ -9577,13 +9758,15 @@ func planReviewDispatch(cfg *config.Config, actionable *github.ActionableResult,
 		lane := classify.Classify(github.Issue{Title: pr.Title, Labels: pr.Labels}).Lane
 		fullRepo := fullRepoName(pr.Repo, cfg.Project.Org)
 		prs = append(prs, review.PullRequest{
-			Repo:    pr.Repo,
-			Number:  pr.Number,
-			Title:   pr.Title,
-			Author:  pr.Author,
-			HeadSHA: pr.HeadSHA,
-			URL:     pr.URL,
-			Lane:    string(lane),
+			Repo:       pr.Repo,
+			Number:     pr.Number,
+			Title:      pr.Title,
+			Author:     pr.Author,
+			HeadSHA:    pr.HeadSHA,
+			UpdatedAt:  pr.UpdatedAt,
+			BodyDigest: pr.BodyDigest,
+			URL:        pr.URL,
+			Lane:       string(lane),
 			// Authorship signal for the fix gate (#8421): a PR an agent opened
 			// on a person's credentials is still the hive's own work.
 			HiveAttributed: pr.HiveAttributed,
@@ -9928,11 +10111,12 @@ func loadNousState(logger *slog.Logger) *dashboard.NousState {
 
 func loadNousStateFromPaths(logger *slog.Logger, governorDir, snapshotDir string) *dashboard.NousState {
 	state := &dashboard.NousState{
-		Mode:   "observe",
-		Scope:  dashboard.NousScopeRepo,
-		Phase:  "collecting",
-		Status: make(map[string]interface{}),
-		Config: make(map[string]interface{}),
+		Mode:        "observe",
+		Scope:       dashboard.NousScopeRepo,
+		Phase:       "collecting",
+		Status:      make(map[string]interface{}),
+		Config:      make(map[string]interface{}),
+		GovernorDir: governorDir,
 	}
 
 	if ledgerData, err := os.ReadFile(filepath.Join(governorDir, "ledger.json")); err == nil {

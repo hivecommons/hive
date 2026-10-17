@@ -2815,7 +2815,7 @@ func newAutoMergeSweepClient(apiURL string) *Engine {
 	// Audit F3: the sweep fails CLOSED without an authorizer, so every test
 	// exercising the merge path must install one. Tests that assert the
 	// fail-closed behaviour itself build their client without this helper.
-	return New(client, Options{MergerAuthorizer: func(login string) bool {
+	return New(client, Options{HeadFirstSeen: NewHeadFirstSeenTracker(), MergerAuthorizer: func(login string) bool {
 		return testTrustedMergers[strings.ToLower(strings.TrimSpace(login))]
 	}})
 }

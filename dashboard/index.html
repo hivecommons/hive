@@ -1342,7 +1342,7 @@
     <div class="config-body" id="config-body"></div>
     <div class="config-footer">
       <button class="btn config-cancel" onclick="closeConfigDialog()">Cancel</button>
-      <button class="btn config-save" onclick="saveConfig()">Save</button>
+      <button class="btn config-save" onclick="saveConfig()">Save &amp; close</button>
     </div>
   </div>
 </div>
@@ -5048,6 +5048,7 @@ function burnAreaChart() {
       const dirty = _configState.dirty;
       if (Object.keys(dirty).length === 0) {
         showToast('No changes to save', 'info');
+        closeConfigDialog();
         return;
       }
       const base = _configState.type === 'governor' ? '/api/config/governor' : `/api/config/agent/${_configState.agent}`;

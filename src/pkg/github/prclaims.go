@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 	"log/slog"
 	"os"
 	"regexp"
@@ -101,26 +102,34 @@ const (
 	// the pod restarts that caused the incident this guard exists to prevent.
 	ClaimLedgerPath = "/data/pr-claims.json"
 
-	// CoveredByPRLabel marks an open issue with an API-verified open PR relation.
-	// The bee replaced the `hive/covered-by-pr` spelling (hivecommons/hive#11888)
-	// so the issue list carries hive's own glyph next to GitHub's PR icon.
-	CoveredByPRLabel = "🐝 covered by PR"
-	// LegacyCoveredByPRLabel is the pre-#11888 spelling. Readers accept both
-	// during the transition; EnsureCoveredByPRLabel renames it in place on the
-	// first sweep so existing issues keep the label without per-issue writes.
-	LegacyCoveredByPRLabel = "hive/covered-by-pr"
-	// CoveredByPRLabelColor is the hive-amber label colour.
-	CoveredByPRLabelColor = "f5a623"
+	// CoveredByPRLabel marks an open issue with an API-verified open PR
+	// relation. It is the `stage/040-covered-by-pr` stage label
+	// (hivecommons/hive#12436; pkg/stagelabels owns the family and a test
+	// pins the spelling). It replaced `🐝 covered by PR` (#11888) and
+	// `hive/covered-by-pr` before it; see legacyCoveredByPRLabels. An issue
+	// whose covering PR has advanced carries the PR's stage instead, so
+	// readers use HasCoveredByPRLabel rather than comparing this string.
+	CoveredByPRLabel = "stage/040-covered-by-pr"
+	// CoveredByPRLabelColor is the shared stage-family colour (hive amber).
+	CoveredByPRLabelColor = stagelabels.StageColor
 	// CoveredByPRLabelDescription is the label description hive creates it with.
-	CoveredByPRLabelDescription = "Hive verified that an open PR references or claims this issue; still actionable until confirmed"
+	CoveredByPRLabelDescription = "An open PR covers this issue"
 	// LikelyDoneLabel marks an open issue with an API-verified merged PR relation
 	// that is not yet a resolved/closed issue.
 	LikelyDoneLabel = "hive/likely-done"
+	// LikelyDoneLabelColor is the green label colour used for likely-done.
+	LikelyDoneLabelColor = "0e8a16"
+	// LikelyDoneLabelDescription is the description hive creates LikelyDoneLabel with.
+	LikelyDoneLabelDescription = "Hive verified that a merged PR references or claims this issue; pending confirmation"
 	// PartiallyAddressedLabel marks an open issue whose merged PR covered only
 	// part of it (no closing keyword, a remainder paragraph, or none of the
 	// cited paths changed). It suppresses likely-done and keeps the issue
 	// actionable (#11931).
 	PartiallyAddressedLabel = "hive/partially-addressed"
+	// PartiallyAddressedLabelColor is the amber label colour used for partially-addressed.
+	PartiallyAddressedLabelColor = "fbca04"
+	// PartiallyAddressedLabelDescription is the description hive creates PartiallyAddressedLabel with.
+	PartiallyAddressedLabelDescription = "A merged PR addressed only part of this issue; remainder still actionable"
 	// AlreadyDoneLabel marks an issue that Hive verified is already fixed.
 	AlreadyDoneLabel = "hive/already-done"
 	// VerifiedOpenLabel records that verification found the issue still open/not
@@ -1749,9 +1758,17 @@ func annotateIssueWithClaim(issue *Issue, claim IssueClaim) {
 	}
 	if claim.MergedPR {
 		issue.Labels = removeCoveredByPRLabel(issue.Labels)
-		if issueHasLabel(issue.Labels, VerifiedOpenLabel) || issueHasLabel(issue.Labels, PartiallyAddressedLabel) {
+		switch {
+		case issueHasLabel(issue.Labels, VerifiedOpenLabel):
 			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
-		} else {
+		case claim.Reference || issueHasLabel(issue.Labels, PartiallyAddressedLabel):
+			// A merged "Refs #N" / "Part of #N" never asserted it finished
+			// the issue (Settled() and close-on-merge both exclude it), so
+			// it is partially-addressed, not likely-done (#11931 rule: no
+			// closing keyword means the remainder is still actionable).
+			issue.Labels = removeIssueLabel(issue.Labels, LikelyDoneLabel)
+			issue.Labels = addIssueLabel(issue.Labels, PartiallyAddressedLabel)
+		default:
 			issue.Labels = addIssueLabel(issue.Labels, LikelyDoneLabel)
 		}
 		issue.ClaimContext = claimContext(claim, "merged_pr_needs_verification")
@@ -1992,30 +2009,48 @@ func SyncIssuePRClaimLabels(ctx context.Context, client *Client, result *Actiona
 				logger.Warn("ensuring verified-open label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}
 		}
-		likelyWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
-		if coveredWanted {
-			if err := client.EnsureCoveredByPRLabel(ctx, issue.Repo); err != nil && logger != nil {
-				logger.Warn("ensuring covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
-			} else if HasCoveredByPRLabel(originalLabels) {
-				// Already carried (under either spelling after the in-place
-				// rename); re-adding would only spend a write.
-			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{CoveredByPRLabel}); err != nil && logger != nil {
-				logger.Warn("adding covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+		mergedWanted := ok && claim.PRNumber > 0 && claim.MergedPR && !verifiedOpen
+		// A merged reference-only claim ("Refs #N", "Part of #N") is
+		// partially-addressed, not likely-done: it never asserted it closed
+		// the issue, close-on-merge skips it, and the kick still offers the
+		// remainder (#11931 rule; hivecommons/hive#12316 sat in "Confirm &
+		// close" with half its work in an open PR).
+		partialWanted := mergedWanted && claim.Reference
+		likelyWanted := mergedWanted && !claim.Reference && !issueHasLabel(originalLabels, PartiallyAddressedLabel)
+		// The covered-by-PR stage label itself is written by the issue stage
+		// reconciler (SyncIssueStageLabels, hivecommons/hive#12436), which
+		// keeps the issue at 040 while the PR is open; here only the
+		// retired spellings are stripped so the migration completes one cycle
+		// after upgrade, and the in-memory copy reflects the claim either way.
+		for _, name := range legacyCoveredByPRLabels {
+			if !issueHasLabel(originalLabels, name) {
+				continue
 			}
-		} else if HasCoveredByPRLabel(originalLabels) {
-			for _, name := range []string{CoveredByPRLabel, LegacyCoveredByPRLabel} {
-				if !issueHasLabel(originalLabels, name) {
-					continue
-				}
-				if err := client.RemoveLabel(ctx, issue.Repo, issue.Number, name); err != nil && logger != nil {
-					logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "label", name, "error", err)
-				}
+			if err := client.removeLabelObserved(ctx, issue.Repo, issue.Number, name, observedState(issue.UpdatedAt)); err != nil && logger != nil {
+				logger.Warn("removing retired covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "label", name, "error", err)
 			}
-			issue.Labels = removeCoveredByPRLabel(issue.Labels)
+			issue.Labels = removeIssueLabel(issue.Labels, name)
+		}
+		if !coveredWanted && stagelabels.Current(originalLabels) == stagelabels.CoveredByPR {
+			// The claim lapsed (PR closed or merged) but the stage label is
+			// still on the issue: take it off now rather than a cycle later.
+			if err := client.removeLabelObserved(ctx, issue.Repo, issue.Number, CoveredByPRLabel, observedState(issue.UpdatedAt)); err != nil && logger != nil {
+				logger.Warn("removing covered-by-pr label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
+			issue.Labels = removeIssueLabel(issue.Labels, CoveredByPRLabel)
+		}
+		if partialWanted && !issueHasLabel(originalLabels, PartiallyAddressedLabel) {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, PartiallyAddressedLabel, PartiallyAddressedLabelColor, PartiallyAddressedLabelDescription); err != nil && logger != nil {
+				logger.Warn("ensuring partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{PartiallyAddressedLabel}); err != nil && logger != nil {
+				logger.Warn("adding partially-addressed label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			}
 		}
 		if likelyWanted {
-			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, "0e8a16", "Hive verified that a merged PR references or claims this issue; pending confirmation"); err != nil && logger != nil {
+			if err := client.EnsureIssueLabel(ctx, issue.Repo, LikelyDoneLabel, LikelyDoneLabelColor, LikelyDoneLabelDescription); err != nil && logger != nil {
 				logger.Warn("ensuring likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
+			} else if issueHasLabel(originalLabels, LikelyDoneLabel) {
+				// Already carried; re-adding every tick only spends a write.
 			} else if err := client.AddLabels(ctx, issue.Repo, issue.Number, []string{LikelyDoneLabel}); err != nil && logger != nil {
 				logger.Warn("adding likely-done label failed", "repo", issue.Repo, "issue", issue.Number, "error", err)
 			}

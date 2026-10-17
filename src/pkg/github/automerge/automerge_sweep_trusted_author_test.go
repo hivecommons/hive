@@ -16,6 +16,7 @@ import (
 )
 
 type trustedSweepFixture struct {
+	author          string
 	listStatus      int
 	getStatus       int // first PR fetch
 	recheckStatus   int // second PR fetch
@@ -48,12 +49,16 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 			headRepo = "acme/widget"
 		}
 		pull := func(sha string) map[string]any {
+			author := fx.author
+			if author == "" {
+				author = "alice"
+			}
 			return map[string]any{
 				"number":          7,
 				"state":           "open",
 				"mergeable_state": state,
 				"mergeable":       state == "clean",
-				"user":            map[string]string{"login": "alice"},
+				"user":            map[string]string{"login": author},
 				"head":            map[string]any{"sha": sha, "repo": map[string]string{"full_name": headRepo}},
 				"base":            map[string]any{"repo": map[string]string{"full_name": "acme/widget"}},
 				"labels":          []map[string]string{},

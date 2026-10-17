@@ -115,6 +115,24 @@ func recordRESTRequest(caller, method, path string, status int, h http.Header, d
 	}, h, daemonCredential)
 }
 
+// RecordLocalServe records a dashboard request that was answered from memory
+// without any GitHub call, so /api/gh-rate-limits lists the caller with its
+// request count and Charged 0. status 304 counts as not modified.
+func RecordLocalServe(caller, path string, status int) {
+	if strings.TrimSpace(caller) == "" {
+		caller = "unknown"
+	}
+	store := sharedRESTAccounting()
+	store.record(restAccountingEvent{
+		at:          store.now(),
+		caller:      caller,
+		method:      http.MethodGet,
+		endpoint:    restEndpointTemplate(path),
+		status:      status,
+		notModified: status == http.StatusNotModified,
+	}, nil, false)
+}
+
 func RESTTopConsumers(limit int) []RESTConsumer {
 	return sharedRESTAccounting().top(limit)
 }

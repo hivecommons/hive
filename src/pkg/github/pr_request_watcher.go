@@ -251,7 +251,7 @@ func (c *Client) CheckPRRepoPolicy(agent, repo string) error {
 	return nil
 }
 
-func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func(agent string) bool, nowFn func() time.Time) <-chan struct{} {
+func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, holdLabel func(agent, repo string) bool, nowFn func() time.Time) <-chan struct{} {
 	done := make(chan struct{})
 	if c == nil {
 		close(done)
@@ -560,7 +560,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	// path; and where it is a human's PR, hive has no standing to gate it at
 	// all. Evaluating the gate here would additionally spend GitHub calls to
 	// compute a hold that must not be applied.
-	holdByLevel := c.prHoldLabel != nil && c.prHoldLabel(req.Agent)
+	holdByLevel := c.prHoldLabel != nil && c.prHoldLabel(req.Agent, req.Repo)
 	var selfAuth SelfAuthorization
 	if !res.IsDuplicate() && !holdByLevel {
 		if !c.selfAuthorizationHoldActive(req.Repo) {
@@ -665,8 +665,10 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	if hook := c.prOpenedDetailHook.Load(); hook != nil && *hook != nil && !res.AlreadyExisted {
 		go (*hook)(PROpenedDetail{Agent: req.Agent, Repo: req.Repo, Number: res.Number, URL: res.URL, Body: body, Handoff: req.Handoff, Issues: append([]int(nil), req.IssueN...)})
 	}
-	// The PR supersedes the hive/in-progress start mark on the issues it
-	// names; the PR-claim sync mirrors the covered-by-PR label next enumeration.
+	// The PR supersedes the pr-in-progress start mark on the issues it
+	// names: they move to stage/040-covered-by-pr, where the stage
+	// reconciler keeps them while the PR is open (the PR's own stage is
+	// narrated in the issue's stage reason, never written as its label).
 	c.clearInProgressForPR(ctx, req.Repo, req.IssueN)
 	c.recordWriteAudit(AuditActionAgentPRCreated, meta,
 		WriteTarget{Repo: req.Repo, Number: res.Number},

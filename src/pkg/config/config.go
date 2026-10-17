@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/authorkind"
 	dashboardtheme "github.com/hivecommons/hive/pkg/dashboard/theme"
 	"github.com/hivecommons/hive/pkg/resolve"
 	"gopkg.in/yaml.v3"
@@ -90,6 +91,9 @@ type Config struct {
 	// Backends is the spoke-wide backend allow/deny list (#11310), enforced
 	// at pack apply and by PUT /api/config/agent/{name}/models.
 	Backends BackendsConfig `yaml:"backends,omitempty" json:"backends,omitempty"`
+	// Providers configures the read-only per-provider auth/availability
+	// status (ADR-0024). See ProvidersConfig.
+	Providers ProvidersConfig `yaml:"providers,omitempty" json:"providers,omitempty"`
 	// Issues tunes issue lifecycle automation. Zero value keeps the safe
 	// defaults: close issues after their fix PR merges, and backfill hourly.
 	Issues     IssuesConfig     `yaml:"issues,omitempty" json:"issues,omitempty"`
@@ -1615,7 +1619,8 @@ type AgentConfig struct {
 	AgentSpec       string `yaml:"agent_spec" json:"agent_spec,omitempty"`
 	// BusyNoActivityThreshold is how long a Working pane may go without any
 	// Copilot transcript activity before repeated undeliverable kicks surface
-	// an operator-visible condition. Unset defaults to 30m.
+	// an operator-visible condition. Unset defaults to 30m. A pane that stays
+	// in that condition for twice the threshold is restarted.
 	BusyNoActivityThreshold time.Duration `yaml:"busy_no_activity_threshold,omitempty" json:"busy_no_activity_threshold,omitempty"`
 	// MaxTurnDuration is an optional visibility-only ceiling for a Working
 	// turn. 0 disables it; exceeding it raises busy-over-ceiling but never
@@ -2232,6 +2237,11 @@ type GovernorConfig struct {
 	// unset and resolves to DefaultCoverageTarget — see EffectiveCoverageTarget.
 	CoverageTarget int `yaml:"coverage_target,omitempty" json:"coverage_target,omitempty"`
 
+	// FirstTimerWelcome is the one-time comment the hive leaves on a
+	// first-time contributor's PR inviting them to run their own hive
+	// (see pkg/config/first_timer_welcome.go). Default ON.
+	FirstTimerWelcome FirstTimerWelcomeConfig `yaml:"first_timer_welcome,omitempty" json:"first_timer_welcome,omitempty"`
+
 	// CadenceOwners records WHO last set each governor mode cadence, keyed
 	// mode → agent → owner (FieldOwnerOperator). It is the cadence analogue of
 	// AgentConfig.ModelOwner/BackendOwner (#5558): a pack could never stomp an
@@ -2318,6 +2328,51 @@ type GovernorConfig struct {
 	Claims ClaimsConfig `yaml:"claims,omitempty" json:"claims,omitempty"`
 	// QuestionAutoclose closes answered question issues (#9584). Default off.
 	QuestionAutoclose QuestionAutocloseConfig `yaml:"question_autoclose,omitempty" json:"question_autoclose,omitempty"`
+	// ReviewGate configures the swarm-review gate the self-merge lane
+	// evaluates on the App's own PRs before merging (hivecommons/hive#12592).
+	// Zero value = shadow: record what the gate would have held, merge as
+	// before. See ReviewGateConfig.
+	ReviewGate ReviewGateConfig `yaml:"review_gate,omitempty" json:"review_gate,omitempty"`
+}
+
+// Review gate modes (GovernorConfig.ReviewGate.Mode, hivecommons/hive#12592).
+const (
+	// ReviewGateModeOff does not evaluate the gate on the self-merge lane
+	// (review.require_approval / review.shadow still apply).
+	ReviewGateModeOff = "off"
+	// ReviewGateModeShadow evaluates the gate and records
+	// shadow.review_gate.would_have_held on the evidence bundle, never
+	// withholding a merge. The default.
+	ReviewGateModeShadow = "shadow"
+	// ReviewGateModeEnforce withholds the self-merge until the swarm has
+	// approved the head (aggregate approve in review-verdicts.json).
+	ReviewGateModeEnforce = "enforce"
+)
+
+// ReviewGateConfig is governor.review_gate. The effective mode on the
+// self-merge lane is the strictest of Mode, review.require_approval
+// (enforce) and review.shadow (shadow); no knob weakens another.
+type ReviewGateConfig struct {
+	// Mode is off | shadow | enforce; "" means shadow.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+}
+
+// ValidReviewGateModes are the accepted governor.review_gate.mode values.
+var ValidReviewGateModes = map[string]bool{
+	"":                    true,
+	ReviewGateModeOff:     true,
+	ReviewGateModeShadow:  true,
+	ReviewGateModeEnforce: true,
+}
+
+// ModeOrDefault returns the configured mode with the shadow default applied.
+func (r ReviewGateConfig) ModeOrDefault() string {
+	switch r.Mode {
+	case ReviewGateModeOff, ReviewGateModeEnforce:
+		return r.Mode
+	default:
+		return ReviewGateModeShadow
+	}
 }
 
 // FleetReportConfig controls upstream fleet self-reporting
@@ -2338,6 +2393,48 @@ type FleetReportConfig struct {
 	// MaxPerDay caps NEW issues this hive may open per 24h. 0 = default 5.
 	// Joining an existing issue does not count against it.
 	MaxPerDay int `yaml:"max_per_day,omitempty" json:"max_per_day,omitempty"`
+	// IncludeRepos controls whether a self-report names the repositories
+	// this hive watches (project.repos) and the owners derived from them
+	// (#12338). nil = true. The report repo is public and hive.yaml does not
+	// record repo visibility, so operators whose project.repos include
+	// private repositories set this to false; the fields then render as "—".
+	IncludeRepos *bool `yaml:"include_repos,omitempty" json:"include_repos,omitempty"`
+	// IncludeOwners controls whether a self-report names the GitHub
+	// login(s) of this hive's owner(s) (authorized users with the owner
+	// role, the device-flow operator) so maintainers can see WHO is
+	// affected. nil = true. false renders "(anonymous)" instead.
+	IncludeOwners *bool `yaml:"include_owners,omitempty" json:"include_owners,omitempty"`
+}
+
+// IncludesRepos resolves include_repos: nil defaults to true.
+func (f FleetReportConfig) IncludesRepos() bool {
+	return f.IncludeRepos == nil || *f.IncludeRepos
+}
+
+// IncludesOwners resolves include_owners: nil defaults to true.
+func (f FleetReportConfig) IncludesOwners() bool {
+	return f.IncludeOwners == nil || *f.IncludeOwners
+}
+
+// OwnerLogins returns the AuthorizedUsers entries that hold the owner role
+// (the first entry without an explicit role, plus any ":owner" entry), in
+// their raw identity form ("alice", "github:alice"); non-GitHub identities
+// are included as-is and filtered by the caller.
+func (d DashboardConfig) OwnerLogins() []string {
+	var out []string
+	for i, entry := range d.AuthorizedUsers {
+		name, role := splitAuthorizedEntry(entry)
+		if name == "" {
+			continue
+		}
+		if role == "" && i == 0 {
+			role = RoleOwner
+		}
+		if role == RoleOwner {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // DefaultFleetReportRepo is where self-reports land unless overridden.
@@ -3974,6 +4071,284 @@ type LabelsConfig struct {
 	// every managed repo to grow a second label meaning the same thing.
 	// Defaults to DefaultAutoMergeLabel.
 	AutoMerge string `yaml:"automerge"`
+	// Stage configures the hive-owned stage/NN-* pipeline labels
+	// (hivecommons/hive#12429; docs/labels-and-control-signals.md).
+	Stage StageLabelsConfig `yaml:"stage"`
+	// Author names the hive-owned `author/<kind>` authorship labels
+	// (hivecommons/hive#12581). The trust axis (`role/<tier>`) is not
+	// renameable.
+	Author AuthorLabelsConfig `yaml:"author"`
+}
+
+// AuthorLabelsConfig is governor.labels.author: the label names for the
+// three authorship kinds pkg/authorkind detects. Each defaults to
+// `author/<kind>`; a configured name must keep the `author/` prefix so the
+// stage reconciler still owns it, and the three must differ.
+type AuthorLabelsConfig struct {
+	// Human is the label for a PR a person pushed themselves (default author/human).
+	Human string `yaml:"human,omitempty"`
+	// Clanker is the label for a PR a contributor's own hive authored under
+	// that contributor's login (default author/clanker).
+	Clanker string `yaml:"clanker,omitempty"`
+	// Hive is the label for a PR this repo's own hive authored (default author/hive).
+	Hive string `yaml:"hive,omitempty"`
+}
+
+// Names returns the effective label names (defaults filled in).
+func (c AuthorLabelsConfig) Names() authorkind.Names {
+	return authorkind.Names{Human: c.Human, Clanker: c.Clanker, Hive: c.Hive}.Normalize()
+}
+
+// Validate rejects names outside the author/ family, duplicates, and names
+// that collide with the retired `author/<tier>` role spellings the
+// reconciler removes.
+func (c AuthorLabelsConfig) Validate() error {
+	n := c.Names()
+	seen := map[string]string{}
+	for key, name := range map[string]string{"human": n.Human, "clanker": n.Clanker, "hive": n.Hive} {
+		if !strings.HasPrefix(name, authorkind.Prefix) || len(name) == len(authorkind.Prefix) {
+			return fmt.Errorf("governor.labels.author.%s %q must start with %q", key, name, authorkind.Prefix)
+		}
+		switch strings.TrimPrefix(name, authorkind.Prefix) {
+		case "trusted", "contributor", "newcomer", "untrusted":
+			return fmt.Errorf("governor.labels.author.%s %q is a retired role spelling; role labels live under role/", key, name)
+		}
+		if other, dup := seen[name]; dup {
+			return fmt.Errorf("governor.labels.author.%s and .%s both use %q", other, key, name)
+		}
+		seen[name] = key
+	}
+	return nil
+}
+
+// StageLabelsConfig is governor.labels.stage: the hive-owned stage/NN-*,
+// author/* and stage/stalled|regressed label families.
+type StageLabelsConfig struct {
+	// Enabled turns the stage reconciler on. nil = true.
+	Enabled *bool `yaml:"enabled"`
+	// Dwell overrides the expected time an item may sit in a stage before
+	// it is marked stage/stalled, keyed by stage slug (e.g. "review-pending":
+	// "1h"). Unset slugs keep the built-in table default; "0" means never.
+	Dwell map[string]string `yaml:"dwell,omitempty"`
+	// ContributorNudge configures the comment + relay interrupt the hive
+	// sends a contributor whose PR entered stage/072-returned-to-contributor
+	// (hivecommons/hive#12436).
+	ContributorNudge ContributorNudgeConfig `yaml:"contributor_nudge"`
+	// PresenceWindow is how recent a relay heartbeat must be for the
+	// contributor to count as online (default 15m). Online contributors get
+	// the fix-pr relay interrupt immediately; offline ones only the comment.
+	PresenceWindow string `yaml:"presence_window,omitempty"`
+	// ContributorGraceOnline is how long after the nudge an ONLINE
+	// contributor (relay heartbeat within presence_window) has to push a new
+	// head before the hive adopts the PR (default 2h).
+	ContributorGraceOnline string `yaml:"contributor_grace_online,omitempty"`
+	// ContributorGraceOffline is the same grace for an offline or external
+	// author who only got the GitHub comment (default 15m): an online
+	// clanker keeps its claim; an offline one gets fifteen minutes.
+	ContributorGraceOffline string `yaml:"contributor_grace_offline,omitempty"`
+	// Adoption configures stage/074-adopted-by-hive: the hive supersedes a
+	// contributor PR that is still red after the grace with an App PR that
+	// preserves the author's commits, and the scanner finishes it.
+	Adoption StageAdoptionConfig `yaml:"adoption"`
+	// Stalled configures the stage/stalled health marker.
+	Stalled StageStalledConfig `yaml:"stalled"`
+	// DCO configures the hive-owned `dco` / `no-dco` labels and the
+	// "missing sign-off returns the PR to its author" rule
+	// (hivecommons/hive#12542).
+	DCO StageDCOConfig `yaml:"dco"`
+}
+
+// StageDCOConfig is governor.labels.stage.dco.
+type StageDCOConfig struct {
+	// Required says, per repo, whether a missing Signed-off-by sends the PR
+	// to stage/071 (human) / 072 (clanker), 070 when self-authored, at once. Keys are "owner/repo", a
+	// bare repo name, or "*"; values true/false override detection. A repo
+	// not listed is required only when the hive DETECTS a DCO gate on it: a
+	// `dco`/`DCO` context in the branch's required checks or reported on the
+	// PR head (the DCO App or Prow's plugin). The labels themselves are
+	// written on every managed repo regardless; only the stage routing and
+	// the nudge ask are gated.
+	Required map[string]bool `yaml:"required,omitempty"`
+}
+
+// RequiredFor resolves the per-repo override for display ("owner/repo"):
+// exact key, then bare repo, then "*". ok is false when no key matches.
+func (c StageDCOConfig) RequiredFor(display string) (required, ok bool) {
+	if len(c.Required) == 0 {
+		return false, false
+	}
+	display = strings.ToLower(strings.TrimSpace(display))
+	bare := display
+	if i := strings.LastIndex(display, "/"); i >= 0 {
+		bare = display[i+1:]
+	}
+	for _, key := range []string{display, bare, "*"} {
+		for k, v := range c.Required {
+			if strings.ToLower(strings.TrimSpace(k)) == key {
+				return v, true
+			}
+		}
+	}
+	return false, false
+}
+
+// StageStalledConfig is governor.labels.stage.stalled.
+type StageStalledConfig struct {
+	// RequireQuiet (nil = true) measures the stage dwell from the last
+	// outside activity (head push, comment, review, CI change, label change
+	// by anyone but the hive) so stage/stalled means "nobody is working
+	// this". false measures from entering the stage. Either way the marker
+	// is never applied while the item waits on the hive (checks running,
+	// reviewer verdict pending) — hivecommons/hive#12534.
+	RequireQuiet *bool `yaml:"require_quiet"`
+}
+
+// IsRequireQuiet reports whether stalled requires a quiet dwell (default on).
+func (c StageStalledConfig) IsRequireQuiet() bool { return c.RequireQuiet == nil || *c.RequireQuiet }
+
+// StageAdoptionConfig is governor.labels.stage.adoption.
+type StageAdoptionConfig struct {
+	// Enabled turns adoption on. nil = true. Off, PRs stay in 072 and only
+	// stall.
+	Enabled *bool `yaml:"enabled"`
+	// AfterOffline is how long the author's relay must have been offline
+	// (no heartbeat within presence_window) after the 072 nudge before the
+	// hive adopts a clanker PR (default 15m). Applies to authors with a
+	// contributor profile on this hive.
+	AfterOffline string `yaml:"after_offline,omitempty"`
+	// AfterUnregistered is the wait after the 072 nudge, with no new head,
+	// before the hive adopts a clanker PR whose author has NO contributor
+	// profile on this hive (another hive posted it; default 15m — no
+	// presence reads as offline).
+	AfterUnregistered string `yaml:"after_unregistered,omitempty"`
+	// InPlace lets the hive adopt by pushing to the PR's own branch when
+	// GitHub allows it (same-repo head or maintainer_can_modify) instead of
+	// opening a superseding App PR. nil = true.
+	InPlace *bool `yaml:"in_place,omitempty"`
+}
+
+// IsEnabled reports whether adoption runs (default on).
+func (c StageAdoptionConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
+
+// InPlaceEnabled reports whether in-place adoption is allowed (default on).
+func (c StageAdoptionConfig) InPlaceEnabled() bool { return c.InPlace == nil || *c.InPlace }
+
+// Defaults for the offline-adoption waits (stage 074, hivecommons/hive#12436).
+const (
+	DefaultAdoptAfterOffline      = 15 * time.Minute
+	DefaultAdoptAfterUnregistered = 15 * time.Minute
+)
+
+// EffectiveAfterOffline parses AfterOffline (default 15m).
+func (c StageAdoptionConfig) EffectiveAfterOffline() time.Duration {
+	return parseDurationOr(c.AfterOffline, DefaultAdoptAfterOffline)
+}
+
+// EffectiveAfterUnregistered parses AfterUnregistered (default 15m).
+func (c StageAdoptionConfig) EffectiveAfterUnregistered() time.Duration {
+	return parseDurationOr(c.AfterUnregistered, DefaultAdoptAfterUnregistered)
+}
+
+// Default graces before a red contributor PR is adopted (stage 074).
+const (
+	DefaultContributorGraceOnline  = 2 * time.Hour
+	DefaultContributorGraceOffline = 15 * time.Minute
+)
+
+// EffectiveContributorGraceOnline parses ContributorGraceOnline (default 2h).
+func (s StageLabelsConfig) EffectiveContributorGraceOnline() time.Duration {
+	return parseDurationOr(s.ContributorGraceOnline, DefaultContributorGraceOnline)
+}
+
+// EffectiveContributorGraceOffline parses ContributorGraceOffline (default 15m).
+func (s StageLabelsConfig) EffectiveContributorGraceOffline() time.Duration {
+	return parseDurationOr(s.ContributorGraceOffline, DefaultContributorGraceOffline)
+}
+
+// ContributorNudgeConfig is governor.labels.stage.contributor_nudge.
+type ContributorNudgeConfig struct {
+	// Enabled turns the nudge on. nil = true.
+	Enabled *bool `yaml:"enabled"`
+	// RenudgeInterval is how long after the first nudge the hive nudges once
+	// more (the documented cap is 2 nudges per head). Default: the stage's
+	// dwell (24h), i.e. the re-nudge coincides with stage/stalled.
+	RenudgeInterval string `yaml:"renudge_interval,omitempty"`
+}
+
+// IsEnabled reports whether the contributor nudge runs (default on).
+func (c ContributorNudgeConfig) IsEnabled() bool { return c.Enabled == nil || *c.Enabled }
+
+// DefaultPresenceWindow is governor.labels.stage.presence_window's default.
+const DefaultPresenceWindow = 15 * time.Minute
+
+// EffectiveRenudgeInterval parses RenudgeInterval; unset/invalid returns 0
+// (the caller falls back to the stage dwell).
+func (c ContributorNudgeConfig) EffectiveRenudgeInterval() time.Duration {
+	return parseDurationOr(c.RenudgeInterval, 0)
+}
+
+// EffectivePresenceWindow parses PresenceWindow with the 15m default.
+func (s StageLabelsConfig) EffectivePresenceWindow() time.Duration {
+	return parseDurationOr(s.PresenceWindow, DefaultPresenceWindow)
+}
+
+// parseDurationOr parses a config duration string; empty, unparsable or
+// non-positive values return def.
+func parseDurationOr(raw string, def time.Duration) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
+}
+
+// IsEnabled reports whether the stage reconciler runs (default on).
+func (s StageLabelsConfig) IsEnabled() bool {
+	return s.Enabled == nil || *s.Enabled
+}
+
+// stageSlugs is registered by pkg/stagelabels at init so config validation
+// can reject unknown dwell keys without pkg/dashboard importing the table.
+var stageSlugs []string
+
+// RegisterStageSlugs records the known stage slugs (called from pkg/stagelabels).
+func RegisterStageSlugs(slugs []string) { stageSlugs = append([]string(nil), slugs...) }
+
+// KnownStageSlugs returns the registered stage slugs (nil if none registered).
+func KnownStageSlugs() []string { return append([]string(nil), stageSlugs...) }
+
+// KnownStageSlug reports whether slug is a registered stage slug. When no
+// table has been registered (stagelabels not linked) every slug is accepted.
+func KnownStageSlug(slug string) bool {
+	if len(stageSlugs) == 0 {
+		return true
+	}
+	for _, s := range stageSlugs {
+		if s == slug {
+			return true
+		}
+	}
+	return false
+}
+
+// DwellOverrides parses Dwell into durations, skipping unparsable entries.
+func (s StageLabelsConfig) DwellOverrides() map[string]time.Duration {
+	if len(s.Dwell) == 0 {
+		return nil
+	}
+	out := make(map[string]time.Duration, len(s.Dwell))
+	for slug, raw := range s.Dwell {
+		d, err := time.ParseDuration(strings.TrimSpace(raw))
+		if err != nil || d < 0 {
+			continue
+		}
+		out[strings.ToLower(strings.TrimSpace(slug))] = d
+	}
+	return out
 }
 
 type SensingConfig struct {
@@ -5080,6 +5455,35 @@ type ContributeAnnouncement struct {
 // are not admission/queue controls.
 type ContributeConfig struct {
 	HelpLinks []ContributeHelpLink `yaml:"help_links,omitempty" json:"help_links,omitempty"`
+	// MaxParallelFixes caps how many red-PR fix sessions the hive dispatches
+	// to one contributor at a time, regardless of what their relay advertises
+	// (hivecommons/hive#12436). 0/unset = DefaultMaxParallelFixes. A relay
+	// that advertises no parallel capability always gets capacity 1.
+	MaxParallelFixes int `yaml:"max_parallel_fixes,omitempty" json:"max_parallel_fixes,omitempty"`
+	// MinFocusWindow is the minimum uninterrupted time a preempted primary
+	// task runs after resuming before the hive may preempt it again
+	// (default 30m). Only applies to relays without parallel sessions.
+	MinFocusWindow string `yaml:"min_focus_window,omitempty" json:"min_focus_window,omitempty"`
+}
+
+// DefaultMaxParallelFixes is contribute.max_parallel_fixes's default.
+const DefaultMaxParallelFixes = 2
+
+// DefaultMinFocusWindow is contribute.min_focus_window's default.
+const DefaultMinFocusWindow = 30 * time.Minute
+
+// EffectiveMaxParallelFixes returns the server-side ceiling on per-contributor
+// fix sessions.
+func (c ContributeConfig) EffectiveMaxParallelFixes() int {
+	if c.MaxParallelFixes <= 0 {
+		return DefaultMaxParallelFixes
+	}
+	return c.MaxParallelFixes
+}
+
+// EffectiveMinFocusWindow parses MinFocusWindow with the 30m default.
+func (c ContributeConfig) EffectiveMinFocusWindow() time.Duration {
+	return parseDurationOr(c.MinFocusWindow, DefaultMinFocusWindow)
 }
 
 type ContributeHelpLink struct {
@@ -5327,8 +5731,8 @@ const (
 	// rounding to zero.
 	contributeCooldownMinHours        = 1
 	contributeCooldownMaxHours        = 8760
-	contributeAlreadyDoneLabelDefault = "hive/already-done"
-	contributeAlreadyDoneDefaultDays  = 30
+	contributeAlreadyDoneLabelDefault = DefaultContributeAlreadyDoneLabel
+	contributeAlreadyDoneDefaultDays  = DefaultContributeAlreadyDoneHoldDays
 	contributeAlreadyDoneMinDays      = 1
 	contributeAlreadyDoneMaxDays      = 365
 )
@@ -5374,7 +5778,8 @@ var defaultContributeSkipLabels = []string{
 	"epic",
 	"discussion",
 	"question",
-	"needs-decision",
+	DefaultNeedsDecisionLabel,
+	LegacyNeedsDecisionLabel,
 	"needs-triage",
 }
 
@@ -5425,7 +5830,7 @@ func normalizeContributeSkipLabels(labels []string, needsDecisionLabel string) [
 
 const (
 	blockedWorkflowSkipLabel  = "blocked"
-	defaultNeedsDecisionLabel = "needs-decision"
+	defaultNeedsDecisionLabel = DefaultNeedsDecisionLabel
 )
 
 // ContributeNeedsDecisionLabelOrDefault resolves the label relays should apply
@@ -5629,6 +6034,30 @@ type DashboardConfig struct {
 	// queue policy decides what agents may work; these labels only decide which
 	// visual band and badges an operator sees on the dashboard.
 	IssueBands DashboardIssueBandsConfig `yaml:"issue_bands,omitempty" json:"issue_bands,omitempty"`
+	// StageTracker tunes the Hive activity monitor's server-side payload cache
+	// (hivecommons/hive#12682).
+	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
+}
+
+// DashboardStageTrackerConfig is dashboard.stage_tracker.
+type DashboardStageTrackerConfig struct {
+	// CacheTTLS is how long, in seconds, GET /api/stage-tracker serves the
+	// payload it last built from the status snapshot before rebuilding. The
+	// endpoint never calls GitHub either way; the TTL only bounds how often
+	// the in-memory snapshot is re-read. 0 means governor.eval_interval_s.
+	CacheTTLS int `yaml:"cache_ttl_s,omitempty" json:"cache_ttl_s,omitempty"`
+}
+
+// StageTrackerCacheTTL is the effective dashboard.stage_tracker.cache_ttl_s:
+// the configured value, else the governor eval interval, else its default.
+func (c *Config) StageTrackerCacheTTL() time.Duration {
+	if c != nil && c.Dashboard.StageTracker.CacheTTLS > 0 {
+		return time.Duration(c.Dashboard.StageTracker.CacheTTLS) * time.Second
+	}
+	if c != nil && c.Governor.EvalIntervalS > 0 {
+		return time.Duration(c.Governor.EvalIntervalS) * time.Second
+	}
+	return time.Duration(defaultEvalIntervalS) * time.Second
 }
 
 type DashboardIssueBandsConfig struct {
@@ -5663,6 +6092,94 @@ func ValidateDashboardPublicURL(raw string) (string, error) {
 		return "", fmt.Errorf("dashboard.public_url %q: must be an origin only (scheme://host[:port]) with no path, query or fragment", raw)
 	}
 	return u.Scheme + "://" + u.Host, nil
+}
+
+// ValidateSnapshotURL validates and normalizes hub.snapshot_url:
+// an absolute http(s) URL with an optional path, returning the URL with any
+// trailing slash trimmed when the path is otherwise root/empty. Query,
+// fragment and credentials are not allowed. Empty is valid and means "unset".
+func ValidateSnapshotURL(raw string) (string, error) {
+	return validateSnapshotURL(raw, false)
+}
+
+// legacySnapshotURLWarned records raw legacy URLs already warned about, so
+// repeated Validate calls (dashboard saves, reloads) do not re-log the warning.
+var (
+	legacySnapshotURLWarnedMu sync.Mutex
+	legacySnapshotURLWarned   = map[string]struct{}{}
+)
+
+// Loading tolerates legacy query/fragment values accepted by hub registration,
+// while dashboard writes continue to enforce the stricter URL shape.
+func validateSnapshotURL(raw string, allowLegacyQueryFragment bool) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return "", nil
+	}
+	// Errors echo a redacted form only: query strings and userinfo may carry secrets.
+	shown := redactSnapshotURL(v)
+	u, err := url.Parse(v)
+	if err != nil {
+		// *url.Error.Error() embeds the raw URL, so unwrap to the bare cause.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return "", fmt.Errorf("hub.snapshot_url %q: %w", shown, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("hub.snapshot_url %q: must be an absolute http:// or https:// URL", shown)
+	}
+	if u.Hostname() == "" {
+		return "", fmt.Errorf("hub.snapshot_url %q: missing host", shown)
+	}
+	if u.User != nil {
+		return "", fmt.Errorf("hub.snapshot_url %q: credentials are not allowed", shown)
+	}
+	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+		if !allowLegacyQueryFragment {
+			return "", fmt.Errorf("hub.snapshot_url %q: query and fragment are not allowed", shown)
+		}
+		// Do not log the URL: legacy query strings may contain credentials.
+		legacySnapshotURLWarnedMu.Lock()
+		_, seen := legacySnapshotURLWarned[v]
+		legacySnapshotURLWarned[v] = struct{}{}
+		legacySnapshotURLWarnedMu.Unlock()
+		if !seen {
+			log.Printf("[config] warning: hub.snapshot_url contains a legacy query or fragment; remove it before updating this field through the dashboard")
+		}
+		// Preserve path and suffix semantics rather than normalizing a legacy URL.
+		return u.String(), nil
+	}
+	if u.Path == "" || u.Path == "/" {
+		return u.Scheme + "://" + u.Host, nil
+	}
+	// Rebuild from parsed parts so a bare trailing "#" (which url.Parse
+	// reports as an empty fragment) and an uppercase scheme do not survive.
+	return u.Scheme + "://" + u.Host + strings.TrimRight(u.EscapedPath(), "/"), nil
+}
+
+// redactSnapshotURL returns raw with any query/fragment suffix and any
+// userinfo masked, so validation errors can name the value without echoing
+// secrets. It works on the raw text so it is safe to use even when parsing
+// failed.
+func redactSnapshotURL(raw string) string {
+	v := raw
+	if i := strings.IndexAny(v, "?#"); i >= 0 {
+		v = v[:i+1] + "[redacted]"
+	}
+	start := 0
+	if s := strings.Index(v, "://"); s >= 0 {
+		start = s + len("://")
+	}
+	authEnd := len(v)
+	if slash := strings.Index(v[start:], "/"); slash >= 0 {
+		authEnd = start + slash
+	}
+	if at := strings.LastIndex(v[start:authEnd], "@"); at >= 0 {
+		v = v[:start] + "[redacted]@" + v[start+at+1:]
+	}
+	return v
 }
 
 var snapshotFrameAncestorHostPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$`)
@@ -6708,8 +7225,8 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Hub.ContributeWallRetentionDays < 0 {
 		c.Hub.ContributeWallRetentionDays = 0
-	} else if c.Hub.ContributeWallRetentionDays > 3650 {
-		c.Hub.ContributeWallRetentionDays = 3650
+	} else if c.Hub.ContributeWallRetentionDays > MaxContributeWallRetentionDays {
+		c.Hub.ContributeWallRetentionDays = MaxContributeWallRetentionDays
 	}
 	if c.Hub.ContributeAlreadyDoneLabel != "" {
 		c.Hub.ContributeAlreadyDoneLabel = strings.TrimSpace(c.Hub.ContributeAlreadyDoneLabel)
@@ -6916,6 +7433,7 @@ func (c *Config) applyDefaults() {
 		if c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle == 0 {
 			c.Knowledge.BeadSynthesizer.MaxAPICallsPerCycle = DefaultBeadSynthMaxAPICallsPerCycle
 		}
+		c.Knowledge.BeadSynthesizer.Publish = c.Knowledge.BeadSynthesizer.Publish.WithDefaults()
 		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
 			c.Knowledge.BeadSynthesizer.VaultPath = DefaultBeadSynthVaultPath
 		}
@@ -8143,7 +8661,11 @@ type EscalationConfig struct {
 // value preserves existing behavior: merge eligibility does not require a
 // review-verdicts.json aggregate approval unless an operator opts in.
 type ReviewConfig struct {
-	RequireApproval    bool     `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
+	RequireApproval bool `yaml:"require_approval,omitempty" json:"require_approval,omitempty"`
+	// Shadow evaluates the approval gate without enforcing it, recording
+	// shadow.review_gate.would_have_held on the evidence bundle. It never
+	// blocks a merge and never weakens an enabled require_approval.
+	Shadow             bool     `yaml:"shadow,omitempty" json:"shadow,omitempty"`
 	FanOut             bool     `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
 	MaxParallelReviews int      `yaml:"max_parallel_reviews,omitempty" json:"max_parallel_reviews,omitempty"`
 	ReviewerAgents     []string `yaml:"reviewer_agents,omitempty" json:"reviewer_agents,omitempty"`
@@ -8628,9 +9150,10 @@ var DefaultContributorLaneRequireTiers = []string{"trusted", "merger"}
 var ContributorLaneGrantableTiers = []string{"trusted", "merger", "advisor"}
 
 // DefaultContributorLaneSoakMinutes is the contributor-lane soak when
-// auto_merge.contributor_lane.soak_minutes is unset: two hours of unchanged,
-// green head gives a maintainer who does want to look a realistic window.
-const DefaultContributorLaneSoakMinutes = 120
+// auto_merge.contributor_lane.soak_minutes is unset: thirty minutes of
+// unchanged, green head gives a maintainer who does want to look a window
+// without parking reviewed work for hours.
+const DefaultContributorLaneSoakMinutes = 30
 
 // DefaultContributorLaneExcludeLabels is the contributor-lane exclude set when
 // auto_merge.contributor_lane.exclude_labels is unset.
@@ -8721,7 +9244,7 @@ func IsContributorLaneGrantableTier(tier string) bool {
 
 func (c ContributorLaneAutoMergeConfig) Validate() error {
 	if c.SoakMinutes < 0 {
-		return fmt.Errorf("auto_merge.contributor_lane.soak_minutes must be 0 (default) or greater, got %d", c.SoakMinutes)
+		return fmt.Errorf("auto_merge.contributor_lane.soak_minutes must be 0 (default 30) or greater, got %d", c.SoakMinutes)
 	}
 	for _, tier := range c.RequireTiers {
 		if !IsContributorLaneGrantableTier(tier) {

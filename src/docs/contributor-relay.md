@@ -25,6 +25,7 @@ sequenceDiagram
 - The **work queue** is built from the hive's monitored repos: open candidate issues that pass every contributor admission gate (including disabled repositories, holds, cooldowns, in-flight work, dependencies, assignments, and the admin's title/author/label filters). `GET /api/contribute/status` reports that offerable total as `actionable_items`; its additive `candidate_items` field is the raw pre-admission scanner population. `GET /api/contribute/queue` returns the bounded ordered rows plus the uncapped offerable `queue_total` and separately visible `held_total`.
 - The **relay** authenticates with a registration token, receives one task at a time, drives the local CLI inside a tmux session, injects a short-lived GitHub token for the PR, and reports the result. It heartbeats every 30 s and reconnects with exponential backoff; a task is abandoned if the relay observes no forward progress for 30 minutes, or if it crosses an absolute 4-hour backstop. The GitHub token is valid for 55 minutes and is re-minted by the hub before it expires, so a task may outlive any single token ([below](#the-github-token-outlives-the-task-because-the-hub-re-mints-it)).
 - Every contributor has a **trust tier** with per-tier rate limits. See [Contributor trust tiers and delegated agent roles](contributor-trust-and-roles.md).
+- Hives **advertise a few open issues** to newcomers: issues that score as small and well-specified get GitHub's `good first issue` + `help wanted` labels and a welcome comment that deep-links this page for that issue (`/contribute?issue=<owner>/<repo>%23<n>`) with the claim → DCO-signed PR → `Fixes #n` steps. The label is not a reservation — if a hive agent starts the issue first the label comes off — so claim first. See [Hive-curated good first issues](good-first-issue.md).
 
 ## Basic setup
 
@@ -793,7 +794,7 @@ Two admission behaviors are worth knowing when your relay seems idle:
 - **A closing keyword written as prose counts.** The claim parser used to require GitHub's own trailer shape, `keyword #N` (optionally with a colon), so a merged PR whose body read *"Resolves architect issue #1232 (first incremental step)"* produced **no claim at all** ([#7995](https://github.com/hivecommons/hive/issues/7995)). Since that issue the closing tier accepts the same bounded run of prose the non-closing reference tier already did — at most 40 characters, no `.`, newline or `#` — so `Resolves architect issue #1232` and `Fixes the bug in #12` are closing claims. GitHub will still not auto-close on those, and hive does not pretend it will: a claim here is about whether the **work landed**, and a merged PR that says it resolves an issue is the strongest evidence the hub gets, so it suppresses rather than being released for re-verification after every merge. The prose gap must begin with a space or tab, which is what keeps a Conventional Commits type prefix (`fix:`, `fix(scope):`) from claiming the first issue number in a title. The closing tier remains single-issue, matching GitHub's one-keyword-per-number rule; only the reference tier reads lists.
 - **A merged fix does not expire on a clock.** A strong claim from a merged PR — or a verified `no_work_needed` verdict — used to leave the ledger 72 hours after the merge, because the settle scan looks back 72h and the ledger TTL matched it. The PR was still merged; only the clock had moved. So the issue went straight back into the offer pool, an agent re-verified "already fixed on main", and the verdict claim it left sat on the same 72h clock — one wasted task cycle every three days for as long as nobody closed the issue ([#8003](https://github.com/hivecommons/hive/issues/8003): projectbluefin/chairlift#55, fixed by #133, re-offered three times with two "please close" agent comments on it). Settled claims are now carried forward across scans for as long as the issue stays open — the 30-day retention bound counts from the last enumeration pass that listed the issue as open, not from the merge, so it only prunes claims whose issue has since closed ([#11580](https://github.com/hivecommons/hive/issues/11580)); a merged *weak* claim (a `Refs #N`, or an external author's PR) is not — it never asserted it finished the issue, and is still released with context as before. And because the hold has by then outlasted every automatic bound, after **7 days** the contribute queue stops describing it as "an open pull request already claims this issue" and withholds it under `merged_claim_stale`, whose prose is the question a maintainer has to answer: *Fixed by merged PR #133 4 days ago; the issue is still open — close it or say what remains.*
 - **An issue that keeps consuming pull requests is withheld for a maintainer.** The claim ledger answers "is somebody on this right now?"; it could not answer "has this issue already cost seven pull requests?" ([#7995](https://github.com/hivecommons/hive/issues/7995)). projectbluefin/documentation#1232 — an incremental architecture issue — went three merged and four closed PRs deep and was still NEXT UP: every cycle an agent found remaining work, shipped the next slice, and the issue came back after the merge, because only a human can decide that an incremental issue is *done*. So the same two PR listings the claim scan already pages through now also feed a cumulative **churn history**: which pull requests have been observed against each issue, and how each one ended. A closed-without-merge PR still claims nothing — the issue stays released for work — it only counts. Once an issue reaches **2 merged** or **2 closed-unmerged** pull requests, the contribute queue stops offering it and withholds it with reason `issue_churn`, on the same operator-visible Withheld surface as an open-PR claim, carrying the counts and the PR numbers a maintainer needs in order to answer the question. Nothing is closed, commented on, or relabelled by the guard. It lapses on its own: records age out 14 days after a pull request was last seen (deliberately longer than the 72h settle scan, because the pattern plays out over a week or more), and a maintainer who has triaged the issue can clear the guard immediately by adding the label `hive: churn-triaged`.
-- **An issue somebody has *claimed* is not offered — and a clanker already on it is pulled off when a higher rank claims it.** The PR-claim ledger above only knows about work that has reached a pull request. Since [#8380](https://github.com/hivecommons/hive/issues/8380) the hub also keeps a **worker-claim ledger**: who is on an issue *right now*, ranked **human > agent > contributor > external**. A person claims from the terminal (`hivectl claim owner/repo#N`) or the API (`POST /api/claims/{owner}/{repo}/{number}`); a governor kick *lists* each issue it hands one of the hive's own agents — no GitHub comment, no claim, just a 30-minute hold that keeps your session and other agents off it while the kick is live — and the hub records the **agent** claim on the agent's first start signal on that issue (its own comment, label or claim request through `hive-open-issue`, or a `hive-open-pr` request naming it; [#10527](https://github.com/hivecommons/hive/issues/10527)); and the relay records a **contributor** claim for your session the moment it leases you a task, releasing it when the task completes, is abandoned, is yanked or its lease expires. `selectTask` excludes every issue another holder claims exactly as it excludes leased items, and the scheduler withholds them from kicks under *In Flight*. Precedence is enforced on write: a higher rank **takes over** and the displaced holder is told to stop — for a relay session that means the hub yanks that one task (`task_revoke`, generation bumped so a late completion is fenced) and hands the session its next admissible item in the same call, leaving your other sessions alone; for an agent or an external bot it means a `🔁` comment addressed to it plus a `preempted:<login>` label on the issue. Same rank warns unless forced; a lower rank is refused. Claims lapse on a per-kind TTL (`claims.human_ttl_s` 4h, `agent_ttl_s` 2h, `contributor_ttl_s` 30m — the relay lease length — capped by `max_ttl_s` 24h) and `claims.enabled: false` turns the whole mechanism off. Every transition is mirrored onto the issue as a comment carrying a `<!-- hive:claim who=… kind=… until=… -->` marker (or `<!-- hive:preempt target=… by=… -->` on takeover) and a `claimed` label, so a relay that only reads GitHub can still see it was preempted.
+- **An issue somebody has *claimed* is not offered — and a clanker already on it is pulled off when a higher rank claims it.** The PR-claim ledger above only knows about work that has reached a pull request. Since [#8380](https://github.com/hivecommons/hive/issues/8380) the hub also keeps a **worker-claim ledger**: who is on an issue *right now*, ranked **human > agent > contributor > external**. A person claims from the terminal (`hivectl claim owner/repo#N`) or the API (`POST /api/claims/{owner}/{repo}/{number}`); a governor kick *lists* each issue it hands one of the hive's own agents — no GitHub comment, no claim, just a 30-minute hold that keeps your session and other agents off it while the kick is live — and the hub records the **agent** claim on the agent's first start signal on that issue (its own comment, label or claim request through `hive-open-issue`, or a `hive-open-pr` request naming it; [#10527](https://github.com/hivecommons/hive/issues/10527) — a comment that is an explicit *deferral* (see the [recognized forms](hive-open-issue.md#comment)) is posted but records no claim, so a parked issue is not shown in progress for two hours after its blocker lands; [#12387](https://github.com/hivecommons/hive/issues/12387)); and the relay records a **contributor** claim for your session the moment it leases you a task, releasing it when the task completes, is abandoned, is yanked or its lease expires. `selectTask` excludes every issue another holder claims exactly as it excludes leased items, and the scheduler withholds them from kicks under *In Flight*. Precedence is enforced on write: a higher rank **takes over** and the displaced holder is told to stop — for a relay session that means the hub yanks that one task (`task_revoke`, generation bumped so a late completion is fenced) and hands the session its next admissible item in the same call, leaving your other sessions alone; for an agent or an external bot it means a `🔁` comment addressed to it plus a `preempted:<login>` label on the issue. Same rank warns unless forced; a lower rank is refused. Claims lapse on a per-kind TTL (`claims.human_ttl_s` 4h, `agent_ttl_s` 2h, `contributor_ttl_s` 30m — the relay lease length — capped by `max_ttl_s` 24h) and `claims.enabled: false` turns the whole mechanism off. Every transition is mirrored onto the issue as a comment carrying a `<!-- hive:claim who=… kind=… until=… -->` marker (or `<!-- hive:preempt target=… by=… -->` on takeover) and a `claimed` label, so a relay that only reads GitHub can still see it was preempted.
 - **Claims expire.** Ledger entries live 72 hours — refreshed while the PR stays open, or anchored at the merge for a merged claim, so a settled issue is suppressed for 72h after its fix lands and nothing is stranded forever. An **open** claiming PR that goes red on a required check and stale releases the issue back to the queue; merged claims never take that valve — a fix already on `main` cannot go red.
 - **A repository the App cannot mint a token for is excluded, not fatal.** Since C4 the `task_assign` token is scoped to the chosen item's repository, so GitHub's `422 There is at least one repository that does not exist or is not accessible to the parent installation` means *that repo* — renamed, deleted, or removed from the installation — and nothing about the tier or the App key. It used to fail the whole selection with `token_mint_failed`, and because selection is deterministic the same doomed item was chosen on every 30 s retry: one stale entry in the project repo list (a renamed repo) wedged a hive for every contributor while `actionable_items` sat at 19 ([#7869](https://github.com/hivecommons/hive/issues/7869)). Now the claim is rolled back, the repo is excluded from selection for `mintFailureRepoCooldown` (10 min, so the fleet is not re-discovering it every retry, but the operator's fix takes effect without a restart), and the *same* call selects again from the remaining candidates (bounded at three such skips). If nothing else is admissible the reason is `repo_unmintable` rather than `no_matching_work` or `token_mint_failed`, and the hub log names the repo with a pointer at the repo list. Non-repo mint failures (5xx, bad key, an unaccepted permission) keep the `token_mint_failed` contract and exclude nothing — they would recur for any candidate.
 
@@ -959,6 +960,51 @@ The prompt also says, in the same breath, that **opening the PR *is* finishing**
 ### When the agent prints both verdict lines
 
 The prompt forbids printing `no_work_needed` *and* `complete` for one task, but a model that narrates a closing "complete" after its real verdict keeps doing it. The scanner reads newest-first, so the narrated `complete` won; with no PR behind it the hub's ledger degraded that to a bare `idle`, while the informative verdict — blocked on a maintainer decision, with the reason — sat one line above ([#7861](https://github.com/hivecommons/hive/issues/7861)). `detectCompletionVerdict()` now keeps the `no_work_needed` when a `complete` follows it *within the same task* (both newer than the [#5650](https://github.com/hivecommons/hive/issues/5650) delivery baseline; a `no_work_needed` at or above the baseline is a previous task's and is never preferred). A `complete` that revises a `no_work_needed` *upward* — the other order — still wins as the newest line, and a PR this task opened still overrides `no_work_needed` where the verdict is acted on (`resolveTaskPR`'s confirmed-PR suppression), so the preference can never demote a real shipment. The delivery baseline itself is still the newest sentinel of any kind, or a previous task's trailing `complete` would complete the next task on its first tick.
+
+### fix-pr tasks
+
+The one place a declaration DOES shape dispatch is the stage-072 contributor nudge ([labels-and-control-signals.md](labels-and-control-signals.md#off-the-happy-path-072--nudge--074--takeover)), and only in the client's favour: the hub never grants more than the relay asked for. When one of a contributor's earlier PRs goes red (failing checks, `changes_requested`, conflicts) and the contributor is online — a heartbeat within `governor.labels.stage.presence_window`, default 15m — the hub pushes the diagnosis to their relay as a `task_assign` the relay may receive **while a task is already running**:
+
+```json
+{ "type": "task_assign", "task_id": "…", "task_gen": 7,
+  "kind": "fix-pr", "priority": "interrupt", "mode": "spawn",
+  "repo": "owner/repo", "number": 99, "url": "https://github.com/owner/repo/pull/99",
+  "fix_prs": [ { "repo": "owner/repo", "number": 99, "url": "…", "head_sha": "abc…",
+                 "title": "…", "failing_checks": ["build"], "review_asks": ["…"], "reason": "check-failing:build" } ],
+  "prompt": "…work on the EXISTING PR branch, push a new head, same sign-off…" }
+```
+
+| Field | Meaning |
+|---|---|
+| `kind: fix-pr` | Not a fresh issue: rework an existing PR of this author on its own branch (push a new head; same DCO sign-off; never open a second PR). |
+| `priority` | `interrupt` when sent mid-task; `queued` when handed out at a task boundary (the relay's `ready`). |
+| `mode` | What the hub expects the relay to do, chosen from its DECLARE: `spawn` (parallel sub-session) or `preempt` (park the primary task, fix, resume). |
+| `fix_prs[]` | One entry per PR. Several of the author's PRs failing for the same cause (same check + error signature) arrive coalesced in ONE task. |
+
+**What the relay advertises.** `relay_capabilities` carries `fix_pr_interrupt_v1` (understands the kind — without it the hub never interrupts, the PR gets the GitHub comment only, and queued fixes are still served at `ready` as ordinary tasks) and, when it can run a one-shot headless child beside the interactive pane, `parallel_sessions` with `max_parallel_fixes: N` — the relay's `HIVE_MAX_PARALLEL_FIXES` (default 1; `0` disables parallel fixes and forces preempt mode). The hub clamps `N` to `contribute.max_parallel_fixes` (default 2) and keeps at most that many fix tasks in flight per contributor; the rest wait server-side, oldest PR first, human changes-requested before CI-red.
+
+**What the shipped relay does.**
+
+- `mode=spawn` with a free slot: `task_accepted`, then a headless child (`buildHeadlessArgv` for the configured backend, cwd `.hive-fix-<task_id>` under the workspace) runs the fix; exit 0 → `task_complete`, anything else → `task_failed` with the exit code, after `HIVE_FIX_PR_TIMEOUT_MS` (2h) the child is killed. `currentTask` is never touched: the primary lease keeps being renewed.
+- `mode=preempt`, interactive pane: `task_accepted`, then the pane receives an `INTERRUPT (hive fix-pr, preempt mode)` prompt telling the agent to park the current issue (commit/stash WIP; the claim stays alive), fix the PR, print exactly `HIVE_FIX_PR_DONE <task_id>` (or `HIVE_FIX_PR_FAILED <task_id> <reason>`), then resume. The progress tick reads the marker off the pane and reports `task_complete`/`task_failed` for the fix's `task_id`. Only one fix preempts at a time; more are queued locally.
+- `mode=preempt`, headless primary: there is no pane to interrupt, so the fix is deferred (`task_accepted` immediately) and runs before the relay's next `ready` — "fix what you broke before taking new work" holds on the client too.
+- With no task running, a `fix-pr` is just the next task.
+
+The hub records the mode it used in the nudge comment's marker (`mode=spawn|preempt|queued|comment`) and exposes queue depth / in-flight as `fix_queue` on the contributor profile API.
+
+#### What the operator sees (Operations → Connected contributor agents)
+
+Each row of the "Connected contributor agents (ClankeR)" list on `/contribute/operations` reads the same declaration back (hivecommons/hive#12502), so an operator can check whether the rework the stage labels promise is actually reaching the agent. The row is fed by `/api/contribute/fleet`; each `clankers[]` entry carries:
+
+| Field | Meaning |
+|---|---|
+| `parallel_capacity` | Total sessions the hub will use for this relay: `max_parallel_fixes + 1` once `parallel_sessions` is advertised (clamped by `contribute.max_parallel_fixes`); `1` for a relay that advertises `fix_pr_interrupt_v1` without parallel sessions (preempt); `0` when neither is advertised — the row reads **capacity: not advertised**. |
+| `fix_mode` | `spawn` or `preempt`, the interrupt mode that capacity implies. |
+| `in_flight[]` | One entry per work item on the connection — the primary task plus every `fix-pr` sub-session — each with `kind` (`new` or `rework`), `task_kind`, `repo`, `number`, `title`, `url`, `stage` (the item's `stage/NNN-*` label as the hive last observed it), `mode` and `started_at`. The row shows one line per item with a **NEW** / **REWORK** badge. A relay running only a boundary-dispatched fix therefore shows as *working*, not *idle*. |
+| `fix_queue_depth` | Red PRs waiting in the contributor's server-side fix queue (not dispatched). |
+| `pending_rework`, `pending_rework_prs[]` | The contributor's open PRs in `stage/072-returned-to-contributor` that have **not** been dispatched to them. The row prints a red **N PRs awaiting rework (not yet dispatched)** line, and an idle relay reads **idle · N PRs awaiting rework** instead of `idle: no matching work`. |
+
+`kind: rework` means the item repairs one of the contributor's own PRs: any `fix-pr` task, or a task whose target the stage store has in a repair stage (`070-fixing`, `071-needs-author`, `072-returned-to-contributor`, `074-adopted-by-hive`). Everything else is `new`. `pending_rework` is derived without a GitHub call: the stage-label store (which remembers each PR's author) ∪ the fix queue, minus the fix tasks in flight on any of the contributor's connections. A non-zero `pending_rework` on an idle row is the signal to look at — typically a relay that did not advertise `fix_pr_interrupt_v1`, a preempt-mode relay inside its `contribute.min_focus_window`, or a contributor who is offline.
 
 ## Reconnecting without losing in-flight work
 
@@ -1671,6 +1717,55 @@ contributor to update the checkout and restart `just contribute-hive`. A relay
 may later send `knowledge_state` with the same two fields when its background
 knowledge refresh changes the loaded state; old hubs ignore the new message, and
 new hubs treat an absent field as not reported rather than false.
+
+## Priority PR-fix scheduling groundwork (#12436)
+
+The hub accepts optional `capabilities.parallel_sessions` on `auth_response`.
+It counts **all** sessions, including the primary: omitted/zero or one means
+single-session; three means one primary plus at most two parallel fixes.
+Declarations are advisory, bounded to 0–64, and do not override server-side
+concurrency limits or credential/acceptance gates. This field alone does **not**
+opt a relay into interrupts. No `fix-pr` server capability is advertised yet.
+
+`pkg/contributefix` supplies the scheduling primitive for the stage-072 adapter:
+
+- Create one queue per contributor account, not per socket/session. Supply only
+  verified, claim-linked feedback, with repo, PR number, head SHA, PR creation
+  time, failing checks and review asks. External authors without a relay claim
+  must not be put in a relay queue.
+- `Dispatch` reserves fix tasks with `kind: fix-pr`, `priority: interrupt`, a
+  `prs` list of head-specific feedback, and instructions to push to the existing
+  branches with the same sign-off. Its IDs are **local reservation IDs**, not
+  replacements for the wire task ID/generation or scoped credential checks.
+- Human changes-requested feedback precedes CI-red feedback; otherwise oldest
+  PR first, with a stable repo/number tie-break. CI tasks coalesce only with the
+  same repository, check name **and** nonempty error signature. Matching feedback
+  arriving after delivery waits for that batch, rather than mutating its payload
+  or running a second task for the same cause concurrently.
+- Parallel dispatch reserves at most `min(parallel_sessions - 1,
+  max_parallel_fixes)` tasks, never the primary session. The caller invokes
+  `Dispatch` again after `Finish` to refill slots. Offline queues do not dispatch.
+- Single-session dispatch proposes `preempt` once. The adapter must park the
+  primary with its claim alive, finish the fix, actually resume the primary,
+  then acknowledge `ResumePrimary`. The focus window starts at that resume,
+  not at dispatch or completion. A duplicate acknowledgement cannot extend it.
+- Reject delivery **before acceptance** with `Reject`; this restores queued
+  feedback without overwriting a newer head. Accepted-task failures instead use
+  `Finish`, with retry policy handled by the adapter. Stale completion IDs cannot
+  free newer slots, and stale green observations cannot remove a newer head.
+- `Counts` reports queued **PRs** and in-flight **tasks** (a coalesced task may
+  cover multiple PRs). Every new-work claim boundary must consult `canClaimNew`;
+  pending, in-flight, or not-yet-resumed work prevents taking new issues.
+
+This is groundwork, not end-to-end delivery: the queue is in memory and is not
+wired into stage reconciliation or task selection yet. Before enabling it, the
+adapter must persist/recover reservations, apply presence and grace settings,
+log enqueue/dequeue, publish profile/dashboard counts, send idempotent GitHub
+nudges, and adopt expired work through the gated takeover path. The in-repository
+relay (`bin/contributor-relay.js`) still needs parallel launch/park/resume handling
+and heartbeat capability updates. Stage mirrors, legacy writer retirement, and
+Settings/config parity also remain tracked by #12436. Do not advertise interrupt
+support or suppress fresh claims until that integration is complete.
 
 ## Custom stylesheets
 

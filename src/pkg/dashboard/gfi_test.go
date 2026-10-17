@@ -45,7 +45,7 @@ func TestFeaturesOpsGoodFirstIssueRoundTrip(t *testing.T) {
 	}
 	apply(cur)
 	g := cur.GoodFirstIssue
-	if !g.Enabled || g.Interval != 30*time.Minute || g.MaxPerRepo != 3 || g.MaxPerSweep != 1 || g.MinAge != 48*time.Hour {
+	if !g.IsEnabled() || g.Interval != 30*time.Minute || g.MaxPerRepo != 3 || g.MaxPerSweep != 1 || g.MinAge != 48*time.Hour {
 		t.Fatalf("applied %+v", g)
 	}
 	resp := featuresOpsResponse(cur)
@@ -71,8 +71,24 @@ func TestFeaturesOpsGoodFirstIssueRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	apply(cur)
-	if cur.GoodFirstIssue.Enabled != g.Enabled || cur.GoodFirstIssue.Interval != g.Interval || cur.GoodFirstIssue.MaxPerRepo != g.MaxPerRepo {
+	if cur.GoodFirstIssue.IsEnabled() != g.IsEnabled() || cur.GoodFirstIssue.Interval != g.Interval || cur.GoodFirstIssue.MaxPerRepo != g.MaxPerRepo {
 		t.Fatalf("empty body mutated config: %+v", cur.GoodFirstIssue)
+	}
+	// Default on; an explicit false persists as an opt-out rather than
+	// collapsing back to the default.
+	fresh := &config.Config{}
+	if featuresOpsResponse(fresh)["goodFirstIssueEnabled"] != true {
+		t.Fatal("good_first_issue should default on")
+	}
+	var optOut featuresOpsBody
+	_ = json.Unmarshal([]byte(`{"goodFirstIssueEnabled":false}`), &optOut)
+	apply, err = optOut.prepare(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(fresh)
+	if fresh.GoodFirstIssue.Enabled == nil || *fresh.GoodFirstIssue.Enabled || featuresOpsResponse(fresh)["goodFirstIssueEnabled"] != false {
+		t.Fatalf("opt-out not persisted: %+v", fresh.GoodFirstIssue)
 	}
 }
 

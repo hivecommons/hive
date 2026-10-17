@@ -49,7 +49,7 @@ type bootAgentsDeps struct {
 // manager's own gate rather than a permissive stand-in.
 type requestRelays struct {
 	prOpen     github.PRRequestAuthorizer
-	holdLabel  func(agentName string) bool
+	holdLabel  func(agentName, repo string) bool
 	issueOpen  github.IssueRequestAuthorizer
 	review     github.ReviewRequestAuthorizer
 	merge      github.MergeRequestAuthorizer

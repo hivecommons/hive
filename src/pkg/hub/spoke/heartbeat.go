@@ -22,8 +22,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/agent"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/fleetreport"
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/inferencehealth"
 	spokesig "github.com/hivecommons/hive/pkg/spoke"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -409,6 +411,16 @@ type AgentSummary struct {
 	// last fields explain the newest restart. The hub may add ResetAt/ResetBy
 	// when rendering fleet rows after an operator reset.
 	Restarts AgentRestartTelemetry `json:"restarts,omitempty"`
+	// BackendAuth* is the agent's backend-auth canary (#6558), the same fields
+	// /api/status shows per agent; empty status means ok. The hub's
+	// auth_health roll-up reads them. BackendAuthRefreshable is
+	// claude.HasUsableToken over the agent's own credential (ADR-0024): nil
+	// for backends with no verified refresh semantics, so absent never reads
+	// as "needs login".
+	BackendAuthStatus      string `json:"backendAuthStatus,omitempty"`
+	BackendAuthSince       string `json:"backendAuthSince,omitempty"`
+	BackendAuthLastError   string `json:"backendAuthLastError,omitempty"`
+	BackendAuthRefreshable *bool  `json:"backendAuthRefreshable,omitempty"`
 }
 
 type AgentRestartTelemetry struct {
@@ -454,6 +466,11 @@ type AgentActivity struct {
 	StartFailureExitCode *int
 	StartFailureSignal   string
 	Restarts             AgentRestartTelemetry
+	// BackendAuth* — see the matching AgentSummary fields.
+	BackendAuthStatus      string
+	BackendAuthSince       time.Time
+	BackendAuthLastError   string
+	BackendAuthRefreshable *bool
 }
 
 // NewAgentSummary builds one AgentSummary from an agent's name, state, mode and
@@ -485,6 +502,13 @@ func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
 		StartBlocked:         act.StartBlocked,
 		StartFailureExitCode: act.StartFailureExitCode,
 		StartFailureSignal:   act.StartFailureSignal,
+
+		BackendAuthStatus:      act.BackendAuthStatus,
+		BackendAuthLastError:   act.BackendAuthLastError,
+		BackendAuthRefreshable: act.BackendAuthRefreshable,
+	}
+	if !act.BackendAuthSince.IsZero() {
+		as.BackendAuthSince = act.BackendAuthSince.UTC().Format(time.RFC3339)
 	}
 	if !act.PausedAt.IsZero() {
 		as.PausedAt = act.PausedAt.UTC().Format(time.RFC3339)
@@ -755,6 +779,11 @@ type HeartbeatPayload struct {
 	ProviderLimitAgents   []string       `json:"provider_limit_agents,omitempty"`
 	Health                map[string]any `json:"health"`
 	DashboardURL          string         `json:"dashboard_url"`
+	// Providers is the per-provider auth/availability roll-up of Agents
+	// (ADR-0024, #12611): redacted, no credential material. Omitted when the
+	// spoke disables provider status or has no enabled agent naming a
+	// backend; an old hub ignores it.
+	Providers []agent.ProviderStatus `json:"providers,omitempty"`
 	// Output-freshness telemetry is optional and backward compatible: older
 	// spokes omit it, and the hub keeps the pre-existing no-write verdict.
 	LastWriteCapableKickAt string `json:"last_write_capable_kick_at,omitempty"`
@@ -1155,7 +1184,9 @@ const HeartbeatEvidenceCalibrationBuckets = 6
 // FalseBlock90d counts blocking verdicts on PRs that were merged anyway;
 // Reverted14d90d counts merged PRs reverted or followed up within 14 days.
 // AutomergeSelfAuthored is AutoMerge.SelfAuthoredAutoMergeAllowed(ACMMLevel),
-// nil when the spoke has no config. The JSON shape matches hub.HeartbeatEvidence.
+// nil when the spoke has no config. HiveState is the 24 h / 7 d summary of the
+// spoke's hive state time series (#12339), nil when it has no recent sample.
+// The JSON shape matches hub.HeartbeatEvidence.
 type HeartbeatEvidence struct {
 	Verdicts90d           int                                                          `json:"verdicts_90d"`
 	FalseApprove90d       int                                                          `json:"false_approve_90d"`
@@ -1166,13 +1197,81 @@ type HeartbeatEvidence struct {
 	ReviewerFamilies      []string                                                     `json:"reviewer_families,omitempty"`
 	AuthorFamilies        []string                                                     `json:"author_families,omitempty"`
 	Calibration           [HeartbeatEvidenceCalibrationBuckets]HeartbeatEvidenceBucket `json:"calibration"`
+
+	// Fleet-panel aggregates (#12370), all additive: an old spoke omits them
+	// and the hub treats the absence as "not reported", never as zero.
+	// OutcomesByAuthorKind is keyed by human/agent/bot. WriteCounters is the
+	// proxy's attempted-vs-blocked agent write totals per intent tier since the
+	// proxy started (not a 90-day window). ShadowGate compares what the shadow
+	// review gate / intent verification would have done with the outcome.
+	OutcomesByAuthorKind map[string]HeartbeatEvidenceOutcome    `json:"outcomes_by_author_kind,omitempty"`
+	WriteCounters        map[string]HeartbeatEvidenceWriteCount `json:"write_counters,omitempty"`
+	ShadowGate           *HeartbeatEvidenceShadow               `json:"shadow_gate,omitempty"`
+
+	// TimeToMerge is the median time-to-merge (merge.at minus
+	// merge.opened_at) of the merged PRs in the window that recorded an open
+	// time, with that sample size. nil when none did, including every bundle
+	// written before opened_at was captured: the hub shows "not reported",
+	// never a zero median.
+	TimeToMerge *HeartbeatEvidenceTimeToMerge `json:"time_to_merge,omitempty"`
+
+	// Windows carries the same counts over shorter trailing windows, keyed by
+	// HeartbeatEvidenceWindowKeys ("24h", "7d", "30d"), so the hub can offer
+	// a window selector without a per-PR feed (RFC #12062). Field names keep
+	// their *90d suffix inside a window for wire compatibility; the key is
+	// the real look-back. Lifetime values (AutomergeSelfAuthored,
+	// WriteCounters) and Windows itself are left empty inside a window. An
+	// old spoke omits it and the hub shows "not reported for this window".
+	Windows   map[string]*HeartbeatEvidence `json:"windows,omitempty"`
+	HiveState *hivestate.Trends             `json:"hive_state,omitempty"`
 }
+
+// HeartbeatEvidenceWindowKeys are the trailing windows a spoke reports in
+// HeartbeatEvidence.Windows, in hours.
+var HeartbeatEvidenceWindowKeys = map[string]int{"24h": 24, "7d": 7 * 24, "30d": 30 * 24}
 
 // HeartbeatEvidenceBucket is one calibration bucket: N verdicts, Bad of
 // which disagreed with the outcome (a false approve or a false block).
 type HeartbeatEvidenceBucket struct {
 	N   int `json:"n"`
 	Bad int `json:"bad"`
+}
+
+// HeartbeatEvidenceOutcome counts the PRs of one author kind: N PRs, Merged
+// of them merged, Reverted (a subset of Merged) reverted or followed up
+// within 14 days. N-Merged is still open.
+type HeartbeatEvidenceOutcome struct {
+	N        int `json:"n"`
+	Merged   int `json:"merged"`
+	Reverted int `json:"reverted"`
+}
+
+// HeartbeatEvidenceTimeToMerge is one window's median time-to-merge in
+// whole seconds over N merged PRs with a recorded open time.
+type HeartbeatEvidenceTimeToMerge struct {
+	MedianSeconds int64 `json:"median_s"`
+	N             int   `json:"n"`
+}
+
+// HeartbeatEvidenceWriteCount is one tier's attempted and proxy-blocked
+// agent write counts.
+type HeartbeatEvidenceWriteCount struct {
+	Attempted int `json:"attempted"`
+	Blocked   int `json:"blocked"`
+}
+
+// HeartbeatEvidenceShadow is the shadow-gate block: ReviewGate is the
+// shadow review gate, Intent the shadow intent verification.
+type HeartbeatEvidenceShadow struct {
+	ReviewGate HeartbeatEvidenceShadowGate `json:"review_gate"`
+	Intent     HeartbeatEvidenceShadowGate `json:"intent"`
+}
+
+// HeartbeatEvidenceShadowGate splits the PRs one shadow gate evaluated into
+// the ones it would have stopped (Held) and let through (Passed).
+type HeartbeatEvidenceShadowGate struct {
+	Held   HeartbeatEvidenceOutcome `json:"held"`
+	Passed HeartbeatEvidenceOutcome `json:"passed"`
 }
 
 type StatusCollector func() *HeartbeatPayload
@@ -1539,6 +1638,7 @@ func overlayFreshStatsAfterCollectTimeout(ctx context.Context, payload *Heartbea
 	payload.ProviderLimitRebuffs = fresh.ProviderLimitRebuffs
 	payload.ProviderLimitHiveWide = fresh.ProviderLimitHiveWide
 	payload.ProviderLimitAgents = fresh.ProviderLimitAgents
+	payload.Providers = fresh.Providers
 	payload.LastWriteCapableKickAt = fresh.LastWriteCapableKickAt
 	payload.LastKickDisposition = fresh.LastKickDisposition
 	payload.LastKickSkipReason = fresh.LastKickSkipReason

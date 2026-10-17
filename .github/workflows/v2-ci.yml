@@ -21,6 +21,10 @@ on:
     # Required contexts from this workflow must appear on every PR head. Keep
     # the trigger unfiltered and let required-context-scope below skip the
     # expensive build for out-of-scope diffs.
+  schedule:
+    # Nightly full run: harmless today, and preserves a safety net if the
+    # project later decides to skip duplicate post-merge push runs.
+    - cron: '17 6 * * *'
 
 
 permissions:
@@ -52,6 +56,7 @@ jobs:
   required-context-scope:
     name: required context scope
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 10
     outputs:
       run-ci: ${{ steps.scope.outputs.run-ci }}
     steps:
@@ -106,7 +111,10 @@ jobs:
     needs: required-context-scope
     # release-gate/* is created only by tagged-release.yml and carries only CHANGELOG.md/changelog.d changes; report the required context immediately (#10863).
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') && !(github.event_name == 'pull_request' && startsWith(github.head_ref, 'release-gate/')) }}
+    # Required on v5: keep on the self-hosted pool so a GitHub-hosted runner
+    # outage does not make otherwise-mergeable PRs impossible to merge.
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 50
     defaults:
       run:
         working-directory: src
@@ -114,7 +122,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Ensure PyYAML on self-hosted runners
         working-directory: .
-        run: python3 -c "import yaml" 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml; } || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q && python3 -m pip install --user -q pyyaml; }
+        run: |
+          python3 -c "import yaml" 2>/dev/null && exit 0
+          # A stale or unreachable third-party apt index (e.g. a PPA 503) must not block the install.
+          sudo apt-get update -qq || true
+          sudo apt-get install -y -qq python3-yaml && exit 0
+          # Noble (Python 3.12) refuses --user installs under PEP 668 without --break-system-packages.
+          python3 -m pip install --user -q --break-system-packages pyyaml \
+            || { curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --user -q --break-system-packages && python3 -m pip install --user -q --break-system-packages pyyaml; }
 
       # Populate the shared node-local Go tool cache under the runner pods'
       # node-wide lock before setup-go, so parallel jobs on a cold cache (a
@@ -1150,6 +1165,7 @@ jobs:
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
     needs: build-and-test
     permissions:
       contents: read
@@ -1216,6 +1232,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -1288,6 +1305,7 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1412,6 +1430,7 @@ jobs:
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
+    timeout-minutes: 60
     needs: [build-and-test, docker]
     permissions:
       contents: read

@@ -125,7 +125,7 @@ func heldPRFixture() *gh.PullRequest {
 func TestSweepDoesNotReleaseLevelHoldAfterPromotion(t *testing.T) {
 	s := &levelHoldServer{comments: []string{levelHoldNotice("quality")}}
 	c := newLevelHoldClient(t, s)
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "acme", "widget", heldPRFixture())
 	if err != nil || released || reason != "hold" {
@@ -149,7 +149,7 @@ func TestReleaseLevelHoldDoesNotReleaseUnknownOrForgedHold(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &levelHoldServer{comments: tc.comments, commentAuthor: tc.commentAuthor}
 			c := newLevelHoldClient(t, s)
-			c.prHoldLabel = func(agent string) bool { return false }
+			c.prHoldLabel = func(agent, repo string) bool { return false }
 			released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "acme", "widget", heldPRFixture())
 			if err != nil || released || reason != tc.wantReason || s.removes != 0 {
 				t.Fatalf("release=(%v,%q,%v) removes=%d", released, reason, err, s.removes)

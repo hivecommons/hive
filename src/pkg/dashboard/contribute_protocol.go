@@ -126,6 +126,7 @@ func serverCapabilities() []string {
 		capExtExecFlue,
 		capExtExecOMP,
 		capExtExecVibeKanban,
+		capFixPRInterrupt,
 	}
 }
 
@@ -159,6 +160,10 @@ const (
 // trusted for a security decision (server-side policy still governs what a
 // contributor may do — see the Restrictions reservation in contribute_ws.go).
 type ContributorCapabilities struct {
+	// ParallelSessions is the total session capacity INCLUDING the primary.
+	// Zero/omitted means no parallel capability. This declaration is groundwork
+	// for fix-pr scheduling (#12436), not permission to launch extra sessions.
+	ParallelSessions int `json:"parallel_sessions,omitempty"`
 	// ContainerRuntime is the container runtime the relay found available:
 	// "docker", "podman", or "none". Advisory only.
 	ContainerRuntime string `json:"container_runtime,omitempty"`
@@ -203,6 +208,12 @@ type ContributorCapabilities struct {
 	PiConfiguration  string `json:"pi_configuration,omitempty"`
 	PiAuthentication string `json:"pi_authentication,omitempty"`
 	PiInvocation     string `json:"pi_invocation,omitempty"`
+	// MaxParallelFixes is how many stage-072 `fix-pr` sub-sessions the relay
+	// can run beside its primary session (hivecommons/hive#12436). Only
+	// meaningful with the "parallel_sessions" relay capability token; the hub
+	// clamps it to contribute.max_parallel_fixes. 0/unset reads as capacity 1
+	// (preempt mode).
+	MaxParallelFixes int `json:"max_parallel_fixes,omitempty"`
 }
 
 // IsZero reports whether the client declared no capabilities at all, so the hub
@@ -211,7 +222,7 @@ type ContributorCapabilities struct {
 func (c ContributorCapabilities) IsZero() bool {
 	return c.ContainerRuntime == "" && c.OS == "" && c.Arch == "" &&
 		c.AgentCLIVersion == "" && c.RelayProtocolVersion == "" && c.CredentialType == "" &&
-		len(c.RelayCapabilities) == 0 &&
+		len(c.RelayCapabilities) == 0 && c.MaxParallelFixes == 0 &&
 		c.PiBinary == "" && c.PiConfiguration == "" && c.PiAuthentication == "" && c.PiInvocation == ""
 }
 
@@ -239,7 +250,15 @@ const capabilityFieldMaxLen = 64
 // still accepted and still authenticates. Declaring badly must never cost a
 // client its connection or its work.
 func (c ContributorCapabilities) Sanitized() ContributorCapabilities {
+	parallel := c.ParallelSessions
+	if parallel < 0 {
+		parallel = 0
+	}
+	if parallel > 64 {
+		parallel = 64
+	}
 	return ContributorCapabilities{
+		ParallelSessions:     parallel,
 		ContainerRuntime:     sanitizeCapabilityField(c.ContainerRuntime),
 		OS:                   sanitizeCapabilityField(c.OS),
 		Arch:                 sanitizeCapabilityField(c.Arch),
@@ -251,7 +270,22 @@ func (c ContributorCapabilities) Sanitized() ContributorCapabilities {
 		PiConfiguration:      sanitizeCapabilityField(c.PiConfiguration),
 		PiAuthentication:     sanitizeCapabilityField(c.PiAuthentication),
 		PiInvocation:         sanitizeCapabilityField(c.PiInvocation),
+		MaxParallelFixes:     clampMaxParallelFixes(c.MaxParallelFixes),
 	}
+}
+
+// maxParallelFixesCeiling bounds the relay-declared fix-session count before
+// config clamps it further; a self-report above this is not an honest value.
+const maxParallelFixesCeiling = 16
+
+func clampMaxParallelFixes(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > maxParallelFixesCeiling {
+		return maxParallelFixesCeiling
+	}
+	return n
 }
 
 // sanitizeCapabilityField makes one declared value printable and bounded.

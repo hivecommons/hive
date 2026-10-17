@@ -4,375 +4,301 @@ import (
 	"fmt"
 )
 
-// subCriterion is one measured contributor to an axis.
-//
-// value is on whatever native scale the criterion measures; the axis converts
-// it to a fleet percentile later. higherIsBetter records the direction, since
-// cost-style criteria are better when smaller and a single comparator cannot
-// guess that.
-//
-// activityFloor is the absolute magnitude at which this criterion's percentile
-// counts in full — see activityFactor in quadrant.go. Leaving it zero EXEMPTS
-// the criterion from the absolute gate, which is correct for ratios and
-// postures (where zero is a real, often good, value) and wrong for throughput
-// counters (where zero means idle). Every criterion must make this choice
-// deliberately; the zero default is safe only because an un-gated criterion
-// behaves exactly as it did before the gate existed.
+// subCriterion is one criterion of an axis for one hive: the static spec plus
+// this hive's measurement (or the reason there is none).
 type subCriterion struct {
-	name           string
-	value          float64
-	higherIsBetter bool
-	activityFloor  float64
-	nudge          string // shown when this criterion is the axis's weakest link
+	spec     criterionSpec
+	measured bool
+	value    float64
+	reason   string // why unmeasured; shown as "not measured yet — …"
+	nudge    string // shown when this criterion is the axis's weakest link
+	fact     string // neutral clause for the one-line summary, e.g. "1.2% of merges reverted"
 }
 
-// trustCriteria scores how much rope the humans have given this hive.
-//
-// Trust is deliberately about DELEGATION, not about outcomes: a hive that is
-// trusted with more scope and a stricter governor posture scores higher even if
-// its throughput is modest. Mixing outcome quality in here would make the axis
-// a second productivity score.
-//
-// THE GOVERNOR CRITERION HAS BEEN REMOVED, and Trust now scores on three
-// criteria: autonomy, merge acceptance and breadth.
-//
-// It was built on a misreading of the governor, in two compounding ways.
-//
-// Mechanically it never worked: it matched "observe"/"advisory"/"enforce", but
-// governor.Mode (pkg/governor/governor.go) only ever emits SURGE, BUSY, QUIET
-// or IDLE. Every hive in the fleet fell through to known=false, so the
-// criterion contributed to nothing — one of only three Trust criteria dropped
-// silently, with the axis still rendering a perfectly plausible number.
-//
-// Conceptually it was worse, and this is why it is deleted rather than
-// remapped: those values are WORKLOAD CADENCE — how hard the governor is
-// currently driving agents — not a trust posture. There is no
-// observe/advisory/enforce dimension anywhere in the governor. A hive at SURGE
-// is busy, not trusted; a hive at IDLE is quiet, not distrusted. Mapping
-// cadence onto a trust rank would take a criterion that measured nothing and
-// replace it with one that measures the wrong thing, which is strictly worse
-// because it would then look like it was working.
-//
-// No replacement is substituted, because the hub does not receive one. The
-// codebase has three genuine delegated-authority signals and ALL of them are
-// spoke-side configuration that never travels on the heartbeat:
-//
-//   - config.AutoMergeConfig.SelfAuthored (pkg/config/config.go) — the App
-//     merging its own PRs with no human approval. This is the strongest
-//     delegation bit in the product and would be the ideal trust criterion.
-//   - config.ReviewConfig.RequireApproval — the review gate.
-//   - config.AgentSandboxConfig / AgentConfig.Tools — sandbox and tool
-//     permissions.
-//
-// None appears on HeartbeatPayload or RegistryEntry; each is read only inside
-// cmd/hive/main.go. The hub therefore cannot see whether an operator granted or
-// revoked any of them, and acmmLevel — already the autonomy criterion below —
-// is the single delegation signal that does arrive.
-//
-// Recomputing a gate hub-side from acmmLevel (PlanAutoApproveForLevel,
-// SelfMergeMinACMMLevel) was considered and rejected: it is a pure function of
-// a value this axis ALREADY scores, so it would add no information while
-// double-weighting autonomy and looking like a second, independent criterion.
-// Inventing a proxy to keep the criterion count at three would repeat exactly
-// the mistake being fixed here.
-//
-// The real fix is to report the signal. Adding
-// AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel) to the heartbeat as a
-// *bool — nil for old spokes, matching every other quadrant pointer field —
-// would give Trust a true delegation criterion. Until then, three.
+func (c subCriterion) score() int { return c.spec.curve.score(c.value) }
+
+// measured builds a scored criterion. fact is the plain clause the summary
+// quotes; nudge is the action when this is the axis's weakest measured link.
+func measured(name string, value float64, fact, nudge string) subCriterion {
+	return subCriterion{spec: criterionSpecs[name], measured: true, value: value, fact: fact, nudge: nudge}
+}
+
+// unmeasured lists a criterion the axis is defined by but this hive has no
+// input for. It is shown, never scored, and never counted in the axis mean.
+func unmeasured(name, reason string) subCriterion {
+	return subCriterion{spec: criterionSpecs[name], reason: reason}
+}
+
+// Reasons for the inputs the hub does not receive yet. Kept as constants so
+// the explainer, the docs and the tests say the same thing about what would
+// feed each criterion.
+const (
+	reasonNoEvidence    = "spoke has not reported an evidence summary yet"
+	reasonFewVerdicts   = "fewer than 10 reviewed verdicts in 90 days"
+	reasonFewMerges     = "fewer than 10 merged PRs with evidence in 90 days"
+	reasonFewWrites     = "fewer than 10 proxied agent writes recorded"
+	reasonNoOrgCount    = "spokes do not report the org's repo count yet"
+	reasonNoFleetStats  = "spoke has not reported its PR counts yet"
+	reasonNoBudget      = "no budget window or hive-state token trend reported"
+	reasonNoAgents      = "no agents configured"
+	reasonIdleForCost   = "hive is not shipping, so burn rate says nothing about efficiency"
+	reasonFewPRsForRate = "fewer than 4 agent PRs reached a verdict"
+	reasonNoHiveState   = "spoke has not reported 7-day hive-state trends yet"
+	reasonNoRelay       = "contributor relay not reported"
+	reasonNoHoldQueue   = "hold and review queues not reported"
+	reasonNoSLA         = "SLA counts not reported"
+	reasonNoTimeToMerge = "spokes do not report time-to-merge yet"
+	reasonNoLaunchCost  = "per-launch cost stays on the spoke's launch-cost API; not on the heartbeat yet"
+	reasonNoHoldLift    = "hold-lift latency is not reported yet"
+	reasonNoReturn      = "contributor return rate is not reported yet"
+	reasonNoPulse       = "no direct feedback signal exists yet; a thumbs up/down on agent output would feed it"
+)
+
+// trustCriteria: how much rope the humans have given this hive AND whether the
+// outcomes justify it. Delegation (autonomy, self-merge, acceptance) says what
+// was granted; the evidence criteria (reverts, false approves, coverage,
+// boundary blocks) say whether that trust is being honoured.
 func trustCriteria(in quadrantInputs) []subCriterion {
+	e := in.evidence
 	var out []subCriterion
 
-	// Autonomy level. The single clearest expression of trust in the product:
-	// a human raised this deliberately, and it gates what agents may do.
-	if in.acmmLevel > 0 {
-		out = append(out, subCriterion{
-			name:           "autonomy",
-			value:          float64(in.acmmLevel),
-			higherIsBetter: true,
-			nudge:          fmt.Sprintf("At ACMM L%d — consider trying the next level on one repo", in.acmmLevel),
-		})
+	if e == nil {
+		out = append(out, unmeasured(critRevert, reasonNoEvidence), unmeasured(critFalseApprove, reasonNoEvidence))
+	} else {
+		if rate, ok := evidenceRate(e.Reverted14d90d, e.Merged90d); ok {
+			n := ""
+			if rate > 0.05 {
+				n = fmt.Sprintf("%d of %d merged PRs were reverted or fixed within 14 days", e.Reverted14d90d, e.Merged90d)
+			}
+			out = append(out, measured(critRevert, rate, fmtPercent(rate)+" of merges reverted", n))
+		} else {
+			out = append(out, unmeasured(critRevert, reasonFewMerges))
+		}
+		if rate, ok := evidenceRate(e.FalseApprove90d, e.Verdicts90d); ok {
+			n := ""
+			if rate > 0.05 {
+				n = fmt.Sprintf("Humans had to fix %d of %d swarm-approved PRs", e.FalseApprove90d, e.Verdicts90d)
+			}
+			out = append(out, measured(critFalseApprove, rate, fmtPercent(rate)+" of approvals needed a human fix", n))
+		} else {
+			out = append(out, unmeasured(critFalseApprove, reasonFewVerdicts))
+		}
 	}
 
-	// Merge acceptance: the share of agent PRs that reached a merge rather than
-	// a rejection. This is the humans' verdict on the agents' work, which is
-	// what makes it a trust signal rather than a throughput one.
-	//
-	// Deliberately one criterion among three, never decisive on its own — see
-	// the weaknesses documented on quadrantInputs.mergeAcceptance.
+	if in.acmmLevel > 0 {
+		out = append(out, measured(critAutonomy, float64(in.acmmLevel), fmt.Sprintf("at ACMM L%d", in.acmmLevel),
+			fmt.Sprintf("At ACMM L%d — consider trying the next level on one repo", in.acmmLevel)))
+	} else {
+		out = append(out, unmeasured(critAutonomy, "ACMM level not reported"))
+	}
+
+	if in.selfMergeAllowed != nil {
+		v, n, f := 0.0, "Self-authored auto-merge is not allowed — raise the ACMM level to delegate it", "self-merge not delegated"
+		if *in.selfMergeAllowed {
+			v, n, f = 1, "", "self-merge delegated"
+		}
+		out = append(out, measured(critDelegation, v, f, n))
+	} else {
+		out = append(out, unmeasured(critDelegation, reasonNoEvidence))
+	}
+
 	if in.mergeAcceptance != nil {
 		n := ""
 		if *in.mergeAcceptance < 0.7 {
-			n = fmt.Sprintf("%.0f%% of agent PRs are merged — tune the mission",
-				*in.mergeAcceptance*100)
+			n = fmt.Sprintf("%.0f%% of agent PRs are merged — tune the mission", *in.mergeAcceptance*100)
 		}
-		out = append(out, subCriterion{
-			name:           "merge_acceptance",
-			value:          *in.mergeAcceptance,
-			higherIsBetter: true,
-			nudge:          n,
-		})
+		out = append(out, measured(critAcceptance, *in.mergeAcceptance, fmtPercent(*in.mergeAcceptance)+" of agent PRs merged", n))
+	} else if in.prsMerged90d == nil || in.prsRejected90d == nil {
+		out = append(out, unmeasured(critAcceptance, reasonNoFleetStats))
+	} else {
+		out = append(out, unmeasured(critAcceptance, reasonFewPRsForRate))
 	}
 
-	// Scope breadth: what fraction of the org's repos are enrolled. Scored as a
-	// ratio rather than a raw count so a 3-repo org enrolling everything is not
-	// beaten by a 200-repo org enrolling five.
-	//
-	// Requires knowing the org total; when that is unknown the criterion
-	// declines rather than assuming the enrolled count IS the total, which
-	// would score every hive a perfect 1.0 and quietly flatten the axis.
+	// Evidence coverage: merged PRs that carry an evidence record over the
+	// hive's merged count. Uses the org-wide collector count as denominator
+	// because that is the figure the evidence view's record_coverage uses.
+	switch {
+	case e == nil:
+		out = append(out, unmeasured(critCoverage, reasonNoEvidence))
+	case in.prsMerged90d == nil || *in.prsMerged90d <= 0:
+		out = append(out, unmeasured(critCoverage, reasonNoFleetStats))
+	default:
+		cov := float64(e.Merged90d) / float64(*in.prsMerged90d)
+		if cov > 1 {
+			cov = 1
+		}
+		n := ""
+		if cov < 0.5 {
+			n = fmt.Sprintf("Only %s of merged PRs have an evidence record — enable the evidence pipeline on every repo", fmtPercent(cov))
+		}
+		out = append(out, measured(critCoverage, cov, fmtPercent(cov)+" of merges carry evidence", n))
+	}
+
+	// Boundary block rate from the proxy write counters, summed across tiers.
+	if e == nil || e.WriteCounters == nil {
+		out = append(out, unmeasured(critBoundary, reasonNoEvidence))
+	} else {
+		attempted, blocked := 0, 0
+		for _, c := range e.WriteCounters {
+			attempted += c.Attempted
+			blocked += c.Blocked
+		}
+		if rate, ok := evidenceRate(blocked, attempted); ok {
+			n := ""
+			if rate > 0.1 {
+				n = fmt.Sprintf("%d of %d agent writes were blocked at the proxy — agents are reaching past their tier", blocked, attempted)
+			}
+			out = append(out, measured(critBoundary, rate, fmtPercent(rate)+" of agent writes blocked", n))
+		} else {
+			out = append(out, unmeasured(critBoundary, reasonFewWrites))
+		}
+	}
+
 	if in.reposInOrg > 0 && in.reposEnrolled >= 0 {
 		ratio := float64(in.reposEnrolled) / float64(in.reposInOrg)
 		n := ""
 		if in.reposEnrolled < in.reposInOrg {
 			n = fmt.Sprintf("Only %d of %d org repos enrolled", in.reposEnrolled, in.reposInOrg)
 		}
-		out = append(out, subCriterion{
-			name:           "breadth",
-			value:          ratio,
-			higherIsBetter: true,
-			nudge:          n,
-		})
+		out = append(out, measured(critBreadth, ratio, fmtPercent(ratio)+" of org repos enrolled", n))
+	} else {
+		out = append(out, unmeasured(critBreadth, reasonNoOrgCount))
 	}
-
-	// Delegation: whether the operator let the App merge its own PRs. Reported
-	// by the spoke on the evidence summary; absent for old spokes, in which case
-	// the criterion declines. A posture, so it is exempt from the activity gate.
-	if in.selfMergeAllowed != nil {
-		v, n := 0.0, "Self-authored auto-merge is not allowed — raise the ACMM level to delegate it"
-		if *in.selfMergeAllowed {
-			v, n = 1, ""
-		}
-		out = append(out, subCriterion{
-			name:           "delegation",
-			value:          v,
-			higherIsBetter: true,
-			nudge:          n,
-		})
-	}
-
 	return out
 }
 
-// efficiencyCriteria scores the cost of an outcome.
-//
-// Cost ratios use the REPO-WIDE merged/closed counts on purpose: the numerator
-// is the spoke's total spend, so the denominator must be the repo's total
-// output for the ratio to mean anything. (Dividing total spend by only
-// agent-authored merges would overstate cost per unit of work.) This is the
-// opposite choice from Productivity, which must be agent-attributed — see the
-// correctness note in QUADRANT-DESIGN.md.
+// efficiencyCriteria: what an outcome costs. The headline is tokens per merged
+// PR; burn rate is judged only for hives that are shipping, because a hive
+// that spends nothing and ships nothing is idle, not efficient.
 func efficiencyCriteria(in quadrantInputs) []subCriterion {
 	var out []subCriterion
+	shipping := (in.prsMerged90d != nil && *in.prsMerged90d > 0) ||
+		(in.mergesPerWeek != nil && *in.mergesPerWeek > 0) ||
+		(in.tasksCompleted7d != nil && *in.tasksCompleted7d > 0)
 
-	// Burn rate: tokens per day in the current budget window. Both sides are
-	// now properly scoped — a rate rather than a lifetime total — so this is a
-	// genuine comparison rather than the approximate ranking an unnormalised
-	// cumulative figure would give.
-	//
-	// Gated on absolute burn. Without the gate this criterion rewards idleness
-	// outright: it is lower-is-better, so a hive spending nothing takes the top
-	// of the ranking for having done nothing at all. The floor makes a
-	// barely-burning hive score near zero here, and only hives doing real work
-	// compete on how cheaply they do it.
-	if in.tokensPerDay != nil {
-		out = append(out, subCriterion{
-			name:           "tokens_per_day",
-			value:          *in.tokensPerDay,
-			higherIsBetter: false,
-			activityFloor:  activityFloorTokensPerDay,
-			nudge:          "Token burn rate is high relative to the fleet",
-		})
+	switch {
+	case in.tokensPerDay == nil:
+		out = append(out, unmeasured(critTokensPerPR, reasonNoBudget))
+	case in.prsMerged90d == nil:
+		out = append(out, unmeasured(critTokensPerPR, reasonNoFleetStats))
+	case *in.prsMerged90d < minMergedPRsForCostRatio:
+		out = append(out, unmeasured(critTokensPerPR, fmt.Sprintf("fewer than %d merged PRs in 90 days", minMergedPRsForCostRatio)))
+	default:
+		// tokens/day × 90 days ÷ merges in 90 days. Approximate: the burn
+		// rate is current while the merge count is a trailing window.
+		per := *in.tokensPerDay * 90 / float64(*in.prsMerged90d)
+		out = append(out, measured(critTokensPerPR, per, fmtTokens(per)+" per merged PR",
+			"Token spend per merged PR is high — check for agents looping or oversized missions"))
 	}
 
-	// Burn per unit of output. The rate above says how fast budget leaves; this
-	// says whether anything came back for it, which is the difference between
-	// an expensive hive and a wasteful one.
-	if in.tokensPerDay != nil && in.prsMerged90d != nil && *in.prsMerged90d >= minMergedPRsForCostRatio {
-		out = append(out, subCriterion{
-			name:           "tokens_per_pr",
-			value:          *in.tokensPerDay / float64(*in.prsMerged90d),
-			higherIsBetter: false,
-			nudge:          "Token spend per merged PR is high relative to the fleet",
-		})
+	switch {
+	case in.tokensPerDay == nil:
+		out = append(out, unmeasured(critTokensPerDay, reasonNoBudget))
+	case !shipping:
+		out = append(out, unmeasured(critTokensPerDay, reasonIdleForCost))
+	default:
+		out = append(out, measured(critTokensPerDay, *in.tokensPerDay, "burning "+fmtTokensPerDay(*in.tokensPerDay),
+			"Token burn rate is high for what is shipping"))
 	}
 
-	// Revert rate: merged PRs reverted or follow-up-fixed within 14 days, the
-	// change-failure-rate proxy. A ratio where zero is the best outcome, so it
-	// has no activityFloor; the merged-count minimum is the sufficiency gate.
-	if e := in.evidence; e != nil {
-		if rate, ok := evidenceRate(e.Reverted14d90d, e.Merged90d); ok {
-			n := ""
-			if rate > 0.1 {
-				n = fmt.Sprintf("%d of %d merged PRs were reverted or fixed within 14 days",
-					e.Reverted14d90d, e.Merged90d)
-			}
-			out = append(out, subCriterion{
-				name:           "revert_rate",
-				value:          rate,
-				higherIsBetter: false,
-				nudge:          n,
-			})
-		}
-	}
-
-	// Rework: PRs the agent opened that were rejected rather than merged. This
-	// is budget spent on work nobody wanted, which is the most actionable form
-	// of inefficiency — it points at mission tuning rather than at throttling.
-	//
-	// Requires a meaningful denominator; with two or three total PRs the rate
-	// swings wildly on a single rejection.
 	if in.prsMerged90d != nil && in.prsRejected90d != nil {
 		total := *in.prsMerged90d + *in.prsRejected90d
 		if total >= minPRsForReworkRate {
 			rate := float64(*in.prsRejected90d) / float64(total)
 			n := ""
 			if rate > 0.25 {
-				n = fmt.Sprintf("%d of %d agent PRs were rejected — tune the mission",
-					*in.prsRejected90d, total)
+				n = fmt.Sprintf("%d of %d agent PRs were rejected — tune the mission", *in.prsRejected90d, total)
 			}
-			out = append(out, subCriterion{
-				name:           "rework_rate",
-				value:          rate,
-				higherIsBetter: false,
-				nudge:          n,
-			})
+			out = append(out, measured(critRework, rate, fmtPercent(rate)+" of agent PRs rejected", n))
+		} else {
+			out = append(out, unmeasured(critRework, reasonFewPRsForRate))
 		}
+	} else {
+		out = append(out, unmeasured(critRework, reasonNoFleetStats))
 	}
 
-	// Idle burn: agents that exist but are not shipping. Measured as merged PRs
-	// per agent, so it is a productivity-per-seat figure rather than a raw
-	// count — three agents producing what one could is the waste being nudged.
-	//
-	// Requires at least one agent; a hive with zero agents is not inefficient,
-	// it is simply not running, which the Productivity axis already expresses.
-	if in.agentCount > 0 && in.prsMerged90d != nil {
+	switch {
+	case in.agentCount <= 0:
+		out = append(out, unmeasured(critPerAgent, reasonNoAgents))
+	case in.prsMerged90d == nil:
+		out = append(out, unmeasured(critPerAgent, reasonNoFleetStats))
+	default:
 		perAgent := float64(*in.prsMerged90d) / float64(in.agentCount)
 		n := ""
 		if perAgent < 1 {
-			n = fmt.Sprintf("%d agents but %d merged PRs — consider pausing idle agents",
-				in.agentCount, *in.prsMerged90d)
+			n = fmt.Sprintf("%d agents but %d merged PRs — consider pausing idle agents", in.agentCount, *in.prsMerged90d)
 		}
-		// Gated at one merged PR per agent: an agent that has shipped nothing
-		// in ninety days is the definition of idle burn, and this criterion
-		// exists to flag exactly that. Without the gate a fleet where most
-		// agents ship nothing puts them all at the median for it.
-		out = append(out, subCriterion{
-			name:           "output_per_agent",
-			value:          perAgent,
-			higherIsBetter: true,
-			activityFloor:  activityFloorOutputPerAgent,
-			nudge:          n,
-		})
+		out = append(out, measured(critPerAgent, perAgent, fmt.Sprintf("%.1f merges per agent", perAgent), n))
 	}
 
+	if w := hiveStateWeek(in); w != nil {
+		n := ""
+		if w.AgentIdleRatio > 0.75 {
+			n = fmt.Sprintf("Agents were idle in %s of samples this week — give them work or pause seats", fmtPercent(w.AgentIdleRatio))
+		}
+		out = append(out, measured(critIdle, w.AgentIdleRatio, "agents idle "+fmtPercent(w.AgentIdleRatio)+" of the time", n))
+	} else {
+		out = append(out, unmeasured(critIdle, reasonNoHiveState))
+	}
+
+	out = append(out, unmeasured(critCostPerMerge, reasonNoLaunchCost))
 	return out
 }
 
-// productivityCriteria scores throughput that is ACTUALLY ATTRIBUTABLE to the
-// hive's agents.
-//
-// The counts here must come from the in-org, agent-authored search
-// (SearchPRCount), never from the repo-wide PRIssueCounts and never from the
-// outreach counter. Repo-wide counts would let a busy human repo with an idle
-// hive score high; the outreach counter is -org: scoped and would omit
-// essentially all real output. Both mistakes are easy to make and neither is
-// visible in the resulting number.
+// productivityCriteria: throughput attributable to THIS hive. The headline is
+// merges per active repo per week from the hive's own audit summary; the
+// org-wide collector count is only the fallback, normalised per enrolled repo.
 func productivityCriteria(in quadrantInputs) []subCriterion {
 	var out []subCriterion
 
-	// Agent-merged PR throughput over the reporting window.
-	if in.prsMerged90d != nil {
-		n := ""
-		if *in.prsMerged90d == 0 {
-			// A throttled hive is not underperforming, it is out of budget.
-			// Telling its owner to ship more would be both wrong and useless;
-			// the actionable fact is the budget, so say that instead.
-			if in.budgetExhausted != nil && *in.budgetExhausted {
-				n = "Budget exhausted — agent kicks are suppressed"
-			} else {
-				n = "No agent-merged PRs in the last 90 days"
-			}
+	switch {
+	case in.mergesPerWeek != nil:
+		repos := in.activeRepos
+		if repos < 1 {
+			repos = 1
 		}
-		// The headline gate. A measured zero here scores ZERO, not the fleet
-		// median — this is the criterion where percentile-blindness did the most
-		// damage, since most of the fleet has merged nothing and ties place a
-		// uniformly-idle population at 50.
-		out = append(out, subCriterion{
-			name:           "prs_merged",
-			value:          float64(*in.prsMerged90d),
-			higherIsBetter: true,
-			activityFloor:  activityFloorMergedPRs,
-			nudge:          n,
-		})
+		per := *in.mergesPerWeek / float64(repos)
+		out = append(out, measured(critThroughput, per, fmtPerWeek(per), zeroMergeNudge(in, per)))
+	case in.prsMerged90d != nil:
+		repos := in.reposEnrolled
+		if repos < 1 {
+			repos = 1
+		}
+		per := float64(*in.prsMerged90d) / (90.0 / 7.0) / float64(repos)
+		out = append(out, measured(critThroughput, per, fmtPerWeek(per)+" (org-wide count)", zeroMergeNudge(in, per)))
+	default:
+		out = append(out, unmeasured(critThroughput, reasonNoFleetStats))
 	}
 
-	// Contributor engagement: how many of the hive's known contributors are
-	// actually active. A hive with many enrolled but few active contributors is
-	// under-using the relay, which is a different problem from having none.
-	//
-	// Scored as a ratio so a hive with three engaged contributors is not beaten
-	// by one with thirty enrolled and three engaged.
-	if in.contributorCount > 0 {
-		ratio := float64(in.activeContributors) / float64(in.contributorCount)
-		n := ""
-		if in.activeContributors < in.contributorCount {
-			n = fmt.Sprintf("%d of %d contributors active",
-				in.activeContributors, in.contributorCount)
-		}
-		out = append(out, subCriterion{
-			name:           "contributor_engagement",
-			value:          ratio,
-			higherIsBetter: true,
-			nudge:          n,
-		})
-	}
-
-	// Work-source autonomy: whether the hive finds its own work or waits to be
-	// handed it. A hive reading only human-filed issues is capped at the rate
-	// humans file them, which is the constraint this nudges at.
-	if in.workSource != "" {
-		selfDirected := 0.0
-		n := "All work is human-filed — let the scanner find work"
-		if in.workSource != "issues" && in.workSource != "" {
-			selfDirected = 1.0
-			n = ""
-		}
-		out = append(out, subCriterion{
-			name:           "work_source",
-			value:          selfDirected,
-			higherIsBetter: true,
-			nudge:          n,
-		})
-	}
-
-	// Contributor-relay throughput over the last seven days. Zero is a real
-	// measurement (the relay is configured but idle), so this reports whenever
-	// the count is present — but only nudge a hive that actually HAS
-	// contributors, since telling a solo hive its relay is idle is noise.
 	if in.tasksCompleted7d != nil {
 		n := ""
 		if *in.tasksCompleted7d == 0 && in.contributorCount > 0 {
 			n = "Contributor relay is idle"
 		}
-		// Gated: an idle relay is idle whatever the rest of the fleet is doing.
-		out = append(out, subCriterion{
-			name:           "relay_7d",
-			value:          float64(*in.tasksCompleted7d),
-			higherIsBetter: true,
-			activityFloor:  activityFloorRelayTasks,
-			nudge:          n,
-		})
+		out = append(out, measured(critRelay, float64(*in.tasksCompleted7d), fmt.Sprintf("%d relay tasks this week", *in.tasksCompleted7d), n))
+	} else {
+		out = append(out, unmeasured(critRelay, reasonNoRelay))
 	}
 
-	// Human bottleneck: work parked behind a hold label or a pending plan
-	// decision. Both measure throughput lost to waiting on a person, which is
-	// the most addressable kind — the nudge points at a queue somebody can
-	// clear today rather than at a system to retune.
-	//
-	// Combined into one criterion because they are the same phenomenon seen
-	// from two ends, and scoring them separately would double their weight
-	// against the throughput criteria.
+	if in.contributorCount > 0 {
+		ratio := float64(in.activeContributors) / float64(in.contributorCount)
+		n := ""
+		if in.activeContributors < in.contributorCount {
+			n = fmt.Sprintf("%d of %d contributors active", in.activeContributors, in.contributorCount)
+		}
+		out = append(out, measured(critEngagement, ratio, fmt.Sprintf("%d of %d contributors active", in.activeContributors, in.contributorCount), n))
+	} else {
+		out = append(out, unmeasured(critEngagement, "no contributors enrolled"))
+	}
+
+	// WorkSource is empty for the default GitHub Issues source, so this is
+	// always measured: an empty string is a real answer.
+	if in.workSource != "" && in.workSource != "issues" {
+		out = append(out, measured(critWorkSource, 1, "finds its own work", ""))
+	} else {
+		out = append(out, measured(critWorkSource, 0, "works only human-filed issues", "All work is human-filed — let the scanner find work"))
+	}
+
 	if in.holdTotal != nil || in.awaitingReview != nil {
 		blocked := 0
 		if in.holdTotal != nil {
@@ -385,81 +311,118 @@ func productivityCriteria(in quadrantInputs) []subCriterion {
 		if blocked > 0 {
 			n = fmt.Sprintf("%d items waiting on a human decision", blocked)
 		}
-		out = append(out, subCriterion{
-			name:           "human_blocked",
-			value:          float64(blocked),
-			higherIsBetter: false,
-			nudge:          n,
-		})
+		out = append(out, measured(critHumanBlocked, float64(blocked), fmt.Sprintf("%d items waiting on a human", blocked), n))
+	} else {
+		out = append(out, unmeasured(critHumanBlocked, reasonNoHoldQueue))
 	}
 
-	// Work aging past its service threshold, whatever the cause.
 	if in.slaViolations != nil {
 		n := ""
 		if *in.slaViolations > 0 {
 			n = fmt.Sprintf("%d items past their SLA", *in.slaViolations)
 		}
-		out = append(out, subCriterion{
-			name:           "sla_violations",
-			value:          float64(*in.slaViolations),
-			higherIsBetter: false,
-			nudge:          n,
-		})
+		out = append(out, measured(critSLA, float64(*in.slaViolations), fmt.Sprintf("%d items past SLA", *in.slaViolations), n))
+	} else {
+		out = append(out, unmeasured(critSLA, reasonNoSLA))
 	}
 
+	out = append(out, unmeasured(critTimeToMerge, reasonNoTimeToMerge))
 	return out
 }
 
-// satisfactionCriteria scores how it feels to use the swarm, from the two
-// honest signals in the evidence store: how often a human had to override a
-// block (false-block) and how often a human had to fix an approved PR
-// (false-approve). Both are lower-is-better ratios, exempt from the activity
-// gate, and decline below minEvidenceN verdicts so a hive with little data
-// renders unscored rather than flattering. Hygiene signals (health, advisory
-// depth) are deliberately not used: hygiene is not satisfaction.
+// zeroMergeNudge tells a throttled hive about its budget rather than telling it
+// to ship more, which would be both wrong and useless.
+func zeroMergeNudge(in quadrantInputs, perWeek float64) string {
+	if perWeek > 0 {
+		return ""
+	}
+	if in.budgetExhausted != nil && *in.budgetExhausted {
+		return "Budget exhausted — agent kicks are suppressed"
+	}
+	return "No agent merges in the window"
+}
+
+// satisfactionCriteria: how it feels to depend on the swarm. The measured
+// signals are how often a human had to lift a swarm block and how often work
+// stayed inside its SLA; the rest of the axis is listed so the reader can see
+// what is still missing, instead of a bare dash.
 func satisfactionCriteria(in quadrantInputs) []subCriterion {
+	var out []subCriterion
 	e := in.evidence
-	if e == nil {
+	switch {
+	case e == nil:
+		out = append(out, unmeasured(critOverride, reasonNoEvidence))
+	default:
+		if rate, ok := evidenceRate(e.FalseBlock90d, e.Verdicts90d); ok {
+			n := ""
+			if rate > 0.05 {
+				n = fmt.Sprintf("Humans overrode %d of %d swarm blocks — the gate may be too strict", e.FalseBlock90d, e.Verdicts90d)
+			}
+			out = append(out, measured(critOverride, rate, fmtPercent(rate)+" of swarm blocks lifted by a human", n))
+		} else {
+			out = append(out, unmeasured(critOverride, reasonFewVerdicts))
+		}
+	}
+
+	if w := hiveStateWeek(in); w != nil {
+		kept := 1 - w.SLAViolationRate
+		if kept < 0 {
+			kept = 0
+		}
+		n := ""
+		if kept < 0.9 {
+			n = fmt.Sprintf("SLA was breached in %s of samples this week — clear the oldest queue items", fmtPercent(w.SLAViolationRate))
+		}
+		out = append(out, measured(critSLAKept, kept, "SLA kept "+fmtPercent(kept)+" of the week", n))
+	} else {
+		out = append(out, unmeasured(critSLAKept, reasonNoHiveState))
+	}
+
+	out = append(out,
+		unmeasured(critHoldLift, reasonNoHoldLift),
+		unmeasured(critReturn, reasonNoReturn),
+		unmeasured(critPulse, reasonNoPulse))
+	return out
+}
+
+// hiveStateWeek returns the 7-day hive-state window when the spoke reported
+// enough samples for its ratios to mean anything.
+func hiveStateWeek(in quadrantInputs) *hiveStateWindow {
+	if in.evidence == nil || in.evidence.HiveState == nil {
 		return nil
 	}
-	var out []subCriterion
-	if rate, ok := evidenceRate(e.FalseBlock90d, e.Verdicts90d); ok {
-		n := ""
-		if rate > 0.1 {
-			n = fmt.Sprintf("Humans overrode %d of %d swarm blocks — the gate may be too strict",
-				e.FalseBlock90d, e.Verdicts90d)
-		}
-		out = append(out, subCriterion{name: "human_override_rate", value: rate, higherIsBetter: false, nudge: n})
+	w := in.evidence.HiveState.Last7d
+	if w.Samples < minHiveStateSamples {
+		return nil
 	}
-	if rate, ok := evidenceRate(e.FalseApprove90d, e.Verdicts90d); ok {
-		n := ""
-		if rate > 0.1 {
-			n = fmt.Sprintf("Humans had to fix %d of %d swarm-approved PRs", e.FalseApprove90d, e.Verdicts90d)
-		}
-		out = append(out, subCriterion{name: "human_followup_rate", value: rate, higherIsBetter: false, nudge: n})
-	}
-	return out
+	return &hiveStateWindow{AgentIdleRatio: w.AgentIdleRatio, SLAViolationRate: w.SLAViolationRate}
 }
 
-// unscoredReason explains, per axis, what evidence is missing. Shown in the
-// hover so a collapsed spoke reads as "not measured yet" rather than as a gap
-// the viewer has to interpret.
+type hiveStateWindow struct {
+	AgentIdleRatio   float64
+	SLAViolationRate float64
+}
+
+// unscoredReason explains, per axis, what evidence is missing when NONE of
+// the axis's criteria is measured. Shown in the hover so a collapsed spoke
+// reads as "not measured yet" rather than as a gap the viewer has to interpret.
 func unscoredReason(axis string) string {
 	switch axis {
 	case AxisSatisfaction:
-		return "No satisfaction signal is collected yet (needs ≥10 reviewed verdicts)"
+		return "Not measured yet: needs ≥10 reviewed verdicts or a 7-day hive-state trend from the spoke"
 	case AxisEfficiency:
-		return "Not enough merged output to judge cost efficiency yet"
+		return "Not measured yet: needs a budget window or token trend and PR counts from the spoke"
 	case AxisProductivity:
-		return "No agent activity reported yet"
+		return "Not measured yet: no activity or PR counts reported by the spoke"
 	case AxisTrust:
-		return "Autonomy and governor posture not reported yet"
+		return "Not measured yet: ACMM level and evidence summary not reported by the spoke"
 	default:
-		return "Not enough data"
+		return "Not measured yet"
 	}
 }
 
-// criteriaFor dispatches to the right sub-criteria builder for an axis.
+// criteriaFor dispatches to the right sub-criteria builder for an axis. The
+// result lists every criterion in quadrantCriteriaOrder exactly once.
 func criteriaFor(axis string, in quadrantInputs) []subCriterion {
 	switch axis {
 	case AxisTrust:

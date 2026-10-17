@@ -153,7 +153,7 @@ New users often expect PRs at L2 (they don't happen) or are surprised when they 
 | **L3** | **Quality only** can open PRs. Every PR has a literal `hold` level-gate label — it will NOT merge until you remove the hold. No other agent opens PRs at L3. |
 | **L4** | Quality, ci-maintainer, **and** sec-check can open PRs (all with literal `hold` level-gate labels). Scanner and guide file issues — not PRs. |
 | **L5** | All agents can open PRs, all with literal `hold` level-gate labels. Nothing auto-merges. You batch-review. |
-| **L6** | Auto-merge switches on for every active repo, then PRs auto-merge when CI goes green. Owners can toggle individual repos off or back on afterward. Non-outreach PRs have no level hold; outreach PRs are still held for human review. Full automation. |
+| **L6** | Auto-merge switches on for every active repo, then PRs auto-merge when CI goes green. Owners can toggle individual repos off or back on afterward. No level hold, except outreach PRs into repositories the hive does not manage, which are still held for human review. Full automation. |
 
 > **The hold label is your safety net.** Hive uses literal `hold` as the level-gate merge-blocking PR label; `hive-pause/<hive-id>` is the dashboard's manual hold label and `hive/<hive-id>` is provenance only. At every level below L6, every PR an agent opens is blocked from merging until you remove `hold`. You are always in control. Nothing ships without your approval until you reach L6 — and you'll only reach L6 after months of trusting the system.
 >
@@ -297,7 +297,7 @@ See [sandbox-isolation.md](sandbox-isolation.md) for the full threat model, the 
 
 ## L6 — Full Automation
 
-**The level:** Full trust. Auto-merge is off below L6; when you switch to L6, Hive enables auto-merge for every active repo, then agents open PRs and merge them automatically when CI goes green. Owners can toggle individual repos off or back on afterward. Non-outreach PRs have no level hold; outreach PRs remain held for human review.
+**The level:** Full trust. Auto-merge is off below L6; when you switch to L6, Hive enables auto-merge for every active repo, then agents open PRs and merge them automatically when CI goes green. Owners can toggle individual repos off or back on afterward. No level hold, except outreach PRs into repositories the hive does not manage, which remain held for human review; outreach PRs into the hive's own repos auto-merge like any other.
 
 **What you get:** A repo that improves itself while you sleep. The tests quality built at L3 are now the guardrails that keep agents honest.
 

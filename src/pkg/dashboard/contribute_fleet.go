@@ -175,6 +175,11 @@ type FleetClanker struct {
 	// not a fault. Derived per snapshot from Capabilities.RelayProtocolVersion;
 	// it stores nothing new and, like Capabilities, is never routed or gated on.
 	Protocol *ProtocolCompat `json:"protocol,omitempty"`
+	// FleetRework (hivecommons/hive#12502): the relay's parallel capacity,
+	// every item in flight (primary + fix-pr sub-sessions) tagged new/rework,
+	// the fix-queue depth and the contributor's stage-072 PRs not yet
+	// dispatched to them. See contribute_fleet_rework.go.
+	FleetRework
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -312,6 +317,7 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 		if task == nil {
 			fc.IdleReason = c.lastIdleReason
 		}
+		fc.FleetRework = h.fleetReworkFor(c, fc.Stale)
 		c.mu.Unlock()
 		fc.CurrentTask = task
 		fc.PromptPreview = promptPreview

@@ -147,7 +147,7 @@ func TestReleaseLevelHoldNoLongerChecksEvents(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		},
 	})
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
 	if released || reason != "hold" || err != nil {
 		t.Fatalf("got (%v, %q, %v), want level hold kept without event scan", released, reason, err)
@@ -196,7 +196,7 @@ func TestReleaseLevelHoldIgnoresAppAppliedLevelHold(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 		},
 	})
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
 	if err != nil || released || reason != "hold" {
 		t.Fatalf("got (%v, %q, %v), want level hold kept", released, reason, err)
@@ -221,7 +221,7 @@ func TestReleaseLevelHoldDoesNotRemoveLabel(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		},
 	})
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
 	if released || reason != "hold" || err != nil {
 		t.Fatalf("got (%v, %q, %v), want level hold kept without removal", released, reason, err)
@@ -243,7 +243,7 @@ func TestReleaseLevelHoldKeepsEvenIfLabelWould404(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 		},
 	})
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("safe change"))
 	if err != nil || released || reason != "hold" {
 		t.Fatalf("got (%v, %q, %v), want level hold kept", released, reason, err)
@@ -269,7 +269,7 @@ func TestReleaseLevelHoldSelfAuthNoticeCommentErrorFailsClosed(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 		},
 	})
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("Closes #581"))
 	if released || reason != "hold" || err != nil {
 		t.Fatalf("got (%v, %q, %v), want level hold kept without self-authorization notice write", released, reason, err)
@@ -291,7 +291,7 @@ func TestReleaseLevelHoldKeepsWhenSelfAuthorizationPolicyDisabled(t *testing.T) 
 			w.WriteHeader(http.StatusOK)
 		},
 	})
-	c.prHoldLabel = func(string) bool { return false }
+	c.prHoldLabel = func(string, string) bool { return false }
 	c.SetSelfAuthorizationHoldEnabled(func(string) bool { return false })
 	released, reason, err := c.releaseLevelHoldIfEligible(context.Background(), "o", "r", heldPR("Closes #581"))
 	if err != nil || released || reason != "hold" {

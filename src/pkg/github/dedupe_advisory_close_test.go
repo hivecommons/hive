@@ -112,12 +112,12 @@ func (f *dedupeFixture) server() *httptest.Server {
 			}
 			f.labels = kept
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
-		case r.Method == http.MethodGet && path == "/repos/o/r/labels/needs-decision":
+		case r.Method == http.MethodGet && path == "/repos/o/r/labels/"+NeedsDecisionStageLabel:
 			if f.failLabel {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"name": "needs-decision"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"name": NeedsDecisionStageLabel})
 		case r.Method == http.MethodPost && path == checklist+"/labels":
 			var labels []string
 			_ = json.NewDecoder(r.Body).Decode(&labels)
@@ -245,8 +245,8 @@ func TestDedupeAdvisoryReclassifiesOnEditOnce(t *testing.T) {
 	f := newDedupeFixture(t, "yes")
 	results := f.run(CloseOnMergeOptions{})
 	assertDedupeResult(t, results, CloseOnMergeSkipped, "dedupe_reclassified_needs_decision")
-	if len(f.added) != 1 || f.added[0] != issueNeedsDecisionLabel {
-		t.Fatalf("added labels = %v, want [%s]", f.added, issueNeedsDecisionLabel)
+	if len(f.added) != 1 || f.added[0] != NeedsDecisionStageLabel {
+		t.Fatalf("added labels = %v, want [%s]", f.added, NeedsDecisionStageLabel)
 	}
 	if len(f.removed) != 1 || f.removed[0] != dedupeAdvisoryLabelName {
 		t.Fatalf("removed labels = %v, want [%s]", f.removed, dedupeAdvisoryLabelName)

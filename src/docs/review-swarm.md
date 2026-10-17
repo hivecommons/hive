@@ -102,7 +102,7 @@ The default human threshold is `high`. Review-triggered fix cycles use the same 
 
 ### Out-of-scope backlog filing
 
-When the relay accepts a review verdict, cited out-of-scope findings (`review_scope: "out-of-scope"` with `file` and positive `line`) are filed as follow-up issues labeled `from-review`. Each issue body links back to the reviewed PR and records the perspective, severity, evidence location, and finding summary. The relay deduplicates against open issues through the normal issue-create path and also persists a finding key in `/data/review-backlog-issues.json`, so re-reviewing a new commit does not file the same backlog issue or summary comment again.
+When the relay accepts a review verdict, cited out-of-scope findings (`review_scope: "out-of-scope"` with `file` and positive `line`) are filed as follow-up issues labeled `origin/reviewer` (the provenance axis of the label vocabulary — see [labels-and-control-signals.md](labels-and-control-signals.md#label-axes); the retired `from-review` and `origin/review` names are accepted in config and migrated on open items). Each issue body links back to the reviewed PR and records the perspective, severity, evidence location, and finding summary. The relay deduplicates against open issues through the normal issue-create path and also persists a finding key in `/data/review-backlog-issues.json`, so re-reviewing a new commit does not file the same backlog issue or summary comment again.
 
 The PR receives one summary comment listing the backlog issues filed from that review. Filing is enabled by default and bounded by `review.max_out_of_scope_backlog_issues` (default `3`) per PR; set `review.out_of_scope_backlog_disabled: true` to opt out.
 
@@ -186,7 +186,7 @@ review:
     backlog_below: true                     # default true
   backlog:
     destination: github_issue               # github_issue | github_project | linear | jira
-    labels: [from-review]                   # default [from-review]
+    labels: [origin/reviewer]               # default [origin/reviewer]; from-review and origin/review are mapped to it
     max_per_pr_per_day: 10                  # default 10
 ```
 
@@ -202,7 +202,7 @@ review:
 | `project_column_id` | — | Projects v2 status option id; required when `destination: github_project`. |
 | `linear_state` | team default | Linear workflow state for new items. |
 | `jira_status` | project initial status | Jira status for new tickets. |
-| `labels` | `[from-review]` | Applied to every item. |
+| `labels` | `[origin/reviewer]` | Applied to every item. The retired `from-review` and `origin/review` are accepted and mapped to `origin/reviewer`. |
 | `max_per_pr_per_day` | `10` | Cap per PR per day. |
 
 **Precedence with `classification.review_bots.min_priority`.** One blocking line governs both the hive reviewer and external review bots. The bot threshold resolves in this order, first non-empty wins: `hive.yaml` `classification.review_bots.min_priority` (including an explicit `all`), then `hive-project.yaml` `classification.review_bots.min_priority`, then `review.severity.block_at`. With none set, every bot finding is routed. `block_at` is never copied into `min_priority`; clearing the explicit override hands control back to `block_at`. Invalid values fail config load with an error naming the field (for example `review.severity.block_at`, `review.backlog.project_column_id`).
@@ -211,7 +211,7 @@ review:
 
 When `block_at` is set and `backlog_below` is on, every cited in-scope finding (with `file` and a positive `line`) whose priority is below the line is filed to the backlog when the relay accepts the verdict. Cited out-of-scope findings go to the same destination as before (see [Out-of-scope backlog filing](#out-of-scope-backlog-filing)).
 
-- **Destination.** `github_issue` files an issue in the PR's repo. `github_project` also adds that issue to the `governor.work_source.github_projects` project and sets its Status to `project_column_id`. `linear` files an issue on the Linear team mapped to the repo, in `linear_state` when set (an unknown state is an error naming it; label names the team lacks are skipped). `jira` files a Task in the first `work_source.jira.project_keys` project and moves it to `jira_status` when set. All three use the work-source credentials. If the destination's work source is not active or cannot be built, the item is filed as a GitHub issue with the `from-review` label added, and the hive logs why.
+- **Destination.** `github_issue` files an issue in the PR's repo. `github_project` also adds that issue to the `governor.work_source.github_projects` project and sets its Status to `project_column_id`. `linear` files an issue on the Linear team mapped to the repo, in `linear_state` when set (an unknown state is an error naming it; label names the team lacks are skipped). `jira` files a Task in the first `work_source.jira.project_keys` project and moves it to `jira_status` when set. All three use the work-source credentials. If the destination's work source is not active or cannot be built, the item is filed as a GitHub issue with the `origin/reviewer` label added, and the hive logs why.
 - **Item body.** The finding title and summary, the PR link, a `file:line` permalink at the reviewed head SHA, the severity with its P-level, the fingerprint, and the line `filed by Hive review backlog`. `labels` are applied to every item.
 - **Fingerprint dedup.** Each finding is fingerprinted as `sha256(rule | path | snippet)`: the title, the cleaned file path and the summary, lower-cased with whitespace collapsed. Line numbers are left out, so the same nit at a shifted line still matches. `/data/review-backlog-issues.json` keeps a per-repo map of fingerprint → item. When another PR raises a known fingerprint, the hive comments on the existing item with the new PR link and permalink instead of filing a second one. The same PR raising it again changes nothing.
 - **Cap.** At most `max_per_pr_per_day` items are filed or updated per PR per UTC day. Findings over the cap are retried on the next review. Out-of-scope findings also stay within `review.max_out_of_scope_backlog_issues` per PR.
@@ -220,6 +220,8 @@ When `block_at` is set and `backlog_below` is on, every cited in-scope finding (
 The confidence score also feeds the **PR review queue** (`GET /api/review/queue`), which ranks every open PR - agent- and contributor-authored - by triage class, confidence band, CI state and age, with the reasons for each position. An unreviewed PR ranks as *needs attention*, never *safe*. See [review-queue-triage.md](review-queue-triage.md#pr-review-queue).
 
 When `review.require_approval` is false or omitted, `merge-eligible.json` is produced as before. When true, a PR is included only if `review-verdicts.json` contains an aggregate `approve` for the same repo, PR number, and head SHA.
+
+`review.shadow` (default false) evaluates the same approval gate (including the unavailable-artifact case) without enforcing it. A PR that is otherwise merge-eligible stays eligible; the result is recorded as `shadow.review_gate.would_have_held` (with reason and confidence) on the PR head's evidence bundle and logged. Shadow never blocks a merge and never weakens `require_approval: true`, which keeps blocking as above. Recording needs `evidence` enabled and an existing bundle for the head; if `evidence.signing_key_path` points at a key that exists but fails to load, the shadow write is skipped with a warning rather than rewriting a signed bundle unsigned (an absent key path or missing key file still records unsigned).
 
 `review.fan_out` is separately defaulted to false. When both `require_approval` and `fan_out` are true, the governor eval cycle plans review kicks for agent-authored PRs that do not yet have a fresh aggregate verdict for their current head SHA.
 

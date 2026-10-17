@@ -150,6 +150,20 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		// default); automergeLabelDefault is the label used when it is empty.
 		"automergeLabel":        cfg.Governor.Labels.AutoMerge,
 		"automergeLabelDefault": config.DefaultAutoMergeLabel,
+		// stageLabelsEnabled/Dwell are governor.labels.stage (#12429).
+		"stageLabelsEnabled": cfg.Governor.Labels.Stage.IsEnabled(),
+		"stageLabelsDwell":   formatStageDwell(cfg.Governor.Labels.Stage.Dwell),
+		// governor.labels.stage.contributor_nudge.* and presence_window
+		// (hivecommons/hive#12436): the stage-072 contributor nudge.
+		"stageNudgeEnabled":   cfg.Governor.Labels.Stage.ContributorNudge.IsEnabled(),
+		"stageNudgeRenudge":   cfg.Governor.Labels.Stage.ContributorNudge.RenudgeInterval,
+		"stagePresenceWindow": cfg.Governor.Labels.Stage.PresenceWindow,
+		// governor.labels.stage.adoption.enabled / contributor_grace_*: the
+		// stage-074 adoption of red contributor PRs.
+		"stageAdoptionEnabled":     cfg.Governor.Labels.Stage.Adoption.IsEnabled(),
+		"stageStalledRequireQuiet": cfg.Governor.Labels.Stage.Stalled.IsRequireQuiet(),
+		"stageGraceOnline":         cfg.Governor.Labels.Stage.ContributorGraceOnline,
+		"stageGraceOffline":        cfg.Governor.Labels.Stage.ContributorGraceOffline,
 		// requireLabels is the OPPOSITE polarity from "labels" (exempt):
 		// project.issue_filter.require_labels — when non-empty, agents may
 		// ONLY initiate work on issues carrying at least one of them. Edited
@@ -281,20 +295,28 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// switch state; contribute_cooldown_hours is the EFFECTIVE period (the
 			// 168h default surfaces when unset) so the number input shows the value
 			// actually in force.
-			"contribute_cooldown_enabled":  cfg.Hub.IsContributeCooldownEnabled(),
-			"contribute_cooldown_hours":    cfg.Hub.ContributeCooldownHoursOrDefault(),
-			"contribute_delegatable_roles": normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
-			"contribute_announcement":      s.activeContributeAnnouncement(),
-			"contribute_help_links":        s.contributeHelpLinks(),
-			"disabled_repos":               s.normalizedHubDisabledRepos(),
-			"disabled_repos_raw":           cfg.Hub.DisabledRepos,
-			"disabled_tiers":               cfg.Hub.DisabledTiers,
-			"tier_limits":                  cfg.Hub.TierLimits,
+			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
+			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
+			// contribute.max_parallel_fixes / contribute.min_focus_window
+			// (hivecommons/hive#12436): the per-contributor red-PR fix budget.
+			"contribute_max_parallel_fixes": cfg.Contribute.EffectiveMaxParallelFixes(),
+			"contribute_min_focus_window":   cfg.Contribute.MinFocusWindow,
+			"contribute_delegatable_roles":  normalizeContributeDelegatableRoles(cfg.Hub.ContributeDelegatableRoles),
+			"contribute_announcement":       s.activeContributeAnnouncement(),
+			"contribute_help_links":         s.contributeHelpLinks(),
+			"disabled_repos":                s.normalizedHubDisabledRepos(),
+			"disabled_repos_raw":            cfg.Hub.DisabledRepos,
+			"disabled_tiers":                cfg.Hub.DisabledTiers,
+			"tier_limits":                   cfg.Hub.TierLimits,
 			// available_repos is the READ-ONLY list of repo full-names the hive knows
 			// about (from the live status snapshot), so the Management tab can render
 			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
 			// list. A repo is ENABLED unless it appears in disabled_repos.
 			"available_repos": s.contributeAvailableRepos(),
+			// settings backs the scalar hub keys (identity, already-done
+			// handling, NPS, task-status push, upgrade drain, hub-only
+			// secrets as set/not set). See hubSettingsResponse.
+			"settings": s.hubSettingsResponse(cfg),
 		},
 	})
 }
@@ -755,6 +777,25 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		// action applies. Empty restores the default. The GitHub client reads it
 		// at boot, so a change applies after a restart.
 		Automerge *string `json:"automerge"`
+		// StageEnabled/StageDwell are governor.labels.stage.enabled and
+		// governor.labels.stage.dwell ("slug=duration, ..."), read live by the
+		// automerge sweep so no restart is needed.
+		StageEnabled *bool   `json:"stage_enabled"`
+		StageDwell   *string `json:"stage_dwell"`
+		// Stage-072 contributor nudge (hivecommons/hive#12436):
+		// governor.labels.stage.contributor_nudge.enabled / .renudge_interval
+		// and governor.labels.stage.presence_window (Go durations; empty
+		// restores the default).
+		StageNudgeEnabled   *bool   `json:"stage_nudge_enabled"`
+		StageNudgeRenudge   *string `json:"stage_nudge_renudge_interval"`
+		StagePresenceWindow *string `json:"stage_presence_window"`
+		// Stage-074 adoption: governor.labels.stage.adoption.enabled and
+		// governor.labels.stage.contributor_grace_online / _offline.
+		StageAdoptionEnabled *bool   `json:"stage_adoption_enabled"`
+		StageGraceOnline     *string `json:"stage_grace_online"`
+		StageGraceOffline    *string `json:"stage_grace_offline"`
+		// governor.labels.stage.stalled.require_quiet (hivecommons/hive#12534).
+		StageStalledRequireQuiet *bool `json:"stage_stalled_require_quiet"`
 		// ReporterTrust (#9665) is pointer-typed per field for the same
 		// "absent means unchanged" reason as the two lists above.
 		ReporterTrust *struct {
@@ -842,6 +883,28 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var stageDwell map[string]string
+	if body.StageDwell != nil {
+		var err error
+		if stageDwell, err = parseStageDwell(*body.StageDwell); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	for name, v := range map[string]*string{
+		"stage_nudge_renudge_interval": body.StageNudgeRenudge,
+		"stage_presence_window":        body.StagePresenceWindow,
+		"stage_grace_online":           body.StageGraceOnline,
+		"stage_grace_offline":          body.StageGraceOffline,
+	} {
+		if v == nil || strings.TrimSpace(*v) == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(strings.TrimSpace(*v)); err != nil || d <= 0 {
+			jsonError(w, name+" must be a positive Go duration such as 15m or 24h", http.StatusBadRequest)
+			return
+		}
+	}
 	if body.WritingGuide != nil {
 		if err := config.ValidateWritingGuide(*body.WritingGuide); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
@@ -912,6 +975,37 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Automerge != nil {
 		s.deps.Config.Governor.Labels.AutoMerge = automerge
+	}
+	if body.StageEnabled != nil {
+		v := *body.StageEnabled
+		s.deps.Config.Governor.Labels.Stage.Enabled = &v
+	}
+	if body.StageDwell != nil {
+		s.deps.Config.Governor.Labels.Stage.Dwell = stageDwell
+	}
+	if body.StageNudgeEnabled != nil {
+		v := *body.StageNudgeEnabled
+		s.deps.Config.Governor.Labels.Stage.ContributorNudge.Enabled = &v
+	}
+	if body.StageNudgeRenudge != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorNudge.RenudgeInterval = strings.TrimSpace(*body.StageNudgeRenudge)
+	}
+	if body.StagePresenceWindow != nil {
+		s.deps.Config.Governor.Labels.Stage.PresenceWindow = strings.TrimSpace(*body.StagePresenceWindow)
+	}
+	if body.StageAdoptionEnabled != nil {
+		v := *body.StageAdoptionEnabled
+		s.deps.Config.Governor.Labels.Stage.Adoption.Enabled = &v
+	}
+	if body.StageGraceOnline != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorGraceOnline = strings.TrimSpace(*body.StageGraceOnline)
+	}
+	if body.StageGraceOffline != nil {
+		s.deps.Config.Governor.Labels.Stage.ContributorGraceOffline = strings.TrimSpace(*body.StageGraceOffline)
+	}
+	if body.StageStalledRequireQuiet != nil {
+		v := *body.StageStalledRequireQuiet
+		s.deps.Config.Governor.Labels.Stage.Stalled.RequireQuiet = &v
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)
@@ -1391,14 +1485,13 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		Enabled                        *bool                                  `json:"enabled"`
 		URL                            string                                 `json:"url"`
 		DashboardURL                   string                                 `json:"dashboard_url"`
-		SnapshotURL                    string                                 `json:"snapshot_url"`
+		SnapshotURL                    *string                                `json:"snapshot_url"`
 		IsPublic                       *bool                                  `json:"is_public"`
 		AutoSnapshot                   *bool                                  `json:"auto_snapshot"`
 		SnapshotFrameAncestors         []string                               `json:"snapshot_frame_ancestors"`
 		AutoUpgrade                    *bool                                  `json:"auto_upgrade"`
 		ContributeSuspended            *bool                                  `json:"contribute_suspended"`
 		ContributeWallEnabled          *bool                                  `json:"contribute_wall_enabled"`
-		ContributeWallRetentionDays    *int                                   `json:"contribute_wall_retention_days"`
 		ContributeTitlesMode           *string                                `json:"contribute_titles_mode"`
 		ContributeAuthorsMode          *string                                `json:"contribute_authors_mode"`
 		ContributeLabelsMode           *string                                `json:"contribute_labels_mode"`
@@ -1416,18 +1509,45 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		ContributeSkipAssignedToOthers *bool                                  `json:"contribute_skip_assigned_to_others"`
 		ContributeCooldownEnabled      *bool                                  `json:"contribute_cooldown_enabled"`
 		ContributeCooldownHours        *int                                   `json:"contribute_cooldown_hours"`
+		ContributeMaxParallelFixes     *int                                   `json:"contribute_max_parallel_fixes"`
+		ContributeMinFocusWindow       *string                                `json:"contribute_min_focus_window"`
 		ContributeDelegatableRoles     []string                               `json:"contribute_delegatable_roles"`
 		ContributeAnnouncement         *config.ContributeAnnouncement         `json:"contribute_announcement"`
 		ContributeHelpLinks            []config.ContributeHelpLink            `json:"contribute_help_links"`
 		DisabledRepos                  []string                               `json:"disabled_repos"`
 		DisabledTiers                  []string                               `json:"disabled_tiers"`
 		TierLimits                     map[string]config.TierRate             `json:"tier_limits"`
+		hubSettingsBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 	cfg := s.deps.Config
+	// The scalar hub keys are validated before any field is applied.
+	applyHubSettings, err := body.hubSettingsBody.prepare(body.ContributeAnnouncement)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var snapshotURL string
+	if body.SnapshotURL != nil {
+		normalized, err := config.ValidateSnapshotURL(*body.SnapshotURL)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		snapshotURL = normalized
+	}
+	var snapshotFrameAncestors []string
+	if body.SnapshotFrameAncestors != nil {
+		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		snapshotFrameAncestors = normalized
+	}
 	// #7451: on a hub-managed spoke the hub owns dashboard_url — the next
 	// heartbeat would revert an edit, and until it did the new value would
 	// be the OAuth callback origin (oauth_origin.go), so a typo locks the
@@ -1439,6 +1559,21 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "hub.dashboard_url is owned by the hub on this spoke and is set from its heartbeat; to serve the dashboard from a different host set dashboard.public_url instead", http.StatusConflict)
 		return
 	}
+	// hivecommons/hive#12436: validate the fix-budget leaves before any field
+	// is applied (same refuse-whole-save rule as dashboard_url above).
+	if body.ContributeMaxParallelFixes != nil &&
+		(*body.ContributeMaxParallelFixes < 1 || *body.ContributeMaxParallelFixes > maxParallelFixesCeiling) {
+		jsonError(w, fmt.Sprintf("contribute_max_parallel_fixes must be between 1 and %d", maxParallelFixesCeiling), http.StatusBadRequest)
+		return
+	}
+	if body.ContributeMinFocusWindow != nil {
+		if v := strings.TrimSpace(*body.ContributeMinFocusWindow); v != "" {
+			if d, err := time.ParseDuration(v); err != nil || d <= 0 {
+				jsonError(w, "contribute_min_focus_window must be a positive Go duration such as 30m", http.StatusBadRequest)
+				return
+			}
+		}
+	}
 	if body.Enabled != nil {
 		cfg.Hub.Enabled = *body.Enabled
 	}
@@ -1448,7 +1583,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.DashboardURL != "" {
 		cfg.Hub.DashboardURL = body.DashboardURL
 	}
-	cfg.Hub.SnapshotURL = body.SnapshotURL
+	if body.SnapshotURL != nil {
+		cfg.Hub.SnapshotURL = snapshotURL
+	}
 	if body.IsPublic != nil {
 		cfg.Hub.IsPublic = *body.IsPublic
 	}
@@ -1456,12 +1593,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		cfg.Hub.AutoSnapshot = *body.AutoSnapshot
 	}
 	if body.SnapshotFrameAncestors != nil {
-		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
-		if err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		cfg.Dashboard.SnapshotFrameAncestors = normalized
+		cfg.Dashboard.SnapshotFrameAncestors = snapshotFrameAncestors
 	}
 	if body.AutoUpgrade != nil {
 		cfg.Hub.AutoUpgrade = *body.AutoUpgrade
@@ -1471,9 +1603,6 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeWallEnabled != nil {
 		cfg.Hub.ContributeWallEnabled = *body.ContributeWallEnabled
-	}
-	if body.ContributeWallRetentionDays != nil {
-		cfg.Hub.ContributeWallRetentionDays = *body.ContributeWallRetentionDays
 	}
 	if body.ContributeTitlesMode != nil {
 		cfg.Hub.ContributeTitlesMode = *body.ContributeTitlesMode
@@ -1498,6 +1627,13 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		v := strings.TrimSpace(*body.ContributeNeedsDecisionLabel)
 		if previous != v {
 			cfg.Hub.ContributeSkipLabels = withoutExactLabel(cfg.Hub.ContributeSkipLabels, previous)
+			if previous == config.DefaultNeedsDecisionLabel {
+				// The retired spellings ride along with the default
+				// (hivecommons/hive#12683); a custom label replaces them too.
+				for _, legacy := range config.LegacyNeedsDecisionLabels {
+					cfg.Hub.ContributeSkipLabels = withoutExactLabel(cfg.Hub.ContributeSkipLabels, legacy)
+				}
+			}
 			if len(cfg.Hub.ContributeSkipLabels) == 0 {
 				cfg.Hub.ContributeSkipLabels = []string{"blocked"}
 			}
@@ -1549,6 +1685,12 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.ContributeCooldownHours != nil {
 		cfg.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
 	}
+	if body.ContributeMaxParallelFixes != nil {
+		cfg.Contribute.MaxParallelFixes = *body.ContributeMaxParallelFixes
+	}
+	if body.ContributeMinFocusWindow != nil {
+		cfg.Contribute.MinFocusWindow = strings.TrimSpace(*body.ContributeMinFocusWindow)
+	}
 	if body.ContributeDelegatableRoles != nil {
 		cfg.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
 	}
@@ -1588,6 +1730,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	cfg.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(cfg.Hub.ContributeAuthorsMode)
 	cfg.Hub.ContributeLabelsMode = config.NormalizeFilterMode(cfg.Hub.ContributeLabelsMode)
 	cfg.Hub.NormalizeContributeRepoFilters()
+	applyHubSettings(&cfg.Hub)
 	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
 	if announcementTouched {
@@ -3261,4 +3404,52 @@ func trimNonEmpty(in []string) []string {
 		}
 	}
 	return out
+}
+
+// formatStageDwell renders governor.labels.stage.dwell as "slug=dur, ..." in
+// stable order for the Settings field.
+func formatStageDwell(dwell map[string]string) string {
+	if len(dwell) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(dwell))
+	for k := range dwell {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+dwell[k])
+	}
+	return strings.Join(parts, ", ")
+}
+
+// parseStageDwell parses the Settings field back into the config map,
+// validating slugs against the stage table and durations with
+// time.ParseDuration. Empty input clears every override.
+func parseStageDwell(raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		slug, dur, ok := strings.Cut(part, "=")
+		slug, dur = strings.ToLower(strings.TrimSpace(slug)), strings.TrimSpace(dur)
+		if !ok || slug == "" || dur == "" {
+			return nil, fmt.Errorf("stage dwell %q must be slug=duration", part)
+		}
+		if !config.KnownStageSlug(slug) {
+			return nil, fmt.Errorf("stage dwell: unknown stage %q (known: %s)", slug, strings.Join(config.KnownStageSlugs(), ", "))
+		}
+		if d, err := time.ParseDuration(dur); err != nil || d < 0 {
+			return nil, fmt.Errorf("stage dwell %q: invalid duration", part)
+		}
+		out[slug] = dur
+	}
+	return out, nil
 }

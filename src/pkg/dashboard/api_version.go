@@ -870,7 +870,12 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	defer closeHTTPBody(resp.Body)
 	const maxUpgradeResponseBytes = 1 << 16
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxUpgradeResponseBytes))
-	if resp.StatusCode < 300 {
+	if resp.StatusCode < 300 && hubUpgradeBodyIsCurrent(body) {
+		// The hub armed nothing: this spoke is already at its reachable
+		// target. Record neither "started" (nothing will roll) nor "failed"
+		// (nothing went wrong) — leave the attempt record as it was (#12494).
+		s.logger.Info("self-upgrade: already at the reachable target — nothing to do", "target", target, "current", versionHash)
+	} else if resp.StatusCode < 300 {
 		now := time.Now().UTC()
 		s.rememberDashboardUpgradeState(dashboardUpgradeState{
 			State:       dashboardUpgradeStateStarted,
@@ -893,6 +898,20 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
+}
+
+// hubUpgradeStatusCurrent mirrors the hub's upgradeStatusCurrent: the
+// `status` of a 200 from POST /api/saas/hives/{id}/upgrade when the spoke is
+// already at its reachable target and nothing was armed.
+const hubUpgradeStatusCurrent = "current"
+
+// hubUpgradeBodyIsCurrent reports whether a 2xx hub upgrade body is the
+// already-current no-op rather than an armed upgrade.
+func hubUpgradeBodyIsCurrent(body []byte) bool {
+	var parsed struct {
+		Status string `json:"status"`
+	}
+	return json.Unmarshal(body, &parsed) == nil && parsed.Status == hubUpgradeStatusCurrent
 }
 
 func upgradeErrorFromHubBody(body []byte, fallback string) string {

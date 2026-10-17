@@ -304,7 +304,7 @@ flowchart LR
 | L3 | Quality-Gated (Measured) | `quality` opens PRs gated by literal `hold` about testing gaps, coverage, and CI health; others advisory. This measurement foundation is what earns automation at higher levels |
 | L4 | Security-Aware (Adaptive) | All agents file issues; quality, ci-maintainer, and sec-check can open PRs gated by literal `hold` |
 | L5 | Semi-Autonomous (Semi-Automated) | All agents open PRs — every PR carries literal `hold` for human review |
-| L6 | Fully Autonomous | Agents open PRs and **auto-merge on green CI**; switching to L6 enables auto-merge for every active repo, owners may toggle repos afterward, non-outreach PRs have no level hold, outreach PRs remain held |
+| L6 | Fully Autonomous | Agents open PRs and **auto-merge on green CI**; switching to L6 enables auto-merge for every active repo, owners may toggle repos afterward, no level hold, except cross-repo outreach PRs (target repo not managed by this hive) remain held |
 
 `supervisor` is always advisory. The full matrix is in
 [`acmm-policy-matrix.md`](acmm-policy-matrix.md).

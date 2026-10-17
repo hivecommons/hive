@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
+	"github.com/hivecommons/hive/pkg/hivestate"
 )
 
 func TestClassifyErrorsFlagsPeriodicBrokenPipeAndIgnoresBenignTimeouts(t *testing.T) {
@@ -106,6 +107,40 @@ func TestAnonymousInstanceAndScrubbing(t *testing.T) {
 	r := BuildReport(Observation{HiveID: "h", Version: "ghp_abcdefghijklmnopqrstuvwxyz123456", Commit: "abcdef", Mode: "IDLE", ACMMLevel: 3}, "coverage", "Token ghp_abcdefghijklmnopqrstuvwxyz123456", Evidence{Component: "proxy", ErrorClass: "ghp_abcdefghijklmnopqrstuvwxyz123456", Count: 1, Window: time.Minute, Severity: "high", Attributable: true}, "fp", id, "ghp_abcdefghijklmnopqrstuvwxyz123456", "abcdef")
 	if strings.Contains(r.Body, "ghp_abcdefghijklmnopqrstuvwxyz123456") || strings.Contains(r.Title, "ghp_abcdefghijklmnopqrstuvwxyz123456") {
 		t.Fatalf("report was not scrubbed:\n%s\n%s", r.Title, r.Body)
+	}
+}
+
+func TestBuildObservationReportContainsHiveMetadataAndSeriesOnly(t *testing.T) {
+	r := BuildObservationReport(ObservationFinding{
+		Kind:           "queue-growth",
+		Title:          "Queue depth is growing",
+		Evidence:       "p90 depth 30 versus 15",
+		SuspectedCause: "intake is outpacing throughput",
+		NextStep:       "review the oldest queue items",
+		Fingerprint:    "h1:queue-growth",
+		Series:         []float64{15, 18, 30},
+	}, ObservationMetadata{
+		HiveID:     "h1",
+		HiveSlug:   "hosted-h1",
+		ProjectOrg: "acme",
+		ACMMLevel:  3,
+		Version:    "v5.1.0",
+		ClusterID:  "oke-11",
+		Now:        time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC),
+	})
+	for _, want := range []string{"h1", "hosted-h1", "acme", "L3", "v5.1.0", "oke-11", "[15,18,30]"} {
+		if !strings.Contains(r.Body, want) {
+			t.Fatalf("observation body missing %q:\n%s", want, r.Body)
+		}
+	}
+	if strings.Contains(r.Body, "acme/widgets") || strings.Contains(r.Body, "foo.go") {
+		t.Fatalf("observation body leaked project repository identity:\n%s", r.Body)
+	}
+	if r.Trigger != TriggerObservation || r.Class != TriggerObservation || r.Observation == nil || r.Observation.Kind != "queue-growth" {
+		t.Fatalf("observation report = %#v", r)
+	}
+	if !contains(r.Labels, LabelObservation) {
+		t.Fatalf("observation labels = %v", r.Labels)
 	}
 }
 
@@ -368,5 +403,49 @@ func TestRecoveryBodyNamesACMMCriterion(t *testing.T) {
 	got := RecoveryReport(OpenIssue{Trigger: TriggerACMMShortfall}, Report{Fingerprint: "abc123", InstanceID: "inst", Criterion: "green-ci-streak", Trigger: TriggerACMMShortfall})
 	if !strings.Contains(got.Body, "`green-ci-streak`") {
 		t.Fatalf("recovery body dropped the criterion: %q", got.Body)
+	}
+}
+
+func TestReportsCarryHiveStateOutsideBody(t *testing.T) {
+	trends := &hivestate.Trends{Last24h: hivestate.Window{Samples: 3, QueueIssues: hivestate.Quantiles{Median: 4, P90: 8}}}
+	obs := Observation{Mode: "busy", ACMMLevel: 2, HiveState: trends}
+	ev := Evidence{Component: "merge", ErrorClass: "conflict", Severity: "high", Class: "unclassified_error_repeated", Message: "boom"}
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	reports := []Report{
+		BuildReport(obs, "ci", "CI", ev, "fp", "inst", "v", "c"),
+		BuildDefectReport(obs, ev, "fp", "inst", "v", "c"),
+		BuildRuntimeReport(obs, ev, "fp", "inst", "hive", "v", "c", now),
+	}
+	obs.HiveState = nil
+	bare := []Report{
+		BuildReport(obs, "ci", "CI", ev, "fp", "inst", "v", "c"),
+		BuildDefectReport(obs, ev, "fp", "inst", "v", "c"),
+		BuildRuntimeReport(obs, ev, "fp", "inst", "hive", "v", "c", now),
+	}
+	for i, r := range reports {
+		if r.HiveState != trends {
+			t.Errorf("report %d hive_state = %+v, want the observation's trends", i, r.HiveState)
+		}
+		if bare[i].HiveState != nil {
+			t.Errorf("report %d without trends = %+v, want nil", i, bare[i].HiveState)
+		}
+		if r.Body != bare[i].Body {
+			t.Errorf("report %d body changed with hive state; trends must not alter the body hash", i)
+		}
+	}
+}
+
+// Selfreports keep the deprecated hive/selfreport marker for operators'
+// existing filters and ALSO carry origin/selfreport, the universal
+// provenance axis every hive-created issue records.
+func TestRuntimeReportCarriesBothSelfReportLabels(t *testing.T) {
+	ev := Evidence{Component: "merge", ErrorClass: "conflict", Severity: "high", Class: "unclassified_error_repeated", Message: "boom"}
+	r := BuildRuntimeReport(Observation{Mode: "busy"}, ev, "fp", "inst", "hive", "v", "c", time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC))
+	has := map[string]bool{}
+	for _, l := range r.Labels {
+		has[l] = true
+	}
+	if !has[LabelSelfReport] || !has[LabelOriginSelfReport] || LabelOriginSelfReport != "origin/selfreport" {
+		t.Fatalf("labels = %v, want both %s and origin/selfreport", r.Labels, LabelSelfReport)
 	}
 }

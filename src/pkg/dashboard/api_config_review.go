@@ -57,6 +57,7 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		RequireApproval    *bool     `json:"require_approval"`
+		Shadow             *bool     `json:"shadow"` // hive.yaml review.shadow
 		FanOut             *bool     `json:"fan_out"`
 		MaxParallelReviews *int      `json:"max_parallel_reviews"`
 		MaxPerspectives    *int      `json:"max_perspectives_per_pr"`
@@ -333,6 +334,9 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.RequireApproval != nil {
 		cfg.Review.RequireApproval = *body.RequireApproval
+	}
+	if body.Shadow != nil {
+		cfg.Review.Shadow = *body.Shadow
 	}
 	if body.FanOut != nil {
 		cfg.Review.FanOut = *body.FanOut

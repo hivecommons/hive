@@ -127,9 +127,11 @@ the body asks the maintainer to choose between options, or to approve before
 work can start. The script sends `"needs_decision": true` on the request, and
 the watcher adds the hive's configured needs-decision label
 (`project.issue_filter.hard_suppress_labels.needs_decision`, first entry;
-`needs-decision` by default) to the create itself, whatever labels the agent
-named ([#11215](https://github.com/hivecommons/hive/issues/11215)). The issue
-is then parked like any other `needs-decision` issue: it stays out of the
+`stage/085-needs-decision` by default — the retired `needs-decision` spelling
+is upgraded, [#12683](https://github.com/hivecommons/hive/issues/12683)) to the
+create itself, whatever labels the agent named
+([#11215](https://github.com/hivecommons/hive/issues/11215)). The issue is then
+parked like any other `stage/085-needs-decision` issue: it stays out of the
 actionable queue, the un-park sweep posts the "What to reply" notice, and the
 maintainer answers with `/hive approve` or `/hive decision` (see
 [maintainer-commands.md](maintainer-commands.md)). Every lane policy that files
@@ -143,22 +145,43 @@ hive. The flag only applies to a create; on any other kind the script exits
 `--repo`, a number or URL, and `--body` are all required, or the script exits
 `2`.
 
+A posted comment is also the agent's **start signal** on that issue: the hub
+records a 2h agent claim the first time the agent's own comment, label or
+claim request (or a `hive-open-pr --issues` request) names it, so a second
+agent is not kicked onto the same work
+([#10527](https://github.com/hivecommons/hive/issues/10527)). A comment that
+is an explicit *deferral* is posted but records no claim
+([#12387](https://github.com/hivecommons/hive/issues/12387)): one that opens
+(after markdown and an optional `Status:`/`Update:` label) with
+"Deferred"/"Deferring", "Not starting", "[This is] [still] blocked by/on
+&lt;ref&gt;" or "Waiting on/for &lt;ref&gt;", where &lt;ref&gt; is `#N`,
+`owner/repo#N` or a GitHub issue/PR URL; or one that says "deferred this
+cycle", "pick(s) [this/it] up once/when …" or "pick(s) up after &lt;ref&gt;
+merges/lands" anywhere. A comment that also says work is starting now
+("starting now", "resuming now", "working on it now", "no longer blocked")
+still records the claim, as does a resume such as "Picking this up after #N
+merged, starting now." The opening forms only look at how the comment starts,
+so a progress comment with a deferral aside later on still claims. Label and
+claim requests are start signals whatever an accompanying comment said. To
+park an issue without claiming it, open the comment with the deferral.
+
 ### `claim`
 
 `--repo` and a number or URL are required; no body or title needed. A claim
 records that this agent is starting work on an issue. Because App bots cannot
 be GitHub assignees, the watcher applies a `hive/claimed-by-<agent>` label
 instead — the visible, auditable ownership signal — and audits it as
-`agent_issue_claimed`. The same label call adds `hive/in-progress`, and the
+`agent_issue_claimed`. The same label call adds `stage/030-pr-in-progress` (formerly `hive/in-progress`), and the
 watcher posts one bot comment carrying a timestamped start marker
 (`<!-- hive:claim who=<agent> kind=agent hive=<spoke> at=<RFC3339>
 until=<at+agent TTL> -->`) so maintainers can see exactly when an agent
 began a PR for the issue ([#11841](https://github.com/hivecommons/hive/issues/11841)). Every kick
 instructs the agent to claim before touching an issue; while the marker is
 live every hive that scans the repo withholds the issue from kicks. The
-`hive/in-progress` label clears when the agent's `hive-open-pr --issues`
-request opens the PR, when the claim is released, or at enumeration once PR
-evidence exists or the marker lapsed (default 2h).
+`stage/030-pr-in-progress` label is swapped for `stage/040-covered-by-pr` when
+the agent's `hive-open-pr --issues` request opens the PR, and cleared when the
+claim is released or at enumeration once PR evidence exists or the marker
+lapsed (default 2h).
 
 ### `label`
 
@@ -170,8 +193,10 @@ required. Labels are added first, then removed, and the change is audited as
 Hive-controlled labels are refused in both directions: the merge-queue label
 (`lgtm`, or whatever the hive renamed it to), the hold labels, anything in the
 `hive/` namespace, and the labels that record a human decision
-(`approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
-`blocked`). They are inputs to hive automation or records of someone's
+(`approved-direction`, `design-approved`, `needs-human`, `blocked`, the
+retired `needs-decision` / `needs-direction`, and every `stage/*` label
+except `stage/085-needs-decision`, which an agent may *add* to park an item on
+a maintainer ruling — never remove, [#12683](https://github.com/hivecommons/hive/issues/12683)). They are inputs to hive automation or records of someone's
 verdict, so an agent may not set them through this operation; one reserved
 label refuses the whole request. Use `hive-open-issue claim` to record
 ownership. This refusal applies only to the `label` operation on an existing

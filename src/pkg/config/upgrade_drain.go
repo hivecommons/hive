@@ -4,7 +4,7 @@ import "time"
 
 // defaultUpgradeDrainTimeoutS is how long a self-upgrade waits for in-flight
 // agent kicks when hub.upgrade_drain_timeout_s is unset (#11876).
-const defaultUpgradeDrainTimeoutS = 45 * 60
+const defaultUpgradeDrainTimeoutS = DefaultUpgradeDrainTimeoutS
 
 // EffectiveUpgradeDrainTimeout returns the self-upgrade drain bound: the
 // configured value, the default when unset, or 0 (drain disabled) when the

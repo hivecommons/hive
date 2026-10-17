@@ -241,12 +241,12 @@ func TestPRRequestWatcher_HoldLabelApplied(t *testing.T) {
 	cases := []struct {
 		name     string
 		agent    string
-		holdFn   func(string) bool
+		holdFn   func(string, string) bool
 		wantHold bool
 	}{
-		{"hold-gated level applies hold", "scanner", func(string) bool { return true }, true},
-		{"non-hold-gated level applies nothing", "scanner", func(string) bool { return false }, false},
-		{"agent-specific decider applies hold", "publicist", func(agent string) bool { return agent == "publicist" }, true},
+		{"hold-gated level applies hold", "scanner", func(string, string) bool { return true }, true},
+		{"non-hold-gated level applies nothing", "scanner", func(string, string) bool { return false }, false},
+		{"agent-specific decider applies hold", "publicist", func(agent, _ string) bool { return agent == "publicist" }, true},
 		{"nil decider applies nothing", "scanner", nil, false},
 	}
 	for _, tc := range cases {
@@ -323,7 +323,7 @@ func TestPRRequestWatcher_RetriesRequiredHoldLabelFailure(t *testing.T) {
 	defer srv.Close()
 	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	c.prAuthz = func(string, int) error { return nil }
-	c.prHoldLabel = func(string) bool { return true }
+	c.prHoldLabel = func(string, string) bool { return true }
 
 	dir := t.TempDir()
 	old := prRequestDirForTest

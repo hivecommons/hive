@@ -4,13 +4,21 @@ The spoke dashboard is the operator UI served from
 `src/pkg/dashboard/static/index.html`. For the behavior behind the labels the repository cards show or mutate, see [Hive Labels and Control Signals](labels-and-control-signals.md). Its FAQ panel (`#faq-section` /
 `#faq-panel`) is intentionally static HTML: it is not ACMM-gated, does not
 fetch data, and is visible to confused L1/L2 users before they understand the
-rest of the UI.
+rest of the UI. Its only script is a client-side filter box (`faqFilter`) that
+hides non-matching questions.
 
-The FAQ is a summary surface for the current v5 hive. It groups answers by
-getting started (L1/L2), the L3-L6 trust ladder, runs and inception,
-contributors and relays, issue claims and GitHub footprint, cost/cadence/models,
-and where to get help. Each answer links back to the relevant `src/docs/*.md`
-source of truth rather than becoming a second spec.
+The FAQ is a summary surface for the current v5 hive. Each question is a
+collapsible `<details class="faq-q">` with a `<summary>`, grouped under
+getting started (L1/L2), the L3-L6 trust ladder (including `hold` labels and
+shadow mode), evidence/releases/upgrades, runs/inception/Experiment Lab,
+contributors/relays/models, issue claims/attribution/audit log,
+cost/cadence/pausing, and where to get help. Each answer links back to the
+relevant `src/docs/*.md` source of truth rather than becoming a second spec,
+and a footer points to Discord, the in-dashboard feedback form and the issue
+tracker when an answer is missing. `pkg/dashboard/faq_ui_test.go` guards the
+structure: section ids, one `<summary>` per question, at least one link per
+answer, the filter input, and no inline `style=` inside the panel (styling is
+the token-based `.faq-*` class set).
 
 Contributor cards use a client-side “album cover” tint: the dashboard samples each GitHub avatar in a tiny canvas, ignores low-saturation/near-black/near-white pixels, picks dominant and secondary accent colours, and applies them only as subtle background, border, avatar-ring, and role-pill washes. When avatar sampling fails, a deterministic hue derived from the login keeps the card distinct; results are cached in browser storage for seven days.
 
@@ -211,12 +219,12 @@ who owns the hive, owns the repository, or has GitHub `write`, `maintain`, or
 or the `▶ Release` chip to remove one. The server always re-checks that
 permission before mutating labels. Adding
 a hold applies the hive's canonical `hive-pause/<hive-id>` label. The name
-deliberately avoids the substring `hold` so it is matched exactly and cannot
-collide with the agent provenance label `hive/<hive-id>`. Removing a hold only
-removes the label(s) that are actually causing the hold (`hive-pause/<hive-id>`
-and/or the generic hold labels such as `hold`, `on-hold`, or `hold/review`) and
-never removes `hive/<hive-id>` provenance. The hive-specific canonical hold is
-`hive-pause/<hive-id>`; `hive/<hive-id>` is provenance only. On upgrade, Hive writes
+deliberately avoids the substring `hold` so it is matched exactly. Removing a
+hold only removes the label(s) that are actually causing the hold
+(`hive-pause/<hive-id>` and/or the generic hold labels such as `hold`,
+`on-hold`, or `hold/review`). The hive-specific canonical hold is
+`hive-pause/<hive-id>`; the former `hive/<hive-id>` provenance label is retired
+(#12539) and the boot sweep removes it from open items. On upgrade, Hive writes
 `/data/hive-hold-migration-<hive-id>.json`: audit-backed dashboard holds are
 copied to the new label, agent-provenance-only items become actionable, and
 ambiguous legacy labels stay held under `hive-pause/<hive-id>` for operator
@@ -246,8 +254,8 @@ PRs`, and the operator glyphs between cards make the full strip read like
 BLOCKED / NEEDS-HUMAN + 22 OUTSIDE`. The `outside` tile is server-side and is
 broken down in `/api/status` as `actionableNow.outside.breakdown[]`, with each
 row naming the count, rule, current setting, and how to change it for this
-hive. The rows cover hard-suppress labels (`needs-direction`,
-`needs-decision`, `needs-spec`; `needs-human` is counted under
+hive. The rows cover hard-suppress labels (`stage/085-needs-decision`,
+`needs-spec`; `needs-human` is counted under
 blocked/needs-human), exempt labels from `governor.labels.exempt` plus permanent
 exempt labels, reporter-trust triage from
 `project.issue_filter.reporter_trust`, require-label filtering from
@@ -276,8 +284,7 @@ and exposes the editable rows.
 
 | Bucket | Definition | Rule/config source | How to change |
 | --- | --- | --- | --- |
-| `needs-direction` | Issue is waiting for maintainer direction before agents may work it. | Labels in `project.issue_filter.hard_suppress_labels.needs_direction`; default `needs-direction`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
-| `needs-decision` | Issue is waiting for a maintainer decision. | Labels in `project.issue_filter.hard_suppress_labels.needs_decision`; default `needs-decision`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
+| `needs-decision` (shown as "needs human decision") | Issue is parked for a maintainer ruling. | `stage/085-needs-decision` always, plus labels in `project.issue_filter.hard_suppress_labels.needs_decision` / `.needs_direction` and the retired `needs-decision` / `needs-direction` spellings until the reconciler migrates them ([#12683](https://github.com/hivecommons/hive/issues/12683)). | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
 | `needs-spec` | Issue needs specification or acceptance criteria. | Labels in `project.issue_filter.hard_suppress_labels.needs_spec`; default `needs-spec`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
 | Exempt labels | Issue or PR carries a deny-list label and is never agent work. | `governor.labels.exempt` plus permanent labels such as `do-not-merge`. | Settings → Labels → Exempt labels, or edit `hive.yaml`. |
 | Reporter triage | Reporter trust is enabled and the issue author is not trusted yet. | `project.issue_filter.reporter_trust` trusted associations/logins and untrusted required labels. | Settings → Labels → Reporter trust. |
@@ -338,8 +345,10 @@ in exactly one band, while non-winning states remain as badges on the pill:
 1. **Unclaimed** (`unclaimed`) — no other band matched: nobody is assigned,
    nothing claimed it, and no human gate applies. This does not by itself mean
    agents will pick it up.
-2. **Claimed** (`claimed`) — a claim is a comment; the `claimed` label is a
-   mirror Hive keeps in sync. The display band also recognises assignees and
+2. **Claimed** (`claimed`) — a claim is a comment; the `stage/020-claimed` /
+   `stage/030-pr-in-progress` label is a mirror Hive keeps in sync (the retired
+   `claimed` and `hive/in-progress` spellings are still recognised for the
+   migration cycle). The display band also recognises assignees and
    `hive/claimed-by-*`.
 3. **Needs triage** (`triage`) — an `agent/<role>` label and no human has
    acknowledged the proposal under #5117: no `approved-direction` label and no
@@ -347,12 +356,13 @@ in exactly one band, while non-winning states remain as badges on the pill:
    satisfies the PR-time gate and is not in the payload). Acknowledge it, or
    close it. Once acknowledged the issue falls through to Unclaimed/Claimed
    with the role badge still on the pill.
-4. **Needs human** (`needs human`) — labels such as `blocked`, `needs-decision`,
+4. **Needs human** (`needs human`) — labels such as `blocked`, `stage/085-needs-decision`,
    `2-discussing`, `Epic`, `needs-human`, or `needs-triage`. Note that the
    `needs-triage` *label* lands here, not in the Needs triage band.
 5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
-   `🐝 covered by PR` (formerly `hive/covered-by-pr`), and `hive/likely-done`: an agent believes the work
-   landed; verify and close.
+   `stage/040-covered-by-pr` (and any later mirrored PR stage; formerly
+   `🐝 covered by PR` / `hive/covered-by-pr`), and `hive/likely-done`: an agent
+   believes the work landed; verify and close.
 
 Precedence is confirm & close → needs human → claimed → needs triage → unclaimed,
 so a human gate beats an assignment and done beats all other display states.
@@ -365,8 +375,8 @@ Operators can tune only the display taxonomy under `dashboard.issue_bands`:
 ```yaml
 dashboard:
   issue_bands:
-    waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
-    done_labels: [hive/already-done, "🐝 covered by PR", hive/covered-by-pr, hive/likely-done]
+    waiting_labels: [blocked, stage/085-needs-decision, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
+    done_labels: [hive/already-done, stage/040-covered-by-pr, "🐝 covered by PR", hive/covered-by-pr, hive/likely-done]
     stale_days: 14
 ```
 
@@ -379,7 +389,7 @@ PR pills are also grouped client-side for display only. Open and held PRs appear
 in exactly one band; held PRs are no longer appended after the actionable list.
 First match wins for classification:
 
-1. **Needs human** — `needs-human`, held, `needs-decision`,
+1. **Needs human** — `needs-human`, held, `stage/085-needs-decision`,
    `2-discussing`, or configured `dashboard.issue_bands.waiting_labels`.
 2. **Merge-eligible** — merge verdict `eligible`, or queued for Hive
    auto-merge.
@@ -401,13 +411,19 @@ queueing.
 
 ## Linked PR issue signals
 
-Repository issue pills show a `🔗` badge when Hive has verified a pull request related to that issue. Open PRs apply `🐝 covered by PR`; merged PRs on still-open issues apply `hive/likely-done`. The badge's tooltip grades the claim: "closes via PR #N" (the PR carries a closing keyword, or Hive linked it from the branch name), "covered by PR #N (partial)" (the PR says `Refs #N` / `Part of #N` and merging it will not close the issue), or "merged via PR #N". These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage.
+Repository issue pills show a `🔗` badge when Hive has verified a pull request related to that issue. Open PRs apply `stage/040-covered-by-pr` (the retired `🐝 covered by PR`); merged PRs on still-open issues apply `hive/likely-done`. The badge's tooltip grades the claim: "closes via PR #N" (the PR carries a closing keyword, or Hive linked it from the branch name), "covered by PR #N (partial)" (the PR says `Refs #N` / `Part of #N` and merging it will not close the issue), or "merged via PR #N". These are pending signals, not resolution: the issue remains in the actionable list until GitHub closes it, GitHub reports the PR in `closingIssuesReferences`, or an operator confirms coverage.
 
 The badge is derived from Hive's own PR-claim evidence — the same source that applies the label — not from GitHub's closing-link data, so it is present for every covered issue whether the claim is closing or partial, and whether the issue is actionable or suppressed into the card's "covered by PR" group ([#12144](https://github.com/hivecommons/hive/issues/12144)). One badge renders per issue; when several PRs cover it the closing PR is primary, the count is appended (`🔗×2`), and the tooltip lists the rest. The status payload exposes the evidence as `linked_prs: [{number, state, merged, url, closing, reference}]` plus `claim_context` on each actionable `github.Issue` and on each `claimed_by_pr` entry in `nonActionableIssues`.
 
 ## Review pipeline board
 
-The **Review** section opens with a separately collapsible **Pipeline** tile that shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. A ⚡ marker on the card means a webhook push or review request triggered the review of the current head (`trigger: event`), ⏳ that one is queued; see [Event-driven dispatch](review-swarm.md#event-driven-dispatch). The board refreshes every 30 seconds and keeps its scroll position. The sibling **Queue** tile is separately collapsible too, ranking the same open PRs in Hive’s suggested review order from `GET /api/review/queue` without hiding the Pipeline tile. A PR in the supersession sweep’s grace window is tagged **superseded** there, with a link to the merged PR and the time the sweep will close it; owners get **Close now** and **Keep open** (adds `hive/keep-open`, which the sweep never auto-closes).
+The **Review** section opens with a separately collapsible **Pipeline** tile that shows every open PR as a card in the column for its review stage, from `GET /api/review/pipeline`: unreviewed, reviewing, changes requested, fixing, human hold, approved (merged and abandoned columns stay empty until the API returns those PRs). Each card shows the PR link, an agent or contributor marker, time in stage, reviewer chips, P0–P3 finding counts, the fix-loop counter (red once it is within one of the cap) and the next-action link. Filter by repo, author kind or stage; column headers carry counts. A ⚡ marker on the card means a webhook push or review request triggered the review of the current head (`trigger: event`), ⏳ that one is queued; see [Event-driven dispatch](review-swarm.md#event-driven-dispatch). The board refreshes every 30 seconds and keeps its scroll position. The sibling **Queue** tile is separately collapsible too, ranking the same open PRs in Hive’s suggested review order from `GET /api/review/queue` without hiding the Pipeline tile. A PR in the supersession sweep’s grace window is tagged **superseded** there, with a link to the merged PR and the time the sweep will close it; owners get **Close now** and **Keep open** (adds `hive/keep-open`, which the sweep never auto-closes). Each queue row reflects the PR's `stage` from the stage-label store ([labels-and-control-signals.md](labels-and-control-signals.md#stagestalled--nobody-is-working-this)): the `stage/stalled` label's tooltip reads "no activity for Xh — nobody is working this PR", a red **waiting on hive Xh** pill marks a PR past its stage dwell while the hive itself holds it (checks running or reviewer verdict pending — the reviewer lane, not the author, needs attention), and an **N hops, M back** pill carries the stage transition history (`stage.history[]`) in its tooltip, replacing the retired `stage/regressed` label.
+
+## Hive activity monitor
+
+The **Hive activity monitor** section (sidebar, Dashboard group; expanded by default) is the "where is my pizza" view of the hive: one entry per open issue and PR from `GET /api/stage-tracker`, each a title line over a thin tracker strip. Issues and PRs share one set of columns — `Open → Actionable → Claimed → PR in progress → CI / Review → Merge gate → ✓` — with the step names printed once in a column header. Covering PRs nest under their issue: an issue with no PR yet draws the whole strip like any other row (its lit step is Open/Actionable/Claimed with the steps ahead faint); once exactly one PR covers it the issue and PR collapse into a single entry: the issue's `#N title` on the left, `[author icon] #PR title` in the *PR in progress* column of the same title line, and one continuous strip beneath — Open/Actionable/Claimed passed, then the PR's stage drives the lit chevron through `CI / Review → Merge gate → ✓` (chips, tooltip and `since` come from the PR). With two or more covering PRs the issue's own strip stops at Claimed — all passed, nothing lit — and directly beneath, one indented sub-row per open covering PR (furthest along first) carries `[author icon] #N title` at the *PR in progress* column and that PR's own strip from there on with its own lit chevron, modifier chip, tooltip and `since`. A PR linked to an open issue in the list has no top-level row of its own (`nested_under`); PRs with no linked issue keep a full-width row. The *Pull requests* filter flattens the list (every PR a top-level row); *Issues* and *All* show the nested view. Only the current step is coloured (amber, named in words, pulsing; static under `prefers-reduced-motion`; the ✓ chevron turns green once merged); passed and upcoming steps are low-contrast shapes with a small grey glyph each. Side stages ride the step they branch from — 070/071/072/074 light *CI / Review* as "Fixing" / "Needs author" / "Returned to contributor" / "Adopted by hive", 085/090 light *Merge gate* as "Needs human decision" / "Ready for human merge". The lit chevron ends with a small icon of whose move it is, in the chevron's ink (person = human, robot = clanker, hexagon = hive): the claimant on *Claimed*, the PR author on *PR in progress* and *Returned to contributor*, hive on *CI / Review* / *Adopted by hive* / *Ready for auto merge*, a human on *Needs human decision* / *Ready for human merge*; *Open* and *Actionable* carry none; 040 shares *PR in progress* with 030, 060/080/100 light *Merge gate* as "Ready for auto merge" (the chevron tooltip distinguishes "not yet admitted — reason" from "admitted, merging") (the chevron tooltip names the exact stage). Every PR stage has a word: 050/060 "CI / Review", 070 "Fixing" (the author's move — a `needs-rebase` chip beside it says *what* is being fixed; the stage labeller always puts a needs-rebase PR at 070/071/072, never 050/060), 071 "Needs author" (a human-authored PR the author must act on), 072 "Returned to contributor" (a clanker PR handed back to its hive), 074 "Adopted by hive", 080/100 "Ready for auto merge", 085 "Needs human decision", 090 "Ready for human merge". The title line carries the item's number and title on the left and, aligned under the *PR in progress* header, `[author icon] #N title` for the PR itself (standalone PR rows and nested sub-rows); the author icon is coloured by `author/*` kind (hive blue, clanker purple, human teal). A `since` column on the title line gives time on the current step (red when stalled), with at most one muted health-modifier chip to its left; the reason sentence, actor, nudges, flags and the last stage hops live in the hover tooltip. Titles never wrap: an issue title is cut with an ellipsis before it would reach the *PR in progress* column (leaving a clear gap, so the PR entry always starts at the column's left edge) and a PR title before the chips and `since`; the full title is on the title element's own hover tooltip, separate from the strip's reason tooltip. Rows are sorted furthest-along first by default (a covered issue ranks by its furthest-along PR, not its own 040), then longest-waiting first; the *Sort* select also offers longest waiting, newest and number, with an arrow button that reverses the direction. The list is complete: every open issue and PR of the watched repos is an entry — including claimed, in-progress, needs-human / needs-decision / needs-triage-filtered and reporter-held issues, draft PRs and PRs carrying an exempt label — and an item with no stage yet sits at *Open*. The toolbar filters the cached payload in the browser: *All / Pull requests / Issues*, *Repo*, a search box (`#number`, number or title substring, also matching a covering PR), *Since* (any / over 1 hour / over 1 day / over 1 week on the current step, or *past the stage dwell* = stalled or longer than the step's configured dwell), *Author* (human / clanker / hive) and a *Needs attention* toggle; a row of label chips built from the labels present (`stage/*`, `needs-*`, `author/*`, `role/*`, then any other label shared by two or more items) narrows further — chips of one family OR together, families AND together. *Clear filters* appears whenever something is narrowed. Filter, sort and page size persist in the browser (`localStorage`); the page does not. Pages hold 25 / 50 / 100 rows (default 50) with Prev / Next above and below the list and a "showing X–Y of N (M filtered out)" line; the section header reads "N items · M need attention" for the filtered set while the sidebar badge keeps counting every item that needs attention (modifiers present, or on 071/072/085/090). The meta line also says "updated Ns ago · cache|fresh": the payload is built server-side at most once per `dashboard.stage_tracker.cache_ttl_s` (default = `governor.eval_interval_s`) from the spoke's existing GitHub snapshot and served with an `ETag`, so the 30-second poll costs a 304 and never a GitHub call (it turns amber once the payload is older than two TTLs). Section details: [dashboard-sections.md](dashboard-sections.md#hive-activity-monitor); stage semantics: [labels-and-control-signals.md](labels-and-control-signals.md#stage-labels-stagennn--the-pipeline-state-machine).
+
+The endpoint returns `stages` (the stage table with `short`, `branch_from` and configured dwell), `items` (one per open issue/PR represented by the status snapshot, including actionable and held items plus display-only non-actionable issues, drafts, and exempt PRs: `labels`, `created_at`, `updated_at`, `bucket`, `bucket_reason`, stage, `stage_since`, humanised `reason`/`caption`, `actor`, `modifiers`, `author_kind` + `author_kind_source`, `lane`, `tier`, `linked_pr`, `linked_prs` (number, title, url, author, author kind, stage, `stage_since`, `caption` and `modifiers` of each open covering PR — enough to draw the nested sub-row without a second lookup), `nested_under` (on a PR: the issue it is listed under), nudge info and the last eight `history` hops from the stage store) and `author_kind_labels`. It answers `{"status":"initializing"}` until the first scan.
 
 ## PR review and link signals
 

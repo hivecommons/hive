@@ -2,8 +2,6 @@ package dashboard
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"sync"
@@ -21,8 +19,10 @@ import (
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/governor"
+	"github.com/hivecommons/hive/pkg/hivestate"
 	"github.com/hivecommons/hive/pkg/hooks"
 	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/nous"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
@@ -251,7 +251,21 @@ type NousState struct {
 	GatePending  map[string]interface{}   `json:"gate_pending,omitempty"`
 	GateResponse map[string]interface{}   `json:"gate_response,omitempty"`
 	SnapshotDir  string                   `json:"-"`
-	Mu           sync.Mutex               `json:"-"`
+	// GovernorDir is where the external experiment loop writes ledger.json,
+	// principles.json and its state (/var/run/nous/governor). Empty means
+	// the loop's activity cannot be observed (#12541).
+	GovernorDir string `json:"-"`
+	// CampaignFile is the per-campaign baseline store (pkg/nous). Empty
+	// means "<dir of SnapshotDir>/campaigns.json"; with no SnapshotDir
+	// either, campaigns are disabled and the baseline is global.
+	CampaignFile string     `json:"-"`
+	Mu           sync.Mutex `json:"-"`
+
+	stateOnce  sync.Once
+	stateStore *hivestate.Store
+
+	campaignOnce  sync.Once
+	campaignStore *nous.Store
 }
 
 type NousPrinciple struct {
@@ -261,7 +275,76 @@ type NousPrinciple struct {
 	Source     string  `json:"source"`
 }
 
-const NousBaselineTarget = 672
+// NousBaselineTarget is how many hive-state snapshots a campaign's baseline
+// needs: one every governor evaluation cycle (NousBaselinePerHour at the
+// default 15-minute interval) for NousBaselineDays — 4 × 24 × 7 = 672, about
+// one week of observations, so the baseline sees every weekday and weekend
+// regime once.
+const (
+	NousBaselinePerHour = 4
+	NousBaselineDays    = 7
+	NousBaselineTarget  = NousBaselinePerHour * 24 * NousBaselineDays
+)
+
+// NousBaselineTargetExplainer is the plain-language meaning of
+// NousBaselineTarget shown next to every "N / 672" in the Experiment Lab.
+const NousBaselineTargetExplainer = "≈ 7 days of observations (4/hour)"
+
+// NousPrinciplesExplainer says what the "Principles" tile counts and how the
+// number grows (#12532): principles are not a prerequisite for starting an
+// experiment, so a new lab legitimately shows 0.
+const NousPrinciplesExplainer = "Principles are durable lessons the lab distils from judged experiments (principles.json). A new lab starts at 0 and the count grows as experiments conclude; none are needed to start an experiment."
+
+// Per-campaign lifecycle stages (#12532). They are derived on every status
+// read from the campaign's baseline, the lab mode and the experiment rows
+// attributed to the campaign, so the card always says what happens next.
+const (
+	NousStageBaseline  = "baseline"  // collecting baseline snapshots
+	NousStageReady     = "ready"     // baseline complete, no proposals yet
+	NousStageProposed  = "proposed"  // a proposal awaits operator review
+	NousStageRunning   = "running"   // an experiment is in flight
+	NousStageConcluded = "concluded" // archived, or every experiment judged
+	NousStagePaused    = "paused"
+)
+
+// NousActionGenerateProposals is the single primary card action offered
+// when a campaign's baseline is complete but the lab is still in observe
+// mode: it flips the trust-ladder mode to suggest so the experiment loop
+// may design proposals for review.
+const NousActionGenerateProposals = "generate_proposals"
+
+// NousLoopIdleCycles is how many governor evaluation cycles may pass without
+// any file write under NousState.GovernorDir before the Experiment Lab says
+// the external experiment loop is not running on this hive (#12541). The
+// hive designs no proposals itself, so a ready card in suggest/evolve mode
+// would otherwise wait forever. 24 cycles is 2 h at the default 300 s
+// interval.
+const NousLoopIdleCycles = 24
+
+// ExperimentLoopLastWrite returns the newest modification time of the files
+// directly under GovernorDir — the directory the hive reads the external
+// experiment loop's output from — or the zero time when nothing was ever
+// written there.
+func (ns *NousState) ExperimentLoopLastWrite() time.Time {
+	var last time.Time
+	if ns == nil || ns.GovernorDir == "" {
+		return last
+	}
+	entries, err := os.ReadDir(ns.GovernorDir)
+	if err != nil {
+		return last
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if mt := info.ModTime(); mt.After(last) {
+			last = mt
+		}
+	}
+	return last.UTC()
+}
 
 // NousBaselinePct reports baseline-collection progress as a percentage,
 // capped at 100 once count reaches NousBaselineTarget. count keeps growing
@@ -275,20 +358,23 @@ func NousBaselinePct(count int) float64 {
 	return pct
 }
 
-type NousSnapshot struct {
-	Timestamp     string            `json:"timestamp"`
-	Mode          string            `json:"mode"`
-	QueueIssues   int               `json:"queue_issues"`
-	QueuePRs      int               `json:"queue_prs"`
-	QueueHold     int               `json:"queue_hold"`
-	SLAViolations int               `json:"sla_violations"`
-	AgentsKicked  []string          `json:"agents_kicked,omitempty"`
-	AgentStates   map[string]string `json:"agent_states,omitempty"`
-	TotalTokens   int64             `json:"total_tokens"`
+// NousSnapshot is one per-eval-cycle hive state record. The series now lives
+// in pkg/hivestate (#12339); the alias keeps existing callers compiling.
+type NousSnapshot = hivestate.Snapshot
+
+// HiveState returns the hive state time series backed by SnapshotDir, or nil
+// when no directory is configured. Collection is independent of Nous mode.
+func (ns *NousState) HiveState() *hivestate.Store {
+	if ns == nil || ns.SnapshotDir == "" {
+		return nil
+	}
+	ns.stateOnce.Do(func() { ns.stateStore = hivestate.NewStore(ns.SnapshotDir) })
+	return ns.stateStore
 }
 
 func (ns *NousState) RecordSnapshot(govState governor.State, actionable *ghpkg.ActionableResult, agentsKicked []string, agentStatuses map[string]*agent.AgentProcess, tokenSummary *tokens.AggregateSummary) error {
-	if ns.SnapshotDir == "" {
+	store := ns.HiveState()
+	if store == nil {
 		return nil
 	}
 
@@ -311,18 +397,9 @@ func (ns *NousState) RecordSnapshot(govState governor.State, actionable *ghpkg.A
 		snap.TotalTokens = tokenSummary.TotalTokens
 	}
 
-	data, err := json.Marshal(snap)
-	if err != nil {
-		return fmt.Errorf("marshaling snapshot: %w", err)
-	}
-
-	filename := fmt.Sprintf("%s/%d.json", ns.SnapshotDir, time.Now().UnixMilli())
-	if err := os.WriteFile(filename, data, 0o644); err != nil {
-		return fmt.Errorf("writing snapshot: %w", err)
-	}
-
+	err := store.Record(snap)
 	ns.refreshStatus()
-	return nil
+	return err
 }
 
 func (ns *NousState) refreshStatus() {
@@ -338,9 +415,15 @@ func (ns *NousState) refreshStatus() {
 		ns.Phase = "observing"
 	}
 
+	// snapshots/snapshotCount stay the whole observation history; the
+	// baseline percentage is scoped to the active campaign (#12501).
+	baselineCount := count
+	if c, ok := ns.ActiveCampaign(); ok {
+		baselineCount = ns.CampaignSnapshots(c)
+	}
 	ns.Status["snapshots"] = count
 	ns.Status["snapshotCount"] = count
-	ns.Status["baseline_pct"] = NousBaselinePct(count)
+	ns.Status["baseline_pct"] = NousBaselinePct(baselineCount)
 	ns.Status["baseline_target"] = NousBaselineTarget
 	ns.Status["snapshotTarget"] = NousBaselineTarget
 	ns.Status["phase"] = ns.Phase

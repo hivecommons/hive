@@ -11,8 +11,15 @@ import (
 
 func TestGoodFirstIssueDefaultsAndPolicy(t *testing.T) {
 	var g GoodFirstIssueConfig
-	if g.Enabled {
-		t.Fatal("must default off")
+	if !g.IsEnabled() {
+		t.Fatal("must default on when enabled is omitted")
+	}
+	off := false
+	if (GoodFirstIssueConfig{Enabled: &off}).IsEnabled() {
+		t.Fatal("explicit enabled: false must opt out")
+	}
+	if DefaultGoodFirstIssueInterval >= time.Hour || gfi.DefaultMinAge > time.Hour {
+		t.Fatalf("defaults too slow for a scanner that claims within minutes: interval=%v min_age=%v", DefaultGoodFirstIssueInterval, gfi.DefaultMinAge)
 	}
 	if g.IntervalOrDefault() != DefaultGoodFirstIssueInterval {
 		t.Fatalf("interval %v", g.IntervalOrDefault())
@@ -65,7 +72,21 @@ good_first_issue:
 		t.Fatal(err)
 	}
 	g := cfg.GoodFirstIssue
-	if !g.Enabled || g.Interval != 30*time.Minute || g.MaxPerRepo != 3 || g.MinAge != 48*time.Hour || len(g.ExcludeLabels) != 1 || len(g.Repos) != 1 {
+	if !g.IsEnabled() || g.Interval != 30*time.Minute || g.MaxPerRepo != 3 || g.MinAge != 48*time.Hour || len(g.ExcludeLabels) != 1 || len(g.Repos) != 1 {
 		t.Fatalf("parsed %+v", g)
+	}
+	var optOut Config
+	if err := yaml.Unmarshal([]byte("good_first_issue:\n  enabled: false\n"), &optOut); err != nil {
+		t.Fatal(err)
+	}
+	if optOut.GoodFirstIssue.IsEnabled() {
+		t.Fatal("enabled: false not honoured")
+	}
+	var omitted Config
+	if err := yaml.Unmarshal([]byte("good_first_issue: {}\n"), &omitted); err != nil {
+		t.Fatal(err)
+	}
+	if !omitted.GoodFirstIssue.IsEnabled() {
+		t.Fatal("omitted enabled should default on")
 	}
 }

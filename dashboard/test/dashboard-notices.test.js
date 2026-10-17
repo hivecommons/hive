@@ -59,12 +59,13 @@ test('dashboard layout migration ignores the pinned notices slot', () => {
   vm.runInNewContext(source, context);
   const normalized = context.exports.dashboardLayoutNormalize({ v: 1, main: ['faq-section', 'dash-notices', 'overview-section'] });
   assert.equal(normalized.main.includes('dash-notices'), false);
-  assert.equal(normalized.main.slice(0, 6).join(','), [
+  assert.equal(normalized.main.slice(0, 7).join(','), [
     'faq-section',
     'overview-section',
     'governor',
     'pr-throughput-section',
     'repos-section',
+    'activity-monitor-section',
     'knowledge-section',
   ].join(','));
 });

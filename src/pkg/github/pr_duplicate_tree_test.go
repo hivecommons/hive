@@ -472,7 +472,7 @@ func TestPRRequestWatcher_DuplicateTreeDoesNotLabelTheOtherPR(t *testing.T) {
 	}
 	srv := d.start(t)
 	c := testClient(t, srv.URL)
-	c.prHoldLabel = func(agent string) bool { return true }
+	c.prHoldLabel = func(agent, repo string) bool { return true }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -528,7 +528,7 @@ func TestPRRequestWatcher_DuplicateTreeIsNotSelfAuthorizationJudged(t *testing.T
 	srv := d.start(t)
 	c := testClient(t, srv.URL)
 	c.SetAppBotLogin("kubestellar-hive[bot]")
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir

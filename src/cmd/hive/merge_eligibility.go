@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // trustedMergerFunc resolves a GitHub login against the hive's authorized-users
@@ -90,6 +91,43 @@ func contributorLanePolicyFunc(cfg *config.Config) func() automerge.ContributorL
 	}
 }
 
+// stageLabelPolicyFunc reads governor.labels.stage live so a config reload
+// turns the stage reconciler on/off and re-times dwell without a restart.
+func stageLabelPolicyFunc(cfg *config.Config) func() automerge.StageLabelPolicy {
+	return func() automerge.StageLabelPolicy {
+		if cfg == nil {
+			return automerge.StageLabelPolicy{}
+		}
+		stage := cfg.Governor.Labels.Stage
+		return automerge.StageLabelPolicy{
+			Enabled:                stage.IsEnabled(),
+			Dwell:                  stage.DwellOverrides(),
+			StalledRequireQuiet:    stage.Stalled.IsRequireQuiet(),
+			ContributorNudge:       stage.ContributorNudge.IsEnabled(),
+			RenudgeInterval:        stage.ContributorNudge.EffectiveRenudgeInterval(),
+			Adoption:               stage.Adoption.IsEnabled(),
+			GraceOnline:            stage.EffectiveContributorGraceOnline(),
+			GraceOffline:           stage.EffectiveContributorGraceOffline(),
+			AdoptAfterOffline:      stage.Adoption.EffectiveAfterOffline(),
+			AdoptAfterUnregistered: stage.Adoption.EffectiveAfterUnregistered(),
+			AdoptInPlace:           stage.Adoption.InPlaceEnabled(),
+			HiveID:                 cfg.HiveID,
+			AuthorKindLabels:       cfg.Governor.Labels.Author.Names(),
+			RelayKnown:             contributorRelayKnown,
+			SharedCIIncident:       stageSharedCIIncident,
+			DCORequired:            stage.DCO.RequiredFor,
+		}
+	}
+}
+
+// contributorRelayKnown answers authorkind's weakest author/clanker signal:
+// the login has a contributor profile on this hive, i.e. runs a relay that
+// targets it. It only decides a PR whose body carries no hive marker.
+func contributorRelayKnown(login string) bool {
+	_, ok := dashboard.ContributorTrustTierByLogin(login)
+	return ok
+}
+
 // contributorRegistryTierFunc answers the contributor-lane registry
 // admission path from the contributor registry on the hive's PVC
 // (dashboard.ContributorTrustTierByLogin), so an operator-granted trusted
@@ -140,17 +178,32 @@ func contributorLaneVerdictFunc(cfg *config.Config, logger *slog.Logger) automer
 			return automerge.ContributorLaneVerdict{Configured: true}
 		}
 		approved := artifact.HasAggregateApproval(repo, number, headSHA)
-		return automerge.ContributorLaneVerdict{Configured: true, Approved: approved, Verdict: contributorLaneVerdictText(artifact, repo, number, headSHA)}
+		return contributorLaneVerdictFromArtifact(artifact, repo, number, headSHA, approved)
 	}
 }
 
-func contributorLaneVerdictText(artifact review.Artifact, repo string, number int, headSHA string) string {
+func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, number int, headSHA string, approved bool) automerge.ContributorLaneVerdict {
+	var match review.Aggregate
+	var ok bool
 	for _, item := range artifact.Items {
 		if item.Number == number && strings.EqualFold(strings.TrimSpace(item.Repo), strings.TrimSpace(repo)) && strings.TrimSpace(item.HeadSHA) == strings.TrimSpace(headSHA) {
-			return string(item.Verdict)
+			if !ok || item.RecordedAt.After(match.RecordedAt) {
+				match = item
+				ok = true
+			}
 		}
 	}
-	return ""
+	if ok {
+		return automerge.ContributorLaneVerdict{
+			Configured:        true,
+			Approved:          approved && match.MergeEligible && match.Verdict == review.VerdictApprove,
+			Verdict:           string(match.Verdict),
+			DecisionRequested: match.DecisionRequested,
+			DecisionQuestion:  match.DecisionQuestion,
+			HumanSummaries:    append([]string(nil), match.HumanSummaries...),
+		}
+	}
+	return automerge.ContributorLaneVerdict{Configured: true, Approved: approved}
 }
 
 func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func(repo, login string) github.SentinelAuthorTrust {
@@ -193,14 +246,27 @@ const (
 	acmmHoldGatedMaxLevel = 5
 )
 
-// shouldHoldAgentPR keeps public outreach claims human-reviewed even at L6,
-// where ordinary agent PRs may auto-merge. The general ACMM hold gate remains
-// unchanged for all roles at L3-L5.
-func shouldHoldAgentPR(agentName string, level int) bool {
-	if strings.EqualFold(strings.TrimSpace(agentName), "outreach") {
-		return true
+// shouldHoldAgentPR decides whether a freshly opened agent PR must carry the
+// "hold" label. The general ACMM hold gate applies to every role at L3-L5.
+// Outreach adds one level-independent reason: a PR that targets a repository
+// OTHER than the ones the outreach agent is working on behalf of (ownsRepo
+// false) is public speech into somebody else's project and stays
+// human-reviewed even at L6. An outreach PR into the agent's own repo —
+// README, ADOPTERS.md, docs, keyword tweaks in a hive-managed repo — is an
+// ordinary hive PR and flows through normal review and auto-merge (operator
+// decision, 2026-10-16). A nil ownsRepo fails closed to "cross-repo", so a
+// wiring mistake can only hold too much, never too little.
+func shouldHoldAgentPR(agentName, repo string, level int, ownsRepo func(agent, repo string) bool) bool {
+	if isOutreachAgent(agentName) {
+		if ownsRepo == nil || !ownsRepo(agentName, repo) {
+			return true
+		}
 	}
 	return level >= acmmHoldGatedMinLevel && level <= acmmHoldGatedMaxLevel
+}
+
+func isOutreachAgent(agentName string) bool {
+	return strings.EqualFold(strings.TrimSpace(agentName), "outreach")
 }
 
 // mergeableJSONUnknown is the explicit wire value for "mergeability was never
@@ -338,6 +404,7 @@ type mergeGates struct {
 	enforceIntent         bool
 	intentVerdicts        map[string]intent.Verdict
 	requireReviewApproval bool
+	shadowReview          bool
 	reviewArtifact        review.Artifact
 	reviewLoaded          bool
 	requiredChecks        map[string]bool
@@ -376,7 +443,11 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	if pr.Draft {
 		return mergeBucketSkip, github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: "draft — mark ready for review to enter the sweep"}, ""
 	}
-	if reason := automergeBlockLabelReason(pr.Labels, hiveAuthoredPR(pr)); reason != "" {
+	// needs-rebase is prow's conflict marker, not a hold: it must reach the
+	// conflict bucket below so the fix lane rebases the PR. Skipping on it
+	// here left every conflicting PR prow had labelled (including adopted
+	// contributor PRs) out of ci-failing.json for good.
+	if reason := automergeBlockLabelReason(pr.Labels, hiveAuthoredPR(pr)); reason != "" && reason != blockLabelNeedsRebase {
 		return mergeBucketSkip, blockedOrOutstanding(reason), ""
 	}
 	// intent.Verdict.BlocksMerge is the one shared refusal predicate; the
@@ -513,6 +584,10 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 	return mergeBucketEligible, github.MergeVerdict{State: github.MergeVerdictEligible, Reason: reason}, ""
 }
 
+// blockLabelNeedsRebase is the automergeBlockLabelReason result for prow's
+// needs-rebase label; the classifier routes it to the conflict bucket.
+const blockLabelNeedsRebase = "label:needs-rebase"
+
 func automergeBlockLabelReason(labels []string, trusted bool) string {
 	for _, label := range labels {
 		trimmed := strings.TrimSpace(label)
@@ -523,7 +598,7 @@ func automergeBlockLabelReason(labels []string, trusted bool) string {
 				return "sentinel"
 			}
 		case lower == "needs-rebase":
-			return "label:needs-rebase"
+			return blockLabelNeedsRebase
 		case lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/"):
 			return "label:" + lower
 		case lower == "hold" || strings.Contains(lower, "hold"):
@@ -592,6 +667,13 @@ func notMergeableReason(pr github.PullRequest, sweepReason string) string {
 		msg += "; also " + sweepReason
 	}
 	return msg
+}
+
+// adoptedInPlace reports whether the stage store holds a live in-place
+// adoption (stage 074) for the PR: the hive's fix lane owns its branch.
+func adoptedInPlace(fullRepo string, number int) bool {
+	rec, ok := stagelabels.Shared().Get(stagelabels.Key(fullRepo, number))
+	return ok && rec.AdoptedInPlace()
 }
 
 func hiveAuthoredPR(pr github.PullRequest) bool {
@@ -777,6 +859,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// ReroutedFrom records the paused or unavailable lane whose conflicted PR
 		// was assigned to the fallback fixer instead.
 		ReroutedFrom string `json:"rerouted_from,omitempty"`
+		// Adopted marks a contributor PR the hive adopted in place (stage
+		// 074, hivecommons/hive#12436): its fix lane owns the PR's own
+		// branch now, so the row is filed like a hive-authored PR — conflict
+		// rows included — and the kick says push to THAT branch (GitHub's
+		// maintainer_can_modify or a same-repo head made it reachable).
+		Adopted bool `json:"adopted,omitempty"`
 		// DeferredIncident is the open [shared-ci] incident issue this red
 		// PR was already deferred to (github.PullRequest.SharedCIIncident,
 		// hivecommons/hive#10528); only red PRs carry one. It applies to a
@@ -805,11 +893,15 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 	var escalated []failingPR
 	var reviewArtifact review.Artifact
 	reviewLoaded := false
-	if requireReviewApproval {
+	if requireReviewApproval || (cfg != nil && cfg.Review.Shadow) {
 		var err error
 		reviewArtifact, err = review.LoadArtifact("")
 		if err != nil {
-			logger.Warn("review approval required but review-verdicts.json is unavailable; merge eligibility will fail closed", "error", err)
+			if requireReviewApproval {
+				logger.Warn("review approval required but review-verdicts.json is unavailable; merge eligibility will fail closed", "error", err)
+			} else {
+				logger.Warn("review.shadow is on but review-verdicts.json is unavailable; shadow will record would_have_held=true, merges are not affected", "error", err)
+			}
 		} else {
 			reviewLoaded = true
 		}
@@ -835,6 +927,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		enforceIntent:         enforceIntent,
 		intentVerdicts:        intentVerdicts,
 		requireReviewApproval: requireReviewApproval,
+		shadowReview:          cfg != nil && cfg.Review.Shadow && !requireReviewApproval,
 		reviewArtifact:        reviewArtifact,
 		reviewLoaded:          reviewLoaded,
 		requiredChecks:        requiredChecks,
@@ -867,9 +960,13 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			logger.Info("excluding PR from merge-eligible due to intent verification", "repo", fullRepo, "number", pr.Number, "tier", iv.Tier, "reason", intentReason)
 		}
 		if bucket == mergeBucketEligible {
-			recordIntentShadow(cfg, logger, enforceIntent, intentVerdicts, pr, fullRepo, time.Now())
+			now := time.Now()
+			recordReviewShadow(cfg, logger, pr, fullRepo, prGates, now)
+			recordIntentShadow(cfg, logger, enforceIntent, intentVerdicts, pr, fullRepo, now)
 		}
+		adopted := adoptedInPlace(fullRepo, pr.Number)
 		row := failingPR{
+			Adopted:         adopted,
 			Number:          pr.Number,
 			Repo:            fullRepo,
 			Title:           pr.Title,
@@ -887,6 +984,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			ReachableAction: github.ReachableAction(pr),
 			Held:            held,
 		}
+		if adopted {
+			row.ReachableAction = github.ReachableActionPush
+		}
 		if bucket != mergeBucketFailing && row.Escalated && !holdDriftPRs[key] {
 			row.Mergeable = mergeableJSON(pr.Mergeable)
 			row.CIStatus = pr.CIStatus
@@ -896,10 +996,15 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		case mergeBucketSkip:
 			continue
 		case mergeBucketConflict:
-			if !hiveAuthoredPR(pr) {
+			if !hiveAuthoredPR(pr) && !adopted {
 				continue
 			}
 			agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)])
+			if adopted {
+				// A contributor's branch name is not a lane; the
+				// fallback fixer owns adopted PRs.
+				agent = ""
+			}
 			reroutedFrom := ""
 			agent, reroutedFrom = routeConflictFixAgent(agent, cfg)
 			row.Agent = agent
@@ -912,6 +1017,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		case mergeBucketFailing:
 			agent := prFixAgent(pr, prAgents[fmt.Sprintf("%s#%d", fullRepo, pr.Number)])
 			reroutedFrom := ""
+			if adopted {
+				agent, reroutedFrom = routeConflictFixAgent("", cfg)
+			}
 			row.Agent = agent
 			row.MergeableState = pr.MergeableState
 			row.Conflict = false
@@ -921,15 +1029,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			continue
 		}
 
-		dco := "unknown"
-		for _, l := range pr.Labels {
-			switch l {
-			case "dco-signoff: yes":
-				dco = "yes"
-			case "dco-signoff: no":
-				dco = "no"
-			}
-		}
+		// hive's own `dco` / `no-dco` first, Prow's legacy pair as fallback
+		// during the migration (hivecommons/hive#12542).
+		dco := stagelabels.DCOFromLabels(pr.Labels).String()
 		eligible = append(eligible, eligiblePR{
 			Number:    pr.Number,
 			Repo:      fullRepo,

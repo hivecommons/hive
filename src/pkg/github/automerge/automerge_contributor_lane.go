@@ -29,8 +29,13 @@ package automerge
 //     an operator-trusted contributor's PR waiting whenever the body merely
 //     referenced the issue (`Part of #N`) or the issue was claimed outside
 //     the relay (#12045, #11756);
-//   - GitHub's author_association for the PR author is not NONE,
-//     FIRST_TIMER or FIRST_TIME_CONTRIBUTOR;
+//   - when neither admission path above applies, GitHub's author_association
+//     for the PR author must not be NONE, FIRST_TIMER or
+//     FIRST_TIME_CONTRIBUTOR (an unmarked, unregistered first-timer is never
+//     admitted). A verified marker or registry tier is this hive's own
+//     statement of trust and outranks GitHub's per-repo association, which
+//     reports FIRST_TIME_CONTRIBUTOR for every relay contributor's first PR
+//     to a repo (#12344: #12195, #12290 sat green and approved for 15h+ on it);
 //   - the diff does not touch CI workflow/action definitions and does not
 //     delete or gut test files;
 //   - no excluded/hold/sentinel label, not draft, mergeable, base not under a
@@ -59,6 +64,7 @@ import (
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 const contributorLaneTier = "contributor-lane"
@@ -100,13 +106,20 @@ const (
 const contributorLaneReasonRegistryTrusted = contributorLaneReasonPrefix + "registry-trusted"
 
 // contributorLaneTrustedAssociations are the GitHub author_association
-// values the tier accepts. NONE, FIRST_TIMER, FIRST_TIME_CONTRIBUTOR,
-// MANNEQUIN and a missing value all skip.
+// values the tier accepts for an author that neither a verified claim
+// marker nor a registry tier admitted. NONE, FIRST_TIMER,
+// FIRST_TIME_CONTRIBUTOR, MANNEQUIN and a missing value all skip.
 var contributorLaneTrustedAssociations = map[string]bool{
 	"OWNER":        true,
 	"MEMBER":       true,
 	"COLLABORATOR": true,
 	"CONTRIBUTOR":  true,
+}
+
+// contributorLaneAssociationTrusted reports whether GitHub's own
+// author_association for the PR is one the tier accepts on its own.
+func contributorLaneAssociationTrusted(pr *gh.PullRequest) bool {
+	return contributorLaneTrustedAssociations[strings.ToUpper(strings.TrimSpace(pr.GetAuthorAssociation()))]
 }
 
 // contributorLaneWorkflowPaths are CI definitions a contributor PR must not
@@ -178,7 +191,10 @@ type ContributorLaneVerdict struct {
 	// merge-eligible.
 	Approved bool
 	// Verdict is the raw aggregate verdict for the audit comment, if any.
-	Verdict string
+	Verdict           string
+	DecisionRequested bool
+	DecisionQuestion  string
+	HumanSummaries    []string
 }
 
 // ContributorLaneVerdictFunc resolves the reviewer verdict for repo#number at
@@ -319,9 +335,13 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 				number = pr.GetNumber()
 			}
 			result.Seen++
+			stage := func(reason string, merged bool, err error) {
+				c.recordStage(stageLaneContributor, displayRepo, owner, repoName, pr, reason, merged, err)
+			}
 			if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 				c.recordContributorLaneSkip(displayRepo, number, reason)
 				result.Skipped++
+				stage(reason, false, nil)
 				continue
 			}
 			result.Candidates++
@@ -329,13 +349,16 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			if err != nil {
 				c.warn("contributor-lane automerge sweep skipped PR", "repo", displayRepo, "pr", number, "reason", reason, "error", err)
 				result.Skipped++
+				stage(reason, false, err)
 				continue
 			}
 			if reason != "" {
 				c.recordContributorLaneSkip(displayRepo, number, reason)
 				result.Skipped++
+				stage(reason, false, nil)
 				continue
 			}
+			stage("", true, nil)
 			result.Merged = append(result.Merged, event)
 			if opts.Audit != nil {
 				opts.Audit(event)
@@ -371,9 +394,9 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 	if _, ok := c.sweepLaneForAuthor(author); ok {
 		return contributorLaneReasonAppAuthored
 	}
-	if !contributorLaneTrustedAssociations[strings.ToUpper(strings.TrimSpace(pr.GetAuthorAssociation()))] {
-		return contributorLaneReasonAuthorAssociation
-	}
+	// author_association is deliberately not checked here: a verified claim
+	// marker or registry tier admits a FIRST_TIME_CONTRIBUTOR, and only
+	// admitContributor can tell. See trySweepContributorLanePR.
 	labels := labelNames(pr.Labels)
 	// trusted=false so the sentinel label blocks outright: a contributor PR
 	// gets the label, not the trusted-author courtesy comment.
@@ -402,6 +425,10 @@ type contributorClaimMatch struct {
 	Issue        int
 	RegistryTier string
 	Reason       string
+	// ObservedTier is the raw tier the lane saw for the author (registry
+	// profile or this hive's claim marker), admitted or not. It feeds the
+	// author/* stage label; admission itself still goes through Reason.
+	ObservedTier string
 }
 
 // admittedByRegistry reports whether the registry path admitted the author.
@@ -440,9 +467,30 @@ func (c *Engine) admittedRegistryTier(author string, policy ContributorLanePolic
 func (c *Engine) admitContributor(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy ContributorLanePolicy) (contributorClaimMatch, error) {
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	if tier := c.admittedRegistryTier(author, policy); tier != "" {
-		return contributorClaimMatch{RegistryTier: tier}, nil
+		return contributorClaimMatch{RegistryTier: tier, ObservedTier: tier}, nil
 	}
-	return c.verifyContributorClaim(ctx, owner, repo, pr, policy)
+	match, err := c.verifyContributorClaim(ctx, owner, repo, pr, policy)
+	if match.ObservedTier == "" {
+		match.ObservedTier = c.observedRegistryTier(author)
+	}
+	return match, err
+}
+
+// observedRegistryTier returns the author's raw registry tier for labelling,
+// regardless of whether the policy lets the registry admit them.
+func (c *Engine) observedRegistryTier(author string) string {
+	if c == nil || c.contributorRegistryTier == nil {
+		return ""
+	}
+	author = strings.TrimSpace(strings.TrimPrefix(author, "@"))
+	if author == "" {
+		return ""
+	}
+	tier, ok := c.contributorRegistryTier(author)
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(tier))
 }
 
 // verifyContributorClaim finds the linked issue whose App-authored
@@ -463,6 +511,7 @@ func (c *Engine) verifyContributorClaim(ctx context.Context, owner, repo string,
 		return contributorClaimMatch{Reason: contributorLaneReasonNoLinkedIssue}, nil
 	}
 	sawOtherHive, sawOtherAuthor, sawUntrustedTier, sawUnverified := false, false, false, false
+	observedTier := ""
 	for _, issue := range issues {
 		comments, err := c.listIssueComments(ctx, owner, repo, issue)
 		if err != nil {
@@ -484,7 +533,8 @@ func (c *Engine) verifyContributorClaim(ctx context.Context, owner, repo string,
 				sawOtherHive = true
 				continue
 			}
-			if !policy.RequireTiers[strings.ToLower(strings.TrimSpace(claim.Tier))] {
+			observedTier = strings.ToLower(strings.TrimSpace(claim.Tier))
+			if !policy.RequireTiers[observedTier] {
 				sawUntrustedTier = true
 				continue
 			}
@@ -492,14 +542,14 @@ func (c *Engine) verifyContributorClaim(ctx context.Context, owner, repo string,
 				sawUnverified = true
 				continue
 			}
-			return contributorClaimMatch{Issue: issue}, nil
+			return contributorClaimMatch{Issue: issue, ObservedTier: observedTier}, nil
 		}
 	}
 	switch {
 	case sawUntrustedTier:
-		return contributorClaimMatch{Reason: contributorLaneReasonClaimTier}, nil
+		return contributorClaimMatch{Reason: contributorLaneReasonClaimTier, ObservedTier: observedTier}, nil
 	case sawUnverified:
-		return contributorClaimMatch{Reason: contributorLaneReasonClaimUnverified}, nil
+		return contributorClaimMatch{Reason: contributorLaneReasonClaimUnverified, ObservedTier: observedTier}, nil
 	case sawOtherHive:
 		return contributorClaimMatch{Reason: contributorLaneReasonClaimOtherHive}, nil
 	case sawOtherAuthor:
@@ -604,6 +654,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		}
 		return AutoMergeSweepEvent{}, "fetch-pr", err
 	}
+	c.noteStagePR(owner, repo, number, pr)
 	if reason := c.prefilterContributorLanePR(pr, policy); reason != "" {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
@@ -613,7 +664,15 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	if err != nil {
 		return AutoMergeSweepEvent{}, claim.Reason, err
 	}
+	c.noteStageRole(owner, repo, number, stagelabels.RoleFromTier(claim.ObservedTier, policy.RequireTiers))
+	c.noteStageVerdict(owner, repo, number, c.contributorLaneVerdictFor(owner+"/"+repo, number, headSHA))
 	if claim.Reason != "" {
+		// Neither this hive's registry nor an App-authored marker vouches
+		// for the author, so GitHub's association is the only evidence left;
+		// an untrusted one outranks the marker-path reason (#12195, #12290).
+		if !contributorLaneAssociationTrusted(pr) {
+			return AutoMergeSweepEvent{}, contributorLaneReasonAuthorAssociation, nil
+		}
 		return AutoMergeSweepEvent{}, claim.Reason, nil
 	}
 	if claim.admittedByRegistry() {
@@ -659,10 +718,7 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	var headPushedAt time.Time
-	if updatedAt := pr.GetUpdatedAt(); !updatedAt.IsZero() {
-		headPushedAt = updatedAt.Time
-	}
+	headPushedAt := c.headPushedAt(ctx, owner, repo, number, headSHA, pr)
 	green, reason, err := c.commitGreenForPR(ctx, owner, repo, baseBranch, headSHA, number, headPushedAt, expectedCheckCacheFromContext(ctx))
 	if err != nil {
 		return AutoMergeSweepEvent{}, reason, err

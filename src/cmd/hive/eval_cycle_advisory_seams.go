@@ -255,7 +255,7 @@ func publishAdvisoryDigest(
 	}
 	// Self-report (#11868): a refused advisory write (403, repo moved, auth)
 	// is hive-side plumbing; a rate limit is not (handled above).
-	fleetreport.Observe(fleetreport.ClassAdvisoryPostFailed, route.primaryRepo, "advisory digest post failed: "+err.Error(), "")
+	fleetreport.ObserveItem(fleetreport.ClassAdvisoryPostFailed, route.primaryRepo, "advisory digest post failed: "+err.Error(), "", route.primaryRepo, "")
 	switch classifyAdvisoryPostError(err) {
 	case advisoryPostWriteForbidden:
 		if deps.recordWriteForbidden != nil {

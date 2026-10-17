@@ -148,3 +148,106 @@ func TestKickUndeliverableSelfReportCarriesReason(t *testing.T) {
 	}
 	t.Fatal("no kick_failed_repeatedly evidence after 3 undeliverable kicks")
 }
+
+func TestKickUndeliverableDuringLiveTurnIsNotSelfReported(t *testing.T) {
+	clock := time.Date(2026, 10, 16, 3, 26, 26, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return clock })
+	fleetreport.SetDefaultTrackerForTest(t, tr)
+
+	m := busyVisibilityTestManager()
+	agent := m.agents["scanner"]
+	// The governor re-kicks an agent mid-turn: its transcript was written to
+	// seconds ago, so the pane is busy, not stuck (#12268).
+	agent.LastTranscriptActivity = clock.Add(-20 * time.Second)
+	for i := 0; i < 3; i++ {
+		m.markKickUndeliverableLocked(agent, clock, "CLI did not reach input prompt")
+	}
+	if agent.KicksUndeliverable != 3 {
+		t.Fatalf("kicks undeliverable = %d, want 3 (dashboard counter still tracks the episode)", agent.KicksUndeliverable)
+	}
+	for _, ev := range tr.Evidence() {
+		if ev.Class == fleetreport.ClassKickFailedRepeatedly {
+			t.Fatalf("live turn produced kick_failed_repeatedly evidence: %q", ev.Message)
+		}
+	}
+
+	// Once the transcript has been silent past the busy-no-activity threshold
+	// the same failures are a stall and are reported, carrying the silence.
+	agent.LastTranscriptActivity = clock.Add(-config.DefaultBusyNoActivityThreshold - time.Minute)
+	for i := 0; i < 3; i++ {
+		m.markKickUndeliverableLocked(agent, clock, "CLI did not reach input prompt")
+	}
+	for _, ev := range tr.Evidence() {
+		if ev.Class != fleetreport.ClassKickFailedRepeatedly {
+			continue
+		}
+		if !strings.Contains(ev.Message, "transcript silent for 31m") {
+			t.Fatalf("message = %q, want the transcript silence in the reason", ev.Message)
+		}
+		return
+	}
+	t.Fatal("no kick_failed_repeatedly evidence once the transcript went silent")
+}
+
+func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
+	now := time.Date(2026, 10, 16, 18, 52, 0, 0, time.UTC)
+	working := "◉ Working (12m 3s · esc interrupt)"
+	stuck := func() *AgentProcess {
+		return &AgentProcess{
+			Name:                   "quality",
+			KicksUndeliverable:     14,
+			BusySince:              now.Add(-65 * time.Minute),
+			LastTranscriptActivity: now.Add(-95 * time.Minute),
+		}
+	}
+
+	reason := busyNoActivityStall(stuck(), working, now)
+	if !strings.Contains(reason, busyNoActivityCondition) || !strings.Contains(reason, "14 kicks undeliverable") {
+		t.Fatalf("wedged pane reason = %q, want busy-no-activity restart reason", reason)
+	}
+
+	// No transcript cache (non-Copilot backends): silence is measured from
+	// the first undeliverable kick.
+	noCache := stuck()
+	noCache.LastTranscriptActivity = time.Time{}
+	noCache.BusySince = now.Add(-61 * time.Minute)
+	if got := busyNoActivityStall(noCache, working, now); got == "" {
+		t.Fatal("no-transcript wedged pane did not escalate")
+	}
+
+	cases := map[string]func(a *AgentProcess) string{
+		"too few kicks": func(a *AgentProcess) string {
+			a.KicksUndeliverable = busyNoActivityRecoveryKicks - 1
+			return working
+		},
+		"transcript recently active": func(a *AgentProcess) string {
+			a.LastTranscriptActivity = now.Add(-45 * time.Minute)
+			return working
+		},
+		"longer configured threshold": func(a *AgentProcess) string {
+			a.Config.BusyNoActivityThreshold = time.Hour
+			return working
+		},
+		"pane no longer working": func(a *AgentProcess) string {
+			return "❯ "
+		},
+		"within restart cooldown": func(a *AgentProcess) string {
+			a.lastSessionStallRestart = now.Add(-time.Minute)
+			return working
+		},
+		"no busy episode": func(a *AgentProcess) string {
+			a.LastTranscriptActivity = time.Time{}
+			a.BusySince = time.Time{}
+			return working
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := stuck()
+			pane := mutate(a)
+			if got := busyNoActivityStall(a, pane, now); got != "" {
+				t.Fatalf("busyNoActivityStall = %q, want no escalation", got)
+			}
+		})
+	}
+}

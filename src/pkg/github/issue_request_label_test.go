@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,14 @@ func newLabelMockServer(t *testing.T, added *[]string, removed *[]string) *httpt
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/comments"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/issues/"):
+			// The re-park gate reads the issue before parking it on a
+			// decision; a bare issue carries no approval.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"number":1,"labels":[]}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -102,8 +111,8 @@ func TestIssueRequestWatcher_LabelAddsRemovesAndAudits(t *testing.T) {
 func TestIssueRequestWatcher_LabelRefusesHiveControlledLabels(t *testing.T) {
 	for _, label := range []string{
 		AutoMergeQueuedLabel, "LGTM", "hold", "on-hold", HumanAckLabel,
-		"design-approved", "needs-human", "needs-decision", "blocked",
-		"hive/claimed-by-other", "hive/likely-done",
+		"design-approved", "needs-decision", "needs-direction", "blocked",
+		"hive/claimed-by-other", "hive/likely-done", "stage/010-actionable", "stage/stalled",
 	} {
 		t.Run(label, func(t *testing.T) {
 			var added, removed []string
@@ -168,10 +177,41 @@ func TestIssueRequestWatcher_LabelAllowsVerifiedOpenVerdict(t *testing.T) {
 	}
 }
 
+// stage/085-needs-decision is add-only for agents (hivecommons/hive#12683):
+// parking an item on a maintainer decision is the ADR-0019 escalation move
+// that replaced `needs-direction` / `needs-decision`; every other stage label
+// is refused and the un-park stays with a maintainer.
+func TestIssueRequestWatcher_LabelAllowsNeedsDecisionPark(t *testing.T) {
+	var added, removed []string
+	srv := newLabelMockServer(t, &added, &removed)
+	defer srv.Close()
+	c := issueTestClient(t, srv.URL)
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "o/r", Number: 12683, Agent: "scanner",
+		Labels: []string{"Stage/085-Needs-Decision"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+
+	if got := strings.Join(added, ","); got != "Stage/085-Needs-Decision" {
+		t.Fatalf("labels added = %q, want stage/085-needs-decision", got)
+	}
+	if len(removed) != 0 {
+		t.Fatalf("unexpected removed labels: %v", removed)
+	}
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+}
+
 // A reserved label is refused in the remove direction too: taking `hold` off
 // a PR is exactly the escalation the guard exists for.
 func TestIssueRequestWatcher_LabelRefusesReservedRemoval(t *testing.T) {
-	for _, label := range []string{"hold", VerifiedOpenLabel} {
+	for _, label := range []string{"hold", VerifiedOpenLabel, NeedsDecisionStageLabel} {
 		t.Run(label, func(t *testing.T) {
 			var added, removed []string
 			srv := newLabelMockServer(t, &added, &removed)
@@ -302,5 +342,104 @@ func TestNormalizeLabelList(t *testing.T) {
 	}
 	if normalizeLabelList(nil) != nil || normalizeLabelList([]string{" ", ","}) != nil {
 		t.Error("an empty list must normalize to nil")
+	}
+}
+
+// A contributor agent read the owner's `/hive decision … Agents stand down`
+// on hivecommons/hive#12680 and re-parked the issue asking for a decision.
+// With `approved-direction` applied and Hive's own un-park reply recording
+// the decision, the re-park is refused and the agent is told to add
+// `needs-human` and unclaim instead. A newer `/hive decision` with different
+// text means direction is changing, and the park goes through.
+func TestIssueRequestWatcher_LabelRefusesReparkOnRecordedDecision(t *testing.T) {
+	const decision = "Agents stand down; owner/Console owners handle this"
+	reply := unparkWireComment{
+		ID: 902, Body: fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, 31, renderUnparkAcceptedReply("owner", decision, true)),
+		User: wireUser{Login: "hive[bot]"}, CreatedAt: unparkOld(), UpdatedAt: unparkOld(),
+	}
+	cases := []struct {
+		name      string
+		comments  []unparkWireComment
+		wantAdded bool
+	}{
+		{"decision unchanged", []unparkWireComment{humanComment(31, "owner", "/hive decision "+decision), reply}, false},
+		{"same decision repeated", []unparkWireComment{reply, humanComment(33, "owner", "/hive decision "+decision)}, false},
+		{"new decision pending", []unparkWireComment{reply, humanComment(34, "owner", "/hive decision option B after all")}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			issue := parkedIssue(12680, tc.comments...)
+			issue.Labels = []wireLabel{{Name: "needs-human"}, {Name: HumanAckLabel}}
+			server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, nil)
+			c := newTestClient(t, server, "org", []string{"repo"})
+			c.issueAuthz = func(agent string, uid int, kind string) error { return nil }
+			dir := withIssueDir(t)
+
+			reqPath, err := WriteIssueRequest(dir, IssueRequest{
+				Kind: "label", Repo: "org/repo", Number: 12680, Agent: "karibhou",
+				Labels: []string{NeedsDecisionStageLabel},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.ProcessIssueRequestsOnce(context.Background())
+
+			resp := readIssueResultFile(t, reqPath)
+			if tc.wantAdded {
+				if !resp.OK || len(rec.added[12680]) != 1 {
+					t.Fatalf("expected the park to go through, resp=%+v added=%v", resp, rec.added[12680])
+				}
+				return
+			}
+			if resp.OK || len(rec.added[12680]) != 0 {
+				t.Fatalf("expected the re-park refused, resp=%+v added=%v", resp, rec.added[12680])
+			}
+			for _, want := range []string{"already decided", decision, "`needs-human`", "/unclaim"} {
+				if !strings.Contains(resp.Error, want) {
+					t.Fatalf("refusal %q should mention %q", resp.Error, want)
+				}
+			}
+			if _, err := os.Stat(reqPath + ".denied"); err != nil {
+				t.Fatalf("request should be moved to .denied: %v", err)
+			}
+		})
+	}
+}
+
+// Without `approved-direction` the same request parks as before, and an
+// agent may add `needs-human` (never remove it).
+func TestIssueRequestWatcher_LabelAllowsNeedsHumanAdd(t *testing.T) {
+	issue := parkedIssue(12681)
+	issue.Labels = []wireLabel{{Name: "kind/bug"}}
+	server, rec := newUnparkServer(t, "org", "repo", []unparkWireIssue{issue}, nil)
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.issueAuthz = func(agent string, uid int, kind string) error { return nil }
+	dir := withIssueDir(t)
+
+	reqPath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "org/repo", Number: 12681, Agent: "karibhou",
+		Labels: []string{"needs-human", NeedsDecisionStageLabel},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if resp := readIssueResultFile(t, reqPath); !resp.OK {
+		t.Fatalf("result = %+v, want ok", resp)
+	}
+	if got := strings.Join(rec.added[12681], ","); got != "needs-human,"+NeedsDecisionStageLabel {
+		t.Fatalf("added = %q", got)
+	}
+
+	removePath, err := WriteIssueRequest(dir, IssueRequest{
+		Kind: "label", Repo: "org/repo", Number: 12681, Agent: "karibhou",
+		RemoveLabels: []string{"needs-human"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessIssueRequestsOnce(context.Background())
+	if resp := readIssueResultFile(t, removePath); resp.OK || !strings.Contains(resp.Error, "needs-human") {
+		t.Fatalf("removing needs-human must be refused, got %+v", resp)
 	}
 }

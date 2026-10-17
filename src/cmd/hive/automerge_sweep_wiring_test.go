@@ -158,6 +158,51 @@ func TestRunAutoMergeSweepIfDue_LogsCompletionWithSeenAndSkipped(t *testing.T) {
 	}
 }
 
+// TestRunAutoMergeSweepIfDue_TrustedBotHandedToSelfAuthoredLane pins the
+// TrustedBotAuthors wiring: without it the trusted-author tier cannot
+// recognise an allow-listed bot and logs untrusted-author-role for it on every
+// run-loop tick (#12189). With it, the tier hands the PR to the self-authored
+// sweep's trusted-bot lane instead.
+func TestRunAutoMergeSweepIfDue_TrustedBotHandedToSelfAuthoredLane(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/testorg/widget/issues", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	})
+	mux.HandleFunc("/repos/testorg/widget/pulls", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"number":21,"state":"open","draft":false,"user":{"login":"dependabot[bot]"},"head":{"sha":"abc123"}}]`))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[]`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	ghClient := github.NewClientForTest(srv.URL, "testorg", []string{"widget"}, sweepTestLogger(nil))
+
+	level := config.SelfMergeMinACMMLevel
+	cfg := &config.Config{
+		ACMMLevel: &level,
+		AutoMerge: config.AutoMergeConfig{
+			TrustedBotAuthors: []string{"dependabot[bot]"},
+			TrustedAuthors:    config.TrustedAuthorAutoMergeConfig{Enabled: true},
+		},
+	}
+
+	var buf strings.Builder
+	var lastRun time.Time
+	runAutoMergeSweepIfDue(context.Background(), ghClient, cfg, nil, &lastRun, sweepTestLogger(&buf))
+
+	log := buf.String()
+	if strings.Contains(log, "untrusted-author-role") {
+		t.Fatalf("trusted bot must not be judged by the trusted-author role gate, log:\n%s", log)
+	}
+	if !strings.Contains(log, "reason=trusted-bot-lane") {
+		t.Fatalf("trusted bot PR must be handed to the trusted-bot lane, log:\n%s", log)
+	}
+}
+
 // resetClaimLedgerForTest resets the package-level sync.Once and pre-installs
 // a ledger backed by a temp file, so guard tests never touch the hardwired
 // /data ledger path (github.ClaimLedgerPath is a const). Process state is

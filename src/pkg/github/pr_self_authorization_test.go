@@ -394,7 +394,7 @@ func TestPRRequestWatcher_HoldsSelfAuthorizedPR(t *testing.T) {
 	c.SetAppBotLogin(botLogin)
 	// No hold-gated level: at L6 this gate is the only thing standing between a
 	// self-proposed direction and a merged one.
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -448,7 +448,7 @@ func TestPRRequestWatcher_DefaultConfigStillHoldsSelfAuthorizedPR(t *testing.T) 
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: botLogin, AuthorType: "Bot"}}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -476,7 +476,7 @@ func TestPRRequestWatcher_ConfigDisabledSkipsSelfAuthorizationHold(t *testing.T)
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
 	c.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return false })
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -504,7 +504,7 @@ func TestPRRequestWatcher_ConfigCallbackReceivesRepo(t *testing.T) {
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
 	c.SetSelfAuthorizationHoldEnabled(func(repo string) bool { return repo != "o/r" })
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -531,7 +531,7 @@ func TestPRRequestWatcher_DoesNotHoldHumanBackedPR(t *testing.T) {
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: {Author: "hanthor"}}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
-	c.prHoldLabel = func(agent string) bool { return false }
+	c.prHoldLabel = func(agent, repo string) bool { return false }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -561,7 +561,7 @@ func TestPRRequestWatcher_HoldGatedLevelSkipsTheLookup(t *testing.T) {
 		Comments: []selfAuthComment{{Author: "someone"}}}}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin(botLogin)
-	c.prHoldLabel = func(agent string) bool { return true }
+	c.prHoldLabel = func(agent, repo string) bool { return true }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir
@@ -589,7 +589,7 @@ func TestPRRequestWatcher_HoldGatedLevelPostsAttributableNotice(t *testing.T) {
 	srv := &selfAuthServer{issues: map[int]*selfAuthIssue{}}
 	c := testClient(t, srv.start(t).URL)
 	c.SetAppBotLogin("kubestellar-hive[bot]")
-	c.prHoldLabel = func(agent string) bool { return true }
+	c.prHoldLabel = func(agent, repo string) bool { return true }
 
 	dir := t.TempDir()
 	prRequestDirForTest = dir

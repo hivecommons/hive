@@ -1142,6 +1142,15 @@ func (m *Manager) MarkStartupLaunchQueued(names []string) {
 	}
 }
 
+// GovernorMayStart reports whether the governor's kick path may start the named
+// agent: it must be stopped and not stopped explicitly by an operator.
+func (m *Manager) GovernorMayStart(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	agent, ok := m.agents[name]
+	return ok && agent.State == StateStopped && !agent.OperatorStopped
+}
+
 // deferStartupKickLocked records the latest kick that arrives while startup
 // owns delivery. It deliberately replaces the normal bootstrap prompt: one
 // readiness-gated kick should be typed into the fresh pane, and the governor's

@@ -337,3 +337,32 @@ func AgentRepoScopeWarnings(cfg *Config) []string {
 	}
 	return warnings
 }
+
+// AgentOwnsRepo reports whether repo is one of the repositories this agent is
+// handed work on (ReposForAgent, plus the hive's primary repo), so a PR the
+// agent opens there changes the agent's "own" repo rather than someone else's.
+// It is the same-repo / cross-repo distinction the outreach hold policy keys
+// on: an outreach PR into a hive-managed repo flows through ordinary review
+// and auto-merge, while a PR into any other repository is held for a human
+// (hivecommons/hive, operator decision 2026-10-16). repo may be bare or
+// org-qualified; comparison is org-qualified and case-folded like every other
+// repo predicate in this package.
+func (c *Config) AgentOwnsRepo(agent, repo string) bool {
+	if c == nil {
+		return false
+	}
+	key := repoPauseKey(c.Project.Org, repo)
+	if key == "" {
+		return false
+	}
+	candidates := c.ReposForAgent(agent)
+	if primary := strings.TrimSpace(c.Project.PrimaryRepo); primary != "" && c.AgentServesRepo(agent, primary) {
+		candidates = append(append([]string{}, candidates...), primary)
+	}
+	for _, r := range candidates {
+		if repoPauseKey(c.Project.Org, r) == key {
+			return true
+		}
+	}
+	return false
+}

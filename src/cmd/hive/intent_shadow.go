@@ -47,17 +47,7 @@ func writeIntentShadow(cfg *config.Config, logger *slog.Logger, lane, fullRepo s
 	}
 	logger.Info("intent shadow gate", "lane", lane, "repo", fullRepo, "number", number, "head", head,
 		"would_have_blocked", *gate.WouldHaveBlocked, "tier", gate.Tier, "reason", gate.Reason, "confidence", gate.Confidence)
-	if !cfg.Evidence.IsEnabled() {
-		return
-	}
-	key, err := evidence.LoadSigningKey(cfg.Evidence.SigningKeyPath())
-	if err != nil {
-		key = nil
-	}
-	path := github.ReviewEvidencePath("", fullRepo, number, head)
-	if err := github.MergeReviewEvidenceShadow(path, evidence.Shadow{Intent: gate}, key); err != nil {
-		logger.Debug("intent shadow: evidence not recorded", "repo", fullRepo, "number", number, "error", err)
-	}
+	writeShadowEvidence(cfg, logger, "intent", fullRepo, number, head, evidence.Shadow{Intent: gate})
 }
 
 // recordIntentShadow records intent.shadow for a PR the merge-eligible lane

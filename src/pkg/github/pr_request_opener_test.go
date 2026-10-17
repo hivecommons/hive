@@ -133,7 +133,7 @@ func TestPRRequestWatcher_CreditsIssueOpener(t *testing.T) {
 			srv := &selfAuthServer{issues: map[int]*selfAuthIssue{581: tc.issue}}
 			c := testClient(t, srv.start(t).URL)
 			c.SetAppBotLogin(botLogin)
-			c.prHoldLabel = func(agent string) bool { return false }
+			c.prHoldLabel = func(agent, repo string) bool { return false }
 
 			dir := t.TempDir()
 			prRequestDirForTest = dir

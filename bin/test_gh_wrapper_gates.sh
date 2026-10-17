@@ -47,6 +47,7 @@ mkdir -p "$SPOOL"
 sed -e "s|CONTRIBUTOR_MODE_MARKER=\"/etc/hive/contributor-mode\"|CONTRIBUTOR_MODE_MARKER=\"${WORK}/contributor-marker\"|" \
   -e "s|TOKEN_ACCESS_SPOOL=\"/var/run/hive-metrics/token-access-events\"|TOKEN_ACCESS_SPOOL=\"${SPOOL}\"|" \
   -e "s|LABEL_CACHE_BASE=\"/tmp/.hive-labels-ensured\"|LABEL_CACHE_BASE=\"${WORK}/.hive-labels-ensured\"|" \
+  -e "s|MERGE_ELIGIBLE_FILE=\"/var/run/hive-metrics/merge-eligible.json\"|MERGE_ELIGIBLE_FILE=\"${WORK}/merge-eligible.json\"|" \
   "$WRAPPER_SRC" >"$WRAPPER"
 if ! grep -q "CONTRIBUTOR_MODE_MARKER=\"${WORK}/contributor-marker\"" "$WRAPPER"; then
   echo "FATAL: failed to redirect CONTRIBUTOR_MODE_MARKER in the test copy — wrapper constant changed?" >&2
@@ -60,6 +61,12 @@ if ! grep -q "LABEL_CACHE_BASE=\"${WORK}/.hive-labels-ensured\"" "$WRAPPER"; the
   echo "FATAL: failed to redirect LABEL_CACHE_BASE in the test copy — wrapper constant changed?" >&2
   exit 1
 fi
+if ! grep -q "MERGE_ELIGIBLE_FILE=\"${WORK}/merge-eligible.json\"" "$WRAPPER"; then
+  echo "FATAL: failed to redirect MERGE_ELIGIBLE_FILE in the test copy — wrapper constant changed?" >&2
+  exit 1
+fi
+# Absent by default so the merge-gate cases below see "cannot verify".
+rm -f "${WORK}/merge-eligible.json"
 # Absent unless a case creates it: these tests are all non-contributor.
 rm -f "${WORK}/contributor-marker"
 
@@ -654,6 +661,184 @@ assert_author "#6908 search prs allows the authenticated login" \
 assert_author "#6908 an authorless search is still allowed" \
   "$(run_author_wrapper "$USER_STUB" "${WORK}/no-such-login-file" -- search prs --state open)" \
   "exit=0 last=search prs --state open*"
+
+# ── #12545: routing/provenance labels only on the hive's OWN PRs ─────────────
+#
+# `agent/<lane>` routes work (prOwningLane, classifier); the `hive/<id>`
+# provenance label it used to ride with is retired (#12539), so the injected
+# label set is agent/<lane> alone. The pr edit fall-through, pr merge and pr comment arms stamped
+# both onto any PR the agent touched: a review-fix kick (review.fix_human_prs)
+# ran `gh pr edit 12495 --body …` on a contributor's PR and the scanner
+# "owned" it. The wrapper must look the PR's author up and compare it with
+# the identity it authenticates as; mismatch or unknown → no labels, edit
+# still goes through untouched.
+echo "-- PR provenance labels require hive authorship (#12545) --"
+OWNER_STUB="${WORK}/gh-stub-prowner"
+cat >"$OWNER_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${STUB_LOG}"
+if [ "${1:-}" = "api" ] && [ "${2:-}" = "user" ]; then
+  echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+  exit 1
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "view" ]; then
+  case "${3:-}" in
+    5)   echo "test-app[bot]" ;;
+    777) echo "mendezr" ;;
+    *)   echo "gh: Could not resolve to a PullRequest" >&2; exit 1 ;;
+  esac
+fi
+exit 0
+STUBEOF
+chmod +x "$OWNER_STUB"
+
+# run_owner_wrapper <login-file> -- <args...>  → "exit=<rc> ::: <stub log>"
+run_owner_wrapper() {
+  local login_file="$1"; shift
+  [ "${1:-}" = "--" ] && shift
+  : >"$STUB_LOG"
+  rm -f "${WORK}"/.hive-labels-ensured-*
+  local out rc
+  out="$(
+    HIVE_GH_WRAPPER_REAL_GH="$OWNER_STUB" \
+    HIVE_GH_WRAPPER_BOT_LOGIN_FILE="$login_file" \
+    STUB_LOG="$STUB_LOG" \
+    HIVE_AGENT="testagent" \
+    HIVE_AGENT_ID="testagent" \
+    HIVE_ID="hive-test" \
+    HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+    HIVE_ACMM_LEVEL=5 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    HIVE_CONTRIBUTOR_MODE="false" \
+    bash "$WRAPPER" "$@" 2>&1
+  )"
+  rc=$?
+  rm -f "${WORK}"/.hive-labels-ensured-*
+  echo "exit=${rc} ::: $(tr '\n' '|' <"$STUB_LOG")"
+}
+
+# Self-authored PR: labels still injected (the existing behaviour is kept).
+result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr edit 5 --repo owner/repo --body b)"
+if [[ "$result" == exit=0* && "$result" == *"pr edit 5 --repo owner/repo --body b --add-label agent/testagent|"* ]]; then
+  echo "  PASS: pr edit on a self-authored PR still injects the agent/ label"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pr edit on a self-authored PR still injects the agent/ label"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
+
+# THE regression: contributor-authored PR, body edit goes through, no labels,
+# and no `gh label create` either (nothing to ensure for).
+result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr edit 777 --repo owner/repo --body b)"
+if [[ "$result" == exit=0* && "$result" == *"|pr edit 777 --repo owner/repo --body b|"* && "$result" != *"add-label"* && "$result" != *"label create"* ]]; then
+  echo "  PASS: pr edit on a contributor PR passes through with NO routing labels"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pr edit on a contributor PR passes through with NO routing labels"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
+
+# The ownership cache lives in world-writable /tmp, so a planted "yes" must
+# not short-circuit the author lookup: only a cached "no" is honoured, and a
+# positive verdict is re-verified against the API every time. Seed the file
+# for the contributor PR and prove the lookup still runs and still says no.
+OWNER_CACHE_777="${WORK}/.hive-labels-ensured-owner-owner_repo-777"
+run_owner_wrapper_seeded() {
+  local login_file="$1"; shift
+  [ "${1:-}" = "--" ] && shift
+  : >"$STUB_LOG"
+  rm -f "${WORK}"/.hive-labels-ensured-*
+  printf 'yes\n' >"$OWNER_CACHE_777"
+  local out rc
+  out="$(
+    HIVE_GH_WRAPPER_REAL_GH="$OWNER_STUB" \
+    HIVE_GH_WRAPPER_BOT_LOGIN_FILE="$login_file" \
+    STUB_LOG="$STUB_LOG" \
+    HIVE_AGENT="testagent" \
+    HIVE_AGENT_ID="testagent" \
+    HIVE_ID="hive-test" \
+    HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+    HIVE_ACMM_LEVEL=5 \
+    HIVE_AGENT_TOKEN_CACHE="$TOKEN_CACHE" \
+    HIVE_CONTRIBUTOR_MODE="false" \
+    bash "$WRAPPER" "$@" 2>&1
+  )"
+  rc=$?
+  local cached="(absent)"
+  [ -f "$OWNER_CACHE_777" ] && cached="$(tr -d '[:space:]' <"$OWNER_CACHE_777")"
+  rm -f "${WORK}"/.hive-labels-ensured-*
+  echo "exit=${rc} cache=${cached} ::: $(tr '\n' '|' <"$STUB_LOG")"
+}
+result="$(run_owner_wrapper_seeded "$TRUSTED_LOGIN_FILE" -- pr edit 777 --repo owner/repo --body b)"
+if [[ "$result" == "exit=0 cache=no :::"* && "$result" == *"::: pr view 777 --repo owner/repo --json author"* && "$result" == *"|pr edit 777 --repo owner/repo --body b|"* && "$result" != *"add-label"* ]]; then
+  echo "  PASS: a planted 'yes' in the owner cache is ignored; author is re-checked and no labels are stamped"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: a planted 'yes' in the owner cache is ignored; author is re-checked and no labels are stamped"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
+
+# Unknown author (view failed) → fail closed: edit proceeds, no labels.
+result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr edit 999 --repo owner/repo --title t)"
+if [[ "$result" == exit=0* && "$result" == *"|pr edit 999 --repo owner/repo --title t|"* && "$result" != *"add-label"* ]]; then
+  echo "  PASS: pr edit with unresolvable author fails closed (no labels, edit kept)"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pr edit with unresolvable author fails closed (no labels, edit kept)"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
+
+# Unknown SELF identity (no trusted file, installation token) → fail closed too.
+result="$(run_owner_wrapper "${WORK}/no-such-login-file" -- pr edit 5 --repo owner/repo --body b)"
+if [[ "$result" == exit=0* && "$result" != *"add-label"* ]]; then
+  echo "  PASS: pr edit with unresolvable self identity injects no labels"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pr edit with unresolvable self identity injects no labels"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
+
+# pr merge post-label follows the same rule. Both PRs are merge-eligible so
+# the merge gate lets us reach the arm under test.
+cat >"${WORK}/merge-eligible.json" <<'EOF2'
+{"merge_eligible":[{"number":5,"repo":"owner/repo"},{"number":777,"repo":"owner/repo"}]}
+EOF2
+result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr merge 777 --repo owner/repo --squash)"
+if [[ "$result" == *"pr merge 777 --repo owner/repo --squash|"* && "$result" != *"add-label"* ]]; then
+  echo "  PASS: pr merge on a contributor PR does not stamp routing labels"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pr merge on a contributor PR does not stamp routing labels"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
+result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- pr merge 5 --repo owner/repo --squash)"
+if [[ "$result" == *"pr edit 5 --repo owner/repo --add-label agent/testagent|"* ]]; then
+  echo "  PASS: pr merge on a self-authored PR still stamps routing labels"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: pr merge on a self-authored PR still stamps routing labels"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
+
+rm -f "${WORK}/merge-eligible.json"
+
+# Issues are unaffected: the lane routing label on an issue is intended.
+result="$(run_owner_wrapper "$TRUSTED_LOGIN_FILE" -- issue edit 42 --repo owner/repo --title t)"
+if [[ "$result" == exit=0* && "$result" == *"issue edit 42 --repo owner/repo --title t --add-label agent/testagent|"* ]]; then
+  echo "  PASS: issue edit still injects the lane routing label"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: issue edit still injects the lane routing label"
+  echo "        got '$result'"
+  FAIL=$((FAIL + 1))
+fi
 
 echo
 echo "=== $PASS passed, $FAIL failed ==="

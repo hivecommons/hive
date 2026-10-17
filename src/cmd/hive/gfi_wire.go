@@ -154,13 +154,18 @@ func gfiCandidates(org string, result *github.ActionableResult, allowed func(str
 }
 
 // runGoodFirstIssueSweepIfDue is the periodic curation pass
-// (good_first_issue.enabled, default off), once per
+// (good_first_issue.enabled, default on), once per
 // good_first_issue.interval. It reads the last enumeration rather than
 // re-listing issues, so it costs GitHub calls only for the few it labels.
+// The labelled set is refreshed from every enumeration, not just the ones a
+// sweep runs on, so an issue a maintainer labelled by hand between sweeps is
+// still released the moment a hive agent starts it.
 func runGoodFirstIssueSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *config.Config, dashSrv *dashboard.Server, state *gfiState, last *github.ActionableResult, lastRun *time.Time, logger *slog.Logger) {
-	if ghClient == nil || cfg == nil || state == nil || !cfg.GoodFirstIssue.Enabled {
+	if ghClient == nil || cfg == nil || state == nil || !cfg.GoodFirstIssue.IsEnabled() || last == nil {
 		return
 	}
+	candidates, labelled := gfiCandidates(cfg.Project.Org, last, cfg.GoodFirstIssue.RepoAllowed)
+	state.rememberLabelled(labelled)
 	now := time.Now()
 	if lastRun != nil && !lastRun.IsZero() && now.Sub(*lastRun) < cfg.GoodFirstIssue.IntervalOrDefault() {
 		return
@@ -168,17 +173,12 @@ func runGoodFirstIssueSweepIfDue(ctx context.Context, ghClient *github.Client, c
 	if lastRun != nil {
 		*lastRun = now
 	}
-	if last == nil {
-		return
-	}
 	opts := gfiSweepOptions(cfg, dashSrv, logger)
 	opts.Now = now
 	if opts.Links.Origin == "" {
 		logger.Warn("gfi skip", "reason", "no-public-url", "hint", "set dashboard.public_url so the welcome comment can link this hive's relay")
 		return
 	}
-	candidates, labelled := gfiCandidates(cfg.Project.Org, last, cfg.GoodFirstIssue.RepoAllowed)
-	state.rememberLabelled(labelled)
 	opts.AgentsMD = func(ctx context.Context, repo string) string { return state.agentsMDURL(ctx, ghClient, repo) }
 	res := state.sweeper.Sweep(ctx, ghClient, candidates, opts)
 	logger.Info("gfi sweep", "scanned", res.Scanned, "selected", len(res.Selected), "errors", res.Errors, "skipped", fmt.Sprint(res.Skipped))
@@ -189,7 +189,7 @@ func runGoodFirstIssueSweepIfDue(ctx context.Context, ghClient *github.Client, c
 // whether or not the claims ledger is on.
 func gfiReleaseOnHiveStart(ctx context.Context, cfg *config.Config, state *gfiState, client func() *github.Client, dashSrv *dashboard.Server, logger *slog.Logger) github.AgentStartHook {
 	return func(agent, repo string, number int, signal string) {
-		if cfg == nil || state == nil || !cfg.GoodFirstIssue.Enabled {
+		if cfg == nil || state == nil || !cfg.GoodFirstIssue.IsEnabled() {
 			return
 		}
 		full := qualifyClaimRepo(cfg.Project.Org, repo)
@@ -224,7 +224,7 @@ func gfiClaimHooks(ctx context.Context, cfg *config.Config, state *gfiState, cli
 		if prev != nil {
 			prev(c, outcome)
 		}
-		if cfg == nil || state == nil || !cfg.GoodFirstIssue.Enabled || outcome != claims.OutcomeClaimed {
+		if cfg == nil || state == nil || !cfg.GoodFirstIssue.IsEnabled() || outcome != claims.OutcomeClaimed {
 			return
 		}
 		cand := gfi.Candidate{Repo: c.Repo, Number: c.Issue}

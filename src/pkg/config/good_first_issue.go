@@ -8,8 +8,10 @@ import (
 	"github.com/hivecommons/hive/pkg/gfi"
 )
 
-// DefaultGoodFirstIssueInterval is how often the curation sweep runs.
-const DefaultGoodFirstIssueInterval = time.Hour
+// DefaultGoodFirstIssueInterval is how often the curation sweep runs. It is
+// short on purpose: the scanner claims a fresh issue within minutes, so an
+// hourly sweep would rarely see an unclaimed issue that has cleared MinAge.
+const DefaultGoodFirstIssueInterval = 15 * time.Minute
 
 // GoodFirstIssueConfig (top-level `good_first_issue:`) is hive-curated
 // `good first issue` advertising: a periodic sweep scores open, unclaimed
@@ -19,12 +21,18 @@ const DefaultGoodFirstIssueInterval = time.Hour
 // relay to claim the issue. The label is not a hold — if a hive agent starts
 // the issue first the label is removed and the comment marked superseded.
 //
-// Default OFF: the hive writes to issues on the operator's behalf, so it is
-// an explicit opt-in. All numeric knobs fall back to the gfi package
-// defaults when zero.
+// Default ON (hivecommons/hive#12185 follow-up): the operator asked the hive
+// to decide what qualifies without per-spoke YAML. The sweep is capped and
+// self-silencing — it does nothing until dashboard.public_url (or a
+// hub-assigned dashboard URL) exists to link, labels at most MaxPerSweep
+// issues per repo per pass and never more than MaxPerRepo at once — so an
+// omitted block is safe. `enabled: false` opts out. All numeric knobs fall
+// back to the gfi package defaults when zero.
 type GoodFirstIssueConfig struct {
-	// Enabled turns the sweep on.
-	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Enabled turns the sweep on. Pointer so an omitted `enabled:` key (nil)
+	// is distinguishable from an explicit false: nil defaults ON. Read via
+	// IsEnabled(), never dereferenced raw.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Interval between sweeps. Zero means DefaultGoodFirstIssueInterval.
 	Interval time.Duration `yaml:"interval,omitempty" json:"interval,omitempty"`
 	// MaxPerRepo caps issues wearing the label per repository.
@@ -71,6 +79,12 @@ const (
 	DefaultGoodFirstIssueReselectCooldown = gfi.DefaultReselectCooldown
 	DefaultGoodFirstIssueDocsBase         = gfi.DefaultDocsBase
 )
+
+// IsEnabled reports whether the sweep runs: true unless the operator set
+// `enabled: false`.
+func (g GoodFirstIssueConfig) IsEnabled() bool {
+	return g.Enabled == nil || *g.Enabled
+}
 
 // IntervalOrDefault resolves the sweep cadence.
 func (g GoodFirstIssueConfig) IntervalOrDefault() time.Duration {

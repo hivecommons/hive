@@ -24,8 +24,17 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// gap endpoint (hivecommons/hive#11065), plus pkg/compliance for the
 	// control registry and /api/compliance routes (hivecommons/hive#11078),
 	// plus pkg/evidence for the schema-v1 bundle types behind the read-only
-	// GET /api/evidence/summary aggregate (hivecommons/hive#12063).
-	const maxDashboardInternalImports = 46
+	// GET /api/evidence/summary aggregate (hivecommons/hive#12063), plus
+	// pkg/hivestate for the state-snapshot time series behind the nous
+	// self-report and fleet report (hivecommons/hive#12339), plus pkg/fixqueue
+	// for the per-contributor red-PR fix budget the contribute hub schedules
+	// stage-072 fix-pr interrupts through (hivecommons/hive#12436), plus
+	// pkg/stagelabels so the Operations fleet payload can derive new-vs-rework
+	// and pending (not yet dispatched) rework from the persisted stage-label
+	// store without extra GitHub calls (hivecommons/hive#12502), plus
+	// pkg/nous for the per-campaign experiment store that scopes the
+	// Experiment Lab baseline to the active research question (hivecommons/hive#12501).
+	const maxDashboardInternalImports = 50
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

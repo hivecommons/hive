@@ -1128,11 +1128,18 @@ HIVE_INSTANCE_ID="${HIVE_ID:-}"
 HIVE_SHA="${HIVE_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')}"
 
 # Build identity footer for injection into issue/comment bodies.
+#
+# The trailing `<!-- hive:origin hive=<id> at=<ts> -->` marker is the
+# machine-readable "which hive wrote this" record that replaced the
+# hive/<id> label (hivecommons/hive#12539); pkg/github.OriginHive reads it.
+# It stays last so pkg/github's attributionIdentityFooter regex keeps
+# matching the whole block.
 _identity_footer() {
   local parts="---\n🐝 **Hive Agent**:"
   [[ -n "$AGENT_DISPLAY_NAME" ]] && parts="${parts} \`${AGENT_DISPLAY_NAME}\`"
   [[ -n "$HIVE_INSTANCE_ID" ]] && parts="${parts} | **Instance:** \`${HIVE_INSTANCE_ID}\`"
   parts="${parts} | **SHA:** \`${HIVE_SHA}\`"
+  [[ -n "$HIVE_INSTANCE_ID" ]] && parts="${parts}\n<!-- hive:origin hive=${HIVE_INSTANCE_ID} at=$(date -u +%Y-%m-%dT%H:%M:%SZ) -->"
   echo -e "$parts"
 }
 
@@ -1300,9 +1307,10 @@ if [[ -n "$AGENT_NAME" ]]; then
   # produce a label no consumer recognises (#8927). The display name is
   # human-facing only — it goes in the label description and the footer.
   LABELS_CSV="agent/${AGENT_NAME}"
-  # Provenance only. The dashboard hold label is hive-pause/<id>; keeping this
-  # as hive/<id> preserves hub activity attribution without parking work.
-  [[ -n "$HIVE_INSTANCE_ID" ]] && LABELS_CSV="${LABELS_CSV},hive/${HIVE_INSTANCE_ID}"
+  # No hive/<id> label (hivecommons/hive#12539): the origin marker in the
+  # identity footer says which hive wrote the item, and the hive strips the
+  # retired label from open items at boot. The dashboard hold label is
+  # hive-pause/<id>.
   # Contributor labels
   if _contributor_mode; then
     [[ -n "${HIVE_CONTRIBUTOR_USERNAME:-}" ]] && LABELS_CSV="${LABELS_CSV},contributor/${HIVE_CONTRIBUTOR_USERNAME}"
@@ -1314,9 +1322,9 @@ if [[ -n "$AGENT_NAME" ]]; then
   # The cache MUST be keyed per target repo (#4043): a single global flag meant
   # whichever repo an agent touched first got the labels created, and every
   # other repo was skipped for the life of the pod — leaving the injected
-  # hive/<id> label missing there, which made every `gh pr edit`/`gh issue edit`
-  # on those repos fail with "'hive/<id>' not found". Verified live on a fleet
-  # owner's hive: only the first-touched repos carried the current label.
+  # agent/<lane> label missing there, which made every `gh pr edit`/`gh issue
+  # edit` on those repos fail with "'<label>' not found". Verified live on a
+  # fleet owner's hive: only the first-touched repos carried the current label.
   LABEL_CACHE_BASE="/tmp/.hive-labels-ensured"
   _ensure_labels() {
     local repo_flag=""
@@ -1336,9 +1344,6 @@ if [[ -n "$AGENT_NAME" ]]; then
     local rf=""
     [[ -n "$repo_flag" ]] && rf="--repo $repo_flag"
     "$REAL_GH" label create "agent/${AGENT_NAME}" --description "Work by the ${AGENT_DISPLAY_NAME} agent" --color 6f42c1 $rf 2>/dev/null || true
-    if [[ -n "$HIVE_INSTANCE_ID" ]]; then
-      "$REAL_GH" label create "hive/${HIVE_INSTANCE_ID}" --description "Hive instance provenance ${HIVE_INSTANCE_ID}" --color 1d76db $rf 2>/dev/null || true
-    fi
     touch "$cache"
   }
 
@@ -1362,6 +1367,64 @@ if [[ -n "$AGENT_NAME" ]]; then
     # `set -e` that non-zero return killed the whole wrapper — comments with a
     # trailing free-text arg died with a silent exit 1.
     return 0
+  }
+
+  # ── PR provenance labels go only on the hive's OWN PRs (#12545) ──
+  # `agent/<lane>` is a ROUTING label (the scheduler's PR-ownership check,
+  # the classifier and the CI-repair router read it as "this lane owns the
+  # work") and `hive/<id>` is "authored by this hive". The pr/edit, pr/comment
+  # and pr/merge arms used to stamp both onto WHATEVER PR the agent touched —
+  # so a review-fix kick that ran `gh pr edit <n> --body` on a contributor's PR
+  # (review.fix_human_prs) re-routed that PR to the scanner and claimed it
+  # for the hive. Ownership is decided by authorship: the PR's author must be
+  # the identity this wrapper authenticates as (the #4044 trusted bot login,
+  # or `gh api user` for a user token — the same oracle the --author gate
+  # uses, so an agent cannot forge it). Adoption (stage/074) opens a NEW App
+  # PR, which is self-authored and gets the labels by this same rule; the
+  # adopted contributor PR keeps its own authorship. Unresolvable author or
+  # identity → no labels: provenance is metadata and must fail closed, never
+  # mislabel.
+  #
+  # The cache under LABEL_CACHE_BASE sits in world-writable /tmp (see the
+  # mode_unrecognized arm for who can write there: any agent UID in the pod,
+  # or a managed-repo PR whose tests run in this sandbox). It therefore only
+  # ever records, and only ever honours, the fail-closed answer: a cached
+  # "no" skips the lookup, anything else — including a planted "yes" — goes
+  # back to the API oracle. A positive verdict is re-verified on every call;
+  # the cost is one `gh pr view` per label stamp on an own PR.
+  _hive_owns_pr() {
+    local num="$1" repo="$2" cache author self owned
+    cache="${LABEL_CACHE_BASE}-owner-${repo//\//_}-${num:-current}"
+    if [[ -f "$cache" ]]; then
+      owned="$(tr -d '[:space:]' < "$cache" 2>/dev/null || true)"
+      if [[ "$owned" = "no" ]]; then
+        return 1
+      fi
+    fi
+    local view_args=(pr view)
+    [[ -n "$num" ]] && view_args+=("$num")
+    [[ -n "$repo" ]] && view_args+=(--repo "$repo")
+    author="$("$REAL_GH" "${view_args[@]}" --json author --jq '.author.login' 2>/dev/null | tr -d '[:space:]' || true)"
+    self="$(_resolve_self_login 2>/dev/null || true)"
+    owned=no
+    if [[ -n "$author" && -n "$self" ]] && _author_matches_login "$author" "$self"; then
+      owned=yes
+    fi
+    if [[ "$owned" = "no" ]]; then
+      printf '%s\n' no >"$cache" 2>/dev/null || true
+    else
+      rm -f "$cache" 2>/dev/null || true
+    fi
+    [[ "$owned" = "yes" ]]
+  }
+
+  # _pr_labels_csv: LABELS_CSV when the hive owns the PR named by the current
+  # argv, empty otherwise. Callers test for emptiness before injecting.
+  _pr_labels_csv() {
+    _extract_item
+    if _hive_owns_pr "$item_num" "$item_repo"; then
+      printf '%s\n' "$LABELS_CSV"
+    fi
   }
 
   case "$subcmd/$action" in
@@ -1510,9 +1573,8 @@ if [[ -n "$AGENT_NAME" ]]; then
             esac
           fi
           if [ -n "$_re_repo" ]; then
-            # Deliberately NOT the provenance LABELS_CSV: hive/<id> sits in a
-            # namespace the label relay refuses, and the relay's audit entry
-            # already attributes the write to this agent.
+            # Deliberately NOT the provenance LABELS_CSV: the relay's audit
+            # entry already attributes the write to this agent.
             _re_rc=0
             if [ -n "$_re_add" ] || [ -n "$_re_remove" ]; then
               _re_label_args=()
@@ -1531,6 +1593,17 @@ if [[ -n "$AGENT_NAME" ]]; then
       # is exactly what an enforced lane may not do (#9587). Express it as a
       # label / reviewer request the relays can perform, or leave it to a human.
       _write_surface_refuse_direct "gh ${subcmd} edit" "hive-open-issue label (labels), hive-open-issue request-review (reviewers)"
+      # Issues: every hive-touched issue carries the lane's routing label.
+      # PRs: only the hive's OWN PRs do (#12545) — editing a contributor's PR
+      # (review-fix on fix_human_prs, a description touch-up) must not re-route
+      # or re-own it.
+      edit_labels="$LABELS_CSV"
+      if [[ "$subcmd" = "pr" ]]; then
+        edit_labels="$(_pr_labels_csv)"
+        if [[ -z "$edit_labels" ]]; then
+          exec "$REAL_GH" "$@"
+        fi
+      fi
       _ensure_labels
       # Label injection is provenance metadata, not a security gate. gh applies
       # an edit atomically, so a missing label (repo not yet ensured, create
@@ -1539,7 +1612,7 @@ if [[ -n "$AGENT_NAME" ]]; then
       # (#4043). Mirror the create arm: try labeled, retry unlabeled on failure.
       # `|| rc=$?` keeps the retry alive under `set -e` (see create arm above).
       rc=0
-      "$REAL_GH" "$@" --add-label "$LABELS_CSV" || rc=$?
+      "$REAL_GH" "$@" --add-label "$edit_labels" || rc=$?
       if [ $rc -ne 0 ]; then
         exec "$REAL_GH" "$@"
       fi
@@ -1547,9 +1620,10 @@ if [[ -n "$AGENT_NAME" ]]; then
       ;;
     pr/merge)
       _write_surface_refuse_direct "gh pr merge" "hive-merge"
-      _ensure_labels
       _extract_item
-      if [[ -n "$item_num" ]]; then
+      # Only the hive's own PRs get routing/provenance labels (#12545).
+      if [[ -n "$item_num" ]] && _hive_owns_pr "$item_num" "$item_repo"; then
+        _ensure_labels
         local_repo=""
         [[ -n "$item_repo" ]] && local_repo="--repo $item_repo"
         "$REAL_GH" pr edit "$item_num" $local_repo --add-label "$LABELS_CSV" 2>/dev/null || true
@@ -1586,10 +1660,17 @@ if [[ -n "$AGENT_NAME" ]]; then
         exec hive-open-issue comment "${args[@]}"
       fi
       _write_surface_refuse_direct "gh ${subcmd} comment" "hive-open-issue comment"
-      _ensure_labels
+      # Issues always get the lane's routing label; a PR only when the hive
+      # authored it (#12545) — commenting on a contributor's PR is review, not
+      # ownership.
+      post_label=yes
+      if [[ "$subcmd" = "pr" && -n "$item_num" ]] && ! _hive_owns_pr "$item_num" "$item_repo"; then
+        post_label=no
+      fi
+      [[ "$post_label" = "yes" ]] && _ensure_labels
       "$REAL_GH" "${args[@]}"
       exit_code=$?
-      if [[ $exit_code -eq 0 && -n "$item_num" ]]; then
+      if [[ $exit_code -eq 0 && -n "$item_num" && "$post_label" = "yes" ]]; then
         local_repo=""
         [[ -n "$item_repo" ]] && local_repo="--repo $item_repo"
         "$REAL_GH" "$subcmd" edit "$item_num" $local_repo --add-label "$LABELS_CSV" 2>/dev/null || true

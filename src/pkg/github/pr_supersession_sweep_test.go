@@ -440,3 +440,183 @@ func TestSweepSupersededOpenPRs_HivePauseLabelIsLeftAlone(t *testing.T) {
 		t.Fatalf("hive-pause PR must not be touched: result=%+v closed=%v comments=%v", res, obs.closed, obs.comments)
 	}
 }
+
+// A PR that closes an open issue is live work whatever happened to the other
+// issues it mentions. #12322 (`Fixes #12117`, `Part of #12080`) was flagged
+// needs-human because closed parent #12080 had been closed by merged #12242.
+func TestSweepSupersededOpenPRs_OpenClosingClaimKeepsPRLive(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	for _, tc := range []struct {
+		name   string
+		body   string
+		issues []supersessionIssueFixture
+	}{
+		{
+			name:   "closing claim open, bare reference closed by another PR",
+			body:   "Fixes #30\n\nPart of #31",
+			issues: []supersessionIssueFixture{{Number: 30, State: "open"}, {Number: 31, State: "closed", GraphQLCloserPR: 40}},
+		},
+		{
+			name:   "two closing claims, one still open",
+			body:   "Fixes #30\nCloses #31",
+			issues: []supersessionIssueFixture{{Number: 30, State: "open"}, {Number: 31, State: "closed", GraphQLCloserPR: 40}},
+		},
+		{
+			name:   "bare references only, one still open",
+			body:   "Refs #30\nRefs #31",
+			issues: []supersessionIssueFixture{{Number: 30, State: "open"}, {Number: 31, State: "closed", GraphQLCloserPR: 40}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, obs := supersessionSweepServer(t, org, repo,
+				[]supersessionPRFixture{
+					{Number: 20, Title: "quadrant drill-down", Body: tc.body, Author: "hive-app[bot]", Files: []string{"pkg/a.go"}},
+					{Number: 40, Title: "landed parent", Body: "Fixes #31", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
+				},
+				tc.issues,
+			)
+			defer server.Close()
+
+			c := newTestClient(t, server, org, []string{repo})
+			c.SetAppBotLogin("hive-app[bot]")
+			for _, level := range []int{acmmLevelFullyAutonomous - 1, acmmLevelFullyAutonomous} {
+				res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return level }})
+				if err != nil {
+					t.Fatalf("SweepSupersededOpenPRs: %v", err)
+				}
+				if len(res.Commented) != 0 || len(res.Closed) != 0 || res.Skipped != 1 {
+					t.Fatalf("level %d: live PR must not be escalated: result=%+v", level, res)
+				}
+				if len(obs.comments[20]) != 0 || len(obs.labels[20]) != 0 || len(obs.closed) != 0 {
+					t.Fatalf("level %d: live PR touched: comments=%v labels=%v closed=%v", level, obs.comments[20], obs.labels[20], obs.closed)
+				}
+			}
+		})
+	}
+}
+
+// With closing claims present, bare references are context only: a closed
+// closing target supersedes the PR even while a `Part of` parent stays open,
+// and a PR whose closing targets are all closed by other merged PRs escalates.
+func TestSweepSupersededOpenPRs_AllClosingClaimsClosedEscalates(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	for _, tc := range []struct {
+		name   string
+		body   string
+		issues []supersessionIssueFixture
+	}{
+		{
+			name:   "closing claim closed, bare reference still open",
+			body:   "Fixes #30\n\nPart of #31",
+			issues: []supersessionIssueFixture{{Number: 30, State: "closed", GraphQLCloserPR: 40}, {Number: 31, State: "open"}},
+		},
+		{
+			name:   "closing claim and bare reference both closed",
+			body:   "Fixes #30\n\nPart of #31",
+			issues: []supersessionIssueFixture{{Number: 30, State: "closed", GraphQLCloserPR: 40}, {Number: 31, State: "closed", GraphQLCloserPR: 40}},
+		},
+		{
+			name:   "two closing claims both closed",
+			body:   "Fixes #30\nCloses #31",
+			issues: []supersessionIssueFixture{{Number: 30, State: "closed", GraphQLCloserPR: 40}, {Number: 31, State: "closed", GraphQLCloserPR: 40}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, obs := supersessionSweepServer(t, org, repo,
+				[]supersessionPRFixture{
+					{Number: 21, Title: "fix thing", Body: tc.body, Author: "hive-app[bot]", Files: []string{"pkg/a.go"}},
+					{Number: 40, Title: "landed", Body: "Fixes #30", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
+				},
+				tc.issues,
+			)
+			defer server.Close()
+
+			c := newTestClient(t, server, org, []string{repo})
+			c.SetAppBotLogin("hive-app[bot]")
+			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }})
+			if err != nil {
+				t.Fatalf("SweepSupersededOpenPRs: %v", err)
+			}
+			if len(res.Commented) != 1 || res.Commented[0].Issue != 30 || res.Commented[0].CloserPR != 40 || res.Commented[0].Action != "commented-needs-human" {
+				t.Fatalf("expected needs-human escalation on #30 via #40: %+v", res)
+			}
+			if got := obs.labels[21]; len(got) != 1 || got[0] != issueNeedsHumanLabel {
+				t.Fatalf("labels on #21 = %v, want needs-human", got)
+			}
+		})
+	}
+}
+
+// Once the escalation comment is on the PR, a later cycle must not re-apply
+// needs-human after a human or hive cleared it: #12322 got the label back 20
+// minutes after it was cleared. A changed closer or reason is a new
+// escalation and labels again.
+func TestSweepSupersededOpenPRs_DoesNotReapplyNeedsHumanAfterClear(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	// newTestClient registers the repo by short name, so the sweep's display
+	// repo is "hive" and the GraphQL closer resolves to org/repo.
+	closer := supersessionCloser{Repo: org + "/" + repo, Number: 40, URL: fmt.Sprintf("https://github.com/%s/%s/pull/40", org, repo), MergedAt: time.Date(2026, 10, 10, 11, 40, 0, 0, time.UTC)}
+	event := SupersessionSweepEvent{Repo: repo, Number: 22, Author: "hive-app[bot]", IssueRepo: repo, Issue: 30, CloserPR: 40}
+	sameBody := renderSupersessionComment(event, closer, "this hive is below ACMM L6, so the sweep will not close PRs automatically. A human should decide whether to close this PR.")
+	staleBody := renderSupersessionComment(event, supersessionCloser{Repo: closer.Repo, Number: 39, URL: "https://github.com/x/y/pull/39"}, "this hive is below ACMM L6, so the sweep will not close PRs automatically. A human should decide whether to close this PR.")
+
+	for _, tc := range []struct {
+		name       string
+		existing   string
+		wantLabel  bool
+		wantEdited bool
+	}{
+		{name: "identical escalation already posted", existing: sameBody, wantLabel: false},
+		{name: "escalation for a different closer", existing: staleBody, wantLabel: true, wantEdited: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, obs := supersessionSweepServer(t, org, repo,
+				[]supersessionPRFixture{
+					{Number: 22, Title: "fix thing", Body: "Fixes #30", Author: "hive-app[bot]", Files: []string{"pkg/a.go"},
+						Comments: []supersessionCommentFixture{{ID: 501, Body: tc.existing, Author: "hive-app[bot]", Bot: true, CreatedAt: time.Now().Add(-time.Hour)}}},
+					{Number: 40, Title: "landed", Body: "Fixes #30", Author: "hive-app[bot]", Merged: true, Files: []string{"pkg/a.go"}},
+				},
+				[]supersessionIssueFixture{{Number: 30, State: "closed", GraphQLCloserPR: 40}},
+			)
+			defer server.Close()
+
+			c := newTestClient(t, server, org, []string{repo})
+			c.SetAppBotLogin("hive-app[bot]")
+			res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{ACMMLevelForRepo: func(string) int { return acmmLevelFullyAutonomous - 1 }})
+			if err != nil {
+				t.Fatalf("SweepSupersededOpenPRs: %v", err)
+			}
+			if len(obs.comments[22]) != 0 {
+				t.Fatalf("marker comment must be edited in place, not duplicated: %v", obs.comments[22])
+			}
+			if _, edited := obs.edits[501]; edited != tc.wantEdited {
+				t.Fatalf("edited = %v, want %v (edit body: %q)", edited, tc.wantEdited, obs.edits[501])
+			}
+			if tc.wantLabel {
+				if len(res.Commented) != 1 || len(obs.labels[22]) != 1 || obs.labels[22][0] != issueNeedsHumanLabel {
+					t.Fatalf("new escalation must label: result=%+v labels=%v", res, obs.labels[22])
+				}
+				return
+			}
+			if len(res.Commented) != 0 || res.Skipped != 1 || len(obs.labels[22]) != 0 {
+				t.Fatalf("unchanged escalation must not re-label: result=%+v labels=%v", res, obs.labels[22])
+			}
+		})
+	}
+}
+
+func TestSupersessionCandidateClaims(t *testing.T) {
+	closingA := IssueClaim{Repo: "o/r", Issue: 1, Closing: true}
+	closingB := IssueClaim{Repo: "o/r", Issue: 2, Closing: true}
+	ref := IssueClaim{Repo: "o/r", Issue: 3, Reference: true}
+	branch := IssueClaim{Repo: "o/r", Issue: 4}
+	if got := supersessionCandidateClaims([]IssueClaim{ref, closingA, branch, closingB}); len(got) != 2 || got[0].Issue != 1 || got[1].Issue != 2 {
+		t.Fatalf("closing claims must win: %+v", got)
+	}
+	if got := supersessionCandidateClaims([]IssueClaim{ref, branch}); len(got) != 2 {
+		t.Fatalf("without closing claims the weaker tiers stand in: %+v", got)
+	}
+	if got := supersessionCandidateClaims(nil); len(got) != 0 {
+		t.Fatalf("nil in, empty out: %+v", got)
+	}
+}

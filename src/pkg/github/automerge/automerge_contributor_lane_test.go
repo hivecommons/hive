@@ -332,11 +332,30 @@ func TestTrySweepContributorLanePRSkipReasons(t *testing.T) {
 			},
 			wantReason: contributorLaneReasonClaimTier,
 		},
-		{name: "author association none", mutate: func(fx *contributorLaneFixture) { fx.association = "NONE" }, wantReason: contributorLaneReasonAuthorAssociation},
-		{name: "author association first-time contributor", mutate: func(fx *contributorLaneFixture) { fx.association = "FIRST_TIME_CONTRIBUTOR" }, wantReason: contributorLaneReasonAuthorAssociation},
-		{name: "author association first-timer", mutate: func(fx *contributorLaneFixture) { fx.association = "FIRST_TIMER" }, wantReason: contributorLaneReasonAuthorAssociation},
-		{name: "author association missing", mutate: func(fx *contributorLaneFixture) { fx.omitAssociation = true }, wantReason: contributorLaneReasonAuthorAssociation},
+		// A verified claim marker admits regardless of GitHub's association
+		// (#12195, #12290: relay contributors are FIRST_TIME_CONTRIBUTOR on
+		// their first PR to a repo).
+		{name: "author association none with claim merges", mutate: func(fx *contributorLaneFixture) { fx.association = "NONE" }, wantMerges: 1},
+		{name: "author association first-time contributor with claim merges", mutate: func(fx *contributorLaneFixture) { fx.association = "FIRST_TIME_CONTRIBUTOR" }, wantMerges: 1},
+		{name: "author association first-timer with claim merges", mutate: func(fx *contributorLaneFixture) { fx.association = "FIRST_TIMER" }, wantMerges: 1},
+		{name: "author association missing with claim merges", mutate: func(fx *contributorLaneFixture) { fx.omitAssociation = true }, wantMerges: 1},
 		{name: "author association member merges", mutate: func(fx *contributorLaneFixture) { fx.association = "MEMBER" }, wantMerges: 1},
+		// Without a marker the association is the only evidence left and an
+		// untrusted one outranks the marker-path reason.
+		{name: "first-time contributor without claim", mutate: func(fx *contributorLaneFixture) { fx.association = "FIRST_TIME_CONTRIBUTOR"; fx.issueComments = nil }, wantReason: contributorLaneReasonAuthorAssociation},
+		{name: "first-time contributor without linked issue", mutate: func(fx *contributorLaneFixture) { fx.association = "FIRST_TIME_CONTRIBUTOR"; fx.body = "Part of #42" }, wantReason: contributorLaneReasonAuthorAssociation},
+		{name: "association none with other-author claim", mutate: func(fx *contributorLaneFixture) {
+			fx.association = "NONE"
+			fx.issueComments = appClaim("someoneelse", contributorLaneTestHive)
+		}, wantReason: contributorLaneReasonAuthorAssociation},
+		{name: "association missing with unverified claim", mutate: func(fx *contributorLaneFixture) {
+			fx.omitAssociation = true
+			tierClaim(" tier=trusted verified=false")(fx)
+		}, wantReason: contributorLaneReasonAuthorAssociation},
+		{name: "first-time contributor with newcomer claim", mutate: func(fx *contributorLaneFixture) {
+			fx.association = "FIRST_TIME_CONTRIBUTOR"
+			tierClaim(" tier=newcomer verified=true")(fx)
+		}, wantReason: contributorLaneReasonAuthorAssociation},
 		{
 			name: "workflow change",
 			mutate: func(fx *contributorLaneFixture) {
@@ -536,9 +555,36 @@ func TestTrySweepContributorLanePRRegistryAdmission(t *testing.T) {
 			wantReason: contributorLaneReasonWorkflowPath,
 		},
 		{
-			name:       "registry trusted still requires author association",
+			name:       "registry trusted admits a first-time contributor",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
+			mutate:     func(fx *contributorLaneFixture) { noMarker(fx); fx.association = "FIRST_TIME_CONTRIBUTOR" },
+			wantMerges: 1,
+			wantAdmit:  "registry",
+		},
+		{
+			name:       "registry trusted admits association none",
 			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
 			mutate:     func(fx *contributorLaneFixture) { noMarker(fx); fx.association = "NONE" },
+			wantMerges: 1,
+			wantAdmit:  "registry",
+		},
+		{
+			name:       "registry newcomer first-timer without marker skips on association",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "newcomer"}),
+			mutate:     func(fx *contributorLaneFixture) { noMarker(fx); fx.association = "FIRST_TIME_CONTRIBUTOR" },
+			wantReason: contributorLaneReasonAuthorAssociation,
+		},
+		{
+			name:       "no registry entry first-timer without marker skips on association",
+			registry:   registryTiers(nil),
+			mutate:     func(fx *contributorLaneFixture) { noMarker(fx); fx.association = "FIRST_TIME_CONTRIBUTOR" },
+			wantReason: contributorLaneReasonAuthorAssociation,
+		},
+		{
+			name:       "registry path disabled first-timer without marker skips on association",
+			registry:   registryTiers(map[string]string{contributorLaneTestAuthor: "trusted"}),
+			mutate:     func(fx *contributorLaneFixture) { noMarker(fx); fx.association = "FIRST_TIME_CONTRIBUTOR" },
+			policy:     func(p *ContributorLanePolicy) { p.RegistryTiersSufficient = false },
 			wantReason: contributorLaneReasonAuthorAssociation,
 		},
 		{
@@ -968,13 +1014,34 @@ func TestPrefilterContributorLanePR(t *testing.T) {
 		{name: "exempt label", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("lfx")}} }), want: "exempt-label"},
 		{name: "needs-rebase", pr: pr(func(p *gh.PullRequest) { p.Labels = []*gh.Label{{Name: gh.Ptr("needs-rebase")}} }), want: "label:needs-rebase"},
 		{name: "missing head", pr: pr(func(p *gh.PullRequest) { p.Head = nil }), want: "missing-head-sha"},
-		{name: "association none", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = gh.Ptr("NONE") }), want: contributorLaneReasonAuthorAssociation},
-		{name: "association first-time", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = gh.Ptr("FIRST_TIME_CONTRIBUTOR") }), want: contributorLaneReasonAuthorAssociation},
-		{name: "association missing", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = nil }), want: contributorLaneReasonAuthorAssociation},
+		// Association is decided after admission (marker/registry), not here.
+		{name: "association none passes prefilter", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = gh.Ptr("NONE") }), want: ""},
+		{name: "association first-time passes prefilter", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = gh.Ptr("FIRST_TIME_CONTRIBUTOR") }), want: ""},
+		{name: "association missing passes prefilter", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = nil }), want: ""},
 		{name: "association lower-case collaborator", pr: pr(func(p *gh.PullRequest) { p.AuthorAssociation = gh.Ptr("collaborator") }), want: ""},
 	} {
 		if got := engine.prefilterContributorLanePR(tc.pr, policy); got != tc.want {
 			t.Fatalf("%s: got %q want %q", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestContributorLaneAssociationTrusted(t *testing.T) {
+	for _, tc := range []struct {
+		assoc *string
+		want  bool
+	}{
+		{gh.Ptr("OWNER"), true}, {gh.Ptr("MEMBER"), true}, {gh.Ptr("COLLABORATOR"), true},
+		{gh.Ptr(" contributor "), true}, {gh.Ptr("CONTRIBUTOR"), true},
+		{gh.Ptr("NONE"), false}, {gh.Ptr("FIRST_TIMER"), false}, {gh.Ptr("FIRST_TIME_CONTRIBUTOR"), false},
+		{gh.Ptr("MANNEQUIN"), false}, {gh.Ptr(""), false}, {nil, false},
+	} {
+		pr := &gh.PullRequest{AuthorAssociation: tc.assoc}
+		if got := contributorLaneAssociationTrusted(pr); got != tc.want {
+			t.Fatalf("association %v: got %v want %v", tc.assoc, got, tc.want)
+		}
+	}
+	if contributorLaneAssociationTrusted(nil) {
+		t.Fatal("nil PR must not be trusted")
 	}
 }
