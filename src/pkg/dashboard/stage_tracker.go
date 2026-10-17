@@ -125,8 +125,8 @@ type StageTrackerItem struct {
 	Caption string `json:"caption"`
 	Actor   string `json:"actor,omitempty"`
 	// Modifiers are the health and control markers in effect: stalled,
-	// regressed, hold, needs-human, needs-decision, needs-rebase, blocked,
-	// draft.
+	// regressed, hold, needs-human, needs-decision (stage/085 carried as a
+	// park signal), needs-rebase, blocked, draft.
 	Modifiers     []string   `json:"modifiers"`
 	RegressedFrom int        `json:"regressed_from,omitempty"`
 	NudgeCount    int        `json:"nudge_count,omitempty"`
@@ -372,7 +372,9 @@ func stageTrackerModifiers(labels []string, hiveID string, rec stagelabels.Recor
 			set[modRegressed] = true
 		case "needs-human":
 			set[modNeedsHuman] = true
-		case "needs-decision":
+		case needsDecisionLabel, "needs-decision":
+			// The stage label is the park signal (hivecommons/hive#12683);
+			// the retired spelling is read until migrated.
 			set[modNeedsDecision] = true
 		case "needs-rebase":
 			set[modNeedsRebase] = true

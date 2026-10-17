@@ -2,6 +2,7 @@ package stagelabels
 
 import (
 	"github.com/hivecommons/hive/pkg/authorkind"
+	"github.com/hivecommons/hive/pkg/config"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -948,5 +949,13 @@ func TestNeedsAuthorWordByAuthorKind(t *testing.T) {
 		if got := NeedsAuthorWord(tc.kind); got != tc.want {
 			t.Errorf("%q: word = %q, want %q", tc.kind, got, tc.want)
 		}
+	}
+}
+
+// hivecommons/hive#12683: config spells the decision park label out because
+// it cannot import this package; the two must never drift.
+func TestNeedsDecisionLabelMatchesConfigDefault(t *testing.T) {
+	if NeedsDecision.Label() != config.DefaultNeedsDecisionLabel {
+		t.Fatalf("stage label %q != config.DefaultNeedsDecisionLabel %q", NeedsDecision.Label(), config.DefaultNeedsDecisionLabel)
 	}
 }

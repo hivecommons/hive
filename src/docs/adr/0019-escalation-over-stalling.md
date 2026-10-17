@@ -22,10 +22,11 @@ per 24 hours.
 Hive agents escalate stalled work instead of silently parking it. Each
 escalation must choose one of four moves:
 
-1. **`needs-decision`** — Use when the next step is a maintainer decision,
-   authority grant, risk acceptance, or product/voice choice. Add the
-   `needs-decision` label and post exactly one comment to the maintainer with a
-   short question and concrete options `A`, `B`, and `C`.
+1. **`stage/085-needs-decision`** (originally `needs-direction`; see the
+   amendment below) — Use when the next step is a maintainer decision,
+   authority grant, risk acceptance, or product/voice choice. Park the item on
+   `stage/085-needs-decision` and post exactly one comment to the maintainer
+   with a short question and concrete options `A`, `B`, and `C`.
 2. **`needs-spec`** — Use when the issue cannot be implemented safely because
    the expected behavior, API contract, acceptance criteria, or compatibility
    rule is missing. File one issue labelled `kind/spec` and `needs-spec` that
@@ -64,21 +65,26 @@ Verified RFC case studies map as follows:
 | upstream #9472, #9473, #9474, #9475, #9477, #9479, #9480, #9471, #9476, #9478 | `meta-issue` for recurring fix-loop/lane-ownership classes, with `needs-signal` for CI evidence gaps and `needs-direction` for permission/fork authority choices. |
 | upstream #9536 / #9481 / #9550 (CI rescue class caught by hand) | `needs-signal`: require the touched-package Go-test/docs-guard pre-PR signal and link the tracker. |
 
-## Amendment: `needs-direction` retired (hivecommons/hive#12683)
-
-`needs-direction` and `needs-decision` had identical gates, un-park handling
-and derived stage (`stage/085-needs-decision`), so move 1 now uses
-`needs-decision`. References to `needs-direction` in the table above are
-historical and read as `needs-decision`. The issue stage reconciler migrates
-any open issue still carrying `needs-direction` to the configured
-needs-decision label; readers keep accepting `needs-direction` as a legacy
-alias, and `hard_suppress_labels.needs_direction` stays (deprecated) so
-operator YAML does not break. The repository label is deleted by a maintainer
-once no open issue carries it.
-
 ## Consequences
 
 Agents stop treating stalled work as a local retry problem. Maintainers get one
 structured decision request, spec request, signal request, or tracker instead of
 many per-item nudges. The trade-off is more issues and labels, but each one
 records the missing decision or signal that made automation unsafe.
+
+## Amendment (2026-10, [#12683](https://github.com/hivecommons/hive/issues/12683))
+
+The `needs-direction` label this ADR introduced, and the `needs-decision`
+label the issue relay later applied, are retired. Both parked an item on a
+maintainer ruling with identical gates — hard-suppressed at enumeration, the
+same `/hive approve` / `/hive decision <text>` un-park, the same derived
+`stage/085-needs-decision` — so a parked issue wore the stage label plus one
+or two park labels that said the same thing. `stage/085-needs-decision` is now
+the single park signal and the move this ADR calls `needs-direction` is made
+by applying it (through the issue relay's `label` command, or
+`hive-open-issue --needs-decision` when filing). The historical mapping table
+above keeps the original spelling. Open items still carrying a retired label
+are migrated by the issue stage reconciler (085 added, then the retired label
+removed) and the two label definitions are deleted from each repo once
+nothing open carries them. `needs-human` is unchanged: it means a human-held
+identity or consent is required, not that a ruling is owed.

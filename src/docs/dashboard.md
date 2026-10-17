@@ -254,8 +254,8 @@ PRs`, and the operator glyphs between cards make the full strip read like
 BLOCKED / NEEDS-HUMAN + 22 OUTSIDE`. The `outside` tile is server-side and is
 broken down in `/api/status` as `actionableNow.outside.breakdown[]`, with each
 row naming the count, rule, current setting, and how to change it for this
-hive. The rows cover hard-suppress labels (`needs-decision`, the
-deprecated legacy `needs-direction`, `needs-spec`; `needs-human` is counted under
+hive. The rows cover hard-suppress labels (`stage/085-needs-decision`,
+`needs-spec`; `needs-human` is counted under
 blocked/needs-human), exempt labels from `governor.labels.exempt` plus permanent
 exempt labels, reporter-trust triage from
 `project.issue_filter.reporter_trust`, require-label filtering from
@@ -284,8 +284,7 @@ and exposes the editable rows.
 
 | Bucket | Definition | Rule/config source | How to change |
 | --- | --- | --- | --- |
-| `needs-direction` (deprecated) | Legacy alias of `needs-decision`, retired in hivecommons/hive#12683: the hive migrates the label to `needs-decision`, so this bucket drains toward zero. Issue is waiting for maintainer direction before agents may work it. | Labels in `project.issue_filter.hard_suppress_labels.needs_direction`; default `needs-direction`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
-| `needs-decision` | Issue is waiting for a maintainer decision. | Labels in `project.issue_filter.hard_suppress_labels.needs_decision`; default `needs-decision`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
+| `needs-decision` (shown as "needs human decision") | Issue is parked for a maintainer ruling. | `stage/085-needs-decision` always, plus labels in `project.issue_filter.hard_suppress_labels.needs_decision` / `.needs_direction` and the retired `needs-decision` / `needs-direction` spellings until the reconciler migrates them ([#12683](https://github.com/hivecommons/hive/issues/12683)). | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
 | `needs-spec` | Issue needs specification or acceptance criteria. | Labels in `project.issue_filter.hard_suppress_labels.needs_spec`; default `needs-spec`. | Settings → Labels → Triage buckets, or edit `hive.yaml`. |
 | Exempt labels | Issue or PR carries a deny-list label and is never agent work. | `governor.labels.exempt` plus permanent labels such as `do-not-merge`. | Settings → Labels → Exempt labels, or edit `hive.yaml`. |
 | Reporter triage | Reporter trust is enabled and the issue author is not trusted yet. | `project.issue_filter.reporter_trust` trusted associations/logins and untrusted required labels. | Settings → Labels → Reporter trust. |
@@ -357,7 +356,7 @@ in exactly one band, while non-winning states remain as badges on the pill:
    satisfies the PR-time gate and is not in the payload). Acknowledge it, or
    close it. Once acknowledged the issue falls through to Unclaimed/Claimed
    with the role badge still on the pill.
-4. **Needs human** (`needs human`) — labels such as `blocked`, `needs-decision`,
+4. **Needs human** (`needs human`) — labels such as `blocked`, `stage/085-needs-decision`,
    `2-discussing`, `Epic`, `needs-human`, or `needs-triage`. Note that the
    `needs-triage` *label* lands here, not in the Needs triage band.
 5. **Confirm & close** (`close?`) — labels such as `hive/already-done`,
@@ -376,7 +375,7 @@ Operators can tune only the display taxonomy under `dashboard.issue_bands`:
 ```yaml
 dashboard:
   issue_bands:
-    waiting_labels: [blocked, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
+    waiting_labels: [blocked, stage/085-needs-decision, needs-decision, 2-discussing, Epic, needs-human, needs-triage]
     done_labels: [hive/already-done, stage/040-covered-by-pr, "🐝 covered by PR", hive/covered-by-pr, hive/likely-done]
     stale_days: 14
 ```
@@ -390,7 +389,7 @@ PR pills are also grouped client-side for display only. Open and held PRs appear
 in exactly one band; held PRs are no longer appended after the actionable list.
 First match wins for classification:
 
-1. **Needs human** — `needs-human`, held, `needs-decision`,
+1. **Needs human** — `needs-human`, held, `stage/085-needs-decision`,
    `2-discussing`, or configured `dashboard.issue_bands.waiting_labels`.
 2. **Merge-eligible** — merge verdict `eligible`, or queued for Hive
    auto-merge.

@@ -82,8 +82,9 @@ as fact (`issue_request_label.go`):
   (use `claim`), `hive/in-progress`, `🐝 covered by PR`, `hive/likely-done`
   and `hive/verified-open`;
 - the labels that record a person's decision or an escalation:
-  `approved-direction`, `design-approved`, `needs-human`, `needs-decision`,
-  `blocked`.
+  `approved-direction`, `design-approved`, `needs-human`, `blocked`, the
+  retired `needs-decision` / `needs-direction`, and `stage/*` (an agent may
+  only *add* `stage/085-needs-decision`, the park-for-a-ruling signal).
 
 One reserved label refuses the whole request — nothing in it is applied — so a
 batch can never partially land. The refusal is a policy denial like any other:

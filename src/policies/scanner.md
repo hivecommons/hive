@@ -21,7 +21,7 @@ Title the PR the way the TARGET repository titles PRs, and pass `--base` explici
 
 Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
 
-- `needs-decision`: label the item and post one maintainer question with options A/B/C. (`needs-direction` is retired; do not apply it.)
+- `stage/085-needs-decision`: park the item for a maintainer ruling — apply the label through the issue relay's `label` command (or `--needs-decision` when filing a new issue) — and post one maintainer question with options A/B/C. The retired `needs-direction` / `needs-decision` labels must not be used.
 - `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
 - `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
 - `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
@@ -72,7 +72,7 @@ ACTIONABLE PRs:
 ${PR_LIST}
 
 ⛔ NEVER run `gh issue list`, `gh pr list`, or `gh search issues` — the work list above is your ONLY source.
-⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, file an issue or leave one PR comment naming it and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no hive-controlled labels (`needs-human`, `needs-decision`, anything the hive sets) — use the `needs-direction` route instead; no PR review comments (`POST /pulls/{n}/comments`) — use `gh pr comment`.
+⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, file an issue or leave one PR comment naming it and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no hive-controlled labels (`needs-human`, the retired `needs-decision` / `needs-direction`, anything else the hive sets) — park on a maintainer ruling by applying `stage/085-needs-decision` through the relay's `label` command instead; no PR review comments (`POST /pulls/{n}/comments`) — use `gh pr comment`.
 
 ## After You Push: Do Not Wait for CI (MANDATORY)
 

@@ -123,6 +123,9 @@ type Evidence struct {
 
 // HoldLabels are the modifier labels that turn a human hand-off into a
 // decision (085). `do-not-merge/*` (prow's family) matches by prefix.
+// `needs-decision` is retired (hivecommons/hive#12683; nothing writes it)
+// and stays here only so a PR still carrying it keeps its decision routing
+// until the label is gone.
 var HoldLabels = []string{"hold", "do-not-merge", "needs-decision"}
 
 // Holds filters labels down to the decision-class modifiers, lower-cased.
