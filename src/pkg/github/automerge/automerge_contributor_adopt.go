@@ -16,7 +16,7 @@ import (
 
 // Stage-074 adoption (hivecommons/hive#12436).
 //
-// A contributor PR in stage/072-needs-author whose author has not
+// A contributor PR in stage/072-returned-to-contributor whose author has not
 // pushed a new head within the grace after the nudge is adopted: the hive
 // re-lanes it through the takeover path so the scanner can finish it. The
 // grace is contributor_grace_online (default 2h) when the author's relay
@@ -236,7 +236,7 @@ const AdoptionYieldMarker = "<!-- hive:adoption-yield"
 // AdoptionYieldComment is that note.
 func AdoptionYieldComment(obs stageObservation) string {
 	return fmt.Sprintf("%s head=%s -->\n@%s you pushed a new head, so the hive has handed this PR back to you (`%s` → `%s`). It will nudge again if CI stays red.",
-		AdoptionYieldMarker, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), stagelabels.NeedsAuthor.Label())
+		AdoptionYieldMarker, obs.HeadSHA, obs.Author, stagelabels.AdoptedByHive.Label(), stagelabels.ReturnedToContributor.Label())
 }
 
 func formatGrace(d time.Duration) string {

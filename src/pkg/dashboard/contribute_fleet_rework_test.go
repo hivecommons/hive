@@ -83,7 +83,7 @@ func TestFleetReworkInFlightMixedNewAndRework(t *testing.T) {
 		nd := fixNudge("r", n, "lint")
 		nd.Author = "bob"
 		nd.Reason = "check-failing:lint-" + string(rune('a'+i))
-		store.Observe(stagelabels.Key("org/r", n), stagelabels.NeedsAuthor, nd.Reason)
+		store.Observe(stagelabels.Key("org/r", n), stagelabels.ReturnedToContributor, nd.Reason)
 		store.NoteAuthor(stagelabels.Key("org/r", n), "bob")
 		hub.Nudge(context.Background(), nd)
 	}
@@ -103,7 +103,7 @@ func TestFleetReworkInFlightMixedNewAndRework(t *testing.T) {
 		t.Fatalf("primary item: %+v", primary)
 	}
 	for _, it := range fc.InFlight[1:] {
-		if it.Kind != FleetWorkKindRework || it.TaskKind != taskKindFixPR || it.Mode != "spawn" || it.Stage != stagelabels.NeedsAuthor.Label() || it.StartedAt == "" || it.URL == "" {
+		if it.Kind != FleetWorkKindRework || it.TaskKind != taskKindFixPR || it.Mode != "spawn" || it.Stage != stagelabels.ReturnedToContributor.Label() || it.StartedAt == "" || it.URL == "" {
 			t.Fatalf("fix item: %+v", it)
 		}
 	}
@@ -142,10 +142,10 @@ func TestFleetReworkPendingDerivedFromStageStoreAndQueue(t *testing.T) {
 	// (this is what survives a hub restart); one of them is also queued in
 	// the fix scheduler with a known cause; a fourth is bob's.
 	for _, n := range []int{1, 2, 3} {
-		store.Observe(stagelabels.Key("org/r", n), stagelabels.NeedsAuthor, "check-failing:build")
+		store.Observe(stagelabels.Key("org/r", n), stagelabels.ReturnedToContributor, "check-failing:build")
 		store.NoteAuthor(stagelabels.Key("org/r", n), "Alice")
 	}
-	store.Observe(stagelabels.Key("org/r", 9), stagelabels.NeedsAuthor, "conflicting")
+	store.Observe(stagelabels.Key("org/r", 9), stagelabels.ReturnedToContributor, "conflicting")
 	store.NoteAuthor(stagelabels.Key("org/r", 9), "bob")
 	store.Observe(stagelabels.Key("org/r", 5), stagelabels.ReviewPending, "")
 	store.NoteAuthor(stagelabels.Key("org/r", 5), "alice")
@@ -173,7 +173,7 @@ func TestFleetReworkPendingDerivedFromStageStoreAndQueue(t *testing.T) {
 		t.Fatalf("pending_rework: %+v", fc.FleetRework)
 	}
 	if fc.PendingReworkPRs[0].Number != 2 || fc.PendingReworkPRs[0].Cause != "build" || fc.PendingReworkPRs[0].URL == "" ||
-		fc.PendingReworkPRs[1].Number != 3 || fc.PendingReworkPRs[1].Stage != stagelabels.NeedsAuthor.Label() || fc.PendingReworkPRs[1].Since == "" {
+		fc.PendingReworkPRs[1].Number != 3 || fc.PendingReworkPRs[1].Stage != stagelabels.ReturnedToContributor.Label() || fc.PendingReworkPRs[1].Since == "" {
 		t.Fatalf("pending prs: %+v", fc.PendingReworkPRs)
 	}
 
@@ -229,7 +229,7 @@ func TestFleetReworkSplitStageKey(t *testing.T) {
 func TestFleetReworkHandlerCarriesFields(t *testing.T) {
 	hub, srv, store := reworkHub(t)
 	fixConn(hub, "alice", fixCaps(capFixPRInterrupt), time.Now())
-	store.Observe(stagelabels.Key("org/r", 3), stagelabels.NeedsAuthor, "conflicting")
+	store.Observe(stagelabels.Key("org/r", 3), stagelabels.ReturnedToContributor, "conflicting")
 	store.NoteAuthor(stagelabels.Key("org/r", 3), "alice")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/contribute/fleet", nil)
@@ -302,8 +302,8 @@ renderClankers([{github_username: 'bob', trust_tier: 'contributor', parallel_cap
   current_task: {task_id: 't1', kind: 'issue', repo: 'org/r', number: 100},
   in_flight: [
     {task_id: 't1', kind: 'new', task_kind: 'issue', repo: 'org/r', number: 100, title: 'add thing', url: 'https://x/100', stage: 'stage/020-claimed', started_at: '2026-10-16T12:00:00Z'},
-    {task_id: 'f1', kind: 'rework', task_kind: 'fix-pr', repo: 'org/r', number: 7, url: 'https://x/7', stage: 'stage/072-needs-author', mode: 'spawn'},
-    {task_id: 'f2', kind: 'rework', task_kind: 'fix-pr', repo: 'org/r', number: 8, url: 'https://x/8', stage: 'stage/072-needs-author', mode: 'spawn'}
+    {task_id: 'f1', kind: 'rework', task_kind: 'fix-pr', repo: 'org/r', number: 7, url: 'https://x/7', stage: 'stage/072-returned-to-contributor', mode: 'spawn'},
+    {task_id: 'f2', kind: 'rework', task_kind: 'fix-pr', repo: 'org/r', number: 8, url: 'https://x/8', stage: 'stage/072-returned-to-contributor', mode: 'spawn'}
   ], fix_queue_depth: 0, pending_rework: 0}]);
 let html = fleet.html;
 assert.match(html, /clanker-capacity[^>]*>capacity 3 &middot; spawn</, 'capacity line');
@@ -311,7 +311,7 @@ assert.equal((html.match(/class="clanker-sub clanker-inflight"/g) || []).length,
 assert.equal((html.match(/class="work-kind new"/g) || []).length, 1, 'one NEW badge');
 assert.equal((html.match(/class="work-kind rework"/g) || []).length, 2, 'two REWORK badges');
 assert.match(html, />NEW<\/span> <a class="cc-issue-link work-ref" href="https:\/\/x\/100">org\/r#100<\/a> <span class="work-title"[^>]*>add thing<\/span> &middot; <span class="work-stage">stage\/020-claimed<\/span> &middot; 5m ago/, 'primary row');
-assert.match(html, />REWORK<\/span> <a class="cc-issue-link work-ref" href="https:\/\/x\/7">org\/r#7<\/a> &middot; <span class="work-stage">stage\/072-needs-author<\/span> &middot; spawn/, 'fix row');
+assert.match(html, />REWORK<\/span> <a class="cc-issue-link work-ref" href="https:\/\/x\/7">org\/r#7<\/a> &middot; <span class="work-stage">stage\/072-returned-to-contributor<\/span> &middot; spawn/, 'fix row');
 assert.doesNotMatch(html, /awaiting rework/, 'nothing pending');
 assert.doesNotMatch(html, /idle/, 'busy relay is not idle');
 assert.match(html, /clanker-status working/, 'status pill is working');
@@ -319,7 +319,7 @@ assert.match(html, /clanker-status working/, 'status pill is working');
 // Idle relay, capacity not advertised, two PRs returned and not dispatched.
 renderClankers([{github_username: 'alice', parallel_capacity: 0, fix_mode: 'preempt', idle_reason: 'no_matching_work',
   fix_queue_depth: 1, pending_rework: 2,
-  pending_rework_prs: [{repo: 'org/r', number: 2, cause: 'build', url: 'https://x/2'}, {repo: 'org/r', number: 3, stage: 'stage/072-needs-author'}]}]);
+  pending_rework_prs: [{repo: 'org/r', number: 2, cause: 'build', url: 'https://x/2'}, {repo: 'org/r', number: 3, stage: 'stage/072-returned-to-contributor'}]}]);
 html = fleet.html;
 assert.match(html, /clanker-capacity[^>]*>capacity: not advertised</, 'not advertised');
 assert.match(html, /class="clanker-sub clanker-idle-rework">idle &middot; 2 PRs awaiting rework</, 'idle line names the rework');
@@ -350,10 +350,10 @@ func TestFleetReworkAdoptionState(t *testing.T) {
 	hub, _, store := reworkHub(t)
 	now := time.Now()
 	c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), now)
-	store.Observe(stagelabels.Key("org/r", 1), stagelabels.NeedsAuthor, "check-failing:build")
+	store.Observe(stagelabels.Key("org/r", 1), stagelabels.ReturnedToContributor, "check-failing:build")
 	store.NoteAuthor(stagelabels.Key("org/r", 1), "alice")
 	store.MarkNudged(stagelabels.Key("org/r", 1), "aaa", 1, true, now)
-	store.Observe(stagelabels.Key("org/r", 2), stagelabels.NeedsAuthor, "check-failing:build")
+	store.Observe(stagelabels.Key("org/r", 2), stagelabels.ReturnedToContributor, "check-failing:build")
 	store.NoteAuthor(stagelabels.Key("org/r", 2), "alice")
 	store.Observe(stagelabels.Key("org/r", 3), stagelabels.AdoptedByHive, "check-failing:build")
 	store.NoteAuthor(stagelabels.Key("org/r", 3), "alice")

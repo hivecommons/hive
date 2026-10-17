@@ -1,5 +1,5 @@
 // Package fixqueue is the per-contributor red-PR fix scheduler behind
-// stage/072-needs-author (hivecommons/hive#12436).
+// stage/072-returned-to-contributor (hivecommons/hive#12436).
 //
 // The governing rule, in the operator's words: "contributors should clean up
 // their mess before taking on new stuff". Every ordering decision the relay

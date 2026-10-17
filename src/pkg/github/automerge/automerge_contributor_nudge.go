@@ -10,7 +10,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-// Contributor nudge for stage/072-needs-author
+// Contributor nudge for stage/072-returned-to-contributor
 // (hivecommons/hive#12436).
 //
 // When a contributor's PR lands in stage 072 the hive posts ONE idempotent
@@ -173,9 +173,9 @@ func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) st
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s head=%s n=%d mode=%s -->\n", ContributorNudgeMarkerPrefix, n.HeadSHA, n.Nudge, nonEmpty(out.Mode, "comment"))
 	if n.Stalled {
-		fmt.Fprintf(&b, "@%s this PR has been waiting on you for a while (`%s`). ", n.Author, stagelabels.NeedsAuthor.Label())
+		fmt.Fprintf(&b, "@%s this PR has been waiting on you for a while (`%s`). ", n.Author, stagelabels.ReturnedToContributor.Label())
 	} else {
-		fmt.Fprintf(&b, "@%s this PR is back in your court (`%s`). ", n.Author, stagelabels.NeedsAuthor.Label())
+		fmt.Fprintf(&b, "@%s this PR is back in your court (`%s`). ", n.Author, stagelabels.ReturnedToContributor.Label())
 	}
 	b.WriteString("The hive will not merge it until the head changes.\n\n")
 	if len(n.FailingChecks) > 0 {
@@ -240,7 +240,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 	}
 	renudge := policy.RenudgeInterval
 	if renudge <= 0 {
-		renudge = stagelabels.Dwell(stagelabels.NeedsAuthor, policy.Dwell)
+		renudge = stagelabels.Dwell(stagelabels.ReturnedToContributor, policy.Dwell)
 	}
 	ordinal, due := nudgeDue(rec, obs.HeadSHA, renudge, now)
 	if !due {
@@ -270,7 +270,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 // resolveNudge tells the sink a PR that was in stage 072 last cycle has
 // left it (new head went green, closed, merged, adopted).
 func (c *Engine) resolveNudge(ctx context.Context, rec stagelabels.Record, had bool, obs stageObservation) {
-	if c.contributorNudge == nil || !had || rec.Stage != stagelabels.NeedsAuthor {
+	if c.contributorNudge == nil || !had || rec.Stage != stagelabels.ReturnedToContributor {
 		return
 	}
 	c.contributorNudge.Resolve(ctx, obs.Owner, obs.Repo, obs.Number)
