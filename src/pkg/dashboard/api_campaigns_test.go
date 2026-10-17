@@ -431,6 +431,9 @@ func TestCampaignDeleteRequiresOwnerRole(t *testing.T) {
 // Deleting the campaign that is also the live L1 session clears that session
 // so the dashboard does not resurrect the row on the next state poll.
 func TestCampaignDeleteClearsActiveInceptionState(t *testing.T) {
+	// Campaigns also projects completed runs from the process-wide timeline.
+	// Start empty so earlier tests cannot add rows to this inception-only fixture.
+	resetLifecycleStore()
 	s := newMinimalServer(t)
 	s.deps.Inception = knowledge.NewInceptionEngine(t.TempDir(), nil, s.logger)
 	state, err := s.deps.Inception.StartBrownfield("https://github.com/hivecommons/hive")
