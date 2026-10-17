@@ -76,12 +76,14 @@ func Enforce(ctx context.Context, l Labeler, k Item, owner, repo string, number 
 	return applyPlan(ctx, l, owner, repo, number, add, remove, out)
 }
 
-// EnforceStage sets the pipeline stage on an item of kind k whose other hive-owned
-// labels (author tier, health) the caller has no opinion about: the
-// claim-ledger hooks, which know a claim began but not what the lanes think.
-// It always re-reads, keeps the author and health labels it finds, and
-// leaves exactly stage among `stage/NNN-*` (None clears them all). Retired
-// labels (`claimed`, `hive/in-progress`, `🐝 covered by PR`) come off too.
+// EnforceStage sets the pipeline stage on an item of kind k whose other
+// hive-owned labels (role, author kind, health) the caller has no opinion
+// about: the claim-ledger hooks, which know a claim began but not what the
+// lanes think. It always re-reads, keeps the role, author-kind and health
+// labels it finds, and leaves exactly stage among `stage/NNN-*` (None clears
+// them all). Retired labels (`claimed`, `hive/in-progress`, `🐝 covered by
+// PR`, the `author/<tier>` role spellings — re-written as `role/<tier>`)
+// come off too.
 func EnforceStage(ctx context.Context, l Labeler, k Item, owner, repo string, number int, stage Stage) (Outcome, error) {
 	return EnforceStageAdding(ctx, l, k, owner, repo, number, stage)
 }
@@ -102,7 +104,7 @@ func EnforceStageAdding(ctx context.Context, l Labeler, k Item, owner, repo stri
 	}
 	out.Reread = true
 	out.Healed = len(StageLabels(fresh)) > 1
-	want := Desired{Stage: stage, Author: AuthorOf(fresh)}
+	want := Desired{Stage: stage, Role: RoleOf(fresh)}
 	for _, lab := range fresh {
 		if lab == StalledLabel {
 			want.Stalled = true
@@ -188,14 +190,22 @@ func StageLabels(labels []string) []string {
 	return out
 }
 
-// AuthorOf returns the author tier a label set carries, or AuthorNone.
-func AuthorOf(labels []string) Author {
+// RoleOf returns the admission tier a label set carries, or RoleNone. The
+// current `role/<tier>` spelling wins; the retired `author/<tier>` spelling
+// is honoured when no current one is present, so a hook that re-writes an
+// item mid-migration carries the tier over instead of dropping it.
+func RoleOf(labels []string) Role {
+	legacy := RoleNone
 	for _, l := range labels {
-		for a, d := range authorDefs {
+		l = strings.TrimSpace(l)
+		for r, d := range roleDefs {
 			if l == d.Name {
-				return a
+				return r
+			}
+			if legacy == RoleNone && l == r.LegacyLabel() {
+				legacy = r
 			}
 		}
 	}
-	return AuthorNone
+	return legacy
 }

@@ -175,6 +175,9 @@ governor.gateways[].name # TODO #11854
 governor.gateways[].project_id # TODO #11854
 governor.gateways[].region # TODO #11854
 governor.health.healthcheck_interval # TODO #11854
+governor.labels.author.clanker # label-name override; yaml-only (#12581)
+governor.labels.author.hive # label-name override; yaml-only (#12581)
+governor.labels.author.human # label-name override; yaml-only (#12581)
 governor.labels.exempt[] # TODO #11854
 governor.litellm.api_key_env # TODO #11854
 governor.litellm.api_key_file # TODO #11854

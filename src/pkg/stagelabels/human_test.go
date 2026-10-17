@@ -29,8 +29,8 @@ func TestRouteHumanReady(t *testing.T) {
 	if r.Summary != "verdict approved @abc1234, 55/55 checks green, DCO yes, soak 2h0m0s elapsed" {
 		t.Fatalf("summary = %q", r.Summary)
 	}
-	got := ReadyComment(r, "`author/newcomer` (below require_tiers)")
-	if !strings.HasPrefix(got, ReadyCommentMarker+"\nReady for a human merge: verdict approved @abc1234") || !strings.Contains(got, "Blocked only by `author/newcomer` (below require_tiers).") {
+	got := ReadyComment(r, "`role/newcomer` (below require_tiers)")
+	if !strings.HasPrefix(got, ReadyCommentMarker+"\nReady for a human merge: verdict approved @abc1234") || !strings.Contains(got, "Blocked only by `role/newcomer` (below require_tiers).") {
 		t.Fatalf("ReadyComment = %q", got)
 	}
 	if strings.Contains(strings.ToLower(got), "approve\n") {
@@ -201,7 +201,7 @@ func TestRenamedLabelStillReads(t *testing.T) {
 	if got := Current([]string{"kind/bug", "stage/090-needs-human"}); got != ReadyForHumanMerge {
 		t.Fatalf("Current(old spelling) = %v", got)
 	}
-	add, remove := Plan([]string{"stage/090-needs-human", "author/newcomer"}, Desired{Stage: ReadyForHumanMerge, Author: AuthorNewcomer})
+	add, remove := Plan([]string{"stage/090-needs-human", "role/newcomer"}, Desired{Stage: ReadyForHumanMerge, Role: RoleNewcomer})
 	if strings.Join(add, ",") != "stage/090-ready-for-human-merge" || strings.Join(remove, ",") != "stage/090-needs-human" {
 		t.Fatalf("Plan add=%v remove=%v", add, remove)
 	}

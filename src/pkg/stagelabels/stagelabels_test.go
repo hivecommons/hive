@@ -1,6 +1,7 @@
 package stagelabels
 
 import (
+	"github.com/hivecommons/hive/pkg/authorkind"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -74,13 +75,25 @@ func TestAllLabelDefsColours(t *testing.T) {
 			}
 		case d.Name == RegressedLabel:
 			t.Errorf("%s is retired and must not be provisioned (hivecommons/hive#12534)", d.Name)
-		case d.Name == AuthorTrusted.Label():
-			if d.Color != AuthorTrustedColor {
-				t.Errorf("author/trusted colour %s", d.Color)
+		case d.Name == RoleTrusted.Label():
+			if d.Color != RoleTrustedColor {
+				t.Errorf("role/trusted colour %s", d.Color)
 			}
-		case strings.HasPrefix(d.Name, AuthorPrefix):
-			if d.Color != AuthorColor {
+		case strings.HasPrefix(d.Name, RolePrefix):
+			if d.Color != RoleColor {
 				t.Errorf("%s colour %s", d.Name, d.Color)
+			}
+		case d.Name == authorkind.Human.Label():
+			if d.Color != AuthorHumanColor {
+				t.Errorf("author/human colour %s", d.Color)
+			}
+		case d.Name == authorkind.Clanker.Label():
+			if d.Color != AuthorClankerColor {
+				t.Errorf("author/clanker colour %s", d.Color)
+			}
+		case d.Name == authorkind.Hive.Label():
+			if d.Color != AuthorHiveColor {
+				t.Errorf("author/hive colour %s", d.Color)
 			}
 		default:
 			t.Errorf("unexpected def %s", d.Name)
@@ -90,28 +103,28 @@ func TestAllLabelDefsColours(t *testing.T) {
 
 func TestAuthorFromTier(t *testing.T) {
 	req := map[string]bool{"trusted": true, "merger": true}
-	cases := map[string]Author{"trusted": AuthorTrusted, "Merger": AuthorTrusted, "contributor": AuthorContributor, "newcomer": AuthorNewcomer, "revoked": AuthorUntrusted, "": AuthorUntrusted}
+	cases := map[string]Role{"trusted": RoleTrusted, "Merger": RoleTrusted, "contributor": RoleContributor, "newcomer": RoleNewcomer, "revoked": RoleUntrusted, "": RoleUntrusted}
 	for tier, want := range cases {
-		if got := AuthorFromTier(tier, req); got != want {
+		if got := RoleFromTier(tier, req); got != want {
 			t.Errorf("tier %q → %v want %v", tier, got, want)
 		}
 	}
 }
 
 func TestAuthorMergePrecedence(t *testing.T) {
-	cases := []struct{ cur, next, want Author }{
-		{AuthorNone, AuthorUntrusted, AuthorUntrusted},
-		{AuthorNone, AuthorTrusted, AuthorTrusted},
+	cases := []struct{ cur, next, want Role }{
+		{RoleNone, RoleUntrusted, RoleUntrusted},
+		{RoleNone, RoleTrusted, RoleTrusted},
 		// #12490: the trusted-author lane's verdict survives the contributor
 		// lane's "no registry profile" in either order.
-		{AuthorTrusted, AuthorUntrusted, AuthorTrusted},
-		{AuthorUntrusted, AuthorTrusted, AuthorTrusted},
-		{AuthorUntrusted, AuthorContributor, AuthorContributor},
-		{AuthorContributor, AuthorUntrusted, AuthorContributor},
-		{AuthorContributor, AuthorTrusted, AuthorTrusted},
-		{AuthorContributor, AuthorNewcomer, AuthorContributor},
-		{AuthorNewcomer, AuthorNone, AuthorNewcomer},
-		{AuthorNone, AuthorNone, AuthorNone},
+		{RoleTrusted, RoleUntrusted, RoleTrusted},
+		{RoleUntrusted, RoleTrusted, RoleTrusted},
+		{RoleUntrusted, RoleContributor, RoleContributor},
+		{RoleContributor, RoleUntrusted, RoleContributor},
+		{RoleContributor, RoleTrusted, RoleTrusted},
+		{RoleContributor, RoleNewcomer, RoleContributor},
+		{RoleNewcomer, RoleNone, RoleNewcomer},
+		{RoleNone, RoleNone, RoleNone},
 	}
 	for _, tc := range cases {
 		if got := tc.cur.Merge(tc.next); got != tc.want {
@@ -121,20 +134,20 @@ func TestAuthorMergePrecedence(t *testing.T) {
 }
 
 func TestPlanIdempotentExclusiveAndStaleRemoval(t *testing.T) {
-	want := Desired{Stage: ReviewPending, Author: AuthorContributor}
-	add, remove := Plan([]string{"bug", "stage/050-review-pending", "author/contributor"}, want)
+	want := Desired{Stage: ReviewPending, Role: RoleContributor}
+	add, remove := Plan([]string{"bug", "stage/050-review-pending", "role/contributor"}, want)
 	if len(add)+len(remove) != 0 {
 		t.Fatalf("unchanged state planned writes add=%v remove=%v", add, remove)
 	}
-	add, remove = Plan([]string{"bug", "stage/070-fixing", "stage/99-old", "author/untrusted", "🐝 covered by PR", "claimed", "hive/in-progress", "hive/claimed-by-bob"}, want)
-	if !reflect.DeepEqual(add, []string{"author/contributor", "stage/050-review-pending"}) {
+	add, remove = Plan([]string{"bug", "stage/070-fixing", "stage/99-old", "role/untrusted", "🐝 covered by PR", "claimed", "hive/in-progress", "hive/claimed-by-bob"}, want)
+	if !reflect.DeepEqual(add, []string{"role/contributor", "stage/050-review-pending"}) {
 		t.Fatalf("add = %v", add)
 	}
-	if !reflect.DeepEqual(remove, []string{"author/untrusted", "claimed", "hive/in-progress", "stage/070-fixing", "stage/99-old", "🐝 covered by PR"}) {
+	if !reflect.DeepEqual(remove, []string{"claimed", "hive/in-progress", "role/untrusted", "stage/070-fixing", "stage/99-old", "🐝 covered by PR"}) {
 		t.Fatalf("remove = %v (human labels and hive/claimed-by-* must survive)", remove)
 	}
-	add, remove = Plan([]string{"stage/100-merge-queue", "stage/stalled", "author/trusted"}, Desired{})
-	if len(add) != 0 || !reflect.DeepEqual(remove, []string{"author/trusted", "stage/100-merge-queue", "stage/stalled"}) {
+	add, remove = Plan([]string{"stage/100-merge-queue", "stage/stalled", "role/trusted", "author/clanker"}, Desired{Kind: authorkind.Human})
+	if len(add) != 1 || add[0] != "author/human" || !reflect.DeepEqual(remove, []string{"author/clanker", "role/trusted", "stage/100-merge-queue", "stage/stalled"}) {
 		t.Fatalf("terminal plan add=%v remove=%v", add, remove)
 	}
 	add, remove = Plan([]string{"stage/070-fixing", "stage/regressed"}, Desired{Stage: Fixing, Stalled: true})
@@ -256,8 +269,8 @@ func TestLookupsAndAuthorStrings(t *testing.T) {
 	if Current([]string{"bug", "stage/stalled", "stage/999-old", MergeQueue.Label()}) != MergeQueue || Current([]string{"stage/999-old"}) != None {
 		t.Fatal("Current() wrong")
 	}
-	if AuthorTrusted.String() != "trusted" || AuthorTrusted.Label() != "author/trusted" || AuthorNone.String() != "" || AuthorNone.Label() != "" {
-		t.Fatalf("author strings: %q %q %q %q", AuthorTrusted.String(), AuthorTrusted.Label(), AuthorNone.String(), AuthorNone.Label())
+	if RoleTrusted.String() != "trusted" || RoleTrusted.Label() != "role/trusted" || RoleNone.String() != "" || RoleNone.Label() != "" {
+		t.Fatalf("author strings: %q %q %q %q", RoleTrusted.String(), RoleTrusted.Label(), RoleNone.String(), RoleNone.Label())
 	}
 	if got := RegressionComment(MergeQueue, Fixing, "  "); !strings.HasSuffix(got, ": state changed") {
 		t.Fatalf("empty reason default: %q", got)
@@ -688,5 +701,54 @@ func TestStoreHistoryTrail(t *testing.T) {
 	rec2, _ := st2.Get(key)
 	if len(rec2.History) != HistoryLimit || rec2.History[0].Stage != Fixing {
 		t.Fatalf("history not persisted: %+v", rec2.History)
+	}
+}
+
+// hivecommons/hive#12581: the trust axis moved from author/<tier> to
+// role/<tier>. Plan migrates the old spelling in the same write, and with
+// no author-kind opinion leaves an existing author/<kind> label alone.
+func TestPlanMigratesLegacyRoleAndKeepsKindWhenUnknown(t *testing.T) {
+	add, remove := Plan([]string{"stage/050-review-pending", "author/trusted", "author/clanker"}, Desired{Stage: ReviewPending, Role: RoleTrusted})
+	if !reflect.DeepEqual(add, []string{"role/trusted"}) || !reflect.DeepEqual(remove, []string{"author/trusted"}) {
+		t.Fatalf("migration add=%v remove=%v", add, remove)
+	}
+	// With a kind opinion the stale kind is swapped and the legacy tier still goes.
+	add, remove = Plan([]string{"stage/050-review-pending", "author/contributor", "author/clanker"}, Desired{Stage: ReviewPending, Role: RoleContributor, Kind: authorkind.Hive})
+	if !reflect.DeepEqual(add, []string{"author/hive", "role/contributor"}) || !reflect.DeepEqual(remove, []string{"author/clanker", "author/contributor"}) {
+		t.Fatalf("kind swap add=%v remove=%v", add, remove)
+	}
+	// Configured names are honoured, and the defaults they replace are stale.
+	names := authorkind.Names{Clanker: "author/relay"}
+	add, remove = Plan([]string{"author/clanker"}, Desired{Stage: ReviewPending, Kind: authorkind.Clanker, KindLabels: names})
+	if !reflect.DeepEqual(add, []string{"author/relay", "stage/050-review-pending"}) || !reflect.DeepEqual(remove, []string{"author/clanker"}) {
+		t.Fatalf("configured names add=%v remove=%v", add, remove)
+	}
+	for _, l := range LegacyRoleLabels() {
+		if !IsLegacyRole(l) || !Owned(l) {
+			t.Errorf("%s not recognised as a retired role spelling", l)
+		}
+	}
+	if IsLegacyRole("author/human") || IsLegacyRole("role/trusted") {
+		t.Error("kind/current labels misread as legacy role")
+	}
+	if RoleTrusted.LegacyLabel() != "author/trusted" || RoleNone.LegacyLabel() != "" {
+		t.Errorf("LegacyLabel: %q %q", RoleTrusted.LegacyLabel(), RoleNone.LegacyLabel())
+	}
+}
+
+func TestLabelDefsForUsesConfiguredKindNames(t *testing.T) {
+	defs := LabelDefsFor(authorkind.Names{Hive: "author/bot-hive"})
+	seen := map[string]string{}
+	for _, d := range defs {
+		seen[d.Name] = d.Color
+	}
+	if seen["author/bot-hive"] != AuthorHiveColor || seen["author/human"] != AuthorHumanColor || seen["author/clanker"] != AuthorClankerColor {
+		t.Fatalf("defs = %v", seen)
+	}
+	if _, ok := seen["author/hive"]; ok {
+		t.Fatal("default hive name provisioned despite override")
+	}
+	if _, ok := seen["author/trusted"]; ok {
+		t.Fatal("legacy role spelling provisioned")
 	}
 }

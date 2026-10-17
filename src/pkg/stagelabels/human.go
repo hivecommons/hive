@@ -301,7 +301,7 @@ const (
 // ReadyComment renders the 090 entry comment:
 //
 //	Ready for a human merge: verdict approved @abc1234, 55/55 checks green,
-//	DCO yes, soak 2h elapsed. Blocked only by `author/newcomer` (below
+//	DCO yes, soak 2h elapsed. Blocked only by `role/newcomer` (below
 //	require_tiers).
 //
 // blockedBy is the prose for the trust cause ("" when unknown).

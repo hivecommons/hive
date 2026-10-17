@@ -475,18 +475,20 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
 ## Stage labels (`governor.labels.stage`)
 
 The hive owns one ordered `stage/NNN-*` label per open issue/PR
-(`010-actionable` … `100-merge-queue`), an `author/*` admission-tier label on
-PRs, and a red `stage/stalled` marker when nobody but the hive has touched an
-item for the stage's dwell — never while checks run or the reviewer verdict
-is pending, those are waits on the hive and surface as a `hive_held` count on
-the review queue instead; `label:stage/stalled` across repos is everything a
-person has walked away from. Backward stage moves are a one-line comment and
-the review queue's transition history (the `stage/regressed` label is
-retired, #12534). Default on; `governor.labels.stage.enabled: false` stops the
-reconciler, `governor.labels.stage.dwell.<slug>` re-times a stage's stalled
-threshold, `governor.labels.stage.stalled.require_quiet: false` measures the
-dwell from stage entry instead of last activity (Settings → Labels). When a
-contributor PR enters
+(`010-actionable` … `100-merge-queue`), a `role/*` admission-tier label and
+an `author/*` authorship label (`human` / `clanker` / `hive`; names under
+`governor.labels.author`) on PRs, and a red `stage/stalled` marker when nobody
+but the hive has touched an item for the stage's dwell — never while checks
+run or the reviewer verdict is pending, those are waits on the hive and
+surface as a `hive_held` count on the review queue instead;
+`label:stage/stalled` across repos is everything a person has walked away
+from. Backward stage moves are a one-line comment and the review queue's
+transition history (the `stage/regressed` label is retired, #12534). Default
+on; `governor.labels.stage.enabled: false` stops the reconciler,
+`governor.labels.stage.dwell.<slug>` re-times a stage's stalled threshold,
+`governor.labels.stage.stalled.require_quiet: false` measures the dwell from
+stage entry instead of last activity (Settings → Labels). When a contributor
+PR enters
 `stage/072-returned-to-contributor` the hive posts one nudge comment per head
 (re-nudged once after `governor.labels.stage.contributor_nudge.renudge_interval`,
 default = the 24h dwell; cap 2) and, for a contributor whose relay heartbeat is

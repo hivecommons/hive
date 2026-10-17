@@ -21,10 +21,11 @@ Hive-authored labels answer different questions. Read them as independent axes, 
 
 | Axis | Shape | Question it answers | Signal? | Notes |
 | --- | --- | --- | --- | --- |
-| **Stage** | `stage/<step>` | Where is this item in the pipeline? | Control (read by claims/auto-merge) | Being added by a parallel change together with `author/*`; see that PR and the reference table once it lands. |
+| **Stage** | `stage/<step>` | Where is this item in the pipeline? | Control (read by claims/auto-merge) | See [Stage labels](#stage-labels-stagennn--the-pipeline-state-machine) below. |
 | **Agent** | `agent/<lane>` | Which agent works it (filed/owning lane)? | Routing + ownership | The suffix is always the lane name from `HIVE_AGENT`. The classifier routes on it and PR ownership compares against it, so `agent/reviewer` would hand the item to a reviewer lane — never use it to say "a review produced this". |
 | **Origin** | `origin/<source>` | Where did this item come from? | Provenance only, never a gate | One neutral colour (`#8250df`) for the whole family. `origin/review` is a review-swarm backlog finding (`src/pkg/github/origin_labels.go`, `src/pkg/config/review_severity.go`). It replaces the retired `from-review`; the startup reconciler (`Client.MigrateOriginLabels`) swaps the old name for the new one on open items once, and `review.backlog.labels` still accepts `from-review` and maps it to `origin/review` without double-labelling. |
-| **Author** | `author/<tier>` | What trust tier did the author have? | Control (auto-merge) | Parallel change, alongside `stage/*`. |
+| **Role** | `role/<tier>` | How far does the hive trust the author's login? | Control (auto-merge) | Was `author/<tier>` before #12581; the reconciler rewrites the old spelling. See [`role/*`](#role--would-the-hive-auto-merge-this). |
+| **Author** | `author/<kind>` | Who wrote it — a person, a contributor's hive, or this repo's hive? | Informational (gates the 072 nudge/adoption) | `author/human`, `author/clanker`, `author/hive`; names configurable under `governor.labels.author`. See [`author/*`](#author--who-wrote-this-pr). |
 | **Modifiers** | `blocked`, `hold`, `needs-*`, `hive-pause/<hive-id>` | What is stopping it right now? | Hold / suppress | See the reference table; these are the hard gates. |
 
 Some hive-authored labels look like provenance but are read as signals, so they stay outside `origin/*` on purpose: `hive/selfreport` is the dedupe key the self-report joiner searches (`label:hive/selfreport` in `src/pkg/github/fleet_report.go`) and the hub relay re-applies it; `hive/advisory` makes an issue a standing meta issue that enumeration excludes (`src/pkg/github/standing_issues.go`); `hive/<hive-id>` is **retired** (#12539): nothing writes it any more, the origin marker in the body says which hive wrote an item, and the boot sweep strips leftovers (see the reference row). `hive/sentinel`, `hive/fleet` and `fleet` are only consulted by the good-first-issue exclusion list (`src/pkg/gfi/gfi.go`) and are no longer written by this code base.
@@ -108,8 +109,9 @@ Operator request ([#12429](https://github.com/hivecommons/hive/issues/12429)):
 "the labeling of issues and prs has to give hints as to what stage the work is
 in … the labels must be clear and reflect the state machine … this needs to be
 dead simple." The hive therefore owns ONE ordered, mutually exclusive
-`stage/NNN-slug` family shared by issues and PRs, an orthogonal `author/*`
-family that answers "would the hive auto-merge this?", and one red health
+`stage/NNN-slug` family shared by issues and PRs, an orthogonal `role/*`
+family that answers "would the hive auto-merge this?", an orthogonal
+`author/*` family that answers "who wrote this?", and one red health
 marker (`stage/stalled`) that says nobody is working the item. Exactly one
 `stage/*` stage label per open item; closed, merged or superseded items carry
 none (terminal = no stage). (`stage/regressed` was retired in
@@ -172,9 +174,11 @@ referenced it) a lone `stage/050-review-pending`
   item on the next cycle; the old labels can then be deleted from the repo.
 - **Colours**: every `stage/NNN-*` label is the same hive amber `#f5a623`
   (the colour the retired `🐝 covered by PR` used) so the eye tracks the family
-  across lists; `stage/stalled` `#d73a4a` is red; `author/*` is neutral grey
-  `#6e7781` except `author/trusted` `#0e8a16`. The retired `stage/regressed`
-  is stripped from any item the sweep sees and is no longer provisioned.
+  across lists; `stage/stalled` `#d73a4a` is red; `role/*` is neutral grey
+  `#6e7781` except `role/trusted` `#0e8a16`; `author/human` is the same grey,
+  `author/clanker` purple `#8250df`, `author/hive` blue `#1d76db`. The retired
+  `stage/regressed` is stripped from any item the sweep sees and is no longer
+  provisioned.
   The ensure-label step creates missing labels and PATCHes the colour of an
   existing one only when it differs from the table, once per repo per
   process.
@@ -194,7 +198,7 @@ referenced it) a lone `stage/050-review-pending`
 | `stage/074-adopted-by-hive` | PR | the author was unavailable past the grace (see below); the hive pushed `hive/adopt-<n>` at the contributor's head, opened a superseding App PR that keeps the author's commits, and the scanner's red-PR fix kick is finishing it. The original closes automatically when the superseder merges | 3h |
 | `stage/080-awaiting-merge-admission` | PR | nothing left for the author: CI green (no red check on the head, required or not), verdict approve, no modifiers — and the automerge lane has not admitted it yet (prefilter not evaluated for this head, labels not synced, lane tripped). A stall here means a lane problem, so the hive also posts one `<!-- hive:stage-stalled -->` comment with the lane's last skip reason | 30m |
 | `stage/085-needs-decision` | PR, issue | on an issue: parked on a person by a hard-suppress label (`needs-human`, `needs-direction`, `needs-decision`, `needs-spec`) — it is outside the agent work queue until a maintainer replies; a lapsed claim on a parked issue never shows 030. On a PR: a person owes a **decision**, not a merge: a `requires_human` swarm verdict (reason `reviewer-verdict:requires_human`), `sentinel-alert`, `hold` / `do-not-merge*` / `needs-decision` modifier, no reviewer configured, or a human-only lane rule unrelated to trust (workflow-path edits, tests removed, human-merge path, reporter-trust hold). One `<!-- hive:stage-needs-decision -->` comment on entry names what is owed | none |
-| `stage/090-ready-for-human-merge` | PR | the hive would merge this itself but trust/role blocks it: reviewer verdict approve at the **current** head, required checks green (tide excluded), DCO yes, no sentinel alert, no conflicts, soak elapsed, no hold — and the only remaining lane reason is the author's tier/role. A maintainer's `/lgtm` `/approve` is the only missing step. One `<!-- hive:stage-ready-for-human-merge -->` comment on entry carries the evidence. Always read with the `author/*` label. (Was `stage/090-needs-human` before [#12528](https://github.com/hivecommons/hive/issues/12528); the engine renames the GitHub label in place) | none |
+| `stage/090-ready-for-human-merge` | PR | the hive would merge this itself but trust/role blocks it: reviewer verdict approve at the **current** head, required checks green (tide excluded), DCO yes, no sentinel alert, no conflicts, soak elapsed, no hold — and the only remaining lane reason is the author's tier/role. A maintainer's `/lgtm` `/approve` is the only missing step. One `<!-- hive:stage-ready-for-human-merge -->` comment on entry carries the evidence. Always read with the `role/*` and `author/*` labels. (Was `stage/090-needs-human` before [#12528](https://github.com/hivecommons/hive/issues/12528); the engine renames the GitHub label in place) | none |
 | `stage/100-merge-queue` | PR | lane admitted: soaking, merge-eligible or waiting for tide / the merge window — and every check on the head is green (tide excluded). A red optional check is 070/072 like any red CI | 3h |
 
 Dwell thresholds are overridable per slug under `governor.labels.stage.dwell`
@@ -356,7 +360,7 @@ conflict reason and the contributor lane's soak — and
 | no verdict for this head yet, or nothing has reported on the head (just pushed) | `050-review-pending` — never 090 without a current-head approve |
 | sentinel alert, hold-class label, no reviewer configured, or a non-trust human-only lane rule | `085-needs-decision` + one entry comment naming the decision ("Needs a decision, not a merge: a sentinel alert is open on this PR.") |
 | checks still running / unreadable, or the lane's soak not yet elapsed | `060-reviewed` |
-| everything above clean and only trust in the way | `090-ready-for-human-merge` + one entry comment: "Ready for a human merge: verdict approved @abc1234, 55/55 checks green, DCO yes, soak 1h0m0s elapsed. Blocked only by `author/newcomer` (below require_tiers)." |
+| everything above clean and only trust in the way | `090-ready-for-human-merge` + one entry comment: "Ready for a human merge: verdict approved @abc1234, 55/55 checks green, DCO yes, soak 1h0m0s elapsed. Blocked only by `role/newcomer` (below require_tiers)." |
 
 The entry comments are posted once per stage visit (a flip 085 ↔ 090 is a
 new visit) and never as a GitHub review: the hive does not approve on a
@@ -364,7 +368,7 @@ maintainer's behalf, so prow/tide see nothing until a person acts. The
 check digest costs two REST calls per head and is cached 10 minutes; it is
 read only for human-routed PRs.
 
-### `author/*` — would the hive auto-merge this?
+### `role/*` — would the hive auto-merge this?
 
 One per PR, derived from what the lane used for admission (registry tier,
 claim-marker `tier=`, trusted-author list, App-authored), recomputed with the
@@ -372,10 +376,83 @@ stage but written only on change:
 
 | Label | Source |
 |---|---|
-| `author/trusted` | App-authored or self-authored lane; trusted-author lane allowed the author; registry/claim tier in the contributor lane's `require_tiers` (default `trusted`, `merger`) → auto-merge eligible |
-| `author/contributor` | registry/claim tier `contributor` → needs human lgtm/approve |
-| `author/newcomer` | registry/claim tier `newcomer` |
-| `author/untrusted` | no claim and no registry profile (external PR), `revoked`, or not a trusted author |
+| `role/trusted` | App-authored or self-authored lane; trusted-author lane allowed the author; registry/claim tier in the contributor lane's `require_tiers` (default `trusted`, `merger`) → auto-merge eligible |
+| `role/contributor` | registry/claim tier `contributor` → needs human lgtm/approve |
+| `role/newcomer` | registry/claim tier `newcomer` |
+| `role/untrusted` | no claim and no registry profile (external PR), `revoked`, or not a trusted author |
+
+**Renamed from `author/<tier>`** ([#12581](https://github.com/hivecommons/hive/issues/12581)).
+The old prefix conflated trust with authorship: `author/trusted` sat on PRs a
+maintainer pushed by hand and on PRs a contributor's hive opened under that
+contributor's login. Trust is now `role/*`; `author/*` says who wrote it (next
+section). Migration is automatic: every reconcile that writes a PR removes a
+retired `author/trusted|contributor|newcomer|untrusted` and adds the `role/*`
+equivalent in the same write; `stagelabels.RoleOf` still reads the old
+spelling until then so a claim hook never drops the tier. The role names are
+not configurable.
+
+### `author/*` — who wrote this PR?
+
+One per PR, mutually exclusive, decided by `pkg/authorkind` from evidence the
+hive already leaves on a PR. It is orthogonal to `role/*`: a trusted
+contributor whose own hive opened the PR carries `role/trusted` +
+`author/clanker`. Unlike the pipeline labels it **stays on merged and closed
+PRs** — who wrote a PR is a fact about it, not pipeline state, and the hub's
+revert-rate-by-author-kind drill-down (#12428) reads it.
+
+| Label | Meaning | Example |
+|---|---|---|
+| `author/human` | a person pushed the PR themselves | a maintainer's hand-written PR |
+| `author/clanker` | a **contributor's own hive** (relay) authored the PR under that contributor's GitHub login — "clanker" is the project's word for a contributor's hive | mendezr's or Karibhou's relay-opened PRs: human login, `— hive:` trailer |
+| `author/hive` | **this repository's own hive** — the App or one of its agent lanes — authored the PR | `app/hivecommons-hive` PRs, anything stamped `agent/<lane>` |
+
+Detection rules, first match wins (`authorkind.Explain` returns the rule
+name, logged at debug as `stage labels: author kind`):
+
+1. author login is the hive's App login (`[bot]` suffix tolerated) → `author/hive`
+2. an `agent/<lane>` ownership stamp is on the PR → `author/hive` (stamps the
+   same pass strips as strays from a non-App PR, #12545, are ignored first)
+3. `<!-- hive:origin hive=<id> -->` in the body: `<id>` is this hive's
+   `hive_id` → `author/hive`; another hive → `author/clanker`
+4. the visible `— hive:` attribution trailer (what the hub's
+   `ReconcilePRAttribution` stamps on every relay-reported PR) → `author/clanker`
+5. the `🐝 **Hive Agent**` identity footer from `gh-wrapper.sh` → `author/clanker`
+6. the login has a contributor profile on this hive (runs a relay that
+   targets it) → `author/clanker` (weakest signal; only reached with no marker)
+7. a non-App `[bot]` login (dependabot, …) → no `author/*` label
+8. otherwise → `author/human`
+
+Names are configurable so a repo can spell them its own way; each must keep
+the `author/` prefix (so the reconciler still owns it) and the three must
+differ:
+
+```yaml
+governor:
+  labels:
+    author:
+      human: author/human      # default
+      clanker: author/clanker  # default
+      hive: author/hive        # default
+```
+
+### Stage 072 by author kind
+
+`stage/072-returned-to-contributor` means the same thing for every kind —
+CI red, changes requested or conflicting, and the author must act — and
+every kind reaches and leaves it through the same lane transitions. What
+differs is whether the hive has anyone to *interrupt*:
+
+| Kind | At 072 | Contributor nudge (`<!-- hive:contributor-nudge -->` + relay interrupt) | Offline adoption (074) |
+|---|---|---|---|
+| `author/clanker` | the contributor's hive is poked to fix its own PR | yes | yes — after the grace, the hive adopts |
+| `author/human` | plain wait on the person; they push or comment | no | no |
+| `author/hive` | plain wait, like any other PR; the hive's own lanes pick the head up on their ordinary cycle | no | no |
+
+Only a clanker PR has a hive on the other end, so only it gets the nudge
+comment, the relay interrupt and adoption; a human or hive PR at 072 just sits
+there until someone pushes a new head (and then stalls per the dwell table
+like any other stage). The engine exposes the kind to the nudge/adoption path
+as `stageObservation.AuthorKind`.
 
 ### `stage/stalled` — "nobody is working this"
 
@@ -546,7 +623,7 @@ the reconciler never touches them: `hold` / `hold/*`, `needs-human`,
 `needs-decision`, `needs-direction`, `blocked`, `needs-rebase`,
 `hive/likely-done`, `hive/partially-addressed`, `hive/verified-open`,
 `hive/claimed-by-<who>` (the grey "who" modifier a stage cannot carry),
-`lgtm`, `author/*`, and the agent provenance labels.
+`lgtm`, `role/*`, `author/*`, and the agent provenance labels.
 
 `hive/partially-addressed` and `hive/verified-open` are *merged-PR evidence*,
 not stages, and stay coherent with the stage model: both describe what a PR

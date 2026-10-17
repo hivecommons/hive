@@ -3,7 +3,7 @@ package automerge
 // Stage labels (hivecommons/hive#12429). Each automerge lane already computes
 // a per-PR reason every cycle; this file maps that reason (plus the review
 // verdict, CI state and the author's admission tier the lane used) onto the
-// hive-owned `stage/NN-*`, `author/*` and `stage/stalled|regressed` label
+// hive-owned `stage/NN-*`, `role/*`, `author/*` and `stage/stalled|regressed` label
 // families in pkg/stagelabels, and reconciles them against the labels the PR
 // list payload already carries — no per-PR GET, writes only on change.
 //
@@ -26,6 +26,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/authorkind"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -59,8 +60,17 @@ type StageLabelPolicy struct {
 	GraceOnline  time.Duration
 	GraceOffline time.Duration
 	// HiveID is this hive's id; hive/<HiveID> on a PR the App did not author
-	// is a stray the reconciler removes (hivecommons/hive#12545).
+	// is a stray the reconciler removes (hivecommons/hive#12545), and the
+	// `<!-- hive:origin hive=<id> -->` marker naming it marks a PR as
+	// author/hive (hivecommons/hive#12581).
 	HiveID string
+	// AuthorKindLabels are the configured `author/<kind>` names
+	// (governor.labels.author); zero = defaults.
+	AuthorKindLabels authorkind.Names
+	// RelayKnown reports whether login has a contributor profile on this
+	// hive (runs a relay that targets it) — authorkind's weakest signal for
+	// author/clanker. nil = unknown.
+	RelayKnown func(login string) bool
 }
 
 // ownershipRoutingPrefix is the lane routing label family. `agent/<lane>`
@@ -135,7 +145,7 @@ var stageLanePrecedence = map[string]int{stageLaneSelf: 3, stageLaneTrusted: 2, 
 type stageDetail struct {
 	Verdict      ContributorLaneVerdict
 	VerdictKnown bool
-	Author       stagelabels.Author
+	Role         stagelabels.Role
 	// RedChecks names the completed-red, non-required checks the CI gate
 	// walked past on RedChecksHead (sorted). The lane ignores them by
 	// design; the stage engine must not call the PR merge-queued or
@@ -183,10 +193,14 @@ type stageObservation struct {
 	Err     bool
 	Detail  stageDetail
 	// Author, Title, URL and OpenedAt feed the stage-072 contributor nudge.
-	Author   string
-	Title    string
-	URL      string
-	OpenedAt time.Time
+	Author string
+	// AuthorKind is who wrote the PR (authorkind.Detect), set on the
+	// resolved observation by ApplyStageLabels before the nudge/adoption
+	// hooks run: only an author/clanker PR has a hive to interrupt.
+	AuthorKind authorkind.Kind
+	Title      string
+	URL        string
+	OpenedAt   time.Time
 	// BaseRef and Body feed the stage-074 adoption (superseding PR target
 	// and the Closes lines to carry over); both come from the list payload.
 	BaseRef string
@@ -278,8 +292,8 @@ func (t *StageTracker) drain() [][]stageObservation {
 			if detail.VerdictKnown {
 				o.Detail.Verdict, o.Detail.VerdictKnown = detail.Verdict, true
 			}
-			if detail.Author != stagelabels.AuthorNone {
-				o.Detail.Author = detail.Author
+			if detail.Role != stagelabels.RoleNone {
+				o.Detail.Role = detail.Role
 			}
 			if detail.RedChecksHead == "" || o.HeadSHA == "" || detail.RedChecksHead == o.HeadSHA {
 				o.Detail.RedChecks, o.Detail.RedChecksHead = detail.RedChecks, detail.RedChecksHead
@@ -368,15 +382,15 @@ func (c *Engine) noteStageVerdict(owner, repo string, number int, v ContributorL
 	})
 }
 
-// noteStageAuthor records the author's admission tier as the lane computed
+// noteStageRole records the author's admission tier as the lane computed
 // it. Lanes disagree by design (the contributor lane reports "untrusted"
 // for a maintainer with no registry profile), so tiers merge by precedence
 // rather than last-writer-wins (#12490).
-func (c *Engine) noteStageAuthor(owner, repo string, number int, a stagelabels.Author) {
-	if !c.stagePolicy().Enabled || a == stagelabels.AuthorNone {
+func (c *Engine) noteStageRole(owner, repo string, number int, r stagelabels.Role) {
+	if !c.stagePolicy().Enabled || r == stagelabels.RoleNone {
 		return
 	}
-	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) { d.Author = d.Author.Merge(a) })
+	c.stageTrackerOrShared().note(stageKey(owner, repo, number), func(d *stageDetail) { d.Role = d.Role.Merge(r) })
 }
 
 // noteStageRedChecks records the red non-required checks the CI gate
@@ -761,26 +775,26 @@ func hasLabelFold(labels []string, want string) bool {
 }
 
 // resolveStage picks the owning opinion among a PR's lane observations
-// (already sorted by lane precedence) and the author tier to show.
-func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Author, stageObservation) {
+// (already sorted by lane precedence) and the role tier to show.
+func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stageObservation) {
 	var best stageVerdict
 	var bestObs stageObservation
-	author := stagelabels.AuthorNone
+	role := stagelabels.RoleNone
 	for _, o := range list {
 		v := classifyStage(o)
 		if v.Rank > best.Rank {
 			best, bestObs = v, o
 		}
-		// The most specific author tier wins: the contributor lane knows
+		// The most specific tier wins: the contributor lane knows
 		// registry/claim tiers the trusted-author lane cannot see, so a
 		// trusted-author "trusted" is kept but its absence is refined.
-		author = author.Merge(o.Detail.Author)
+		role = role.Merge(o.Detail.Role)
 	}
 	if best.Rank < stageRankOwned {
 		switch {
-		case author == stagelabels.AuthorNone:
-			author = stagelabels.AuthorUntrusted
-		case best.Stage == stagelabels.ReadyForHumanMerge && author == stagelabels.AuthorTrusted:
+		case role == stagelabels.RoleNone:
+			role = stagelabels.RoleUntrusted
+		case best.Stage == stagelabels.ReadyForHumanMerge && role == stagelabels.RoleTrusted:
 			// Some lane admits this author; a lane that cannot vouch for
 			// them has nothing to say about the stage. Leave it as is.
 			best = stageVerdict{}
@@ -789,7 +803,36 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Author, st
 	if best.Rank == stageRankNone {
 		bestObs = list[0]
 	}
-	return best, author, bestObs
+	return best, role, bestObs
+}
+
+// stageAuthorKind decides who wrote the PR from the observation and the
+// engine's own identity. Labels the same pass is about to strip as strays
+// (agent/<lane> on a PR the App did not author, #12545) are excluded first,
+// so a mis-stamped human PR is never read as author/hive for a cycle.
+func (c *Engine) stageAuthorKind(obs stageObservation, policy StageLabelPolicy) authorkind.Kind {
+	appLogin := c.transport.AppBotLogin()
+	stray := strayOwnershipLabels(obs.Labels, obs.Author, appLogin, policy.HiveID)
+	labels := obs.Labels
+	if len(stray) > 0 {
+		isStray := map[string]bool{}
+		for _, l := range stray {
+			isStray[l] = true
+		}
+		labels = make([]string, 0, len(obs.Labels))
+		for _, l := range obs.Labels {
+			if !isStray[strings.TrimSpace(l)] {
+				labels = append(labels, l)
+			}
+		}
+	}
+	in := authorkind.Input{Author: obs.Author, AppLogin: appLogin, HiveID: policy.HiveID, Labels: labels, Body: obs.Body}
+	if policy.RelayKnown != nil && obs.Author != "" {
+		in.RelayKnown = policy.RelayKnown(obs.Author)
+	}
+	kind, rule := authorkind.Explain(in)
+	c.debug("stage labels: author kind", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", kind.String(), "rule", rule)
+	return kind
 }
 
 // missingStageLanes names the lanes that evaluate every PR of displayRepo
@@ -842,7 +885,7 @@ type StageLabelResult struct {
 	HiveHeld int
 }
 
-// ApplyStageLabels reconciles the stage/author/health labels for every PR
+// ApplyStageLabels reconciles the stage/role/author/health labels for every PR
 // observed since the last pass and persists stage timing. It is the single
 // write point for the families; lanes only record.
 func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error) {
@@ -865,7 +908,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			continue
 		}
 		result.Items++
-		verdict, author, obs := resolveStage(list)
+		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
 		if verdict.Rank == stageRankNone {
 			result.Skipped++
@@ -878,6 +921,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				continue
 			}
 		}
+		obs.AuthorKind = c.stageAuthorKind(obs, policy)
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
@@ -912,9 +956,11 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			store.NoteActivity(key, stageActivity(obs, verdict.Stage))
 			rec, _ := store.Get(key)
 			want = stagelabels.Desired{
-				Stage:   verdict.Stage,
-				Author:  author,
-				Stalled: stagelabels.StalledWith(rec, policy.Dwell, now, policy.StalledRequireQuiet),
+				Stage:      verdict.Stage,
+				Role:       role,
+				Kind:       obs.AuthorKind,
+				KindLabels: policy.AuthorKindLabels,
+				Stalled:    stagelabels.StalledWith(rec, policy.Dwell, now, policy.StalledRequireQuiet),
 			}
 			if stagelabels.HiveHeld(rec, policy.Dwell, now) {
 				result.HiveHeld++
@@ -934,7 +980,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		commentsBefore := result.Comments
 		add, remove := stagelabels.Plan(obs.Labels, want)
 		if len(add)+len(remove) > 0 {
-			if err := c.ensureStageLabels(ctx, obs.Owner, obs.Repo, tracker); err != nil {
+			if err := c.ensureStageLabels(ctx, obs.Owner, obs.Repo, tracker, policy.AuthorKindLabels); err != nil {
 				c.warn("stage labels: provisioning failed", "repo", obs.Display, "error", err)
 				if firstErr == nil {
 					firstErr = err
@@ -963,7 +1009,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 		}
 		if out.Changed() {
-			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", out.Stage.String(), "author", author.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "clamped", out.Clamped, "wanted", out.Wanted.String(), "reason", obs.Reason, "lane", obs.Lane)
+			c.info("stage labels reconciled", "repo", obs.Display, "pr", obs.Number, "stage", out.Stage.String(), "role", role.String(), "author_kind", obs.AuthorKind.String(), "added", out.Added, "removed", out.Removed, "healed", out.Healed, "clamped", out.Clamped, "wanted", out.Wanted.String(), "reason", obs.Reason, "lane", obs.Lane)
 		}
 		if want.Stalled && want.Stage.StallNote() {
 			if rec, ok := store.Get(key); ok && !rec.StallCommented {
@@ -980,7 +1026,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			}
 		}
 		if obs.Route != nil && (want.Stage == stagelabels.ReadyForHumanMerge || want.Stage == stagelabels.NeedsDecision) {
-			n, err := c.postHumanEntry(ctx, store, key, obs, author, *obs.Route)
+			n, err := c.postHumanEntry(ctx, store, key, obs, role, *obs.Route)
 			result.Comments += n
 			if err != nil && firstErr == nil {
 				firstErr = err
@@ -1039,7 +1085,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 // ensureStageLabels provisions (or recolours) the family's labels in a repo
 // once per process: one list call, then a create or patch per label that is
 // missing or whose colour drifted from the table.
-func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, tracker *StageTracker) error {
+func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, tracker *StageTracker, kinds authorkind.Names) error {
 	full := strings.ToLower(owner + "/" + repo)
 	tracker.mu.Lock()
 	done := tracker.ensured[full]
@@ -1081,7 +1127,7 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 		}
 		existing[strings.ToLower(stage.Label())] = renamed
 	}
-	for _, def := range stagelabels.AllLabelDefs() {
+	for _, def := range stagelabels.LabelDefsFor(kinds) {
 		cur, ok := existing[strings.ToLower(def.Name)]
 		switch {
 		case !ok:

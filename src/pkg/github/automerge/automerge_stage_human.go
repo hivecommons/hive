@@ -130,9 +130,9 @@ func (c *Engine) routeHuman(ctx context.Context, tracker *StageTracker, key stri
 }
 
 // trustCause renders the trust reason for the 090 comment.
-func trustCause(reason string, author stagelabels.Author) string {
-	tier := "`" + author.Label() + "`"
-	if author == stagelabels.AuthorNone {
+func trustCause(reason string, role stagelabels.Role) string {
+	tier := "`" + role.Label() + "`"
+	if role == stagelabels.RoleNone {
 		tier = "the author's trust tier"
 	}
 	switch reason {
@@ -177,7 +177,7 @@ func decisionCause(reason string) string {
 
 // postHumanEntry writes the 085 / 090 entry comment once per stage visit.
 // Returns the comments posted.
-func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, author stagelabels.Author, route stagelabels.Route) (int, error) {
+func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, role stagelabels.Role, route stagelabels.Route) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || rec.EntryCommented || rec.Stage != route.Stage {
 		return 0, nil
@@ -185,7 +185,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	var body string
 	switch route.Stage {
 	case stagelabels.ReadyForHumanMerge:
-		body = stagelabels.ReadyComment(route, trustCause(obs.Reason, author))
+		body = stagelabels.ReadyComment(route, trustCause(obs.Reason, role))
 	case stagelabels.NeedsDecision:
 		body = stagelabels.DecisionComment(route)
 	default:

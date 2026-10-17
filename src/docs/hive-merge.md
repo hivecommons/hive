@@ -422,8 +422,10 @@ contributor PR → `stage/072-returned-to-contributor`, hold / sentinel alert �
 `stage/085-needs-decision`, untrusted author with an approve verdict at the
 current head, green checks, DCO and soak done →
 `stage/090-ready-for-human-merge` (only a maintainer's `/lgtm` `/approve` is
-missing), merged → no stage), plus one `author/*` label saying
-which admission tier the lane actually used and `stage/stalled` when nobody
+missing), merged → no stage), plus one `role/*` label saying
+which admission tier the lane actually used, one `author/*` label saying who
+wrote the PR (`human`, `clanker` = a contributor's hive, `hive` = this repo's
+own; #12581) and `stage/stalled` when nobody
 but the hive has touched the PR for the stage's dwell (never while checks run
 or the reviewer verdict is pending). Backward moves are a one-line stage
 comment and dashboard history, not a label. Writes happen only when
