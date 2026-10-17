@@ -1369,6 +1369,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		Number:  chosen.number,
 		Title:   chosen.title,
 		URL:     chosen.url,
+		Forge:   repoScopeDefaultForge,
+		Host:    h.assignmentHost(),
 		// Source-aware identity (kubestellar/hive#4245). Additive: a GitHub
 		// assignment carries exactly the fields it always did, and these tell a
 		// relay working a Linear or Jira item what the item actually IS instead
@@ -1490,4 +1492,13 @@ func runStageFromIssueMap(issue map[string]any) string {
 		}
 	}
 	return ""
+}
+
+// assignmentHost is the host segment stamped on task_assign, from the same
+// source the advertised repository-scope ids use.
+func (h *ContributeWSHub) assignmentHost() string {
+	if h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
+		return h.server.deps.Config.GitHub.Forge()
+	}
+	return repoScopeDefaultHost
 }

@@ -537,15 +537,20 @@ type WSMessage struct {
 	// whose task was revoked and reassigned cannot later overwrite the new owner's
 	// state. Additive: an unversioned relay omits it (0), and the hub falls back to the
 	// pre-existing TaskID match for those clients. Never a credential.
-	TaskGen uint64   `json:"task_gen,omitempty"`
-	Stage   string   `json:"stage,omitempty"`
-	Kind    string   `json:"kind,omitempty"`
-	Repo    string   `json:"repo,omitempty"`
-	Number  int      `json:"number,omitempty"`
-	Title   string   `json:"title,omitempty"`
-	URL     string   `json:"url,omitempty"`
-	Labels  []string `json:"labels,omitempty"`
-	Prompt  string   `json:"prompt,omitempty"`
+	TaskGen uint64 `json:"task_gen,omitempty"`
+	Stage   string `json:"stage,omitempty"`
+	Kind    string `json:"kind,omitempty"`
+	Repo    string `json:"repo,omitempty"`
+	Number  int    `json:"number,omitempty"`
+	Title   string `json:"title,omitempty"`
+	URL     string `json:"url,omitempty"`
+	// Forge and Host identify the forge an assignment's Repo belongs to, in the
+	// same terms as the repository-scope ids this hub advertises
+	// (forge/host/owner/name). Additive and omitempty.
+	Forge  string   `json:"forge,omitempty"`
+	Host   string   `json:"host,omitempty"`
+	Labels []string `json:"labels,omitempty"`
+	Prompt string   `json:"prompt,omitempty"`
 	// Requirements carries the hub-derived task-side capability requirements
 	// used by #2547 routing. Additive and advisory: older relays ignore it, and
 	// enforcement already happened server-side before assignment.

@@ -72,6 +72,9 @@ func TestFixQueueNudgeOnlinePreemptAndSpawn(t *testing.T) {
 	if m.Type != "task_assign" || m.Kind != taskKindFixPR || m.Priority != taskPriorityInterrupt || m.Mode != "preempt" {
 		t.Fatalf("task_assign shape: %+v", m)
 	}
+	if m.Forge != repoScopeDefaultForge || m.Host == "" {
+		t.Fatalf("task_assign must carry forge/host: %+v", m)
+	}
 	if len(m.FixPRs) != 1 || m.FixPRs[0].Number != 1 || m.FixPRs[0].HeadSHA != "abc123" || m.FixPRs[0].FailingChecks[0] != "build" {
 		t.Fatalf("payload: %+v", m.FixPRs)
 	}

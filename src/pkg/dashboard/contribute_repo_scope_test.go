@@ -88,7 +88,7 @@ func TestRepoScope_SelectedLowerPriorityWorkIsServed(t *testing.T) {
 	conn := lockScopeConn(hub, "alice", "c-alice")
 	ackScope(conn, 1, repoScopeModeSelected, scopeIDTestsuite)
 	msg := hub.selectTask(conn)
-	if msg == nil || msg.Type != "task_assign" || msg.Repo != "myorg/testsuite" || msg.Number != 866 {
+	if msg == nil || msg.Type != "task_assign" || msg.Repo != "myorg/testsuite" || msg.Number != 866 || msg.Forge != repoScopeDefaultForge || msg.Host == "" {
 		t.Fatalf("expected the selected testsuite#866, got %+v", msg)
 	}
 
