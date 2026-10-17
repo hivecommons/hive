@@ -1,0 +1,1 @@
+- Hive activity monitor: the toolbar selects (Repo, Since, Author, Sort, Per page) no longer lose their top border in Safari, whose native menulist painted taller than its layout box and was clipped by the section; the pill now draws its own chevron and renders identically in every browser.
