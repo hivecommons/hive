@@ -195,6 +195,7 @@ func TestReleaseApprovalAcceptsNamedDefaultBranchAncestor(t *testing.T) {
 	fx := &releaseApprovalFixture{head: strings.Repeat("b", 40), compareStatus: "ahead"}
 	server := newReleaseApprovalServer(t, issue, fx, "write")
 	client := newTestClient(t, server, "org", []string{"repo"})
+	client.SetAppBotLogin("hive[bot]")
 
 	result, err := client.SweepIssueUnparkCommands(context.Background(), releaseApprovalOptions())
 	if err != nil {
@@ -223,6 +224,7 @@ func TestReleaseApprovalPreconditionRefusalsLeaveIssueParked(t *testing.T) {
 			fx := tc.fx
 			server := newReleaseApprovalServer(t, issue, &fx, "write")
 			client := newTestClient(t, server, "org", []string{"repo"})
+			client.SetAppBotLogin("hive[bot]")
 
 			result, err := client.SweepIssueUnparkCommands(context.Background(), releaseApprovalOptions())
 			if err != nil {

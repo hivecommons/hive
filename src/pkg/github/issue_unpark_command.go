@@ -363,7 +363,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 	}
 
 	if releasePolicy.enabled && command.Kind == unparkCommandApprove {
-		menu := c.unparkMenuFor(issue.GetBody(), comments)
+		menu := c.unparkMenuFor(issue.GetBody(), issue.GetUser(), comments)
 		if menu.releaseStep != nil {
 			return c.approveIssueRelease(ctx, displayRepo, owner, repo, issue, candidate, actor, menu.releaseStep, releasePolicy, result, audit)
 		}
