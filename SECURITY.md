@@ -36,6 +36,15 @@ Please include, as much as you can:
   remediate before any public disclosure.
 - **Credit:** with your permission, we are happy to credit you for the report.
 
+## Automated scanning
+
+Hive is enrolled in [Anthropic's OSS Scanner](https://red.anthropic.com/oss-scanner/),
+which builds the `v5` branch from [`.oss-scanner/Dockerfile`](.oss-scanner/Dockerfile),
+reads [`.oss-scanner/threat_model.md`](.oss-scanner/threat_model.md), and
+emails model-generated findings privately to the maintainers. Those reports
+are triaged through the same process as any other private report. Private
+vulnerability reporting (above) remains the public channel for everyone else.
+
 ## Scope
 
 Reports about the code in this repository are in scope. When in doubt, report it
