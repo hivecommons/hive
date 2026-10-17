@@ -1159,7 +1159,7 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 		if _, hasNew := existing[strings.ToLower(stage.Label())]; !hadOld || hasNew {
 			continue
 		}
-		renamed, _, err := c.gh.Issues.EditLabel(ctx, owner, repo, cur.GetName(), &gh.Label{Name: gh.Ptr(stage.Label()), Color: gh.Ptr(stagelabels.StageColor), Description: gh.Ptr(stage.Description())})
+		renamed, _, err := c.gh.Issues.EditLabel(ctx, owner, repo, cur.GetName(), &gh.Label{Name: gh.Ptr(stage.Label()), Color: gh.Ptr(stagelabels.StageColor), Description: gh.Ptr(stagelabels.ClampLabelDescription(stage.Description()))})
 		if err != nil {
 			return fmt.Errorf("renaming label %s to %s in %s: %w", old, stage.Label(), full, err)
 		}
@@ -1173,12 +1173,12 @@ func (c *Engine) ensureStageLabels(ctx context.Context, owner, repo string, trac
 		cur, ok := existing[strings.ToLower(def.Name)]
 		switch {
 		case !ok:
-			_, _, err := c.gh.Issues.CreateLabel(ctx, owner, repo, &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(def.Description)})
+			_, _, err := c.gh.Issues.CreateLabel(ctx, owner, repo, &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(stagelabels.ClampLabelDescription(def.Description))})
 			if err != nil && !isGitHubStatus(err, http.StatusUnprocessableEntity) {
 				return fmt.Errorf("creating label %s in %s: %w", def.Name, full, err)
 			}
 		case !strings.EqualFold(cur.GetColor(), def.Color):
-			_, _, err := c.gh.Issues.EditLabel(ctx, owner, repo, cur.GetName(), &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(def.Description)})
+			_, _, err := c.gh.Issues.EditLabel(ctx, owner, repo, cur.GetName(), &gh.Label{Name: gh.Ptr(def.Name), Color: gh.Ptr(def.Color), Description: gh.Ptr(stagelabels.ClampLabelDescription(def.Description))})
 			if err != nil {
 				return fmt.Errorf("recolouring label %s in %s: %w", def.Name, full, err)
 			}

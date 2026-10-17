@@ -796,3 +796,29 @@ func TestStoreAdoptInPlaceAndYield(t *testing.T) {
 		t.Fatalf("cleared: %+v", r)
 	}
 }
+
+// GitHub rejects label descriptions over 100 characters with 422; one such
+// label aborted ensureStageLabels for every repo, so nothing downstream of
+// it (adoption included) ran. Every provisioned description must fit.
+func TestLabelDescriptionsFitGitHubLimit(t *testing.T) {
+	for _, def := range AllLabelDefs() {
+		if n := len([]rune(def.Description)); n > MaxLabelDescription {
+			t.Errorf("%s: description is %d runes, max %d: %q", def.Name, n, MaxLabelDescription, def.Description)
+		}
+	}
+	for old, stage := range Renames {
+		if n := len([]rune(stage.Description())); n > MaxLabelDescription {
+			t.Errorf("rename %s → %s: description is %d runes, max %d", old, stage.Label(), n, MaxLabelDescription)
+		}
+	}
+}
+
+func TestClampLabelDescription(t *testing.T) {
+	long := strings.Repeat("x", MaxLabelDescription) + " tail"
+	if got := ClampLabelDescription(long); len([]rune(got)) != MaxLabelDescription {
+		t.Fatalf("clamp: got %d runes", len([]rune(got)))
+	}
+	if got := ClampLabelDescription("short"); got != "short" {
+		t.Fatalf("clamp changed a short description: %q", got)
+	}
+}

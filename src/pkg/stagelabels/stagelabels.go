@@ -212,10 +212,10 @@ var Table = []Definition{
 	{Stage: Reviewed, Number: 60, Slug: "reviewed", Description: "Review swarm verdict approve; a gate is still pending (CI running, soak not started)", Dwell: 30 * time.Minute, PR: true},
 	{Stage: Fixing, Number: 70, Slug: "fixing", Description: "Hive-authored PR: CI red, changes requested or needs rebase; a hive agent is fixing it", Dwell: 2 * time.Hour, PR: true},
 	{Stage: ReturnedToContributor, Number: 72, Slug: "returned-to-contributor", Description: "Contributor PR: CI red, changes requested or conflicting; diagnosis posted, author must act", Dwell: 24 * time.Hour, PR: true},
-	{Stage: AdoptedByHive, Number: 74, Slug: "adopted-by-hive", Description: "Contributor PR adopted: author unavailable after red CI; the hive is finishing it via the takeover path", Dwell: 3 * time.Hour, PR: true},
+	{Stage: AdoptedByHive, Number: 74, Slug: "adopted-by-hive", Description: "Contributor PR adopted: author unavailable after red CI; the hive is finishing it (takeover path)", Dwell: 3 * time.Hour, PR: true},
 	{Stage: AwaitingMergeAdmission, Number: 80, Slug: "awaiting-merge-admission", Description: "CI green, verdict approve, no modifiers; the automerge lane has not admitted it yet", Dwell: 30 * time.Minute, StallNote: true, PR: true},
-	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed before this can move: sentinel alert, hold / do-not-merge / needs-decision label, a human-only lane rule (see the hive's stage comment), or an issue parked by needs-human / needs-direction / needs-decision / needs-spec", Issue: true, PR: true},
-	{Stage: ReadyForHumanMerge, Number: 90, Slug: "ready-for-human-merge", Description: "Hive would merge this itself but trust/role blocks it; a maintainer's /lgtm /approve is the only missing step (see role/*, author/* and hold labels)", PR: true},
+	{Stage: NeedsDecision, Number: 85, Slug: "needs-decision", Description: "A human decision is owed: sentinel alert, hold/needs-decision label, human-only rule or parked issue", Issue: true, PR: true},
+	{Stage: ReadyForHumanMerge, Number: 90, Slug: "ready-for-human-merge", Description: "Hive would merge this but trust/role blocks it; a maintainer's /lgtm /approve is all that is missing", PR: true},
 	{Stage: MergeQueue, Number: MergeQueueNumber, Slug: "merge-queue", Description: "Lane admitted: soaking, merge-eligible or waiting for tide / the merge window", Dwell: 3 * time.Hour, PR: true},
 }
 
@@ -227,7 +227,7 @@ const MergeQueueNumber = 100
 const NumberWidth = 3
 
 var healthDefs = []LabelDef{
-	{Name: StalledLabel, Color: StalledColor, Description: "No activity (head, comment, review, CI, label) for longer than the stage expects; nobody is working it"},
+	{Name: StalledLabel, Color: StalledColor, Description: "No activity (head, comment, review, CI, label) longer than the stage expects; nobody is working it"},
 }
 
 func definition(s Stage) (Definition, bool) {
@@ -439,6 +439,20 @@ func authorKindDefs(names authorkind.Names) []LabelDef {
 		{Name: n.Clanker, Color: AuthorClankerColor, Description: "A contributor's own hive authored this PR under their login"},
 		{Name: n.Hive, Color: AuthorHiveColor, Description: "This repository's own hive (the App or one of its agent lanes) authored this PR"},
 	}
+}
+
+// MaxLabelDescription is GitHub's hard cap on a label description; a longer
+// one makes label create/edit fail with 422, which aborted the whole stage
+// reconcile (and with it adoption) on every repo after the 085/090 rewording.
+const MaxLabelDescription = 100
+
+// ClampLabelDescription trims d to MaxLabelDescription runes.
+func ClampLabelDescription(d string) string {
+	r := []rune(d)
+	if len(r) <= MaxLabelDescription {
+		return d
+	}
+	return strings.TrimSpace(string(r[:MaxLabelDescription]))
 }
 
 // LabelDef is what the ensure-label step needs to create or recolour a label.
