@@ -131,7 +131,7 @@ writes no entry.
 | Shared-CI rerun (`rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment) | `shared_ci_rerun.go` | yes (`shared-ci-rerun`) | yes |
 | Duplicate-PR sweep suggestions | `duplicate_sweep.go` | yes (`duplicate-sweep-suggested`) | yes (target = surviving PR) |
 | Hold-label migration (one-time) | `hive_hold_migration.go` | yes (`hold_migration_label_added`, one per item labeled; the migration report file is still written) | yes |
-| Origin-label migration (one-time, `from-review` → `origin/review`) | `origin_labels.go` | yes (`origin_label_migrated`, one per item swapped, with `from`, `to`; report file `/data/origin-label-migration.json`) | yes |
+| Origin-label migration (one-time, `from-review` / `origin/review` → `origin/reviewer`; also deletes the retired `origin/review` label definition from each repo once its open items are swapped) | `origin_labels.go` | yes (`origin_label_migrated`, one per item swapped, with `from`, `to`; report file `/data/origin-label-migration-v2.json`) | yes |
 | `hive/<hive-id>` label retire sweep (every boot until clean, #12539) | `hive_id_label_retire.go` | yes (`hive_id_label_retired`, one per open item stripped, with `label`, `origin_source`; report file `/data/hive-id-label-retire-<hive-id>.json`) | yes |
 | Signed-commit reconcile: branch rewrite | `pr_signed_reconcile.go` | yes (`signed_commit_reauthored`, with `branch`, `base`, `commit`, `replaced_commits`) | yes / PR number |
 | Signed-commit reconcile: "cannot sign" comment | `pr_signed_reconcile.go` | yes (`signed_commit_skip_noted`, with `reason`) | yes / PR number |
@@ -146,7 +146,7 @@ writes no entry.
 
 The open-time signed rewrite in `pr_request_signed.go` is part of `open_pr`
 and is covered by that operation's `agent_pr_created` entry. Creating a
-missing label on a repository (the hold label, `origin/review`) is a side
+missing label on a repository (the hold label, `origin/reviewer`) is a side
 effect of the labeled write and is not audited on its own.
 
 ## Lane allowlist

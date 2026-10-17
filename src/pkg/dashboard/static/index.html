@@ -46910,7 +46910,7 @@ function burnAreaChart() {
       const backlogBelow = sev.backlog_below !== false;
       const dests = reviewBacklogDestinationsFor(ws);
       const dest = dests.some(o => o.value === bl.destination) ? bl.destination : 'github_issue';
-      const labels = Array.isArray(bl.labels) ? bl.labels : ['from-review'];
+      const labels = Array.isArray(bl.labels) ? bl.labels : ['origin/reviewer'];
       const presetBtns = REVIEW_SEVERITY_PRESETS.map(p => `<button type="button" class="hv-btn ${blockAt === p.blockAt ? 'btn-primary' : 'btn-secondary'} btn-sm btn-small" data-action="applyReviewSeverityPreset" data-arg0="${p.blockAt}" aria-pressed="${blockAt === p.blockAt ? 'true' : 'false'}"${dis}>${esc(p.label)}</button>`).join(' ');
       const toggle = (key, on, label, tip) => `<div class="config-toggle mt-3">
               <div class="config-toggle-switch ${on ? 'on' : ''}${canEdit ? '' : ' disabled'}" data-action="toggleReviewSeverityFlag" data-arg0="${key}" data-arg-types="s" role="switch" aria-checked="${on ? 'true' : 'false'}"></div>
@@ -46946,8 +46946,8 @@ function burnAreaChart() {
           </div>
           ${destFields}
           <div class="config-field mt-3">
-            <label>Backlog labels ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Backlog labels', `review.backlog.labels: comma-separated labels on every backlog item. Default from-review.`)}</label>
-            <input type="text" id="review-backlog-labels" value="${esc(labels.join(', '))}" placeholder="from-review" data-change-action="markDirtyReviewBacklogLabels" data-arg-types="v"${dis}>
+            <label>Backlog labels ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Backlog labels', `review.backlog.labels: comma-separated labels on every backlog item. Default origin/reviewer (the retired from-review and origin/review are accepted and mapped to it).`)}</label>
+            <input type="text" id="review-backlog-labels" value="${esc(labels.join(', '))}" placeholder="origin/reviewer" data-change-action="markDirtyReviewBacklogLabels" data-arg-types="v"${dis}>
           </div>
           <div class="config-field mt-3">
             <label>Max backlog items per PR per day ${settingHelpMark('review-swarm', 'blocking-line-reviewseverity-reviewbacklog', 'Max backlog items per PR per day', `review.backlog.max_per_pr_per_day: cap on items filed from one PR in a day. 0 or blank uses the default of 10.`)}</label>

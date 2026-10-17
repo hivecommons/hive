@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,23 +26,38 @@ import (
 // origin/* label as a gate; the family is informational and shares one
 // neutral colour so operators recognise it at a glance.
 const (
-	OriginLabelPrefix = config.OriginLabelPrefix
-	OriginReviewLabel = config.OriginReviewLabel
-	// LegacyFromReviewLabel is the retired name of OriginReviewLabel.
+	OriginLabelPrefix   = config.OriginLabelPrefix
+	OriginReviewerLabel = config.OriginReviewerLabel
+	// LegacyOriginReviewLabel is the retired first origin/* spelling of
+	// OriginReviewerLabel; its repo definition is deleted once open items
+	// have been migrated.
+	LegacyOriginReviewLabel = config.LegacyOriginReviewLabel
+	// LegacyFromReviewLabel is the retired pre-origin/* name of
+	// OriginReviewerLabel.
 	LegacyFromReviewLabel = config.LegacyReviewBacklogLabel
 	// OriginLabelColor is the shared colour of every origin/* label; it
 	// matches the purple from-review used before the rename.
 	OriginLabelColor = "8250df"
 
-	OriginLabelMigrationID       = "origin-provenance-labels-v1"
-	originLabelMigrationFileStem = "origin-label-migration"
+	// OriginLabelMigrationID names the current swap. v1 moved from-review →
+	// origin/review; v2 moves both retired names → origin/reviewer. The
+	// marker and report file names carry the version so a hive that already
+	// ran v1 runs v2 exactly once.
+	OriginLabelMigrationID       = "origin-provenance-labels-v2"
+	originLabelMigrationFileStem = "origin-label-migration-v2"
 )
+
+// retiredOriginLabelDefinitions lists retired origin/* names whose repo
+// label definition the migration deletes after swapping open items. The
+// pre-origin/* from-review is deliberately not listed: it predates the
+// family and is left defined so closed items keep their history.
+var retiredOriginLabelDefinitions = []string{LegacyOriginReviewLabel}
 
 // originLabelDescriptions documents the known origin/* sources. Unknown
 // sources still get the shared colour and a generic description, so a
 // future filer only has to pick a name.
 var originLabelDescriptions = map[string]string{
-	OriginReviewLabel: "Filed by Hive from a review-swarm backlog finding (provenance only, not a routing or hold signal)",
+	OriginReviewerLabel: "Filed by the Hive reviewer swarm from a backlog finding (provenance only, not a routing or hold signal)",
 }
 
 // IsOriginLabel reports whether name belongs to the origin/* family.
@@ -49,8 +66,8 @@ func IsOriginLabel(name string) bool {
 	return strings.HasPrefix(name, OriginLabelPrefix) && len(name) > len(OriginLabelPrefix)
 }
 
-// CanonicalOriginLabel maps a retired provenance label (from-review) to its
-// origin/* replacement; see config.CanonicalOriginLabel.
+// CanonicalOriginLabel maps a retired provenance label (from-review,
+// origin/review) to its origin/* replacement; see config.CanonicalOriginLabel.
 func CanonicalOriginLabel(name string) (string, bool) {
 	return config.CanonicalOriginLabel(name)
 }
@@ -87,6 +104,10 @@ func (c *Client) ensureOriginLabel(ctx context.Context, owner, repo, name string
 	if !ok {
 		return fmt.Errorf("%q is not an %s label", name, OriginLabelPrefix)
 	}
+	// Never recreate a retired spelling the migration has deleted.
+	if canonical, renamed := CanonicalOriginLabel(name); renamed {
+		return fmt.Errorf("%q is retired; use %s", name, canonical)
+	}
 	existing, _, err := c.client.Issues.GetLabel(ctx, owner, repo, name)
 	if err == nil {
 		if strings.EqualFold(strings.TrimSpace(existing.GetColor()), def.color) {
@@ -113,8 +134,8 @@ func (c *Client) ensureOriginLabel(ctx context.Context, owner, repo, name string
 	return err
 }
 
-// OriginLabelMigrationOptions configures the one-time from-review →
-// origin/review swap on open items.
+// OriginLabelMigrationOptions configures the one-time from-review /
+// origin/review → origin/reviewer swap on open items.
 type OriginLabelMigrationOptions struct {
 	DataDir    string
 	MarkerPath string
@@ -130,7 +151,10 @@ type OriginLabelMigrationReport struct {
 	ReportPath  string                     `json:"report_path"`
 	Renames     map[string]string          `json:"renames"`
 	Migrated    []OriginLabelMigrationItem `json:"migrated"`
-	Errors      []string                   `json:"errors,omitempty"`
+	// DefinitionsDeleted lists "<repo>:<label>" for each retired origin/*
+	// label definition removed from a repo after its open items were swapped.
+	DefinitionsDeleted []string `json:"definitions_deleted,omitempty"`
+	Errors             []string `json:"errors,omitempty"`
 }
 
 // OriginLabelMigrationItem is one open issue or PR whose label was swapped.
@@ -147,10 +171,13 @@ type OriginLabelMigrationItem struct {
 
 // MigrateOriginLabels swaps retired provenance labels for their origin/*
 // replacement on every open item in the hive's repos, exactly once per data
-// dir (a marker file records completion). The new label is ensured with the
-// shared family colour before it is added; the old label is removed from the
-// item but left defined on the repo so closed items keep their history. A
-// nil report with nil error means the migration already ran.
+// dir (a versioned marker file records completion, so a hive that ran the v1
+// from-review swap still runs this one). The new label is ensured with the
+// shared family colour before it is added and the old label is removed from
+// the item. Retired origin/* definitions (origin/review) are then deleted
+// from each repo whose items all migrated; from-review is left defined so
+// closed items keep their history. A nil report with nil error means the
+// migration already ran.
 func (c *Client) MigrateOriginLabels(ctx context.Context, opts OriginLabelMigrationOptions) (*OriginLabelMigrationReport, error) {
 	if c == nil || c.client == nil {
 		return nil, ErrNoGitHubClient
@@ -186,19 +213,45 @@ func (c *Client) MigrateOriginLabels(ctx context.Context, opts OriginLabelMigrat
 		Renames:     config.OriginLabelRenames,
 	}
 	ensuredRepos := map[string]bool{}
-	for oldLabel, newLabel := range config.OriginLabelRenames {
+	oldLabels := make([]string, 0, len(config.OriginLabelRenames))
+	for oldLabel := range config.OriginLabelRenames {
+		oldLabels = append(oldLabels, oldLabel)
+	}
+	sort.Strings(oldLabels)
+	for _, oldLabel := range oldLabels {
+		newLabel := config.OriginLabelRenames[oldLabel]
 		items, err := c.openItemsWithLabel(ctx, oldLabel)
 		if err != nil {
 			report.Errors = append(report.Errors, err.Error())
 			continue
 		}
+		failedRepos := map[string]bool{}
 		for _, item := range items {
 			migrated := OriginLabelMigrationItem{Repo: item.Repo, Number: item.Number, Type: item.Type, From: oldLabel, To: newLabel}
 			if err := c.migrateOriginLabelOnItem(ctx, item, oldLabel, newLabel, ensuredRepos, &migrated); err != nil {
+				failedRepos[item.Repo] = true
 				report.Errors = append(report.Errors, err.Error())
 				continue
 			}
 			report.Migrated = append(report.Migrated, migrated)
+		}
+		if !slices.Contains(retiredOriginLabelDefinitions, oldLabel) {
+			continue
+		}
+		for _, repo := range c.getRepos() {
+			owner, repoName := c.splitRepo(repo)
+			fullRepo := owner + "/" + repoName
+			if failedRepos[fullRepo] {
+				continue
+			}
+			deleted, err := c.deleteLabelDefinition(ctx, owner, repoName, oldLabel)
+			if err != nil {
+				report.Errors = append(report.Errors, fmt.Sprintf("deleting label %s in %s: %v", oldLabel, fullRepo, err))
+				continue
+			}
+			if deleted {
+				report.DefinitionsDeleted = append(report.DefinitionsDeleted, fullRepo+":"+oldLabel)
+			}
 		}
 	}
 	if err := writeOriginLabelMigrationReport(reportPath, report); err != nil {
@@ -215,7 +268,7 @@ func (c *Client) MigrateOriginLabels(ctx context.Context, opts OriginLabelMigrat
 	if err := os.WriteFile(markerPath, []byte(report.GeneratedAt+"\n"), 0o600); err != nil {
 		return report, err
 	}
-	logger.Info("origin label migration complete", "migrated", len(report.Migrated), "report", reportPath)
+	logger.Info("origin label migration complete", "migrated", len(report.Migrated), "definitions_deleted", len(report.DefinitionsDeleted), "report", reportPath)
 	return report, nil
 }
 
