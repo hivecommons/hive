@@ -124,6 +124,7 @@ type reviewEvidenceUpdate struct {
 	verdicts []evidence.Verdict
 	posted   []evidence.PostedReview
 	sentinel []evidence.SentinelFinding
+	ci       *evidence.CI
 }
 
 // recordReviewEvidence adds what the relay just recorded to the evidence
@@ -292,6 +293,11 @@ func (c *Client) upsertReviewEvidence(repo string, number int, head string, u re
 			b.Sentinel = append(b.Sentinel, f)
 			changed = true
 		}
+	}
+	if u.ci != nil && b.Merge == nil &&
+		(b.CI.CapturedAt.IsZero() || b.CI.Status != u.ci.Status || !sameEvidenceChecks(b.CI.Checks, u.ci.Checks)) {
+		b.CI = *u.ci
+		changed = true
 	}
 	if !changed {
 		return

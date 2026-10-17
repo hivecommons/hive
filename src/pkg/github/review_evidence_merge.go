@@ -174,13 +174,13 @@ func (c *Client) completeReviewEvidenceMerge(repo string, number int, head strin
 	return b
 }
 
-// recordReviewEvidenceCI stores the CI conclusion on the head's existing
-// bundle when merge eligibility is evaluated, so a bundle carries a captured
-// verdict even when the merge-time capture fails. It never starts a bundle,
-// never touches a merged one, writes only when the checks or status changed
-// (the capture time of an unchanged verdict stays put, so no hash churn), and
-// logs and swallows every failure: it must not affect a merge decision.
-func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status string, runs []*gh.CheckRun) {
+// recordReviewEvidenceCI stores the CI conclusion when merge eligibility is
+// evaluated, starting the head's bundle from pr when review has not done so
+// yet. It never touches a merged bundle, writes only when the checks or status
+// changed (the capture time of an unchanged verdict stays put, so no hash
+// churn), and logs and swallows every failure: it must not affect a merge
+// decision.
+func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status string, pr *gh.PullRequest, runs []*gh.CheckRun) {
 	if c == nil || head == "" || number <= 0 || len(runs) == 0 {
 		return
 	}
@@ -192,39 +192,14 @@ func (c *Client) recordReviewEvidenceCI(repo string, number int, head, status st
 	if status != "" {
 		ci.Status = status
 	}
-
-	reviewEvidenceMu.Lock()
-	defer reviewEvidenceMu.Unlock()
-	path := ReviewEvidencePath("", repo, number, head)
-	b, err := LoadReviewEvidence(path)
-	if err != nil || b.Merge != nil {
-		return
-	}
-	if !b.CI.CapturedAt.IsZero() && b.CI.Status == ci.Status && sameEvidenceChecks(b.CI.Checks, ci.Checks) {
-		return
-	}
-	b.CI = ci
-	b.UpdatedAt = ci.CapturedAt
-	if err := b.Validate(); err != nil {
-		c.logger.Warn("review evidence: CI snapshot invalid, not written",
-			slog.String("path", path), slog.String("error", err.Error()))
-		return
-	}
 	key, err := evidence.LoadSigningKey(settings.SigningKeyFile)
 	if err != nil {
 		c.logger.Warn("review evidence: signing key unusable, writing CI snapshot unsigned",
-			slog.String("path", path), slog.String("error", err.Error()))
+			slog.String("error", err.Error()))
 		key = nil
 	}
-	if err := evidence.Seal(b, key); err != nil {
-		c.logger.Warn("review evidence: could not seal CI snapshot",
-			slog.String("path", path), slog.String("error", err.Error()))
-		return
-	}
-	if err := writeReviewEvidence(path, b); err != nil {
-		c.logger.Warn("review evidence: could not write CI snapshot",
-			slog.String("path", path), slog.String("error", err.Error()))
-	}
+	c.upsertReviewEvidence(repo, number, head, reviewEvidenceUpdate{ci: &ci}, settings.Policy, key,
+		func() *gh.PullRequest { return pr }, ci.CapturedAt)
 }
 
 // sameEvidenceChecks reports whether two check lists carry the same verdicts.

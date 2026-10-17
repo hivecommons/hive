@@ -1,0 +1,1 @@
+- Review evidence now preserves the merge-eligibility CI snapshot even when it arrives before the review bundle ([#12594](https://github.com/hivecommons/hive/issues/12594)).
