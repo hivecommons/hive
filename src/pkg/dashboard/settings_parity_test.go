@@ -49,7 +49,8 @@ func dashboardSettingsCorpus(t *testing.T) string {
 	var b strings.Builder
 	paths := []string{filepath.Join("static", "index.html")}
 	if err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".go") {
+		// This file names control-only leaves literally; it is not UI coverage.
+		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".go") && filepath.Base(path) != "settings_parity_test.go" {
 			paths = append(paths, path)
 		}
 		return err
