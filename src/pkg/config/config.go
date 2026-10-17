@@ -2233,6 +2233,11 @@ type GovernorConfig struct {
 	// unset and resolves to DefaultCoverageTarget — see EffectiveCoverageTarget.
 	CoverageTarget int `yaml:"coverage_target,omitempty" json:"coverage_target,omitempty"`
 
+	// FirstTimerWelcome is the one-time comment the hive leaves on a
+	// first-time contributor's PR inviting them to run their own hive
+	// (see pkg/config/first_timer_welcome.go). Default ON.
+	FirstTimerWelcome FirstTimerWelcomeConfig `yaml:"first_timer_welcome,omitempty" json:"first_timer_welcome,omitempty"`
+
 	// CadenceOwners records WHO last set each governor mode cadence, keyed
 	// mode → agent → owner (FieldOwnerOperator). It is the cadence analogue of
 	// AgentConfig.ModelOwner/BackendOwner (#5558): a pack could never stomp an

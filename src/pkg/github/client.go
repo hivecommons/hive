@@ -674,20 +674,28 @@ type IssueClaimContext struct {
 }
 
 type PullRequest struct {
-	ReporterTrustReason string    `json:"reporter_trust_reason,omitempty"`
-	Repo                string    `json:"repo"`
-	Number              int       `json:"number"`
-	Title               string    `json:"title"`
-	Author              string    `json:"author"`
-	AppAuthored         bool      `json:"app_authored,omitempty"`
-	Labels              []string  `json:"labels"`
-	Draft               bool      `json:"draft"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
-	ClosedAt            time.Time `json:"closed_at,omitempty"`
-	MergedAt            time.Time `json:"merged_at,omitempty"`
-	State               string    `json:"state,omitempty"`
-	URL                 string    `json:"url"`
+	ReporterTrustReason string `json:"reporter_trust_reason,omitempty"`
+	Repo                string `json:"repo"`
+	Number              int    `json:"number"`
+	Title               string `json:"title"`
+	Author              string `json:"author"`
+	AppAuthored         bool   `json:"app_authored,omitempty"`
+	// AuthorAssociation is GitHub's author_association for the PR author
+	// (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR,
+	// FIRST_TIMER, NONE), read from the list payload so the first-timer
+	// welcome (pkg/firsttimer) costs no per-PR call.
+	AuthorAssociation string `json:"author_association,omitempty"`
+	// AuthorNonHuman is true when the author is a Bot account, the App's own
+	// login or one of this hive's identities (the negation of isHumanAuthor).
+	AuthorNonHuman bool      `json:"author_non_human,omitempty"`
+	Labels         []string  `json:"labels"`
+	Draft          bool      `json:"draft"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	ClosedAt       time.Time `json:"closed_at,omitempty"`
+	MergedAt       time.Time `json:"merged_at,omitempty"`
+	State          string    `json:"state,omitempty"`
+	URL            string    `json:"url"`
 	// HiveAttributed is true when the PR body carries the `— hive:`
 	// attribution trailer (HasAttributionTrailer). It is how a PR a hive agent
 	// opened on a PERSON's credentials — a contributor relay, or an operator
@@ -1697,18 +1705,20 @@ func (c *Client) fetchPRs(ctx context.Context, repo string, clankerBudget *repor
 		reqLogins, reqTeams := prRequestedReviews(pr)
 
 		actionable = append(actionable, PullRequest{
-			Repo:        repo,
-			Number:      pr.GetNumber(),
-			Title:       pr.GetTitle(),
-			Author:      author,
-			AppAuthored: strings.EqualFold(author, c.appBotLogin) && c.appBotLogin != "",
-			Labels:      labels,
-			Draft:       pr.GetDraft(),
-			CreatedAt:   pr.GetCreatedAt().Time,
-			UpdatedAt:   pr.GetUpdatedAt().Time,
-			State:       pr.GetState(),
-			URL:         pr.GetHTMLURL(),
-			ReviewClass: ClassifyReviewClass(pr.GetTitle(), labels),
+			Repo:              repo,
+			Number:            pr.GetNumber(),
+			Title:             pr.GetTitle(),
+			Author:            author,
+			AppAuthored:       strings.EqualFold(author, c.appBotLogin) && c.appBotLogin != "",
+			AuthorAssociation: pr.GetAuthorAssociation(),
+			AuthorNonHuman:    !c.isHumanAuthor(pr.GetUser()),
+			Labels:            labels,
+			Draft:             pr.GetDraft(),
+			CreatedAt:         pr.GetCreatedAt().Time,
+			UpdatedAt:         pr.GetUpdatedAt().Time,
+			State:             pr.GetState(),
+			URL:               pr.GetHTMLURL(),
+			ReviewClass:       ClassifyReviewClass(pr.GetTitle(), labels),
 			// The list payload carries the body, so the hive-mediated test
 			// costs no extra call (hivecommons/hive#7638).
 			HiveAttributed: hasAttr,

@@ -395,6 +395,15 @@ governor:
   conserve_interval_multiplier: 2         # Eval interval multiplier in API budget conserve mode
   optional_sweep_every_n_cycles: 1        # Run optional sweeps every Nth normal cycle (1 = every cycle)
 
+  # First-time contributor welcome (see docs/good-first-issue.md#welcoming-first-time-contributors).
+  # When a human whose GitHub author_association is FIRST_TIME_CONTRIBUTOR /
+  # FIRST_TIMER opens a PR, post one comment (per author per repo, marker
+  # <!-- hive:first-timer-welcome -->) inviting them to run their own hive.
+  # Needs dashboard.public_url (or a hub-assigned dashboard URL).
+  # first_timer_welcome:
+  #   enabled: true           # default; false opts out
+  #   template_path: ""       # optional text/template file over firsttimer.Vars; must contain {{ .Marker }}
+
   # Kick prompt list caps (#7368). Every issue list and every PR list in a
   # kick is cut at these counts, with an explicit "… and N more" line, so a
   # large backlog cannot balloon the prompt (302 open PRs once produced a

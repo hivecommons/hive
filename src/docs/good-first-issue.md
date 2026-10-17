@@ -195,6 +195,22 @@ the next pass; `exclude_labels` and `repos` are YAML-only.
 | `docs_url` | hive's `src/docs` on `v5` | Base URL the comment links docs under. |
 | `comment_template` | `gfi.DefaultTemplate` | Override; must contain `{{ .Marker }}`. |
 
+## Welcoming first-time contributors
+
+The same invitation reaches people who skip the issue and open a PR directly. When a pull request is opened by a **human** whose GitHub `author_association` is `FIRST_TIME_CONTRIBUTOR` or `FIRST_TIMER`, the hive leaves one comment (marker `<!-- hive:first-timer-welcome -->`) on it that thanks them and explains they can run their own hive — we call them clankers — and let it do the contribution loop (claim, PR, review fixes, rebase) for them. The comment lists the concrete advantages: a contributor profile (`/contribute/dossier/<login>`) and leaderboard place (`/contribute/leaderboard`) on this hive's dashboard, trust-tier progression (newcomer → contributor → trusted) that unlocks contributor-lane auto-merge, the hive handling failing checks, reviewer asks, rebases and PR adoption while they are offline, and faster turnaround. It links the `/contribute` landing page, [contributor-relay.md](contributor-relay.md) and [contributor-trust-and-roles.md](contributor-trust-and-roles.md).
+
+Rules, mirroring the good-first-issue comment:
+
+- **Once per author per repository.** The sweeper remembers who it welcomed, and after a restart it looks for the marker on the author's earlier PRs in the repo before posting again.
+- **Humans only.** Bots, PRs carrying `author/clanker` or `author/hive`, PRs the hive attributes to itself, drafts and logins already known as relay contributors (or with a trust tier) are skipped.
+- **Silent without a public dashboard URL** — the links need `dashboard.public_url` or a hub-assigned URL.
+- Every post is audited as `first-timer-welcome`.
+
+| Key (`governor.first_timer_welcome.*`) | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Set `false` to opt out. |
+| `template_path` | `firsttimer.DefaultTemplate` | Path to a `text/template` file over `firsttimer.Vars`; must contain `{{ .Marker }}`. |
+
 ## Related
 
 - [Contributor relay](contributor-relay.md) — what a contributor sets up and how claiming works.

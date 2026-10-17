@@ -152,6 +152,8 @@ evidence.complexity.static_analysis # TODO #11854
 github.additional_bot_logins[] # TODO #11854
 good_first_issue.exclude_labels[] # advanced scorer tuning; yaml-only (#12185)
 good_first_issue.repos[] # advanced scorer tuning; yaml-only (#12185)
+governor.first_timer_welcome.enabled # first-time contributor welcome; yaml-only
+governor.first_timer_welcome.template_path # first-time contributor welcome; yaml-only
 governor.backup.key_env # TODO #11854
 governor.backup.key_file # TODO #11854
 governor.backup.key_name # TODO #11854
