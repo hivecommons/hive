@@ -12414,7 +12414,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_PR_COLUMN = 30;
     const STAGE_TRACKER_MERGE_COLUMN = 80;
     // Stages that share a column but light it with their own word.
-    const STAGE_TRACKER_ACTIVE_WORD = { 100: 'Auto merge queue' };
+    const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Auto merge queue', 80: 'Auto merge queue', 100: 'Auto merge queue' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12438,10 +12438,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 70: return 'Fixing review findings' + viaPR;
         case 72: return 'Back with the contributor' + viaPR;
         case 74: return 'Hive took it over' + viaPR;
-        case 80: return 'Waiting for merge admission' + viaPR;
+        case 80: return 'Not yet admitted to auto merge' + viaPR;
         case 85: return 'Needs a decision' + viaPR;
         case 90: return 'Ready for a human merge' + viaPR;
-        case 100: return 'In the merge queue' + viaPR;
+        case 100: return 'Admitted — merging' + viaPR;
         case 110: return 'Merged';
         default: return item.stage_label || 'Tracking';
       }
@@ -12546,6 +12546,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ctx = ctx || {};
       const nowMs = Number(ctx.nowMs) || Date.now();
       const segs = stageTrackerSegments(item, stages);
+      const curStage = Number(item.stage) || 0;
       const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
         .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
       const title = item.title || '';
@@ -12560,7 +12561,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const prCol = STAGE_TRACKER_PATH.map(n => `<li class="ham-seg">${n === STAGE_TRACKER_PR_COLUMN ? prRefs.join('') : ''}</li>`).join('');
       const stripItems = segs.map(sg => {
         const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : ''].filter(Boolean).join(' ');
-        const tip = sg.label + (sg.description ? ' — ' + sg.description : '');
+        let tip = sg.label + (sg.description ? ' — ' + sg.description : '');
+        // The shared Merge gate word hides 080 vs 100; the chevron tooltip carries it.
+        if (sg.state === 'active' && !sg.detour && (curStage === 60 || curStage === 80)) tip = sg.label + ' — not yet admitted' + (item.caption || item.reason ? ' — ' + (item.caption || item.reason) : '');
+        else if (sg.state === 'active' && curStage === 100) tip = sg.label + ' — admitted, merging';
         let inner;
         if (sg.cap) inner = stageTrackerIcon(sg.number, 'ham-ico');
         else if (sg.state === 'active') inner = sg.detour ? `<span class="ham-detour">${esc(sg.detour.text)}</span>` : `<span class="ham-seg-t">${esc(sg.short)}</span>`;

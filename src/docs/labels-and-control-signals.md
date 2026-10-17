@@ -538,7 +538,7 @@ The Governor dialog's Features tab has a "Question Auto-Close" section: a switch
 
 ### Hive activity monitor
 
-The dashboard renders every open issue and PR's stage as one unified tracker strip in the **Hive activity monitor** section (`GET /api/stage-tracker`): `Open → 010 → 020 → 030/040 (PR in progress) → 050 (Review) → 080/100 (Merge gate) → merged`, with 060 shown as 080 lit, 100 lit as "Auto merge queue", 070/072/074 as the lit *Review* step named after the side stage, and 085/090 as the lit *Merge gate* step. An issue row advances with its covering PR, and the PR column of its title line lists each covering PR with an `author/*`-coloured icon. `stage/stalled` and `stage/regressed` appear as a chip and colour the `since` value; the stage store's per-item transition history (last eight hops) is in the row tooltip. See [dashboard.md](dashboard.md#hive-activity-monitor).
+The dashboard renders every open issue and PR's stage as one unified tracker strip in the **Hive activity monitor** section (`GET /api/stage-tracker`): `Open → 010 → 020 → 030/040 (PR in progress) → 050 (Review) → 080/100 (Merge gate) → merged`, with 060/080/100 lit as "Auto merge queue" (tooltip: not yet admitted vs admitted, merging), 070/072/074 as the lit *Review* step named after the side stage, and 085/090 as the lit *Merge gate* step. An issue row advances with its covering PR, and the PR column of its title line lists each covering PR with an `author/*`-coloured icon. `stage/stalled` and `stage/regressed` appear as a chip and colour the `since` value; the stage store's per-item transition history (last eight hops) is in the row tooltip. See [dashboard.md](dashboard.md#hive-activity-monitor).
 
 ## Lifecycle examples
 

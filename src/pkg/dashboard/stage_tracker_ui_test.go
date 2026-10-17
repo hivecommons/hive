@@ -117,9 +117,9 @@ assert.ok(!row.includes('✓'), 'no text check glyphs');
 // Issue whose covering PR is in the merge queue: the issue row rides the PR's stage.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 8, kind: 'issue', url: 'https://github.com/acme/console/issues/8', stage: 100, mirrored: true, linked_pr: 102, caption: 'Covered by PR #102' }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
-assert.ok(tooltip(row).includes('In the merge queue (its PR)') && tooltip(row).includes('Covering PR: #102'), tooltip(row));
+assert.ok(tooltip(row).includes('Admitted — merging (its PR)') && tooltip(row).includes('Covering PR: #102'), tooltip(row));
 assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Auto merge queue</span></li>'), '100 lights the Merge gate column as Auto merge queue');
-assert.ok(strip(row).includes('title="Merge queue'), 'chevron tooltip names the exact stage');
+assert.ok(strip(row).includes('title="Merge queue — admitted, merging"'), 'chevron tooltip carries 100: ' + row);
 assert.ok(text(row).startsWith('hive#102'), text(row));
 assert.ok(tooltip(row).includes('acme/console'), 'repo lives in the tooltip');
 
@@ -137,6 +137,9 @@ assert.ok(tooltip(row).includes('Flags: needs-human, needs-rebase') && tooltip(r
 // PR reviewed (060): Review done, Merge gate lit, no detour.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 107, kind: 'pr', stage: 60 }, stages, ctx);
 assert.deepStrictEqual(segStates(row), [D, D, D, D, D, 'active', 'todo cap']);
+assert.ok(row.includes('aria-current="step"><span class="ham-seg-t">Auto merge queue</span></li>'), '060/080/100 all light Merge gate as Auto merge queue');
+row = stageTrackerRowHtml({ repo: 'acme/console', number: 109, kind: 'pr', stage: 80, caption: 'soak 20m left' }, stages, ctx);
+assert.ok(row.includes('<span class="ham-seg-t">Auto merge queue</span>') && strip(row).includes('title="Awaiting merge admission — not yet admitted — soak 20m left"'), 'chevron tooltip carries 080: ' + row);
 
 // PR regressed from the queue back to review-pending: Review lit, "Sent back" in the tooltip.
 row = stageTrackerRowHtml({ repo: 'acme/console', number: 103, kind: 'pr', stage: 50, modifiers: ['regressed', 'needs-rebase'], history: [{stage:80},{stage:100},{stage:50}] }, stages, ctx);
