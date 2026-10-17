@@ -104,19 +104,26 @@ type StageTrackerItem struct {
 	ClaimantKind string `json:"claimant_kind,omitempty"`
 	LinkedPR     int    `json:"linked_pr,omitempty"`
 	// LinkedPRs lists the open pull requests covering an issue (the one
-	// named in the stage reason first) with the author kind of each, so
-	// the tracker can print "[author icon] #N title" in the PR column.
+	// named in the stage reason first) with everything the tracker needs
+	// to draw each as a sub-row nested under the issue.
 	LinkedPRs []StageTrackerLinkedPR `json:"linked_prs,omitempty"`
-	History   []StageTrackerHop      `json:"history"`
+	// NestedUnder is, on a PR, the issue in the same repo whose row nests
+	// it (0 when the PR has no listed issue and stands on its own).
+	NestedUnder int               `json:"nested_under,omitempty"`
+	History     []StageTrackerHop `json:"history"`
 }
 
-// StageTrackerLinkedPR is one covering PR on an issue row.
+// StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
-	Number     int    `json:"number"`
-	Title      string `json:"title,omitempty"`
-	URL        string `json:"url,omitempty"`
-	AuthorKind string `json:"author_kind,omitempty"`
-	Stage      int    `json:"stage,omitempty"`
+	Number     int        `json:"number"`
+	Title      string     `json:"title,omitempty"`
+	URL        string     `json:"url,omitempty"`
+	Author     string     `json:"author,omitempty"`
+	AuthorKind string     `json:"author_kind,omitempty"`
+	Stage      int        `json:"stage,omitempty"`
+	StageSince *time.Time `json:"stage_since,omitempty"`
+	Caption    string     `json:"caption,omitempty"`
+	Modifiers  []string   `json:"modifiers,omitempty"`
 }
 
 // Stage numbers the tracker lays out by. Pinned to stagelabels.Table in
@@ -676,8 +683,9 @@ func (s *Server) handleStageTracker(w http.ResponseWriter, r *http.Request) {
 }
 
 // stageTrackerResolveLinkedPRs fills each issue's linked PR entries from the
-// PR items in the same response (title, author kind, stage), puts the PR the
-// stage reason names first and drops duplicates.
+// PR items in the same response (title, author, stage, since, modifiers),
+// puts the PR the stage reason names first, drops duplicates and marks each
+// such PR as nested under the lowest-numbered issue that lists it.
 func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 	prs := map[string]*StageTrackerItem{}
 	for i := range items {
@@ -698,9 +706,16 @@ func stageTrackerResolveLinkedPRs(items []StageTrackerItem) {
 			}
 			seen[lp.Number] = true
 			if pr := prs[it.Repo+"#"+strconv.Itoa(lp.Number)]; pr != nil {
-				lp.Title, lp.AuthorKind, lp.Stage = pr.Title, pr.AuthorKind, pr.Stage
+				lp.Title, lp.Author, lp.AuthorKind, lp.Stage = pr.Title, pr.Author, pr.AuthorKind, pr.Stage
+				lp.StageSince, lp.Caption = pr.StageSince, pr.Caption
+				if len(pr.Modifiers) > 0 {
+					lp.Modifiers = append([]string(nil), pr.Modifiers...)
+				}
 				if lp.URL == "" {
 					lp.URL = pr.URL
+				}
+				if pr.NestedUnder == 0 || it.Number < pr.NestedUnder {
+					pr.NestedUnder = it.Number
 				}
 			}
 			out = append(out, lp)

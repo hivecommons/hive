@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -153,7 +154,7 @@ func hasMod(it StageTrackerItem, m string) bool {
 // rows sort by stage (highest first) then newest transition.
 func TestStageTrackerEndpoint(t *testing.T) {
 	now := time.Date(2026, 10, 16, 22, 35, 0, 0, time.UTC)
-	s, _ := stageTrackerFixture(t, now)
+	s, store := stageTrackerFixture(t, now)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/stage-tracker", nil)
 	rr := httptest.NewRecorder()
@@ -161,8 +162,21 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 	}
+	var live StageTrackerResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &live); err != nil {
+		t.Fatal(err)
+	}
+	if len(live.Items) != 7 {
+		t.Fatalf("handler items = %d, want 7", len(live.Items))
+	}
+	// Dwell-based modifiers depend on the clock, so the item assertions use
+	// the fixture's frozen now (round-tripped through JSON like the handler).
 	var resp StageTrackerResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+	raw, err := json.Marshal(s.buildStageTracker(s.status, store, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.HiveID != "hv-test" || len(resp.Stages) != len(stagelabels.Table) || !resp.AuthorKindLabels {
@@ -172,6 +186,18 @@ func TestStageTrackerEndpoint(t *testing.T) {
 		t.Fatalf("items = %d, want 7 (2 issues + 4 open PRs + 1 held PR)", len(resp.Items))
 	}
 
+	// needs-rebase always lands a PR in 070/072; a sample at 050/060 with the
+	// chip would draw a contradictory row.
+	for _, it := range resp.Items {
+		if slices.Contains(it.Modifiers, "needs-rebase") && (it.Stage == trackerNumberReviewPending || it.Stage == trackerNumberReviewed) {
+			t.Fatalf("%s #%d pairs needs-rebase with stage %d", it.Kind, it.Number, it.Stage)
+		}
+		for _, lp := range it.LinkedPRs {
+			if slices.Contains(lp.Modifiers, "needs-rebase") && (lp.Stage == trackerNumberReviewPending || lp.Stage == trackerNumberReviewed) {
+				t.Fatalf("issue #%d linked PR #%d pairs needs-rebase with stage %d", it.Number, lp.Number, lp.Stage)
+			}
+		}
+	}
 	pr101 := trackerItem(t, resp, "pr", 101)
 	if pr101.Stage != 72 || pr101.StageLabel != "stage/072-returned-to-contributor" || pr101.Lane != laneContributor {
 		t.Fatalf("pr101 stage: %+v", pr101)
@@ -221,6 +247,16 @@ func TestStageTrackerEndpoint(t *testing.T) {
 	}
 	if issue7.Caption != "Covered by PR #102 — merge queue on the PR side" {
 		t.Fatalf("issue7 caption = %q", issue7.Caption)
+	}
+	// The covering PR is resolved onto the issue with what its sub-row
+	// needs, and the PR itself is marked as nested under the issue.
+	if len(issue7.LinkedPRs) != 1 || issue7.LinkedPRs[0].Number != 102 || issue7.LinkedPRs[0].Title != "Stabilise test" || issue7.LinkedPRs[0].Author != "hive-app[bot]" ||
+		issue7.LinkedPRs[0].AuthorKind != authorKindHive || issue7.LinkedPRs[0].Stage != 100 || issue7.LinkedPRs[0].StageSince == nil || !issue7.LinkedPRs[0].StageSince.Equal(*pr102.StageSince) ||
+		issue7.LinkedPRs[0].Caption != pr102.Caption || len(issue7.LinkedPRs[0].Modifiers) != 0 {
+		t.Fatalf("issue7 linked PRs = %+v", issue7.LinkedPRs)
+	}
+	if pr102.NestedUnder != 7 || pr101.NestedUnder != 0 {
+		t.Fatalf("nested_under: pr102=%d pr101=%d", pr102.NestedUnder, pr101.NestedUnder)
 	}
 	issue8 := trackerItem(t, resp, "issue", 8)
 	if issue8.Stage != 10 || issue8.Mirrored || issue8.Actor != "scanner" || issue8.AuthorKind != authorKindHive {

@@ -1342,6 +1342,8 @@
     .ham-actor-ico { margin-left: var(--sp-1); stroke-width: 2; }
     .ham-seg.done { background: var(--panel-strong); color: var(--text-faint); }
     .ham-seg.todo { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.5; }
+    .ham-seg.blank { visibility: hidden; }
+    .ham-sub { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
     .ham-seg.active { background: var(--amber); color: var(--surface-0); animation: ham-pulse 1.6s ease-in-out infinite; }
     .ham-detour { overflow: hidden; text-overflow: ellipsis; }
     @keyframes ham-pulse { 0%, 100% { filter: brightness(1); } 50% { filter: brightness(1.35); } }
@@ -12418,7 +12420,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_ACTIVE_WORD = { 60: 'Ready for auto merge', 80: 'Ready for auto merge', 100: 'Ready for auto merge', 85: 'Needs human decision' };
     // Whose move it is on each lit chevron: 'author' = the PR's author kind,
     // 'claimant' = the live claim holder's kind; Open and Actionable carry none.
-    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 50: 'hive', 60: 'hive', 70: 'hive', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
+    const STAGE_TRACKER_ACTOR = { 20: 'claimant', 30: 'author', 40: 'author', 50: 'hive', 60: 'hive', 70: 'author', 72: 'author', 74: 'hive', 80: 'hive', 85: 'human', 90: 'human', 100: 'hive' };
     const STAGE_TRACKER_TERMINAL = 110;
     const STAGE_TRACKER_TRAIL_HOPS = 4;
     var _stageTracker = null;
@@ -12557,29 +12559,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-cols" aria-hidden="true"><div class="ham-strip-row"><ol class="ham-strip">${cols}<li class="ham-seg cap">${stageTrackerIcon(STAGE_TRACKER_TERMINAL, 'ham-ico')}</li></ol><span class="ham-since">since</span></div></div>`;
     }
 
-    // Row = title line + thin strip. Non-active chevrons carry only a grey
-    // icon; the active one carries words. Everything else is in the tooltip.
-    function stageTrackerRowHtml(item, stages, ctx) {
-      ctx = ctx || {};
-      const nowMs = Number(ctx.nowMs) || Date.now();
+    // Chevrons for one item. range bounds the columns the item owns (an
+    // issue row stops at PR in progress, a nested PR row starts there);
+    // columns outside it are invisible spacers that keep the grid aligned.
+    function stageTrackerStripItems(item, stages, range) {
       const segs = stageTrackerSegments(item, stages);
       const curStage = Number(item.stage) || 0;
-      const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
-        .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
-      const title = item.title || '';
-      const ak = item.author_kind || '';
-      const chips = [];
-      if (mods.length) chips.push(`<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`);
-      // The lit chevron ends with the icon of whose move it is, in the chevron's ink.
+      const from = range && range.from != null ? range.from : -Infinity;
+      const to = range && range.to != null ? range.to : Infinity;
       const actorKind = stageTrackerActorKind(item);
       const actorIco = actorKind ? stageTrackerIcon(actorKind, 'ham-ico ham-actor-ico', 'Next move: ' + actorKind) : '';
-      // PR column of the title line: the item's own PR, or the issue's covering PRs.
-      let prRefs = [];
-      if (item.kind === 'pr') prRefs = [stageTrackerPRRef(item.number, item.url, ak, item.author, title)];
-      else if (Array.isArray(item.linked_prs)) prRefs = item.linked_prs.map(lp => stageTrackerPRRef(lp.number, lp.url, lp.author_kind, '', lp.title || ''));
-      else if (item.linked_pr) prRefs = [stageTrackerPRRef(item.linked_pr, '', '', '', '')];
-      const prCol = STAGE_TRACKER_PATH.map(n => `<li class="ham-seg">${n === STAGE_TRACKER_PR_COLUMN ? prRefs.join('') : ''}</li>`).join('');
-      const stripItems = segs.map(sg => {
+      return segs.map(sg => {
+        if (sg.number < from || sg.number > to) return `<li class="ham-seg blank${sg.cap ? ' cap' : ''}" aria-hidden="true"></li>`;
         const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : ''].filter(Boolean).join(' ');
         let tip = sg.label + (sg.description ? ' — ' + sg.description : '');
         // The shared Merge gate word hides 080 vs 100; the chevron tooltip carries it.
@@ -12591,33 +12582,101 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}" title="${esc(tip)}"${sg.state === 'active' ? ' aria-current="step"' : ''}>${inner}</li>`;
       }).join('');
+    }
+
+    // Row tooltip: headline, reason, repo, author, flags, since, recent hops.
+    function stageTrackerTooltip(item, nowMs) {
+      const ak = item.author_kind || '';
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       const sinceMs = Date.parse(item.stage_since || '');
-      const since = sinceMs ? stageTrackerShortAgo(nowMs - sinceMs) : '';
-      const stalled = mods.indexOf('stalled') >= 0;
       const trail = Array.isArray(item.history) && item.history.length > 1
         ? item.history.slice(-STAGE_TRACKER_TRAIL_HOPS).map(h => String(h.stage).padStart(3, '0')).join(' → ') : '';
-      const tipLines = [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
-      if (item.author || ak) tipLines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
-      if (item.kind === 'issue' && prRefs.length) tipLines.push('Covering PR: ' + (Array.isArray(item.linked_prs) && item.linked_prs.length ? item.linked_prs.map(lp => '#' + lp.number).join(', ') : '#' + item.linked_pr));
-      if (actorKind) tipLines.push('Next move: ' + actorKind);
-      if (mods.length) tipLines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
-      if (sinceMs) tipLines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
-      if (trail) tipLines.push('Trail: ' + trail);
-      const tip = tipLines.filter(Boolean).join('\n');
-      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}" title="${esc(tip)}">
+      const lines = [stageTrackerHeadline(item), item.caption || item.reason || '', item.repo || ''];
+      if (item.author || ak) lines.push('Author: ' + (item.author ? '@' + item.author : '') + (ak ? ' (author/' + ak + (item.author_kind_source === 'inferred' ? ', inferred' : '') + ')' : '') + (item.tier ? ' · ' + item.tier : ''));
+      if (item.kind === 'issue' && Array.isArray(item.linked_prs) && item.linked_prs.length) lines.push('Covering PR: ' + item.linked_prs.map(lp => Number(lp.number) || 0).sort((x, y) => x - y).map(n => '#' + n).join(', '));
+      else if (item.kind === 'issue' && item.linked_pr) lines.push('Covering PR: #' + item.linked_pr);
+      const actorKind = stageTrackerActorKind(item);
+      if (actorKind) lines.push('Next move: ' + actorKind);
+      if (mods.length) lines.push('Flags: ' + mods.map(m => STAGE_TRACKER_MOD_TEXT[m] || m).join(', '));
+      if (sinceMs) lines.push('Since ' + agentNowClockTime(sinceMs, nowMs) + ' · ' + agentNowAgo(nowMs - sinceMs));
+      if (trail) lines.push('Trail: ' + trail);
+      return lines.filter(Boolean).join('\n');
+    }
+
+    function stageTrackerChipsHtml(item) {
+      const mods = (Array.isArray(item.modifiers) ? item.modifiers.slice() : [])
+        .sort((x, y) => STAGE_TRACKER_MOD_PRIORITY.indexOf(x) - STAGE_TRACKER_MOD_PRIORITY.indexOf(y));
+      if (!mods.length) return '';
+      return `<span class="ham-badge ham-badge-mod ham-mod-${esc(mods[0])}">${esc(STAGE_TRACKER_MOD_TEXT[mods[0]] || mods[0].replace(/-/g, ' '))}${mods.length > 1 ? ' +' + (mods.length - 1) : ''}</span>`;
+    }
+
+    // Ghost strip for a title line: the PR column carries the given refs.
+    function stageTrackerHeadColsHtml(prRefs) {
+      const cols = STAGE_TRACKER_PATH.map(n => `<li class="ham-seg">${n === STAGE_TRACKER_PR_COLUMN ? prRefs.join('') : ''}</li>`).join('');
+      return `<div class="ham-strip-row ham-head-cols"><ol class="ham-strip">${cols}<li class="ham-seg cap"></li></ol><span class="ham-since"></span></div>`;
+    }
+
+    function stageTrackerSinceHtml(item, nowMs) {
+      const sinceMs = Date.parse(item.stage_since || '');
+      const stalled = (Array.isArray(item.modifiers) ? item.modifiers : []).indexOf('stalled') >= 0;
+      return `<span class="ham-since${stalled ? ' ham-stalled' : ''}">${esc(sinceMs ? stageTrackerShortAgo(nowMs - sinceMs) : '')}</span>`;
+    }
+
+    // A covering PR nested under its issue: "[author icon] #N title" at the
+    // PR column, then the PR's own strip from PR in progress onwards.
+    function stageTrackerSubRowHtml(lp, issue, stages, nowMs) {
+      const pr = { repo: issue.repo, number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
+        stage: lp.stage || 0, stage_since: lp.stage_since || '', modifiers: lp.modifiers || [], caption: lp.caption || '', reason: lp.reason || '' };
+      const ref = stageTrackerPRRef(pr.number, pr.url, pr.author_kind, pr.author, pr.title);
+      return `<div class="ham-sub" data-ham-kind="pr" data-ham-stage="${pr.stage}" title="${esc(stageTrackerTooltip(pr, nowMs))}">
+          <div class="ham-row-head">
+            ${stageTrackerHeadColsHtml([ref])}
+            <span class="ham-badges">${stageTrackerChipsHtml(pr)}</span>
+          </div>
+          <div class="ham-strip-row">
+            <ol class="ham-strip" aria-label="Pipeline progress">${stageTrackerStripItems(pr, stages, { from: STAGE_TRACKER_PR_COLUMN })}</ol>
+            ${stageTrackerSinceHtml(pr, nowMs)}
+          </div>
+        </div>`;
+    }
+
+    // Row = title line + thin strip. Non-active chevrons carry only a grey
+    // icon; the active one carries words. Everything else is in the tooltip.
+    // An issue row owns the columns up to Claimed once a PR covers it (up to
+    // PR in progress while it has none) and nests one sub-row per covering
+    // PR, furthest along first; a PR row without an issue owns the whole strip.
+    function stageTrackerRowHtml(item, stages, ctx) {
+      ctx = ctx || {};
+      const nowMs = Number(ctx.nowMs) || Date.now();
+      const isIssue = item.kind === 'issue';
+      const title = item.title || '';
+      let prRefs = [], shown = item, range = null, subs = '';
+      if (isIssue) {
+        const linked = Array.isArray(item.linked_prs) ? item.linked_prs.slice() : (item.linked_pr ? [{ number: item.linked_pr }] : []);
+        // With a covering PR the issue strip ends at Claimed, all passed and
+        // nothing lit: the PR sub-rows carry the live chevron from here on.
+        range = { to: linked.length ? 20 : STAGE_TRACKER_PR_COLUMN };
+        if (linked.length && stageTrackerAnchor(item.stage, stages) <= 20) shown = Object.assign({}, item, { stage: 40 });
+        const sinceOf = lp => Date.parse(lp.stage_since || '') || Infinity;
+        linked.sort((x, y) => (stageTrackerAnchor(y.stage, stages) - stageTrackerAnchor(x.stage, stages)) || (sinceOf(x) - sinceOf(y)) || ((x.number || 0) - (y.number || 0)));
+        subs = linked.map(lp => stageTrackerSubRowHtml(lp, item, stages, nowMs)).join('');
+      } else {
+        prRefs = [stageTrackerPRRef(item.number, item.url, item.author_kind || '', item.author, title)];
+      }
+      return `<div class="ham-row" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}" title="${esc(stageTrackerTooltip(item, nowMs))}">
         <div class="ham-row-head">
-          <div class="ham-strip-row ham-head-cols"><ol class="ham-strip">${prCol}<li class="ham-seg cap"></li></ol><span class="ham-since"></span></div>
+          ${stageTrackerHeadColsHtml(prRefs)}
           <div class="ham-head-main">
-            ${stageTrackerIcon(item.kind === 'issue' ? 'issue' : 'pr', 'ham-kind-ico')}
+            ${stageTrackerIcon(isIssue ? 'issue' : 'pr', 'ham-kind-ico')}
             <a class="ham-ref" href="${esc(item.url || '#')}" target="_blank" rel="noopener">#${Number(item.number) || 0}</a>
             <span class="ham-title">${esc(title)}</span>
           </div>
-          <span class="ham-badges">${chips.join('')}</span>
+          <span class="ham-badges">${stageTrackerChipsHtml(item)}</span>
         </div>
         <div class="ham-strip-row">
-          <ol class="ham-strip" aria-label="Pipeline progress">${stripItems}</ol>
-          <span class="ham-since${stalled ? ' ham-stalled' : ''}">${esc(since)}</span>
-        </div>
+          <ol class="ham-strip" aria-label="Pipeline progress">${stageTrackerStripItems(shown, stages, range)}</ol>
+          ${stageTrackerSinceHtml(item, nowMs)}
+        </div>${subs}
       </div>`;
     }
 
@@ -12627,11 +12686,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return mods.length > 0 || n === 72 || n === 85 || n === 90;
     }
 
-    function stageTrackerVisible(items) {
-      const f = _stageTrackerFilter;
-      return (items || []).filter(it =>
+    // Rows for the current filter. Outside the Pull requests view a PR that
+    // is nested under a listed issue is drawn as that issue's sub-row only.
+    function stageTrackerVisible(items, filter) {
+      const f = filter || _stageTrackerFilter;
+      const rows = (items || []).filter(it =>
         (f.kind === 'all' || it.kind === f.kind) &&
         (!f.repo || it.repo === f.repo));
+      if (f.kind === 'pr') return rows;
+      const issues = new Set(rows.filter(it => it.kind === 'issue').map(it => it.repo + '#' + it.number));
+      return rows.filter(it => !(it.kind === 'pr' && it.nested_under && issues.has(it.repo + '#' + it.nested_under)));
     }
 
     function hamFilter(key, value) {
