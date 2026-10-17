@@ -938,6 +938,59 @@ Notes:
 - **`remove` discards a token the hub cannot reprint**, so it asks you to type
   the hive name unless `--yes` is given.
 
+#### Contribution presets
+
+A contribution preset is a plain, credential-free document a project publishes
+at a public HTTPS URL (or ships as a local file) to recommend Hives and
+repositories to contribute to. It is a recommendation only: it grants nothing,
+and each Hive's operator admission gates (disabled repos, holds, trust tiers,
+model filters, quota) stay authoritative. It is unrelated to the encrypted
+`hives export` bundle, which carries a registration token.
+
+```yaml
+version: 1                                   # integer; any other major is refused
+name: Bluefin ecosystem
+description: Hives Bluefin depends on        # optional, display only
+revision: "2026-10-17"                       # optional, opaque publisher revision
+hives:
+  - url: https://bluefin-hive.example
+    description: Why we recommend this Hive  # optional
+    repositories: all-current                # or a list:
+  - url: https://dependency-hive.example
+    repositories:
+      - repo: dependency-org/component-a     # full owner/name (GitLab may nest groups)
+        forge: github                        # optional: github (default), gitlab, gitea
+        host: github.com                     # optional: github.com / gitlab.com; required for gitea
+        description: optional
+hubs:                                        # optional
+  - url: https://hub.example
+    hives: all-current                       # or a list of Hive URLs advertised by the hub
+```
+
+`all-current` selects the current membership only; there is no `all` or
+`follow` keyword, because following future additions is a personal setting,
+not something a publisher can switch on. Repositories are identified by
+`{forge, host, owner/name}` compared case-insensitively, and duplicates are
+collapsed.
+
+`hivectl` loads a preset from an `https://` URL or a local path and writes
+nothing. It refuses:
+
+- any scheme other than `https://` (including `file://`, `ws://`, `wss://`);
+  `http://` only for loopback hosts, and URLs with embedded credentials;
+- redirects that leave HTTPS; fetches send no credentials or cookies and time
+  out after 30 seconds;
+- documents larger than 256 KiB or with more than 1024 entries, multiple YAML
+  documents, and YAML aliases;
+- an unknown or missing `version`;
+- any unknown field. Fields that carry credentials, shell commands, local
+  execution settings or permission changes (`token`, `registration_token`,
+  `*_api_key`, `secret`, `password`, `env`, `command`, `script`, `hooks`,
+  `backend`, `model`, `session`, `permissions`, `allowed_tools`, …) are named
+  in the error;
+- repository entries that are not a full `owner/name` (display names are never
+  matched) or that name an unknown forge.
+
 ## Input and safety
 
 - Write commands take `--file <path>` or `--stdin` (JSON or YAML).
