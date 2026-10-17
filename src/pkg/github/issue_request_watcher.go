@@ -453,6 +453,17 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			c.denyIssueRequest(path, req, "issue claim refused: "+reason, nowFn)
 			return
 		}
+		// A claim right after a hive verification with nothing in between is
+		// the re-verify loop, not new work (#12733). Deny it with the reason;
+		// a lookup failure falls through to the claim.
+		if verified, lookupErr := c.issueLatestCommentIsRecentVerification(ctx, req.Repo, req.Number, nowFn()); lookupErr != nil {
+			c.logger.Warn("issue-request watcher: verification lookup before claim failed, claiming anyway",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", lookupErr.Error()))
+		} else if verified {
+			c.denyIssueRequest(path, req, "issue claim refused: a hive agent verified this issue less than "+
+				verificationClaimCooldown.String()+" ago and nothing has changed since; do not re-verify it, and open a PR without a claim if you intend to fix it", nowFn)
+			return
+		}
 		// Apply a namespaced ownership label (App bots can't be assignees)
 		// and, when enabled, stage/030-pr-in-progress — the timestamped "an
 		// agent started a PR for this" signal (see issue_inprogress.go). The
@@ -466,7 +477,26 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			c.markInProgressStarted(ctx, req.Repo, req.Number, req.Agent, nowFn())
 		}
 	case "comment":
-		err = c.CreateIssueComment(ctx, req.Repo, req.Number, body)
+		// A verification marker already on the issue means this comment was
+		// posted on an earlier kick: acknowledge it, do not post again
+		// (#12733). A failed lookup posts — suppression only on evidence.
+		if marker := verificationMarker(req.Body); marker != "" {
+			found, lookupErr := c.IssueCommentsContain(ctx, req.Repo, req.Number, marker)
+			if lookupErr != nil {
+				c.logger.Warn("issue-request watcher: verification-marker lookup failed, posting anyway",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", lookupErr.Error()))
+			} else if found {
+				c.logger.Info("issue-request watcher: verification marker already on issue, not re-posting",
+					slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("agent", req.Agent), slog.String("marker", marker))
+				resp.OK, resp.Number, resp.AlreadyExisted = true, req.Number, true
+				break
+			}
+		}
+		err = c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, body)
+		if errors.Is(err, ErrIssueCommentBudget) {
+			c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
+			return
+		}
 		if err == nil {
 			resp.OK = true
 			resp.Number = req.Number
@@ -946,7 +976,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 		}
 	}
 	if componentTwin != nil {
-		if err := c.CreateIssueComment(ctx, owner+"/"+repoName, componentTwin.GetNumber(),
+		if err := c.appendFoldedFinding(ctx, owner, repoName, componentTwin.GetNumber(),
 			foldedComponentFindingComment(title, body, componentPath, componentCount, componentClosed)); err != nil {
 			return CreateIssueResult{}, fmt.Errorf("CreateIssue: folding into open issue #%d in %s/%s: %w", componentTwin.GetNumber(), owner, repoName, err)
 		}
@@ -1463,6 +1493,95 @@ func foldedComponentFindingComment(title, body, path string, openSiblings, close
 	b.WriteString("\n\n")
 	b.WriteString(body)
 	return b.String()
+}
+
+// foldedCommentMaxChars is how large one fold-trail comment may grow before a
+// new one is started; GitHub rejects comment bodies over 65536 characters.
+const foldedCommentMaxChars = 60000
+
+// appendFoldedFinding records a same-component fold on the tracker issue
+// without notifying its subscribers again (#12733): the newest existing
+// <!-- hive-finding-folded --> comment that still has room is EDITED to carry
+// the new finding as another section. GitHub does not notify on an edit, so
+// a tracker that collects dozens of variants costs one notification, not one
+// per variant. Only when no fold comment exists (or every one is full) is a
+// new comment posted, through the per-issue budget. A failed comment list
+// falls back to posting; a failed edit or post is returned so the request
+// retries rather than dropping the finding.
+func (c *Client) appendFoldedFinding(ctx context.Context, owner, repo string, number int, comment string) error {
+	section := strings.TrimPrefix(comment, hiveFindingFoldedMarker+"\n")
+	comments, err := c.listIssueComments(ctx, owner, repo, number)
+	if err != nil {
+		c.logger.Warn("CreateIssue: fold-trail lookup failed, posting a new fold comment",
+			slog.String("repo", repo), slog.Int("number", number), slog.String("error", err.Error()))
+		return c.CreateIssueCommentBudgeted(ctx, owner+"/"+repo, number, comment)
+	}
+	for i := len(comments) - 1; i >= 0; i-- {
+		cm := comments[i]
+		if cm == nil || !strings.Contains(cm.GetBody(), hiveFindingFoldedMarker) {
+			continue
+		}
+		if len(cm.GetBody())+len(section) > foldedCommentMaxChars {
+			break
+		}
+		merged := cm.GetBody() + "\n\n---\n\n" + section
+		if _, _, err := c.client.Issues.EditComment(ctx, owner, repo, cm.GetID(), &gh.IssueComment{Body: gh.Ptr(merged)}); err != nil {
+			return fmt.Errorf("appending to fold comment %d: %w", cm.GetID(), err)
+		}
+		c.logger.Info("CreateIssue: appended folded finding to the existing fold comment",
+			slog.String("repo", repo), slog.Int("number", number), slog.Int64("comment_id", cm.GetID()))
+		return nil
+	}
+	err = c.CreateIssueCommentBudgeted(ctx, owner+"/"+repo, number, comment)
+	if errors.Is(err, ErrIssueCommentBudget) {
+		// The finding is folded either way; the forge trail resumes tomorrow.
+		c.logger.Warn("CreateIssue: fold comment suppressed by the per-issue budget, finding folded silently",
+			slog.String("repo", repo), slog.Int("number", number))
+		return nil
+	}
+	return err
+}
+
+// verificationMarkerRE matches the agent-authored verification markers that
+// follow the `<!-- hive-* -->` convention: `<!-- hive-466-verified -->`,
+// `<!-- hive-verified -->`, `<!-- hive-verification: head=abc123 -->`. The
+// whole marker, including any head SHA it carries, is the idempotence key, so
+// a verification against a new head still posts.
+var verificationMarkerRE = regexp.MustCompile(`<!--\s*hive-(?:[A-Za-z0-9_]+-)*verif(?:ied|ication)\b[^>]*-->`)
+
+// verificationMarker returns the first verification marker in body, or "".
+func verificationMarker(body string) string {
+	return verificationMarkerRE.FindString(body)
+}
+
+// verificationClaimCooldown is how long after a hive verification comment a
+// `claim` on the same issue is refused when nothing else happened since.
+const verificationClaimCooldown = 24 * time.Hour
+
+// issueLatestCommentIsRecentVerification reports whether the newest comment
+// on the issue is a hive-bot verification posted within
+// verificationClaimCooldown of now. Any later comment — a human reply, a
+// fold, a PR link — is a state change and lets the claim through.
+func (c *Client) issueLatestCommentIsRecentVerification(ctx context.Context, repo string, number int, now time.Time) (bool, error) {
+	owner, repoName := c.splitRepo(repo)
+	comments, err := c.listIssueComments(ctx, owner, repoName, number)
+	if err != nil {
+		return false, err
+	}
+	if len(comments) == 0 {
+		return false, nil
+	}
+	last := comments[len(comments)-1]
+	if last == nil || verificationMarker(last.GetBody()) == "" {
+		return false, nil
+	}
+	if login := last.GetUser().GetLogin(); login != "" && !isHiveBotLogin(c.hiveBotLogins(), login) {
+		return false, nil
+	}
+	if at := last.GetCreatedAt().Time; !at.IsZero() && now.Sub(at) > verificationClaimCooldown {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (c *Client) ensureCreateIssueLabel(ctx context.Context, owner, repo, name string) error {

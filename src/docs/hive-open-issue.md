@@ -447,8 +447,21 @@ exact-set twin, and a failed comment keeps the request queued.
 
 Paths that unrelated findings mention in passing (`README.md`,
 `CHANGELOG.md`, `go.mod`, `package.json`, lock files, and similar manifests)
-never count as a shared component. Below the threshold, overlapping findings
-file normally; an exact file-set twin still takes precedence.
+never count as a shared component. Build artefacts and generated output —
+`dist/`, `node_modules/`, `vendor/`, any `coverage*/` directory, `lcov.info`
+and other coverage reports, `*.min.js`, `*.map`, `*.pb.go`, lock files — are
+dropped from the file-reference set altogether
+([#12733](https://github.com/hivecommons/hive/issues/12733)): every coverage
+finding on a bundled Action cites `dist/index.js`, so sharing it is not
+evidence of a shared root cause, and a finding that cites only such paths has
+no citation evidence at all. Below the threshold, overlapping findings file
+normally; an exact file-set twin still takes precedence.
+
+The tracker's subscribers are notified once, not once per variant: the second
+and later folds **edit** the newest existing `<!-- hive-finding-folded -->`
+comment on the tracker to append the new finding as another section (GitHub
+does not notify on an edit). A new fold comment is posted only when none
+exists or the existing one is near GitHub's body size limit.
 
 Open issues alone rarely reach the threshold in steady state: each variant's
 PR merges and closes its issue before the next variant is filed. So when at
@@ -460,6 +473,33 @@ fold target is still the oldest **open** sibling — a finding is never folded
 into a closed issue — so if every sibling is closed the finding files
 normally. Issues closed as `not_planned` or `duplicate` never count: they are
 the rejected-twin gate's evidence, not a sign of a stream.
+
+### Unattended comments are rate-limited per issue
+
+Every automated comment is a notification to the issue's subscribers, and a
+tracker that collects folds, an agent re-posting its verification each kick
+and the claim that follows added up to 47 comments on one downstream issue
+([#12733](https://github.com/hivecommons/hive/issues/12733)). Three guards
+bound that:
+
+- **Verification markers are idempotent.** A `comment` request whose body
+  carries a verification marker (`<!-- hive-<n>-verified -->`,
+  `<!-- hive-verification: … -->`) is acknowledged with `already_existed:
+  true` and not posted when that exact marker is already on the issue. The
+  whole marker is the key, so a verification that names a new head SHA still
+  posts.
+- **A claim right after a verification is refused.** A `claim` request is
+  denied (parked as `.denied`, with the reason in the result) when the issue's
+  newest comment is a hive-bot verification less than 24h old — nothing has
+  changed, so re-verifying is the loop, not new work. Any later comment lets
+  the claim through.
+- **Per-issue daily budget.** The relay's `comment` kind, finding folds and
+  the agent claim mark share a cap of 5 comments per issue per rolling 24h per
+  hub process (`HIVE_ISSUE_COMMENT_BUDGET_PER_DAY`; 0 disables). A suppressed
+  comment is logged (`per-issue bot comment budget reached`); a relay comment
+  over budget is denied rather than retried, and a fold over budget still
+  folds (the result is `consolidated: true`) but leaves no comment that day.
+  Reviewer and operator-driven comments are not budgeted.
 
 ## Where things live
 
