@@ -567,16 +567,16 @@ When a contributor PR goes red the hive does not just relabel it (full flow in
    the PR at 072 indefinitely). The marker records which rule fired:
    - `reason=contributor-offline` — the author has a contributor profile
      here and no relay heartbeat within `governor.labels.stage.presence_window`:
-     adopted `governor.labels.stage.adoption.after_offline` (default 30m)
+     adopted `governor.labels.stage.adoption.after_offline` (default 15m)
      after the later of its last heartbeat and the first nudge;
    - `reason=contributor-unregistered` — no profile here (another hive, or a
      relay that never registered, posted the PR): adopted
-     `governor.labels.stage.adoption.after_unregistered` (default 2h) after
+     `governor.labels.stage.adoption.after_unregistered` (default 15m) after
      the first nudge;
    - `reason=grace-elapsed` — the relay is online but the nudge went
      unanswered for `governor.labels.stage.contributor_grace_online` (default
      2h); and, on a hub that reports no presence at all, the nudge-time
-     graces (`contributor_grace_online` 2h / `contributor_grace_offline` 1h
+     graces (`contributor_grace_online` 2h / `contributor_grace_offline` 15m
      after a comment-only nudge).
    A PR carrying `hold`, `do-not-merge` or `do-not-merge/hold` is never
    adopted (a human parked it; one log line, the stage stays 072).
