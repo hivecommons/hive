@@ -340,6 +340,7 @@ func sanitizeHiveStateWindow(w hivestate.Window, hours float64) hivestate.Window
 		QueuePRs:         q(w.QueuePRs),
 		QueueHold:        q(w.QueueHold),
 		SLAViolationRate: clampEvidenceFloat(w.SLAViolationRate, 1),
+		AgentSamples:     c(w.AgentSamples),
 		AgentIdleRatio:   clampEvidenceFloat(w.AgentIdleRatio, 1),
 		KicksPerDay:      clampEvidenceFloat(w.KicksPerDay, maxHiveStatePerDay),
 		TokensPerDay:     clampEvidenceFloat(w.TokensPerDay, maxHiveStatePerDay),

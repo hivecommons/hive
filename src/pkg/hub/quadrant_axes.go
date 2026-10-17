@@ -231,7 +231,8 @@ func efficiencyCriteria(in quadrantInputs) []subCriterion {
 		out = append(out, measured(critPerAgent, perAgent, fmt.Sprintf("%.1f merges per agent", perAgent), n))
 	}
 
-	if w := hiveStateWeek(in); w != nil {
+	if w := hiveStateWeek(in); w != nil && (w.AgentSamples > 0 || w.AgentIdleRatio > 0) {
+		// Older spokes omit the denominator; only a positive ratio proves observations.
 		n := ""
 		if w.AgentIdleRatio > 0.75 {
 			n = fmt.Sprintf("Agents were idle in %s of samples this week — give them work or pause seats", fmtPercent(w.AgentIdleRatio))
@@ -395,10 +396,11 @@ func hiveStateWeek(in quadrantInputs) *hiveStateWindow {
 	if w.Samples < minHiveStateSamples {
 		return nil
 	}
-	return &hiveStateWindow{AgentIdleRatio: w.AgentIdleRatio, SLAViolationRate: w.SLAViolationRate}
+	return &hiveStateWindow{AgentSamples: w.AgentSamples, AgentIdleRatio: w.AgentIdleRatio, SLAViolationRate: w.SLAViolationRate}
 }
 
 type hiveStateWindow struct {
+	AgentSamples     int
 	AgentIdleRatio   float64
 	SLAViolationRate float64
 }
