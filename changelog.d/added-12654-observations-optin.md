@@ -1,0 +1,1 @@
+- Nous hive-state observations can be filed upstream when `nous.observations.enabled` is set (default off), capped by a restart-safe rolling weekly budget `nous.observations.max_per_week` (default 5) and never during a self-upgrade drain ([#12654](https://github.com/hivecommons/hive/issues/12654)).

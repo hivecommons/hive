@@ -192,6 +192,26 @@ the last 7 d window covers under 5 days; week-over-week detectors also need
 
 There is no mode-stuck detector yet: buckets do not record the Nous mode.
 
+### Filing observations
+
+Filing detector findings upstream is opt-in and throttled ([#12654](https://github.com/hivecommons/hive/issues/12654)):
+
+- **Off by default.** Nothing runs unless `nous.observations.enabled` is
+  `true`. When it is, the detectors run once per eval cycle, right after the
+  snapshot is recorded.
+- **Weekly budget.** At most `nous.observations.max_per_week` (default `5`,
+  minimum `1`) new observations are filed per rolling 7 days. The ledger is
+  `observations-budget.json` under `data.nous_dir`, so a restart does not
+  reset it. A fingerprint already filed in the window is not filed again.
+  Observations over budget are logged (`weekly budget exhausted`) and
+  dropped; that is not an error.
+- **Upgrade window.** While a hub-instructed self-upgrade is draining — the
+  same signal the governor uses to withhold new kicks — the detectors still
+  run but nothing is filed and no budget is spent.
+- **Sink.** Findings go through the hub self-report relay
+  ([#12653](https://github.com/hivecommons/hive/issues/12653)). A build
+  without that relay files nothing.
+
 Because compaction turns many raw files into one bucket, the dashboard's
 `snapshots` / `baseline_pct` count is a file count, not a sample count.
 
@@ -536,6 +556,8 @@ Dashboard tab.
 | Branch | `nous.artifact_repo.branch` | `HIVE_NOUS_ARTIFACT_BRANCH` | Empty resolves the repository's default branch. Ref-unsafe names are rejected even while the repo is empty. |
 | Path | `nous.artifact_repo.path` | `HIVE_NOUS_ARTIFACT_PATH` | Relative, no `..`; empty means `campaigns`. |
 | Sync interval (seconds) | `nous.artifact_repo.sync_interval_seconds` | `HIVE_NOUS_ARTIFACT_SYNC_INTERVAL` | `0` means the 300s default; the 30s floor is applied at resolve time. |
+| Observations enabled | `nous.observations.enabled` | — | Off by default. See [Filing observations](#filing-observations). |
+| Observations max per week | `nous.observations.max_per_week` | — | Default `5`; values below `1` are rejected. |
 
 `agents.<name>.engine` is exposed in the agent configuration dialog (General
 tab, "Experiment engine", next to Role) and validated with

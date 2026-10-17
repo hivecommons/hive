@@ -32,6 +32,8 @@ func TestGovernorFeatures_NousSettingsPut(t *testing.T) {
 		{"nousArtifactBranch": "a..b"},
 		{"nousArtifactPath": "../escape"},
 		{"nousArtifactSyncIntervalSeconds": -5},
+		{"nousObservationsMaxPerWeek": 0},
+		{"nousObservationsMaxPerWeek": -1},
 		// A valid value alongside an invalid one must not be applied.
 		{"nousGatePollSeconds": 30, "nousDispatcher": "nope"},
 	} {
@@ -55,6 +57,8 @@ func TestGovernorFeatures_NousSettingsPut(t *testing.T) {
 		"nousArtifactBranch":              "main",
 		"nousArtifactPath":                "campaigns/hive",
 		"nousArtifactSyncIntervalSeconds": 600,
+		"nousObservationsEnabled":         true,
+		"nousObservationsMaxPerWeek":      3,
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT = %d - %s", rec.Code, rec.Body.String())
@@ -68,6 +72,9 @@ func TestGovernorFeatures_NousSettingsPut(t *testing.T) {
 	}
 	if n.ArtifactRepo.Repo != "acme/nous-artifacts" || n.ArtifactRepo.Branch != "main" || n.ArtifactRepo.Path != "campaigns/hive" || n.ArtifactRepo.SyncIntervalSeconds != 600 {
 		t.Fatalf("artifact repo not persisted: %+v", n.ArtifactRepo)
+	}
+	if !n.Observations.Enabled || n.Observations.ResolvedMaxPerWeek() != 3 {
+		t.Fatalf("observations not persisted: %+v", n.Observations)
 	}
 
 	// An explicitly empty allowlist is deny-all and must survive as a
@@ -103,7 +110,7 @@ func TestGovernorFeatures_NousSettingsPut(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := payload.Features
-	if f["nousGatePollSeconds"] != float64(30) || f["nousArtifactRepo"] != "acme/nous-artifacts" || f["nousArtifactEnabled"] != true {
+	if f["nousGatePollSeconds"] != float64(30) || f["nousArtifactRepo"] != "acme/nous-artifacts" || f["nousArtifactEnabled"] != true || f["nousObservationsEnabled"] != true || f["nousObservationsMaxPerWeek"] != float64(3) {
 		t.Fatalf("GET features missing nous values: %v", f)
 	}
 	vals, _ := f["nousDispatcherValues"].([]any)
@@ -131,12 +138,12 @@ func TestGovernorFeatures_NousSettingsPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"nousDispatcher", "nousGatePollSeconds", "nousFetchAllowlist", "nousArtifactRepo", "nousArtifactBranch", "nousArtifactPath", "nousArtifactSyncIntervalSeconds"} {
+	for _, key := range []string{"nousDispatcher", "nousGatePollSeconds", "nousFetchAllowlist", "nousArtifactRepo", "nousArtifactBranch", "nousArtifactPath", "nousArtifactSyncIntervalSeconds", "nousObservationsEnabled", "nousObservationsMaxPerWeek"} {
 		if !strings.Contains(string(html), `data-arg1="`+key+`"`) {
 			t.Errorf("Settings UI has no control for %s", key)
 		}
 	}
-	for _, yamlKey := range []string{"nous.dispatcher", "nous.gate_poll_seconds", "nous.fetch_allowlist[]", "nous.artifact_repo.repo", "nous.artifact_repo.branch", "nous.artifact_repo.path", "nous.artifact_repo.sync_interval_seconds", "agents.<key>.engine"} {
+	for _, yamlKey := range []string{"nous.dispatcher", "nous.gate_poll_seconds", "nous.fetch_allowlist[]", "nous.artifact_repo.repo", "nous.artifact_repo.branch", "nous.artifact_repo.path", "nous.artifact_repo.sync_interval_seconds", "nous.observations.enabled", "nous.observations.max_per_week", "agents.<key>.engine"} {
 		if !strings.Contains(string(html), yamlKey) {
 			t.Errorf("Settings UI does not label the %s key", yamlKey)
 		}

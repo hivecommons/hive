@@ -7990,6 +7990,7 @@ func runEvalCycle(
 		if err := nousState.RecordSnapshot(govState, actionable, agentsDue, agentStatuses, tokenSummary); err != nil {
 			logger.Warn("failed to record nous snapshot", "error", err)
 		}
+		runNousObservations(ctx, logger, newNousObservationDeps(cfg, nousState))
 	}
 }
 

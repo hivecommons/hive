@@ -171,6 +171,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		NousArtifactBranch              *string   `json:"nousArtifactBranch"`
 		NousArtifactPath                *string   `json:"nousArtifactPath"`
 		NousArtifactSyncIntervalSeconds *int      `json:"nousArtifactSyncIntervalSeconds"`
+		NousObservationsEnabled         *bool     `json:"nousObservationsEnabled"`
+		NousObservationsMaxPerWeek      *int      `json:"nousObservationsMaxPerWeek"`
 
 		RotationEnabled            *bool                                     `json:"rotationEnabled"`
 		RotationThresholdPct       *int                                      `json:"rotationThresholdPct"`
@@ -348,6 +350,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		dispatcher: body.NousDispatcher, gatePollSeconds: body.NousGatePollSeconds, fetchAllowlist: body.NousFetchAllowlist,
 		artifactRepo: body.NousArtifactRepo, artifactBranch: body.NousArtifactBranch, artifactPath: body.NousArtifactPath,
 		artifactSyncIntervalSeconds: body.NousArtifactSyncIntervalSeconds,
+		observationsEnabled:         body.NousObservationsEnabled, observationsMaxPerWeek: body.NousObservationsMaxPerWeek,
 	})
 	if nousErr != nil {
 		jsonError(w, nousErr.Error(), http.StatusBadRequest)
@@ -831,6 +834,9 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"nousArtifactPath":                    cfg.Nous.ArtifactRepo.Path,
 		"nousArtifactSyncIntervalSeconds":     cfg.Nous.ArtifactRepo.SyncIntervalSeconds,
 		"nousArtifactSyncMinSeconds":          int(config.MinNousArtifactSyncInterval.Seconds()),
+		"nousObservationsEnabled":             cfg.Nous.Observations.Enabled,
+		"nousObservationsMaxPerWeek":          cfg.Nous.Observations.ResolvedMaxPerWeek(),
+		"nousObservationsMaxPerWeekDefault":   config.DefaultNousObservationsMaxPerWeek,
 		"nousArtifactEnabled":                 nousArtifact.Enabled,
 		"nousArtifactRepoEffective":           nousArtifact.Repo,
 		"rotationEnabled":                     rotationCfg.Enabled,

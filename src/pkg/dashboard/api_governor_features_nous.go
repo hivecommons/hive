@@ -19,6 +19,8 @@ type nousPatch struct {
 	artifactBranch              *string
 	artifactPath                *string
 	artifactSyncIntervalSeconds *int
+	observationsEnabled         *bool
+	observationsMaxPerWeek      *int
 }
 
 // patchNousConfig applies p to a copy of cur and validates the result with
@@ -81,6 +83,16 @@ func patchNousConfig(cur config.NousConfig, p nousPatch) (config.NousConfig, err
 			return cur, fmt.Errorf("nous artifact_repo.sync_interval_seconds must be 0 (default %ds) or greater", int(config.DefaultNousArtifactSyncInterval.Seconds()))
 		}
 		next.ArtifactRepo.SyncIntervalSeconds = *p.artifactSyncIntervalSeconds
+	}
+	if p.observationsEnabled != nil {
+		next.Observations.Enabled = *p.observationsEnabled
+	}
+	if p.observationsMaxPerWeek != nil {
+		if *p.observationsMaxPerWeek < 1 {
+			return cur, fmt.Errorf("nous observations.max_per_week must be 1 or greater")
+		}
+		v := *p.observationsMaxPerWeek
+		next.Observations.MaxPerWeek = &v
 	}
 	if err := next.Validate(); err != nil {
 		return cur, err

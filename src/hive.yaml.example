@@ -1236,6 +1236,14 @@ nous:
   #   branch: main            # default: the repository's default branch
   #   path: campaigns
   #   sync_interval_seconds: 300   # minimum 30
+  # Hive-state observations (#12654). Off by default. When enabled, the
+  # detectors run once per eval cycle over the snapshot series and file at
+  # most max_per_week new observations per rolling 7 days (minimum 1) through
+  # the hub self-report relay. Nothing is filed while a self-upgrade drain is
+  # open. The budget is persisted under data.nous_dir.
+  # observations:
+  #   enabled: false
+  #   max_per_week: 5
 
 # Experimenter role (RFC #11585 part 5). An agent whose name or `role` is
 # `experimenter` runs self-improvement campaigns through an engine implementing

@@ -138,6 +138,9 @@ type NousConfig struct {
 	// ArtifactRepo is the optional GitHub repository campaign artifacts are
 	// mirrored to (RFC #11585 part 8). The zero value keeps the mirror OFF.
 	ArtifactRepo NousArtifactRepoConfig `yaml:"artifact_repo,omitempty" json:"artifact_repo,omitempty"`
+	// Observations gates filing hive-state detector findings upstream
+	// (#12654). The zero value keeps filing OFF.
+	Observations NousObservationsConfig `yaml:"observations,omitempty" json:"observations,omitempty"`
 }
 
 // ResolvedFetchAllowlist resolves the dependency fetch allowlist with
@@ -246,6 +249,9 @@ func (n NousConfig) Validate() error {
 		}
 	}
 	if err := n.ArtifactRepo.Validate(); err != nil {
+		return fmt.Errorf("nous: %w", err)
+	}
+	if err := n.Observations.Validate(); err != nil {
 		return fmt.Errorf("nous: %w", err)
 	}
 	return nil
