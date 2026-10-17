@@ -28,7 +28,7 @@ import (
 // per report, whether to write upstream:
 //
 //   - dry-run → nothing (preview stays on the dashboard);
-//   - Nous observations → hub relay only; the spoke GitHub client is never used;
+//   - Nous observations → the hub relay only; the spoke GitHub client is never used;
 //   - the API budget is not normal → defer ordinary reports (observations still relay);
 //   - fingerprint already written by this hive → at most one "also seen"
 //     comment per 24h, otherwise skip;
@@ -64,16 +64,17 @@ type selfReportRelay func(ctx context.Context, req selfReportRelayRequest) (self
 
 // selfReportRelayRequest is the wire shape shared with pkg/hub.
 type selfReportRelayRequest struct {
-	Action      string               `json:"action,omitempty"`
-	HiveID      string               `json:"hive_id"`
-	Fingerprint string               `json:"fingerprint"`
-	Class       string               `json:"class,omitempty"`
-	Title       string               `json:"title,omitempty"`
-	Body        string               `json:"body"`
-	Labels      []string             `json:"labels,omitempty"`
-	Version     string               `json:"version,omitempty"`
-	Repo        string               `json:"repo,omitempty"`
-	Evidence    fleetreport.Evidence `json:"evidence"`
+	Action      string                          `json:"action,omitempty"`
+	HiveID      string                          `json:"hive_id"`
+	Fingerprint string                          `json:"fingerprint"`
+	Class       string                          `json:"class,omitempty"`
+	Title       string                          `json:"title,omitempty"`
+	Body        string                          `json:"body"`
+	Labels      []string                        `json:"labels,omitempty"`
+	Version     string                          `json:"version,omitempty"`
+	Repo        string                          `json:"repo,omitempty"`
+	Evidence    fleetreport.Evidence            `json:"evidence"`
+	Observation *fleetreport.ObservationFinding `json:"observation,omitempty"`
 	// HiveState is the reporting hive's 24 h / 7 d state trends (#12339).
 	HiveState *hivestate.Trends `json:"hive_state,omitempty"`
 }
@@ -150,6 +151,17 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 	if deps.budgetOK != nil {
 		budgetNormal = deps.budgetOK()
 	}
+	hasObservation := false
+	for _, report := range res.Reports {
+		if isObservationReport(report) {
+			hasObservation = true
+			break
+		}
+	}
+	if !budgetNormal && !hasObservation {
+		logger.Info("fleet report: API budget not normal; deferring self-reports", "reports", len(res.Reports))
+		return
+	}
 	now := deps.now()
 	state := dashSrv.FleetReportState()
 	var observationRecoveries []nous.RecoveryRequest
@@ -183,6 +195,7 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 	for _, report := range res.Reports {
 		isObservation := isObservationReport(report)
 		if !isObservation && !budgetNormal {
+			logger.Info("fleet report: API budget not normal; deferring non-observation self-report", "fingerprint", report.Fingerprint)
 			continue
 		}
 		open := state.Open[report.Fingerprint]
@@ -200,15 +213,18 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 		var write github.FleetReportResult
 		var err error
 		if isObservation {
+			// Observations are hub-owned reports. Never fall back to the
+			// spoke's GitHub client, even when it can write another repo.
 			if deps.relay == nil {
 				err = errSelfReportObservationNoRelay
 			} else {
 				logger.Info("fleet report: relaying Nous observation to hub", "fingerprint", report.Fingerprint, "kind", report.Class)
 				var relayed selfReportRelayResponse
 				relayed, err = deps.relay(ctx, selfReportRelayRequest{
-					HiveID: deps.hiveSlug, Fingerprint: report.Fingerprint, Class: selfReportObservationClass,
+					HiveID: deps.hiveSlug, Fingerprint: report.Fingerprint, Class: fleetreport.TriggerObservation,
 					Title: report.Title, Body: report.Body, Labels: report.Labels, Version: deps.version,
-					Repo: config.DefaultFleetReportRepo, Evidence: firstEvidence(report), HiveState: report.HiveState,
+					Repo: config.DefaultFleetReportRepo, Evidence: firstEvidence(report),
+					Observation: report.Observation, HiveState: report.HiveState,
 				})
 				if err == nil {
 					write = github.FleetReportResult{
@@ -373,10 +389,14 @@ func publishFleetReportsWith(ctx context.Context, logger *slog.Logger, dashSrv *
 	}
 }
 
+func isObservationReport(report fleetreport.Report) bool {
+	return report.Trigger == fleetreport.TriggerObservation || report.Class == fleetreport.TriggerObservation
+}
+
 var (
 	errSelfReportCreateDeferred     = errors.New("self-report: new filing deferred by rate limit")
 	errSelfReportNoDirectWriter     = errors.New("self-report: no GitHub client")
-	errSelfReportObservationNoRelay = errors.New("self-report: observation recovery relay unavailable")
+	errSelfReportObservationNoRelay = errors.New("self-report: observation relay unavailable")
 )
 
 // withCreateGate returns opts; when allowNew is false the writer is asked to
@@ -412,10 +432,6 @@ func observationBeforeAfter(report fleetreport.Report) (string, string) {
 		return "", ""
 	}
 	return fmt.Sprintf("%g", series[0]), fmt.Sprintf("%g", series[len(series)-1])
-}
-
-func isObservationReport(report fleetreport.Report) bool {
-	return report.Trigger == selfReportObservationClass || report.Class == selfReportObservationClass
 }
 
 func relayObservationRecovery(ctx context.Context, deps selfReportPublishDeps, report fleetreport.Report) (selfReportRelayResponse, error) {

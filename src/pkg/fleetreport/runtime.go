@@ -456,6 +456,7 @@ const (
 	LabelKindBug               = "kind/bug"
 	LabelNeedsTriage           = "needs-triage"
 	LabelFleetReport           = "fleet-report"
+	LabelObservation           = "hive-observation"
 )
 
 // SelfReportMarker is the body marker a runtime-error report carries.

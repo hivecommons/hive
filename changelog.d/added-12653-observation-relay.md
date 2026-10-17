@@ -1,0 +1,1 @@
+- Nous observations now use the hub self-report relay to create parked, fingerprint-deduplicated issues in `hivecommons/hive` without exposing watched project files ([#12653](https://github.com/hivecommons/hive/issues/12653)).
